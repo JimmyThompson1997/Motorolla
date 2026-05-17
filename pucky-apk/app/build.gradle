@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+android {
+    namespace "com.pucky.device"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.pucky.device"
+        minSdk 26
+        targetSdk 35
+        versionCode 4
+        versionName "0.2.3-pucky-ui-state"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "com.github.mwiede:jsch:2.28.2"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "io.livekit:livekit-android:2.25.2"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
+    implementation "ai.picovoice:porcupine-android:4.0.0"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+}

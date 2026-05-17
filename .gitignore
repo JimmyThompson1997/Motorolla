@@ -1,0 +1,41 @@
+# Build outputs and local tool state
+.gradle/
+.kotlin/
+build/
+app/build/
+**/build/
+**/__pycache__/
+.pytest_cache/
+
+# Dependency folders
+node_modules/
+**/node_modules/
+
+# Local Android/IDE machine state
+local.properties
+.idea/
+*.iml
+
+# Generated app packages and archives
+*.apk
+*.aab
+*.apks
+*.zip
+
+# Device evidence and bulky inspection artifacts
+adb_inspect/
+outer-screen-research/
+pucky-implementation-proof/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+
+# Secrets and tunnel credentials
+.secrets/
+*.pem
+*.key
+*.pub
+id_*
+known_hosts

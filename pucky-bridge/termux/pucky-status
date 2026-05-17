@@ -1,0 +1,187 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+import datetime as _dt
+import hashlib
+import json
+import os
+import platform
+import shutil
+import signal
+import subprocess
+from pathlib import Path
+
+
+TIMEOUT_SECONDS = 8
+
+
+def run(argv, timeout=TIMEOUT_SECONDS):
+    try:
+        proc = subprocess.Popen(
+            argv,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return {
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "stdout": (stdout or "").strip(),
+            "stderr": (stderr or "").strip(),
+        }
+    except FileNotFoundError:
+        return {
+            "ok": False,
+            "returncode": 127,
+            "stdout": "",
+            "stderr": f"command not found: {argv[0]}",
+        }
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            stdout, stderr = proc.communicate()
+        return {
+            "ok": False,
+            "returncode": 124,
+            "stdout": (stdout or "").strip(),
+            "stderr": (stderr or f"timeout after {timeout}s").strip(),
+        }
+
+
+def parse_json_result(result, fallback):
+    if not result["ok"] or not result["stdout"]:
+        return fallback
+    try:
+        return json.loads(result["stdout"])
+    except json.JSONDecodeError:
+        return fallback
+
+
+def getprop(name):
+    result = run(["/system/bin/getprop", name], timeout=3)
+    return result["stdout"] if result["ok"] else ""
+
+
+def stable_device_id():
+    config = Path.home() / ".config" / "pucky" / "device_id"
+    if config.exists():
+        value = config.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+
+    parts = [
+        getprop("ro.product.manufacturer"),
+        getprop("ro.product.model"),
+        getprop("ro.product.device"),
+        getprop("ro.serialno"),
+    ]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:10]
+    return f"xs19pro-{digest}"
+
+
+def command_available(name):
+    return shutil.which(name) is not None
+
+
+def storage_info():
+    targets = [str(Path.home())]
+    if Path("/sdcard").exists():
+        targets.append("/sdcard")
+
+    result = run(["df", "-k", *targets], timeout=5)
+    entries = []
+    if result["ok"]:
+        lines = result["stdout"].splitlines()
+        for line in lines[1:]:
+            cols = line.split()
+            if len(cols) >= 6:
+                entries.append(
+                    {
+                        "filesystem": cols[0],
+                        "size_kb": int(cols[1]) if cols[1].isdigit() else None,
+                        "used_kb": int(cols[2]) if cols[2].isdigit() else None,
+                        "available_kb": int(cols[3]) if cols[3].isdigit() else None,
+                        "use_percent": cols[4],
+                        "mount": cols[5],
+                    }
+                )
+    return {"ok": result["ok"], "entries": entries, "error": result["stderr"] or None}
+
+
+def network_info():
+    wifi_raw = run(["termux-wifi-connectioninfo"], timeout=5)
+    wifi = parse_json_result(wifi_raw, None)
+    ip_cmd = "ip" if command_available("ip") else "/system/bin/ip"
+    route = run([ip_cmd, "route", "get", "1.1.1.1"], timeout=5)
+    return {
+        "wifi": wifi,
+        "wifi_error": None if wifi_raw["ok"] else (wifi_raw["stderr"] or wifi_raw["stdout"]),
+        "route_hint": route["stdout"] if route["ok"] else None,
+        "route_error": None if route["ok"] else (route["stderr"] or route["stdout"]),
+    }
+
+
+def main():
+    battery_raw = run(["termux-battery-status"], timeout=5)
+    sensors_raw = run(["termux-sensor", "-l"], timeout=8)
+    battery = parse_json_result(battery_raw, None)
+    sensors_payload = parse_json_result(sensors_raw, [])
+    if isinstance(sensors_payload, dict) and isinstance(sensors_payload.get("sensors"), list):
+        sensors = sensors_payload["sensors"]
+    elif isinstance(sensors_payload, list):
+        sensors = sensors_payload
+    else:
+        sensors = []
+
+    errors = []
+    if not battery_raw["ok"]:
+        errors.append({"component": "battery", "error": battery_raw["stderr"] or battery_raw["stdout"]})
+    if not sensors_raw["ok"]:
+        errors.append({"component": "sensors", "error": sensors_raw["stderr"] or sensors_raw["stdout"]})
+
+    props = {
+        "manufacturer": getprop("ro.product.manufacturer"),
+        "model": getprop("ro.product.model"),
+        "device": getprop("ro.product.device"),
+        "android_release": getprop("ro.build.version.release"),
+        "sdk": getprop("ro.build.version.sdk"),
+        "hardware": getprop("ro.hardware"),
+    }
+
+    payload = {
+        "ok": len(errors) == 0,
+        "schema": "pucky.status.v1",
+        "device_id": stable_device_id(),
+        "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "termux_user": os.environ.get("USER") or run(["whoami"], timeout=3)["stdout"],
+        "python": platform.python_version(),
+        "commands": {
+            "termux_battery_status": command_available("termux-battery-status"),
+            "termux_sensor": command_available("termux-sensor"),
+            "termux_wifi_connectioninfo": command_available("termux-wifi-connectioninfo"),
+            "ip": command_available("ip") or Path("/system/bin/ip").exists(),
+            "ssh": command_available("ssh"),
+            "jq": command_available("jq"),
+        },
+        "android": props,
+        "battery": battery,
+        "sensors": sensors if isinstance(sensors, list) else [],
+        "sensor_count": len(sensors) if isinstance(sensors, list) else 0,
+        "storage": storage_info(),
+        "network": network_info(),
+        "errors": errors,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

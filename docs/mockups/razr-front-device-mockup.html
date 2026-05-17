@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Pucky Razr Front Mockup</title>
+  <style>
+    :root {
+      --desk: #101821;
+      --phone: #1a2028;
+      --rail: #2b3440;
+      --leather: #263039;
+      --screen: #02060a;
+      --panel: #000;
+      --text: #f5f9ff;
+      --muted: #b3c9e0;
+      --blue: #58b2ff;
+      --blue-2: #226fe8;
+      --green: #31d4a8;
+      --outline: rgba(88, 178, 255, 0.26);
+      --icon-bg: rgba(8, 17, 28, 0.78);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% 46%, rgba(104, 135, 168, 0.18), transparent 38%),
+        linear-gradient(145deg, #0a1017, var(--desk));
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body.light {
+      --screen: #f7fbff;
+      --panel: #fafdff;
+      --text: #091220;
+      --muted: #4d6482;
+      --outline: rgba(34, 111, 232, 0.22);
+      --icon-bg: rgba(255, 255, 255, 0.86);
+      --leather: #d4dbe2;
+      --rail: #c1cbd6;
+      --phone: #dce3eb;
+      background:
+        radial-gradient(circle at 50% 46%, rgba(34, 111, 232, 0.12), transparent 39%),
+        linear-gradient(145deg, #dce5ef, #bfcbd7);
+    }
+
+    .scene {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 30px;
+    }
+
+    .phone {
+      position: relative;
+      width: 770px;
+      height: 968px;
+      border-radius: 64px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.18), transparent 24%),
+        linear-gradient(180deg, var(--phone), #111821 62%, var(--leather) 63%);
+      box-shadow:
+        0 42px 90px rgba(0, 0, 0, 0.44),
+        inset 0 0 0 3px rgba(255, 255, 255, 0.08),
+        inset 0 0 0 12px var(--rail);
+      overflow: hidden;
+    }
+
+    .hinge-line {
+      position: absolute;
+      left: 34px;
+      right: 34px;
+      top: 748px;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.36), transparent);
+      opacity: 0.65;
+    }
+
+    .lower-back {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      bottom: 22px;
+      height: 194px;
+      border-radius: 0 0 48px 48px;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05), transparent 26%, rgba(0, 0, 0, 0.08)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 7px),
+        var(--leather);
+    }
+
+    .m-logo {
+      position: absolute;
+      left: 50%;
+      bottom: 92px;
+      width: 54px;
+      height: 54px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.22);
+      display: grid;
+      place-items: center;
+      color: rgba(255, 255, 255, 0.48);
+      font-size: 27px;
+      font-weight: 800;
+    }
+
+    body.light .m-logo {
+      color: rgba(9, 18, 32, 0.34);
+      border-color: rgba(9, 18, 32, 0.16);
+    }
+
+    .cover-glass {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      top: 22px;
+      height: 724px;
+      border-radius: 48px 48px 34px 34px;
+      background: var(--screen);
+      overflow: hidden;
+      box-shadow:
+        inset 0 0 0 2px rgba(255, 255, 255, 0.08),
+        inset 0 -28px 48px rgba(0, 0, 0, 0.42);
+    }
+
+    body.light .cover-glass {
+      box-shadow:
+        inset 0 0 0 2px rgba(34, 111, 232, 0.12),
+        inset 0 -26px 42px rgba(34, 111, 232, 0.08);
+    }
+
+    .safe-card {
+      position: absolute;
+      top: 34px;
+      bottom: 70px;
+      left: 50%;
+      width: 676px;
+      transform: translateX(-50%);
+      overflow: hidden;
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .nav-bar {
+      position: absolute;
+      left: 84px;
+      bottom: 24px;
+      width: 260px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: rgba(255, 255, 255, 0.76);
+      z-index: 9;
+    }
+
+    body.light .nav-bar {
+      color: rgba(9, 18, 32, 0.42);
+    }
+
+    .back {
+      width: 24px;
+      height: 24px;
+      border-left: 5px solid currentColor;
+      border-bottom: 5px solid currentColor;
+      transform: rotate(45deg);
+    }
+
+    .home {
+      width: 34px;
+      height: 34px;
+      border: 5px solid currentColor;
+      border-radius: 50%;
+    }
+
+    .recent {
+      width: 31px;
+      height: 31px;
+      border: 5px solid currentColor;
+      border-left-width: 8px;
+    }
+
+    .camera-bank {
+      position: absolute;
+      right: 34px;
+      bottom: 24px;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: repeat(2, 58px);
+      gap: 15px;
+      align-items: center;
+    }
+
+    .lens {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 38% 32%, rgba(255, 255, 255, 0.68) 0 5px, transparent 6px),
+        radial-gradient(circle, #162638 0 21px, #07101b 22px 31px, #1f2b36 32px);
+      box-shadow:
+        0 0 0 5px rgba(7, 10, 14, 0.92),
+        0 0 0 7px rgba(255, 255, 255, 0.08);
+    }
+
+    .flash {
+      position: absolute;
+      right: 2px;
+      bottom: 76px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #e8edf4;
+      box-shadow: 0 0 0 4px rgba(7, 10, 14, 0.84);
+    }
+
+    .threads-button {
+      position: absolute;
+      top: 20px;
+      right: 22px;
+      z-index: 5;
+    }
+
+    .icon-button {
+      width: 54px;
+      height: 54px;
+      border: 1px solid var(--outline);
+      border-radius: 15px;
+      background: var(--icon-bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+    }
+
+    .thread-mark,
+    .thread-mark::before,
+    .thread-mark::after {
+      display: block;
+      width: 22px;
+      height: 2px;
+      border-radius: 2px;
+      background: currentColor;
+      content: "";
+    }
+
+    .thread-mark::before {
+      transform: translateY(-8px);
+    }
+
+    .thread-mark::after {
+      transform: translateY(6px);
+    }
+
+    .home-halo {
+      position: absolute;
+      left: 50%;
+      top: 40%;
+      width: 250px;
+      height: 250px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background:
+        radial-gradient(circle, rgba(88, 178, 255, 0.15) 0 28%, rgba(88, 178, 255, 0.08) 36%, transparent 64%),
+        radial-gradient(circle, transparent 45%, rgba(88, 178, 255, 0.38) 49%, rgba(88, 178, 255, 0.08) 58%, transparent 68%);
+      filter: blur(0.2px);
+    }
+
+    .home-prompt {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(40% + 98px);
+      color: var(--text);
+      font-size: 24px;
+      line-height: 1.1;
+      text-align: center;
+      font-weight: 400;
+    }
+
+    .drawer-handle {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      width: 72px;
+      height: 4px;
+      transform: translateX(-50%);
+      border-radius: 99px;
+      background: var(--muted);
+      opacity: 0.8;
+    }
+
+    .drawer-peek {
+      position: absolute;
+      left: 50%;
+      bottom: -72px;
+      width: 440px;
+      height: 122px;
+      transform: translateX(-50%);
+      border: 1px solid var(--outline);
+      border-radius: 26px 26px 0 0;
+      background: linear-gradient(180deg, rgba(8, 17, 28, 0.9), transparent);
+      opacity: 0.72;
+    }
+
+    body.light .drawer-peek {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), transparent);
+    }
+
+    .screen-title {
+      margin: 0;
+      position: absolute;
+      top: 30px;
+      left: 0;
+      right: 0;
+      color: var(--blue);
+      font-size: 17px;
+      font-weight: 760;
+      text-align: center;
+    }
+
+    .up-button {
+      position: absolute;
+      left: 18px;
+      top: 18px;
+      width: 54px;
+      height: 42px;
+      border: 1px solid var(--outline);
+      border-radius: 15px;
+      background: var(--icon-bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+    }
+
+    .up-button::before {
+      content: "";
+      width: 12px;
+      height: 12px;
+      border-left: 2px solid currentColor;
+      border-top: 2px solid currentColor;
+      transform: translateY(4px) rotate(45deg);
+    }
+
+    .app-grid {
+      position: absolute;
+      left: 54px;
+      right: 54px;
+      top: 118px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 48px;
+      justify-items: center;
+    }
+
+    .app {
+      width: 138px;
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+    }
+
+    .app-icon {
+      width: 94px;
+      height: 94px;
+      border-radius: 26px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background:
+        radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.44), transparent 32%),
+        linear-gradient(135deg, #7d8bff, var(--blue-2));
+      box-shadow: 0 14px 32px rgba(34, 111, 232, 0.28);
+    }
+
+    .app-icon.threads {
+      background:
+        radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.44), transparent 32%),
+        linear-gradient(135deg, var(--green), var(--blue-2));
+    }
+
+    .app-icon.small {
+      width: 74px;
+      height: 74px;
+      border-radius: 22px;
+    }
+
+    .app-label {
+      margin: 0;
+      color: var(--text);
+      font-size: 16px;
+      line-height: 1.1;
+      text-align: center;
+      font-weight: 620;
+    }
+
+    .settings-grid {
+      position: absolute;
+      left: 50px;
+      right: 50px;
+      top: 108px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      row-gap: 30px;
+      column-gap: 22px;
+      justify-items: center;
+    }
+
+    .settings-grid .app {
+      width: 100px;
+      gap: 10px;
+    }
+
+    .settings-grid .app-label {
+      font-size: 13px;
+    }
+
+    .gear svg,
+    .threads-symbol svg,
+    .moon svg,
+    .wifi svg,
+    .home-symbol svg,
+    .reload svg,
+    .info svg {
+      width: 52px;
+      height: 52px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 3.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .app-icon.small svg {
+      width: 40px;
+      height: 40px;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="phone" aria-label="Closed Motorola Razr front mockup">
+      <div class="cover-glass">
+        <div class="safe-card"></div>
+        <div class="nav-bar" aria-hidden="true">
+          <div class="back"></div>
+          <div class="home"></div>
+          <div class="recent"></div>
+        </div>
+        <div class="flash" aria-hidden="true"></div>
+        <div class="camera-bank" aria-hidden="true">
+          <div class="lens"></div>
+          <div class="lens"></div>
+        </div>
+      </div>
+      <div class="hinge-line" aria-hidden="true"></div>
+      <div class="lower-back" aria-hidden="true"></div>
+      <div class="m-logo" aria-hidden="true">M</div>
+    </div>
+  </div>
+  <template id="home-view">
+    <button class="icon-button threads-button" type="button" aria-label="Threads">
+      <span class="thread-mark"></span>
+    </button>
+    <div class="home-halo" aria-hidden="true"></div>
+    <div class="home-prompt">Hey Pucky...</div>
+    <div class="drawer-peek" aria-hidden="true"></div>
+    <div class="drawer-handle" aria-hidden="true"></div>
+  </template>
+  <template id="apps-view">
+    <div class="up-button" aria-hidden="true"></div>
+    <h1 class="screen-title">Apps</h1>
+    <div class="app-grid">
+      <div class="app">
+        <div class="app-icon gear">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <path d="M27 8h10l2 8 7 3 7-4 7 7-4 7 3 7 8 2v10l-8 2-3 7 4 7-7 7-7-4-7 3-2 8H27l-2-8-7-3-7 4-7-7 4-7-3-7-8-2V38l8-2 3-7-4-7 7-7 7 4 7-3 2-8z"/>
+            <circle cx="32" cy="32" r="9"/>
+          </svg>
+        </div>
+        <p class="app-label">Settings</p>
+      </div>
+      <div class="app">
+        <div class="app-icon threads threads-symbol">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <rect x="14" y="10" width="36" height="44" rx="8"/>
+            <path d="M23 23h18M23 32h18M23 41h12"/>
+          </svg>
+        </div>
+        <p class="app-label">Threads</p>
+      </div>
+    </div>
+  </template>
+  <template id="settings-view">
+    <div class="up-button" aria-hidden="true"></div>
+    <h1 class="screen-title">Settings</h1>
+    <div class="settings-grid">
+      <div class="app">
+        <div class="app-icon small moon">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M44 48a22 22 0 0 1-28-28 22 22 0 1 0 28 28z"/></svg>
+        </div>
+        <p class="app-label">Theme</p>
+      </div>
+      <div class="app">
+        <div class="app-icon small wifi">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 26a32 32 0 0 1 40 0M20 35a20 20 0 0 1 24 0M28 44a8 8 0 0 1 8 0"/><circle cx="32" cy="52" r="2"/></svg>
+        </div>
+        <p class="app-label">Network</p>
+      </div>
+      <div class="app">
+        <div class="app-icon small home-symbol">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 31 32 14l20 17"/><path d="M18 29v23h28V29"/><path d="M28 52V40h8v12"/></svg>
+        </div>
+        <p class="app-label">Home</p>
+      </div>
+      <div class="app">
+        <div class="app-icon small info">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="22"/><path d="M32 29v15M32 20h.1"/></svg>
+        </div>
+        <p class="app-label">App</p>
+      </div>
+      <div class="app">
+        <div class="app-icon small reload">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M48 22a20 20 0 1 0 4 18"/><path d="M48 10v12H36"/></svg>
+        </div>
+        <p class="app-label">Reload</p>
+      </div>
+      <div class="app">
+        <div class="app-icon small threads-symbol">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="14" y="10" width="36" height="44" rx="8"/><path d="M23 23h18M23 32h18M23 41h12"/></svg>
+        </div>
+        <p class="app-label">Threads</p>
+      </div>
+    </div>
+  </template>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get("view") || "home";
+    const theme = params.get("theme") || "dark";
+    document.body.classList.toggle("light", theme === "light");
+    const card = document.querySelector(".safe-card");
+    const template = document.getElementById(`${view}-view`) || document.getElementById("home-view");
+    card.replaceChildren(template.content.cloneNode(true));
+  </script>
+</body>
+</html>

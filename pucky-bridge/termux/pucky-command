@@ -1,0 +1,189 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+import argparse
+import datetime as _dt
+import json
+import os
+import signal
+import secrets
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+TIMEOUT_SECONDS = 10
+ALLOWED = ("status", "battery", "sensors-list", "storage", "network", "ping")
+STATE_DIR = Path.home() / ".local" / "state" / "pucky"
+LOG_FILE = STATE_DIR / "commands.jsonl"
+
+
+def now():
+    return _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def command_id():
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"cmd_{stamp}_{secrets.token_hex(4)}"
+
+
+def append_log(payload):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def run(argv, timeout=TIMEOUT_SECONDS):
+    try:
+        proc = subprocess.Popen(
+            argv,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return proc.returncode, (stdout or "").strip(), (stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            stdout, stderr = proc.communicate()
+        return 124, (stdout or "").strip(), (stderr or f"timeout after {timeout}s").strip()
+    except FileNotFoundError:
+        return 127, "", f"command not found: {argv[0]}"
+
+
+def try_json(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def emit(ctx, ok, result=None, error=None, exit_code=0):
+    completed_at = now()
+    payload = {
+        "id": ctx["id"],
+        "ok": ok,
+        "schema": "pucky.command.v2",
+        "command": ctx["command"],
+        "requested_by": ctx["requested_by"],
+        "started_at": ctx["started_at"],
+        "completed_at": completed_at,
+        "duration_ms": int((time.monotonic() - ctx["started_monotonic"]) * 1000),
+        "result": result,
+        "error": error,
+    }
+    append_log(payload)
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(exit_code)
+
+
+def run_json_command(ctx, argv, timeout=TIMEOUT_SECONDS):
+    rc, stdout, stderr = run(argv, timeout=timeout)
+    parsed = try_json(stdout)
+    if rc == 0 and parsed is not None:
+        emit(ctx, True, parsed)
+    emit(
+        ctx,
+        False,
+        {"stdout": stdout if stdout else None},
+        {"returncode": rc, "stderr": stderr or None, "json_parse_failed": rc == 0},
+        exit_code=1,
+    )
+
+
+def storage(ctx):
+    rc, stdout, stderr = run(["df", "-k", str(Path.home()), "/sdcard"], timeout=5)
+    rows = []
+    if rc == 0:
+        for line in stdout.splitlines()[1:]:
+            cols = line.split()
+            if len(cols) >= 6:
+                rows.append(
+                    {
+                        "filesystem": cols[0],
+                        "size_kb": int(cols[1]) if cols[1].isdigit() else None,
+                        "used_kb": int(cols[2]) if cols[2].isdigit() else None,
+                        "available_kb": int(cols[3]) if cols[3].isdigit() else None,
+                        "use_percent": cols[4],
+                        "mount": cols[5],
+                    }
+                )
+        emit(ctx, True, {"entries": rows})
+    emit(ctx, False, None, {"returncode": rc, "stderr": stderr or stdout}, exit_code=1)
+
+
+def network(ctx):
+    wifi_rc, wifi_stdout, wifi_stderr = run(["termux-wifi-connectioninfo"], timeout=5)
+    ip_cmd = "ip" if Path("/data/data/com.termux/files/usr/bin/ip").exists() else "/system/bin/ip"
+    route_rc, route_stdout, route_stderr = run([ip_cmd, "route", "get", "1.1.1.1"], timeout=5)
+    ok = wifi_rc == 0 or route_rc == 0
+    emit(
+        ctx,
+        ok,
+        {
+            "wifi": try_json(wifi_stdout),
+            "wifi_error": None if wifi_rc == 0 else (wifi_stderr or wifi_stdout),
+            "route_hint": route_stdout if route_rc == 0 else None,
+            "route_error": None if route_rc == 0 else (route_stderr or route_stdout),
+        },
+        None if ok else {"message": "network checks failed"},
+        exit_code=0 if ok else 1,
+    )
+
+
+def ping(ctx):
+    emit(ctx, True, {"message": "pong", "user": os.environ.get("USER")})
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="Pucky Termux-side allowlist command dispatcher")
+    parser.add_argument("command", nargs="?", default="status")
+    parser.add_argument("--id", dest="command_id", default=None)
+    parser.add_argument("--requested-by", default="unknown")
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    ctx = {
+        "id": args.command_id or command_id(),
+        "command": args.command,
+        "requested_by": args.requested_by,
+        "started_at": now(),
+        "started_monotonic": time.monotonic(),
+    }
+
+    if args.command == "status":
+        run_json_command(ctx, [str(Path.home() / "bin" / "pucky-status")], timeout=20)
+    if args.command == "battery":
+        run_json_command(ctx, ["termux-battery-status"], timeout=5)
+    if args.command == "sensors-list":
+        run_json_command(ctx, ["termux-sensor", "-l"], timeout=8)
+    if args.command == "storage":
+        storage(ctx)
+    if args.command == "network":
+        network(ctx)
+    if args.command == "ping":
+        ping(ctx)
+
+    emit(
+        ctx,
+        False,
+        None,
+        {"message": "command not allowed", "allowed": list(ALLOWED)},
+        exit_code=64,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+ALLOWED = ("status", "battery", "sensors-list", "storage", "network", "ping")
+
+
+def emit(payload, exit_code=0, pretty=False):
+    print(json.dumps(payload, sort_keys=True, indent=2 if pretty else None, separators=None if pretty else (",", ":")))
+    raise SystemExit(exit_code)
+
+
+def request_json(method, url, body=None, timeout=30):
+    data = None
+    headers = {}
+    if body is not None:
+        data = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload = {"ok": False, "error": {"message": str(exc)}}
+        return exc.code, payload
+    except Exception as exc:
+        return 599, {"ok": False, "schema": "puckyctl.v3", "error": {"message": str(exc), "url": url}}
+
+
+def broker_url(args, path):
+    return urllib.parse.urljoin(args.broker_url.rstrip("/") + "/", path.lstrip("/"))
+
+
+def command(args):
+    if args.command not in ALLOWED:
+        emit(
+            {
+                "ok": False,
+                "schema": "puckyctl.v3",
+                "error": {"message": "command not allowed", "allowed": list(ALLOWED)},
+            },
+            exit_code=64,
+            pretty=args.pretty,
+        )
+    status, payload = request_json(
+        "POST",
+        broker_url(args, "/commands"),
+        {
+            "command": args.command,
+            "id": args.command_id,
+            "requested_by": args.requested_by,
+        },
+        timeout=args.timeout + 35,
+    )
+    emit(payload, exit_code=0 if status == 200 and payload.get("ok") else 1, pretty=args.pretty)
+
+
+def simple_get(args, path, ok_status=200):
+    status, payload = request_json("GET", broker_url(args, path), timeout=args.timeout + 35)
+    emit(payload, exit_code=0 if status == ok_status and payload.get("ok", True) else 1, pretty=args.pretty)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="Pucky broker-backed control CLI")
+    parser.add_argument("--broker-url", default=os.environ.get("PUCKY_BROKER_URL", "http://127.0.0.1:18080"))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get("PUCKY_TIMEOUT", "10")))
+    parser.add_argument("--requested-by", default=os.environ.get("PUCKY_REQUESTED_BY", "puckyctl"))
+    parser.add_argument("--command-id", default=None)
+    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("command")
+    parser.add_argument("command_args", nargs="*")
+    return parser
+
+
+def main():
+    args, extra = build_parser().parse_known_args()
+    args.command_args.extend(extra)
+    if args.command == "health":
+        simple_get(args, "/health")
+    if args.command == "devices":
+        simple_get(args, "/devices")
+    if args.command == "tunnel-check":
+        simple_get(args, "/tunnel-check")
+    if args.command == "registry":
+        simple_get(args, "/registry")
+    if args.command == "history":
+        if args.command_args:
+            emit(
+                {"ok": False, "schema": "puckyctl.v3", "error": {"message": "usage: puckyctl history [--limit N]"}},
+                exit_code=64,
+                pretty=args.pretty,
+            )
+        simple_get(args, f"/history?limit={args.limit}")
+    if args.command == "show":
+        if len(args.command_args) != 1:
+            emit(
+                {"ok": False, "schema": "puckyctl.v3", "error": {"message": "usage: puckyctl show <command-id>"}},
+                exit_code=64,
+                pretty=args.pretty,
+            )
+        simple_get(args, f"/commands/{urllib.parse.quote(args.command_args[0])}")
+    command(args)
+
+
+if __name__ == "__main__":
+    main()

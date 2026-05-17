@@ -1,0 +1,46 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+import os
+import socket
+import ssl
+import sys
+import threading
+
+
+def pump_stdin(sock):
+    try:
+        while True:
+            data = os.read(0, 16384)
+            if not data:
+                break
+            sock.sendall(data)
+    finally:
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def main():
+    if len(sys.argv) != 4:
+        print("usage: pucky-tls-proxy <connect-host> <connect-port> <server-name>", file=sys.stderr)
+        return 64
+
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    server_name = sys.argv[3]
+
+    raw = socket.create_connection((host, port), timeout=20)
+    ctx = ssl.create_default_context()
+    with ctx.wrap_socket(raw, server_hostname=server_name) as sock:
+        worker = threading.Thread(target=pump_stdin, args=(sock,), daemon=True)
+        worker.start()
+        while True:
+            data = sock.recv(16384)
+            if not data:
+                break
+            os.write(1, data)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
