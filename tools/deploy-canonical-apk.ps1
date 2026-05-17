@@ -6,8 +6,8 @@ param(
     [string]$AndroidHome = "C:\Users\jimmy\Desktop\Android\tools\android-sdk",
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
-    [int]$ExpectedVersionCode = 6,
-    [string]$ExpectedVersionName = "0.2.5-power-assistant-debug",
+    [int]$ExpectedVersionCode = 7,
+    [string]$ExpectedVersionName = "0.2.6-simple-assistant-setup-debug",
     [switch]$SkipBuild,
     [switch]$DryRun
 )

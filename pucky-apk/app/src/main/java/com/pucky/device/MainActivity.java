@@ -42,6 +42,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.audio.AudioController;
@@ -113,6 +114,8 @@ public final class MainActivity extends Activity {
     private static final long SPEAKING_STATE_WORD_MS = 340L;
     private static final long SPEAKING_STATE_TAIL_MS = 2200L;
     private static final long SPEAKING_FINISHED_HOLD_MS = 15000L;
+    private static final int REQUEST_ALL_PERMISSIONS = 1001;
+    private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
 
     private TextView stateText;
     private TextView statusText;
@@ -148,6 +151,8 @@ public final class MainActivity extends Activity {
     private long lastDisconnectAtMs;
     private long lastSilentCloseAtMs;
     private boolean screenReceiverRegistered;
+    private boolean assistantSetupMode;
+    private boolean pendingAssistantSetupAfterPermission;
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
@@ -173,12 +178,15 @@ public final class MainActivity extends Activity {
         settingsStore = app.settingsStore();
         buttonController = new ButtonController(this);
         configureApplianceWindow();
+        assistantSetupMode = shouldStartInAssistantSetup(getIntent());
         adminMode = shouldStartInAdmin(getIntent());
-        setContentView(adminMode ? buildAdminView() : buildHomeView());
+        setContentView(assistantSetupMode ? buildAssistantSetupView() : adminMode ? buildAdminView() : buildHomeView());
         applySystemUiForMode();
         renderCurrent();
         handleLaunchIntent(getIntent());
-        requestNeededPermissions();
+        if (!assistantSetupMode) {
+            requestNeededPermissions();
+        }
     }
 
     private void requestNeededPermissions() {
@@ -219,7 +227,7 @@ public final class MainActivity extends Activity {
             missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
         if (!missing.isEmpty()) {
-            requestPermissions(missing.toArray(new String[0]), 1001);
+            requestPermissions(missing.toArray(new String[0]), REQUEST_ALL_PERMISSIONS);
         }
     }
 
@@ -233,7 +241,9 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (shouldStartInAdmin(intent)) {
+        if (shouldStartInAssistantSetup(intent)) {
+            showAssistantSetupScreen();
+        } else if (shouldStartInAdmin(intent)) {
             showAdminScreen();
         } else {
             showHomeScreen();
@@ -263,9 +273,11 @@ public final class MainActivity extends Activity {
         }
         screenReceiverRegistered = true;
         applySystemUiForMode();
-        ensureAutoConnectService();
-        WakeWordController.shared(this).start(new JSONObject());
-        if (!adminMode && isVoiceVisualMode(coverSurfaceMode) && shouldResetCoverOnResume()) {
+        if (!assistantSetupMode) {
+            ensureAutoConnectService();
+            WakeWordController.shared(this).start(new JSONObject());
+        }
+        if (!assistantSetupMode && !adminMode && isVoiceVisualMode(coverSurfaceMode) && shouldResetCoverOnResume()) {
             resetCoverVisualHome("activity_resume");
         } else {
             renderCurrent();
@@ -315,6 +327,15 @@ public final class MainActivity extends Activity {
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         return super.onKeyUp(keyCode, event);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
+            pendingAssistantSetupAfterPermission = false;
+            mainHandler.post(() -> PuckyAssistantController.openAssistantSetup(this));
+        }
     }
 
     private void configureApplianceWindow() {
@@ -697,6 +718,48 @@ public final class MainActivity extends Activity {
         return scrollView;
     }
 
+    private View buildAssistantSetupView() {
+        resetCoverRefs();
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setPadding(48, 48, 48, 48);
+        root.setBackgroundColor(Color.rgb(2, 6, 10));
+
+        TextView title = new TextView(this);
+        title.setText("Make Power Button Open Pucky");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(28);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, fullWidthBlockParams());
+
+        TextView body = new TextView(this);
+        body.setText("Choose Pucky as your phone assistant once. Then long-hold Power starts or stops the Pucky call line.");
+        body.setTextColor(Color.rgb(190, 207, 226));
+        body.setTextSize(18);
+        body.setGravity(Gravity.CENTER);
+        body.setLineSpacing(4f, 1.0f);
+        LinearLayout.LayoutParams bodyParams = fullWidthBlockParams();
+        bodyParams.setMargins(0, 12, 0, 22);
+        root.addView(body, bodyParams);
+
+        Button enable = button("Enable Power Button");
+        enable.setTextSize(18);
+        enable.setOnClickListener(v -> startAssistantSetupFlow());
+        root.addView(enable, fullWidthBlockParams());
+
+        TextView status = new TextView(this);
+        status.setText(assistantSetupStatusText());
+        status.setTextColor(Color.rgb(135, 153, 174));
+        status.setTextSize(14);
+        status.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusParams = fullWidthBlockParams();
+        statusParams.setMargins(0, 18, 0, 0);
+        root.addView(status, statusParams);
+        return root;
+    }
+
     private TextView label(String text) {
         TextView view = new TextView(this);
         view.setText(text);
@@ -778,6 +841,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showHomeScreen() {
+        assistantSetupMode = false;
         if (!adminMode) {
             applySystemUiForMode();
             if (homeWebView == null || homePortalErrorVisible) {
@@ -793,6 +857,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showAdminScreen() {
+        assistantSetupMode = false;
         if (adminMode) {
             exitHomeImmersiveMode();
             renderState();
@@ -805,12 +870,30 @@ public final class MainActivity extends Activity {
         renderState();
     }
 
+    private void showAssistantSetupScreen() {
+        assistantSetupMode = true;
+        adminMode = false;
+        setContentView(buildAssistantSetupView());
+        applySystemUiForMode();
+    }
+
     private boolean shouldStartInAdmin(Intent intent) {
         return intent != null
                 && intent.getBooleanExtra("admin", false);
     }
 
+    private boolean shouldStartInAssistantSetup(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        return intent.getBooleanExtra("assistant_setup", false)
+                || "com.pucky.device.action.ASSISTANT_SETUP".equals(intent.getAction());
+    }
+
     private void renderCurrent() {
+        if (assistantSetupMode) {
+            return;
+        }
         if (adminMode) {
             renderState();
         } else {
@@ -1394,6 +1477,7 @@ public final class MainActivity extends Activity {
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settingsStore),
                 TunnelController.shared(this, settingsStore),
+                new RemoteAdbController(this, settingsStore, TunnelController.shared(this, settingsStore)),
                 new AndroidSubstrateController(this));
         bridgeCommandRouter = new CommandRouter(executor);
         return bridgeCommandRouter;
@@ -1583,7 +1667,7 @@ public final class MainActivity extends Activity {
                     token == null ? settingsStore.getToken() : token);
             syncProvisioningFields();
         }
-        if (intent != null && intent.getBooleanExtra("connect", false)) {
+        if (intent != null && intent.getBooleanExtra("connect", false) && !shouldStartInAssistantSetup(intent)) {
             PuckyForegroundService.start(this, true);
         }
     }
@@ -1693,6 +1777,25 @@ public final class MainActivity extends Activity {
             return "Google/Gemini default";
         }
         return "not default (" + current + ")";
+    }
+
+    private String assistantSetupStatusText() {
+        JSONObject status = PuckyAssistantController.status(this);
+        if (status.optBoolean("configured", false)) {
+            return "Pucky is already selected.";
+        }
+        return "Android will ask you to switch from Gemini to Pucky.";
+    }
+
+    private void startAssistantSetupFlow() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingAssistantSetupAfterPermission = true;
+            requestPermissions(
+                    new String[] { Manifest.permission.RECORD_AUDIO },
+                    REQUEST_ASSISTANT_SETUP_PERMISSIONS);
+            return;
+        }
+        PuckyAssistantController.openAssistantSetup(this);
     }
 
     private String join(JSONArray values) {

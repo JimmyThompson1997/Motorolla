@@ -130,6 +130,10 @@ the foreground service and toggles the LiveKit PTT line. If no Pucky mic line is
 an open mic turn with a haptic tick. If a Pucky mic line is active, the same gesture stops it with a haptic
 tick. Motorola owns the actual hold duration through Settings > Gestures > Power key / Press and hold.
 
+The user-facing setup surface is a one-button flow launched with `--ez assistant_setup true`. The button says
+"Enable Power Button", requests microphone only if it is missing, then opens Android's default-assistant
+picker/settings so the user can choose Pucky instead of Gemini.
+
 ## Phase 3 puckyctl
 
 The VM-side agent should use `puckyctl` instead of hand-posting HTTP JSON.
