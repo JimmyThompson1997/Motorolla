@@ -174,6 +174,7 @@ public final class MainActivity extends Activity {
     private boolean adminMode;
     private boolean homePortalLoadStarted;
     private boolean homePortalPageFinished;
+    private boolean homePortalErrorVisible;
     private String lastHomePortalUrl = "";
     private boolean notesVisible;
     private boolean coverLightMode;
@@ -240,6 +241,9 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.SEND_SMS);
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.CAMERA);
@@ -459,7 +463,13 @@ public final class MainActivity extends Activity {
                             ? "unknown load error"
                             : error.getDescription().toString();
                     Log.w(TAG, "Pucky portal load failed url=" + failingUrl + " error=" + description);
-                    mainHandler.post(() -> setContentView(buildPortalErrorView(failingUrl, description)));
+                    mainHandler.post(() -> {
+                        homePortalErrorVisible = true;
+                        homePortalPageFinished = false;
+                        homeWebView = null;
+                        lastPushedCoverStateJson = "";
+                        setContentView(buildPortalErrorView(failingUrl, description));
+                    });
                 }
             }
         });
@@ -1064,6 +1074,7 @@ public final class MainActivity extends Activity {
             return;
         }
         homePortalLoadStarted = true;
+        homePortalErrorVisible = false;
         Log.i(TAG, "Loading Pucky portal width=" + homeWebView.getWidth()
                 + " height=" + homeWebView.getHeight());
         String url = homePortalUrl();
@@ -1350,6 +1361,9 @@ public final class MainActivity extends Activity {
     private void showHomeScreen() {
         if (!adminMode) {
             applySystemUiForMode();
+            if (homeWebView == null || homePortalErrorVisible) {
+                setContentView(buildHomeView());
+            }
             renderHome();
             return;
         }

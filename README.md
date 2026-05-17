@@ -65,3 +65,4 @@ Full ADB power still needs one trusted bootstrap step on stock Android:
 See `docs/vm-specific-apk-install-and-pairing.md` for the embedded token / VM-specific install flow.
 See `docs/vm-installation-package-requirements.md` for the VM install package checklist.
 See `docs/fresh-user-install-end-state.md` for the current working setup and the ideal fresh-user install flow.
+See `docs/notes/adb-cover-display-input.md` for the ADB `-d 1` cover-display input note.
