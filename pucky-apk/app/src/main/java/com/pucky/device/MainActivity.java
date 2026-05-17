@@ -2,6 +2,10 @@ package com.pucky.device;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -117,6 +121,8 @@ public final class MainActivity extends Activity {
     private static final long SPEAKING_FINISHED_HOLD_MS = 15000L;
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
+    private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
+    private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
 
     private TextView stateText;
     private TextView statusText;
@@ -339,7 +345,7 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
             pendingAssistantSetupAfterPermission = false;
-            mainHandler.post(() -> PuckyAssistantController.openAssistantSetup(this));
+            mainHandler.post(this::continueAssistantSetupFlow);
         }
     }
 
@@ -732,7 +738,7 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(2, 6, 10));
 
         TextView prompt = new TextView(this);
-        prompt.setText("Approve Wireless Access?");
+        prompt.setText("Set Pucky as assistant?");
         prompt.setTextColor(Color.WHITE);
         prompt.setTextSize(30);
         prompt.setGravity(Gravity.CENTER);
@@ -1820,14 +1826,77 @@ public final class MainActivity extends Activity {
     }
 
     private void startAssistantSetupFlow() {
+        List<String> missing = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (!missing.isEmpty()) {
             pendingAssistantSetupAfterPermission = true;
             requestPermissions(
-                    new String[] { Manifest.permission.RECORD_AUDIO },
+                    missing.toArray(new String[0]),
                     REQUEST_ASSISTANT_SETUP_PERMISSIONS);
             return;
         }
-        PuckyAssistantController.openAssistantSetup(this);
+        continueAssistantSetupFlow();
+    }
+
+    private void continueAssistantSetupFlow() {
+        showAssistantSetupNotification();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+                || (getDisplay() != null && getDisplay().getDisplayId() == 0)) {
+            PuckyAssistantController.openAssistantSetup(this);
+        }
+    }
+
+    private void showAssistantSetupNotification() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel channel = new NotificationChannel(
+                    ASSISTANT_SETUP_CHANNEL_ID,
+                    "Pucky setup",
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.enableVibration(true);
+            manager.createNotificationChannel(channel);
+        }
+
+        Intent settingsIntent = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (settingsIntent.resolveActivity(getPackageManager()) == null) {
+            settingsIntent = new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        }
+        int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent openSettings = PendingIntent.getActivity(
+                this,
+                ASSISTANT_SETUP_NOTIFICATION_ID,
+                settingsIntent,
+                pendingFlags);
+
+        String detail = "Open Android Settings and choose Pucky as your digital assistant app.";
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, ASSISTANT_SETUP_CHANNEL_ID)
+                : new Notification.Builder(this);
+        builder.setContentTitle("Set Pucky as assistant")
+                .setContentText("Tap to choose Pucky in Android Settings.")
+                .setStyle(new Notification.BigTextStyle().bigText(detail))
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentIntent(openSettings)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(false);
+        if (Build.VERSION.SDK_INT < 26) {
+            builder.setPriority(Notification.PRIORITY_HIGH);
+        }
+        manager.notify(ASSISTANT_SETUP_NOTIFICATION_ID, builder.build());
     }
 
     private String join(JSONArray values) {

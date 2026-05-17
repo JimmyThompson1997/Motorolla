@@ -6,8 +6,8 @@ param(
     [string]$AndroidHome = "C:\Users\jimmy\Desktop\Android\tools\android-sdk",
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
-    [int]$ExpectedVersionCode = 9,
-    [string]$ExpectedVersionName = "0.2.8-wireless-access-choice-debug",
+    [int]$ExpectedVersionCode = 10,
+    [string]$ExpectedVersionName = "0.2.9-assistant-setup-notification-debug",
     [switch]$SkipBuild,
     [switch]$DryRun
 )

@@ -11,8 +11,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 9
-        versionName "0.2.8-wireless-access-choice"
+        versionCode 10
+        versionName "0.2.9-assistant-setup-notification"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
