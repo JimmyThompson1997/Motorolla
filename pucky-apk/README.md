@@ -110,13 +110,13 @@ Button capture currently works while the Pucky Activity is foregrounded and the 
 The default policy is deliberately narrow:
 
 - volume-up single press: normal Android media volume up
-- volume-up hold: `speech.native.start`
-- volume-up hold release: `speech.native.stop`
+- volume-up hold: `livekit.ptt.start`
+- volume-up hold release: `livekit.ptt.stop`
 - volume-down press/hold/double: `none`, so Android can keep normal volume behavior
 
-The hold/release actions are currently wired to Android native transcription for push-to-talk testing.
-The older `voice.capture.*` file-capture endpoints remain available for acoustic diagnostics before the later
-LiveKit/WebRTC turn-taking implementation.
+The hold/release actions are wired to LiveKit push-to-talk. They start and stop the realtime mic line, but the
+cover WebView no longer changes into listening/thinking/speaking visual modes. The older `voice.capture.*` and
+`speech.native.*` endpoints remain available for diagnostics.
 
 ## Future assistant role note
 
@@ -128,7 +128,8 @@ selected instead of Gemini where Motorola exposes the standard assistant gesture
 The first behavior is deliberately tiny: when Android invokes Pucky's `VoiceInteractionSession`, Pucky starts
 the foreground service and toggles the LiveKit PTT line. If no Pucky mic line is active, the gesture starts
 an open mic turn with a haptic tick. If a Pucky mic line is active, the same gesture stops it with a haptic
-tick. Motorola owns the actual hold duration through Settings > Gestures > Power key / Press and hold.
+tick. This also does not drive cover-screen voice visuals. Motorola owns the actual hold duration through
+Settings > Gestures > Power key / Press and hold.
 
 The user-facing setup surface is a yes/no flow launched with `--ez assistant_setup true`. Yes asks the user to set
 Pucky as the default assistant, requests microphone/notification permission only if missing, and posts a normal Android

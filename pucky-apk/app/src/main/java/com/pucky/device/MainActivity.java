@@ -97,7 +97,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
@@ -108,17 +107,8 @@ public final class MainActivity extends Activity {
     private static final String MODE_APPS = "apps";
     private static final String MODE_THREADS = "threads";
     private static final String MODE_INBOX = "inbox";
-    private static final String MODE_LISTENING = "listening";
-    private static final String MODE_SPEAKING = "speaking";
-    private static final String MODE_THINKING = "thinking";
-    private static final String MODE_FINALIZING = "finalizing";
     private static final int COVER_SAFE_RECT_WIDTH_PX = 992;
     private static final int COVER_SAFE_RECT_BOTTOM_PX = 102;
-    private static final long COVER_EVENT_START_GRACE_MS = 3000L;
-    private static final long COVER_NO_SPEECH_TIMEOUT_MS = 20000L;
-    private static final long SPEAKING_STATE_WORD_MS = 340L;
-    private static final long SPEAKING_STATE_TAIL_MS = 2200L;
-    private static final long SPEAKING_FINISHED_HOLD_MS = 15000L;
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
@@ -135,7 +125,6 @@ public final class MainActivity extends Activity {
     private ButtonController buttonController;
     private CommandRouter bridgeCommandRouter;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private long coverEventFloorAtMs = System.currentTimeMillis() - COVER_EVENT_START_GRACE_MS;
     private boolean adminMode;
     private boolean homePortalLoadStarted;
     private boolean homePortalPageFinished;
@@ -143,20 +132,6 @@ public final class MainActivity extends Activity {
     private String lastHomePortalUrl = "";
     private boolean coverLightMode;
     private String coverSurfaceMode = MODE_HOME;
-    private String lastTranscriptText = "";
-    private String lastTranscriptSpeaker = "";
-    private long lastTranscriptChangedAtMs;
-    private long lastPttStartAtMs;
-    private long lastPttStopAtMs;
-    private long lastAgentTranscriptAtMs;
-    private long lastUserTranscriptAtMs;
-    private long lastVoxTurnStartedAtMs;
-    private long lastAssistantReplyStartedAtMs;
-    private long lastAssistantReplyFinishedAtMs;
-    private long lastAssistantReplyVisibleUntilMs;
-    private long lastCoverTranscriptAtMs;
-    private long lastDisconnectAtMs;
-    private long lastSilentCloseAtMs;
     private boolean screenReceiverRegistered;
     private boolean assistantSetupMode;
     private boolean pendingAssistantSetupAfterPermission;
@@ -173,7 +148,7 @@ public final class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             String action = intent == null ? "" : intent.getAction();
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
-                mainHandler.post(() -> handleCoverScreenVisibilityChanged(action));
+                mainHandler.post(MainActivity.this::renderCurrent);
             }
         }
     };
@@ -288,11 +263,7 @@ public final class MainActivity extends Activity {
             ensureAutoConnectService();
             WakeWordController.shared(this).start(new JSONObject());
         }
-        if (!assistantSetupMode && !adminMode && isVoiceVisualMode(coverSurfaceMode) && shouldResetCoverOnResume()) {
-            resetCoverVisualHome("activity_resume");
-        } else {
-            renderCurrent();
-        }
+        renderCurrent();
     }
 
     @Override
@@ -554,8 +525,7 @@ public final class MainActivity extends Activity {
 
     private JSONObject buildCoverState() {
         JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
-        refreshLatestTranscript(liveKit);
-        String mode = coverModeFor(liveKit);
+        String mode = isKnownCoverMode(coverSurfaceMode) ? coverSurfaceMode : MODE_HOME;
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.cover_state.v1");
         Json.put(out, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
@@ -578,39 +548,19 @@ public final class MainActivity extends Activity {
 
         JSONObject turn = new JSONObject();
         Json.put(turn, "id", JSONObject.NULL);
-        Json.put(turn, "phase", phaseForMode(mode));
-        Json.put(turn, "speaker", lastTranscriptSpeaker.isEmpty() ? JSONObject.NULL : lastTranscriptSpeaker);
-        Json.put(turn, "user_transcript", "user".equals(lastTranscriptSpeaker) ? lastTranscriptText : "");
-        Json.put(turn, "assistant_transcript", "agent".equals(lastTranscriptSpeaker) ? lastTranscriptText : "");
-        Json.put(turn, "accepted_at", instantOrNull(lastVoxTurnStartedAtMs));
-        Json.put(turn, "reply_started_at", instantOrNull(lastAssistantReplyStartedAtMs));
-        Json.put(turn, "reply_finished_at", instantOrNull(lastAssistantReplyFinishedAtMs));
+        Json.put(turn, "phase", "idle");
+        Json.put(turn, "speaker", JSONObject.NULL);
+        Json.put(turn, "user_transcript", "");
+        Json.put(turn, "assistant_transcript", "");
+        Json.put(turn, "accepted_at", JSONObject.NULL);
+        Json.put(turn, "reply_started_at", JSONObject.NULL);
+        Json.put(turn, "reply_finished_at", JSONObject.NULL);
         Json.put(out, "turn", turn);
 
         Json.put(out, "threads", new JSONArray());
         Json.put(out, "current_thread_id", JSONObject.NULL);
         Json.put(out, "inbox", new JSONArray());
         return out;
-    }
-
-    private String phaseForMode(String mode) {
-        if (MODE_LISTENING.equals(mode)) {
-            return "listening";
-        }
-        if (MODE_FINALIZING.equals(mode)) {
-            return "finalizing";
-        }
-        if (MODE_THINKING.equals(mode)) {
-            return "thinking";
-        }
-        if (MODE_SPEAKING.equals(mode)) {
-            return "speaking";
-        }
-        return "idle";
-    }
-
-    private Object instantOrNull(long epochMs) {
-        return epochMs > 0L ? Instant.ofEpochMilli(epochMs).toString() : JSONObject.NULL;
     }
 
     private ScrollView buildAdminView() {
@@ -948,512 +898,6 @@ public final class MainActivity extends Activity {
         homeWebView = null;
     }
 
-    private String coverModeFor(JSONObject liveKit) {
-        String state = liveKit.optString("state", "disconnected");
-        boolean connected = liveKit.optBoolean("connected", false);
-        boolean mic = liveKit.optBoolean("mic_enabled", false);
-        boolean micOpen = mic || "connected_talking".equals(state);
-        String activePttTurnId = liveKit.optString("active_ptt_turn_id", "");
-        if ("null".equalsIgnoreCase(activePttTurnId)) {
-            activePttTurnId = "";
-        }
-        inferPttStopFromMutedStatus(state, micOpen, activePttTurnId);
-        boolean pttTurnOpen = (lastPttStartAtMs > 0L && lastPttStartAtMs > lastPttStopAtMs)
-                || !activePttTurnId.isBlank()
-                || (micOpen && lastPttStartAtMs > 0L && lastPttStartAtMs > lastPttStopAtMs);
-        long latestTurnAtMs = Math.max(
-                Math.max(lastPttStartAtMs, lastPttStopAtMs),
-                Math.max(lastAgentTranscriptAtMs, lastUserTranscriptAtMs));
-        boolean hasCurrentTurn = latestTurnAtMs > lastDisconnectAtMs;
-        boolean userSpeechCaptured = lastUserTranscriptAtMs >= lastPttStartAtMs
-                && lastUserTranscriptAtMs > lastDisconnectAtMs
-                && lastUserTranscriptAtMs > 0L;
-        boolean agentReplyVisible = "agent".equals(lastTranscriptSpeaker)
-                && !lastTranscriptText.trim().isEmpty()
-                && lastAgentTranscriptAtMs >= lastPttStopAtMs
-                && lastAgentTranscriptAtMs > lastPttStartAtMs;
-        long latestAssistantStartAtMs = Math.max(lastAgentTranscriptAtMs, lastAssistantReplyStartedAtMs);
-        boolean assistantStillSpeaking = isAssistantSpeechActive(latestAssistantStartAtMs);
-        boolean assistantReplyHeld = isAssistantReplyHeld();
-        if (shouldCloseSilentListening(liveKit, userSpeechCaptured)) {
-            closeSilentListening();
-            return MODE_HOME;
-        }
-        if (pttTurnOpen) {
-            return MODE_LISTENING;
-        }
-        if (isManualCoverSurface(coverSurfaceMode) && !assistantStillSpeaking) {
-            return coverSurfaceMode;
-        }
-        if (assistantStillSpeaking
-                || assistantReplyHeld
-                || (agentReplyVisible
-                    && MODE_SPEAKING.equals(coverSurfaceMode)
-                    && lastCoverTranscriptAtMs <= 0L)) {
-            return MODE_SPEAKING;
-        }
-        boolean userTurnStillOpen = hasCurrentTurn
-                && micOpen
-                && lastPttStartAtMs > lastPttStopAtMs
-                && lastAgentTranscriptAtMs <= lastPttStartAtMs;
-        if (userTurnStillOpen) {
-            return MODE_LISTENING;
-        }
-        boolean voxAcceptedTurn = lastVoxTurnStartedAtMs > lastPttStopAtMs
-                && lastVoxTurnStartedAtMs > lastDisconnectAtMs;
-        if (voxAcceptedTurn && lastAssistantReplyStartedAtMs <= lastVoxTurnStartedAtMs) {
-            return MODE_THINKING;
-        }
-        boolean silentTurnStopped = hasCurrentTurn
-                && lastPttStopAtMs >= lastPttStartAtMs
-                && lastPttStopAtMs > 0L
-                && !userSpeechCaptured
-                && lastAgentTranscriptAtMs < lastPttStopAtMs;
-        if (silentTurnStopped) {
-            return MODE_HOME;
-        }
-        boolean finalizingTurn = hasCurrentTurn
-                && connected
-                && userSpeechCaptured
-                && lastPttStopAtMs >= lastPttStartAtMs
-                && lastPttStopAtMs > 0L
-                && lastVoxTurnStartedAtMs < lastPttStopAtMs
-                && lastAgentTranscriptAtMs < lastPttStopAtMs;
-        if (finalizingTurn) {
-            return MODE_FINALIZING;
-        }
-        if ((connected || "reconnecting".equals(state)) && hasCurrentTurn) {
-            if ("agent".equals(lastTranscriptSpeaker)
-                    && !lastTranscriptText.trim().isEmpty()
-                    && lastCoverTranscriptAtMs <= 0L) {
-                return MODE_SPEAKING;
-            }
-            if (userSpeechCaptured && voxAcceptedTurn) {
-                return MODE_THINKING;
-            }
-        }
-        if ("disconnected".equals(state) || "failed".equals(state)) {
-            return isVoiceVisualMode(coverSurfaceMode) ? MODE_HOME : coverSurfaceMode;
-        }
-        return coverSurfaceMode;
-    }
-
-    private boolean isManualCoverSurface(String mode) {
-        return MODE_APPS.equals(mode)
-                || MODE_THREADS.equals(mode)
-                || MODE_INBOX.equals(mode);
-    }
-
-    private boolean isAssistantSpeechActive(long latestAssistantStartAtMs) {
-        if (latestAssistantStartAtMs <= 0L || lastAssistantReplyFinishedAtMs >= latestAssistantStartAtMs) {
-            return false;
-        }
-        long elapsed = Math.max(0L, System.currentTimeMillis() - latestAssistantStartAtMs);
-        long estimatedMs = estimatedSpeechStateDurationMs(lastTranscriptText);
-        if (elapsed <= estimatedMs) {
-            return true;
-        }
-        lastAssistantReplyFinishedAtMs = latestAssistantStartAtMs;
-        return false;
-    }
-
-    private long estimatedSpeechStateDurationMs(String text) {
-        String clean = text == null ? "" : text.trim();
-        if (clean.isEmpty()) {
-            return 6000L;
-        }
-        int words = clean.split("\\s+").length;
-        return Math.max(5000L, words * SPEAKING_STATE_WORD_MS + SPEAKING_STATE_TAIL_MS);
-    }
-
-    private boolean isAssistantReplyHeld() {
-        return lastAssistantReplyVisibleUntilMs > System.currentTimeMillis()
-                && "agent".equals(lastTranscriptSpeaker)
-                && !lastTranscriptText.trim().isEmpty();
-    }
-
-    private boolean shouldCloseSilentListening(JSONObject liveKit, boolean userSpeechCaptured) {
-        boolean mic = liveKit.optBoolean("mic_enabled", false)
-                || "connected_talking".equals(liveKit.optString("state", ""));
-        if (!mic || userSpeechCaptured || lastPttStartAtMs <= lastPttStopAtMs || lastPttStartAtMs <= 0L) {
-            return false;
-        }
-        long now = System.currentTimeMillis();
-        return lastSilentCloseAtMs < lastPttStartAtMs
-                && now - lastPttStartAtMs >= COVER_NO_SPEECH_TIMEOUT_MS;
-    }
-
-    private void closeSilentListening() {
-        long now = System.currentTimeMillis();
-        lastSilentCloseAtMs = now;
-        lastPttStopAtMs = now;
-        lastTranscriptText = "";
-        lastTranscriptSpeaker = "";
-        coverSurfaceMode = MODE_HOME;
-        new Thread(() -> {
-            try {
-                JSONObject result = LiveKitController.shared(this, settingsStore).pttStop(new JSONObject());
-                Log.i(TAG, "silent pttStop result=" + result);
-            } catch (Exception exc) {
-                Log.w(TAG, "silent pttStop failed", exc);
-            }
-        }, "pucky-silent-listening-close").start();
-    }
-
-    private void inferPttStopFromMutedStatus(String liveKitState, boolean micOpen, String activePttTurnId) {
-        if (micOpen
-                || activePttTurnId == null
-                || !activePttTurnId.isBlank()
-                || lastPttStartAtMs <= 0L
-                || lastPttStartAtMs < lastPttStopAtMs
-                || "reconnecting".equals(liveKitState)) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (now - lastPttStartAtMs < 2500L) {
-            return;
-        }
-        lastPttStopAtMs = now;
-    }
-
-    private void refreshLatestTranscript(JSONObject liveKit) {
-        try {
-            JSONObject args = new JSONObject();
-            Json.put(args, "limit", 120);
-            JSONArray events = LiveKitController.shared(this, settingsStore)
-                    .eventsList(args)
-                    .optJSONArray("events");
-            if (events == null) {
-                return;
-            }
-            long scannedPttStartAtMs = 0L;
-            long scannedPttStopAtMs = 0L;
-            long scannedDisconnectAtMs = 0L;
-            for (int i = 0; i < events.length(); i++) {
-                JSONObject event = events.optJSONObject(i);
-                if (event == null) {
-                    continue;
-                }
-                String eventName = event.optString("event", "");
-                long eventAtMs = eventTimeMs(event, i);
-                if (eventAtMs < coverEventFloorAtMs) {
-                    continue;
-                }
-                if ("ptt_start_requested".equals(eventName)
-                        || "ptt_turn_started".equals(eventName)
-                        || isPttMicEvent(event, "mic_enabled")) {
-                    scannedPttStartAtMs = Math.max(scannedPttStartAtMs, eventAtMs);
-                } else if ("ptt_stop_requested".equals(eventName)
-                        || "ptt_turn_stopped".equals(eventName)
-                        || isPttMicEvent(event, "mic_disabled")) {
-                    scannedPttStopAtMs = Math.max(scannedPttStopAtMs, eventAtMs);
-                } else if ("disconnected".equals(eventName) || "sdk_disconnected".equals(eventName)) {
-                    scannedDisconnectAtMs = Math.max(scannedDisconnectAtMs, eventAtMs);
-                } else if ("cover_event".equals(eventName)) {
-                    applyCoverEvent(event, eventAtMs);
-                }
-            }
-            if (scannedDisconnectAtMs > lastDisconnectAtMs) {
-                lastDisconnectAtMs = scannedDisconnectAtMs;
-            }
-            if (scannedPttStartAtMs > lastPttStartAtMs) {
-                lastPttStartAtMs = scannedPttStartAtMs;
-                clearCoverTurnTranscript(scannedPttStartAtMs);
-                coverSurfaceMode = MODE_LISTENING;
-            }
-            if (scannedPttStopAtMs > lastPttStopAtMs) {
-                lastPttStopAtMs = scannedPttStopAtMs;
-            }
-            boolean micOpen = liveKit.optBoolean("mic_enabled", false)
-                    || "connected_talking".equals(liveKit.optString("state", ""));
-            if (micOpen && lastPttStartAtMs >= lastPttStopAtMs) {
-                if (!"user".equals(lastTranscriptSpeaker) || lastAgentTranscriptAtMs > lastPttStartAtMs) {
-                    clearCoverTurnTranscript(lastPttStartAtMs > 0L
-                            ? lastPttStartAtMs
-                            : System.currentTimeMillis());
-                }
-                coverSurfaceMode = MODE_LISTENING;
-            }
-
-            long transcriptFloorAtMs = Math.max(Math.max(lastDisconnectAtMs, lastPttStartAtMs), coverEventFloorAtMs);
-            String newestText = "";
-            String newestSpeaker = "";
-            long newestTranscriptAtMs = 0L;
-            long newestAgentAtMs = lastAgentTranscriptAtMs;
-            long newestUserAtMs = lastUserTranscriptAtMs;
-            for (int i = 0; i < events.length(); i++) {
-                JSONObject event = events.optJSONObject(i);
-                if (event == null || !"transcription_received".equals(event.optString("event", ""))) {
-                    continue;
-                }
-                long eventAtMs = eventTimeMs(event, i);
-                if (eventAtMs < transcriptFloorAtMs) {
-                    continue;
-                }
-                JSONObject detail = event.optJSONObject("detail");
-                JSONArray segments = detail == null ? null : detail.optJSONArray("segments");
-                if (segments == null || segments.length() == 0) {
-                    continue;
-                }
-                for (int j = segments.length() - 1; j >= 0; j--) {
-                    JSONObject segment = segments.optJSONObject(j);
-                    String text = segment == null ? "" : segment.optString("text", "").trim();
-                    if (text.isEmpty()) {
-                        continue;
-                    }
-                    String speaker = speakerForTranscript(detail.optString("participant", ""), liveKit);
-                    if ("agent".equals(speaker) && !shouldAcceptAgentTranscriptForCover(eventAtMs)) {
-                        continue;
-                    }
-                    if ("agent".equals(speaker)) {
-                        newestAgentAtMs = Math.max(newestAgentAtMs, eventAtMs);
-                    } else {
-                        newestUserAtMs = Math.max(newestUserAtMs, eventAtMs);
-                    }
-                    if ("user".equals(speaker)
-                            && lastVoxTurnStartedAtMs > 0L
-                            && eventAtMs >= lastVoxTurnStartedAtMs) {
-                        break;
-                    }
-                    if (eventAtMs >= newestTranscriptAtMs) {
-                        newestTranscriptAtMs = eventAtMs;
-                        newestText = text;
-                        newestSpeaker = speaker;
-                    }
-                    break;
-                }
-            }
-            lastAgentTranscriptAtMs = newestAgentAtMs;
-            lastUserTranscriptAtMs = newestUserAtMs;
-            boolean coverAgentTextAuthoritative = lastCoverTranscriptAtMs > 0L
-                    && "agent".equals(lastTranscriptSpeaker);
-            if (!newestText.isEmpty()
-                    && newestTranscriptAtMs >= lastCoverTranscriptAtMs
-                    && (!coverAgentTextAuthoritative || !"agent".equals(newestSpeaker))
-                    && (!newestText.equals(lastTranscriptText) || !newestSpeaker.equals(lastTranscriptSpeaker))) {
-                lastTranscriptText = newestText;
-                lastTranscriptSpeaker = newestSpeaker;
-                lastTranscriptChangedAtMs = System.currentTimeMillis();
-            } else if (lastPttStartAtMs > lastTranscriptChangedAtMs && lastPttStartAtMs >= lastPttStopAtMs) {
-                lastTranscriptText = "";
-                lastTranscriptSpeaker = "user";
-                lastTranscriptChangedAtMs = lastPttStartAtMs;
-            }
-        } catch (Exception exc) {
-            Log.w(TAG, "transcript refresh failed", exc);
-        }
-    }
-
-    private boolean isPttMicEvent(JSONObject event, String expectedName) {
-        if (!expectedName.equals(event.optString("event", ""))) {
-            return false;
-        }
-        JSONObject detail = event.optJSONObject("detail");
-        String reason = detail == null ? "" : detail.optString("reason", "");
-        return reason.startsWith("ptt_") || reason.contains("volume_up_hold");
-    }
-
-    private void applyCoverEvent(JSONObject event, long eventAtMs) {
-        JSONObject detail = event.optJSONObject("detail");
-        if (detail == null) {
-            return;
-        }
-        String coverEvent = detail.optString("event", detail.optString("type", ""));
-        if (coverEvent.isEmpty()) {
-            return;
-        }
-        if ("codex_turn_started".equals(coverEvent)
-                || "turn_accepted".equals(coverEvent)
-                || "turn_started".equals(coverEvent)) {
-            if (eventAtMs > lastVoxTurnStartedAtMs) {
-                lastVoxTurnStartedAtMs = eventAtMs;
-                coverSurfaceMode = MODE_THINKING;
-            }
-            return;
-        }
-        if ("assistant_reply_started".equals(coverEvent)
-                || "assistant_reply_text".equals(coverEvent)
-                || "assistant_reply_delta".equals(coverEvent)) {
-            String text = detail.optString("text", "").trim();
-            if (!text.isEmpty()
-                    && (eventAtMs > lastAssistantReplyStartedAtMs || !text.equals(lastTranscriptText))) {
-                lastTranscriptText = text;
-                lastTranscriptSpeaker = "agent";
-                lastTranscriptChangedAtMs = System.currentTimeMillis();
-                lastCoverTranscriptAtMs = eventAtMs;
-            }
-            lastAssistantReplyStartedAtMs = Math.max(lastAssistantReplyStartedAtMs, eventAtMs);
-            lastAssistantReplyFinishedAtMs = 0L;
-            lastAssistantReplyVisibleUntilMs = Math.max(
-                    lastAssistantReplyVisibleUntilMs,
-                    System.currentTimeMillis() + estimatedSpeechStateDurationMs(lastTranscriptText));
-            lastAgentTranscriptAtMs = Math.max(lastAgentTranscriptAtMs, eventAtMs);
-            coverSurfaceMode = MODE_SPEAKING;
-            return;
-        }
-        if ("assistant_reply_finished".equals(coverEvent)
-                || "assistant_speech_finished".equals(coverEvent)) {
-            lastAssistantReplyFinishedAtMs = Math.max(lastAssistantReplyFinishedAtMs, eventAtMs);
-            if ("agent".equals(lastTranscriptSpeaker) && !lastTranscriptText.trim().isEmpty()) {
-                lastAssistantReplyVisibleUntilMs = Math.max(
-                        lastAssistantReplyVisibleUntilMs,
-                        System.currentTimeMillis() + SPEAKING_FINISHED_HOLD_MS);
-                coverSurfaceMode = MODE_SPEAKING;
-            }
-        }
-    }
-
-    private void resetCoverVisualHome(String reason) {
-        lastTranscriptText = "";
-        lastTranscriptSpeaker = "";
-        lastPttStartAtMs = 0L;
-        lastPttStopAtMs = 0L;
-        lastAgentTranscriptAtMs = 0L;
-        lastUserTranscriptAtMs = 0L;
-        lastVoxTurnStartedAtMs = 0L;
-        lastAssistantReplyStartedAtMs = 0L;
-        lastAssistantReplyFinishedAtMs = 0L;
-        lastAssistantReplyVisibleUntilMs = 0L;
-        lastCoverTranscriptAtMs = 0L;
-        coverEventFloorAtMs = System.currentTimeMillis();
-        coverSurfaceMode = MODE_HOME;
-        Log.i(TAG, "cover visual reset home reason=" + reason);
-        renderCurrent();
-    }
-
-    private void handleCoverScreenVisibilityChanged(String reason) {
-        if (assistantSetupMode || adminMode) {
-            return;
-        }
-        JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
-        refreshLatestTranscript(liveKit);
-        if (shouldPreserveCoverVisual(liveKit)
-                || (isVoiceVisualMode(coverSurfaceMode) && hasVmDrivenCoverTurn())) {
-            renderCurrent();
-            return;
-        }
-        resetCoverVisualHome(reason);
-    }
-
-    private void clearCoverTurnTranscript(long startedAtMs) {
-        lastTranscriptText = "";
-        lastTranscriptSpeaker = "user";
-        lastTranscriptChangedAtMs = startedAtMs;
-        lastAgentTranscriptAtMs = 0L;
-        lastUserTranscriptAtMs = 0L;
-        lastVoxTurnStartedAtMs = 0L;
-        lastAssistantReplyStartedAtMs = 0L;
-        lastAssistantReplyFinishedAtMs = 0L;
-        lastAssistantReplyVisibleUntilMs = 0L;
-        lastCoverTranscriptAtMs = 0L;
-    }
-
-    private boolean shouldResetCoverOnResume() {
-        if (MODE_HOME.equals(coverSurfaceMode)) {
-            return false;
-        }
-        if (isVoiceVisualMode(coverSurfaceMode) && hasVmDrivenCoverTurn()) {
-            return false;
-        }
-        JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
-        refreshLatestTranscript(liveKit);
-        if (MODE_THINKING.equals(coverSurfaceMode) && hasPendingAcceptedCoverTurn()) {
-            return false;
-        }
-        if (MODE_FINALIZING.equals(coverSurfaceMode) && hasRecentStoppedUserTurn()) {
-            return false;
-        }
-        if (MODE_SPEAKING.equals(coverSurfaceMode) && isAssistantReplyHeld()) {
-            return false;
-        }
-        return !shouldPreserveCoverVisual(liveKit);
-    }
-
-    private boolean shouldPreserveCoverVisual(JSONObject liveKit) {
-        boolean micOpen = liveKit.optBoolean("mic_enabled", false)
-                || "connected_talking".equals(liveKit.optString("state", ""));
-        return micOpen
-                || hasPendingAcceptedCoverTurn()
-                || (MODE_FINALIZING.equals(coverSurfaceMode) && hasRecentStoppedUserTurn())
-                || (MODE_SPEAKING.equals(coverSurfaceMode) && isAssistantReplyHeld());
-    }
-
-    private boolean hasVmDrivenCoverTurn() {
-        return lastVoxTurnStartedAtMs > 0L
-                || lastAssistantReplyStartedAtMs > 0L
-                || lastCoverTranscriptAtMs > 0L;
-    }
-
-    private boolean hasPendingAcceptedCoverTurn() {
-        return lastVoxTurnStartedAtMs > 0L
-                && lastVoxTurnStartedAtMs > lastDisconnectAtMs
-                && lastVoxTurnStartedAtMs >= lastPttStopAtMs
-                && lastAssistantReplyStartedAtMs <= lastVoxTurnStartedAtMs
-                && lastAssistantReplyFinishedAtMs < lastVoxTurnStartedAtMs;
-    }
-
-    private boolean hasRecentStoppedUserTurn() {
-        long latestUserTurnAtMs = Math.max(lastPttStopAtMs, lastUserTranscriptAtMs);
-        return latestUserTurnAtMs > 0L
-                && latestUserTurnAtMs > lastDisconnectAtMs
-                && System.currentTimeMillis() - latestUserTurnAtMs < COVER_NO_SPEECH_TIMEOUT_MS;
-    }
-
-    private boolean isVoiceVisualMode(String mode) {
-        return MODE_LISTENING.equals(mode)
-                || MODE_SPEAKING.equals(mode)
-                || MODE_THINKING.equals(mode)
-                || MODE_FINALIZING.equals(mode);
-    }
-
-    private long eventTimeMs(JSONObject event, int fallbackOffset) {
-        String timestamp = event.optString("timestamp", "");
-        if (!timestamp.isEmpty()) {
-            try {
-                return Instant.parse(timestamp).toEpochMilli();
-            } catch (Exception ignored) {
-                // Fall through to a monotonic-ish fallback for malformed local debug events.
-            }
-        }
-        return System.currentTimeMillis() + fallbackOffset;
-    }
-
-    private String speakerForTranscript(String participant, JSONObject liveKit) {
-        String who = participant == null ? "" : participant.trim().toLowerCase(Locale.US);
-        String localIdentity = jsonLower(liveKit, "identity");
-        String localName = jsonLower(liveKit, "participant_name");
-        if (!who.isEmpty()) {
-            if (who.equals(localIdentity) || who.equals(localName)) {
-                return "user";
-            }
-            return "agent";
-        }
-        return lastPttStartAtMs >= lastPttStopAtMs ? "user" : "agent";
-    }
-
-    private boolean shouldAcceptAgentTranscriptForCover(long eventAtMs) {
-        if (lastPttStartAtMs <= 0L) {
-            return eventAtMs > lastDisconnectAtMs;
-        }
-        if (eventAtMs < lastPttStartAtMs) {
-            return false;
-        }
-        if (lastAssistantReplyStartedAtMs > lastPttStartAtMs
-                && eventAtMs >= lastAssistantReplyStartedAtMs) {
-            return true;
-        }
-        return lastCoverTranscriptAtMs > lastPttStartAtMs
-                && eventAtMs >= lastCoverTranscriptAtMs;
-    }
-
-    private String jsonLower(JSONObject json, String key) {
-        Object value = json == null ? null : json.opt(key);
-        if (value == null || value == JSONObject.NULL) {
-            return "";
-        }
-        return String.valueOf(value).trim().toLowerCase(Locale.US);
-    }
-
     private void applyForegroundBrightness(double value) {
         double clamped = Math.max(0.02d, Math.min(1.0d, value));
         WindowManager.LayoutParams params = getWindow().getAttributes();
@@ -1741,11 +1185,7 @@ public final class MainActivity extends Activity {
         return MODE_HOME.equals(mode)
                 || MODE_APPS.equals(mode)
                 || MODE_THREADS.equals(mode)
-                || MODE_INBOX.equals(mode)
-                || MODE_LISTENING.equals(mode)
-                || MODE_SPEAKING.equals(mode)
-                || MODE_THINKING.equals(mode)
-                || MODE_FINALIZING.equals(mode);
+                || MODE_INBOX.equals(mode);
     }
 
     private void ensureAutoConnectService() {
