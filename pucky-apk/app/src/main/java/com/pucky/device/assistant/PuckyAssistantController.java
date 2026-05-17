@@ -2,6 +2,7 @@ package com.pucky.device.assistant;
 
 import android.app.Activity;
 import android.app.role.RoleManager;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
@@ -18,7 +19,6 @@ import org.json.JSONObject;
 
 public final class PuckyAssistantController {
     private static final String TAG = "PuckyAssistant";
-    private static final int REQUEST_ASSISTANT_ROLE = 4205;
 
     private PuckyAssistantController() {
     }
@@ -54,21 +54,25 @@ public final class PuckyAssistantController {
     }
 
     public static void openAssistantSetup(Activity activity) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            RoleManager roleManager = activity.getSystemService(RoleManager.class);
-            if (roleManager != null
-                    && roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT)
-                    && !roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
-                Intent request = roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT);
-                activity.startActivityForResult(request, REQUEST_ASSISTANT_ROLE);
-                return;
-            }
+        if (startSettingsActivity(activity, Settings.ACTION_VOICE_INPUT_SETTINGS)) {
+            return;
         }
-        Intent intent = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
+        startSettingsActivity(activity, Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
+    }
+
+    private static boolean startSettingsActivity(Activity activity, String action) {
+        Intent intent = new Intent(action);
         if (intent.resolveActivity(activity.getPackageManager()) == null) {
-            intent = new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
+            return false;
         }
-        activity.startActivity(intent);
+        try {
+            Log.i(TAG, "opening assistant setup settings action=" + action);
+            activity.startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException exc) {
+            Log.w(TAG, "assistant setup settings failed action=" + action, exc);
+            return false;
+        }
     }
 
     public static void handleAssistantInvocation(Context context, Bundle args, int showFlags) {

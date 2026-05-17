@@ -21,6 +21,7 @@ import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -241,6 +242,10 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (assistantSetupMode && !shouldStartInAssistantSetup(intent) && !shouldStartInAdmin(intent)) {
+            Log.i(TAG, "ignoring non-setup launch while assistant setup is active");
+            return;
+        }
         if (shouldStartInAssistantSetup(intent)) {
             showAssistantSetupScreen();
         } else if (shouldStartInAdmin(intent)) {
@@ -726,19 +731,36 @@ public final class MainActivity extends Activity {
         root.setPadding(48, 48, 48, 48);
         root.setBackgroundColor(Color.rgb(2, 6, 10));
 
-        Button enable = button("Approve Wireless Access");
-        enable.setAllCaps(false);
-        enable.setTextSize(22);
-        enable.setTextColor(Color.rgb(8, 13, 20));
-        enable.setMinHeight(104);
-        enable.setPadding(24, 0, 24, 0);
-        enable.setBackground(friendlyAccessButtonBackground());
-        enable.setOnClickListener(v -> startAssistantSetupFlow());
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+        TextView prompt = new TextView(this);
+        prompt.setText("Approve Wireless Access?");
+        prompt.setTextColor(Color.WHITE);
+        prompt.setTextSize(30);
+        prompt.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams promptParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        buttonParams.setMargins(12, 0, 12, 0);
-        root.addView(enable, buttonParams);
+        promptParams.setMargins(0, 0, 0, 28);
+        root.addView(prompt, promptParams);
+
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.HORIZONTAL);
+        choices.setGravity(Gravity.CENTER);
+
+        Button yes = approvalChoiceButton("Yes", true);
+        yes.setOnClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            startAssistantSetupFlow();
+        });
+        choices.addView(yes, choiceButtonParams(0, 10));
+
+        Button no = approvalChoiceButton("No", false);
+        no.setOnClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            showHomeScreen();
+        });
+        choices.addView(no, choiceButtonParams(10, 0));
+
+        root.addView(choices, fullWidthBlockParams());
         return root;
     }
 
@@ -822,11 +844,31 @@ public final class MainActivity extends Activity {
         return drawable;
     }
 
-    private GradientDrawable friendlyAccessButtonBackground() {
+    private Button approvalChoiceButton(String text, boolean primary) {
+        Button button = button(text);
+        button.setAllCaps(false);
+        button.setTextSize(24);
+        button.setTextColor(primary ? Color.rgb(8, 13, 20) : Color.WHITE);
+        button.setMinHeight(96);
+        button.setPadding(16, 0, 16, 0);
+        button.setBackground(approvalChoiceButtonBackground(primary));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams choiceButtonParams(int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f);
+        params.setMargins(leftMargin, 0, rightMargin, 0);
+        return params;
+    }
+
+    private GradientDrawable approvalChoiceButtonBackground(boolean primary) {
         GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(Color.rgb(238, 244, 250));
+        drawable.setColor(primary ? Color.rgb(238, 244, 250) : Color.rgb(17, 28, 39));
         drawable.setCornerRadius(34);
-        drawable.setStroke(2, Color.rgb(255, 255, 255));
+        drawable.setStroke(2, primary ? Color.rgb(255, 255, 255) : Color.rgb(82, 101, 120));
         return drawable;
     }
 
@@ -863,6 +905,7 @@ public final class MainActivity extends Activity {
     private void showAssistantSetupScreen() {
         assistantSetupMode = true;
         adminMode = false;
+        Log.i(TAG, "showing assistant setup screen");
         setContentView(buildAssistantSetupView());
         applySystemUiForMode();
     }
@@ -1273,6 +1316,9 @@ public final class MainActivity extends Activity {
     }
 
     private void handleCoverScreenVisibilityChanged(String reason) {
+        if (assistantSetupMode || adminMode) {
+            return;
+        }
         JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
         refreshLatestTranscript(liveKit);
         if (shouldPreserveCoverVisual(liveKit)
@@ -1617,6 +1663,10 @@ public final class MainActivity extends Activity {
     }
 
     private void handleLaunchIntent(Intent intent) {
+        if (shouldStartInAssistantSetup(intent)) {
+            showAssistantSetupScreen();
+            return;
+        }
         if (intent != null && intent.hasExtra("cover_mode")) {
             String mode = intent.getStringExtra("cover_mode");
             if (isKnownCoverMode(mode)) {
