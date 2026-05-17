@@ -726,37 +726,19 @@ public final class MainActivity extends Activity {
         root.setPadding(48, 48, 48, 48);
         root.setBackgroundColor(Color.rgb(2, 6, 10));
 
-        TextView title = new TextView(this);
-        title.setText("Make Power Button Open Pucky");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(28);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, fullWidthBlockParams());
-
-        TextView body = new TextView(this);
-        body.setText("Choose Pucky as your phone assistant once. Then long-hold Power starts or stops the Pucky call line.");
-        body.setTextColor(Color.rgb(190, 207, 226));
-        body.setTextSize(18);
-        body.setGravity(Gravity.CENTER);
-        body.setLineSpacing(4f, 1.0f);
-        LinearLayout.LayoutParams bodyParams = fullWidthBlockParams();
-        bodyParams.setMargins(0, 12, 0, 22);
-        root.addView(body, bodyParams);
-
-        Button enable = button("Enable Power Button");
-        enable.setTextSize(18);
+        Button enable = button("Approve Wireless Access");
+        enable.setAllCaps(false);
+        enable.setTextSize(22);
+        enable.setTextColor(Color.rgb(8, 13, 20));
+        enable.setMinHeight(104);
+        enable.setPadding(24, 0, 24, 0);
+        enable.setBackground(friendlyAccessButtonBackground());
         enable.setOnClickListener(v -> startAssistantSetupFlow());
-        root.addView(enable, fullWidthBlockParams());
-
-        TextView status = new TextView(this);
-        status.setText(assistantSetupStatusText());
-        status.setTextColor(Color.rgb(135, 153, 174));
-        status.setTextSize(14);
-        status.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams statusParams = fullWidthBlockParams();
-        statusParams.setMargins(0, 18, 0, 0);
-        root.addView(status, statusParams);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonParams.setMargins(12, 0, 12, 0);
+        root.addView(enable, buttonParams);
         return root;
     }
 
@@ -837,6 +819,14 @@ public final class MainActivity extends Activity {
         drawable.setColor(Color.rgb(35, 42, 54));
         drawable.setCornerRadius(10);
         drawable.setStroke(1, Color.rgb(70, 82, 98));
+        return drawable;
+    }
+
+    private GradientDrawable friendlyAccessButtonBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.rgb(238, 244, 250));
+        drawable.setCornerRadius(34);
+        drawable.setStroke(2, Color.rgb(255, 255, 255));
         return drawable;
     }
 
@@ -1777,14 +1767,6 @@ public final class MainActivity extends Activity {
             return "Google/Gemini default";
         }
         return "not default (" + current + ")";
-    }
-
-    private String assistantSetupStatusText() {
-        JSONObject status = PuckyAssistantController.status(this);
-        if (status.optBoolean("configured", false)) {
-            return "Pucky is already selected.";
-        }
-        return "Android will ask you to switch from Gemini to Pucky.";
     }
 
     private void startAssistantSetupFlow() {

@@ -131,7 +131,7 @@ an open mic turn with a haptic tick. If a Pucky mic line is active, the same ges
 tick. Motorola owns the actual hold duration through Settings > Gestures > Power key / Press and hold.
 
 The user-facing setup surface is a one-button flow launched with `--ez assistant_setup true`. The button says
-"Enable Power Button", requests microphone only if it is missing, then opens Android's default-assistant
+"Approve Wireless Access", requests microphone only if it is missing, then opens Android's default-assistant
 picker/settings so the user can choose Pucky instead of Gemini.
 
 ## Phase 3 puckyctl
