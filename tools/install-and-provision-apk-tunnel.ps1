@@ -2,10 +2,9 @@ param(
     [string]$AdbPath = "$env:LOCALAPPDATA\Android\platform-tools\adb.exe",
     [string]$Serial,
     [string]$ApkPath = "$PSScriptRoot\..\pucky-apk\app\build\outputs\apk\debug\app-debug.apk",
-    [Parameter(Mandatory = $true)]
-    [string]$VmHost,
+    [string]$VmHost = "jt-project-vox-codex.fly.dev",
     [string]$VmUser = "pucky-adb",
-    [int]$VmPort = 22,
+    [int]$VmPort = 2222,
     [string]$RemoteBindAddress = "127.0.0.1",
     [int]$RemoteAdbPort = 15555,
     [string]$PhoneAdbHost = "127.0.0.1",
@@ -43,19 +42,6 @@ function Resolve-ExistingFile {
     return $resolved.Path
 }
 
-function ConvertTo-JsonLiteral {
-    param([AllowNull()][string]$Value)
-    if ($null -eq $Value) {
-        return "null"
-    }
-    $escaped = $Value.Replace("\", "\\").
-        Replace("""", "\""").
-        Replace("`r", "\r").
-        Replace("`n", "\n").
-        Replace("`t", "\t")
-    return """$escaped"""
-}
-
 $adb = Resolve-ExistingFile -Path $AdbPath -Label "adb"
 $privateKey = Resolve-ExistingFile -Path $PrivateKeyPath -Label "Private key"
 if (-not $SkipInstall) {
@@ -83,51 +69,62 @@ if (-not $SkipInstall) {
 if (-not $SkipTcpip) {
     Write-Host "Enabling ADB TCP mode on phone port $PhoneAdbPort"
     & $adb @serialArgs tcpip $PhoneAdbPort
+    Write-Host "Waiting for the phone to return after adbd restarts"
+    Start-Sleep -Seconds 2
+    & $adb @serialArgs wait-for-device
 }
 
-$privateKeyText = Get-Content -LiteralPath $privateKey -Raw
-$tunnelParts = @(
-    '"enabled":true',
-    '"host":' + (ConvertTo-JsonLiteral $VmHost),
-    '"user":' + (ConvertTo-JsonLiteral $VmUser),
-    '"port":' + $VmPort,
-    '"remote_bind_address":' + (ConvertTo-JsonLiteral $RemoteBindAddress),
-    '"remote_adb_port":' + $RemoteAdbPort,
-    '"phone_adb_host":' + (ConvertTo-JsonLiteral $PhoneAdbHost),
-    '"phone_adb_port":' + $PhoneAdbPort,
-    '"tls_enabled":' + $UseTlsSni.IsPresent.ToString().ToLowerInvariant(),
-    '"strict_host_key_checking":' + (-not $InsecureNoStrictHostKeyChecking.IsPresent).ToString().ToLowerInvariant(),
-    '"private_key":' + (ConvertTo-JsonLiteral $privateKeyText),
-    '"start":' + (-not $NoStartTunnel.IsPresent).ToString().ToLowerInvariant()
-)
+$privateKeyText = [System.IO.File]::ReadAllText($privateKey)
+$tunnel = [ordered]@{
+    enabled = $true
+    host = $VmHost
+    user = $VmUser
+    port = $VmPort
+    remote_bind_address = $RemoteBindAddress
+    remote_adb_port = $RemoteAdbPort
+    phone_adb_host = $PhoneAdbHost
+    phone_adb_port = $PhoneAdbPort
+    tls_enabled = $UseTlsSni.IsPresent
+    strict_host_key_checking = -not $InsecureNoStrictHostKeyChecking.IsPresent
+    private_key = $privateKeyText
+    start = -not $NoStartTunnel.IsPresent
+}
 if (-not [string]::IsNullOrWhiteSpace($TlsServerName)) {
-    $tunnelParts += '"tls_server_name":' + (ConvertTo-JsonLiteral $TlsServerName)
+    $tunnel["tls_server_name"] = $TlsServerName
 }
 if (-not [string]::IsNullOrWhiteSpace($KnownHostsPath)) {
-    $knownHostsText = Get-Content -LiteralPath $knownHosts -Raw
-    $tunnelParts += '"known_hosts":' + (ConvertTo-JsonLiteral $knownHostsText)
+    $knownHostsText = [System.IO.File]::ReadAllText($knownHosts)
+    $tunnel["known_hosts"] = $knownHostsText
 }
 
-$provisioningParts = @(
-    '"schema":"pucky.provisioning.v1"',
-    '"tunnel":{' + ($tunnelParts -join ",") + '}'
-)
+$provisioning = [ordered]@{
+    schema = "pucky.provisioning.v1"
+    tunnel = $tunnel
+}
 if (-not [string]::IsNullOrWhiteSpace($BrokerUrl)) {
-    $provisioningParts += '"broker_url":' + (ConvertTo-JsonLiteral $BrokerUrl)
+    $provisioning["broker_url"] = $BrokerUrl
 }
 if (-not [string]::IsNullOrWhiteSpace($DeviceId)) {
-    $provisioningParts += '"device_id":' + (ConvertTo-JsonLiteral $DeviceId)
+    $provisioning["device_id"] = $DeviceId
 }
 if (-not [string]::IsNullOrWhiteSpace($Token)) {
-    $provisioningParts += '"token":' + (ConvertTo-JsonLiteral $Token)
+    $provisioning["token"] = $Token
 }
 
-$json = "{" + ($provisioningParts -join ",") + "}"
-$jsonBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+$json = $provisioning | ConvertTo-Json -Depth 6 -Compress
 $component = "$PackageName/$ActivityName"
+$localProvisioningFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pucky_provisioning.json")
+$deviceProvisioningFile = "/data/local/tmp/pucky_provisioning.json"
+$appProvisioningFile = "pucky_provisioning.json"
+[System.IO.File]::WriteAllText($localProvisioningFile, $json, [Text.Encoding]::UTF8)
+
+Write-Host "Pushing provisioning into app-private storage"
+& $adb @serialArgs push $localProvisioningFile $deviceProvisioningFile | Out-Null
+& $adb @serialArgs shell "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile"
+& $adb @serialArgs shell "rm -f $deviceProvisioningFile"
 
 Write-Host "Injecting provisioning into $component"
-& $adb @serialArgs shell "am start -n $component --es provisioning_json_base64 $jsonBase64 --ez connect false"
+& $adb @serialArgs shell "am start -n $component --es provisioning_file $appProvisioningFile --ez connect false"
 
 Write-Host ""
 Write-Host "Provisioning sent. On the VM, after the tunnel connects, run:"

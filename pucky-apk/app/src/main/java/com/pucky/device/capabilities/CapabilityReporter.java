@@ -128,7 +128,11 @@ public final class CapabilityReporter {
         Json.add(out, cap("ssh.reverse_tunnel", "tunnel.status/tunnel.config.set/tunnel.start/tunnel.stop",
                 "implemented_untested", "foreground_service", "raw_device_bridge", Manifest.permission.INTERNET,
                 "not_recorded",
-                "APK-managed reverse SSH tunnel from phone to VM using an app-private key. ADB over the tunnel still requires ADB TCP mode to be enabled by USB or Wireless Debugging first."));
+                "APK-managed reverse SSH tunnel from phone to VM using an app-private key. ADB over the tunnel uses classic ADB TCP after USB enables adb tcpip 5555."));
+        Json.add(out, cap("adb.remote", "adb.remote.status/adb.remote.reconnect",
+                "implemented_untested", "foreground_service", "raw_device_bridge", Manifest.permission.INTERNET,
+                "not_recorded",
+                "Two-command status/reconnect surface for the classic ADB TCP reverse-tunnel path on VM port 15555."));
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));

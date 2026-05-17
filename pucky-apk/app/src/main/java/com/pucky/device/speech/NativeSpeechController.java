@@ -18,6 +18,7 @@ import com.pucky.device.PuckyApplication;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.livekit.LiveKitController;
+import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -52,7 +53,9 @@ public final class NativeSpeechController {
     private final Context context;
     private final SharedPreferences prefs;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final OkHttpClient http = new OkHttpClient();
+    private final OkHttpClient http = new OkHttpClient.Builder()
+            .dns(Ipv4FirstDns.INSTANCE)
+            .build();
 
     private SpeechRecognizer recognizer;
     private JSONObject active;

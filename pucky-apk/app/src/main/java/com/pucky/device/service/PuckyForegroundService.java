@@ -1,6 +1,7 @@
 package com.pucky.device.service;
 
 import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -33,6 +34,7 @@ import java.util.List;
 
 import com.pucky.device.PuckyApplication;
 import com.pucky.device.MainActivity;
+import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.battery.BatteryProvider;
@@ -53,6 +55,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.sensors.CoverGestureController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
@@ -78,12 +81,18 @@ public final class PuckyForegroundService extends Service {
     public static final String ACTION_CONNECT = "connect";
     public static final String ACTION_DISCONNECT = "disconnect";
     public static final String ACTION_STOP = "stop";
+    public static final String ACTION_COVER_GESTURE_CONFIG = "cover_gesture_config";
+    public static final String ACTION_COVER_GESTURE_SLEEP = "com.pucky.device.action.COVER_GESTURE_SLEEP";
+    public static final String EXTRA_COVER_GESTURE_ENABLED = "cover_gesture_enabled";
 
     private static final int NOTIFICATION_ID = 41001;
     private static final int COVER_RESTORE_REQUEST_CODE = 41003;
+    private static final int SERVICE_RESTART_REQUEST_CODE = 41004;
     private static final String CHANNEL_ID = "pucky_service";
     private static final long WATCHDOG_INITIAL_DELAY_MS = 30_000L;
     private static final long WATCHDOG_INTERVAL_MS = 120_000L;
+    private static final long SELF_RESTART_DELAY_MS = 15_000L;
+    private static final long KEEPALIVE_RESTART_DELAY_MS = 180_000L;
     private static final long COVER_RESTORE_DELAY_MS = 900L;
     private static final long COVER_RESTORE_DEBOUNCE_MS = 2_500L;
     private static final int RAZR_COVER_DISPLAY_ID = 1;
@@ -100,6 +109,7 @@ public final class PuckyForegroundService extends Service {
     private long lastCoverRestoreAtMs;
     private WindowManager coverSentinelWindowManager;
     private View coverSentinelView;
+    private CoverGestureController coverGestureController;
 
     public static void start(Context context, boolean connect) {
         Intent intent = new Intent(context, PuckyForegroundService.class)
@@ -123,6 +133,17 @@ public final class PuckyForegroundService extends Service {
         context.startService(intent);
     }
 
+    public static void configureCoverGesture(Context context, boolean enabled) {
+        Intent intent = new Intent(context, PuckyForegroundService.class)
+                .putExtra(EXTRA_ACTION, ACTION_COVER_GESTURE_CONFIG)
+                .putExtra(EXTRA_COVER_GESTURE_ENABLED, enabled);
+        if (Build.VERSION.SDK_INT >= 26) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -138,7 +159,28 @@ public final class PuckyForegroundService extends Service {
         registerNetworkCallback();
         registerCoverDisplayListener();
         ensureCoverVisibilitySentinel("service_started");
+        coverGestureController = new CoverGestureController(this, new CoverGestureController.Callback() {
+            @Override
+            public boolean isCoverDisplayAvailable() {
+                return findCoverDisplayId() >= 0;
+            }
+
+            @Override
+            public void onCoverGestureSleep(long durationMs) {
+                handleCoverGestureSleep(durationMs);
+            }
+
+            @Override
+            public void onCoverGestureWake(long durationMs) {
+                handleCoverGestureWake(durationMs);
+            }
+        });
+        coverGestureController.startIfEnabled();
+        if (coverGestureController.isSleeping()) {
+            removeCoverVisibilitySentinel();
+        }
         startReconnectWatchdog();
+        scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
         ensureTunnelStarted("service_started");
         scheduleCoverRestore("service_started");
@@ -155,11 +197,22 @@ public final class PuckyForegroundService extends Service {
             settings.setAutoConnectEnabled(false);
             PuckyState.get().setPolicy(settings.isAutoConnectEnabled(), settings.isAutostartEnabled());
             PuckyState.get().setLifecycleEvent("service.stop_requested");
+            cancelServiceRestart();
             stopTunnel("service_stop");
             disconnectBroker();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return START_NOT_STICKY;
+        }
+        if (ACTION_COVER_GESTURE_CONFIG.equals(action)) {
+            boolean enabled = intent != null
+                    && intent.getBooleanExtra(EXTRA_COVER_GESTURE_ENABLED, false);
+            if (coverGestureController != null) {
+                coverGestureController.setEnabled(enabled);
+            }
+            PuckyState.get().setLifecycleEvent("cover.gesture." + (enabled ? "enabled" : "disabled"));
+            PuckyState.get().broadcast(this);
+            return START_STICKY;
         }
         if (ACTION_DISCONNECT.equals(action)) {
             settings.setAutoConnectEnabled(false);
@@ -188,6 +241,10 @@ public final class PuckyForegroundService extends Service {
     @Override
     public void onDestroy() {
         stopReconnectWatchdog();
+        if (coverGestureController != null) {
+            coverGestureController.stop();
+            coverGestureController = null;
+        }
         unregisterCoverDisplayListener();
         WakeWordController.shared(this).stop(new org.json.JSONObject());
         stopTunnel("service_destroy");
@@ -198,6 +255,12 @@ public final class PuckyForegroundService extends Service {
         PuckyState.get().setLifecycleEvent(manualStopRequested ? "service.stopped_manual" : "service.destroyed");
         PuckyState.get().setConnectionState(manualStopRequested ? "service_stopped" : "service_destroyed");
         PuckyState.get().broadcast(this);
+        SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
+        if (!manualStopRequested && shouldKeepServiceRunning(settings)) {
+            scheduleServiceRestart("service_destroyed", SELF_RESTART_DELAY_MS);
+        } else {
+            cancelServiceRestart();
+        }
         super.onDestroy();
     }
 
@@ -206,8 +269,8 @@ public final class PuckyForegroundService extends Service {
         SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
         PuckyState.get().setLifecycleEvent("service.task_removed");
         PuckyState.get().broadcast(this);
-        if (!manualStopRequested && settings.isAutoConnectEnabled()) {
-            start(this, true);
+        if (!manualStopRequested && shouldKeepServiceRunning(settings)) {
+            start(this, settings.isAutoConnectEnabled());
             scheduleCoverRestore("task_removed");
         }
         super.onTaskRemoved(rootIntent);
@@ -258,6 +321,7 @@ public final class PuckyForegroundService extends Service {
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settings),
                 TunnelController.shared(this, settings),
+                new RemoteAdbController(this, settings, TunnelController.shared(this, settings)),
                 new AndroidSubstrateController(this));
         CommandRouter router = new CommandRouter(executor);
         brokerClient = new BrokerControlClient(this, settings, router, logStore);
@@ -435,6 +499,10 @@ public final class PuckyForegroundService extends Service {
     }
 
     private void maybeRestoreCoverActivity(String reason) {
+        if (coverGestureController != null && coverGestureController.isSleeping()) {
+            Log.i(TAG, "cover restore skipped; gesture sleep active reason=" + reason);
+            return;
+        }
         int displayId = findCoverDisplayId();
         if (displayId < 0) {
             Log.i(TAG, "cover restore skipped; no non-default display reason=" + reason);
@@ -676,6 +744,40 @@ public final class PuckyForegroundService extends Service {
         }
     }
 
+    private void handleCoverGestureSleep(long durationMs) {
+        Handler handler = coverRestoreHandler;
+        if (handler == null) {
+            handler = new Handler(Looper.getMainLooper());
+            coverRestoreHandler = handler;
+        }
+        handler.post(() -> {
+            if (pendingCoverRestore != null && coverRestoreHandler != null) {
+                coverRestoreHandler.removeCallbacks(pendingCoverRestore);
+                pendingCoverRestore = null;
+            }
+            removeCoverVisibilitySentinel();
+            Intent intent = new Intent(ACTION_COVER_GESTURE_SLEEP).setPackage(getPackageName());
+            sendBroadcast(intent);
+            PuckyState.get().setLifecycleEvent("cover.gesture.sleep." + durationMs + "ms");
+            PuckyState.get().broadcast(this);
+            Log.i(TAG, "cover gesture sleep duration_ms=" + durationMs);
+        });
+    }
+
+    private void handleCoverGestureWake(long durationMs) {
+        Handler handler = coverRestoreHandler;
+        if (handler == null) {
+            handler = new Handler(Looper.getMainLooper());
+            coverRestoreHandler = handler;
+        }
+        handler.post(() -> {
+            PuckyState.get().setLifecycleEvent("cover.gesture.wake." + durationMs + "ms");
+            PuckyState.get().broadcast(this);
+            scheduleCoverRestore("cover_gesture_wake", 0L);
+            Log.i(TAG, "cover gesture wake duration_ms=" + durationMs);
+        });
+    }
+
     private void startReconnectWatchdog() {
         if (watchdogHandler != null) {
             return;
@@ -685,6 +787,7 @@ public final class PuckyForegroundService extends Service {
             @Override
             public void run() {
                 maybeAutoConnect("watchdog");
+                scheduleServiceRestart("service_keepalive_watchdog", KEEPALIVE_RESTART_DELAY_MS);
                 scheduleReconnectWatchdog(WATCHDOG_INTERVAL_MS);
             }
         };
@@ -705,6 +808,54 @@ public final class PuckyForegroundService extends Service {
         }
         watchdogTask = null;
         watchdogHandler = null;
+    }
+
+    private void scheduleServiceRestart(String reason, long delayMs) {
+        SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
+        if (!shouldKeepServiceRunning(settings)) {
+            return;
+        }
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            return;
+        }
+        PendingIntent pendingIntent = serviceRestartIntent(reason);
+        long triggerAtMs = SystemClock.elapsedRealtime() + Math.max(1_000L, delayMs);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAtMs,
+                    pendingIntent);
+        } else {
+            alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAtMs, pendingIntent);
+        }
+        Log.i(TAG, "service restart alarm scheduled reason=" + reason
+                + " delay_ms=" + delayMs);
+    }
+
+    private void cancelServiceRestart() {
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            return;
+        }
+        alarmManager.cancel(serviceRestartIntent("cancel"));
+        Log.i(TAG, "service restart alarm canceled");
+    }
+
+    private PendingIntent serviceRestartIntent(String reason) {
+        Intent intent = new Intent(this, PuckyBootReceiver.class)
+                .setAction(PuckyBootReceiver.ACTION_RESTART_SERVICE)
+                .putExtra("reason", reason == null ? "unknown" : reason);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getBroadcast(this, SERVICE_RESTART_REQUEST_CODE, intent, flags);
+    }
+
+    private static boolean shouldKeepServiceRunning(SettingsStore settings) {
+        return settings.isAutostartEnabled()
+                && (settings.isAutoConnectEnabled() || settings.isTunnelEnabled());
     }
 
     private void createChannel() {

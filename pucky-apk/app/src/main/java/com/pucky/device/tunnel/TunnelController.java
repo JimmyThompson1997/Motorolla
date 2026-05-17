@@ -114,6 +114,9 @@ public final class TunnelController {
             Json.put(out, "assigned_remote_adb_port", assignedRemoteAdbPort < 0
                     ? JSONObject.NULL
                     : assignedRemoteAdbPort);
+            Json.put(out, "assigned_vm_adb_port", assignedRemoteAdbPort < 0
+                    ? JSONObject.NULL
+                    : assignedRemoteAdbPort);
             Json.put(out, "settings", settingsStore.tunnelSettingsJson());
             Json.put(out, "vm_adb_connect", assignedRemoteAdbPort < 0
                     ? JSONObject.NULL

@@ -2,6 +2,7 @@ package com.pucky.device.notifications;
 
 import android.content.Context;
 
+import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 
@@ -22,7 +23,9 @@ public final class BrokerReplyPoster {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     private final SettingsStore settings;
-    private final OkHttpClient client = new OkHttpClient();
+    private final OkHttpClient client = new OkHttpClient.Builder()
+            .dns(Ipv4FirstDns.INSTANCE)
+            .build();
 
     public BrokerReplyPoster(Context context) {
         this.settings = new SettingsStore(context.getApplicationContext());

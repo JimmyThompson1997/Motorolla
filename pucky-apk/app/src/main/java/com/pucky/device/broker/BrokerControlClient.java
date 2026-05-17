@@ -7,6 +7,7 @@ import android.util.Log;
 
 import com.pucky.device.command.CommandHandlingResult;
 import com.pucky.device.command.CommandRouter;
+import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.CommandLogStore;
@@ -51,6 +52,7 @@ public final class BrokerControlClient {
         this.router = router;
         this.logStore = logStore;
         this.client = new OkHttpClient.Builder()
+                .dns(Ipv4FirstDns.INSTANCE)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .pingInterval(30, TimeUnit.SECONDS)
                 .build();

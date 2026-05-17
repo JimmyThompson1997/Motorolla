@@ -2,6 +2,7 @@ package com.pucky.device.command;
 
 import com.pucky.device.util.Json;
 
+import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.battery.BatteryProvider;
@@ -44,7 +45,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample", "sensor.watch",
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
-            "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
+            "service.status", "power.policy.get", "cover.gesture.status", "cover.gesture.set",
+            "compute.benchmark", "shell.exec",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.delete",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
@@ -64,7 +66,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "livekit.disconnect", "livekit.mic.set", "livekit.ptt.start",
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
             "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
-            "tunnel.stop", "cover.event", "settings.open", "settings.panel", "browser.open",
+            "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
+            "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
             "ui.dashboard.show", "launcher.capability.get", "android.substrate"
@@ -100,6 +103,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final AppUpdateController appUpdateController;
     private final LiveKitController liveKitController;
     private final TunnelController tunnelController;
+    private final RemoteAdbController remoteAdbController;
     private final AndroidSubstrateController androidSubstrateController;
 
     public NativeCommandExecutor(
@@ -133,6 +137,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             AppUpdateController appUpdateController,
             LiveKitController liveKitController,
             TunnelController tunnelController,
+            RemoteAdbController remoteAdbController,
             AndroidSubstrateController androidSubstrateController) {
         this.statusProvider = statusProvider;
         this.batteryProvider = batteryProvider;
@@ -164,6 +169,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.appUpdateController = appUpdateController;
         this.liveKitController = liveKitController;
         this.tunnelController = tunnelController;
+        this.remoteAdbController = remoteAdbController;
         this.androidSubstrateController = androidSubstrateController;
     }
 
@@ -222,6 +228,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return systemController.serviceStatus();
             case "power.policy.get":
                 return systemController.powerPolicy();
+            case "cover.gesture.status":
+                return systemController.coverGestureStatus();
+            case "cover.gesture.set":
+                return systemController.coverGestureSet(command.args());
             case "compute.benchmark":
                 return systemController.benchmark(command.args());
             case "shell.exec":
@@ -364,6 +374,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return tunnelController.start(command.args());
             case "tunnel.stop":
                 return tunnelController.stop(command.args());
+            case "adb.remote.status":
+                return remoteAdbController.status(command.args());
+            case "adb.remote.reconnect":
+                return remoteAdbController.reconnect(command.args());
             case "cover.event":
                 return liveKitController.coverEvent(command.args());
             case "settings.open":

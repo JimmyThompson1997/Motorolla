@@ -3,6 +3,7 @@ package com.pucky.device.broker;
 import android.content.Context;
 import android.util.Log;
 
+import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 
@@ -23,7 +24,9 @@ public final class BrokerEventPoster {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     private final SettingsStore settings;
-    private final OkHttpClient client = new OkHttpClient();
+    private final OkHttpClient client = new OkHttpClient.Builder()
+            .dns(Ipv4FirstDns.INSTANCE)
+            .build();
 
     public BrokerEventPoster(Context context) {
         this.settings = new SettingsStore(context.getApplicationContext());

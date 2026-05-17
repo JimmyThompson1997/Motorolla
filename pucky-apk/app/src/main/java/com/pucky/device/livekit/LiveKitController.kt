@@ -7,6 +7,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import io.livekit.android.annotations.Beta
+import com.pucky.device.net.Ipv4FirstDns
 import com.pucky.device.storage.SettingsStore
 import com.pucky.device.util.Json
 import io.livekit.android.AudioOptions
@@ -39,6 +40,7 @@ class LiveKitController private constructor(context: Context, private val settin
     private val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val httpClient = OkHttpClient.Builder()
+        .dns(Ipv4FirstDns.INSTANCE)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
@@ -72,6 +74,10 @@ class LiveKitController private constructor(context: Context, private val settin
         Json.put(out, "connected_at", if (connectedAt.isBlank()) JSONObject.NULL else connectedAt)
         Json.put(out, "active_ptt_turn_id", if (activePttTurnId.isBlank()) JSONObject.NULL else activePttTurnId)
         Json.put(out, "remote_audio_gain", remoteAudioGain())
+        val remoteParticipants = remoteParticipantSnapshot()
+        Json.put(out, "remote_participant_count", remoteParticipants.length())
+        Json.put(out, "agent_participant_connected", hasAgentParticipant())
+        Json.put(out, "remote_participants", remoteParticipants)
         Json.put(out, "last_error", if (lastError.isBlank()) JSONObject.NULL else lastError)
         val allEvents = eventsJson()
         Json.put(out, "event_count", allEvents.length())
@@ -210,14 +216,26 @@ class LiveKitController private constructor(context: Context, private val settin
     private suspend fun ensureConnectedInternal(args: JSONObject): JSONObject {
         val out = JSONObject()
         val connectedBefore = isLiveKitConnected()
+        val forceNewSession = args.optBoolean("force_new_session", false)
         Json.put(out, "schema", "pucky.livekit_ensure_connected.v1")
         Json.put(out, "connected_before", connectedBefore)
         Json.put(out, "state_before", state)
+        Json.put(out, "force_new_session", forceNewSession)
         Json.put(out, "session_expired", sessionExpired(lastSession, SESSION_EXPIRY_GRACE_SECONDS))
-        if (connectedBefore) {
+        if (connectedBefore && !forceNewSession) {
             Json.put(out, "connected_after", true)
             Json.put(out, "status", status())
             return out
+        }
+        if (connectedBefore) {
+            Json.put(out, "reconnect_reason", args.optString("force_new_session_reason", "force_new_session"))
+            event("ptt_force_reconnect_requested", JSONObject().also {
+                copyIfPresent(args, it, "ptt_turn_id")
+                Json.put(it, "state_before", state)
+                Json.put(it, "room_before", lastSession?.optString("room") ?: "")
+                Json.put(it, "reason", args.optString("force_new_session_reason", "force_new_session"))
+            })
+            disconnectInternal(args.optString("force_new_session_reason", "force_new_session"))
         }
         val connectArgs = JSONObject(args.toString())
         if (!connectArgs.optBoolean("force_new_session", false)
@@ -626,6 +644,39 @@ class LiveKitController private constructor(context: Context, private val settin
         return prefs.getFloat(REMOTE_AUDIO_GAIN, DEFAULT_REMOTE_AUDIO_GAIN.toFloat())
             .toDouble()
             .coerceIn(0.0, 1.0)
+    }
+
+    private fun remoteParticipantSnapshot(): JSONArray {
+        val snapshot = JSONArray()
+        val activeRoom = room ?: return snapshot
+        for (participant in activeRoom.remoteParticipants.values) {
+            Json.add(snapshot, JSONObject().also {
+                val identity = participant.identity?.value ?: ""
+                val name = participant.name ?: ""
+                Json.put(it, "identity", identity)
+                Json.put(it, "name", name)
+                Json.put(it, "is_agent", isAgentParticipant(identity, name))
+                Json.put(it, "audio_track_count", participant.audioTrackPublications.size)
+            })
+        }
+        return snapshot
+    }
+
+    private fun hasAgentParticipant(): Boolean {
+        val activeRoom = room ?: return false
+        for (participant in activeRoom.remoteParticipants.values) {
+            if (isAgentParticipant(participant.identity?.value ?: "", participant.name ?: "")) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isAgentParticipant(identity: String, name: String): Boolean {
+        return identity.startsWith("agent-")
+                || identity.startsWith("agent_")
+                || identity.contains("agent", ignoreCase = true)
+                || name.contains("agent", ignoreCase = true)
     }
 
     private fun applyRemoteAudioGain(track: Any?, participantIdentity: String, reason: String): JSONObject? {

@@ -95,12 +95,20 @@ public final class SettingsStore {
         return prefs.getInt(TUNNEL_REMOTE_ADB_PORT, 15555);
     }
 
+    public int getTunnelVmAdbPort() {
+        return getTunnelRemoteAdbPort();
+    }
+
     public String getTunnelPhoneAdbHost() {
         return prefs.getString(TUNNEL_PHONE_ADB_HOST, "127.0.0.1").trim();
     }
 
     public int getTunnelPhoneAdbPort() {
         return prefs.getInt(TUNNEL_PHONE_ADB_PORT, 5555);
+    }
+
+    public String getAdbTransport() {
+        return "classic_tcp";
     }
 
     public boolean isTunnelTlsEnabled() {
@@ -133,6 +141,8 @@ public final class SettingsStore {
         Json.put(out, "user", getTunnelUser());
         Json.put(out, "port", getTunnelPort());
         Json.put(out, "remote_bind_address", getTunnelRemoteBindAddress());
+        Json.put(out, "adb_transport", getAdbTransport());
+        Json.put(out, "vm_adb_port", getTunnelVmAdbPort());
         Json.put(out, "remote_adb_port", getTunnelRemoteAdbPort());
         Json.put(out, "phone_adb_host", getTunnelPhoneAdbHost());
         Json.put(out, "phone_adb_port", getTunnelPhoneAdbPort());
@@ -159,6 +169,7 @@ public final class SettingsStore {
         putString(editor, input, "user", TUNNEL_USER);
         putInt(editor, input, "port", TUNNEL_PORT, 1, 65535);
         putString(editor, input, "remote_bind_address", TUNNEL_REMOTE_BIND);
+        putInt(editor, input, "vm_adb_port", TUNNEL_REMOTE_ADB_PORT, 1, 65535);
         putInt(editor, input, "remote_adb_port", TUNNEL_REMOTE_ADB_PORT, 1, 65535);
         putString(editor, input, "phone_adb_host", TUNNEL_PHONE_ADB_HOST);
         putInt(editor, input, "phone_adb_port", TUNNEL_PHONE_ADB_PORT, 1, 65535);

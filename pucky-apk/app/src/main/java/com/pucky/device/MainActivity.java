@@ -94,6 +94,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -372,8 +375,16 @@ public final class MainActivity extends Activity {
             return;
         }
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        moveTaskToBack(true);
-        Log.i(TAG, "cover home moved to back for gesture sleep");
+        setContentView(buildCoverSleepView());
+        Log.i(TAG, "cover home showing black sleep surface for gesture sleep");
+    }
+
+    private View buildCoverSleepView() {
+        resetCoverRefs();
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        return root;
     }
 
     private void applySystemUiForMode() {
@@ -844,6 +855,7 @@ public final class MainActivity extends Activity {
 
     private void showHomeScreen() {
         assistantSetupMode = false;
+        configureApplianceWindow();
         if (!adminMode) {
             applySystemUiForMode();
             if (homeWebView == null || homePortalErrorVisible) {
@@ -1151,7 +1163,7 @@ public final class MainActivity extends Activity {
                 Log.i(TAG, "Imported provisioning_json");
                 syncProvisioningFields();
                 Toast.makeText(this, "Provisioning imported", Toast.LENGTH_SHORT).show();
-            } catch (JSONException e) {
+            } catch (Exception e) {
                 Log.e(TAG, "Invalid provisioning_json", e);
                 Toast.makeText(this, "Invalid provisioning JSON: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
@@ -1190,7 +1202,29 @@ public final class MainActivity extends Activity {
             String raw = intent.getStringExtra("provisioning_json");
             return raw == null ? "{}" : raw;
         }
+        if (intent.hasExtra("provisioning_file")) {
+            return provisioningJsonFromFile(intent.getStringExtra("provisioning_file"));
+        }
         return null;
+    }
+
+    private String provisioningJsonFromFile(String fileName) {
+        if (fileName == null || fileName.trim().isEmpty()) {
+            return "{}";
+        }
+        String safeName = new File(fileName).getName();
+        try (FileInputStream input = openFileInput(safeName);
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+            }
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        } catch (Exception exc) {
+            throw new IllegalArgumentException("Unable to read provisioning_file " + safeName
+                    + ": " + exc.getMessage(), exc);
+        }
     }
 
     private void ensureAutoConnectService() {

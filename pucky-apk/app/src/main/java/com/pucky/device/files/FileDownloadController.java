@@ -5,6 +5,7 @@ import android.webkit.MimeTypeMap;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
@@ -33,7 +34,9 @@ public final class FileDownloadController {
 
     public FileDownloadController(Context context) {
         this.context = context.getApplicationContext();
-        this.client = new OkHttpClient.Builder().build();
+        this.client = new OkHttpClient.Builder()
+                .dns(Ipv4FirstDns.INSTANCE)
+                .build();
     }
 
     public JSONObject download(JSONObject args) throws CommandException {

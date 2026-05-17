@@ -111,6 +111,8 @@ public final class PuckyAssistantController {
             } else {
                 Json.put(commandArgs, "reason", "assistant_power_hold_start");
                 Json.put(commandArgs, "ptt_turn_id", "assistant_" + Long.toHexString(System.currentTimeMillis()));
+                Json.put(commandArgs, "force_new_session", true);
+                Json.put(commandArgs, "force_new_session_reason", "assistant_power_hold_start");
                 JSONObject result = liveKit.pttStart(commandArgs);
                 Log.i(TAG, "assistant power hold started open line result=" + result);
             }
