@@ -97,8 +97,54 @@ public final class PermissionReporter {
                 array("location.get", "location.watch"));
         add(out, Manifest.permission.POST_NOTIFICATIONS, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
                 array("notify.show", "timer.set", "foreground service notification"));
+        add(out, Manifest.permission.READ_SMS, declared, true, true, "dangerous",
+                array("android.substrate SMS query"));
+        add(out, Manifest.permission.SEND_SMS, declared, true, true, "dangerous",
+                array("android.substrate SMS send"));
+        add(out, Manifest.permission.RECEIVE_SMS, declared, true, true, "dangerous",
+                array("android.substrate inbound SMS"));
+        add(out, Manifest.permission.CALL_PHONE, declared, true, true, "dangerous",
+                array("android.substrate place call"));
+        add(out, Manifest.permission.ANSWER_PHONE_CALLS, declared, true, true, "dangerous",
+                array("android.substrate hang up or answer calls"));
+        add(out, Manifest.permission.READ_PHONE_STATE, declared, true, true, "dangerous",
+                array("android.substrate phone state"));
+        add(out, Manifest.permission.READ_CALL_LOG, declared, true, true, "dangerous",
+                array("android.substrate call log query"));
+        add(out, Manifest.permission.WRITE_CALL_LOG, declared, true, true, "dangerous",
+                array("android.substrate call log mutation"));
+        add(out, Manifest.permission.READ_CONTACTS, declared, true, true, "dangerous",
+                array("android.substrate contacts query"));
+        add(out, Manifest.permission.WRITE_CONTACTS, declared, true, true, "dangerous",
+                array("android.substrate contacts mutation"));
+        add(out, Manifest.permission.GET_ACCOUNTS, declared, true, true, "dangerous",
+                array("android.substrate account-backed providers"));
+        add(out, Manifest.permission.READ_CALENDAR, declared, true, true, "dangerous",
+                array("android.substrate calendar query"));
+        add(out, Manifest.permission.WRITE_CALENDAR, declared, true, true, "dangerous",
+                array("android.substrate calendar mutation"));
+        add(out, Manifest.permission.READ_EXTERNAL_STORAGE, declared, true, Build.VERSION.SDK_INT < 33, "dangerous",
+                array("android.substrate media query"));
+        add(out, Manifest.permission.READ_MEDIA_IMAGES, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
+                array("android.substrate image media query"));
+        add(out, Manifest.permission.READ_MEDIA_VIDEO, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
+                array("android.substrate video media query"));
+        add(out, Manifest.permission.READ_MEDIA_AUDIO, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
+                array("android.substrate audio media query"));
         add(out, "com.android.alarm.permission.SET_ALARM", declared, false, true, "normal",
                 array("alarm.intent.set"));
+        add(out, "com.android.voicemail.permission.READ_VOICEMAIL", declared, true, true, "dangerous",
+                array("android.substrate voicemail query"));
+        add(out, "com.android.voicemail.permission.ADD_VOICEMAIL", declared, true, true, "dangerous",
+                array("android.substrate voicemail insert"));
+        add(out, "android.permission.READ_BLOCKED_NUMBERS", declared, true, true, "dangerous",
+                array("android.substrate blocked number query"));
+        add(out, "android.permission.WRITE_BLOCKED_NUMBERS", declared, true, true, "dangerous",
+                array("android.substrate blocked number mutation"));
+        add(out, "android.permission.READ_USER_DICTIONARY", declared, true, true, "dangerous",
+                array("android.substrate user dictionary query"));
+        add(out, "android.permission.WRITE_USER_DICTIONARY", declared, true, true, "dangerous",
+                array("android.substrate user dictionary mutation"));
         return out;
     }
 

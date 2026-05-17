@@ -16,6 +16,7 @@ import android.service.notification.StatusBarNotification;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.MainActivity;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -53,6 +54,7 @@ public final class NotificationController {
         builder
                 .setContentTitle(title)
                 .setContentText(text)
+                .setContentIntent(contentIntent(notificationId))
                 .setSmallIcon(android.R.drawable.stat_notify_more)
                 .setAutoCancel(args.optBoolean("auto_cancel", true))
                 .setOngoing(args.optBoolean("ongoing", false))
@@ -131,9 +133,10 @@ public final class NotificationController {
         builder
                 .setContentTitle(title)
                 .setContentText(text)
+                .setContentIntent(contentIntent(notificationId))
                 .setSmallIcon(android.R.drawable.stat_notify_more)
-                .setAutoCancel(false)
-                .setOngoing(args.optBoolean("ongoing", false))
+                .setAutoCancel(args.optBoolean("auto_cancel", false))
+                .setOngoing(args.optBoolean("ongoing", true))
                 .setOnlyAlertOnce(args.optBoolean("only_alert_once", !audible))
                 .addAction(replyAction);
         if (audible) {
@@ -240,13 +243,27 @@ public final class NotificationController {
 
     private int notificationId(JSONObject args) {
         if (args.has("numeric_id")) {
-            return args.optInt("numeric_id", NOTIFICATION_ID);
+            return Math.max(1, args.optInt("numeric_id", NOTIFICATION_ID));
         }
         String id = args.optString("id", "");
         if (id.trim().isEmpty()) {
             return NOTIFICATION_ID;
         }
-        return id.hashCode();
+        int hash = id.hashCode();
+        if (hash == Integer.MIN_VALUE) {
+            return NOTIFICATION_ID;
+        }
+        return Math.max(1, Math.abs(hash));
+    }
+
+    private PendingIntent contentIntent(int notificationId) {
+        Intent intent = new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(
+                context,
+                notificationId + 1000,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 }
 

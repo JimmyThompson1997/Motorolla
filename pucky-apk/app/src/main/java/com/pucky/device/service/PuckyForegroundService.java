@@ -11,6 +11,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -21,8 +22,12 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
+import android.view.Gravity;
 import android.util.Log;
 import android.view.Display;
+import android.view.View;
+import android.view.WindowManager;
 
 import java.util.List;
 
@@ -55,6 +60,7 @@ import com.pucky.device.status.StatusProvider;
 import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.storage.StorageProvider;
+import com.pucky.device.substrate.AndroidSubstrateController;
 import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
@@ -74,11 +80,13 @@ public final class PuckyForegroundService extends Service {
     public static final String ACTION_STOP = "stop";
 
     private static final int NOTIFICATION_ID = 41001;
+    private static final int COVER_RESTORE_REQUEST_CODE = 41003;
     private static final String CHANNEL_ID = "pucky_service";
     private static final long WATCHDOG_INITIAL_DELAY_MS = 30_000L;
     private static final long WATCHDOG_INTERVAL_MS = 120_000L;
     private static final long COVER_RESTORE_DELAY_MS = 900L;
     private static final long COVER_RESTORE_DEBOUNCE_MS = 2_500L;
+    private static final int RAZR_COVER_DISPLAY_ID = 1;
 
     private BrokerControlClient brokerClient;
     private TunnelController tunnelController;
@@ -90,6 +98,8 @@ public final class PuckyForegroundService extends Service {
     private Runnable watchdogTask;
     private boolean manualStopRequested;
     private long lastCoverRestoreAtMs;
+    private WindowManager coverSentinelWindowManager;
+    private View coverSentinelView;
 
     public static void start(Context context, boolean connect) {
         Intent intent = new Intent(context, PuckyForegroundService.class)
@@ -127,6 +137,7 @@ public final class PuckyForegroundService extends Service {
         startAsForegroundService();
         registerNetworkCallback();
         registerCoverDisplayListener();
+        ensureCoverVisibilitySentinel("service_started");
         startReconnectWatchdog();
         WakeWordController.shared(this).start(new org.json.JSONObject());
         ensureTunnelStarted("service_started");
@@ -181,6 +192,7 @@ public final class PuckyForegroundService extends Service {
         WakeWordController.shared(this).stop(new org.json.JSONObject());
         stopTunnel("service_destroy");
         disconnectBroker();
+        removeCoverVisibilitySentinel();
         unregisterNetworkCallback();
         PuckyState.get().setServiceRunning(false);
         PuckyState.get().setLifecycleEvent(manualStopRequested ? "service.stopped_manual" : "service.destroyed");
@@ -245,7 +257,8 @@ public final class PuckyForegroundService extends Service {
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settings),
-                TunnelController.shared(this, settings));
+                TunnelController.shared(this, settings),
+                new AndroidSubstrateController(this));
         CommandRouter router = new CommandRouter(executor);
         brokerClient = new BrokerControlClient(this, settings, router, logStore);
         brokerClient.connect();
@@ -404,6 +417,10 @@ public final class PuckyForegroundService extends Service {
     }
 
     private void scheduleCoverRestore(String reason) {
+        scheduleCoverRestore(reason, COVER_RESTORE_DELAY_MS);
+    }
+
+    private void scheduleCoverRestore(String reason, long delayMs) {
         if (manualStopRequested) {
             return;
         }
@@ -414,7 +431,7 @@ public final class PuckyForegroundService extends Service {
             coverRestoreHandler.removeCallbacks(pendingCoverRestore);
         }
         pendingCoverRestore = () -> maybeRestoreCoverActivity(reason);
-        coverRestoreHandler.postDelayed(pendingCoverRestore, COVER_RESTORE_DELAY_MS);
+        coverRestoreHandler.postDelayed(pendingCoverRestore, Math.max(0L, delayMs));
     }
 
     private void maybeRestoreCoverActivity(String reason) {
@@ -423,15 +440,28 @@ public final class PuckyForegroundService extends Service {
             Log.i(TAG, "cover restore skipped; no non-default display reason=" + reason);
             return;
         }
+        ensureCoverVisibilitySentinel("restore_" + reason, displayId);
         long now = SystemClock.elapsedRealtime();
-        if (now - lastCoverRestoreAtMs < COVER_RESTORE_DEBOUNCE_MS) {
+        long elapsed = now - lastCoverRestoreAtMs;
+        if (elapsed < COVER_RESTORE_DEBOUNCE_MS) {
+            if (shouldRetryDebouncedRestore(reason)) {
+                long retryDelayMs = COVER_RESTORE_DEBOUNCE_MS - elapsed + 150L;
+                Log.i(TAG, "cover restore debounced reason=" + reason
+                        + " retry_ms=" + retryDelayMs);
+                scheduleCoverRestore(reason + "_debounce_retry", retryDelayMs);
+            } else {
+                Log.i(TAG, "cover restore debounced reason=" + reason
+                        + " retry=false");
+            }
             return;
         }
         lastCoverRestoreAtMs = now;
         try {
             PuckyApplication app = (PuckyApplication) getApplication();
             SettingsStore settings = app.settingsStore();
-            Intent intent = new Intent(this, MainActivity.class)
+            Intent intent = new Intent(Intent.ACTION_MAIN)
+                    .addCategory("android.intent.category.SECONDARY_HOME")
+                    .setClass(this, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                             | Intent.FLAG_ACTIVITY_SINGLE_TOP
                             | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -439,13 +469,26 @@ public final class PuckyForegroundService extends Service {
                     .putExtra("device_id", settings.getDeviceId())
                     .putExtra("token", settings.getToken())
                     .putExtra("connect", settings.isAutoConnectEnabled());
-            Bundle options = ActivityOptions.makeBasic()
-                    .setLaunchDisplayId(displayId)
-                    .toBundle();
-            startActivity(intent, options);
+            Bundle options = coverLaunchOptions(displayId, true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                PendingIntent pendingIntent = PendingIntent.getActivity(
+                        this,
+                        COVER_RESTORE_REQUEST_CODE,
+                        intent,
+                        pendingFlags);
+                pendingIntent.send(this, 0, null, null, null, null, options);
+                Log.i(TAG, "cover restore pending intent sent display=" + displayId
+                        + " reason=" + reason);
+            } else {
+                startActivity(intent, options);
+            }
             if (coverRestoreHandler != null) {
                 coverRestoreHandler.postDelayed(
-                        () -> moveExistingPuckyTaskToFront("post_start_" + reason),
+                        () -> moveExistingPuckyTaskToFront("post_start_" + reason, displayId),
                         350L);
             }
             PuckyState.get().setLifecycleEvent("cover.restored." + reason + ".display_" + displayId);
@@ -459,7 +502,98 @@ public final class PuckyForegroundService extends Service {
         }
     }
 
-    private boolean moveExistingPuckyTaskToFront(String reason) {
+    private static Bundle coverLaunchOptions(int displayId, boolean forPendingIntent) {
+        ActivityOptions options = ActivityOptions.makeBasic()
+                .setLaunchDisplayId(displayId);
+        if (forPendingIntent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            options.setPendingIntentBackgroundActivityLaunchAllowed(true);
+            options.setPendingIntentBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+        }
+        return options.toBundle();
+    }
+
+    private static boolean shouldRetryDebouncedRestore(String reason) {
+        if (reason == null || reason.endsWith("_debounce_retry")) {
+            return false;
+        }
+        return reason.startsWith("display_")
+                || reason.startsWith("task_removed")
+                || reason.startsWith("service_started")
+                || reason.startsWith("autoconnect_");
+    }
+
+    private void ensureCoverVisibilitySentinel(String reason) {
+        int displayId = findCoverDisplayId();
+        if (displayId >= 0) {
+            ensureCoverVisibilitySentinel(reason, displayId);
+        }
+    }
+
+    private void ensureCoverVisibilitySentinel(String reason, int displayId) {
+        if (coverSentinelView != null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Log.i(TAG, "cover sentinel skipped; overlay permission missing reason=" + reason);
+            return;
+        }
+        DisplayManager displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        Display display = displayManager == null ? null : displayManager.getDisplay(displayId);
+        if (!isCoverDisplay(display)) {
+            Log.i(TAG, "cover sentinel skipped; no cover display reason=" + reason
+                    + " display=" + displayId);
+            return;
+        }
+        try {
+            Context displayContext = createDisplayContext(display);
+            WindowManager windowManager = (WindowManager) displayContext.getSystemService(
+                    Context.WINDOW_SERVICE);
+            if (windowManager == null) {
+                Log.i(TAG, "cover sentinel skipped; no window manager reason=" + reason);
+                return;
+            }
+            View sentinel = new View(displayContext);
+            sentinel.setBackgroundColor(0x01000000);
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    1,
+                    1,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.LEFT;
+            params.x = 0;
+            params.y = 0;
+            params.alpha = 0.05f;
+            params.setTitle("PuckyCoverSentinel");
+            windowManager.addView(sentinel, params);
+            coverSentinelWindowManager = windowManager;
+            coverSentinelView = sentinel;
+            Log.i(TAG, "cover sentinel added display=" + displayId + " reason=" + reason);
+        } catch (Exception exc) {
+            Log.w(TAG, "cover sentinel failed reason=" + reason, exc);
+        }
+    }
+
+    private void removeCoverVisibilitySentinel() {
+        if (coverSentinelWindowManager == null || coverSentinelView == null) {
+            coverSentinelWindowManager = null;
+            coverSentinelView = null;
+            return;
+        }
+        try {
+            coverSentinelWindowManager.removeView(coverSentinelView);
+        } catch (RuntimeException ignored) {
+            // The system can detach the overlay during display teardown.
+        }
+        coverSentinelWindowManager = null;
+        coverSentinelView = null;
+    }
+
+    private boolean moveExistingPuckyTaskToFront(String reason, int targetDisplayId) {
         try {
             ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
             if (manager == null) {
@@ -477,7 +611,8 @@ public final class PuckyForegroundService extends Service {
                     task.moveToFront();
                     PuckyState.get().setLifecycleEvent("cover.task_fronted." + reason);
                     PuckyState.get().broadcast(this);
-                    Log.i(TAG, "cover restore moved existing task front reason=" + reason);
+                    Log.i(TAG, "cover restore moved existing task front target_display="
+                            + targetDisplayId + " reason=" + reason);
                     return true;
                 }
             }
@@ -495,23 +630,50 @@ public final class PuckyForegroundService extends Service {
         if (manager == null) {
             return -1;
         }
-        Display preferred = manager.getDisplay(1);
-        if (isUsableCoverDisplay(preferred)) {
+        Display preferred = manager.getDisplay(RAZR_COVER_DISPLAY_ID);
+        if (isCoverDisplay(preferred)) {
+            logCoverDisplayCandidate("preferred", preferred);
             return preferred.getDisplayId();
         }
         Display[] displays = manager.getDisplays();
         for (Display display : displays) {
-            if (isUsableCoverDisplay(display)) {
+            if (isCoverDisplay(display)) {
+                logCoverDisplayCandidate("listed", display);
                 return display.getDisplayId();
             }
         }
         return -1;
     }
 
-    private static boolean isUsableCoverDisplay(Display display) {
+    private void logCoverDisplayCandidate(String source, Display display) {
+        Log.i(TAG, "cover display selected source=" + source
+                + " id=" + display.getDisplayId()
+                + " state=" + displayStateName(display.getState())
+                + " name=" + display.getName());
+    }
+
+    private static boolean isCoverDisplay(Display display) {
         return display != null
-                && display.getDisplayId() != Display.DEFAULT_DISPLAY
-                && display.getState() != Display.STATE_OFF;
+                && display.getDisplayId() != Display.DEFAULT_DISPLAY;
+    }
+
+    private static String displayStateName(int state) {
+        switch (state) {
+            case Display.STATE_OFF:
+                return "OFF";
+            case Display.STATE_ON:
+                return "ON";
+            case Display.STATE_DOZE:
+                return "DOZE";
+            case Display.STATE_DOZE_SUSPEND:
+                return "DOZE_SUSPEND";
+            case Display.STATE_VR:
+                return "VR";
+            case Display.STATE_ON_SUSPEND:
+                return "ON_SUSPEND";
+            default:
+                return String.valueOf(state);
+        }
     }
 
     private void startReconnectWatchdog() {

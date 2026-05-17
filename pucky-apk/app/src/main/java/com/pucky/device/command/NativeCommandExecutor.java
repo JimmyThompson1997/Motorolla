@@ -24,6 +24,7 @@ import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.status.StatusProvider;
 import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.StorageProvider;
+import com.pucky.device.substrate.AndroidSubstrateController;
 import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
@@ -40,7 +41,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private static final String[] COMMANDS = new String[] {
             "ping", "command.catalog", "status.get", "capabilities.get", "permissions.get",
             "battery.get", "network.get", "location.get", "location.watch", "file.download",
-            "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample",
+            "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample", "sensor.watch",
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
             "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
@@ -66,7 +67,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "tunnel.stop", "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
-            "ui.dashboard.show", "launcher.capability.get"
+            "ui.dashboard.show", "launcher.capability.get", "android.substrate"
     };
 
     private final StatusProvider statusProvider;
@@ -99,6 +100,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final AppUpdateController appUpdateController;
     private final LiveKitController liveKitController;
     private final TunnelController tunnelController;
+    private final AndroidSubstrateController androidSubstrateController;
 
     public NativeCommandExecutor(
             StatusProvider statusProvider,
@@ -130,7 +132,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
             LiveKitController liveKitController,
-            TunnelController tunnelController) {
+            TunnelController tunnelController,
+            AndroidSubstrateController androidSubstrateController) {
         this.statusProvider = statusProvider;
         this.batteryProvider = batteryProvider;
         this.networkProvider = networkProvider;
@@ -161,6 +164,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.appUpdateController = appUpdateController;
         this.liveKitController = liveKitController;
         this.tunnelController = tunnelController;
+        this.androidSubstrateController = androidSubstrateController;
     }
 
     @Override
@@ -194,6 +198,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return sensorController.list();
             case "sensor.sample":
                 return sensorController.sample(command.args());
+            case "sensor.watch":
+                return sensorController.watch(command.args());
             case "camera.info":
                 return cameraController.info();
             case "torch.set":
@@ -385,6 +391,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.showDashboard(command.args());
             case "launcher.capability.get":
                 return uiController.launcherCapability();
+            case "android.substrate":
+                return androidSubstrateController.execute(command.args());
             default:
                 throw new CommandException(
                         CommandErrorCodes.COMMAND_NOT_ALLOWED,

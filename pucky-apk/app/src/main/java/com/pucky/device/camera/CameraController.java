@@ -13,6 +13,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -54,7 +55,15 @@ public final class CameraController {
                 JSONObject item = new JSONObject();
                 Json.put(item, "camera_id", id);
                 Json.put(item, "facing", facing(chars));
-                Json.put(item, "flash_available", Boolean.TRUE.equals(chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)));
+                boolean flashAvailable = Boolean.TRUE.equals(chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
+                Json.put(item, "flash_available", flashAvailable);
+                if (Build.VERSION.SDK_INT >= 33 && flashAvailable) {
+                    Integer maxStrength = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL);
+                    Integer defaultStrength = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_DEFAULT_LEVEL);
+                    Json.put(item, "torch_strength_maximum_level", maxStrength == null ? JSONObject.NULL : maxStrength);
+                    Json.put(item, "torch_strength_default_level", defaultStrength == null ? JSONObject.NULL : defaultStrength);
+                    Json.put(item, "torch_strength_control_available", maxStrength != null && maxStrength > 1);
+                }
                 Integer orientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION);
                 Json.put(item, "sensor_orientation", orientation == null ? JSONObject.NULL : orientation);
                 Size size = chooseJpegSize(chars, 1280);
@@ -87,7 +96,19 @@ public final class CameraController {
             if (cameraId == null) {
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "No flash-capable camera found");
             }
-            manager.setTorchMode(cameraId, enabled);
+            Integer strengthLevel = null;
+            Integer maxStrength = null;
+            if (enabled && args.has("strength_level") && Build.VERSION.SDK_INT >= 33) {
+                CameraCharacteristics chars = manager.getCameraCharacteristics(cameraId);
+                maxStrength = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL);
+                Integer defaultStrength = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_DEFAULT_LEVEL);
+                int fallback = defaultStrength == null ? 1 : defaultStrength;
+                int max = maxStrength == null || maxStrength < 1 ? fallback : maxStrength;
+                strengthLevel = clamp(args.optInt("strength_level", fallback), 1, max);
+                manager.turnOnTorchWithStrengthLevel(cameraId, strengthLevel);
+            } else {
+                manager.setTorchMode(cameraId, enabled);
+            }
             if (enabled && autoOffMs > 0) {
                 String autoOffCameraId = cameraId;
                 mainHandler.postDelayed(() -> {
@@ -101,6 +122,9 @@ public final class CameraController {
             Json.put(out, "enabled", enabled);
             Json.put(out, "camera_id", cameraId);
             Json.put(out, "auto_off_ms", enabled ? autoOffMs : 0);
+            Json.put(out, "strength_level", strengthLevel == null ? JSONObject.NULL : strengthLevel);
+            Json.put(out, "strength_maximum_level", maxStrength == null ? JSONObject.NULL : maxStrength);
+            Json.put(out, "strength_control_used", strengthLevel != null);
             return out;
         } catch (CameraAccessException | SecurityException e) {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, e.getMessage());
@@ -270,6 +294,10 @@ public final class CameraController {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "CameraManager unavailable");
         }
         return manager;
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private void requireCameraPermission() throws CommandException {

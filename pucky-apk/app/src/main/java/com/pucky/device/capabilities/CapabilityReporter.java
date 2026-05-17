@@ -93,6 +93,8 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Public Android sensor inventory."));
         Json.add(out, cap("sensor.sample", "sensor.sample", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Bounded foreground-safe sensor sample."));
+        Json.add(out, cap("sensor.watch", "sensor.watch", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
+                "yes", "quiet", null, "not_recorded", "Bounded multi-sensor watch by exact sensor name/type for physical gesture mapping."));
         Json.add(out, cap("camera.inventory", "camera.info", hasCamera() ? "implemented" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
@@ -212,19 +214,19 @@ public final class CapabilityReporter {
         return out;
     }
 
-    private JSONObject cap(String id, String command, String status, String directControl, String risk, String permission,
+    private JSONObject cap(String id, String command, String status, String directControl, String sensitivity, String permission,
             String lastTestStatus, String notes) {
-        return cap(id, command, status, directControl, risk, permission, null, lastTestStatus, notes);
+        return cap(id, command, status, directControl, sensitivity, permission, null, lastTestStatus, notes);
     }
 
-    private JSONObject cap(String id, String command, String status, String directControl, String risk, String permission,
+    private JSONObject cap(String id, String command, String status, String directControl, String sensitivity, String permission,
             Boolean permissionGranted, String lastTestStatus, String notes) {
         JSONObject out = new JSONObject();
         Json.put(out, "id", id);
         Json.put(out, "command", command == null ? JSONObject.NULL : command);
         Json.put(out, "status", status);
         Json.put(out, "direct_control", directControl);
-        Json.put(out, "risk", risk);
+        Json.put(out, "sensitivity", sensitivity);
         Json.put(out, "permission", permission == null ? JSONObject.NULL : shortPermission(permission));
         Json.put(out, "permission_granted",
                 permission == null ? JSONObject.NULL

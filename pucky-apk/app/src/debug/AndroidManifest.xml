@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name="com.pucky.device.sms.SmsLabSendReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.pucky.device.sms.SMS_LAB_SEND" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.pucky.device.sms.SmsLabResultReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="com.pucky.device.calls.CallLabStartReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.pucky.device.calls.CALL_LAB_START" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

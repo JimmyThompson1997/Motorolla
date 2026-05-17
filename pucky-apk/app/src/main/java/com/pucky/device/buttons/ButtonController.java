@@ -341,9 +341,49 @@ public final class ButtonController {
         Json.put(event, "mapped_action", action);
         Json.put(event, "action_result", actionResult);
         appendEvent(event);
+        postPttGestureToBroker(gesture, action, actionResult, source);
         PuckyState.get().setLifecycleEvent("button." + gesture + "." + actionResult.optString("status", "ok"));
         PuckyState.get().broadcast(context);
         return event;
+    }
+
+    private void postPttGestureToBroker(String gesture, String action, JSONObject actionResult, String source) {
+        if (!"volume_up_hold".equals(gesture) && !"volume_up_hold_release".equals(gesture)) {
+            return;
+        }
+        if (!"livekit.ptt.start".equals(action) && !"livekit.ptt.stop".equals(action)) {
+            return;
+        }
+        try {
+            SettingsStore settings = new SettingsStore(context);
+            JSONObject livekit = liveKitController().status();
+            JSONObject result = actionResult.optJSONObject("result");
+            JSONObject event = new JSONObject();
+            Json.put(event, "schema", "pucky.device_event.v1");
+            Json.put(event, "event_id", "evt_" + Long.toHexString(System.currentTimeMillis()));
+            Json.put(event, "device_id", settings.getDeviceId());
+            Json.put(event, "timestamp", Instant.now().toString());
+            Json.put(event, "type", "volume_up_hold".equals(gesture) ? "ptt.started" : "ptt.released");
+            Json.put(event, "gesture", gesture);
+            Json.put(event, "source", source);
+            Json.put(event, "foreground_only", true);
+            Json.put(event, "mapped_action", action);
+            if (result != null) {
+                String turnId = result.optString("ptt_turn_id", "").trim();
+                if (!turnId.isEmpty()) {
+                    Json.put(event, "ptt_turn_id", turnId);
+                }
+            }
+            Json.put(event, "livekit_state", livekit.optString("state", ""));
+            Json.put(event, "mic_enabled", livekit.optBoolean("mic_enabled", false));
+            String room = livekit.optString("room", "").trim();
+            if (!room.isEmpty()) {
+                Json.put(event, "livekit_room", room);
+            }
+            new BrokerEventPoster(context).postAsync(event);
+        } catch (Exception ignored) {
+            // Button handling must remain reliable even if the broker is unavailable.
+        }
     }
 
     private JSONObject executeAction(String action) {
