@@ -118,6 +118,17 @@ The hold/release actions are wired to LiveKit push-to-talk. They start and stop 
 cover WebView no longer changes into listening/thinking/speaking visual modes. The older `voice.capture.*` and
 `speech.native.*` endpoints remain available for diagnostics.
 
+## Cover UI boundary
+
+The APK hosts the WebView, native bridge, buttons, LiveKit, permissions, and device APIs. It does not own the
+cover-screen visual state. Home, apps, threads, inbox, and later visual rebuilds are served by the VM at
+`/pucky-home`.
+
+`PuckyAndroid.getNativeContext()` returns `pucky.native_context.v1` with native facts only: device id, shell theme,
+safe rectangle, and LiveKit status. `PuckyAndroid.getState()` is kept as a compatibility alias for that same native
+context. Neither bridge method emits cover `mode`, voice visual modes, transcript turns, threads, inbox items, or
+`call_visual`.
+
 ## Future assistant role note
 
 Long-press power is implemented through Android's default-assistant integration, not a raw power-key

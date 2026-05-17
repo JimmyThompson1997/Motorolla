@@ -6,6 +6,8 @@ Keep the cover display intentionally small: one home screen, plus the swipe-up a
 
 This repo hosts the Android WebView shell. The actual `/pucky-home` portal HTML/JS is served by Project Vox outside this repository, so this spec defines the contract that external portal should implement.
 
+The boundary is strict: Android owns native capabilities and facts only. Project Vox owns every visible cover surface, including home, apps, threads, inbox, placeholders, and later rebuilds.
+
 ## Kept Surfaces
 
 - `home`: the existing "Hey Pucky..." home screen.
@@ -13,7 +15,7 @@ This repo hosts the Android WebView shell. The actual `/pucky-home` portal HTML/
 - `threads`: allowed as an app destination.
 - `inbox`: allowed as an app destination.
 
-Android still accepts these modes through `cover_mode` launch extras and returns them from `PuckyAndroid.getState()`.
+These modes are VM/HTML state. Android must not accept launch extras or native events that directly select them.
 
 ## Removed Surfaces
 
@@ -34,23 +36,32 @@ The cover UI should delete or ignore any HTML/CSS/JS pages/components dedicated 
 http://127.0.0.1:8788/pucky-home
 ```
 
-The portal receives `pucky.cover_state.v1` through:
+The portal receives VM-owned `pucky.cover_state.v1` through Project Vox:
 
 - `window.PuckyInitialState`
 - `window.PuckyCover.applyState(...)`
 - `/pucky-ui/state`
 - `/pucky-ui/live`
 
-The stripped state contains:
+That cover state contains:
 
 - `mode`: one of `home`, `apps`, `threads`, or `inbox`.
-- `theme`: `light` or `dark`.
+- `turn`: always idle and transcript-free.
+- `threads`, `current_thread_id`, and `inbox`: lightweight app data owned by the VM.
+
+Android exposes native facts to the portal bridge as `pucky.native_context.v1` through:
+
+- `PuckyAndroid.getNativeContext()`
+- `PuckyAndroid.getState()` as a backward-compatible alias
+
+The native context contains:
+
+- `device_id`: current paired device id.
+- `theme`: native shell light/dark preference.
 - `safe_rect`: the Razr cover-safe dimensions.
 - `livekit`: connection/debug status only.
-- `turn`: always idle and transcript-free.
-- `threads`, `current_thread_id`, and `inbox`: empty placeholders for portal compatibility.
 
-Android no longer sends `call_visual`, no longer derives `mode` from LiveKit/PTT events, and no longer scans LiveKit event history to infer a cover-screen turn.
+Android no longer sends `call_visual`, no longer sends cover `mode`, no longer derives `mode` from LiveKit/PTT events, and no longer scans LiveKit event history to infer a cover-screen turn.
 
 ## Gesture Behavior
 
@@ -85,13 +96,15 @@ The voice agent should be heard, not visualized. The cover screen should stay on
 - Keep the safe-rectangle layout and theme variables.
 - Keep app navigation local and explicit.
 - Keep normal scroll behavior in app surfaces that need it.
+- Treat Android bridge data as native context only. It may update safe area/theme/LiveKit facts, but it may not update cover `mode`.
 
 ## Acceptance Criteria
 
 - From `home`, swipe up opens `apps`.
 - From `apps`, swipe down returns to `home`.
-- Launching with `cover_mode=home|apps|threads|inbox` works.
-- Launching with `cover_mode=listening|finalizing|thinking|speaking` is ignored.
+- Launching with any `cover_mode` extra does not change the cover UI.
 - PTT start/stop and VM `cover.event` activity do not change the displayed cover mode.
-- `PuckyAndroid.getState()` never emits voice modes or `call_visual`.
+- `PuckyAndroid.getNativeContext()` emits `pucky.native_context.v1`.
+- `PuckyAndroid.getState()` remains only as a compatibility alias for native context.
+- Android bridge state never emits cover `mode`, voice modes, `turn`, `threads`, `inbox`, or `call_visual`.
 - The portal can be rebuilt later from the home/apps contract without inheriting the old voice visual state machine.

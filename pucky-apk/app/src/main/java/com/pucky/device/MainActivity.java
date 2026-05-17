@@ -25,6 +25,7 @@ import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.Display;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.View;
@@ -103,10 +104,6 @@ public final class MainActivity extends Activity {
     private static final String HOME_PORTAL_PATH = "/pucky-home";
     private static final String COVER_PREFS = "pucky_cover_ui";
     private static final String PREF_LIGHT_MODE = "light_mode";
-    private static final String MODE_HOME = "home";
-    private static final String MODE_APPS = "apps";
-    private static final String MODE_THREADS = "threads";
-    private static final String MODE_INBOX = "inbox";
     private static final int COVER_SAFE_RECT_WIDTH_PX = 992;
     private static final int COVER_SAFE_RECT_BOTTOM_PX = 102;
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
@@ -131,8 +128,8 @@ public final class MainActivity extends Activity {
     private boolean homePortalErrorVisible;
     private String lastHomePortalUrl = "";
     private boolean coverLightMode;
-    private String coverSurfaceMode = MODE_HOME;
     private boolean screenReceiverRegistered;
+    private boolean coverGestureReceiverRegistered;
     private boolean assistantSetupMode;
     private boolean pendingAssistantSetupAfterPermission;
 
@@ -149,6 +146,16 @@ public final class MainActivity extends Activity {
             String action = intent == null ? "" : intent.getAction();
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.post(MainActivity.this::renderCurrent);
+            }
+        }
+    };
+
+    private final BroadcastReceiver coverGestureReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent == null ? "" : intent.getAction();
+            if (PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP.equals(action)) {
+                mainHandler.post(MainActivity.this::hideCoverHomeForGestureSleep);
             }
         }
     };
@@ -258,6 +265,13 @@ public final class MainActivity extends Activity {
             registerReceiver(screenReceiver, screenFilter);
         }
         screenReceiverRegistered = true;
+        IntentFilter coverGestureFilter = new IntentFilter(PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(coverGestureReceiver, coverGestureFilter, RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(coverGestureReceiver, coverGestureFilter);
+        }
+        coverGestureReceiverRegistered = true;
         applySystemUiForMode();
         if (!assistantSetupMode) {
             ensureAutoConnectService();
@@ -281,6 +295,10 @@ public final class MainActivity extends Activity {
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver);
             screenReceiverRegistered = false;
+        }
+        if (coverGestureReceiverRegistered) {
+            unregisterReceiver(coverGestureReceiver);
+            coverGestureReceiverRegistered = false;
         }
     }
 
@@ -343,6 +361,19 @@ public final class MainActivity extends Activity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
             getWindow().setAttributes(params);
         }
+    }
+
+    private void hideCoverHomeForGestureSleep() {
+        if (adminMode || assistantSetupMode) {
+            return;
+        }
+        Display display = getDisplay();
+        if (display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+            return;
+        }
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        moveTaskToBack(true);
+        Log.i(TAG, "cover home moved to back for gesture sleep");
     }
 
     private void applySystemUiForMode() {
@@ -523,13 +554,11 @@ public final class MainActivity extends Activity {
                 + "&token=" + Uri.encode(token == null ? "" : token);
     }
 
-    private JSONObject buildCoverState() {
+    private JSONObject buildNativeContext() {
         JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
-        String mode = isKnownCoverMode(coverSurfaceMode) ? coverSurfaceMode : MODE_HOME;
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.cover_state.v1");
+        Json.put(out, "schema", "pucky.native_context.v1");
         Json.put(out, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
-        Json.put(out, "mode", mode);
         Json.put(out, "theme", coverLightMode ? "light" : "dark");
 
         JSONObject safe = new JSONObject();
@@ -545,21 +574,6 @@ public final class MainActivity extends Activity {
         Json.put(live, "room", liveKit.opt("room"));
         Json.put(live, "remote_audio_gain", liveKit.opt("remote_audio_gain"));
         Json.put(out, "livekit", live);
-
-        JSONObject turn = new JSONObject();
-        Json.put(turn, "id", JSONObject.NULL);
-        Json.put(turn, "phase", "idle");
-        Json.put(turn, "speaker", JSONObject.NULL);
-        Json.put(turn, "user_transcript", "");
-        Json.put(turn, "assistant_transcript", "");
-        Json.put(turn, "accepted_at", JSONObject.NULL);
-        Json.put(turn, "reply_started_at", JSONObject.NULL);
-        Json.put(turn, "reply_finished_at", JSONObject.NULL);
-        Json.put(out, "turn", turn);
-
-        Json.put(out, "threads", new JSONArray());
-        Json.put(out, "current_thread_id", JSONObject.NULL);
-        Json.put(out, "inbox", new JSONArray());
         return out;
     }
 
@@ -1045,7 +1059,12 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getState() {
-            return buildCoverState().toString();
+            return buildNativeContext().toString();
+        }
+
+        @JavascriptInterface
+        public String getNativeContext() {
+            return buildNativeContext().toString();
         }
 
         @JavascriptInterface
@@ -1117,13 +1136,6 @@ public final class MainActivity extends Activity {
             showAssistantSetupScreen();
             return;
         }
-        if (intent != null && intent.hasExtra("cover_mode")) {
-            String mode = intent.getStringExtra("cover_mode");
-            if (isKnownCoverMode(mode)) {
-                coverSurfaceMode = mode;
-                renderHome();
-            }
-        }
         String provisioningJson = provisioningJsonFromIntent(intent);
         if (provisioningJson != null) {
             try {
@@ -1179,13 +1191,6 @@ public final class MainActivity extends Activity {
             return raw == null ? "{}" : raw;
         }
         return null;
-    }
-
-    private boolean isKnownCoverMode(String mode) {
-        return MODE_HOME.equals(mode)
-                || MODE_APPS.equals(mode)
-                || MODE_THREADS.equals(mode)
-                || MODE_INBOX.equals(mode);
     }
 
     private void ensureAutoConnectService() {
