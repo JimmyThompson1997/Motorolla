@@ -120,17 +120,15 @@ LiveKit/WebRTC turn-taking implementation.
 
 ## Future assistant role note
 
-Long-press power is intentionally punted for now. A normal foreground APK cannot reliably capture the power
-button because Android reserves it for system power, emergency, and assistant behavior. The future path is an
-experimental Android default-assistant integration (`VoiceInteractionService`/assistant role) so Pucky can be
+Long-press power is implemented through Android's default-assistant integration, not a raw power-key
+interceptor. A normal foreground APK cannot reliably capture the power button because Android reserves it for
+system power, emergency, and assistant behavior. Pucky registers a `VoiceInteractionService` so it can be
 selected instead of Gemini where Motorola exposes the standard assistant gesture.
 
-The desired behavior is not a foreground key interceptor. Pucky should register as a real Android assistant
-candidate, request the assistant role, and let SystemUI/Motorola route the long-press power gesture into a
-`VoiceInteractionSession`. That session can then foreground the cover UI and start an open-ended LiveKit call
-mode: mic stays open until the user taps End or says a stop phrase, while Pucky continues to use the same
-Project Vox transcript, thinking, and speaking state machine. This still needs a device proof because Motorola
-may route the assistant gesture differently on the outer display than on the inner display.
+The first behavior is deliberately tiny: when Android invokes Pucky's `VoiceInteractionSession`, Pucky starts
+the foreground service and toggles the LiveKit PTT line. If no Pucky mic line is active, the gesture starts
+an open mic turn with a haptic tick. If a Pucky mic line is active, the same gesture stops it with a haptic
+tick. Motorola owns the actual hold duration through Settings > Gestures > Power key / Press and hold.
 
 ## Phase 3 puckyctl
 

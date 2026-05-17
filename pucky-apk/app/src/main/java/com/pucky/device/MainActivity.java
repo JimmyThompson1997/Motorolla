@@ -43,6 +43,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.pucky.device.artifacts.ArtifactController;
+import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.battery.BatteryProvider;
 import com.pucky.device.buttons.ButtonController;
@@ -656,6 +657,15 @@ public final class MainActivity extends Activity {
         refresh.setOnClickListener(v -> renderState());
         appActions.addView(refresh, weightedButtonParams());
         root.addView(appActions);
+
+        LinearLayout assistantActions = row();
+        Button assistant = button("Assistant");
+        assistant.setOnClickListener(v -> PuckyAssistantController.openAssistantSetup(this));
+        assistantActions.addView(assistant, weightedButtonParams());
+        Button voiceSettings = button("Voice settings");
+        voiceSettings.setOnClickListener(v -> openVoiceSettings());
+        assistantActions.addView(voiceSettings, weightedButtonParams());
+        root.addView(assistantActions);
 
         root.addView(sectionTitle("Provisioning"));
 
@@ -1514,6 +1524,7 @@ public final class MainActivity extends Activity {
         stateText.setText("Device: " + settingsStore.getDeviceId()
                 + "\nBroker: " + compactBroker(settingsStore.getBrokerUrl())
                 + "\nLiveKit: " + liveKitSummary()
+                + "\nAssistant: " + assistantSummary()
                 + "\nBattery: " + batterySummary()
                 + "\nNetwork: " + networkSummary()
                 + "\nWarnings: " + warningsSummary()
@@ -1671,6 +1682,19 @@ public final class MainActivity extends Activity {
         return state + (status.optBoolean("mic_enabled", false) ? " mic on" : " mic muted");
     }
 
+    private String assistantSummary() {
+        JSONObject status = PuckyAssistantController.status(this);
+        if (status.optBoolean("configured", false)) {
+            return "Pucky default";
+        }
+        Object assistant = status.opt("assistant");
+        String current = assistant == null || assistant == JSONObject.NULL ? "none" : assistant.toString();
+        if (current.contains("googlequicksearchbox")) {
+            return "Google/Gemini default";
+        }
+        return "not default (" + current + ")";
+    }
+
     private String join(JSONArray values) {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < values.length(); i++) {
@@ -1693,6 +1717,14 @@ public final class MainActivity extends Activity {
     private void openAppSettings() {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                 .setData(Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
+    }
+
+    private void openVoiceSettings() {
+        Intent intent = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
+        if (intent.resolveActivity(getPackageManager()) == null) {
+            intent = new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
+        }
         startActivity(intent);
     }
 }

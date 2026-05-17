@@ -51,6 +51,9 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <intent>
+            <action android:name="android.service.voice.VoiceInteractionService" />
+        </intent>
     </queries>
 
     <application
@@ -80,6 +83,33 @@
             android:name=".service.PuckyForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync|camera|location|mediaPlayback|microphone" />
+
+        <service
+            android:name=".assistant.PuckyVoiceInteractionService"
+            android:exported="true"
+            android:label="Pucky"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/pucky_voice_interaction" />
+        </service>
+
+        <service
+            android:name=".assistant.PuckyVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <service
+            android:name=".assistant.PuckyRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".timers.TimerReceiver"
