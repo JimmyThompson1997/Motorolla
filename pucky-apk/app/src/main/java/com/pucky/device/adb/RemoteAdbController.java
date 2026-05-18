@@ -3,7 +3,11 @@ package com.pucky.device.adb;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
+import android.net.wifi.WifiManager;
 import android.provider.Settings;
+import android.text.TextUtils;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -23,6 +27,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public final class RemoteAdbController {
     private static final String SCHEMA_STATUS = "pucky.adb_remote_status.v1";
@@ -32,6 +38,7 @@ public final class RemoteAdbController {
     private static final String GLOBAL_ADB_WIFI_PORT = "adb_wifi_port";
     private static final String GLOBAL_ADB_WIFI_PAIRING_PORT = "adb_wifi_pairing_port";
     private static final String GLOBAL_DEVELOPMENT_SETTINGS_ENABLED = "development_settings_enabled";
+    private static final String ADB_TLS_CONNECT_SERVICE = "_adb-tls-connect._tcp.";
     private static final int DEFAULT_RECONNECT_WAIT_MS = 20000;
     private static final int DEFAULT_RECONNECT_POLL_MS = 1000;
     private static final int DEFAULT_WIFI_ENABLE_WAIT_MS = 20000;
@@ -117,10 +124,14 @@ public final class RemoteAdbController {
     public JSONObject wifiStatus(JSONObject args) {
         JSONObject safeArgs = args == null ? new JSONObject() : args;
         PortSnapshot snapshot = readListenPorts();
+        MdnsSnapshot mdns = safeArgs.optBoolean("discover_mdns", true)
+                ? discoverMdns(Math.max(1000, Math.min(30000, safeArgs.optInt("mdns_wait_ms", 5000))))
+                : MdnsSnapshot.skipped();
         JSONObject out = baseWifiStatus(snapshot);
+        Json.put(out, "mdns", mdns.toJson());
         int requestedPort = requestedPort(safeArgs);
         Json.put(out, "requested_port", requestedPort > 0 ? requestedPort : JSONObject.NULL);
-        Json.put(out, "selected_port_hint", selectPort(safeArgs, new HashSet<>(), snapshot.ports));
+        Json.put(out, "selected_port_hint", selectPort(safeArgs, new HashSet<>(), snapshot.ports, mdns.connectPort));
         Json.put(out, "notes", "Experimental official Wireless Debugging path. Enabling needs WRITE_SECURE_SETTINGS; VM ADB may still need Android wireless-debugging pairing trust.");
         return out;
     }
@@ -137,16 +148,21 @@ public final class RemoteAdbController {
                 safeArgs.optInt("wait_ms", DEFAULT_WIFI_ENABLE_WAIT_MS)));
         long pollMs = Math.max(250, Math.min(5000,
                 safeArgs.optInt("poll_ms", DEFAULT_WIFI_ENABLE_POLL_MS)));
+        MdnsSnapshot mdns = MdnsSnapshot.skipped();
         PortSnapshot after = readListenPorts();
-        int selectedPort = selectPort(safeArgs, before.ports, after.ports);
+        int selectedPort = selectPort(safeArgs, before.ports, after.ports, mdns.connectPort);
         while (System.currentTimeMillis() - started < waitMs
                 && (readGlobalInt(GLOBAL_ADB_WIFI_ENABLED, 0) != 1 || selectedPort <= 0)) {
             sleep(pollMs);
             after = readListenPorts();
-            selectedPort = selectPort(safeArgs, before.ports, after.ports);
+            if (safeArgs.optBoolean("discover_mdns", true)) {
+                mdns = discoverMdns(Math.max(1000, Math.min(10000, safeArgs.optInt("mdns_wait_ms", 3000))));
+            }
+            selectedPort = selectPort(safeArgs, before.ports, after.ports, mdns.connectPort);
         }
 
         JSONObject out = baseWifiStatus(after);
+        Json.put(out, "mdns", mdns.toJson());
         Json.put(out, "schema", "pucky.adb_wifi_enable_result.v1");
         Json.put(out, "requested_enabled", true);
         Json.put(out, "previous_adb_wifi_enabled", previous == null ? JSONObject.NULL : previous);
@@ -341,7 +357,7 @@ public final class RemoteAdbController {
         return out;
     }
 
-    private int selectPort(JSONObject args, Set<Integer> before, Set<Integer> after) {
+    private int selectPort(JSONObject args, Set<Integer> before, Set<Integer> after, int mdnsPort) {
         int requested = requestedPort(args);
         if (requested > 0) {
             return requested;
@@ -349,6 +365,9 @@ public final class RemoteAdbController {
         int globalPort = parsePort(readGlobalString(GLOBAL_ADB_WIFI_PORT));
         if (globalPort > 0) {
             return globalPort;
+        }
+        if (mdnsPort > 0) {
+            return mdnsPort;
         }
         for (int port : sortedPorts(after)) {
             if (!before.contains(port) && isWifiCandidatePort(port)) {
@@ -361,6 +380,100 @@ public final class RemoteAdbController {
             }
         }
         return 0;
+    }
+
+    private MdnsSnapshot discoverMdns(int timeoutMs) {
+        NsdManager nsd = (NsdManager) context.getSystemService(Context.NSD_SERVICE);
+        if (nsd == null) {
+            return MdnsSnapshot.failed("NsdManager unavailable");
+        }
+        WifiManager.MulticastLock lock = null;
+        try {
+            WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi != null) {
+                lock = wifi.createMulticastLock("PuckyAdbWifiDiscovery");
+                lock.setReferenceCounted(false);
+                lock.acquire();
+            }
+        } catch (RuntimeException ignored) {
+            lock = null;
+        }
+
+        MdnsSnapshot snapshot = new MdnsSnapshot();
+        CountDownLatch foundLatch = new CountDownLatch(1);
+        final boolean[] discoveryStarted = new boolean[] { false };
+        NsdManager.DiscoveryListener listener = new NsdManager.DiscoveryListener() {
+            @Override
+            public void onStartDiscoveryFailed(String serviceType, int errorCode) {
+                snapshot.error("start_failed", errorCode);
+                foundLatch.countDown();
+            }
+
+            @Override
+            public void onStopDiscoveryFailed(String serviceType, int errorCode) {
+                snapshot.error("stop_failed", errorCode);
+            }
+
+            @Override
+            public void onDiscoveryStarted(String serviceType) {
+                discoveryStarted[0] = true;
+            }
+
+            @Override
+            public void onDiscoveryStopped(String serviceType) {
+            }
+
+            @Override
+            public void onServiceFound(NsdServiceInfo serviceInfo) {
+                if (serviceInfo == null || !ADB_TLS_CONNECT_SERVICE.equals(serviceInfo.getServiceType())) {
+                    return;
+                }
+                nsd.resolveService(serviceInfo, new NsdManager.ResolveListener() {
+                    @Override
+                    public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
+                        snapshot.error("resolve_failed", errorCode);
+                    }
+
+                    @Override
+                    public void onServiceResolved(NsdServiceInfo resolved) {
+                        snapshot.add(resolved);
+                        if (snapshot.connectPort > 0) {
+                            foundLatch.countDown();
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public void onServiceLost(NsdServiceInfo serviceInfo) {
+            }
+        };
+
+        try {
+            nsd.discoverServices(ADB_TLS_CONNECT_SERVICE, NsdManager.PROTOCOL_DNS_SD, listener);
+            foundLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException exc) {
+            Thread.currentThread().interrupt();
+            snapshot.message = "interrupted";
+        } catch (RuntimeException exc) {
+            snapshot.message = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+        } finally {
+            if (discoveryStarted[0]) {
+                try {
+                    nsd.stopServiceDiscovery(listener);
+                } catch (RuntimeException ignored) {
+                    // Discovery may already have stopped after an error callback.
+                }
+            }
+            if (lock != null && lock.isHeld()) {
+                try {
+                    lock.release();
+                } catch (RuntimeException ignored) {
+                    // Best effort.
+                }
+            }
+        }
+        return snapshot;
     }
 
     private int requestedPort(JSONObject args) {
@@ -443,5 +556,57 @@ public final class RemoteAdbController {
         final Set<Integer> ports = new HashSet<>();
         final JSONArray entries = new JSONArray();
         final JSONArray errors = new JSONArray();
+    }
+
+    private static final class MdnsSnapshot {
+        int connectPort;
+        String message = "ok";
+        final JSONArray services = new JSONArray();
+        final JSONArray errors = new JSONArray();
+
+        static MdnsSnapshot skipped() {
+            MdnsSnapshot snapshot = new MdnsSnapshot();
+            snapshot.message = "skipped";
+            return snapshot;
+        }
+
+        static MdnsSnapshot failed(String message) {
+            MdnsSnapshot snapshot = new MdnsSnapshot();
+            snapshot.message = message;
+            return snapshot;
+        }
+
+        synchronized void add(NsdServiceInfo serviceInfo) {
+            int port = serviceInfo == null ? 0 : serviceInfo.getPort();
+            if (connectPort <= 0 && port > 0) {
+                connectPort = port;
+            }
+            JSONObject service = new JSONObject();
+            Json.put(service, "service_name", serviceInfo == null ? JSONObject.NULL : serviceInfo.getServiceName());
+            Json.put(service, "service_type", serviceInfo == null ? JSONObject.NULL : serviceInfo.getServiceType());
+            Json.put(service, "port", port > 0 ? port : JSONObject.NULL);
+            String host = serviceInfo == null || serviceInfo.getHost() == null
+                    ? ""
+                    : serviceInfo.getHost().getHostAddress();
+            Json.put(service, "host", TextUtils.isEmpty(host) ? JSONObject.NULL : host);
+            Json.add(services, service);
+        }
+
+        synchronized void error(String stage, int code) {
+            JSONObject error = new JSONObject();
+            Json.put(error, "stage", stage);
+            Json.put(error, "code", code);
+            Json.add(errors, error);
+        }
+
+        synchronized JSONObject toJson() {
+            JSONObject out = new JSONObject();
+            Json.put(out, "service_type", ADB_TLS_CONNECT_SERVICE);
+            Json.put(out, "message", message);
+            Json.put(out, "connect_port", connectPort > 0 ? connectPort : JSONObject.NULL);
+            Json.put(out, "services", services);
+            Json.put(out, "errors", errors);
+            return out;
+        }
     }
 }
