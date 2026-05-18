@@ -108,8 +108,6 @@ public final class PuckyForegroundService extends Service {
     private WindowManager coverSentinelWindowManager;
     private View coverSentinelView;
     private CoverDisplayGestureController coverDisplayGestureController;
-    private final CoverDisplayGestureController.Callbacks coverGestureCallbacks =
-            reason -> scheduleCoverRestore(reason, 450L);
 
     public static void start(Context context, boolean connect) {
         Intent intent = new Intent(context, PuckyForegroundService.class)
@@ -147,7 +145,6 @@ public final class PuckyForegroundService extends Service {
         startAsForegroundService();
         registerNetworkCallback();
         coverDisplayGestureController = CoverDisplayGestureController.shared(this);
-        coverDisplayGestureController.setCallbacks(coverGestureCallbacks);
         coverDisplayGestureController.start();
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
@@ -199,7 +196,6 @@ public final class PuckyForegroundService extends Service {
     public void onDestroy() {
         stopReconnectWatchdog();
         if (coverDisplayGestureController != null) {
-            coverDisplayGestureController.clearCallbacks(coverGestureCallbacks);
             coverDisplayGestureController.stop();
             coverDisplayGestureController = null;
         }
@@ -455,11 +451,6 @@ public final class PuckyForegroundService extends Service {
     }
 
     private void maybeRestoreCoverActivity(String reason) {
-        if (coverDisplayGestureController != null
-                && coverDisplayGestureController.shouldSuppressCoverRestore()) {
-            Log.i(TAG, "cover restore skipped; gesture sleep active reason=" + reason);
-            return;
-        }
         int displayId = findCoverDisplayId();
         if (displayId < 0) {
             Log.i(TAG, "cover restore skipped; no non-default display reason=" + reason);
