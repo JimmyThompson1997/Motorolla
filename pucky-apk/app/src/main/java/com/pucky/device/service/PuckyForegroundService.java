@@ -40,6 +40,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.sensors.CoverWaveController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
@@ -73,6 +74,13 @@ public final class PuckyForegroundService extends Service {
     private BrokerControlClient brokerClient;
     private TunnelController tunnelController;
     private CoverDisplayPresenter coverDisplayPresenter;
+    private CoverWaveController coverWaveController;
+    private final CoverWaveController.Callbacks coverWaveCallbacks =
+            reason -> {
+                if (coverDisplayPresenter != null) {
+                    coverDisplayPresenter.armOnce("cover_wave_" + reason);
+                }
+            };
     private ConnectivityManager.NetworkCallback networkCallback;
     private Handler watchdogHandler;
     private Runnable watchdogTask;
@@ -114,6 +122,9 @@ public final class PuckyForegroundService extends Service {
         startAsForegroundService();
         coverDisplayPresenter = new CoverDisplayPresenter(this);
         coverDisplayPresenter.armOnce("service_started");
+        coverWaveController = CoverWaveController.shared(this);
+        coverWaveController.setCallbacks(coverWaveCallbacks);
+        coverWaveController.start();
         registerNetworkCallback();
         startReconnectWatchdog();
         WakeWordController.shared(this).start(new org.json.JSONObject());
@@ -168,6 +179,11 @@ public final class PuckyForegroundService extends Service {
         if (coverDisplayPresenter != null) {
             coverDisplayPresenter.shutdown("service_destroy");
             coverDisplayPresenter = null;
+        }
+        if (coverWaveController != null) {
+            coverWaveController.clearCallbacks(coverWaveCallbacks);
+            coverWaveController.stop();
+            coverWaveController = null;
         }
         WakeWordController.shared(this).stop(new org.json.JSONObject());
         stopTunnel("service_destroy");
@@ -232,6 +248,7 @@ public final class PuckyForegroundService extends Service {
                 new ButtonController(this),
                 VoiceCaptureController.shared(this),
                 NativeSpeechController.shared(this),
+                CoverWaveController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settings),

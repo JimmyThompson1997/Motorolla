@@ -11,8 +11,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 10
-        versionName "0.2.9-assistant-setup-notification"
+        versionCode 14
+        versionName "0.2.13-clean-cover-wave"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -6,10 +6,12 @@ param(
     [string]$AndroidHome = "C:\Users\jimmy\Desktop\Android\tools\android-sdk",
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
-    [int]$ExpectedVersionCode = 10,
-    [string]$ExpectedVersionName = "0.2.9-assistant-setup-notification-debug",
+    [int]$ExpectedVersionCode = -1,
+    [string]$ExpectedVersionName = "",
     [switch]$SkipBuild,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$AllowDirty,
+    [switch]$AllowUnpushed
 )
 
 Set-StrictMode -Version Latest
@@ -45,9 +47,43 @@ $gradle = Resolve-ExistingPath -Path $GradlePath -Label "Gradle"
 $java = Resolve-ExistingPath -Path $JavaHome -Label "JAVA_HOME"
 $android = Resolve-ExistingPath -Path $AndroidHome -Label "ANDROID_HOME"
 $apk = Join-Path $canonicalProject "app\build\outputs\apk\debug\app-debug.apk"
+$buildFile = Join-Path $canonicalProject "app\build.gradle"
+
+$gitHead = (& git -C $repoRoot rev-parse HEAD).Trim()
+$gitBranch = (& git -C $repoRoot branch --show-current).Trim()
+$gitStatus = (& git -C $repoRoot status --porcelain) -join "`n"
+if (-not $AllowDirty -and -not [string]::IsNullOrWhiteSpace($gitStatus)) {
+    throw "Refusing to deploy dirty worktree from $repoRoot. Commit/push first, or pass -AllowDirty for a local lab build."
+}
+if (-not $AllowUnpushed) {
+    $upstream = (& git -C $repoRoot rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null).Trim()
+    if ([string]::IsNullOrWhiteSpace($upstream)) {
+        throw "Refusing to deploy branch without upstream. Push/set upstream first, or pass -AllowUnpushed for a local lab build."
+    }
+    $upstreamHead = (& git -C $repoRoot rev-parse $upstream).Trim()
+    if ($gitHead -ne $upstreamHead) {
+        throw "Refusing to deploy unpushed HEAD $gitHead; upstream $upstream is $upstreamHead. Push first, or pass -AllowUnpushed for a local lab build."
+    }
+}
+
+$buildText = Get-Content -Raw -LiteralPath $buildFile
+if ($ExpectedVersionCode -lt 0) {
+    if ($buildText -notmatch "versionCode\s+(\d+)") {
+        throw "Could not parse versionCode from $buildFile"
+    }
+    $ExpectedVersionCode = [int]$Matches[1]
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedVersionName)) {
+    if ($buildText -notmatch 'versionName\s+"([^"]+)"') {
+        throw "Could not parse versionName from $buildFile"
+    }
+    $ExpectedVersionName = "$($Matches[1])-debug"
+}
 
 Write-Host "Canonical repo: $repoRoot"
 Write-Host "APK project:    $canonicalProject"
+Write-Host "Git branch:     $gitBranch"
+Write-Host "Git HEAD:       $gitHead"
 Write-Host "ADB:            $adb"
 Write-Host "Gradle:         $gradle"
 Write-Host "Device serial:  $Serial"

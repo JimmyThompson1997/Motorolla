@@ -56,6 +56,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.sensors.CoverWaveController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.speech.NativeSpeechController;
@@ -582,6 +583,7 @@ public final class MainActivity extends Activity {
                 buttonController == null ? new ButtonController(this) : buttonController,
                 VoiceCaptureController.shared(this),
                 NativeSpeechController.shared(this),
+                CoverWaveController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settingsStore),

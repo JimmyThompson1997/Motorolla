@@ -20,6 +20,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.sensors.CoverWaveController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.status.StatusProvider;
@@ -57,6 +58,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "button.events.list", "button.events.clear", "button.simulate",
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
+            "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -96,6 +98,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final ButtonController buttonController;
     private final VoiceCaptureController voiceCaptureController;
     private final NativeSpeechController nativeSpeechController;
+    private final CoverWaveController coverWaveController;
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
     private final LiveKitController liveKitController;
@@ -129,6 +132,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             ButtonController buttonController,
             VoiceCaptureController voiceCaptureController,
             NativeSpeechController nativeSpeechController,
+            CoverWaveController coverWaveController,
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
             LiveKitController liveKitController,
@@ -160,6 +164,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.buttonController = buttonController;
         this.voiceCaptureController = voiceCaptureController;
         this.nativeSpeechController = nativeSpeechController;
+        this.coverWaveController = coverWaveController;
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
         this.liveKitController = liveKitController;
@@ -314,6 +319,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return voiceCaptureController.list(command.args());
             case "voice.capture.delete":
                 return voiceCaptureController.delete(command.args());
+            case "cover.wave.status":
+                return coverWaveController.status();
+            case "cover.wave.config.set":
+                return coverWaveController.configure(command.args());
+            case "cover.wave.trigger":
+                return coverWaveController.trigger(command.args());
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":

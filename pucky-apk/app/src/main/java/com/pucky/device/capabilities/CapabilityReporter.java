@@ -95,6 +95,10 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Bounded foreground-safe sensor sample."));
         Json.add(out, cap("sensor.watch", "sensor.watch", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Bounded multi-sensor watch by exact sensor name/type for physical gesture mapping."));
+        Json.add(out, cap("cover.wave", "cover.wave.status/cover.wave.config.set/cover.wave.trigger",
+                hasAnySensor() ? "implemented_safe_default_off" : "blocked_by_hardware",
+                "foreground_service", "visible", null, "not_recorded",
+                "Cover hand-wave detector restored from the old sensor logic. Defaults off; display actions require explicit action_enabled and action_mode=display."));
         Json.add(out, cap("camera.inventory", "camera.info", hasCamera() ? "implemented" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
