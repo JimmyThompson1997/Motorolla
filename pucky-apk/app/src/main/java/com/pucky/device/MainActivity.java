@@ -7,10 +7,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.KeyguardManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
@@ -91,8 +89,6 @@ import java.util.List;
 public final class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
     private static final String HOME_PORTAL_PATH = "/pucky-home";
-    private static final String COVER_PREFS = "pucky_cover_ui";
-    private static final String PREF_LIGHT_MODE = "light_mode";
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
@@ -112,26 +108,7 @@ public final class MainActivity extends Activity {
     private boolean homePortalErrorVisible;
     private String lastHomePortalUrl = "";
     private String portalScreen = PORTAL_SCREEN_HOME;
-    private boolean coverLightMode;
-    private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
-
-    private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            renderCurrent();
-        }
-    };
-
-    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent == null ? "" : intent.getAction();
-            if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
-                mainHandler.post(MainActivity.this::renderCurrent);
-            }
-        }
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -143,7 +120,6 @@ public final class MainActivity extends Activity {
         portalScreen = portalScreenFromIntent(getIntent());
         setContentView(buildHomeView());
         applySystemUiForMode();
-        renderCurrent();
         handleLaunchIntent(getIntent());
         if (!isAssistantSetupPortal()) {
             requestNeededPermissions();
@@ -219,26 +195,11 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         configureApplianceWindow();
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED), RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED));
-        }
-        IntentFilter screenFilter = new IntentFilter();
-        screenFilter.addAction(Intent.ACTION_SCREEN_ON);
-        screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(screenReceiver, screenFilter);
-        }
-        screenReceiverRegistered = true;
         applySystemUiForMode();
         if (!isAssistantSetupPortal()) {
             ensureAutoConnectService();
             WakeWordController.shared(this).start(new JSONObject());
         }
-        renderCurrent();
     }
 
     @Override
@@ -246,16 +207,6 @@ public final class MainActivity extends Activity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             applySystemUiForMode();
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        unregisterReceiver(stateReceiver);
-        if (screenReceiverRegistered) {
-            unregisterReceiver(screenReceiver);
-            screenReceiverRegistered = false;
         }
     }
 
@@ -269,7 +220,6 @@ public final class MainActivity extends Activity {
                 handled = buttonController.handleKeyUp(event.getKeyCode(), event);
             }
             if (handled) {
-                renderCurrent();
                 return true;
             }
         }
@@ -315,16 +265,16 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams params = getWindow().getAttributes();
             params.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
             getWindow().setAttributes(params);
         }
     }
 
     private void applySystemUiForMode() {
-        exitHomeImmersiveMode();
+        applyPortalEdgeToEdge();
     }
 
-    private void scheduleHomeImmersiveMode() {
+    private void schedulePortalEdgeToEdge() {
         mainHandler.postDelayed(() -> {
             if (PORTAL_SCREEN_HOME.equals(portalScreen) && homePortalPageFinished) {
                 applySystemUiForMode();
@@ -332,32 +282,40 @@ public final class MainActivity extends Activity {
         }, 500);
     }
 
-    private void exitHomeImmersiveMode() {
+    private void applyPortalEdgeToEdge() {
         Window window = getWindow();
         View decorView = window.getDecorView();
-        decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        decorView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowInsetsController controller = decorView.getWindowInsetsController();
             if (controller != null) {
-                controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
-            window.setDecorFitsSystemWindows(true);
+            window.setDecorFitsSystemWindows(false);
         }
     }
 
     private View buildHomeView() {
         resetCoverRefs();
-        coverLightMode = getSharedPreferences(COVER_PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_LIGHT_MODE, false);
         lastHomePortalUrl = "";
         homePortalLoadStarted = false;
         homePortalPageFinished = false;
 
         FrameLayout root = new FrameLayout(this);
-        int backgroundColor = coverLightMode ? Color.rgb(247, 251, 255) : Color.rgb(2, 6, 10);
+        root.setFitsSystemWindows(false);
+        int backgroundColor = Color.rgb(2, 6, 10);
         root.setBackgroundColor(backgroundColor);
 
         homeWebView = new WebView(this);
+        homeWebView.setFitsSystemWindows(false);
         homeWebView.setBackgroundColor(backgroundColor);
         homeWebView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         homeWebView.setVerticalScrollBarEnabled(false);
@@ -383,7 +341,7 @@ public final class MainActivity extends Activity {
                 homePortalPageFinished = true;
                 lastHomePortalUrl = url == null ? "" : url;
                 Log.i(TAG, "Pucky portal loaded url=" + url);
-                scheduleHomeImmersiveMode();
+                schedulePortalEdgeToEdge();
             }
 
             @Override
@@ -471,7 +429,7 @@ public final class MainActivity extends Activity {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.native_context.v1");
         Json.put(out, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
-        Json.put(out, "theme", coverLightMode ? "light" : "dark");
+        Json.put(out, "theme", "dark");
 
         JSONObject live = new JSONObject();
         Json.put(live, "state", liveKit.optString("state", "unknown"));
@@ -503,7 +461,6 @@ public final class MainActivity extends Activity {
         } else {
             loadHomePortal();
         }
-        renderHome();
     }
 
     private boolean shouldStartInAdmin(Intent intent) {
@@ -557,14 +514,6 @@ public final class MainActivity extends Activity {
 
     private boolean isAssistantSetupPortal() {
         return PORTAL_SCREEN_ASSISTANT_SETUP.equals(portalScreen);
-    }
-
-    private void renderCurrent() {
-        renderHome();
-    }
-
-    private void renderHome() {
-        // The cover experience is rendered by the portal loaded in the WebView.
     }
 
     private void resetCoverRefs() {
@@ -677,12 +626,12 @@ public final class MainActivity extends Activity {
             Json.put(out, "schema", "pucky.bridge_execute_result.v1");
             Json.put(out, "duration_ms", System.currentTimeMillis() - started);
             Json.put(out, "trusted_url", lastHomePortalUrl);
-            Log.i(TAG, "ui.bridge.execute type=" + type
+            Log.i(TAG, "native.bridge.execute type=" + type
                     + " status=" + handled.status()
                     + " duration_ms=" + (System.currentTimeMillis() - started));
             return out.toString();
         } catch (Exception exc) {
-            Log.w(TAG, "ui.bridge.execute failed", exc);
+            Log.w(TAG, "native.bridge.execute failed", exc);
             return bridgeError("EXECUTION_FAILED", exc.getMessage(), started).toString();
         }
     }
@@ -986,7 +935,6 @@ public final class MainActivity extends Activity {
     private void syncProvisioningFields() {
         PuckyState.get().setDeviceId(settingsStore.getDeviceId());
         PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
-        renderCurrent();
     }
 
     private String batterySummary() {
