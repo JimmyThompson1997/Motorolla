@@ -13,8 +13,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -24,9 +22,6 @@ import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.Display;
-import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -40,15 +35,9 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.widget.Toast;
 
-import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.audio.AudioController;
@@ -83,7 +72,7 @@ import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.PuckyUiController;
+import com.pucky.device.host.NativeHostController;
 import com.pucky.device.ui.PuckyWebBridgePolicy;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.util.Json;
@@ -110,27 +99,23 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
+    private static final String PORTAL_SCREEN_HOME = "home";
+    private static final String PORTAL_SCREEN_ADMIN = "admin";
+    private static final String PORTAL_SCREEN_ASSISTANT_SETUP = "assistant_setup";
+    private static final String OFFLINE_PORTAL_URL = "file:///android_asset/pucky-offline.html";
 
-    private TextView stateText;
-    private TextView statusText;
-    private TextView buttonText;
     private WebView homeWebView;
-    private EditText deviceIdInput;
-    private EditText brokerUrlInput;
-    private EditText tokenInput;
     private SettingsStore settingsStore;
     private ButtonController buttonController;
     private CommandRouter bridgeCommandRouter;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private boolean adminMode;
     private boolean homePortalLoadStarted;
     private boolean homePortalPageFinished;
     private boolean homePortalErrorVisible;
     private String lastHomePortalUrl = "";
+    private String portalScreen = PORTAL_SCREEN_HOME;
     private boolean coverLightMode;
     private boolean screenReceiverRegistered;
-    private boolean coverGestureReceiverRegistered;
-    private boolean assistantSetupMode;
     private boolean pendingAssistantSetupAfterPermission;
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
@@ -150,16 +135,6 @@ public final class MainActivity extends Activity {
         }
     };
 
-    private final BroadcastReceiver coverGestureReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent == null ? "" : intent.getAction();
-            if (PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP.equals(action)) {
-                mainHandler.post(MainActivity.this::hideCoverHomeForGestureSleep);
-            }
-        }
-    };
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -167,13 +142,12 @@ public final class MainActivity extends Activity {
         settingsStore = app.settingsStore();
         buttonController = new ButtonController(this);
         configureApplianceWindow();
-        assistantSetupMode = shouldStartInAssistantSetup(getIntent());
-        adminMode = shouldStartInAdmin(getIntent());
-        setContentView(assistantSetupMode ? buildAssistantSetupView() : adminMode ? buildAdminView() : buildHomeView());
+        portalScreen = portalScreenFromIntent(getIntent());
+        setContentView(buildHomeView());
         applySystemUiForMode();
         renderCurrent();
         handleLaunchIntent(getIntent());
-        if (!assistantSetupMode) {
+        if (!isAssistantSetupPortal()) {
             requestNeededPermissions();
         }
     }
@@ -230,10 +204,6 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (assistantSetupMode && !shouldStartInAssistantSetup(intent) && !shouldStartInAdmin(intent)) {
-            Log.i(TAG, "ignoring non-setup launch while assistant setup is active");
-            return;
-        }
         if (shouldStartInAssistantSetup(intent)) {
             showAssistantSetupScreen();
         } else if (shouldStartInAdmin(intent)) {
@@ -265,15 +235,8 @@ public final class MainActivity extends Activity {
             registerReceiver(screenReceiver, screenFilter);
         }
         screenReceiverRegistered = true;
-        IntentFilter coverGestureFilter = new IntentFilter(PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(coverGestureReceiver, coverGestureFilter, RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(coverGestureReceiver, coverGestureFilter);
-        }
-        coverGestureReceiverRegistered = true;
         applySystemUiForMode();
-        if (!assistantSetupMode) {
+        if (!isAssistantSetupPortal()) {
             ensureAutoConnectService();
             WakeWordController.shared(this).start(new JSONObject());
         }
@@ -295,10 +258,6 @@ public final class MainActivity extends Activity {
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver);
             screenReceiverRegistered = false;
-        }
-        if (coverGestureReceiverRegistered) {
-            unregisterReceiver(coverGestureReceiver);
-            coverGestureReceiverRegistered = false;
         }
     }
 
@@ -363,26 +322,13 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void hideCoverHomeForGestureSleep() {
-        if (adminMode || assistantSetupMode) {
-            return;
-        }
-        Display display = getDisplay();
-        if (display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) {
-            return;
-        }
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        moveTaskToBack(true);
-        Log.i(TAG, "cover home moved to back for gesture sleep");
-    }
-
     private void applySystemUiForMode() {
         exitHomeImmersiveMode();
     }
 
     private void scheduleHomeImmersiveMode() {
         mainHandler.postDelayed(() -> {
-            if (!adminMode && homePortalPageFinished) {
+            if (PORTAL_SCREEN_HOME.equals(portalScreen) && homePortalPageFinished) {
                 applySystemUiForMode();
             }
         }, 500);
@@ -408,12 +354,6 @@ public final class MainActivity extends Activity {
         lastHomePortalUrl = "";
         homePortalLoadStarted = false;
         homePortalPageFinished = false;
-        statusText = null;
-        stateText = null;
-        buttonText = null;
-        deviceIdInput = null;
-        brokerUrlInput = null;
-        tokenInput = null;
 
         FrameLayout root = new FrameLayout(this);
         int backgroundColor = coverLightMode ? Color.rgb(247, 251, 255) : Color.rgb(2, 6, 10);
@@ -433,7 +373,7 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setAllowFileAccess(false);
+        settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             settings.setSafeBrowsingEnabled(true);
@@ -464,8 +404,7 @@ public final class MainActivity extends Activity {
                     mainHandler.post(() -> {
                         homePortalErrorVisible = true;
                         homePortalPageFinished = false;
-                        homeWebView = null;
-                        setContentView(buildPortalErrorView(failingUrl, description));
+                        loadOfflinePortal(failingUrl, description);
                     });
                 }
             }
@@ -474,43 +413,6 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         homeWebView.post(this::loadHomePortal);
-        return root;
-    }
-
-    private View buildPortalErrorView(String failingUrl, String description) {
-        resetCoverRefs();
-        homePortalLoadStarted = false;
-        homePortalPageFinished = false;
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(46, 46, 46, 46);
-        root.setBackgroundColor(Color.rgb(2, 6, 10));
-
-        TextView title = new TextView(this);
-        title.setText("Pucky UI failed to load");
-        title.setTextColor(Color.rgb(255, 120, 120));
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView body = new TextView(this);
-        body.setText("Remote cover UI is unavailable.\n\n"
-                + "URL: " + (failingUrl == null ? homePortalUrl() : failingUrl) + "\n"
-                + "Error: " + (description == null ? "unknown" : description) + "\n\n"
-                + "Restore the VM server and ADB reverse, then reopen Pucky.");
-        body.setTextColor(Color.rgb(229, 237, 247));
-        body.setTextSize(14);
-        body.setLineSpacing(4f, 1.0f);
-        body.setGravity(Gravity.CENTER);
-        body.setPadding(0, 22, 0, 0);
-        root.addView(body, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
         return root;
     }
 
@@ -542,6 +444,17 @@ public final class MainActivity extends Activity {
         homeWebView.loadUrl(url);
     }
 
+    private void loadOfflinePortal(String failingUrl, String description) {
+        if (homeWebView == null) {
+            return;
+        }
+        String url = OFFLINE_PORTAL_URL
+                + "?failed_url=" + Uri.encode(failingUrl == null ? homePortalUrl() : failingUrl)
+                + "&error=" + Uri.encode(description == null ? "unknown" : description);
+        lastHomePortalUrl = url;
+        homeWebView.loadUrl(url);
+    }
+
     private String homePortalUrl() {
         String deviceId = settingsStore == null ? "" : settingsStore.getDeviceId();
         String base = projectVoxBaseUrl();
@@ -551,7 +464,8 @@ public final class MainActivity extends Activity {
         String token = settingsStore == null ? "" : settingsStore.getToken();
         return base + HOME_PORTAL_PATH
                 + "?device_id=" + Uri.encode(deviceId == null ? "" : deviceId)
-                + "&token=" + Uri.encode(token == null ? "" : token);
+                + "&token=" + Uri.encode(token == null ? "" : token)
+                + "&screen=" + Uri.encode(portalScreen == null ? PORTAL_SCREEN_HOME : portalScreen);
     }
 
     private JSONObject buildNativeContext() {
@@ -577,307 +491,27 @@ public final class MainActivity extends Activity {
         return out;
     }
 
-    private ScrollView buildAdminView() {
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
-        scrollView.setBackgroundColor(Color.rgb(247, 248, 250));
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(20, 20, 20, 28);
-        scrollView.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView title = new TextView(this);
-        title.setText("Pucky");
-        title.setTextSize(28);
-        title.setTextColor(Color.rgb(28, 31, 36));
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.START);
-        root.addView(title);
-
-        statusText = new TextView(this);
-        statusText.setTextSize(15);
-        statusText.setTextColor(Color.rgb(67, 75, 86));
-        statusText.setPadding(0, 4, 0, 14);
-        root.addView(statusText);
-
-        LinearLayout primaryActions = row();
-        Button connect = button("Connect");
-        connect.setOnClickListener(v -> PuckyForegroundService.start(this, true));
-        primaryActions.addView(connect, weightedButtonParams());
-        Button stop = button("Stop");
-        stop.setOnClickListener(v -> PuckyForegroundService.stop(this));
-        primaryActions.addView(stop, weightedButtonParams());
-        root.addView(primaryActions);
-
-        root.addView(sectionTitle("Status"));
-        stateText = new TextView(this);
-        stateText.setTextSize(14);
-        stateText.setTextColor(Color.rgb(39, 45, 53));
-        stateText.setPadding(16, 12, 16, 12);
-        stateText.setBackground(panelBackground());
-        root.addView(stateText, fullWidthBlockParams());
-
-        buttonText = new TextView(this);
-        buttonText.setTextSize(14);
-        buttonText.setTextColor(Color.rgb(39, 45, 53));
-        buttonText.setPadding(16, 12, 16, 12);
-        buttonText.setBackground(panelBackground());
-        root.addView(buttonText, fullWidthBlockParams());
-
-        root.addView(sectionTitle("Controls"));
-        LinearLayout serviceActions = row();
-        Button start = button("Start");
-        start.setOnClickListener(v -> PuckyForegroundService.start(this, false));
-        serviceActions.addView(start, weightedButtonParams());
-        Button disconnect = button("Disconnect");
-        disconnect.setOnClickListener(v -> PuckyForegroundService.disconnect(this));
-        serviceActions.addView(disconnect, weightedButtonParams());
-        root.addView(serviceActions);
-
-        LinearLayout setupActions = row();
-        Button requestPermissions = button("Permissions");
-        requestPermissions.setOnClickListener(v -> requestNeededPermissions());
-        setupActions.addView(requestPermissions, weightedButtonParams());
-        Button homeSettings = button("Home");
-        homeSettings.setOnClickListener(v -> openHomeSettings());
-        setupActions.addView(homeSettings, weightedButtonParams());
-        root.addView(setupActions);
-
-        LinearLayout appActions = row();
-        Button appSettings = button("App settings");
-        appSettings.setOnClickListener(v -> openAppSettings());
-        appActions.addView(appSettings, weightedButtonParams());
-        Button refresh = button("Refresh");
-        refresh.setOnClickListener(v -> renderState());
-        appActions.addView(refresh, weightedButtonParams());
-        root.addView(appActions);
-
-        LinearLayout assistantActions = row();
-        Button assistant = button("Assistant");
-        assistant.setOnClickListener(v -> PuckyAssistantController.openAssistantSetup(this));
-        assistantActions.addView(assistant, weightedButtonParams());
-        Button voiceSettings = button("Voice settings");
-        voiceSettings.setOnClickListener(v -> openVoiceSettings());
-        assistantActions.addView(voiceSettings, weightedButtonParams());
-        root.addView(assistantActions);
-
-        root.addView(sectionTitle("Provisioning"));
-
-        deviceIdInput = input("Device ID", settingsStore.getDeviceId());
-        root.addView(label("Device ID"));
-        root.addView(deviceIdInput);
-
-        brokerUrlInput = input("Broker URL", settingsStore.getBrokerUrl());
-        root.addView(label("Broker URL"));
-        root.addView(brokerUrlInput);
-
-        tokenInput = input("Dev token", settingsStore.getToken());
-        root.addView(label("Dev token"));
-        root.addView(tokenInput);
-
-        Button save = button("Save Provisioning");
-        save.setOnClickListener(v -> {
-            settingsStore.save(
-                    deviceIdInput.getText().toString().trim(),
-                    brokerUrlInput.getText().toString().trim(),
-                    tokenInput.getText().toString().trim());
-            PuckyState.get().setDeviceId(settingsStore.getDeviceId());
-            PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
-            renderState();
-            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
-        });
-        root.addView(save, fullWidthBlockParams());
-
-        return scrollView;
-    }
-
-    private View buildAssistantSetupView() {
-        resetCoverRefs();
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(48, 48, 48, 48);
-        root.setBackgroundColor(Color.rgb(2, 6, 10));
-
-        TextView prompt = new TextView(this);
-        prompt.setText("Set Pucky as assistant?");
-        prompt.setTextColor(Color.WHITE);
-        prompt.setTextSize(30);
-        prompt.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams promptParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        promptParams.setMargins(0, 0, 0, 28);
-        root.addView(prompt, promptParams);
-
-        LinearLayout choices = new LinearLayout(this);
-        choices.setOrientation(LinearLayout.HORIZONTAL);
-        choices.setGravity(Gravity.CENTER);
-
-        Button yes = approvalChoiceButton("Yes", true);
-        yes.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-            startAssistantSetupFlow();
-        });
-        choices.addView(yes, choiceButtonParams(0, 10));
-
-        Button no = approvalChoiceButton("No", false);
-        no.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-            showHomeScreen();
-        });
-        choices.addView(no, choiceButtonParams(10, 0));
-
-        root.addView(choices, fullWidthBlockParams());
-        return root;
-    }
-
-    private TextView label(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.rgb(86, 96, 111));
-        view.setTextSize(13);
-        view.setPadding(0, 8, 0, 0);
-        return view;
-    }
-
-    private EditText input(String hint, String value) {
-        EditText editText = new EditText(this);
-        editText.setSingleLine(true);
-        editText.setHint(hint);
-        editText.setText(value);
-        return editText;
-    }
-
-    private Button button(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextSize(14);
-        return button;
-    }
-
-    private TextView sectionTitle(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextSize(15);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setTextColor(Color.rgb(28, 31, 36));
-        view.setPadding(0, 18, 0, 8);
-        return view;
-    }
-
-    private LinearLayout row() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        return row;
-    }
-
-    private LinearLayout.LayoutParams weightedButtonParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        params.setMargins(4, 4, 4, 4);
-        return params;
-    }
-
-    private LinearLayout.LayoutParams fullWidthBlockParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 4, 0, 8);
-        return params;
-    }
-
-    private LinearLayout.LayoutParams coverBlockParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 2, 0, 4);
-        return params;
-    }
-
-    private GradientDrawable panelBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(Color.WHITE);
-        drawable.setCornerRadius(10);
-        drawable.setStroke(1, Color.rgb(223, 227, 232));
-        return drawable;
-    }
-
-    private GradientDrawable darkButtonBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(Color.rgb(35, 42, 54));
-        drawable.setCornerRadius(10);
-        drawable.setStroke(1, Color.rgb(70, 82, 98));
-        return drawable;
-    }
-
-    private Button approvalChoiceButton(String text, boolean primary) {
-        Button button = button(text);
-        button.setAllCaps(false);
-        button.setTextSize(24);
-        button.setTextColor(primary ? Color.rgb(8, 13, 20) : Color.WHITE);
-        button.setMinHeight(96);
-        button.setPadding(16, 0, 16, 0);
-        button.setBackground(approvalChoiceButtonBackground(primary));
-        return button;
-    }
-
-    private LinearLayout.LayoutParams choiceButtonParams(int leftMargin, int rightMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f);
-        params.setMargins(leftMargin, 0, rightMargin, 0);
-        return params;
-    }
-
-    private GradientDrawable approvalChoiceButtonBackground(boolean primary) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(primary ? Color.rgb(238, 244, 250) : Color.rgb(17, 28, 39));
-        drawable.setCornerRadius(34);
-        drawable.setStroke(2, primary ? Color.rgb(255, 255, 255) : Color.rgb(82, 101, 120));
-        return drawable;
-    }
-
     private void showHomeScreen() {
-        assistantSetupMode = false;
-        if (!adminMode) {
-            applySystemUiForMode();
-            if (homeWebView == null || homePortalErrorVisible) {
-                setContentView(buildHomeView());
-            }
-            renderHome();
-            return;
-        }
-        adminMode = false;
-        setContentView(buildHomeView());
-        applySystemUiForMode();
-        renderHome();
+        showPortalScreen(PORTAL_SCREEN_HOME);
     }
 
     private void showAdminScreen() {
-        assistantSetupMode = false;
-        if (adminMode) {
-            exitHomeImmersiveMode();
-            renderState();
-            return;
-        }
-        adminMode = true;
-        exitHomeImmersiveMode();
-        setContentView(buildAdminView());
-        exitHomeImmersiveMode();
-        renderState();
+        showPortalScreen(PORTAL_SCREEN_ADMIN);
     }
 
     private void showAssistantSetupScreen() {
-        assistantSetupMode = true;
-        adminMode = false;
-        Log.i(TAG, "showing assistant setup screen");
-        setContentView(buildAssistantSetupView());
+        showPortalScreen(PORTAL_SCREEN_ASSISTANT_SETUP);
+    }
+
+    private void showPortalScreen(String screen) {
+        portalScreen = knownPortalScreen(screen) ? screen : PORTAL_SCREEN_HOME;
         applySystemUiForMode();
+        if (homeWebView == null || homePortalErrorVisible) {
+            setContentView(buildHomeView());
+        } else {
+            loadHomePortal();
+        }
+        renderHome();
     }
 
     private boolean shouldStartInAdmin(Intent intent) {
@@ -893,15 +527,28 @@ public final class MainActivity extends Activity {
                 || "com.pucky.device.action.ASSISTANT_SETUP".equals(intent.getAction());
     }
 
+    private String portalScreenFromIntent(Intent intent) {
+        if (shouldStartInAssistantSetup(intent)) {
+            return PORTAL_SCREEN_ASSISTANT_SETUP;
+        }
+        if (shouldStartInAdmin(intent)) {
+            return PORTAL_SCREEN_ADMIN;
+        }
+        return PORTAL_SCREEN_HOME;
+    }
+
+    private boolean knownPortalScreen(String screen) {
+        return PORTAL_SCREEN_HOME.equals(screen)
+                || PORTAL_SCREEN_ADMIN.equals(screen)
+                || PORTAL_SCREEN_ASSISTANT_SETUP.equals(screen);
+    }
+
+    private boolean isAssistantSetupPortal() {
+        return PORTAL_SCREEN_ASSISTANT_SETUP.equals(portalScreen);
+    }
+
     private void renderCurrent() {
-        if (assistantSetupMode) {
-            return;
-        }
-        if (adminMode) {
-            renderState();
-        } else {
-            renderHome();
-        }
+        renderHome();
     }
 
     private void renderHome() {
@@ -960,7 +607,7 @@ public final class MainActivity extends Activity {
                 logStore,
                 capabilities,
                 permissions,
-                new PuckyUiController(this),
+                new NativeHostController(this),
                 new SystemController(this),
                 new IntentController(this),
                 new NoteController(this),
@@ -977,7 +624,6 @@ public final class MainActivity extends Activity {
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settingsStore),
                 TunnelController.shared(this, settingsStore),
-                new RemoteAdbController(this, settingsStore, TunnelController.shared(this, settingsStore)),
                 new AndroidSubstrateController(this));
         bridgeCommandRouter = new CommandRouter(executor);
         return bridgeCommandRouter;
@@ -1046,6 +692,41 @@ public final class MainActivity extends Activity {
         return out;
     }
 
+    private JSONObject bridgeOk(String schema) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", schema);
+        Json.put(out, "ok", true);
+        return out;
+    }
+
+    private JSONObject untrustedBridgeResult() {
+        return bridgeError(
+                "UNTRUSTED_ORIGIN",
+                "Pucky bridge origin is not trusted",
+                System.currentTimeMillis());
+    }
+
+    private JSONObject buildAdminStatus() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.native_admin_status.v1");
+        Json.put(out, "state", PuckyState.get().snapshotJson());
+        JSONObject settings = new JSONObject();
+        Json.put(settings, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
+        Json.put(settings, "broker_url", settingsStore == null ? "" : settingsStore.getBrokerUrl());
+        Json.put(settings, "broker_url_compact", settingsStore == null ? "" : compactBroker(settingsStore.getBrokerUrl()));
+        Json.put(settings, "token", settingsStore == null ? "" : settingsStore.getToken());
+        Json.put(out, "settings", settings);
+        JSONObject summary = new JSONObject();
+        Json.put(summary, "livekit", liveKitSummary());
+        Json.put(summary, "assistant", assistantSummary());
+        Json.put(summary, "battery", batterySummary());
+        Json.put(summary, "network", networkSummary());
+        Json.put(summary, "warnings", warningsSummary());
+        Json.put(summary, "button", buttonSummary());
+        Json.put(out, "summary", summary);
+        return out;
+    }
+
     private final class PuckyAndroidBridge {
         @JavascriptInterface
         public void setBrightness(double value) {
@@ -1068,6 +749,14 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getAdminStatus() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            return buildAdminStatus().toString();
+        }
+
+        @JavascriptInterface
         public String execute(String commandJson) {
             return executeBridgeCommand(commandJson);
         }
@@ -1079,6 +768,112 @@ public final class MainActivity extends Activity {
             Json.put(out, "schema", "pucky.bridge_reload_result.v1");
             Json.put(out, "ok", true);
             return out.toString();
+        }
+
+        @JavascriptInterface
+        public String showPortalScreen(String screen) {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> MainActivity.this.showPortalScreen(screen));
+            return bridgeOk("pucky.bridge_show_portal_screen_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String requestPermissions() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(MainActivity.this::requestNeededPermissions);
+            return bridgeOk("pucky.bridge_permission_request_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String startAssistantSetup() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(MainActivity.this::startAssistantSetupFlow);
+            return bridgeOk("pucky.bridge_assistant_setup_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String openHomeSettings() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(MainActivity.this::openHomeSettings);
+            return bridgeOk("pucky.bridge_settings_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String openAppSettings() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(MainActivity.this::openAppSettings);
+            return bridgeOk("pucky.bridge_settings_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String openVoiceSettings() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(MainActivity.this::openVoiceSettings);
+            return bridgeOk("pucky.bridge_settings_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String openAssistantSettings() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> PuckyAssistantController.openAssistantSetup(MainActivity.this));
+            return bridgeOk("pucky.bridge_settings_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String startService(boolean connect) {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> PuckyForegroundService.start(MainActivity.this, connect));
+            return bridgeOk("pucky.bridge_service_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String stopService() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> PuckyForegroundService.stop(MainActivity.this));
+            return bridgeOk("pucky.bridge_service_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String disconnectService() {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> PuckyForegroundService.disconnect(MainActivity.this));
+            return bridgeOk("pucky.bridge_service_result.v1").toString();
+        }
+
+        @JavascriptInterface
+        public String saveProvisioning(String deviceId, String brokerUrl, String token) {
+            if (!isTrustedBridgeCaller()) {
+                return untrustedBridgeResult().toString();
+            }
+            mainHandler.post(() -> {
+                settingsStore.save(
+                        deviceId == null ? "" : deviceId.trim(),
+                        brokerUrl == null ? "" : brokerUrl.trim(),
+                        token == null ? "" : token.trim());
+                syncProvisioningFields();
+                Toast.makeText(MainActivity.this, "Saved", Toast.LENGTH_SHORT).show();
+            });
+            return bridgeOk("pucky.bridge_provisioning_result.v1").toString();
         }
 
         @JavascriptInterface
@@ -1099,29 +894,6 @@ public final class MainActivity extends Activity {
             Json.put(out, "ok", true);
             return out.toString();
         }
-    }
-
-    private void renderState() {
-        if (statusText == null || stateText == null || buttonText == null) {
-            return;
-        }
-        PuckyState snapshot = PuckyState.get();
-        JSONObject state = snapshot.snapshotJson();
-        String connection = state.optString("connection_state", "unknown");
-        String service = state.optBoolean("service_running", false) ? "running" : "stopped";
-        statusText.setText("Service " + service + " - " + connection);
-        stateText.setText("Device: " + settingsStore.getDeviceId()
-                + "\nBroker: " + compactBroker(settingsStore.getBrokerUrl())
-                + "\nLiveKit: " + liveKitSummary()
-                + "\nAssistant: " + assistantSummary()
-                + "\nBattery: " + batterySummary()
-                + "\nNetwork: " + networkSummary()
-                + "\nWarnings: " + warningsSummary()
-                + "\nLast command: " + state.optString("last_command_id", "none")
-                + " / " + state.optString("last_command_status", "none"));
-        buttonText.setText("Button: " + buttonSummary()
-                + "\nVolume up: press changes volume; hold opens PTT mic; release mutes PTT mic"
-                + "\nVolume down: press changes volume; hold pauses/resumes Vox reply audio");
     }
 
     private String compactBroker(String brokerUrl) {
@@ -1202,11 +974,6 @@ public final class MainActivity extends Activity {
     private void syncProvisioningFields() {
         PuckyState.get().setDeviceId(settingsStore.getDeviceId());
         PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
-        if (deviceIdInput != null && brokerUrlInput != null && tokenInput != null) {
-            deviceIdInput.setText(settingsStore.getDeviceId());
-            brokerUrlInput.setText(settingsStore.getBrokerUrl());
-            tokenInput.setText(settingsStore.getToken());
-        }
         renderCurrent();
     }
 

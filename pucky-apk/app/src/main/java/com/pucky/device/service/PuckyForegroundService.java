@@ -44,6 +44,7 @@ import com.pucky.device.capabilities.PermissionReporter;
 import com.pucky.device.command.CommandRouter;
 import com.pucky.device.command.NativeCommandExecutor;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.host.NativeHostController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.livekit.LiveKitController;
@@ -65,7 +66,6 @@ import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
@@ -241,7 +241,7 @@ public final class PuckyForegroundService extends Service {
                 logStore,
                 capabilityReporter,
                 permissionReporter,
-                new PuckyUiController(this),
+                new NativeHostController(this),
                 new SystemController(this),
                 new IntentController(this),
                 new NoteController(this),

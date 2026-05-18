@@ -10,6 +10,7 @@ import com.pucky.device.camera.CameraController;
 import com.pucky.device.capabilities.CapabilityReporter;
 import com.pucky.device.capabilities.PermissionReporter;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.host.NativeHostController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.livekit.LiveKitController;
@@ -29,7 +30,6 @@ import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
@@ -66,8 +66,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
-            "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
-            "ui.dashboard.show", "launcher.capability.get", "android.substrate"
+            "note.create_local", "note.list_local", "note.delete_local", "native.status.get",
+            "native.host.show", "launcher.capability.get", "android.substrate"
     };
 
     private final StatusProvider statusProvider;
@@ -83,7 +83,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final CommandLogStore commandLogStore;
     private final CapabilityReporter capabilityReporter;
     private final PermissionReporter permissionReporter;
-    private final PuckyUiController uiController;
+    private final NativeHostController nativeHostController;
     private final SystemController systemController;
     private final IntentController intentController;
     private final NoteController noteController;
@@ -116,7 +116,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             CommandLogStore commandLogStore,
             CapabilityReporter capabilityReporter,
             PermissionReporter permissionReporter,
-            PuckyUiController uiController,
+            NativeHostController nativeHostController,
             SystemController systemController,
             IntentController intentController,
             NoteController noteController,
@@ -147,7 +147,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.commandLogStore = commandLogStore;
         this.capabilityReporter = capabilityReporter;
         this.permissionReporter = permissionReporter;
-        this.uiController = uiController;
+        this.nativeHostController = nativeHostController;
         this.systemController = systemController;
         this.intentController = intentController;
         this.noteController = noteController;
@@ -385,12 +385,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return noteController.list(command.args());
             case "note.delete_local":
                 return noteController.delete(command.args());
-            case "ui.state.get":
-                return uiController.state();
-            case "ui.dashboard.show":
-                return uiController.showDashboard(command.args());
+            case "native.status.get":
+                return nativeHostController.status();
+            case "native.host.show":
+                return nativeHostController.showHost(command.args());
             case "launcher.capability.get":
-                return uiController.launcherCapability();
+                return nativeHostController.launcherCapability();
             case "android.substrate":
                 return androidSubstrateController.execute(command.args());
             default:

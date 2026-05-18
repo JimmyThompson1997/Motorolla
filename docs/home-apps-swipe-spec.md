@@ -6,7 +6,7 @@ Keep the cover display intentionally small: one home screen, plus the swipe-up a
 
 This repo hosts the Android WebView shell. The actual `/pucky-home` portal HTML/JS is served by Project Vox outside this repository, so this spec defines the contract that external portal should implement.
 
-The boundary is strict: Android owns native capabilities and facts only. Project Vox owns every visible cover surface, including home, apps, threads, inbox, placeholders, and later rebuilds.
+The boundary is strict: Android owns native capabilities and facts only. Project Vox owns every visible product surface, including home, apps, setup, admin, threads, inbox, placeholders, and later rebuilds. The APK may show only platform-owned Android surfaces and a bundled local HTML recovery page if the VM portal cannot load.
 
 ## Kept Surfaces
 
@@ -14,6 +14,8 @@ The boundary is strict: Android owns native capabilities and facts only. Project
 - `apps`: the swipe-up app drawer/app feed.
 - `threads`: allowed as an app destination.
 - `inbox`: allowed as an app destination.
+- `admin`: VM-rendered development/provisioning surface.
+- `assistant_setup`: VM-rendered assistant setup prompt.
 
 These modes are VM/HTML state. Android must not accept launch extras or native events that directly select them.
 

@@ -40,8 +40,8 @@ launch, capture logs, and forward local broker traffic during development.
 - `speech.native.delete`
 - `timer.set`
 - `timer.cancel`
-- `ui.state.get`
-- `ui.dashboard.show`
+- `native.status.get`
+- `native.host.show`
 - `launcher.capability.get`
 - `runtime.stats`
 - `system.memory.get`
@@ -120,14 +120,18 @@ cover WebView no longer changes into listening/thinking/speaking visual modes. T
 
 ## Cover UI boundary
 
-The APK hosts the WebView, native bridge, buttons, LiveKit, permissions, and device APIs. It does not own the
-cover-screen visual state. Home, apps, threads, inbox, and later visual rebuilds are served by the VM at
-`/pucky-home`.
+The APK hosts the WebView, native bridge, buttons, LiveKit, permissions, and device APIs. It does not own product
+screens or cover-screen visual state. Home, apps, setup, admin, threads, inbox, and later visual rebuilds are served
+by the VM at `/pucky-home`.
 
 `PuckyAndroid.getNativeContext()` returns `pucky.native_context.v1` with native facts only: device id, shell theme,
 safe rectangle, and LiveKit status. `PuckyAndroid.getState()` is kept as a compatibility alias for that same native
 context. Neither bridge method emits cover `mode`, voice visual modes, transcript turns, threads, inbox items, or
 `call_visual`.
+
+The only bundled visual asset is `pucky-offline.html`, a dead-man recovery page loaded when the remote VM portal
+cannot be reached. Android permission dialogs, notification surfaces, Settings panels, and assistant pickers remain
+native because the platform owns them.
 
 ## Future assistant role note
 

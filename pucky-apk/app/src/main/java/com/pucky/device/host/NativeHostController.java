@@ -1,4 +1,4 @@
-package com.pucky.device.ui;
+package com.pucky.device.host;
 
 import android.content.Context;
 import android.content.Intent;
@@ -10,28 +10,30 @@ import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
 
-public final class PuckyUiController {
+public final class NativeHostController {
     private final Context context;
 
-    public PuckyUiController(Context context) {
+    public NativeHostController(Context context) {
         this.context = context.getApplicationContext();
     }
 
-    public JSONObject state() {
-        return PuckyState.get().snapshotJson();
+    public JSONObject status() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.native_host_status.v1");
+        Json.put(out, "state", PuckyState.get().snapshotJson());
+        return out;
     }
 
-    public JSONObject showDashboard(JSONObject args) {
+    public JSONObject showHost(JSONObject args) {
         Intent intent = new Intent(context, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra("show_home", true);
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (args.optBoolean("connect", false)) {
             intent.putExtra("connect", true);
         }
         context.startActivity(intent);
         JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.native_host_show_result.v1");
         Json.put(out, "launched", true);
-        Json.put(out, "target", "dashboard");
         Json.put(out, "connect_requested", args.optBoolean("connect", false));
         Json.put(out, "risk", "visible");
         return out;

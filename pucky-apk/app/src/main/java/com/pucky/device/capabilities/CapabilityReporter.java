@@ -194,10 +194,10 @@ public final class CapabilityReporter {
                 "Lists app-local Pucky notes."));
         Json.add(out, cap("notes.local_delete", "note.delete_local", "implemented", "yes", "quiet", null, "not_recorded",
                 "Tombstones app-local Pucky note."));
-        Json.add(out, cap("ui.state", "ui.state.get", "implemented", "yes", "quiet", null, "self_reported",
-                "App connection and command state snapshot."));
-        Json.add(out, cap("ui.dashboard", "ui.dashboard.show", "implemented", "yes", "visible", null, "self_reported",
-                "Brings the Pucky dashboard activity to the foreground."));
+        Json.add(out, cap("native.host_status", "native.status.get", "implemented", "yes", "quiet", null, "self_reported",
+                "Native host connection and command state snapshot."));
+        Json.add(out, cap("native.host_foreground", "native.host.show", "implemented", "yes", "visible", null, "self_reported",
+                "Brings the Pucky WebView host activity to the foreground."));
         Json.add(out, cap("launcher.home_activity", "launcher.capability.get", "requires_user_mediated_intent",
                 "user_mediated", "visible", null, "manual_required",
                 "Manifest advertises a reversible Home activity; the user must choose and can undo the default Home app."));

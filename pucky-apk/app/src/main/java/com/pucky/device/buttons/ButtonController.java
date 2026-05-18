@@ -14,6 +14,7 @@ import com.pucky.device.broker.BrokerEventPoster;
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.host.NativeHostController;
 import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.player.PlayerController;
@@ -21,7 +22,6 @@ import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
-import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.util.Json;
 import com.pucky.device.voice.VoiceCaptureController;
 
@@ -38,7 +38,7 @@ public final class ButtonController {
     private static final int KEY_VOLUME_UP = KeyEvent.KEYCODE_VOLUME_UP;
     private static final int KEY_VOLUME_DOWN = KeyEvent.KEYCODE_VOLUME_DOWN;
     private static final int MAX_EVENTS = 100;
-    private static final int CONFIG_VERSION = 16;
+    private static final int CONFIG_VERSION = 17;
     private static final int DEFAULT_LONG_PRESS_MS = 250;
 
     private final Context context;
@@ -447,8 +447,8 @@ public final class ButtonController {
                     Json.put(out, "result", interruptReply());
                     Json.put(out, "status", "completed");
                     break;
-                case "ui.dashboard.show":
-                    Json.put(out, "result", new PuckyUiController(context).showDashboard(new JSONObject()));
+                case "native.host.show":
+                    Json.put(out, "result", new NativeHostController(context).showHost(new JSONObject()));
                     Json.put(out, "status", "completed");
                     break;
                 case "service.connect":
@@ -551,7 +551,7 @@ public final class ButtonController {
         Json.put(out, "double_press_ms", 450);
         Json.put(out, "long_press_ms", DEFAULT_LONG_PRESS_MS);
         Json.put(out, "long_press_repeat_count", 1);
-        Json.put(out, "policy", "android_volume_synthetic_show_ui_hold_ptt_v16");
+        Json.put(out, "policy", "android_volume_synthetic_show_ui_hold_ptt_v17");
         Json.put(out, "mappings", defaultMappings());
         return out;
     }
@@ -590,12 +590,14 @@ public final class ButtonController {
                 String name = names.optString(i);
                 if (!mappings.has(name)) {
                     Json.put(mappings, name, defaults.optString(name, "none"));
+                } else if ("ui.dashboard.show".equals(mappings.optString(name))) {
+                    Json.put(mappings, name, "native.host.show");
                 }
             }
         }
         Json.put(raw, "config_version", CONFIG_VERSION);
         Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 250, 1200));
-        Json.put(raw, "policy", raw.optString("policy", "android_volume_synthetic_show_ui_hold_ptt_v16"));
+        Json.put(raw, "policy", raw.optString("policy", "android_volume_synthetic_show_ui_hold_ptt_v17"));
         Json.put(raw, "mappings", mappings);
         return raw;
     }
@@ -688,7 +690,7 @@ public final class ButtonController {
             case "reply.interrupt":
             case "volume.adjust.up":
             case "volume.adjust.down":
-            case "ui.dashboard.show":
+            case "native.host.show":
             case "service.connect":
             case "voice.listen.start":
             case "voice.listen.stop_submit":
