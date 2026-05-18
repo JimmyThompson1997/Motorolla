@@ -16,6 +16,19 @@ Motorolla GitHub repo
   -> plugged-in Android device
 ```
 
+Current live canonical APK line:
+
+```text
+branch:      codex/slim-webview-cover-ui
+package:     com.pucky.device.debug
+version:     16 / 0.2.15-live-cover-wave-debug
+deploy gate: tools\deploy-canonical-apk.ps1
+```
+
+The deploy gate refuses the wrong worktree, wrong branch, dirty worktree,
+unpushed HEAD, or mismatched Gradle version. This keeps the installed APK,
+GitHub branch, and local checkout aligned.
+
 This folder is the Motorola Razr working workspace. It contains:
 
 - `pucky-apk/`: editable copy of the current Pucky Android APK source.

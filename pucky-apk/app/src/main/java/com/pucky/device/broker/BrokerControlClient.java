@@ -136,6 +136,7 @@ public final class BrokerControlClient {
         Json.put(out, "schema", "pucky.hello.v1");
         Json.put(out, "device_id", settings.getDeviceId());
         Json.put(out, "apk_version", AppIdentity.versionName(context));
+        Json.put(out, "apk_identity", AppIdentity.json(context));
         Json.put(out, "timestamp", Instant.now().toString());
         return out;
     }

@@ -27,6 +27,7 @@ public final class StatusProvider {
         JSONObject out = new JSONObject();
         Json.put(out, "device_id", settingsStore.getDeviceId());
         Json.put(out, "apk_version", AppIdentity.versionName(context));
+        Json.put(out, "apk_identity", AppIdentity.json(context));
         Json.put(out, "android", androidJson());
         Json.put(out, "battery", new BatteryProvider(context).read());
         Json.put(out, "network", new NetworkProvider(context).read());

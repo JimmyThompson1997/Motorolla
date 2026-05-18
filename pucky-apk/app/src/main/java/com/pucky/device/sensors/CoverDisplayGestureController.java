@@ -7,12 +7,16 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 import android.view.Display;
 
+import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
@@ -37,10 +41,13 @@ public final class CoverDisplayGestureController {
     private static final String PREFS = "pucky_cover_display_gesture";
     private static final String ENABLED = "enabled";
     private static final String ACTION_ENABLED = "action_enabled";
+    private static final String ACTION_MODE = "action_mode";
     private static final String MIN_SWIPE_MS = "min_swipe_ms";
     private static final String MAX_SWIPE_MS = "max_swipe_ms";
     private static final String COOLDOWN_MS = "cooldown_ms";
     private static final String DISPLAY_ID = "display_id";
+    private static final String MODE_NOTIFY = "notify";
+    private static final String MODE_DISPLAY = "display";
     private static final int DEFAULT_DISPLAY_ID = 1;
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
@@ -120,6 +127,7 @@ public final class CoverDisplayGestureController {
             Json.put(out, "schema", "pucky.cover_display_gesture_status.v2");
             Json.put(out, "enabled", enabled());
             Json.put(out, "action_enabled", actionEnabled());
+            Json.put(out, "action_mode", actionMode());
             Json.put(out, "running", running);
             Json.put(out, "cover_sleeping", coverSleeping);
             Json.put(out, "display_id", displayId());
@@ -147,7 +155,15 @@ public final class CoverDisplayGestureController {
                 editor.putBoolean(ENABLED, args.optBoolean("enabled", true));
             }
             if (args.has("action_enabled")) {
-                editor.putBoolean(ACTION_ENABLED, args.optBoolean("action_enabled", true));
+                editor.putBoolean(ACTION_ENABLED, args.optBoolean("action_enabled", false));
+            }
+            if (args.has("action_mode") && !args.isNull("action_mode")) {
+                String mode = args.optString("action_mode", MODE_NOTIFY).trim().toLowerCase(Locale.US);
+                if (MODE_NOTIFY.equals(mode) || MODE_DISPLAY.equals(mode)) {
+                    editor.putString(ACTION_MODE, mode);
+                } else {
+                    lastError = "action_mode must be notify or display";
+                }
             }
             if (args.has("min_swipe_ms")) {
                 editor.putLong(MIN_SWIPE_MS,
@@ -203,7 +219,7 @@ public final class CoverDisplayGestureController {
             }
             addEventLocked("display_action_requested", "trigger_" + action, 0L, null, currentGateSnapshot());
         }
-        runDisplayAction(action, "trigger_" + action);
+        runAction(action, "trigger_" + action);
         JSONObject out = status();
         Json.put(out, "triggered", true);
         Json.put(out, "trigger_action", action);
@@ -355,7 +371,7 @@ public final class CoverDisplayGestureController {
                 return;
             }
         }
-        runDisplayAction(action, "gesture_" + action);
+        runAction(action, "gesture_" + action);
     }
 
     private String earlyRejectReason(long durationMs) {
@@ -553,6 +569,35 @@ public final class CoverDisplayGestureController {
         return out;
     }
 
+    private void runAction(String action, String reason) {
+        if (MODE_NOTIFY.equals(actionMode())) {
+            runNotifyAction(action, reason);
+            return;
+        }
+        runDisplayAction(action, reason);
+    }
+
+    private void runNotifyAction(String action, String reason) {
+        buzz();
+        try {
+            JSONObject args = new JSONObject();
+            Json.put(args, "id", "cover_wave_" + action);
+            Json.put(args, "title", "Pucky cover wave");
+            Json.put(args, "text", "Wave accepted: " + action);
+            Json.put(args, "big_text", "Cover wave accepted for " + action + " via " + reason + ".");
+            Json.put(args, "timeout_ms", 4_000L);
+            new NotificationController(context).show(args);
+            synchronized (lock) {
+                addEventLocked("notify_action", reason, 0L, null, currentGateSnapshot());
+            }
+        } catch (Exception exc) {
+            synchronized (lock) {
+                lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+                addEventLocked("notify_action_failed", reason, 0L, null, currentGateSnapshot());
+            }
+        }
+    }
+
     private void runDisplayAction(String action, String reason) {
         final int targetDisplay = displayId();
         new Thread(() -> {
@@ -578,6 +623,22 @@ public final class CoverDisplayGestureController {
                 wakeCallbacks.onCoverDisplayWoke(reason);
             }
         }, "pucky-cover-display-" + action).start();
+    }
+
+    private void buzz() {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(60);
+            }
+        } catch (RuntimeException exc) {
+            Log.w(TAG, "cover wave vibration failed", exc);
+        }
     }
 
     private void registerSensorLocked(String name) {
@@ -634,7 +695,12 @@ public final class CoverDisplayGestureController {
     }
 
     private boolean actionEnabled() {
-        return prefs.getBoolean(ACTION_ENABLED, true);
+        return prefs.getBoolean(ACTION_ENABLED, false);
+    }
+
+    private String actionMode() {
+        String mode = prefs.getString(ACTION_MODE, MODE_NOTIFY);
+        return MODE_DISPLAY.equals(mode) ? MODE_DISPLAY : MODE_NOTIFY;
     }
 
     private long minSwipeMs() {

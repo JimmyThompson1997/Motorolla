@@ -4,14 +4,18 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 
 import ai.picovoice.porcupine.PorcupineManager;
 import ai.picovoice.porcupine.PorcupineManagerCallback;
 
 import com.pucky.device.livekit.LiveKitController;
+import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 
@@ -28,6 +32,10 @@ public final class WakeWordController {
     private static final String ACCESS_KEY = "picovoice_access_key";
     private static final String KEYWORD_PATH = "keyword_path";
     private static final String ENABLED = "enabled";
+    private static final String ACTION = "action";
+    private static final String ACTION_NOTIFY = "notify";
+    private static final String ACTION_LIVEKIT = "livekit";
+    private static final String NOTIFY_AUDIBLE = "notify_audible";
     private static final String DEFAULT_KEYWORD_PATH = "pucky_android.ppn";
     private static final long NO_SPEECH_TIMEOUT_MS = 20_000L;
 
@@ -41,6 +49,9 @@ public final class WakeWordController {
     private boolean running;
     private String lastError = "";
     private String lastDetectionAt = "";
+    private String lastNotificationAt = "";
+    private String lastNotificationError = "";
+    private String lastVibrationAt = "";
     private Runnable noSpeechTimeout;
 
     private WakeWordController(Context context) {
@@ -69,6 +80,8 @@ public final class WakeWordController {
         Json.put(out, "engine", "picovoice_porcupine");
         Json.put(out, "wake_word", "Pucky");
         Json.put(out, "enabled", enabled());
+        Json.put(out, "action", action());
+        Json.put(out, "notify_audible", notifyAudible());
         Json.put(out, "running", running);
         Json.put(out, "configured", configured);
         Json.put(out, "access_key_set", accessKeySet());
@@ -76,6 +89,9 @@ public final class WakeWordController {
         Json.put(out, "keyword_available", keywordAvailable(keywordPath));
         Json.put(out, "no_speech_timeout_ms", NO_SPEECH_TIMEOUT_MS);
         Json.put(out, "last_detection_at", lastDetectionAt.isEmpty() ? JSONObject.NULL : lastDetectionAt);
+        Json.put(out, "last_notification_at", lastNotificationAt.isEmpty() ? JSONObject.NULL : lastNotificationAt);
+        Json.put(out, "last_notification_error", lastNotificationError.isEmpty() ? JSONObject.NULL : lastNotificationError);
+        Json.put(out, "last_vibration_at", lastVibrationAt.isEmpty() ? JSONObject.NULL : lastVibrationAt);
         Json.put(out, "last_error", lastError.isEmpty() ? JSONObject.NULL : lastError);
         return out;
     }
@@ -90,6 +106,17 @@ public final class WakeWordController {
         }
         if (args.has("keyword_path") && !args.isNull("keyword_path")) {
             editor.putString(KEYWORD_PATH, args.optString("keyword_path", DEFAULT_KEYWORD_PATH).trim());
+        }
+        if (args.has("action") && !args.isNull("action")) {
+            String requestedAction = args.optString("action", ACTION_NOTIFY).trim().toLowerCase();
+            if (ACTION_NOTIFY.equals(requestedAction) || ACTION_LIVEKIT.equals(requestedAction)) {
+                editor.putString(ACTION, requestedAction);
+            } else {
+                lastError = "action must be notify or livekit";
+            }
+        }
+        if (args.has("notify_audible")) {
+            editor.putBoolean(NOTIFY_AUDIBLE, args.optBoolean("notify_audible", true));
         }
         editor.apply();
         if (running) {
@@ -177,11 +204,29 @@ public final class WakeWordController {
         return prefs.getBoolean(ENABLED, true);
     }
 
+    private String action() {
+        String value = prefs.getString(ACTION, ACTION_NOTIFY);
+        if (ACTION_LIVEKIT.equals(value)) {
+            return ACTION_LIVEKIT;
+        }
+        return ACTION_NOTIFY;
+    }
+
+    private boolean notifyAudible() {
+        return prefs.getBoolean(NOTIFY_AUDIBLE, true);
+    }
+
     private void handleDetection(String source, int keywordIndex) {
         int transcriptionCountBefore = transcriptionEventCount();
-        lastDetectionAt = Instant.now().toString();
+        String detectedAt = Instant.now().toString();
+        lastDetectionAt = detectedAt;
         lastError = "";
         Log.i(TAG, "wake detected source=" + source + " keywordIndex=" + keywordIndex);
+        buzz(detectedAt);
+        postWakeNotification(detectedAt, source, keywordIndex);
+        if (!ACTION_LIVEKIT.equals(action())) {
+            return;
+        }
         new Thread(() -> {
             try {
                 JSONObject args = new JSONObject();
@@ -195,6 +240,43 @@ public final class WakeWordController {
                 Log.w(TAG, "wake LiveKit start failed", exc);
             }
         }, "pucky-wake-livekit").start();
+    }
+
+    private void buzz(String detectedAt) {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(90, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(90);
+            }
+            lastVibrationAt = detectedAt;
+        } catch (Exception exc) {
+            Log.w(TAG, "wake vibration failed", exc);
+        }
+    }
+
+    private void postWakeNotification(String detectedAt, String source, int keywordIndex) {
+        try {
+            JSONObject args = new JSONObject();
+            Json.put(args, "id", "wake_word_pucky");
+            Json.put(args, "title", "Pucky heard");
+            Json.put(args, "text", "Wake word detected");
+            Json.put(args, "big_text", "Wake word detected via " + source
+                    + " keywordIndex=" + keywordIndex
+                    + " at " + detectedAt + ".");
+            Json.put(args, "audible", notifyAudible());
+            Json.put(args, "timeout_ms", 6_000L);
+            new NotificationController(context).show(args);
+            lastNotificationAt = detectedAt;
+            lastNotificationError = "";
+        } catch (Exception exc) {
+            lastNotificationError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+            Log.w(TAG, "wake notification failed", exc);
+        }
     }
 
     private void scheduleNoSpeechTimeout(int transcriptionCountBefore) {

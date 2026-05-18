@@ -23,6 +23,10 @@ local.properties
 *.zip
 
 # Device evidence and bulky inspection artifacts
+.tmp/
+pucky-apk/.tmp/
+.current-physical-run.txt
+pucky-window.xml
 adb_inspect/
 outer-screen-research/
 pucky-implementation-proof/

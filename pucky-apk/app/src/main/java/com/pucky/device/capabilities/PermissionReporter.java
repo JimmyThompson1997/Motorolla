@@ -34,6 +34,7 @@ public final class PermissionReporter {
         Json.put(out, "schema", "pucky.permissions.v1");
         Json.put(out, "device_id", settingsStore.getDeviceId());
         Json.put(out, "apk_version", AppIdentity.versionName(context));
+        Json.put(out, "apk_identity", AppIdentity.json(context));
         Json.put(out, "package_name", context.getPackageName());
         Json.put(out, "android_sdk", Build.VERSION.SDK_INT);
         Json.put(out, "generated_at", Instant.now().toString());

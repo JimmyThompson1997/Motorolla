@@ -461,6 +461,9 @@ def build_parser():
     player_seek = player_sub.add_parser("seek")
     player_seek.add_argument("position_ms", type=int)
     add_command_flags(player_seek)
+    player_speed = player_sub.add_parser("speed")
+    player_speed.add_argument("speed", type=float)
+    add_command_flags(player_speed)
     player_state = player_sub.add_parser("state")
     add_command_flags(player_state)
     player_queue = player_sub.add_parser("queue-set")
@@ -1390,6 +1393,8 @@ def dispatch(ctx, args):
             return run_command(ctx, None, "player.stop", {}, args, wait_default=True)
         if args.action == "seek":
             return run_command(ctx, None, "player.seek", {"position_ms": args.position_ms}, args, wait_default=True)
+        if args.action == "speed":
+            return run_command(ctx, None, "player.speed", {"speed": args.speed}, args, wait_default=True)
         if args.action == "state":
             return run_command(ctx, None, "player.state", {}, args, wait_default=True)
         if args.action == "queue-set":

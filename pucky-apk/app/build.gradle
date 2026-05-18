@@ -3,6 +3,36 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
+def puckyGitValue = { List<String> args, String fallback ->
+    try {
+        def output = new ByteArrayOutputStream()
+        def errors = new ByteArrayOutputStream()
+        exec {
+            commandLine(["git", "-C", rootDir.parentFile.absolutePath] + args)
+            standardOutput = output
+            errorOutput = errors
+            ignoreExitValue = true
+        }
+        def value = output.toString("UTF-8").trim()
+        return value ? value : fallback
+    } catch (Exception ignored) {
+        return fallback
+    }
+}
+
+def buildConfigString = { Object value ->
+    def text = String.valueOf(value == null ? "" : value)
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+    return "\"${text}\""
+}
+
+def puckyGitCommit = puckyGitValue(["rev-parse", "HEAD"], "unknown")
+def puckyGitBranch = puckyGitValue(["branch", "--show-current"], "unknown")
+def puckyGitStatus = puckyGitValue(["status", "--porcelain"], "")
+def puckyGitDirty = puckyGitStatus.trim().isEmpty() ? "false" : "true"
+def puckyBuildTime = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
+
 android {
     namespace "com.pucky.device"
     compileSdk 35
@@ -11,9 +41,14 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 13
-        versionName "0.2.12-cover-fullscreen-restore"
+        versionCode 16
+        versionName "0.2.15-live-cover-wave"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)
+        buildConfigField "String", "PUCKY_GIT_BRANCH", buildConfigString(puckyGitBranch)
+        buildConfigField "String", "PUCKY_BUILD_TIME", buildConfigString(puckyBuildTime)
+        buildConfigField "boolean", "PUCKY_GIT_DIRTY", puckyGitDirty
     }
 
     buildTypes {
@@ -25,6 +60,10 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {

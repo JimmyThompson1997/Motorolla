@@ -33,6 +33,7 @@ public final class CapabilityReporter {
         Json.put(out, "schema", "pucky.capabilities.v1");
         Json.put(out, "device_id", settingsStore.getDeviceId());
         Json.put(out, "apk_version", AppIdentity.versionName(context));
+        Json.put(out, "apk_identity", AppIdentity.json(context));
         Json.put(out, "package_name", context.getPackageName());
         Json.put(out, "android_sdk", Build.VERSION.SDK_INT);
         Json.put(out, "generated_at", Instant.now().toString());
@@ -95,6 +96,10 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Bounded foreground-safe sensor sample."));
         Json.add(out, cap("sensor.watch", "sensor.watch", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Bounded multi-sensor watch by exact sensor name/type for physical gesture mapping."));
+        Json.add(out, cap("cover.wave", "cover.wave.status/cover.wave.config.set/cover.wave.trigger",
+                hasAnySensor() ? "implemented_guarded" : "blocked_by_hardware",
+                "foreground_service", "visible", "android.permission.VIBRATE", "not_recorded",
+                "Cover-screen hand-wave detector gated by closed device state, face-up/stationary accelerometer checks, and explicit display-action arming."));
         Json.add(out, cap("camera.inventory", "camera.info", hasCamera() ? "implemented" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
@@ -162,7 +167,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("player.asset_prepare", "player.asset.prepare", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads an HTTP/HTTPS audio asset into app-owned storage for Pucky-native playback."));
         Json.add(out, cap("player.load", "player.load", "implemented_untested", "yes", "quiet", null,
-                "not_recorded", "Loads an app-owned audio artifact into Pucky's native player."));
+                "not_recorded", "Loads an app-owned audio artifact or the prepared public audiobook folder into Pucky's native player."));
         Json.add(out, cap("player.play", "player.play", "implemented_untested", "yes", "audible", null,
                 "not_recorded", "Starts Pucky-native local audio playback."));
         Json.add(out, cap("player.pause", "player.pause", "implemented_untested", "yes", "quiet", null,
@@ -171,10 +176,12 @@ public final class CapabilityReporter {
                 "not_recorded", "Stops Pucky-native local audio playback and seeks to the start."));
         Json.add(out, cap("player.seek", "player.seek", "implemented_untested", "yes", "quiet", null,
                 "not_recorded", "Seeks within the currently loaded Pucky-native audio asset."));
+        Json.add(out, cap("player.speed", "player.speed", "implemented_untested", "yes", "audible", null,
+                "not_recorded", "Sets Pucky-native playback speed for audiobook and podcast-style listening."));
         Json.add(out, cap("player.state", "player.state", "implemented_untested", "yes", "quiet", null,
                 "not_recorded", "Reports loaded asset, playback state, position, duration, and queue state."));
         Json.add(out, cap("player.queue", "player.queue.set/player.queue.next/player.queue.previous", "implemented_untested", "yes", "quiet", null,
-                "not_recorded", "Maintains an in-memory queue of app-owned audio artifacts."));
+                "not_recorded", "Maintains an in-memory queue of app-owned audio artifacts or prepared audiobook files."));
         Json.add(out, cap("player.bookmark", "player.bookmark.save/player.bookmark.list", "implemented_untested", "yes", "quiet", null,
                 "not_recorded", "Stores app-local playback bookmarks for audio/podcast-style resume points."));
         Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/livekit.ptt.start/livekit.ptt.stop", "implemented_untested",

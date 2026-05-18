@@ -52,7 +52,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
             "media.export.list", "media.export.delete", "player.asset.prepare", "player.load",
             "player.play", "player.pause", "player.stop", "player.seek", "player.state",
-            "player.queue.set", "player.queue.next", "player.queue.previous",
+            "player.speed", "player.queue.set", "player.queue.next", "player.queue.previous",
             "player.bookmark.save", "player.bookmark.list", "button.state",
             "button.config.get", "button.config.set", "button.config.reset",
             "button.events.list", "button.events.clear", "button.simulate",
@@ -67,6 +67,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
             "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
+            "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
             "cover.display_gesture.status", "cover.display_gesture.set",
             "cover.display_gesture.trigger",
             "cover.event", "settings.open", "settings.panel", "browser.open",
@@ -284,6 +285,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return playerController.stop(command.args());
             case "player.seek":
                 return playerController.seek(command.args());
+            case "player.speed":
+                return playerController.speed(command.args());
             case "player.state":
                 return playerController.state();
             case "player.queue.set":
@@ -382,10 +385,13 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return remoteAdbController.wifiEnable(command.args());
             case "adb.wifi.disable":
                 return remoteAdbController.wifiDisable(command.args());
+            case "cover.wave.status":
             case "cover.display_gesture.status":
                 return systemController.coverDisplayGestureStatus();
+            case "cover.wave.config.set":
             case "cover.display_gesture.set":
                 return systemController.coverDisplayGestureSet(command.args());
+            case "cover.wave.trigger":
             case "cover.display_gesture.trigger":
                 return systemController.coverDisplayGestureTrigger(command.args());
             case "cover.event":

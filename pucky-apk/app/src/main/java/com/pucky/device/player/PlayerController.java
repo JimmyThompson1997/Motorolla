@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
+import android.media.PlaybackParams;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -19,6 +20,10 @@ import java.time.Instant;
 public final class PlayerController {
     private static final String PREFS = "pucky_player";
     private static final String BOOKMARKS = "bookmarks_json";
+    private static final float MIN_PLAYBACK_SPEED = 0.5f;
+    private static final float MAX_PLAYBACK_SPEED = 3.0f;
+    private static final String PUBLIC_AUDIOBOOK_DIR =
+            File.separator + "Podcasts" + File.separator + "From_Pocket_Computers_to_Planetary_Platforms";
     private static PlayerController shared;
 
     private final Context context;
@@ -29,6 +34,7 @@ public final class PlayerController {
     private String playbackState = "idle";
     private JSONArray queue = new JSONArray();
     private int queueIndex = -1;
+    private float playbackSpeed = 1.0f;
 
     public PlayerController(Context context) {
         this.context = context.getApplicationContext();
@@ -50,7 +56,7 @@ public final class PlayerController {
     }
 
     public synchronized JSONObject load(JSONObject args) throws CommandException {
-        File file = resolveAppOwnedPath(pathFromArgs(args));
+        File file = resolvePlayablePath(pathFromArgs(args));
         String title = args.optString("title", file.getName());
         String source = args.optString("source", "");
         loadFile(file, title, source);
@@ -69,6 +75,7 @@ public final class PlayerController {
         try {
             player.start();
             playbackState = "playing";
+            applyPlaybackSpeedForCurrentState();
             return state();
         } catch (IllegalStateException exc) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Unable to start playback: " + exc.getMessage());
@@ -108,6 +115,16 @@ public final class PlayerController {
         return state();
     }
 
+    public synchronized JSONObject speed(JSONObject args) throws CommandException {
+        double raw = args.optDouble("speed", args.optDouble("rate", playbackSpeed));
+        if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "player.speed requires a finite speed");
+        }
+        playbackSpeed = (float) Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, raw));
+        applyPlaybackSpeedForCurrentState();
+        return state();
+    }
+
     public synchronized JSONObject state() {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.player_state.v1");
@@ -120,6 +137,8 @@ public final class PlayerController {
         Json.put(out, "filename", currentFile == null ? JSONObject.NULL : currentFile.getName());
         Json.put(out, "queue_index", queueIndex);
         Json.put(out, "queue_count", queue.length());
+        Json.put(out, "speed", playbackSpeed);
+        Json.put(out, "can_set_speed", true);
         if (player == null) {
             Json.put(out, "is_playing", false);
             Json.put(out, "position_ms", 0);
@@ -150,7 +169,7 @@ public final class PlayerController {
         queue = new JSONArray();
         for (int index = 0; index < items.length(); index++) {
             JSONObject item = normalizeQueueItem(items.opt(index));
-            resolveAppOwnedPath(pathFromArgs(item));
+            resolvePlayablePath(pathFromArgs(item));
             Json.add(queue, item);
         }
         queueIndex = Math.max(0, Math.min(args.optInt("index", 0), queue.length() - 1));
@@ -232,7 +251,7 @@ public final class PlayerController {
         if (item == null) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Queue item is not an object");
         }
-        loadFile(resolveAppOwnedPath(pathFromArgs(item)), item.optString("title", ""), item.optString("source", ""));
+        loadFile(resolvePlayablePath(pathFromArgs(item)), item.optString("title", ""), item.optString("source", ""));
     }
 
     private void loadFile(File file, String title, String source) throws CommandException {
@@ -244,7 +263,7 @@ public final class PlayerController {
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .build());
             next.setDataSource(file.getAbsolutePath());
-            next.setOnCompletionListener(mp -> playbackState = "completed");
+            next.setOnCompletionListener(mp -> handleCompletion());
             next.prepare();
             player = next;
             currentFile = file;
@@ -255,6 +274,25 @@ public final class PlayerController {
             releasePlayer();
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     "Unable to load media: " + exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+    }
+
+    private void handleCompletion() {
+        synchronized (this) {
+            if (queue.length() > 0 && queueIndex >= 0 && queueIndex < queue.length() - 1) {
+                try {
+                    queueIndex += 1;
+                    loadQueueIndex(queueIndex);
+                    requireLoaded();
+                    player.start();
+                    playbackState = "playing";
+                    applyPlaybackSpeedForCurrentState();
+                    return;
+                } catch (Exception ignored) {
+                    // A completion callback should not crash the app; leave playback completed.
+                }
+            }
+            playbackState = "completed";
         }
     }
 
@@ -286,6 +324,38 @@ public final class PlayerController {
             player.seekTo(bounded);
         } catch (IllegalStateException exc) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Unable to seek: " + exc.getMessage());
+        }
+    }
+
+    private void applyPlaybackSpeedForCurrentState() throws CommandException {
+        if (player == null || (!"playing".equals(playbackState) && !"paused".equals(playbackState))) {
+            return;
+        }
+        boolean wasPlaying = safeIsPlaying();
+        try {
+            PlaybackParams params;
+            try {
+                params = player.getPlaybackParams();
+            } catch (IllegalStateException exc) {
+                params = new PlaybackParams();
+            }
+            params.setSpeed(playbackSpeed);
+            player.setPlaybackParams(params);
+            if (!wasPlaying) {
+                player.pause();
+                playbackState = "paused";
+            }
+        } catch (IllegalStateException | IllegalArgumentException exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    "Unable to set playback speed: " + exc.getMessage());
+        }
+    }
+
+    private boolean safeIsPlaying() {
+        try {
+            return player != null && player.isPlaying();
+        } catch (IllegalStateException ignored) {
+            return false;
         }
     }
 
@@ -335,13 +405,14 @@ public final class PlayerController {
         return path;
     }
 
-    private File resolveAppOwnedPath(String path) throws CommandException {
+    private File resolvePlayablePath(String path) throws CommandException {
         try {
             File file = new File(path).getCanonicalFile();
             if (!isWithin(file, context.getFilesDir())
                     && !isWithin(file, context.getCacheDir())
-                    && !isWithin(file, context.getExternalFilesDir(null))) {
-                throw new CommandException(CommandErrorCodes.PERMISSION_MISSING, "Path is outside app-owned storage");
+                    && !isWithin(file, context.getExternalFilesDir(null))
+                    && !isAllowedPublicAudiobook(file)) {
+                throw new CommandException(CommandErrorCodes.PERMISSION_MISSING, "Path is outside Pucky playback storage");
             }
             if (!file.exists() || !file.isFile()) {
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "Player asset file not found");
@@ -352,6 +423,13 @@ public final class PlayerController {
         } catch (Exception exc) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
         }
+    }
+
+    private boolean isAllowedPublicAudiobook(File file) throws Exception {
+        File sharedStorage = new File("/storage/emulated/0" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        File sdcard = new File("/sdcard" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        File legacySdcard = new File("/mnt/sdcard" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        return isWithin(file, sharedStorage) || isWithin(file, sdcard) || isWithin(file, legacySdcard);
     }
 
     private boolean isWithin(File file, File root) throws Exception {
