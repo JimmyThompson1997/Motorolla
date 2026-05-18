@@ -101,7 +101,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class MainActivity extends Activity {
+public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
     private static final String HOME_PORTAL_PATH = "/pucky-home";
     private static final String COVER_PREFS = "pucky_cover_ui";

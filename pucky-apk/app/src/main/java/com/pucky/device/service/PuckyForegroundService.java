@@ -32,6 +32,7 @@ import android.view.WindowManager;
 
 import java.util.List;
 
+import com.pucky.device.CoverHomeActivity;
 import com.pucky.device.PuckyApplication;
 import com.pucky.device.MainActivity;
 import com.pucky.device.adb.RemoteAdbController;
@@ -492,7 +493,7 @@ public final class PuckyForegroundService extends Service {
             SettingsStore settings = app.settingsStore();
             Intent intent = new Intent(Intent.ACTION_MAIN)
                     .addCategory("android.intent.category.SECONDARY_HOME")
-                    .setClass(this, MainActivity.class)
+                    .setClass(this, CoverHomeActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                             | Intent.FLAG_ACTIVITY_SINGLE_TOP
                             | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -631,21 +632,30 @@ public final class PuckyForegroundService extends Service {
                 return false;
             }
             List<ActivityManager.AppTask> tasks = manager.getAppTasks();
-            ComponentName main = new ComponentName(this, MainActivity.class);
+            ComponentName coverHome = new ComponentName(this, CoverHomeActivity.class);
             for (ActivityManager.AppTask task : tasks) {
                 ActivityManager.RecentTaskInfo info = task.getTaskInfo();
                 ComponentName base = info == null || info.baseIntent == null
                         ? null
                         : info.baseIntent.getComponent();
                 ComponentName top = info == null ? null : info.topActivity;
-                if (main.equals(base) || main.equals(top)) {
-                    task.moveToFront();
-                    PuckyState.get().setLifecycleEvent("cover.task_fronted." + reason);
-                    PuckyState.get().broadcast(this);
-                    Log.i(TAG, "cover restore moved existing task front target_display="
-                            + targetDisplayId + " reason=" + reason);
-                    return true;
+                if (!coverHome.equals(base) && !coverHome.equals(top)) {
+                    continue;
                 }
+                if (!isValidCoverHomeTask(info, targetDisplayId)) {
+                    Log.i(TAG, "cover restore skipped non-cover task base=" + base
+                            + " top=" + top
+                            + " task_display=" + taskDisplayId(info)
+                            + " target_display=" + targetDisplayId
+                            + " reason=" + reason);
+                    continue;
+                }
+                task.moveToFront();
+                PuckyState.get().setLifecycleEvent("cover.task_fronted." + reason);
+                PuckyState.get().broadcast(this);
+                Log.i(TAG, "cover restore moved existing cover task front target_display="
+                        + targetDisplayId + " reason=" + reason);
+                return true;
             }
         } catch (Exception exc) {
             Log.w(TAG, "cover task move failed reason=" + reason, exc);
@@ -654,6 +664,34 @@ public final class PuckyForegroundService extends Service {
             PuckyState.get().broadcast(this);
         }
         return false;
+    }
+
+    private static boolean isValidCoverHomeTask(
+            ActivityManager.RecentTaskInfo info,
+            int targetDisplayId) {
+        if (info == null || info.baseIntent == null) {
+            return false;
+        }
+        int taskDisplayId = taskDisplayId(info);
+        if (taskDisplayId >= 0 && taskDisplayId != targetDisplayId) {
+            return false;
+        }
+        if (info.baseIntent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            return false;
+        }
+        return info.baseIntent.hasCategory("android.intent.category.SECONDARY_HOME");
+    }
+
+    private static int taskDisplayId(ActivityManager.RecentTaskInfo info) {
+        if (info == null) {
+            return -1;
+        }
+        try {
+            Object value = info.getClass().getField("displayId").get(info);
+            return value instanceof Integer ? (Integer) value : -1;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return -1;
+        }
     }
 
     private int findCoverDisplayId() {
