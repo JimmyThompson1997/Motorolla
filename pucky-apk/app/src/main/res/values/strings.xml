@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pucky_button_accessibility_label">Pucky button control</string>
+    <string name="pucky_button_accessibility_summary">Let Pucky listen for volume-button hold and release gestures.</string>
+    <string name="pucky_button_accessibility_description">Pucky uses this accessibility service only to detect volume-button gestures for push-to-talk and reply controls.</string>
+</resources>

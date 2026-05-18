@@ -60,6 +60,28 @@ public final class PuckyAssistantController {
         startSettingsActivity(activity, Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
     }
 
+    public static boolean requestAssistantRole(Activity activity, int requestCode) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return false;
+        }
+        RoleManager roleManager = activity.getSystemService(RoleManager.class);
+        if (roleManager == null || !roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT)) {
+            return false;
+        }
+        if (roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
+            return true;
+        }
+        try {
+            Intent intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT);
+            Log.i(TAG, "requesting assistant role");
+            activity.startActivityForResult(intent, requestCode);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException | IllegalArgumentException exc) {
+            Log.w(TAG, "assistant role request failed", exc);
+            return false;
+        }
+    }
+
     private static boolean startSettingsActivity(Activity activity, String action) {
         Intent intent = new Intent(action);
         if (intent.resolveActivity(activity.getPackageManager()) == null) {

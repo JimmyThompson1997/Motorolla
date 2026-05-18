@@ -72,6 +72,7 @@ public final class PuckyForegroundService extends Service {
 
     private BrokerControlClient brokerClient;
     private TunnelController tunnelController;
+    private CoverDisplayPresenter coverDisplayPresenter;
     private ConnectivityManager.NetworkCallback networkCallback;
     private Handler watchdogHandler;
     private Runnable watchdogTask;
@@ -111,6 +112,8 @@ public final class PuckyForegroundService extends Service {
         PuckyState.get().broadcast(this);
         createChannel();
         startAsForegroundService();
+        coverDisplayPresenter = new CoverDisplayPresenter(this);
+        coverDisplayPresenter.armOnce("service_started");
         registerNetworkCallback();
         startReconnectWatchdog();
         WakeWordController.shared(this).start(new org.json.JSONObject());
@@ -121,6 +124,9 @@ public final class PuckyForegroundService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getStringExtra(EXTRA_ACTION);
         Log.i(TAG, "onStartCommand action=" + action);
+        if (coverDisplayPresenter != null) {
+            coverDisplayPresenter.armOnce("start_command_" + action);
+        }
         SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
         PuckyState.get().setPolicy(settings.isAutoConnectEnabled(), settings.isAutostartEnabled());
         if (ACTION_STOP.equals(action)) {
@@ -159,6 +165,10 @@ public final class PuckyForegroundService extends Service {
     @Override
     public void onDestroy() {
         stopReconnectWatchdog();
+        if (coverDisplayPresenter != null) {
+            coverDisplayPresenter.shutdown("service_destroy");
+            coverDisplayPresenter = null;
+        }
         WakeWordController.shared(this).stop(new org.json.JSONObject());
         stopTunnel("service_destroy");
         disconnectBroker();

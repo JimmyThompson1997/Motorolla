@@ -169,9 +169,9 @@ public final class CapabilityReporter {
                 "not_recorded", "Maintains an in-memory queue of app-owned audio artifacts."));
         Json.add(out, cap("player.bookmark", "player.bookmark.save/player.bookmark.list", "implemented_untested", "yes", "quiet", null,
                 "not_recorded", "Stores app-local playback bookmarks for audio/podcast-style resume points."));
-        Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/livekit.ptt.start/livekit.ptt.stop", "implemented_untested",
-                "foreground_only", "quiet", null, "not_recorded",
-                "Captures configurable volume-button gestures while Pucky Activity is foreground. Default v8 policy keeps single volume presses as normal media volume, maps volume-up hold/release to LiveKit PTT, and maps volume-down hold to Vox reply pause/resume. Global/screen-off capture remains future Device Owner/root research."));
+        Json.add(out, cap("button.capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/livekit.ptt.start/livekit.ptt.stop", "implemented",
+                "foreground_or_accessibility", "quiet", null, "not_recorded",
+                "Captures configurable volume-button gestures in the foreground, or globally when the optional Pucky button accessibility service is enabled. Default policy keeps single volume presses as volume, maps volume-up hold/release to LiveKit PTT, and maps volume-down hold to Vox reply pause/resume."));
         Json.add(out, cap("timer.local", "timer.set", notificationStatusForTimer(), "yes", "visible",
                 Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "AlarmManager elapsed timer; notification requires notification permission."));
         Json.add(out, cap("timer.cancel", "timer.cancel", "implemented_untested", "yes", "quiet", null, "not_recorded",

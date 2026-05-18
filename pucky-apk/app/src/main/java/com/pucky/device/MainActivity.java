@@ -90,6 +90,7 @@ public final class MainActivity extends Activity {
     private static final String HOME_PORTAL_PATH = "/pucky-home";
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
+    private static final int REQUEST_ASSISTANT_ROLE = 4208;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
     private static final String PORTAL_SCREEN_HOME = "home";
@@ -241,6 +242,16 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
             pendingAssistantSetupAfterPermission = false;
             mainHandler.post(this::continueAssistantSetupFlow);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_ASSISTANT_ROLE) {
+            Log.i(TAG, "assistant role request result=" + resultCode
+                    + " status=" + PuckyAssistantController.status(this));
+            showAssistantSetupNotification();
         }
     }
 
@@ -1010,6 +1021,9 @@ public final class MainActivity extends Activity {
         showAssistantSetupNotification();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
                 || (getDisplay() != null && getDisplay().getDisplayId() == 0)) {
+            if (PuckyAssistantController.requestAssistantRole(this, REQUEST_ASSISTANT_ROLE)) {
+                return;
+            }
             PuckyAssistantController.openAssistantSetup(this);
         }
     }

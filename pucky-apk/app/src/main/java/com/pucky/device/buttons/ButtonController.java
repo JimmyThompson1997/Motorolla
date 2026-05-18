@@ -63,6 +63,14 @@ public final class ButtonController {
     }
 
     public synchronized boolean handleKeyDown(int keyCode, KeyEvent event) {
+        return handleKeyDown(keyCode, event, "foreground_activity", true);
+    }
+
+    public synchronized boolean handleGlobalKeyDown(int keyCode, KeyEvent event) {
+        return handleKeyDown(keyCode, event, "accessibility_key_filter", false);
+    }
+
+    private boolean handleKeyDown(int keyCode, KeyEvent event, String source, boolean foregroundOnly) {
         if (!isVolumeKey(keyCode)) {
             return false;
         }
@@ -72,12 +80,12 @@ public final class ButtonController {
         }
         if (keyCode == KEY_VOLUME_UP) {
             if (!volumeUpDown) {
-                scheduleHoldTimer(KEY_VOLUME_UP, "volume_up_hold", config);
+                scheduleHoldTimer(KEY_VOLUME_UP, "volume_up_hold", config, source, foregroundOnly);
             }
             volumeUpDown = true;
         } else {
             if (!volumeDownDown) {
-                scheduleHoldTimer(KEY_VOLUME_DOWN, "volume_down_hold", config);
+                scheduleHoldTimer(KEY_VOLUME_DOWN, "volume_down_hold", config, source, foregroundOnly);
             }
             volumeDownDown = true;
         }
@@ -87,20 +95,30 @@ public final class ButtonController {
             volumeDownLongSent = true;
             cancelHoldTimer(KEY_VOLUME_UP);
             cancelHoldTimer(KEY_VOLUME_DOWN);
-            emitGesture("volume_both_press", keyCode, event, "foreground_activity");
+            emitGesture("volume_both_press", keyCode, event, source, foregroundOnly);
             return true;
         }
         if ((keyCode == KEY_VOLUME_UP && volumeUpLongSent)
                 || (keyCode == KEY_VOLUME_DOWN && volumeDownLongSent)) {
             return true;
         }
-        if (event.getRepeatCount() > 0 && isMappedActiveGesture(holdGestureForKey(keyCode), config)) {
-            return sendHoldIfNeeded(keyCode, event, "foreground_activity_repeat");
+        if (event != null
+                && event.getRepeatCount() > 0
+                && isMappedActiveGesture(holdGestureForKey(keyCode), config)) {
+            return sendHoldIfNeeded(keyCode, event, source + "_repeat", foregroundOnly);
         }
         return shouldConsumeVolumeKey(keyCode, config);
     }
 
     public synchronized boolean handleKeyUp(int keyCode, KeyEvent event) {
+        return handleKeyUp(keyCode, event, "foreground_activity", true);
+    }
+
+    public synchronized boolean handleGlobalKeyUp(int keyCode, KeyEvent event) {
+        return handleKeyUp(keyCode, event, "accessibility_key_filter", false);
+    }
+
+    private boolean handleKeyUp(int keyCode, KeyEvent event, String source, boolean foregroundOnly) {
         if (!isVolumeKey(keyCode)) {
             return false;
         }
@@ -124,17 +142,23 @@ public final class ButtonController {
         }
         if (keyCode == KEY_VOLUME_UP && wasLong && !wasChord
                 && isMappedActiveGesture("volume_up_hold_release", config)) {
-            emitGesture("volume_up_hold_release", keyCode, event, "foreground_activity");
+            emitGesture("volume_up_hold_release", keyCode, event, source, foregroundOnly);
             return true;
         }
         if (!wasLong && !wasChord) {
-            handleTap(keyCode, event, clamp(config.optInt("double_press_ms", 450), 150, 1500));
+            handleTap(keyCode, event, clamp(config.optInt("double_press_ms", 450), 150, 1500),
+                    source, foregroundOnly);
             return shouldConsumeVolumeKey(keyCode, config);
         }
         return wasLong || wasChord || shouldConsumeVolumeKey(keyCode, config);
     }
 
-    private void scheduleHoldTimer(int keyCode, String gesture, JSONObject config) {
+    private void scheduleHoldTimer(
+            int keyCode,
+            String gesture,
+            JSONObject config,
+            String source,
+            boolean foregroundOnly) {
         if (!isMappedActiveGesture(gesture, config)) {
             return;
         }
@@ -155,7 +179,7 @@ public final class ButtonController {
                 } else if (!volumeDownDown || volumeDownLongSent || sequence != volumeDownSequence) {
                     return;
                 }
-                sendHoldIfNeeded(keyCode, null, "foreground_activity_timer");
+                sendHoldIfNeeded(keyCode, null, source + "_timer", foregroundOnly);
             }
         };
         if (keyCode == KEY_VOLUME_UP) {
@@ -182,17 +206,21 @@ public final class ButtonController {
         }
     }
 
-    private boolean sendHoldIfNeeded(int keyCode, KeyEvent event, String source) {
+    private boolean sendHoldIfNeeded(
+            int keyCode,
+            KeyEvent event,
+            String source,
+            boolean foregroundOnly) {
         JSONObject config = configJson();
         if (keyCode == KEY_VOLUME_UP && !volumeUpLongSent && isMappedActiveGesture("volume_up_hold", config)) {
             volumeUpLongSent = true;
             cancelHoldTimer(KEY_VOLUME_UP);
-            emitGesture("volume_up_hold", keyCode, event, source);
+            emitGesture("volume_up_hold", keyCode, event, source, foregroundOnly);
             return true;
         } else if (keyCode == KEY_VOLUME_DOWN && !volumeDownLongSent && isMappedActiveGesture("volume_down_hold", config)) {
             volumeDownLongSent = true;
             cancelHoldTimer(KEY_VOLUME_DOWN);
-            emitGesture("volume_down_hold", keyCode, event, source);
+            emitGesture("volume_down_hold", keyCode, event, source, foregroundOnly);
             return true;
         }
         return false;
@@ -293,14 +321,19 @@ public final class ButtonController {
         if (!isKnownGesture(gesture)) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Unknown button gesture: " + gesture);
         }
-        JSONObject event = emitGesture(gesture, 0, null, "simulated_command");
+        JSONObject event = emitGesture(gesture, 0, null, "simulated_command", false);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.button_simulate.v1");
         Json.put(out, "event", event);
         return out;
     }
 
-    private void handleTap(int keyCode, KeyEvent event, long doublePressMs) {
+    private void handleTap(
+            int keyCode,
+            KeyEvent event,
+            long doublePressMs,
+            String source,
+            boolean foregroundOnly) {
         long now = System.currentTimeMillis();
         if (keyCode == KEY_VOLUME_UP) {
             JSONObject mappings = configJson().optJSONObject("mappings");
@@ -308,23 +341,28 @@ public final class ButtonController {
                     && isActivePhysicalAction(mappings.optString("volume_up_double", "none"));
             if (doubleMapped && lastVolumeUpTapMs > 0 && now - lastVolumeUpTapMs <= doublePressMs) {
                 lastVolumeUpTapMs = 0;
-                emitGesture("volume_up_double", keyCode, event, "foreground_activity");
+                emitGesture("volume_up_double", keyCode, event, source, foregroundOnly);
             } else {
                 lastVolumeUpTapMs = now;
-                emitGesture("volume_up_press", keyCode, event, "foreground_activity");
+                emitGesture("volume_up_press", keyCode, event, source, foregroundOnly);
             }
         } else {
             if (lastVolumeDownTapMs > 0 && now - lastVolumeDownTapMs <= doublePressMs) {
                 lastVolumeDownTapMs = 0;
-                emitGesture("volume_down_double", keyCode, event, "foreground_activity");
+                emitGesture("volume_down_double", keyCode, event, source, foregroundOnly);
             } else {
                 lastVolumeDownTapMs = now;
-                emitGesture("volume_down_press", keyCode, event, "foreground_activity");
+                emitGesture("volume_down_press", keyCode, event, source, foregroundOnly);
             }
         }
     }
 
-    private JSONObject emitGesture(String gesture, int keyCode, KeyEvent keyEvent, String source) {
+    private JSONObject emitGesture(
+            String gesture,
+            int keyCode,
+            KeyEvent keyEvent,
+            String source,
+            boolean foregroundOnly) {
         JSONObject config = configJson();
         JSONObject mappings = config.optJSONObject("mappings");
         String action = mappings == null ? "event_only" : mappings.optString(gesture, "event_only");
@@ -337,17 +375,22 @@ public final class ButtonController {
         Json.put(event, "key_code", keyCode == 0 ? JSONObject.NULL : keyCode);
         Json.put(event, "repeat_count", keyEvent == null ? JSONObject.NULL : keyEvent.getRepeatCount());
         Json.put(event, "source", source);
-        Json.put(event, "foreground_only", true);
+        Json.put(event, "foreground_only", foregroundOnly);
         Json.put(event, "mapped_action", action);
         Json.put(event, "action_result", actionResult);
         appendEvent(event);
-        postPttGestureToBroker(gesture, action, actionResult, source);
+        postPttGestureToBroker(gesture, action, actionResult, source, foregroundOnly);
         PuckyState.get().setLifecycleEvent("button." + gesture + "." + actionResult.optString("status", "ok"));
         PuckyState.get().broadcast(context);
         return event;
     }
 
-    private void postPttGestureToBroker(String gesture, String action, JSONObject actionResult, String source) {
+    private void postPttGestureToBroker(
+            String gesture,
+            String action,
+            JSONObject actionResult,
+            String source,
+            boolean foregroundOnly) {
         if (!"volume_up_hold".equals(gesture) && !"volume_up_hold_release".equals(gesture)) {
             return;
         }
@@ -366,7 +409,7 @@ public final class ButtonController {
             Json.put(event, "type", "volume_up_hold".equals(gesture) ? "ptt.started" : "ptt.released");
             Json.put(event, "gesture", gesture);
             Json.put(event, "source", source);
-            Json.put(event, "foreground_only", true);
+            Json.put(event, "foreground_only", foregroundOnly);
             Json.put(event, "mapped_action", action);
             if (result != null) {
                 String turnId = result.optString("ptt_turn_id", "").trim();
