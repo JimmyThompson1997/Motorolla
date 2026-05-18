@@ -19,15 +19,16 @@ Motorolla GitHub repo
 Current live canonical APK line:
 
 ```text
-branch:      codex/slim-webview-cover-ui
+branch:      master
 package:     com.pucky.device.debug
-version:     19 / 0.2.18-webview-shell-broker-recover-debug
+version:     20 / 0.2.19-master-power-key-debug
 deploy gate: tools\deploy-canonical-apk.ps1
 ```
 
 The deploy gate refuses the wrong worktree, wrong branch, dirty worktree,
-unpushed HEAD, or mismatched Gradle version. This keeps the installed APK,
-GitHub branch, and local checkout aligned.
+unpushed HEAD, or mismatched Gradle version. All agents should work from
+`master` for deployable APK changes; feature branches are for experiments only
+and must be merged before anything is installed on-device.
 
 This folder is the Motorola Razr working workspace. It contains:
 

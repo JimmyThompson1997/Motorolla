@@ -7,7 +7,7 @@ param(
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
     [string]$CanonicalRepoRoot = "C:\Users\jimmy\Desktop\Motorolla",
-    [string]$ExpectedBranch = "codex/slim-webview-cover-ui",
+    [string]$ExpectedBranch = "master",
     [int]$ExpectedVersionCode = -1,
     [string]$ExpectedVersionName = "",
     [switch]$AllowDirty,

@@ -33,10 +33,6 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CoverDisplayGestureController {
-    public interface Callbacks {
-        void onCoverDisplayWoke(String reason);
-    }
-
     private static final String TAG = "PuckyCoverGesture";
     private static final String PREFS = "pucky_cover_display_gesture";
     private static final String ENABLED = "enabled";
@@ -47,8 +43,10 @@ public final class CoverDisplayGestureController {
     private static final String COOLDOWN_MS = "cooldown_ms";
     private static final String DISPLAY_ID = "display_id";
     private static final String MODE_NOTIFY = "notify";
-    private static final String MODE_DISPLAY = "display";
+    private static final String MODE_POWER = "power";
+    private static final String LEGACY_MODE_DISPLAY = "display";
     private static final int DEFAULT_DISPLAY_ID = 1;
+    private static final String POWER_KEY_COMMAND = "input keyevent 26";
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
     private static final long DEFAULT_MIN_SWIPE_MS = 50L;
@@ -81,10 +79,8 @@ public final class CoverDisplayGestureController {
     private Handler sensorHandler;
     private SensorEventListener listener;
     private final List<Sensor> registeredSensors = new ArrayList<>();
-    private Callbacks callbacks;
 
     private boolean running;
-    private boolean coverSleeping;
     private boolean handNear;
     private long nearStartedAtMs;
     private long activeCandidateId;
@@ -110,16 +106,6 @@ public final class CoverDisplayGestureController {
         }
     }
 
-    public synchronized void setCallbacks(Callbacks callbacks) {
-        this.callbacks = callbacks;
-    }
-
-    public synchronized void clearCallbacks(Callbacks callbacks) {
-        if (this.callbacks == callbacks) {
-            this.callbacks = null;
-        }
-    }
-
     public JSONObject status() {
         JSONObject gates = currentGateSnapshot();
         synchronized (lock) {
@@ -129,9 +115,9 @@ public final class CoverDisplayGestureController {
             Json.put(out, "action_enabled", actionEnabled());
             Json.put(out, "action_mode", actionMode());
             Json.put(out, "running", running);
-            Json.put(out, "cover_sleeping", coverSleeping);
             Json.put(out, "display_id", displayId());
             Json.put(out, "display_state", displayStateName(readDisplayState()));
+            Json.put(out, "power_key_command", POWER_KEY_COMMAND);
             Json.put(out, "min_swipe_ms", minSwipeMs());
             Json.put(out, "max_swipe_ms", maxSwipeMs());
             Json.put(out, "cooldown_ms", cooldownMs());
@@ -159,10 +145,12 @@ public final class CoverDisplayGestureController {
             }
             if (args.has("action_mode") && !args.isNull("action_mode")) {
                 String mode = args.optString("action_mode", MODE_NOTIFY).trim().toLowerCase(Locale.US);
-                if (MODE_NOTIFY.equals(mode) || MODE_DISPLAY.equals(mode)) {
-                    editor.putString(ACTION_MODE, mode);
+                if (MODE_NOTIFY.equals(mode)) {
+                    editor.putString(ACTION_MODE, MODE_NOTIFY);
+                } else if (MODE_POWER.equals(mode) || LEGACY_MODE_DISPLAY.equals(mode)) {
+                    editor.putString(ACTION_MODE, MODE_POWER);
                 } else {
-                    lastError = "action_mode must be notify or display";
+                    lastError = "action_mode must be notify or power";
                 }
             }
             if (args.has("min_swipe_ms")) {
@@ -198,26 +186,22 @@ public final class CoverDisplayGestureController {
     public JSONObject trigger(JSONObject args) {
         String requested = args.optString("action", "toggle").trim().toLowerCase(Locale.US);
         boolean force = args.optBoolean("force", false);
-        String action;
+        String action = "toggle";
         synchronized (lock) {
-            if ("toggle".equals(requested) || requested.isEmpty()) {
-                action = readDisplayState() == Display.STATE_ON ? "sleep" : "wake";
-            } else if ("sleep".equals(requested) || "wake".equals(requested)) {
-                action = requested;
-            } else {
+            if (!"toggle".equals(requested) && !requested.isEmpty()) {
                 JSONObject out = status();
                 Json.put(out, "triggered", false);
-                Json.put(out, "trigger_error", "action must be sleep, wake, or toggle");
+                Json.put(out, "trigger_error", "power key mode supports toggle only");
                 return out;
             }
             if (!force && !actionEnabled()) {
-                addEventLocked("display_action_skipped", "dry_run_trigger_" + action, 0L, null, null);
+                addEventLocked("power_action_skipped", "dry_run_trigger_" + action, 0L, null, null);
                 JSONObject out = status();
                 Json.put(out, "triggered", false);
                 Json.put(out, "trigger_error", "action_enabled is false; pass force=true for test trigger");
                 return out;
             }
-            addEventLocked("display_action_requested", "trigger_" + action, 0L, null, currentGateSnapshot());
+            addEventLocked("power_action_requested", "trigger_" + action, 0L, null, currentGateSnapshot());
         }
         runAction(action, "trigger_" + action);
         JSONObject out = status();
@@ -272,15 +256,6 @@ public final class CoverDisplayGestureController {
         synchronized (lock) {
             stopLocked();
             addEventLocked("controller_stopped", "disabled", 0L, null, null);
-        }
-    }
-
-    public boolean shouldSuppressCoverRestore() {
-        synchronized (lock) {
-            if (coverSleeping && readDisplayState() == Display.STATE_ON) {
-                coverSleeping = false;
-            }
-            return coverSleeping;
         }
     }
 
@@ -362,12 +337,12 @@ public final class CoverDisplayGestureController {
             return;
         }
 
-        String action = preflight.displayState == Display.STATE_ON ? "sleep" : "wake";
+        String action = "toggle";
         synchronized (lock) {
             lastGestureAtMs = SystemClock.elapsedRealtime();
             addEventLocked("gesture_accepted", action + ":" + sourceSensor, durationMs, values, gates);
             if (!actionEnabled()) {
-                addEventLocked("display_action_skipped", "dry_run", durationMs, values, gates);
+                addEventLocked("power_action_skipped", "dry_run", durationMs, values, gates);
                 return;
             }
         }
@@ -574,7 +549,7 @@ public final class CoverDisplayGestureController {
             runNotifyAction(action, reason);
             return;
         }
-        runDisplayAction(action, reason);
+        runPowerKeyAction(action, reason);
     }
 
     private void runNotifyAction(String action, String reason) {
@@ -598,31 +573,21 @@ public final class CoverDisplayGestureController {
         }
     }
 
-    private void runDisplayAction(String action, String reason) {
-        final int targetDisplay = displayId();
+    private void runPowerKeyAction(String action, String reason) {
         new Thread(() -> {
-            String command = "sleep".equals(action)
-                    ? "cmd display disable-display " + targetDisplay
-                    : "cmd display enable-display " + targetDisplay;
-            ShellResult result = exec(command, 5_000L);
-            Callbacks wakeCallbacks = null;
+            ShellResult result = exec(POWER_KEY_COMMAND, 5_000L);
             synchronized (lock) {
                 if (result.exitCode == 0) {
-                    coverSleeping = "sleep".equals(action);
-                    addEventLocked("display_" + action, "exit_0", result.durationMs, null, currentGateSnapshot());
-                    if ("wake".equals(action)) {
-                        wakeCallbacks = callbacks;
-                    }
+                    addEventLocked("power_key_" + action, "exit_0", result.durationMs, null,
+                            currentGateSnapshot());
                 } else {
-                    lastError = "display " + action + " failed: exit " + result.exitCode + " " + result.output;
-                    addEventLocked("display_" + action + "_failed", "exit_" + result.exitCode,
+                    lastError = "power key " + action + " unavailable: exit "
+                            + result.exitCode + " " + result.output;
+                    addEventLocked("power_key_" + action + "_failed", "exit_" + result.exitCode,
                             result.durationMs, null, currentGateSnapshot());
                 }
             }
-            if (wakeCallbacks != null) {
-                wakeCallbacks.onCoverDisplayWoke(reason);
-            }
-        }, "pucky-cover-display-" + action).start();
+        }, "pucky-cover-power-key-" + action).start();
     }
 
     private void buzz() {
@@ -700,7 +665,7 @@ public final class CoverDisplayGestureController {
 
     private String actionMode() {
         String mode = prefs.getString(ACTION_MODE, MODE_NOTIFY);
-        return MODE_DISPLAY.equals(mode) ? MODE_DISPLAY : MODE_NOTIFY;
+        return MODE_POWER.equals(mode) || LEGACY_MODE_DISPLAY.equals(mode) ? MODE_POWER : MODE_NOTIFY;
     }
 
     private long minSwipeMs() {
