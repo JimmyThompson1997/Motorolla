@@ -12,7 +12,7 @@ Current live canonical line:
 - Worktree: `C:\Users\jimmy\Desktop\Motorolla`
 - Branch: `codex/slim-webview-cover-ui`
 - Package: `com.pucky.device.debug`
-- Version: `versionCode=18`, `versionName=0.2.17-webview-shell-only-debug`
+- Version: `versionCode=19`, `versionName=0.2.18-webview-shell-broker-recover-debug`
 
 For an APK update:
 

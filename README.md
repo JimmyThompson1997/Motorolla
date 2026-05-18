@@ -21,7 +21,7 @@ Current live canonical APK line:
 ```text
 branch:      codex/slim-webview-cover-ui
 package:     com.pucky.device.debug
-version:     18 / 0.2.17-webview-shell-only-debug
+version:     19 / 0.2.18-webview-shell-broker-recover-debug
 deploy gate: tools\deploy-canonical-apk.ps1
 ```
 

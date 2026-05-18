@@ -29,6 +29,7 @@ import okhttp3.WebSocketListener;
 
 public final class BrokerControlClient {
     private static final String TAG = "PuckyBrokerClient";
+    private static final long OPEN_TIMEOUT_MS = 15000L;
 
     private final Context context;
     private final SettingsStore settings;
@@ -45,6 +46,7 @@ public final class BrokerControlClient {
     private boolean closed;
     private boolean connected;
     private boolean opening;
+    private long openingStartedAtMs;
 
     public BrokerControlClient(Context context, SettingsStore settings, CommandRouter router, CommandLogStore logStore) {
         this.context = context.getApplicationContext();
@@ -63,6 +65,7 @@ public final class BrokerControlClient {
         closed = false;
         connected = false;
         opening = false;
+        openingStartedAtMs = 0L;
         reconnectAttempt = 0;
         open();
     }
@@ -72,8 +75,22 @@ public final class BrokerControlClient {
         if (closed) {
             closed = false;
         }
-        if (connected || opening) {
+        if (connected) {
             return;
+        }
+        if (opening) {
+            long elapsedMs = System.currentTimeMillis() - openingStartedAtMs;
+            if (openingStartedAtMs > 0L && elapsedMs > OPEN_TIMEOUT_MS) {
+                Log.w(TAG, "websocket open timed out; reconnecting elapsed_ms=" + elapsedMs);
+                if (webSocket != null) {
+                    webSocket.cancel();
+                    webSocket = null;
+                }
+                opening = false;
+                openingStartedAtMs = 0L;
+            } else {
+                return;
+            }
         }
         if (reconnectTask != null && !reconnectTask.isDone()) {
             return;
@@ -90,6 +107,7 @@ public final class BrokerControlClient {
         closed = true;
         connected = false;
         opening = false;
+        openingStartedAtMs = 0L;
         stopHeartbeat();
         cancelReconnect();
         if (webSocket != null) {
@@ -115,6 +133,7 @@ public final class BrokerControlClient {
                 .header("Authorization", "Bearer " + settings.getToken())
                 .build();
         opening = true;
+        openingStartedAtMs = System.currentTimeMillis();
         webSocket = client.newWebSocket(request, new Listener());
     }
 
@@ -208,6 +227,7 @@ public final class BrokerControlClient {
                 webSocket = socket;
                 connected = true;
                 opening = false;
+                openingStartedAtMs = 0L;
                 cancelReconnect();
                 reconnectAttempt = 0;
             }
@@ -252,6 +272,7 @@ public final class BrokerControlClient {
                 }
                 connected = false;
                 opening = false;
+                openingStartedAtMs = 0L;
             }
             PuckyState.get().setConnectionState("closed_" + code);
             PuckyState.get().broadcast(context);
@@ -273,6 +294,7 @@ public final class BrokerControlClient {
                 }
                 connected = false;
                 opening = false;
+                openingStartedAtMs = 0L;
             }
             PuckyState.get().setConnectionState("offline");
             PuckyState.get().setLastError(t.getClass().getSimpleName() + ": " + t.getMessage());
