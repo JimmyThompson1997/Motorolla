@@ -67,6 +67,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
             "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
+            "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
@@ -378,6 +379,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return remoteAdbController.status(command.args());
             case "adb.remote.reconnect":
                 return remoteAdbController.reconnect(command.args());
+            case "adb.wifi.status":
+                return remoteAdbController.wifiStatus(command.args());
+            case "adb.wifi.enable":
+                return remoteAdbController.wifiEnable(command.args());
+            case "adb.wifi.disable":
+                return remoteAdbController.wifiDisable(command.args());
             case "cover.event":
                 return liveKitController.coverEvent(command.args());
             case "settings.open":

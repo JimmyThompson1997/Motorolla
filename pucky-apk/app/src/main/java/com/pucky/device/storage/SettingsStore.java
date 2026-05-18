@@ -29,6 +29,7 @@ public final class SettingsStore {
     private static final String TUNNEL_STRICT_HOST_KEY = "tunnel_strict_host_key";
     private static final String TUNNEL_CONNECT_TIMEOUT_MS = "tunnel_connect_timeout_ms";
     private static final String TUNNEL_RECONNECT_DELAY_MS = "tunnel_reconnect_delay_ms";
+    private static final String ADB_TRANSPORT = "adb_transport";
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -108,7 +109,8 @@ public final class SettingsStore {
     }
 
     public String getAdbTransport() {
-        return "classic_tcp";
+        String value = prefs.getString(ADB_TRANSPORT, "classic_tcp").trim();
+        return value.isEmpty() ? "classic_tcp" : value;
     }
 
     public boolean isTunnelTlsEnabled() {
@@ -173,6 +175,7 @@ public final class SettingsStore {
         putInt(editor, input, "remote_adb_port", TUNNEL_REMOTE_ADB_PORT, 1, 65535);
         putString(editor, input, "phone_adb_host", TUNNEL_PHONE_ADB_HOST);
         putInt(editor, input, "phone_adb_port", TUNNEL_PHONE_ADB_PORT, 1, 65535);
+        putString(editor, input, "adb_transport", ADB_TRANSPORT);
         putBoolean(editor, input, "tls_enabled", TUNNEL_TLS_ENABLED);
         putString(editor, input, "tls_server_name", TUNNEL_TLS_SERVER_NAME);
         putBoolean(editor, input, "strict_host_key_checking", TUNNEL_STRICT_HOST_KEY);
