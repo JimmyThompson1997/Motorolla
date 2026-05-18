@@ -45,9 +45,8 @@ public final class CoverDisplayGestureController {
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
     private static final long DEFAULT_MIN_SWIPE_MS = 50L;
-    private static final long DEFAULT_MAX_SWIPE_MS = 425L;
-    private static final long DEFAULT_COOLDOWN_MS = 1_500L;
-    private static final long OBJECT_HOLD_REJECT_MS = 550L;
+    private static final long DEFAULT_MAX_SWIPE_MS = 500L;
+    private static final long DEFAULT_COOLDOWN_MS = 800L;
     private static final long PREFLIGHT_MAX_AGE_MS = 1_250L;
     private static final long ACCEL_SAMPLE_MAX_AGE_MS = 350L;
     private static final long ACCEL_BUFFER_MS = 700L;
@@ -128,7 +127,6 @@ public final class CoverDisplayGestureController {
             Json.put(out, "min_swipe_ms", minSwipeMs());
             Json.put(out, "max_swipe_ms", maxSwipeMs());
             Json.put(out, "cooldown_ms", cooldownMs());
-            Json.put(out, "object_hold_reject_ms", OBJECT_HOLD_REJECT_MS);
             Json.put(out, "preflight_max_age_ms", PREFLIGHT_MAX_AGE_MS);
             Json.put(out, "hand_near", handNear);
             Json.put(out, "near_duration_ms", handNear && nearStartedAtMs > 0
@@ -365,9 +363,6 @@ public final class CoverDisplayGestureController {
         synchronized (lock) {
             if (durationMs < minSwipeMs()) {
                 return "too_short_" + durationMs + "ms";
-            }
-            if (durationMs >= OBJECT_HOLD_REJECT_MS) {
-                return "object_or_hover_hold_" + durationMs + "ms";
             }
             if (durationMs > maxSwipeMs()) {
                 return "too_long_" + durationMs + "ms";
