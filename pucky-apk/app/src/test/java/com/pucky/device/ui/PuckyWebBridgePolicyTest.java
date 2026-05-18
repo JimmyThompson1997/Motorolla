@@ -38,4 +38,11 @@ public final class PuckyWebBridgePolicyTest {
         PuckyWebBridgePolicy.boundShellArgs(args);
         assertEquals(120000L, args.getLong("timeout_ms"));
     }
+
+    @Test
+    public void portalRetryBackoffIsBounded() {
+        assertEquals(1000L, PuckyWebBridgePolicy.portalRetryDelayMs(0));
+        assertEquals(2000L, PuckyWebBridgePolicy.portalRetryDelayMs(1));
+        assertEquals(30000L, PuckyWebBridgePolicy.portalRetryDelayMs(99));
+    }
 }

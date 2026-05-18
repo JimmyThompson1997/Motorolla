@@ -12,7 +12,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -23,12 +22,8 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.provider.Settings;
-import android.view.Gravity;
 import android.util.Log;
 import android.view.Display;
-import android.view.View;
-import android.view.WindowManager;
 
 import java.util.List;
 
@@ -105,8 +100,6 @@ public final class PuckyForegroundService extends Service {
     private Runnable watchdogTask;
     private boolean manualStopRequested;
     private long lastCoverRestoreAtMs;
-    private WindowManager coverSentinelWindowManager;
-    private View coverSentinelView;
     private CoverDisplayGestureController coverDisplayGestureController;
     private final CoverDisplayGestureController.Callbacks coverGestureCallbacks =
             reason -> scheduleCoverRestore(reason, 450L);
@@ -207,7 +200,6 @@ public final class PuckyForegroundService extends Service {
         WakeWordController.shared(this).stop(new org.json.JSONObject());
         stopTunnel("service_destroy");
         disconnectBroker();
-        removeCoverVisibilitySentinel();
         unregisterNetworkCallback();
         PuckyState.get().setServiceRunning(false);
         PuckyState.get().setLifecycleEvent(manualStopRequested ? "service.stopped_manual" : "service.destroyed");
@@ -465,7 +457,6 @@ public final class PuckyForegroundService extends Service {
             Log.i(TAG, "cover restore skipped; no non-default display reason=" + reason);
             return;
         }
-        ensureCoverVisibilitySentinel("restore_" + reason, displayId);
         long now = SystemClock.elapsedRealtime();
         long elapsed = now - lastCoverRestoreAtMs;
         if (elapsed < COVER_RESTORE_DEBOUNCE_MS) {
@@ -546,76 +537,6 @@ public final class PuckyForegroundService extends Service {
                 || reason.startsWith("task_removed")
                 || reason.startsWith("service_started")
                 || reason.startsWith("autoconnect_");
-    }
-
-    private void ensureCoverVisibilitySentinel(String reason) {
-        int displayId = findCoverDisplayId();
-        if (displayId >= 0) {
-            ensureCoverVisibilitySentinel(reason, displayId);
-        }
-    }
-
-    private void ensureCoverVisibilitySentinel(String reason, int displayId) {
-        if (coverSentinelView != null) {
-            return;
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Log.i(TAG, "cover sentinel skipped; overlay permission missing reason=" + reason);
-            return;
-        }
-        DisplayManager displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
-        Display display = displayManager == null ? null : displayManager.getDisplay(displayId);
-        if (!isCoverDisplay(display)) {
-            Log.i(TAG, "cover sentinel skipped; no cover display reason=" + reason
-                    + " display=" + displayId);
-            return;
-        }
-        try {
-            Context displayContext = createDisplayContext(display);
-            WindowManager windowManager = (WindowManager) displayContext.getSystemService(
-                    Context.WINDOW_SERVICE);
-            if (windowManager == null) {
-                Log.i(TAG, "cover sentinel skipped; no window manager reason=" + reason);
-                return;
-            }
-            View sentinel = new View(displayContext);
-            sentinel.setBackgroundColor(0x01000000);
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    1,
-                    1,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT);
-            params.gravity = Gravity.TOP | Gravity.LEFT;
-            params.x = 0;
-            params.y = 0;
-            params.alpha = 0.05f;
-            params.setTitle("PuckyCoverSentinel");
-            windowManager.addView(sentinel, params);
-            coverSentinelWindowManager = windowManager;
-            coverSentinelView = sentinel;
-            Log.i(TAG, "cover sentinel added display=" + displayId + " reason=" + reason);
-        } catch (Exception exc) {
-            Log.w(TAG, "cover sentinel failed reason=" + reason, exc);
-        }
-    }
-
-    private void removeCoverVisibilitySentinel() {
-        if (coverSentinelWindowManager == null || coverSentinelView == null) {
-            coverSentinelWindowManager = null;
-            coverSentinelView = null;
-            return;
-        }
-        try {
-            coverSentinelWindowManager.removeView(coverSentinelView);
-        } catch (RuntimeException ignored) {
-            // The system can detach the overlay during display teardown.
-        }
-        coverSentinelWindowManager = null;
-        coverSentinelView = null;
     }
 
     private boolean moveExistingPuckyTaskToFront(String reason, int targetDisplayId) {

@@ -150,6 +150,11 @@ public final class IntentController {
             case "home":
                 intent = new Intent(Settings.ACTION_HOME_SETTINGS);
                 break;
+            case "assistant":
+            case "voice":
+            case "voice_input":
+                intent = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
+                break;
             case "app_details":
                 intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                         .setData(Uri.parse("package:" + context.getPackageName()));

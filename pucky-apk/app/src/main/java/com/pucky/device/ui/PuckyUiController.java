@@ -25,6 +25,10 @@ public final class PuckyUiController {
         Intent intent = new Intent(context, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra("show_home", true);
+        String surface = args.optString("surface", "").trim();
+        if (!surface.isEmpty()) {
+            intent.putExtra("surface", surface);
+        }
         if (args.optBoolean("connect", false)) {
             intent.putExtra("connect", true);
         }

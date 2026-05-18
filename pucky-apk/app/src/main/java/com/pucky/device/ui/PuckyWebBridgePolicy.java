@@ -11,6 +11,8 @@ public final class PuckyWebBridgePolicy {
     private static final long MAX_TTL_MS = 120000L;
     private static final long DEFAULT_SHELL_TIMEOUT_MS = 10000L;
     private static final long MAX_SHELL_TIMEOUT_MS = 120000L;
+    private static final long PORTAL_RETRY_BASE_DELAY_MS = 1000L;
+    private static final long PORTAL_RETRY_MAX_DELAY_MS = 30000L;
 
     private PuckyWebBridgePolicy() {
     }
@@ -59,6 +61,12 @@ public final class PuckyWebBridgePolicy {
         long timeout = args.optLong("timeout_ms", DEFAULT_SHELL_TIMEOUT_MS);
         long bounded = Math.max(1000L, Math.min(MAX_SHELL_TIMEOUT_MS, timeout));
         Json.put(args, "timeout_ms", bounded);
+    }
+
+    public static long portalRetryDelayMs(int failureCount) {
+        int boundedFailures = Math.max(0, Math.min(8, failureCount));
+        long delay = PORTAL_RETRY_BASE_DELAY_MS << boundedFailures;
+        return Math.min(PORTAL_RETRY_MAX_DELAY_MS, delay);
     }
 
     private static boolean isPuckyPortalPath(String path) {
