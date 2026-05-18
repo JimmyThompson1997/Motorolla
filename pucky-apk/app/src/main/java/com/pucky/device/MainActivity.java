@@ -208,7 +208,7 @@ public final class MainActivity extends Activity {
             showAssistantSetupScreen();
         } else if (shouldStartInAdmin(intent)) {
             showAdminScreen();
-        } else {
+        } else if (shouldStartInHome(intent)) {
             showHomeScreen();
         }
         handleLaunchIntent(intent);
@@ -517,6 +517,26 @@ public final class MainActivity extends Activity {
     private boolean shouldStartInAdmin(Intent intent) {
         return intent != null
                 && intent.getBooleanExtra("admin", false);
+    }
+
+    private boolean shouldStartInHome(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        if (intent.getBooleanExtra("home", false)) {
+            return true;
+        }
+        boolean launcherIntent = Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_LAUNCHER);
+        if (!launcherIntent) {
+            return false;
+        }
+        return !intent.hasExtra("broker_url")
+                && !intent.hasExtra("device_id")
+                && !intent.hasExtra("token")
+                && !intent.hasExtra("provisioning_json")
+                && !intent.hasExtra("provisioning_json_base64")
+                && !intent.getBooleanExtra("connect", false);
     }
 
     private boolean shouldStartInAssistantSetup(Intent intent) {
