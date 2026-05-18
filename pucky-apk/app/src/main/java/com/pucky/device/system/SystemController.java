@@ -8,8 +8,7 @@ import android.os.SystemClock;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
-import com.pucky.device.sensors.CoverGestureController;
-import com.pucky.device.service.PuckyForegroundService;
+import com.pucky.device.sensors.CoverDisplayGestureController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.util.Json;
 
@@ -90,20 +89,16 @@ public final class SystemController {
         return out;
     }
 
-    public JSONObject coverGestureStatus() {
-        return CoverGestureController.readStatus(context);
+    public JSONObject coverDisplayGestureStatus() {
+        return CoverDisplayGestureController.shared(context).status();
     }
 
-    public JSONObject coverGestureSet(JSONObject args) {
-        boolean enabled = args.optBoolean("enabled", true);
-        CoverGestureController.setEnabledPreference(context, enabled);
-        if (!enabled) {
-            CoverGestureController.setSleepingPreference(context, false);
-        }
-        PuckyForegroundService.configureCoverGesture(context, enabled);
-        JSONObject out = CoverGestureController.readStatus(context);
-        Json.put(out, "requested_enabled", enabled);
-        return out;
+    public JSONObject coverDisplayGestureSet(JSONObject args) {
+        return CoverDisplayGestureController.shared(context).configure(args);
+    }
+
+    public JSONObject coverDisplayGestureTrigger(JSONObject args) {
+        return CoverDisplayGestureController.shared(context).trigger(args);
     }
 
     public JSONObject benchmark(JSONObject args) throws CommandException {

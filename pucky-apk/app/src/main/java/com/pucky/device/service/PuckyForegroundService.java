@@ -55,7 +55,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.sensors.CoverGestureController;
+import com.pucky.device.sensors.CoverDisplayGestureController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
@@ -81,9 +81,6 @@ public final class PuckyForegroundService extends Service {
     public static final String ACTION_CONNECT = "connect";
     public static final String ACTION_DISCONNECT = "disconnect";
     public static final String ACTION_STOP = "stop";
-    public static final String ACTION_COVER_GESTURE_CONFIG = "cover_gesture_config";
-    public static final String ACTION_COVER_GESTURE_SLEEP = "com.pucky.device.action.COVER_GESTURE_SLEEP";
-    public static final String EXTRA_COVER_GESTURE_ENABLED = "cover_gesture_enabled";
 
     private static final int NOTIFICATION_ID = 41001;
     private static final int COVER_RESTORE_REQUEST_CODE = 41003;
@@ -109,7 +106,9 @@ public final class PuckyForegroundService extends Service {
     private long lastCoverRestoreAtMs;
     private WindowManager coverSentinelWindowManager;
     private View coverSentinelView;
-    private CoverGestureController coverGestureController;
+    private CoverDisplayGestureController coverDisplayGestureController;
+    private final CoverDisplayGestureController.Callbacks coverGestureCallbacks =
+            reason -> scheduleCoverRestore(reason, 450L);
 
     public static void start(Context context, boolean connect) {
         Intent intent = new Intent(context, PuckyForegroundService.class)
@@ -133,17 +132,6 @@ public final class PuckyForegroundService extends Service {
         context.startService(intent);
     }
 
-    public static void configureCoverGesture(Context context, boolean enabled) {
-        Intent intent = new Intent(context, PuckyForegroundService.class)
-                .putExtra(EXTRA_ACTION, ACTION_COVER_GESTURE_CONFIG)
-                .putExtra(EXTRA_COVER_GESTURE_ENABLED, enabled);
-        if (Build.VERSION.SDK_INT >= 26) {
-            context.startForegroundService(intent);
-        } else {
-            context.startService(intent);
-        }
-    }
-
     @Override
     public void onCreate() {
         super.onCreate();
@@ -158,27 +146,10 @@ public final class PuckyForegroundService extends Service {
         startAsForegroundService();
         registerNetworkCallback();
         registerCoverDisplayListener();
+        coverDisplayGestureController = CoverDisplayGestureController.shared(this);
+        coverDisplayGestureController.setCallbacks(coverGestureCallbacks);
+        coverDisplayGestureController.start();
         ensureCoverVisibilitySentinel("service_started");
-        coverGestureController = new CoverGestureController(this, new CoverGestureController.Callback() {
-            @Override
-            public boolean isCoverDisplayAvailable() {
-                return findCoverDisplayId() >= 0;
-            }
-
-            @Override
-            public void onCoverGestureSleep(long durationMs) {
-                handleCoverGestureSleep(durationMs);
-            }
-
-            @Override
-            public void onCoverGestureWake(long durationMs) {
-                handleCoverGestureWake(durationMs);
-            }
-        });
-        coverGestureController.startIfEnabled();
-        if (coverGestureController.isSleeping()) {
-            removeCoverVisibilitySentinel();
-        }
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
@@ -203,16 +174,6 @@ public final class PuckyForegroundService extends Service {
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return START_NOT_STICKY;
-        }
-        if (ACTION_COVER_GESTURE_CONFIG.equals(action)) {
-            boolean enabled = intent != null
-                    && intent.getBooleanExtra(EXTRA_COVER_GESTURE_ENABLED, false);
-            if (coverGestureController != null) {
-                coverGestureController.setEnabled(enabled);
-            }
-            PuckyState.get().setLifecycleEvent("cover.gesture." + (enabled ? "enabled" : "disabled"));
-            PuckyState.get().broadcast(this);
-            return START_STICKY;
         }
         if (ACTION_DISCONNECT.equals(action)) {
             settings.setAutoConnectEnabled(false);
@@ -241,9 +202,10 @@ public final class PuckyForegroundService extends Service {
     @Override
     public void onDestroy() {
         stopReconnectWatchdog();
-        if (coverGestureController != null) {
-            coverGestureController.stop();
-            coverGestureController = null;
+        if (coverDisplayGestureController != null) {
+            coverDisplayGestureController.clearCallbacks(coverGestureCallbacks);
+            coverDisplayGestureController.stop();
+            coverDisplayGestureController = null;
         }
         unregisterCoverDisplayListener();
         WakeWordController.shared(this).stop(new org.json.JSONObject());
@@ -499,7 +461,8 @@ public final class PuckyForegroundService extends Service {
     }
 
     private void maybeRestoreCoverActivity(String reason) {
-        if (coverGestureController != null && coverGestureController.isSleeping()) {
+        if (coverDisplayGestureController != null
+                && coverDisplayGestureController.shouldSuppressCoverRestore()) {
             Log.i(TAG, "cover restore skipped; gesture sleep active reason=" + reason);
             return;
         }
@@ -742,40 +705,6 @@ public final class PuckyForegroundService extends Service {
             default:
                 return String.valueOf(state);
         }
-    }
-
-    private void handleCoverGestureSleep(long durationMs) {
-        Handler handler = coverRestoreHandler;
-        if (handler == null) {
-            handler = new Handler(Looper.getMainLooper());
-            coverRestoreHandler = handler;
-        }
-        handler.post(() -> {
-            if (pendingCoverRestore != null && coverRestoreHandler != null) {
-                coverRestoreHandler.removeCallbacks(pendingCoverRestore);
-                pendingCoverRestore = null;
-            }
-            removeCoverVisibilitySentinel();
-            Intent intent = new Intent(ACTION_COVER_GESTURE_SLEEP).setPackage(getPackageName());
-            sendBroadcast(intent);
-            PuckyState.get().setLifecycleEvent("cover.gesture.sleep." + durationMs + "ms");
-            PuckyState.get().broadcast(this);
-            Log.i(TAG, "cover gesture sleep duration_ms=" + durationMs);
-        });
-    }
-
-    private void handleCoverGestureWake(long durationMs) {
-        Handler handler = coverRestoreHandler;
-        if (handler == null) {
-            handler = new Handler(Looper.getMainLooper());
-            coverRestoreHandler = handler;
-        }
-        handler.post(() -> {
-            PuckyState.get().setLifecycleEvent("cover.gesture.wake." + durationMs + "ms");
-            PuckyState.get().broadcast(this);
-            scheduleCoverRestore("cover_gesture_wake", 0L);
-            Log.i(TAG, "cover gesture wake duration_ms=" + durationMs);
-        });
     }
 
     private void startReconnectWatchdog() {

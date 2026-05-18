@@ -25,7 +25,6 @@ import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
-import android.view.Display;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.View;
@@ -132,7 +131,6 @@ public final class MainActivity extends Activity {
     private String lastHomePortalUrl = "";
     private boolean coverLightMode;
     private boolean screenReceiverRegistered;
-    private boolean coverGestureReceiverRegistered;
     private boolean assistantSetupMode;
     private boolean pendingAssistantSetupAfterPermission;
 
@@ -149,16 +147,6 @@ public final class MainActivity extends Activity {
             String action = intent == null ? "" : intent.getAction();
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.post(MainActivity.this::renderCurrent);
-            }
-        }
-    };
-
-    private final BroadcastReceiver coverGestureReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent == null ? "" : intent.getAction();
-            if (PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP.equals(action)) {
-                mainHandler.post(MainActivity.this::hideCoverHomeForGestureSleep);
             }
         }
     };
@@ -268,13 +256,6 @@ public final class MainActivity extends Activity {
             registerReceiver(screenReceiver, screenFilter);
         }
         screenReceiverRegistered = true;
-        IntentFilter coverGestureFilter = new IntentFilter(PuckyForegroundService.ACTION_COVER_GESTURE_SLEEP);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(coverGestureReceiver, coverGestureFilter, RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(coverGestureReceiver, coverGestureFilter);
-        }
-        coverGestureReceiverRegistered = true;
         applySystemUiForMode();
         if (!assistantSetupMode) {
             ensureAutoConnectService();
@@ -298,10 +279,6 @@ public final class MainActivity extends Activity {
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver);
             screenReceiverRegistered = false;
-        }
-        if (coverGestureReceiverRegistered) {
-            unregisterReceiver(coverGestureReceiver);
-            coverGestureReceiverRegistered = false;
         }
     }
 
@@ -364,27 +341,6 @@ public final class MainActivity extends Activity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
             getWindow().setAttributes(params);
         }
-    }
-
-    private void hideCoverHomeForGestureSleep() {
-        if (adminMode || assistantSetupMode) {
-            return;
-        }
-        Display display = getDisplay();
-        if (display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) {
-            return;
-        }
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        setContentView(buildCoverSleepView());
-        Log.i(TAG, "cover home showing black sleep surface for gesture sleep");
-    }
-
-    private View buildCoverSleepView() {
-        resetCoverRefs();
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
-        root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-        return root;
     }
 
     private void applySystemUiForMode() {
@@ -855,7 +811,6 @@ public final class MainActivity extends Activity {
 
     private void showHomeScreen() {
         assistantSetupMode = false;
-        configureApplianceWindow();
         if (!adminMode) {
             applySystemUiForMode();
             if (homeWebView == null || homePortalErrorVisible) {

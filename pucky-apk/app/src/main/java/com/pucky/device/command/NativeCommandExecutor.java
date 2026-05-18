@@ -45,8 +45,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample", "sensor.watch",
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
-            "service.status", "power.policy.get", "cover.gesture.status", "cover.gesture.set",
-            "compute.benchmark", "shell.exec",
+            "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.delete",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
@@ -67,6 +66,9 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
             "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
+            "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
+            "cover.display_gesture.status", "cover.display_gesture.set",
+            "cover.display_gesture.trigger",
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
@@ -228,10 +230,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return systemController.serviceStatus();
             case "power.policy.get":
                 return systemController.powerPolicy();
-            case "cover.gesture.status":
-                return systemController.coverGestureStatus();
-            case "cover.gesture.set":
-                return systemController.coverGestureSet(command.args());
             case "compute.benchmark":
                 return systemController.benchmark(command.args());
             case "shell.exec":
@@ -378,6 +376,18 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return remoteAdbController.status(command.args());
             case "adb.remote.reconnect":
                 return remoteAdbController.reconnect(command.args());
+            case "adb.wifi.status":
+                return remoteAdbController.wifiStatus(command.args());
+            case "adb.wifi.enable":
+                return remoteAdbController.wifiEnable(command.args());
+            case "adb.wifi.disable":
+                return remoteAdbController.wifiDisable(command.args());
+            case "cover.display_gesture.status":
+                return systemController.coverDisplayGestureStatus();
+            case "cover.display_gesture.set":
+                return systemController.coverDisplayGestureSet(command.args());
+            case "cover.display_gesture.trigger":
+                return systemController.coverDisplayGestureTrigger(command.args());
             case "cover.event":
                 return liveKitController.coverEvent(command.args());
             case "settings.open":
