@@ -125,7 +125,7 @@ screens or cover-screen visual state. Home, apps, setup, admin, threads, inbox, 
 by the VM at `/pucky-home`.
 
 `PuckyAndroid.getNativeContext()` returns `pucky.native_context.v1` with native facts only: device id, shell theme,
-safe rectangle, and LiveKit status. `PuckyAndroid.getState()` is kept as a compatibility alias for that same native
+and LiveKit status. The cover safe rectangle is owned by the VM HTML/CSS. `PuckyAndroid.getState()` is kept as a compatibility alias for that same native
 context. Neither bridge method emits cover `mode`, voice visual modes, transcript turns, threads, inbox items, or
 `call_visual`.
 

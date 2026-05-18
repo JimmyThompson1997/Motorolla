@@ -60,8 +60,9 @@ The native context contains:
 
 - `device_id`: current paired device id.
 - `theme`: native shell light/dark preference.
-- `safe_rect`: the Razr cover-safe dimensions.
 - `livekit`: connection/debug status only.
+
+The Razr cover-safe dimensions belong to the VM/HTML layer, not Android. The current canonical values are `width_px=992`, `top_px=50`, and `bottom_px=102`, mirrored in the portal defaults and CSS variables.
 
 Android no longer sends `call_visual`, no longer sends cover `mode`, no longer derives `mode` from LiveKit/PTT events, and no longer scans LiveKit event history to infer a cover-screen turn.
 
@@ -95,7 +96,7 @@ The voice agent should be heard, not visualized. The cover screen should stay on
 - Delete voice visual pages/components for `listening`, `finalizing`, `thinking`, and `speaking`.
 - Delete code that lets VM/LiveKit events override manual `home`, `apps`, `threads`, or `inbox` surfaces.
 - Keep one home renderer and one apps/app-feed renderer.
-- Keep the safe-rectangle layout and theme variables.
+- Keep the safe-rectangle layout and theme variables in VM HTML/CSS.
 - Keep app navigation local and explicit.
 - Keep normal scroll behavior in app surfaces that need it.
 - Treat Android bridge data as native context only. It may update safe area/theme/LiveKit facts, but it may not update cover `mode`.

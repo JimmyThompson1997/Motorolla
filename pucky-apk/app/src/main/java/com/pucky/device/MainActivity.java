@@ -93,8 +93,6 @@ public final class MainActivity extends Activity {
     private static final String HOME_PORTAL_PATH = "/pucky-home";
     private static final String COVER_PREFS = "pucky_cover_ui";
     private static final String PREF_LIGHT_MODE = "light_mode";
-    private static final int COVER_SAFE_RECT_WIDTH_PX = 992;
-    private static final int COVER_SAFE_RECT_BOTTOM_PX = 102;
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
@@ -474,12 +472,6 @@ public final class MainActivity extends Activity {
         Json.put(out, "schema", "pucky.native_context.v1");
         Json.put(out, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
         Json.put(out, "theme", coverLightMode ? "light" : "dark");
-
-        JSONObject safe = new JSONObject();
-        Json.put(safe, "width_px", COVER_SAFE_RECT_WIDTH_PX);
-        Json.put(safe, "top_px", 50);
-        Json.put(safe, "bottom_px", COVER_SAFE_RECT_BOTTOM_PX);
-        Json.put(out, "safe_rect", safe);
 
         JSONObject live = new JSONObject();
         Json.put(live, "state", liveKit.optString("state", "unknown"));
