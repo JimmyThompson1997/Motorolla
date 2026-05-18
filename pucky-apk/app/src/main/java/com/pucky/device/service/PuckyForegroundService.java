@@ -146,16 +146,13 @@ public final class PuckyForegroundService extends Service {
         createChannel();
         startAsForegroundService();
         registerNetworkCallback();
-        registerCoverDisplayListener();
         coverDisplayGestureController = CoverDisplayGestureController.shared(this);
         coverDisplayGestureController.setCallbacks(coverGestureCallbacks);
         coverDisplayGestureController.start();
-        ensureCoverVisibilitySentinel("service_started");
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
         ensureTunnelStarted("service_started");
-        scheduleCoverRestore("service_started");
     }
 
     @Override
@@ -190,12 +187,10 @@ public final class PuckyForegroundService extends Service {
             PuckyState.get().setLifecycleEvent("broker.manual_connect");
             ensureTunnelStarted("connect_action");
             ensureBrokerConnected();
-            scheduleCoverRestore("connect_action");
         } else if (settings.isAutoConnectEnabled()) {
             PuckyState.get().setLifecycleEvent("broker.auto_connect");
             ensureTunnelStarted("autoconnect_action");
             ensureBrokerConnected();
-            scheduleCoverRestore("autoconnect_action");
         }
         return START_STICKY;
     }
@@ -234,7 +229,6 @@ public final class PuckyForegroundService extends Service {
         PuckyState.get().broadcast(this);
         if (!manualStopRequested && shouldKeepServiceRunning(settings)) {
             start(this, settings.isAutoConnectEnabled());
-            scheduleCoverRestore("task_removed");
         }
         super.onTaskRemoved(rootIntent);
     }
@@ -422,7 +416,6 @@ public final class PuckyForegroundService extends Service {
         Log.i(TAG, "auto-connect after " + reason);
         ensureTunnelStarted("broker_" + reason);
         ensureBrokerConnected();
-        scheduleCoverRestore("autoconnect_" + reason);
     }
 
     private void ensureTunnelStarted(String reason) {
