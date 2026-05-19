@@ -137,9 +137,11 @@ public final class PuckyForegroundService extends Service {
         createChannel();
         startAsForegroundService();
         registerNetworkCallback();
+        registerCoverDisplayListener();
         coverDisplayGestureController = CoverDisplayGestureController.shared(this);
         coverDisplayGestureController.start();
         startReconnectWatchdog();
+        scheduleCoverRestore("service_started");
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
         ensureTunnelStarted("service_started");
@@ -177,10 +179,12 @@ public final class PuckyForegroundService extends Service {
             PuckyState.get().setLifecycleEvent("broker.manual_connect");
             ensureTunnelStarted("connect_action");
             ensureBrokerConnected();
+            scheduleCoverRestore("connect_action");
         } else if (settings.isAutoConnectEnabled()) {
             PuckyState.get().setLifecycleEvent("broker.auto_connect");
             ensureTunnelStarted("autoconnect_action");
             ensureBrokerConnected();
+            scheduleCoverRestore("autoconnect_action");
         }
         return START_STICKY;
     }

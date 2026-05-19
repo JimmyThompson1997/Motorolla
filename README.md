@@ -21,7 +21,7 @@ Current live canonical APK line:
 ```text
 branch:      master
 package:     com.pucky.device.debug
-version:     20 / 0.2.19-master-power-key-debug
+version:     21 / 0.2.20-cover-restore-debug
 deploy gate: tools\deploy-canonical-apk.ps1
 ```
 

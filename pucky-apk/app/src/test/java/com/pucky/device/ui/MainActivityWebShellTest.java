@@ -1,6 +1,7 @@
 package com.pucky.device.ui;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -52,5 +53,17 @@ public final class MainActivityWebShellTest {
             assertFalse("Foreground service should not draw cover overlay sentinel " + needle,
                     source.contains(needle));
         }
+    }
+
+    @Test
+    public void foregroundServiceKeepsCoverRestoreListenerActive() throws Exception {
+        String source = new String(
+                Files.readAllBytes(Path.of("src/main/java/com/pucky/device/service/PuckyForegroundService.java")),
+                StandardCharsets.UTF_8);
+
+        assertTrue("Foreground service should listen for cover display lifecycle changes",
+                source.contains("registerCoverDisplayListener();"));
+        assertTrue("Foreground service should attempt one cover restore when it starts",
+                source.contains("scheduleCoverRestore(\"service_started\");"));
     }
 }
