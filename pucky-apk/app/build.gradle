@@ -41,8 +41,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName "0.2.20-cover-restore"
+        versionCode 22
+        versionName "0.2.21-cover-sleep-cleanup"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

@@ -1,6 +1,9 @@
 package com.pucky.device.sensors;
 
+import android.app.ActivityOptions;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -8,6 +11,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
@@ -16,6 +20,9 @@ import android.os.Vibrator;
 import android.util.Log;
 import android.view.Display;
 
+import com.pucky.device.CoverHomeActivity;
+import com.pucky.device.MainActivity;
+import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.util.Json;
 
@@ -43,10 +50,11 @@ public final class CoverDisplayGestureController {
     private static final String COOLDOWN_MS = "cooldown_ms";
     private static final String DISPLAY_ID = "display_id";
     private static final String MODE_NOTIFY = "notify";
-    private static final String MODE_POWER = "power";
+    private static final String MODE_LOCK_SCREEN = "lock_screen";
+    private static final String LEGACY_MODE_POWER = "power";
     private static final String LEGACY_MODE_DISPLAY = "display";
     private static final int DEFAULT_DISPLAY_ID = 1;
-    private static final String POWER_KEY_COMMAND = "input keyevent 26";
+    private static final int WAKE_REQUEST_CODE = 41005;
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
     private static final long DEFAULT_MIN_SWIPE_MS = 50L;
@@ -117,7 +125,7 @@ public final class CoverDisplayGestureController {
             Json.put(out, "running", running);
             Json.put(out, "display_id", displayId());
             Json.put(out, "display_state", displayStateName(readDisplayState()));
-            Json.put(out, "power_key_command", POWER_KEY_COMMAND);
+            Json.put(out, "accessibility_lock_available", PuckyAccessibilityService.canLockScreen(context));
             Json.put(out, "min_swipe_ms", minSwipeMs());
             Json.put(out, "max_swipe_ms", maxSwipeMs());
             Json.put(out, "cooldown_ms", cooldownMs());
@@ -147,10 +155,12 @@ public final class CoverDisplayGestureController {
                 String mode = args.optString("action_mode", MODE_NOTIFY).trim().toLowerCase(Locale.US);
                 if (MODE_NOTIFY.equals(mode)) {
                     editor.putString(ACTION_MODE, MODE_NOTIFY);
-                } else if (MODE_POWER.equals(mode) || LEGACY_MODE_DISPLAY.equals(mode)) {
-                    editor.putString(ACTION_MODE, MODE_POWER);
+                } else if (MODE_LOCK_SCREEN.equals(mode)
+                        || LEGACY_MODE_POWER.equals(mode)
+                        || LEGACY_MODE_DISPLAY.equals(mode)) {
+                    editor.putString(ACTION_MODE, MODE_LOCK_SCREEN);
                 } else {
-                    lastError = "action_mode must be notify or power";
+                    lastError = "action_mode must be notify or lock_screen";
                 }
             }
             if (args.has("min_swipe_ms")) {
@@ -549,7 +559,7 @@ public final class CoverDisplayGestureController {
             runNotifyAction(action, reason);
             return;
         }
-        runPowerKeyAction(action, reason);
+        runLockOrWakeAction(action, reason);
     }
 
     private void runNotifyAction(String action, String reason) {
@@ -573,21 +583,93 @@ public final class CoverDisplayGestureController {
         }
     }
 
-    private void runPowerKeyAction(String action, String reason) {
-        new Thread(() -> {
-            ShellResult result = exec(POWER_KEY_COMMAND, 5_000L);
-            synchronized (lock) {
-                if (result.exitCode == 0) {
-                    addEventLocked("power_key_" + action, "exit_0", result.durationMs, null,
-                            currentGateSnapshot());
+    private void runLockOrWakeAction(String action, String reason) {
+        int displayState = readDisplayState();
+        if (displayState == Display.STATE_ON) {
+            runLockScreenAction(action, reason);
+        } else {
+            runWakeCoverAction(action, reason, displayState);
+        }
+    }
+
+    private void runLockScreenAction(String action, String reason) {
+        buzz();
+        boolean success = PuckyAccessibilityService.lockScreen();
+        synchronized (lock) {
+            if (success) {
+                addEventLocked("lock_screen_" + action, reason, 0L, null, currentGateSnapshot());
+            } else {
+                lastError = "Accessibility screen lock is unavailable";
+                addEventLocked("lock_screen_unavailable", reason, 0L, null, currentGateSnapshot());
+            }
+        }
+        if (!success) {
+            notifyActionUnavailable();
+        }
+    }
+
+    private void runWakeCoverAction(String action, String reason, int displayState) {
+        buzz();
+        new Handler(context.getMainLooper()).post(() -> {
+            try {
+                Intent intent = new Intent(Intent.ACTION_MAIN)
+                        .addCategory("android.intent.category.SECONDARY_HOME")
+                        .setClass(context, CoverHomeActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        .putExtra(MainActivity.EXTRA_WAKE_SCREEN, true);
+                Bundle options = coverLaunchOptions(displayId(), true);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        flags |= PendingIntent.FLAG_IMMUTABLE;
+                    }
+                    PendingIntent pendingIntent = PendingIntent.getActivity(
+                            context,
+                            WAKE_REQUEST_CODE,
+                            intent,
+                            flags);
+                    pendingIntent.send(context, 0, null, null, null, null, options);
                 } else {
-                    lastError = "power key " + action + " unavailable: exit "
-                            + result.exitCode + " " + result.output;
-                    addEventLocked("power_key_" + action + "_failed", "exit_" + result.exitCode,
-                            result.durationMs, null, currentGateSnapshot());
+                    context.startActivity(intent, options);
+                }
+                synchronized (lock) {
+                    addEventLocked("wake_cover_" + action, displayStateName(displayState),
+                            0L, null, currentGateSnapshot());
+                }
+            } catch (Exception exc) {
+                synchronized (lock) {
+                    lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+                    addEventLocked("wake_cover_failed", reason, 0L, null, currentGateSnapshot());
                 }
             }
-        }, "pucky-cover-power-key-" + action).start();
+        });
+    }
+
+    private static Bundle coverLaunchOptions(int displayId, boolean forPendingIntent) {
+        ActivityOptions options = ActivityOptions.makeBasic()
+                .setLaunchDisplayId(displayId);
+        if (forPendingIntent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            options.setPendingIntentBackgroundActivityLaunchAllowed(true);
+            options.setPendingIntentBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+        }
+        return options.toBundle();
+    }
+
+    private void notifyActionUnavailable() {
+        try {
+            JSONObject args = new JSONObject();
+            Json.put(args, "id", "cover_wave_lock_unavailable");
+            Json.put(args, "title", "Pucky screen lock needs setup");
+            Json.put(args, "text", "Enable Pucky screen lock in Accessibility settings.");
+            Json.put(args, "big_text", "The hand-wave gesture was accepted, but Android requires the Pucky Accessibility service before Pucky can lock the screen.");
+            Json.put(args, "timeout_ms", 6_000L);
+            new NotificationController(context).show(args);
+        } catch (Exception exc) {
+            Log.w(TAG, "cover wave unavailable notification failed", exc);
+        }
     }
 
     private void buzz() {
@@ -665,7 +747,11 @@ public final class CoverDisplayGestureController {
 
     private String actionMode() {
         String mode = prefs.getString(ACTION_MODE, MODE_NOTIFY);
-        return MODE_POWER.equals(mode) || LEGACY_MODE_DISPLAY.equals(mode) ? MODE_POWER : MODE_NOTIFY;
+        return MODE_LOCK_SCREEN.equals(mode)
+                || LEGACY_MODE_POWER.equals(mode)
+                || LEGACY_MODE_DISPLAY.equals(mode)
+                ? MODE_LOCK_SCREEN
+                : MODE_NOTIFY;
     }
 
     private long minSwipeMs() {

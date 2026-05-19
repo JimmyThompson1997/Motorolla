@@ -21,6 +21,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -95,6 +96,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
+    public static final String EXTRA_WAKE_SCREEN = "pucky_wake_screen";
     private static final String HOME_PORTAL_PATH = "/pucky-home";
     private static final int COVER_SAFE_RECT_WIDTH_PX = 992;
     private static final int COVER_SAFE_RECT_BOTTOM_PX = 102;
@@ -122,6 +124,7 @@ public class MainActivity extends Activity {
     private boolean portalNetworkCallbackRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
+    private long wakeScreenUntilMs;
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
@@ -208,6 +211,7 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         portalSurface = portalSurfaceFromIntent(intent);
+        configureApplianceWindow();
         showHomeScreen();
         handleLaunchIntent(intent);
         if (intent != null && "com.pucky.device.action.REQUEST_PERMISSIONS".equals(intent.getAction())) {
@@ -304,16 +308,25 @@ public class MainActivity extends Activity {
     private void configureApplianceWindow() {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+        boolean wakeScreen = shouldWakeScreenForThisResume();
+        if (wakeScreen) {
+            mainHandler.postDelayed(this::configureApplianceWindow, 3_100L);
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true);
-            setTurnScreenOn(true);
-            KeyguardManager keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
-            if (keyguardManager != null) {
-                keyguardManager.requestDismissKeyguard(this, null);
+            setShowWhenLocked(wakeScreen);
+            setTurnScreenOn(wakeScreen);
+            if (wakeScreen) {
+                KeyguardManager keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+                if (keyguardManager != null) {
+                    keyguardManager.requestDismissKeyguard(this, null);
+                }
             }
-        } else {
+        } else if (wakeScreen) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                     | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
                     | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
@@ -324,6 +337,23 @@ public class MainActivity extends Activity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
             getWindow().setAttributes(params);
         }
+    }
+
+    private boolean consumeWakeScreenRequest() {
+        Intent intent = getIntent();
+        if (intent == null || !intent.getBooleanExtra(EXTRA_WAKE_SCREEN, false)) {
+            return false;
+        }
+        intent.removeExtra(EXTRA_WAKE_SCREEN);
+        return true;
+    }
+
+    private boolean shouldWakeScreenForThisResume() {
+        if (consumeWakeScreenRequest()) {
+            wakeScreenUntilMs = SystemClock.elapsedRealtime() + 3_000L;
+            return true;
+        }
+        return SystemClock.elapsedRealtime() < wakeScreenUntilMs;
     }
 
     private void applySystemUiForMode() {

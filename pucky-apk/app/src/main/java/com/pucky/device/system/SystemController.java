@@ -2,10 +2,13 @@ package com.pucky.device.system;
 
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.provider.Settings;
 
+import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.sensors.CoverDisplayGestureController;
@@ -86,6 +89,35 @@ public final class SystemController {
                     Build.VERSION.SDK_INT >= 23 && manager.isIgnoringBatteryOptimizations(context.getPackageName()));
         }
         Json.put(out, "service", PuckyState.get().snapshotJson());
+        return out;
+    }
+
+    public JSONObject screenLockStatus() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.screen_lock_status.v1");
+        Json.put(out, "available", PuckyAccessibilityService.canLockScreen(context));
+        Json.put(out, "enabled_in_settings", PuckyAccessibilityService.isEnabledInSettings(context));
+        Json.put(out, "requires_accessibility_service", true);
+        Json.put(out, "settings_action", Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        return out;
+    }
+
+    public JSONObject screenLockRequest() {
+        boolean success = PuckyAccessibilityService.lockScreen();
+        JSONObject out = screenLockStatus();
+        Json.put(out, "schema", "pucky.screen_lock_request.v1");
+        Json.put(out, "requested", true);
+        Json.put(out, "success", success);
+        return out;
+    }
+
+    public JSONObject openAccessibilitySettings() {
+        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
+        JSONObject out = screenLockStatus();
+        Json.put(out, "schema", "pucky.screen_lock_settings_result.v1");
+        Json.put(out, "opened", true);
         return out;
     }
 

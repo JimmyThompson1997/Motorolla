@@ -86,8 +86,7 @@ public final class PuckyForegroundService extends Service {
     private static final long WATCHDOG_INTERVAL_MS = 120_000L;
     private static final long SELF_RESTART_DELAY_MS = 15_000L;
     private static final long KEEPALIVE_RESTART_DELAY_MS = 180_000L;
-    private static final long COVER_RESTORE_DELAY_MS = 900L;
-    private static final long COVER_RESTORE_DEBOUNCE_MS = 2_500L;
+    private static final long COVER_WAKE_RESTORE_DELAY_MS = 250L;
     private static final int RAZR_COVER_DISPLAY_ID = 1;
 
     private BrokerControlClient brokerClient;
@@ -99,7 +98,7 @@ public final class PuckyForegroundService extends Service {
     private Handler watchdogHandler;
     private Runnable watchdogTask;
     private boolean manualStopRequested;
-    private long lastCoverRestoreAtMs;
+    private int lastCoverDisplayState = Display.STATE_UNKNOWN;
     private CoverDisplayGestureController coverDisplayGestureController;
 
     public static void start(Context context, boolean connect) {
@@ -141,7 +140,6 @@ public final class PuckyForegroundService extends Service {
         coverDisplayGestureController = CoverDisplayGestureController.shared(this);
         coverDisplayGestureController.start();
         startReconnectWatchdog();
-        scheduleCoverRestore("service_started");
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
         ensureTunnelStarted("service_started");
@@ -179,12 +177,10 @@ public final class PuckyForegroundService extends Service {
             PuckyState.get().setLifecycleEvent("broker.manual_connect");
             ensureTunnelStarted("connect_action");
             ensureBrokerConnected();
-            scheduleCoverRestore("connect_action");
         } else if (settings.isAutoConnectEnabled()) {
             PuckyState.get().setLifecycleEvent("broker.auto_connect");
             ensureTunnelStarted("autoconnect_action");
             ensureBrokerConnected();
-            scheduleCoverRestore("autoconnect_action");
         }
         return START_STICKY;
     }
@@ -346,26 +342,29 @@ public final class PuckyForegroundService extends Service {
             @Override
             public void onDisplayAdded(int displayId) {
                 if (displayId != Display.DEFAULT_DISPLAY) {
-                    scheduleCoverRestore("display_added_" + displayId);
+                    handleCoverDisplayChanged(displayId, "display_added_" + displayId);
                 }
             }
 
             @Override
             public void onDisplayChanged(int displayId) {
                 if (displayId != Display.DEFAULT_DISPLAY) {
-                    scheduleCoverRestore("display_changed_" + displayId);
+                    handleCoverDisplayChanged(displayId, "display_changed_" + displayId);
                 }
             }
 
             @Override
             public void onDisplayRemoved(int displayId) {
                 if (displayId != Display.DEFAULT_DISPLAY) {
+                    lastCoverDisplayState = Display.STATE_UNKNOWN;
                     PuckyState.get().setLifecycleEvent("cover.display_removed_" + displayId);
                     PuckyState.get().broadcast(PuckyForegroundService.this);
                 }
             }
         };
         manager.registerDisplayListener(coverDisplayListener, coverRestoreHandler);
+        int displayId = findCoverDisplayId();
+        lastCoverDisplayState = displayId < 0 ? Display.STATE_UNKNOWN : readDisplayState(displayId);
     }
 
     private void unregisterCoverDisplayListener() {
@@ -428,11 +427,25 @@ public final class PuckyForegroundService extends Service {
         tunnelController.stop(args);
     }
 
-    private void scheduleCoverRestore(String reason) {
-        scheduleCoverRestore(reason, COVER_RESTORE_DELAY_MS);
+    private void handleCoverDisplayChanged(int displayId, String reason) {
+        DisplayManager manager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        Display display = manager == null ? null : manager.getDisplay(displayId);
+        if (!isCoverDisplay(display)) {
+            return;
+        }
+        int previous = lastCoverDisplayState;
+        int current = display.getState();
+        lastCoverDisplayState = current;
+        if (current == Display.STATE_ON && previous != Display.STATE_ON) {
+            scheduleCoverWakeRestore(reason, COVER_WAKE_RESTORE_DELAY_MS);
+            return;
+        }
+        Log.i(TAG, "cover restore skipped state transition reason=" + reason
+                + " previous=" + displayStateName(previous)
+                + " current=" + displayStateName(current));
     }
 
-    private void scheduleCoverRestore(String reason, long delayMs) {
+    private void scheduleCoverWakeRestore(String reason, long delayMs) {
         if (manualStopRequested) {
             return;
         }
@@ -452,21 +465,12 @@ public final class PuckyForegroundService extends Service {
             Log.i(TAG, "cover restore skipped; no non-default display reason=" + reason);
             return;
         }
-        long now = SystemClock.elapsedRealtime();
-        long elapsed = now - lastCoverRestoreAtMs;
-        if (elapsed < COVER_RESTORE_DEBOUNCE_MS) {
-            if (shouldRetryDebouncedRestore(reason)) {
-                long retryDelayMs = COVER_RESTORE_DEBOUNCE_MS - elapsed + 150L;
-                Log.i(TAG, "cover restore debounced reason=" + reason
-                        + " retry_ms=" + retryDelayMs);
-                scheduleCoverRestore(reason + "_debounce_retry", retryDelayMs);
-            } else {
-                Log.i(TAG, "cover restore debounced reason=" + reason
-                        + " retry=false");
-            }
+        int state = readDisplayState(displayId);
+        if (state != Display.STATE_ON) {
+            Log.i(TAG, "cover restore skipped; display not on reason=" + reason
+                    + " state=" + displayStateName(state));
             return;
         }
-        lastCoverRestoreAtMs = now;
         try {
             PuckyApplication app = (PuckyApplication) getApplication();
             SettingsStore settings = app.settingsStore();
@@ -522,16 +526,6 @@ public final class PuckyForegroundService extends Service {
                     ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
         }
         return options.toBundle();
-    }
-
-    private static boolean shouldRetryDebouncedRestore(String reason) {
-        if (reason == null || reason.endsWith("_debounce_retry")) {
-            return false;
-        }
-        return reason.startsWith("display_")
-                || reason.startsWith("task_removed")
-                || reason.startsWith("service_started")
-                || reason.startsWith("autoconnect_");
     }
 
     private boolean moveExistingPuckyTaskToFront(String reason, int targetDisplayId) {
@@ -621,6 +615,12 @@ public final class PuckyForegroundService extends Service {
             }
         }
         return -1;
+    }
+
+    private int readDisplayState(int displayId) {
+        DisplayManager manager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        Display display = manager == null ? null : manager.getDisplay(displayId);
+        return display == null ? Display.STATE_UNKNOWN : display.getState();
     }
 
     private void logCoverDisplayCandidate(String source, Display display) {

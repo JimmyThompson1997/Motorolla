@@ -12,7 +12,7 @@ Current live canonical line:
 - Worktree: `C:\Users\jimmy\Desktop\Motorolla`
 - Branch: `master`
 - Package: `com.pucky.device.debug`
-- Version: `versionCode=21`, `versionName=0.2.20-cover-restore-debug`
+- Version: `versionCode=22`, `versionName=0.2.21-cover-sleep-cleanup-debug`
 
 For an APK update:
 

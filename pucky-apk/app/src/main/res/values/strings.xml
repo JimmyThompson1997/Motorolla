@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pucky</string>
+    <string name="pucky_accessibility_label">Pucky screen lock</string>
+    <string name="pucky_accessibility_description">Allows Pucky hand-wave gestures to lock the screen.</string>
+</resources>

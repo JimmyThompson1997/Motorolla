@@ -8,6 +8,7 @@ import android.hardware.SensorManager;
 import android.os.Build;
 import android.speech.SpeechRecognizer;
 
+import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -99,7 +100,11 @@ public final class CapabilityReporter {
         Json.add(out, cap("cover.wave", "cover.wave.status/cover.wave.config.set/cover.wave.trigger",
                 hasAnySensor() ? "implemented_guarded" : "blocked_by_hardware",
                 "foreground_service", "visible", "android.permission.VIBRATE", "not_recorded",
-                "Cover-screen hand-wave detector gated by closed device state, face-up/stationary accelerometer checks, and explicit display-action arming."));
+                "Cover-screen hand-wave detector gated by closed device state, face-up/stationary accelerometer checks, and Accessibility screen lock when enabled."));
+        Json.add(out, cap("screen.lock", "screen.lock.status/screen.lock.request/screen.lock.open_accessibility_settings",
+                PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
+                "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
+                "not_recorded", "Locks the screen through Pucky's user-enabled AccessibilityService; no ADB or shell command required."));
         Json.add(out, cap("camera.inventory", "camera.info", hasCamera() ? "implemented" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",

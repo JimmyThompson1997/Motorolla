@@ -46,6 +46,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
             "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
+            "screen.lock.status", "screen.lock.request", "screen.lock.open_accessibility_settings",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.delete",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
@@ -231,6 +232,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return systemController.serviceStatus();
             case "power.policy.get":
                 return systemController.powerPolicy();
+            case "screen.lock.status":
+                return systemController.screenLockStatus();
+            case "screen.lock.request":
+                return systemController.screenLockRequest();
+            case "screen.lock.open_accessibility_settings":
+                return systemController.openAccessibilitySettings();
             case "compute.benchmark":
                 return systemController.benchmark(command.args());
             case "shell.exec":
