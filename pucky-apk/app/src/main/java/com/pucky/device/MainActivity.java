@@ -50,6 +50,7 @@ import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.tunnel.TunnelController;
+import com.pucky.device.ui.DetailSurfaceController;
 import com.pucky.device.ui.ReplyCard;
 import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
@@ -941,6 +942,7 @@ public class MainActivity extends Activity {
                 .putExtra(TranscriptActivity.EXTRA_TRANSCRIPT, card.transcript())
                 .putExtra(TranscriptActivity.EXTRA_MESSAGES_JSON, card.transcriptMessages());
         startActivity(intent);
+        DetailSurfaceController.applyOpenTransition(this);
     }
 
     private void openRichReply(ReplyCard card) {
@@ -948,6 +950,7 @@ public class MainActivity extends Activity {
                 .putExtra(RichReplyActivity.EXTRA_HTML_PATH, card.htmlPath())
                 .putExtra(RichReplyActivity.EXTRA_TITLE, card.title());
         startActivity(intent);
+        DetailSurfaceController.applyOpenTransition(this);
     }
 
     private int drawableForIcon(String icon) {

@@ -2,17 +2,16 @@ package com.pucky.device;
 
 import android.app.Activity;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.WindowInsets;
 import android.view.ViewGroup;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.widget.Button;
 import android.widget.FrameLayout;
+
+import com.pucky.device.ui.DetailSurfaceController;
 
 import java.io.File;
 
@@ -21,8 +20,6 @@ public final class RichReplyActivity extends Activity {
     public static final String EXTRA_TITLE = "pucky_reply_title";
 
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
-    private static final int TEXT = Color.rgb(245, 249, 255);
-    private static final int BLUE = Color.rgb(58, 132, 255);
     private static final int WEB_DETAIL_BOTTOM_SAFE_PADDING_DP = 88;
 
     @Override
@@ -40,6 +37,7 @@ public final class RichReplyActivity extends Activity {
         WebView webView = new WebView(this);
         webView.setBackgroundColor(BACKGROUND);
         webView.setClipToPadding(false);
+        DetailSurfaceController.installEdgeSwipeDismiss(this, webView);
         applyWebViewSafePadding(webView, 0);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             webView.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -68,17 +66,6 @@ public final class RichReplyActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT);
         root.addView(webView, webParams);
         webView.loadUrl(Uri.fromFile(html).toString());
-
-        Button back = new Button(this);
-        back.setText("<");
-        back.setTextColor(TEXT);
-        back.setTextSize(20);
-        back.setAllCaps(false);
-        back.setBackground(roundRect(BLUE, BLUE, dp(14)));
-        back.setOnClickListener(view -> finish());
-        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(58), dp(50), Gravity.TOP | Gravity.START);
-        backParams.setMargins(dp(12), dp(12), 0, 0);
-        root.addView(back, backParams);
         return root;
     }
 
@@ -113,17 +100,15 @@ public final class RichReplyActivity extends Activity {
         return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
     }
 
-    private GradientDrawable roundRect(int fill, int stroke, int radiusPx) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fill);
-        drawable.setCornerRadius(radiusPx);
-        drawable.setStroke(1, stroke);
-        return drawable;
-    }
-
     private void applyWebViewSafePadding(WebView webView, int bottomInsetPx) {
         int bottomPadding = Math.max(dp(WEB_DETAIL_BOTTOM_SAFE_PADDING_DP), bottomInsetPx + dp(28));
         webView.setPadding(0, 0, 0, bottomPadding);
+    }
+
+    @Override
+    public void finish() {
+        super.finish();
+        DetailSurfaceController.applyCloseTransition(this);
     }
 
     private int dp(int value) {

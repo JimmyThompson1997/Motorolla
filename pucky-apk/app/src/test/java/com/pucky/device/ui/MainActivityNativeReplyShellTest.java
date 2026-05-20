@@ -75,14 +75,39 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("new WebView"));
         assertTrue("Rich replies should allow normal page JavaScript",
                 source.contains("setJavaScriptEnabled(true)"));
-        assertTrue("Rich reply back button should float over the page instead of reserving top margin",
-                source.contains("Gravity.TOP | Gravity.START")
-                        && !source.contains("webParams.topMargin"));
+        assertTrue("Rich replies should use edge swipe dismiss instead of a visible native back button",
+                source.contains("DetailSurfaceController.installEdgeSwipeDismiss(this, webView)"));
+        assertFalse("Rich replies should not render the old blue native back button",
+                source.contains("new Button") || source.contains("back.setText"));
+        assertFalse("Rich replies should not reserve a top margin",
+                source.contains("webParams.topMargin"));
         assertTrue("Rich replies should keep scrollable page content above the cover navigation area",
                 source.contains("WEB_DETAIL_BOTTOM_SAFE_PADDING_DP")
                         && source.contains("applyWebViewSafePadding(webView"));
         assertFalse("Rich replies must not receive native bridge powers",
                 source.contains("addJavascriptInterface"));
+    }
+
+    @Test
+    public void detailSurfacesSlideAndDismissByEdgeSwipe() throws Exception {
+        String main = read("src/main/java/com/pucky/device/MainActivity.java");
+        String transcript = read("src/main/java/com/pucky/device/TranscriptActivity.java");
+        String controller = read("src/main/java/com/pucky/device/ui/DetailSurfaceController.java");
+
+        assertTrue("MainActivity should slide detail surfaces in from the right",
+                main.contains("DetailSurfaceController.applyOpenTransition(this)"));
+        assertTrue("Transcript detail should install the same edge-swipe dismiss behavior",
+                transcript.contains("DetailSurfaceController.installEdgeSwipeDismiss(this, scroll)"));
+        assertFalse("Transcript detail should not render the old top bar/back button",
+                transcript.contains("buildTopBar()") || transcript.contains("new Button")
+                        || transcript.contains("scrollParams.topMargin"));
+        assertTrue("Swipe dismiss helper should use an edge threshold and close animation",
+                controller.contains("EDGE_START_DP") && controller.contains("DISMISS_DISTANCE_DP")
+                        && controller.contains("pucky_detail_slide_out_right"));
+        assertTrue("Detail transition animations must be present",
+                Files.exists(Path.of("src/main/res/anim/pucky_detail_slide_in_right.xml"))
+                        && Files.exists(Path.of("src/main/res/anim/pucky_detail_slide_out_right.xml"))
+                        && Files.exists(Path.of("src/main/res/anim/pucky_detail_hold.xml")));
     }
 
     @Test

@@ -9,12 +9,13 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+
+import com.pucky.device.ui.DetailSurfaceController;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -30,7 +31,6 @@ public final class TranscriptActivity extends Activity {
     public static final String EXTRA_MESSAGES_JSON = "pucky_transcript_messages_json";
 
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
-    private static final int PANEL = Color.rgb(8, 17, 28);
     private static final int CARD = Color.rgb(8, 17, 28);
     private static final int CARD_SOFT = Color.rgb(11, 24, 40);
     private static final int TEXT = Color.rgb(245, 249, 255);
@@ -49,10 +49,13 @@ public final class TranscriptActivity extends Activity {
         root.setBackgroundColor(BACKGROUND);
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, dp(88));
         scroll.setOverScrollMode(ScrollView.OVER_SCROLL_NEVER);
+        DetailSurfaceController.installEdgeSwipeDismiss(this, scroll);
         LinearLayout thread = new LinearLayout(this);
         thread.setOrientation(LinearLayout.VERTICAL);
-        thread.setPadding(dp(14), dp(14), dp(14), dp(24));
+        thread.setPadding(dp(14), dp(18), dp(14), dp(24));
         scroll.addView(thread, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -65,39 +68,8 @@ public final class TranscriptActivity extends Activity {
         FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT);
-        scrollParams.topMargin = dp(58);
         root.addView(scroll, scrollParams);
-        root.addView(buildTopBar(), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(58),
-                Gravity.TOP));
         return root;
-    }
-
-    private LinearLayout buildTopBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(10), dp(8), dp(12), dp(8));
-        bar.setBackgroundColor(PANEL);
-
-        Button back = new Button(this);
-        back.setText("<");
-        back.setTextColor(TEXT);
-        back.setTextSize(20);
-        back.setAllCaps(false);
-        back.setBackground(roundRect(CARD_SOFT, BLUE, dp(14)));
-        back.setOnClickListener(view -> finish());
-        bar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(42)));
-
-        TextView title = new TextView(this);
-        title.setText(title());
-        title.setTextColor(MUTED);
-        title.setTextSize(15);
-        title.setSingleLine(true);
-        title.setPadding(dp(12), 0, 0, 0);
-        bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        return bar;
     }
 
     private TextView dayDivider(String label) {
@@ -285,6 +257,12 @@ public final class TranscriptActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    @Override
+    public void finish() {
+        super.finish();
+        DetailSurfaceController.applyCloseTransition(this);
     }
 
     private static final class Message {
