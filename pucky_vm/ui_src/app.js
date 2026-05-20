@@ -8,7 +8,8 @@
     mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>'
   };
   const ACTIONS = {
-    page: '<svg viewBox="0 0 24 24"><path d="M8 4h8l4 4v12H8z"/><path d="M15 4v5h5"/></svg>'
+    transcript: '<svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>',
+    page: '<svg viewBox="0 0 24 24"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>'
   };
   const MOCK_CARDS = [
     {
@@ -228,9 +229,16 @@
       }
     });
 
-    const body = el("button", "card-body");
-    body.type = "button";
+    const body = el("div", "card-body");
+    body.setAttribute("role", "button");
+    body.tabIndex = 0;
     body.addEventListener("click", () => showTranscript(card));
+    body.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showTranscript(card);
+      }
+    });
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
     if (isActiveCard(card) && state.player.is_playing) {
@@ -240,6 +248,17 @@
     }
 
     const actions = el("div", "card-actions");
+    if (hasTranscript(card)) {
+      const transcript = el("button", "action");
+      transcript.type = "button";
+      transcript.innerHTML = ACTIONS.transcript;
+      transcript.setAttribute("aria-label", `Open transcript for ${card.title}`);
+      transcript.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showTranscript(card);
+      });
+      actions.append(transcript);
+    }
     if (card.html_path) {
       const page = el("button", "action");
       page.type = "button";
@@ -259,11 +278,11 @@
   async function toggleAudio(card) {
     try {
       const current = await Pucky.request({ command: "player.state", args: {} });
-      const same = current && current.path === card.audio_path;
+      const same = current && samePath(current.path, card.audio_path);
       if (same && current.is_playing) {
         state.player = await Pucky.request({ command: "player.pause", args: {} });
       } else {
-        const start = state.savedPositions.get(card.audio_path) || 0;
+        const start = savedPositionFor(card.audio_path);
         state.activePath = card.audio_path;
         state.player = await Pucky.request({
           command: "player.play",
@@ -312,14 +331,17 @@
   }
 
   function openRightPanel(panel, content) {
-    panel.replaceChildren(content);
+    const edge = el("div", "edge-swipe");
+    panel.replaceChildren(content, edge);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
     installHorizontalDismiss(content, panel);
+    installHorizontalDismiss(edge, panel);
   }
 
   function dismissDetail() {
     const panel = document.getElementById("detail");
+    panel.style.transform = "";
     panel.classList.remove("is-open");
     panel.setAttribute("aria-hidden", "true");
   }
@@ -371,6 +393,7 @@
 
   function dismissAudioSheet() {
     const sheet = document.getElementById("audioSheet");
+    sheet.style.transform = "";
     sheet.classList.remove("is-open");
     sheet.setAttribute("aria-hidden", "true");
     state.sheetCard = null;
@@ -465,31 +488,71 @@
     let startX = 0;
     let startY = 0;
     let dragging = false;
-    target.addEventListener("pointerdown", event => {
-      startX = event.clientX;
-      startY = event.clientY;
+    const threshold = () => (config.axis === "x" ? window.innerWidth : window.innerHeight) * 0.22;
+    const begin = (x, y) => {
+      startX = x;
+      startY = y;
       dragging = true;
-      target.setPointerCapture(event.pointerId);
-    });
-    target.addEventListener("pointermove", event => {
+    };
+    const move = (x, y, event) => {
       if (!dragging) return;
-      const dx = event.clientX - startX;
-      const dy = event.clientY - startY;
+      const dx = x - startX;
+      const dy = y - startY;
       const primary = config.axis === "x" ? dx : dy;
       const cross = config.axis === "x" ? Math.abs(dy) : Math.abs(dx);
       if (primary > 8 && primary > cross) {
+        if (event && event.cancelable) {
+          event.preventDefault();
+        }
         config.apply(primary);
+        if (primary > threshold()) {
+          dragging = false;
+          config.done();
+        }
       }
-    });
-    target.addEventListener("pointerup", event => {
+    };
+    const finish = (x, y) => {
       if (!dragging) return;
       dragging = false;
-      const delta = config.axis === "x" ? event.clientX - startX : event.clientY - startY;
-      if (delta > window.innerHeight * 0.22) {
+      const delta = config.axis === "x" ? x - startX : y - startY;
+      if (delta > threshold()) {
         config.done();
       } else {
         config.reset();
       }
+    };
+    target.addEventListener("pointerdown", event => {
+      begin(event.clientX, event.clientY);
+      if (target.setPointerCapture) {
+        target.setPointerCapture(event.pointerId);
+      }
+    });
+    target.addEventListener("pointermove", event => {
+      move(event.clientX, event.clientY, event);
+    });
+    target.addEventListener("pointerup", event => {
+      finish(event.clientX, event.clientY);
+    });
+    target.addEventListener("pointercancel", event => {
+      finish(event.clientX, event.clientY);
+    });
+    target.addEventListener("touchstart", event => {
+      if (event.touches.length) {
+        begin(event.touches[0].clientX, event.touches[0].clientY);
+      }
+    }, { passive: true });
+    target.addEventListener("touchmove", event => {
+      if (event.touches.length) {
+        move(event.touches[0].clientX, event.touches[0].clientY, event);
+      }
+    }, { passive: false });
+    target.addEventListener("touchend", event => {
+      const touch = event.changedTouches[0];
+      finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
+    });
+    target.addEventListener("touchcancel", event => {
+      const touch = event.changedTouches[0];
+      finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
     });
   }
 
@@ -510,8 +573,29 @@
     return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
   }
 
+  function hasTranscript(card) {
+    return Boolean(card.transcript || (Array.isArray(card.transcript_messages) && card.transcript_messages.length));
+  }
+
   function isActiveCard(card) {
-    return Boolean(card.audio_path && state.activePath === card.audio_path);
+    return Boolean(card.audio_path
+      && (samePath(state.activePath, card.audio_path) || samePath(state.player.path, card.audio_path)));
+  }
+
+  function samePath(left, right) {
+    return Boolean(left && right && normalizePath(left) === normalizePath(right));
+  }
+
+  function normalizePath(path) {
+    return String(path || "").replace(/^\/data\/user\/0\//, "/data/data/");
+  }
+
+  function savedPositionFor(path) {
+    return state.savedPositions.get(normalizePath(path)) || 0;
+  }
+
+  function rememberPosition(path, position) {
+    state.savedPositions.set(normalizePath(path), position);
   }
 
   function normalizeIcon(icon) {
@@ -543,7 +627,7 @@
         state.player = await Pucky.request({ command: "player.state", args: {} });
         if (state.player.path) {
           state.activePath = state.player.path;
-          state.savedPositions.set(state.activePath, state.player.position_ms || 0);
+          rememberPosition(state.activePath, state.player.position_ms || 0);
         }
         render();
       } catch (_) {
