@@ -154,7 +154,7 @@ public final class MainActivityNativeReplyShellTest {
                 main.contains("audioSheetLayer") && main.contains("InteractivePanelController.slideUp")
                         && main.contains("InteractivePanelController.installDownSwipeDismiss"));
         assertTrue("Audio sheet slide-up should be slower and eased separately from quick detail slides",
-                controller.contains("SLIDE_UP_ANIMATION_MS = 260L")
+                controller.contains("SLIDE_UP_ANIMATION_MS = 340L")
                         && controller.contains("DecelerateInterpolator"));
         assertTrue("Swipe dismiss helper should drag the panel with the finger and snap or dismiss",
                 controller.contains("setTranslationX(offset)") && controller.contains("setTranslationY(offset)")

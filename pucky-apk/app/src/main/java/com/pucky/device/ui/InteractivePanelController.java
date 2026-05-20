@@ -8,7 +8,7 @@ import android.view.animation.DecelerateInterpolator;
 
 public final class InteractivePanelController {
     private static final long ANIMATION_MS = 180L;
-    private static final long SLIDE_UP_ANIMATION_MS = 260L;
+    private static final long SLIDE_UP_ANIMATION_MS = 340L;
     private static final float DISMISS_FRACTION = 0.30f;
     private static final float FLING_VELOCITY_DP = 720f;
 
@@ -31,7 +31,7 @@ public final class InteractivePanelController {
             panel.animate()
                     .translationY(0f)
                     .setDuration(SLIDE_UP_ANIMATION_MS)
-                    .setInterpolator(new DecelerateInterpolator(1.35f))
+                    .setInterpolator(new DecelerateInterpolator(1.18f))
                     .start();
         });
     }

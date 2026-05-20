@@ -41,8 +41,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 34
-        versionName "0.2.33-spiky-voice-waveform"
+        versionCode 35
+        versionName "0.2.34-spiky-waveform-sheet-timing"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)
