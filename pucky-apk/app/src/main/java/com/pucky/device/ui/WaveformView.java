@@ -7,16 +7,25 @@ import android.graphics.Paint;
 import android.media.audiofx.Visualizer;
 import android.view.View;
 
+import java.lang.ref.WeakReference;
+import java.util.HashMap;
+import java.util.Map;
+
 public final class WaveformView extends View {
     private static final int TARGET_CAPTURE_RATE_MHZ = 30_000;
     private static final int TARGET_CAPTURE_SIZE = 256;
     private static final int SAMPLE_COUNT = 92;
+    private static final Object OWNER_LOCK = new Object();
+    private static final Object HISTORY_LOCK = new Object();
+    private static final Map<Integer, float[]> SESSION_LEVEL_HISTORY = new HashMap<>();
+    private static WeakReference<WaveformView> activeCaptureOwner = new WeakReference<>(null);
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float[] levels = new float[SAMPLE_COUNT];
     private final Object sampleLock = new Object();
     private int accent = Color.rgb(58, 132, 255);
     private boolean playing;
     private int audioSessionId;
+    private int capturePriority;
     private Visualizer visualizer;
     private boolean visualizerUnavailable;
 
@@ -37,10 +46,18 @@ public final class WaveformView extends View {
         this.audioSessionId = audioSessionId;
         releaseVisualizer();
         visualizerUnavailable = false;
+        restoreHistoryForSession(audioSessionId);
         if (isAttachedToWindow() && playing) {
             attachVisualizer();
         }
         invalidate();
+    }
+
+    public void setCapturePriority(int capturePriority) {
+        this.capturePriority = capturePriority;
+        if (isAttachedToWindow() && playing) {
+            attachVisualizer();
+        }
     }
 
     public void setPlaying(boolean playing) {
@@ -99,6 +116,9 @@ public final class WaveformView extends View {
         if (!playing || visualizer != null || visualizerUnavailable || audioSessionId <= 0 || !isAttachedToWindow()) {
             return;
         }
+        if (!claimCaptureOwnership()) {
+            return;
+        }
         Visualizer next = null;
         try {
             next = new Visualizer(audioSessionId);
@@ -131,6 +151,23 @@ public final class WaveformView extends View {
         }
     }
 
+    private boolean claimCaptureOwnership() {
+        synchronized (OWNER_LOCK) {
+            WaveformView currentOwner = activeCaptureOwner.get();
+            if (currentOwner == this) {
+                return true;
+            }
+            if (currentOwner != null && currentOwner.capturePriority > capturePriority) {
+                return false;
+            }
+            if (currentOwner != null) {
+                currentOwner.releaseVisualizer();
+            }
+            activeCaptureOwner = new WeakReference<>(this);
+            return true;
+        }
+    }
+
     private int preferredCaptureSize() {
         try {
             int[] range = Visualizer.getCaptureSizeRange();
@@ -157,6 +194,11 @@ public final class WaveformView extends View {
             // Release is best effort; fallback drawing keeps the UI safe.
         }
         visualizer = null;
+        synchronized (OWNER_LOCK) {
+            if (activeCaptureOwner.get() == this) {
+                activeCaptureOwner = new WeakReference<>(null);
+            }
+        }
     }
 
     private void updateSamples(byte[] waveform) {
@@ -176,8 +218,38 @@ public final class WaveformView extends View {
             float next = Math.min(1f, Math.max(0f, (rms - 0.018f) * 2.8f + peak * 0.22f));
             System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1);
             levels[SAMPLE_COUNT - 1] = levels[SAMPLE_COUNT - 2] * 0.52f + next * 0.48f;
+            saveHistoryForSessionLocked();
         }
         postInvalidateOnAnimation();
+    }
+
+    private void restoreHistoryForSession(int audioSessionId) {
+        synchronized (sampleLock) {
+            if (audioSessionId <= 0) {
+                for (int index = 0; index < levels.length; index++) {
+                    levels[index] = 0f;
+                }
+                return;
+            }
+            synchronized (HISTORY_LOCK) {
+                float[] history = SESSION_LEVEL_HISTORY.get(audioSessionId);
+                if (history == null || history.length != SAMPLE_COUNT) {
+                    return;
+                }
+                System.arraycopy(history, 0, levels, 0, SAMPLE_COUNT);
+            }
+        }
+    }
+
+    private void saveHistoryForSessionLocked() {
+        if (audioSessionId <= 0) {
+            return;
+        }
+        float[] copy = new float[SAMPLE_COUNT];
+        System.arraycopy(levels, 0, copy, 0, SAMPLE_COUNT);
+        synchronized (HISTORY_LOCK) {
+            SESSION_LEVEL_HISTORY.put(audioSessionId, copy);
+        }
     }
 
     private boolean hasLiveSamples() {
@@ -206,17 +278,11 @@ public final class WaveformView extends View {
     }
 
     private void drawIdleWaveform(Canvas canvas, int width, int height, float center) {
-        long now = System.currentTimeMillis();
         float step = width / (float) Math.max(1, SAMPLE_COUNT - 1);
         float baseline = Math.max(dp(1), height * 0.035f);
-        float maxAmplitude = playing ? Math.max(dp(3), height * 0.18f) : 0f;
         for (int index = 0; index < SAMPLE_COUNT; index++) {
-            float progress = index / (float) (SAMPLE_COUNT - 1);
             float x = index * step;
-            float envelope = 0.22f + 0.78f * (float) Math.sin(Math.PI * progress);
-            float wave = (float) ((Math.sin(progress * Math.PI * 12f + now / 180f) + 1f) / 2f);
-            float halfHeight = baseline + wave * envelope * maxAmplitude;
-            canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint);
+            canvas.drawLine(x, center - baseline, x, center + baseline, paint);
         }
     }
 

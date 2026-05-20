@@ -56,6 +56,10 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("AUDIO_PROGRESS_TICK_MS = 80L")
                         && source.contains("updateAudioProgressControls(state)")
                         && !source.contains("mainHandler.postDelayed(playerTick, 1_000L)"));
+        assertTrue("Audio sheet rendering should preserve the active waveform view unless a rebuild is needed",
+                source.contains("audioSheetNeedsRebuild")
+                        && source.contains("renderedAudioSheetPath")
+                        && source.contains("waveform.setCapturePriority(1)"));
         assertTrue("MainActivity should offer an overlay playback speed picker",
                 source.contains("speedPickerOverlay") && source.contains("renderSpeedPickerOverlay()")
                         && source.contains(".speed(args)"));
@@ -97,6 +101,12 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint)")
                         && source.contains("System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1)")
                         && !source.contains("android.graphics.Path"));
+        assertTrue("WaveformView should preserve session history and avoid multiple views fighting over one Visualizer",
+                source.contains("SESSION_LEVEL_HISTORY")
+                        && source.contains("activeCaptureOwner")
+                        && source.contains("claimCaptureOwnership"));
+        assertFalse("Waveform fallback should not fake an oscillating live waveform",
+                source.contains("System.currentTimeMillis()"));
         assertTrue("Player state should expose the active audio session id",
                 player.contains("\"audio_session_id\"")
                         && player.contains("getAudioSessionId()"));
@@ -136,6 +146,9 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue("Audio should have a full-screen slide-up control sheet",
                 main.contains("audioSheetLayer") && main.contains("InteractivePanelController.slideUp")
                         && main.contains("InteractivePanelController.installDownSwipeDismiss"));
+        assertTrue("Audio sheet slide-up should be slower and eased separately from quick detail slides",
+                controller.contains("SLIDE_UP_ANIMATION_MS = 260L")
+                        && controller.contains("DecelerateInterpolator"));
         assertTrue("Swipe dismiss helper should drag the panel with the finger and snap or dismiss",
                 controller.contains("setTranslationX(offset)") && controller.contains("setTranslationY(offset)")
                         && controller.contains("snapBack()") && controller.contains("DISMISS_FRACTION"));

@@ -117,8 +117,10 @@ public class MainActivity extends Activity {
     private boolean trackingAudioSeek;
     private boolean speedPickerOpen;
     private boolean audioSheetOpen;
+    private boolean audioSheetNeedsRebuild;
     private boolean audioTickWasPlaying;
     private ReplyCard audioSheetCard;
+    private String renderedAudioSheetPath = "";
     private long wakeScreenUntilMs;
 
     private final Runnable playerTick = new Runnable() {
@@ -132,6 +134,7 @@ public class MainActivity extends Activity {
             boolean isPlaying = state.optBoolean("is_playing", false);
             updateAudioProgressControls(state);
             if (audioTickWasPlaying && !isPlaying) {
+                audioSheetNeedsRebuild = audioSheetOpen;
                 renderCurrent();
             }
             audioTickWasPlaying = isPlaying;
@@ -651,18 +654,34 @@ public class MainActivity extends Activity {
         if (audioSheetLayer == null) {
             return;
         }
+        if (!audioSheetOpen || audioSheetCard == null) {
+            activeAudioSeekBar = null;
+            activeAudioTimeText = null;
+            activeAudioDurationMs = 0;
+            renderedAudioSheetPath = "";
+            audioSheetNeedsRebuild = false;
+            audioSheetLayer.removeAllViews();
+            audioSheetLayer.setVisibility(View.GONE);
+            return;
+        }
+        String requestedPath = audioSheetCard.audioPath();
+        if (!audioSheetNeedsRebuild
+                && requestedPath.equals(renderedAudioSheetPath)
+                && audioSheetLayer.getChildCount() > 0) {
+            updateAudioProgressControls(PlayerController.shared(this).state());
+            audioSheetLayer.setVisibility(View.VISIBLE);
+            return;
+        }
         activeAudioSeekBar = null;
         activeAudioTimeText = null;
         activeAudioDurationMs = 0;
         audioSheetLayer.removeAllViews();
-        if (!audioSheetOpen || audioSheetCard == null) {
-            audioSheetLayer.setVisibility(View.GONE);
-            return;
-        }
         audioSheetLayer.setVisibility(View.VISIBLE);
         audioSheetLayer.addView(audioSheetView(audioSheetCard), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+        renderedAudioSheetPath = requestedPath;
+        audioSheetNeedsRebuild = false;
     }
 
     private View audioSheetView(ReplyCard card) {
@@ -701,6 +720,7 @@ public class MainActivity extends Activity {
 
         WaveformView waveform = new WaveformView(this);
         waveform.setAccentColor(parseColor(card.accent(), BLUE));
+        waveform.setCapturePriority(1);
         JSONObject state = PlayerController.shared(this).state();
         waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
         waveform.setPlaying(state.optBoolean("is_playing", false));
@@ -736,7 +756,7 @@ public class MainActivity extends Activity {
         progress.setMax(max);
         progress.setProgress(Math.min(positionMs, max));
         progress.setContentDescription("audio_scrubber");
-        progress.setPadding(0, 0, 0, 0);
+        progress.setPadding(dp(12), 0, dp(12), 0);
         progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
@@ -823,6 +843,7 @@ public class MainActivity extends Activity {
         closeSpeedPicker();
         audioSheetCard = card;
         audioSheetOpen = true;
+        audioSheetNeedsRebuild = true;
         renderAudioSheet();
         if (audioSheetLayer != null && audioSheetLayer.getChildCount() > 0) {
             InteractivePanelController.slideUp(audioSheetLayer.getChildAt(0));
@@ -935,6 +956,7 @@ public class MainActivity extends Activity {
             activeAudioPath = card.audioPath();
             applyPlaybackSpeed(playbackSpeedForCard(card.audioPath()));
             PuckyState.get().setLifecycleEvent("reply_card.audio_play");
+            audioSheetNeedsRebuild = audioSheetOpen;
             renderCurrent();
             schedulePlayerTick();
         } catch (CommandException exc) {
@@ -955,6 +977,7 @@ public class MainActivity extends Activity {
             savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
         }
         if (!state.optBoolean("is_playing", false)) {
+            audioSheetNeedsRebuild = audioSheetOpen;
             renderCurrent();
             return;
         }
@@ -964,6 +987,7 @@ public class MainActivity extends Activity {
             savedAudioPositions.put(activeAudioPath, Math.max(0, paused.optInt("position_ms", 0)));
             savedAudioDurations.put(activeAudioPath, Math.max(0, paused.optInt("duration_ms", 0)));
             PuckyState.get().setLifecycleEvent("reply_card.audio_pause");
+            audioSheetNeedsRebuild = audioSheetOpen;
             renderCurrent();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to pause reply audio", exc);
@@ -994,6 +1018,7 @@ public class MainActivity extends Activity {
             JSONObject played = player.play(new JSONObject());
             savedAudioDurations.put(activeAudioPath, Math.max(0, played.optInt("duration_ms", 0)));
             applyPlaybackSpeed(playbackSpeedForActiveCard());
+            audioSheetNeedsRebuild = audioSheetOpen;
             renderCurrent();
             schedulePlayerTick();
         } catch (CommandException exc) {
@@ -1054,6 +1079,7 @@ public class MainActivity extends Activity {
         }
         applyPlaybackSpeed(globalPlaybackSpeed);
         speedPickerOpen = false;
+        audioSheetNeedsRebuild = audioSheetOpen;
         renderCurrent();
     }
 
