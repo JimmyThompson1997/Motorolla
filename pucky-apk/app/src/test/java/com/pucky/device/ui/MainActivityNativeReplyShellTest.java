@@ -48,6 +48,10 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("pucky_ic_transcript") && source.contains("pucky_ic_attachment"));
         assertTrue("MainActivity should render title-preserving in-card waveform audio",
                 source.contains("audioWaveformLine(card)") && source.contains("setAudioSessionId"));
+        assertTrue("Card waveform should be compact instead of spanning the whole card body",
+                source.contains("audio_waveform_row_")
+                        && source.contains("row.addView(waveform, new LinearLayout.LayoutParams(0, dp(32), 1f))")
+                        && source.contains("row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(32), 1f))"));
         assertTrue("MainActivity should update audio progress without the old one-second full repaint loop",
                 source.contains("AUDIO_PROGRESS_TICK_MS = 80L")
                         && source.contains("updateAudioProgressControls(state)")
@@ -89,6 +93,10 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue("WaveformView should keep a safe idle fallback if capture fails",
                 source.contains("visualizerUnavailable")
                         && source.contains("drawIdleWaveform"));
+        assertTrue("WaveformView should render voice-memo style vertical energy ticks, not a continuous graph line",
+                source.contains("canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint)")
+                        && source.contains("rms * 0.7f + peak * 0.55f")
+                        && !source.contains("android.graphics.Path"));
         assertTrue("Player state should expose the active audio session id",
                 player.contains("\"audio_session_id\"")
                         && player.contains("getAudioSessionId()"));

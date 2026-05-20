@@ -4,18 +4,15 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.media.audiofx.Visualizer;
 import android.view.View;
 
 public final class WaveformView extends View {
     private static final int TARGET_CAPTURE_RATE_MHZ = 30_000;
     private static final int TARGET_CAPTURE_SIZE = 256;
-    private static final int SAMPLE_COUNT = 56;
+    private static final int SAMPLE_COUNT = 92;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint idlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path path = new Path();
-    private final float[] samples = new float[SAMPLE_COUNT];
+    private final float[] levels = new float[SAMPLE_COUNT];
     private final Object sampleLock = new Object();
     private int accent = Color.rgb(58, 132, 255);
     private boolean playing;
@@ -83,25 +80,16 @@ public final class WaveformView extends View {
         }
 
         float center = height / 2f;
-        idlePaint.setColor(Color.argb(88, Color.red(accent), Color.green(accent), Color.blue(accent)));
-        idlePaint.setStyle(Paint.Style.STROKE);
-        idlePaint.setStrokeWidth(dp(1));
-        idlePaint.setStrokeCap(Paint.Cap.ROUND);
-        canvas.drawLine(0, center, width, center, idlePaint);
-
-        paint.setColor(Color.argb(238, Color.red(accent), Color.green(accent), Color.blue(accent)));
+        paint.setColor(Color.argb(226, Color.red(accent), Color.green(accent), Color.blue(accent)));
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(dp(2));
+        paint.setStrokeWidth(Math.max(1f, dp(1)));
         paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setStrokeJoin(Paint.Join.ROUND);
 
-        path.reset();
         if (hasLiveSamples()) {
-            drawLiveWaveform(width, height, center);
+            drawLiveWaveform(canvas, width, height, center);
         } else {
-            drawIdleWaveform(width, height, center);
+            drawIdleWaveform(canvas, width, height, center);
         }
-        canvas.drawPath(path, paint);
         if (playing) {
             postInvalidateDelayed(80L);
         }
@@ -179,14 +167,19 @@ public final class WaveformView extends View {
             for (int index = 0; index < SAMPLE_COUNT; index++) {
                 int start = index * waveform.length / SAMPLE_COUNT;
                 int end = Math.max(start + 1, (index + 1) * waveform.length / SAMPLE_COUNT);
-                float total = 0f;
+                float squareTotal = 0f;
+                float peak = 0f;
                 int count = 0;
                 for (int sample = start; sample < end && sample < waveform.length; sample++) {
-                    total += ((waveform[sample] & 0xFF) - 128) / 128f;
+                    float centered = ((waveform[sample] & 0xFF) - 128) / 128f;
+                    float absolute = Math.abs(centered);
+                    squareTotal += absolute * absolute;
+                    peak = Math.max(peak, absolute);
                     count++;
                 }
-                float next = count == 0 ? 0f : total / count;
-                samples[index] = samples[index] * 0.62f + next * 0.38f;
+                float rms = count == 0 ? 0f : (float) Math.sqrt(squareTotal / count);
+                float next = Math.min(1f, rms * 0.7f + peak * 0.55f);
+                levels[index] = levels[index] * 0.58f + next * 0.42f;
             }
         }
         postInvalidateOnAnimation();
@@ -194,8 +187,8 @@ public final class WaveformView extends View {
 
     private boolean hasLiveSamples() {
         synchronized (sampleLock) {
-            for (float sample : samples) {
-                if (Math.abs(sample) > 0.015f) {
+            for (float level : levels) {
+                if (level > 0.025f) {
                     return true;
                 }
             }
@@ -203,35 +196,32 @@ public final class WaveformView extends View {
         return false;
     }
 
-    private void drawLiveWaveform(int width, int height, float center) {
-        float maxAmplitude = Math.max(dp(4), height * 0.36f);
+    private void drawLiveWaveform(Canvas canvas, int width, int height, float center) {
+        float baseline = Math.max(dp(1), height * 0.035f);
+        float maxAmplitude = Math.max(dp(6), height * 0.47f);
+        float step = width / (float) Math.max(1, SAMPLE_COUNT - 1);
         synchronized (sampleLock) {
             for (int index = 0; index < SAMPLE_COUNT; index++) {
-                float x = SAMPLE_COUNT == 1 ? 0 : width * (index / (float) (SAMPLE_COUNT - 1));
-                float y = center + samples[index] * maxAmplitude;
-                if (index == 0) {
-                    path.moveTo(x, y);
-                } else {
-                    path.lineTo(x, y);
-                }
+                float x = index * step;
+                float shaped = (float) Math.pow(Math.max(0f, levels[index]), 0.72f);
+                float halfHeight = baseline + shaped * maxAmplitude;
+                canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint);
             }
         }
     }
 
-    private void drawIdleWaveform(int width, int height, float center) {
+    private void drawIdleWaveform(Canvas canvas, int width, int height, float center) {
         long now = System.currentTimeMillis();
-        float maxAmplitude = playing ? Math.max(dp(3), height * 0.12f) : dp(1);
+        float step = width / (float) Math.max(1, SAMPLE_COUNT - 1);
+        float baseline = Math.max(dp(1), height * 0.035f);
+        float maxAmplitude = playing ? Math.max(dp(3), height * 0.18f) : 0f;
         for (int index = 0; index < SAMPLE_COUNT; index++) {
             float progress = index / (float) (SAMPLE_COUNT - 1);
-            float x = width * progress;
-            float envelope = 0.25f + 0.75f * (float) Math.sin(Math.PI * progress);
-            float wave = (float) Math.sin(progress * Math.PI * 8f + now / 220f);
-            float y = center + wave * envelope * maxAmplitude;
-            if (index == 0) {
-                path.moveTo(x, y);
-            } else {
-                path.lineTo(x, y);
-            }
+            float x = index * step;
+            float envelope = 0.22f + 0.78f * (float) Math.sin(Math.PI * progress);
+            float wave = (float) ((Math.sin(progress * Math.PI * 12f + now / 180f) + 1f) / 2f);
+            float halfHeight = baseline + wave * envelope * maxAmplitude;
+            canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint);
         }
     }
 

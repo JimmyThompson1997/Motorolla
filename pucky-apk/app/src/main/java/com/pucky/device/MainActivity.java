@@ -621,14 +621,20 @@ public class MainActivity extends Activity {
 
     private View audioWaveformLine(ReplyCard card) {
         JSONObject state = PlayerController.shared(this).state();
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(3), 0, 0);
+        row.setContentDescription("audio_waveform_row_" + card.title());
+
         WaveformView waveform = new WaveformView(this);
         waveform.setAccentColor(parseColor(card.accent(), BLUE));
         waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
         waveform.setPlaying(state.optBoolean("is_playing", false));
         waveform.setContentDescription("audio_waveform_" + card.title());
-        waveform.setPadding(0, dp(3), 0, 0);
         waveform.setOnClickListener(view -> showAudioSheet(card));
-        return waveform;
+        row.addView(waveform, new LinearLayout.LayoutParams(0, dp(32), 1f));
+        row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(32), 1f));
+        return row;
     }
 
     private ImageButton iconActionButton(int drawableRes) {
