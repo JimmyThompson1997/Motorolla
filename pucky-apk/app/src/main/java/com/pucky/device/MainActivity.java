@@ -821,28 +821,25 @@ public class MainActivity extends Activity {
         Button speed = audioTransportButton(speedLabel(playbackSpeedForActiveCard()), 14);
         speed.setContentDescription("audio_speed");
         speed.setOnClickListener(view -> toggleSpeedPicker());
-        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        speedParams.setMargins(0, 0, dp(16), 0);
-        controls.addView(speed, speedParams);
+        controls.addView(audioControlSlot(speed, dp(48), dp(48)), audioControlSlotParams());
 
-        Button back = audioTransportButton("\u21ba15", 16);
+        ImageButton back = audioTransportIconButton(R.drawable.pucky_ic_replay_15);
         back.setContentDescription("audio_rewind_15");
         back.setOnClickListener(view -> seekRelative(-15_000));
-        controls.addView(back, new LinearLayout.LayoutParams(dp(56), dp(48)));
+        controls.addView(audioControlSlot(back, dp(52), dp(52)), audioControlSlotParams());
 
         Button playPause = audioTransportButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6", 32);
         playPause.setContentDescription("audio_play_pause");
         playPause.setOnClickListener(view -> toggleActiveAudio());
-        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(72), dp(58));
-        playParams.setMargins(dp(14), 0, dp(14), 0);
-        controls.addView(playPause, playParams);
+        controls.addView(audioControlSlot(playPause, dp(72), dp(58)), audioControlSlotParams());
 
-        Button forward = audioTransportButton("30\u21bb", 16);
+        ImageButton forward = audioTransportIconButton(R.drawable.pucky_ic_forward_30);
         forward.setContentDescription("audio_forward_30");
         forward.setOnClickListener(view -> seekRelative(30_000));
-        controls.addView(forward, new LinearLayout.LayoutParams(dp(56), dp(48)));
+        controls.addView(audioControlSlot(forward, dp(52), dp(52)), audioControlSlotParams());
+        controls.addView(new View(this), audioControlSlotParams());
         LinearLayout.LayoutParams controlsParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         controlsParams.gravity = Gravity.CENTER_HORIZONTAL;
         stack.addView(controls, controlsParams);
@@ -879,6 +876,32 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setPadding(0, 0, 0, 0);
         button.setBackground(roundRectNoStroke(CARD_SOFT, dp(14)));
+        return button;
+    }
+
+    private FrameLayout audioControlSlot(View child, int width, int height) {
+        FrameLayout slot = new FrameLayout(this);
+        FrameLayout.LayoutParams childParams = new FrameLayout.LayoutParams(width, height, Gravity.CENTER);
+        slot.addView(child, childParams);
+        return slot;
+    }
+
+    private LinearLayout.LayoutParams audioControlSlotParams() {
+        return new LinearLayout.LayoutParams(0, dp(58), 1f);
+    }
+
+    private ImageButton audioTransportIconButton(int drawableRes) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawableRes);
+        button.setColorFilter(TEXT);
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setPadding(dp(6), dp(6), dp(6), dp(6));
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setMinimumWidth(0);
+        button.setMinimumHeight(0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            button.setStateListAnimator(null);
+        }
         return button;
     }
 
