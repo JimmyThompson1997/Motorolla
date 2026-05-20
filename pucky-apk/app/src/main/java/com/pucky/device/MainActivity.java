@@ -818,30 +818,29 @@ public class MainActivity extends Activity {
             }
         });
 
-        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
+        Button speed = audioTransportButton(speedLabel(playbackSpeedForActiveCard()), 14);
         speed.setContentDescription("audio_speed");
         speed.setOnClickListener(view -> toggleSpeedPicker());
-        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(54), dp(44));
-        speedParams.setMargins(0, 0, dp(12), 0);
+        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        speedParams.setMargins(0, 0, dp(16), 0);
         controls.addView(speed, speedParams);
 
-        Button back = audioNudgeButton("\u21ba15");
+        Button back = audioTransportButton("\u21ba15", 16);
         back.setContentDescription("audio_rewind_15");
         back.setOnClickListener(view -> seekRelative(-15_000));
-        controls.addView(back, new LinearLayout.LayoutParams(dp(54), dp(44)));
+        controls.addView(back, new LinearLayout.LayoutParams(dp(56), dp(48)));
 
-        Button playPause = audioNudgeButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6");
-        playPause.setTextSize(20);
+        Button playPause = audioTransportButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6", 32);
         playPause.setContentDescription("audio_play_pause");
         playPause.setOnClickListener(view -> toggleActiveAudio());
-        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(72), dp(56));
-        playParams.setMargins(dp(12), 0, dp(12), 0);
+        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(72), dp(58));
+        playParams.setMargins(dp(14), 0, dp(14), 0);
         controls.addView(playPause, playParams);
 
-        Button forward = audioNudgeButton("30\u21bb");
+        Button forward = audioTransportButton("30\u21bb", 16);
         forward.setContentDescription("audio_forward_30");
         forward.setOnClickListener(view -> seekRelative(30_000));
-        controls.addView(forward, new LinearLayout.LayoutParams(dp(54), dp(44)));
+        controls.addView(forward, new LinearLayout.LayoutParams(dp(56), dp(48)));
         LinearLayout.LayoutParams controlsParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -880,6 +879,26 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setPadding(0, 0, 0, 0);
         button.setBackground(roundRectNoStroke(CARD_SOFT, dp(14)));
+        return button;
+    }
+
+    private Button audioTransportButton(String label, float textSizeSp) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextColor(TEXT);
+        button.setTextSize(textSizeSp);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setIncludeFontPadding(false);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumWidth(0);
+        button.setMinimumHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            button.setStateListAnimator(null);
+        }
         return button;
     }
 
