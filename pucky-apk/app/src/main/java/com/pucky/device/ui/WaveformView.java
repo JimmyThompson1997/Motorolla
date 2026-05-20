@@ -164,23 +164,18 @@ public final class WaveformView extends View {
             return;
         }
         synchronized (sampleLock) {
-            for (int index = 0; index < SAMPLE_COUNT; index++) {
-                int start = index * waveform.length / SAMPLE_COUNT;
-                int end = Math.max(start + 1, (index + 1) * waveform.length / SAMPLE_COUNT);
-                float squareTotal = 0f;
-                float peak = 0f;
-                int count = 0;
-                for (int sample = start; sample < end && sample < waveform.length; sample++) {
-                    float centered = ((waveform[sample] & 0xFF) - 128) / 128f;
-                    float absolute = Math.abs(centered);
-                    squareTotal += absolute * absolute;
-                    peak = Math.max(peak, absolute);
-                    count++;
-                }
-                float rms = count == 0 ? 0f : (float) Math.sqrt(squareTotal / count);
-                float next = Math.min(1f, rms * 0.7f + peak * 0.55f);
-                levels[index] = levels[index] * 0.58f + next * 0.42f;
+            float squareTotal = 0f;
+            float peak = 0f;
+            for (byte raw : waveform) {
+                float centered = ((raw & 0xFF) - 128) / 128f;
+                float absolute = Math.abs(centered);
+                squareTotal += absolute * absolute;
+                peak = Math.max(peak, absolute);
             }
+            float rms = (float) Math.sqrt(squareTotal / waveform.length);
+            float next = Math.min(1f, Math.max(0f, (rms - 0.018f) * 2.8f + peak * 0.22f));
+            System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1);
+            levels[SAMPLE_COUNT - 1] = levels[SAMPLE_COUNT - 2] * 0.52f + next * 0.48f;
         }
         postInvalidateOnAnimation();
     }

@@ -95,7 +95,7 @@ public final class MainActivityNativeReplyShellTest {
                         && source.contains("drawIdleWaveform"));
         assertTrue("WaveformView should render voice-memo style vertical energy ticks, not a continuous graph line",
                 source.contains("canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint)")
-                        && source.contains("rms * 0.7f + peak * 0.55f")
+                        && source.contains("System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1)")
                         && !source.contains("android.graphics.Path"));
         assertTrue("Player state should expose the active audio session id",
                 player.contains("\"audio_session_id\"")
