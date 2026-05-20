@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
     private static final int TEXT = Color.rgb(245, 249, 255);
     private static final int MUTED = Color.rgb(179, 201, 224);
     private static final int BLUE = Color.rgb(58, 132, 255);
+    private static final int COVER_FEED_BOTTOM_SAFE_PADDING_DP = 104;
 
     private SettingsStore settingsStore;
     private ReplyCardStore replyCardStore;
@@ -89,6 +90,7 @@ public class MainActivity extends Activity {
     private LinearLayout cardList;
     private TextView emptyView;
     private FrameLayout speedPickerOverlay;
+    private View feedBottomSafeSpacer;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
@@ -389,7 +391,16 @@ public class MainActivity extends Activity {
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        applyFeedScrollSafePadding(scroll, 0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+                int navInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+                applyFeedScrollSafePadding(scroll, navInset);
+                return insets;
+            });
+        }
         shell.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -421,6 +432,12 @@ public class MainActivity extends Activity {
         content.addView(cardList, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        feedBottomSafeSpacer = new View(this);
+        feedBottomSafeSpacer.setContentDescription("cover_feed_bottom_safe_spacer");
+        content.addView(feedBottomSafeSpacer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(COVER_FEED_BOTTOM_SAFE_PADDING_DP)));
         return root;
     }
 
@@ -941,7 +958,18 @@ public class MainActivity extends Activity {
         if ("bolt".equals(normalized) || "lightning".equals(normalized) || "energy".equals(normalized)) {
             return R.drawable.pucky_ic_bolt;
         }
+        if ("calendar".equals(normalized) || "meeting".equals(normalized) || "agenda".equals(normalized)) {
+            return R.drawable.pucky_ic_calendar;
+        }
+        if ("moon".equals(normalized) || "night".equals(normalized) || "bedtime".equals(normalized)) {
+            return R.drawable.pucky_ic_moon;
+        }
         return android.R.drawable.ic_dialog_email;
+    }
+
+    private void applyFeedScrollSafePadding(ScrollView scroll, int bottomInsetPx) {
+        int bottomPadding = Math.max(dp(COVER_FEED_BOTTOM_SAFE_PADDING_DP), bottomInsetPx + dp(36));
+        scroll.setPadding(0, 0, 0, bottomPadding);
     }
 
     private int parseColor(String raw, int fallback) {

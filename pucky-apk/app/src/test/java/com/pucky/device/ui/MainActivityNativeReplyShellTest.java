@@ -36,8 +36,14 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("identityMark(card)"));
         assertTrue("MainActivity should use the original Android mail header icon",
                 source.contains("android.R.drawable.ic_dialog_email"));
-        assertTrue("MainActivity should map clock and bolt icons to APK-owned drawables",
-                source.contains("pucky_ic_clock") && source.contains("pucky_ic_bolt"));
+        assertTrue("MainActivity should map feed icons to APK-owned drawables",
+                source.contains("pucky_ic_clock") && source.contains("pucky_ic_bolt")
+                        && source.contains("pucky_ic_calendar") && source.contains("pucky_ic_moon"));
+        assertTrue("MainActivity should keep reply cards scrollable above the cover navigation area",
+                source.contains("COVER_FEED_BOTTOM_SAFE_PADDING_DP")
+                        && source.contains("setClipToPadding(false)")
+                        && source.contains("cover_feed_bottom_safe_spacer")
+                        && source.contains("applyFeedScrollSafePadding(scroll"));
         assertTrue("MainActivity should expose transcript and web-page action icons",
                 source.contains("pucky_ic_transcript") && source.contains("pucky_ic_eye"));
         assertTrue("MainActivity should render the in-card audio player line",
@@ -72,6 +78,9 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue("Rich reply back button should float over the page instead of reserving top margin",
                 source.contains("Gravity.TOP | Gravity.START")
                         && !source.contains("webParams.topMargin"));
+        assertTrue("Rich replies should keep scrollable page content above the cover navigation area",
+                source.contains("WEB_DETAIL_BOTTOM_SAFE_PADDING_DP")
+                        && source.contains("applyWebViewSafePadding(webView"));
         assertFalse("Rich replies must not receive native bridge powers",
                 source.contains("addJavascriptInterface"));
     }

@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.WindowInsets;
 import android.view.ViewGroup;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -22,6 +23,7 @@ public final class RichReplyActivity extends Activity {
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
     private static final int TEXT = Color.rgb(245, 249, 255);
     private static final int BLUE = Color.rgb(58, 132, 255);
+    private static final int WEB_DETAIL_BOTTOM_SAFE_PADDING_DP = 88;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,6 +39,15 @@ public final class RichReplyActivity extends Activity {
 
         WebView webView = new WebView(this);
         webView.setBackgroundColor(BACKGROUND);
+        webView.setClipToPadding(false);
+        applyWebViewSafePadding(webView, 0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            webView.setOnApplyWindowInsetsListener((view, insets) -> {
+                int navInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+                applyWebViewSafePadding(webView, navInset);
+                return insets;
+            });
+        }
         webView.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -108,6 +119,11 @@ public final class RichReplyActivity extends Activity {
         drawable.setCornerRadius(radiusPx);
         drawable.setStroke(1, stroke);
         return drawable;
+    }
+
+    private void applyWebViewSafePadding(WebView webView, int bottomInsetPx) {
+        int bottomPadding = Math.max(dp(WEB_DETAIL_BOTTOM_SAFE_PADDING_DP), bottomInsetPx + dp(28));
+        webView.setPadding(0, 0, 0, bottomPadding);
     }
 
     private int dp(int value) {
