@@ -56,8 +56,10 @@ import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.InteractivePanelController;
+import com.pucky.device.ui.PuckyWebBridge;
 import com.pucky.device.ui.ReplyCard;
 import com.pucky.device.ui.ReplyCardStore;
+import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.ui.WaveformView;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
@@ -94,6 +96,7 @@ public class MainActivity extends Activity {
 
     private SettingsStore settingsStore;
     private ReplyCardStore replyCardStore;
+    private UiBundleController uiBundleController;
     private ButtonController buttonController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private FrameLayout rootView;
@@ -102,6 +105,9 @@ public class MainActivity extends Activity {
     private LinearLayout cardList;
     private TextView emptyView;
     private FrameLayout speedPickerOverlay;
+    private WebView webShell;
+    private PuckyWebBridge webBridge;
+    private boolean webShellMode;
     private View feedBottomSafeSpacer;
     private SeekBar activeAudioSeekBar;
     private TextView activeAudioTimeText;
@@ -168,9 +174,11 @@ public class MainActivity extends Activity {
         PuckyApplication app = (PuckyApplication) getApplication();
         settingsStore = app.settingsStore();
         replyCardStore = new ReplyCardStore(this);
+        uiBundleController = new UiBundleController(this);
         buttonController = new ButtonController(this);
+        webShellMode = settingsStore.isWebCachedUiEnabled();
         configureApplianceWindow();
-        setContentView(buildHomeView());
+        setContentView(webShellMode ? buildWebShellView() : buildHomeView());
         applySystemUiForMode();
         renderCurrent();
         handleLaunchIntent(getIntent());
@@ -501,7 +509,56 @@ public class MainActivity extends Activity {
         return root;
     }
 
+    private View buildWebShellView() {
+        FrameLayout root = new FrameLayout(this);
+        rootView = root;
+        root.setBackgroundColor(BACKGROUND);
+
+        webShell = new WebView(this);
+        webShell.setBackgroundColor(BACKGROUND);
+        webShell.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        configureWebShellSettings(webShell);
+        webBridge = new PuckyWebBridge(this, webShell, replyCardStore, uiBundleController, settingsStore);
+        webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
+        root.addView(webShell, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        loadWebShell();
+        return root;
+    }
+
+    private void configureWebShellSettings(WebView webView) {
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            settings.setAllowFileAccessFromFileURLs(false);
+            settings.setAllowUniversalAccessFromFileURLs(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            settings.setSafeBrowsingEnabled(true);
+        }
+    }
+
+    private void loadWebShell() {
+        if (webShell != null && uiBundleController != null) {
+            webShell.loadUrl(uiBundleController.entrypointUrl());
+        }
+    }
+
     private void showHomeScreen() {
+        webShellMode = settingsStore != null && settingsStore.isWebCachedUiEnabled();
+        if (webShellMode) {
+            if (webShell == null) {
+                setContentView(buildWebShellView());
+            } else {
+                loadWebShell();
+            }
+            return;
+        }
         if (cardList == null) {
             setContentView(buildHomeView());
         }
@@ -509,8 +566,18 @@ public class MainActivity extends Activity {
     }
 
     private void renderCurrent() {
+        if (webShellMode) {
+            emitWebPlayerState();
+            return;
+        }
         renderHome();
         renderAudioSheet();
+    }
+
+    private void emitWebPlayerState() {
+        if (webBridge != null) {
+            webBridge.emit("player.state", PlayerController.shared(this).state());
+        }
     }
 
     private void renderHome() {
@@ -1582,6 +1649,27 @@ public class MainActivity extends Activity {
         if (intent == null) {
             return;
         }
+        boolean uiSurfaceChanged = false;
+        if (intent.hasExtra("ui_bundle_path")) {
+            String bundlePath = intent.getStringExtra("ui_bundle_path");
+            try {
+                JSONObject args = new JSONObject();
+                Json.put(args, "path", bundlePath);
+                JSONObject result = uiBundleController.installDownloaded(args);
+                Log.i(TAG, "Installed UI bundle from launch extra: "
+                        + result.optString("ui_version", ""));
+                uiSurfaceChanged = true;
+            } catch (Exception exc) {
+                Log.e(TAG, "Unable to install launch UI bundle", exc);
+                PuckyState.get().setLastError("Unable to install UI bundle: " + exc.getMessage());
+            }
+        }
+        if (intent.hasExtra("ui_shell_mode")) {
+            String mode = intent.getStringExtra("ui_shell_mode");
+            settingsStore.setUiShellMode(mode);
+            Log.i(TAG, "Set UI shell mode from launch extra: " + settingsStore.getUiShellMode());
+            uiSurfaceChanged = true;
+        }
         String provisioningJson = provisioningJsonFromIntent(intent);
         if (provisioningJson != null) {
             try {
@@ -1620,6 +1708,10 @@ public class MainActivity extends Activity {
         }
         if (shouldStartAssistantSetup(intent)) {
             startAssistantSetupFlow();
+        }
+        if (uiSurfaceChanged) {
+            showHomeScreen();
+            renderCurrent();
         }
     }
 

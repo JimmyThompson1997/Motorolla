@@ -14,6 +14,9 @@ public final class SettingsStore {
     private static final String DEVICE_ID = "device_id";
     private static final String BROKER_URL = "broker_url";
     private static final String TOKEN = "token";
+    private static final String PUCKY_TURN_URL = "pucky_turn_url";
+    private static final String PUCKY_API_TOKEN = "pucky_api_token";
+    private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
     private static final String TUNNEL_ENABLED = "tunnel_enabled";
@@ -58,6 +61,32 @@ public final class SettingsStore {
 
     public String getToken() {
         return prefs.getString(TOKEN, "dev-token");
+    }
+
+    public String getPuckyTurnUrl() {
+        return prefs.getString(PUCKY_TURN_URL, "https://pucky.fly.dev/api/turn").trim();
+    }
+
+    public String getPuckyApiToken() {
+        String explicit = prefs.getString(PUCKY_API_TOKEN, "").trim();
+        if (!explicit.isEmpty()) {
+            return explicit;
+        }
+        String brokerToken = getToken();
+        return "dev-token".equals(brokerToken) ? "" : brokerToken.trim();
+    }
+
+    public String getUiShellMode() {
+        return prefs.getString(UI_SHELL_MODE, "native").trim();
+    }
+
+    public boolean isWebCachedUiEnabled() {
+        return "web_cached".equals(getUiShellMode());
+    }
+
+    public void setUiShellMode(String mode) {
+        String normalized = "web_cached".equals(mode == null ? "" : mode.trim()) ? "web_cached" : "native";
+        prefs.edit().putString(UI_SHELL_MODE, normalized).apply();
     }
 
     public boolean isAutoConnectEnabled() {
@@ -207,6 +236,11 @@ public final class SettingsStore {
         if (tunnel != null) {
             saveTunnelSettings(tunnel);
         }
+        SharedPreferences.Editor editor = prefs.edit();
+        putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
+        putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
+        putString(editor, input, "ui_shell_mode", UI_SHELL_MODE);
+        editor.commit();
         JSONObject out = new JSONObject();
         Json.put(out, "schema", schema);
         Json.put(out, "device_id", getDeviceId());

@@ -18,7 +18,6 @@ public final class MainActivityNativeReplyShellTest {
                 "HOME_PORTAL_PATH",
                 "/pucky-home",
                 "loadHomePortal",
-                "addJavascriptInterface",
                 "PuckyAndroidBridge",
                 "PuckyWebBridgePolicy",
                 "theme_owner",
@@ -79,6 +78,13 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("card.tag()"));
         assertFalse("Reply emoji badges should not be rendered in the feed",
                 source.contains("card.emoji()"));
+        assertTrue("MainActivity should support the new cached HTML shell as a feature-flagged surface",
+                source.contains("buildWebShellView()")
+                        && source.contains("UiBundleController")
+                        && source.contains("settingsStore.isWebCachedUiEnabled()")
+                        && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")"));
+        assertTrue("ADB launch extras should be able to install and switch a cached UI bundle for parity tests",
+                source.contains("\"ui_bundle_path\"") && source.contains("\"ui_shell_mode\""));
     }
 
     @Test
@@ -120,8 +126,9 @@ public final class MainActivityNativeReplyShellTest {
     }
 
     @Test
-    public void richReplyViewerIsLocalPanelAndHasNoNativeBridge() throws Exception {
+    public void richReplyViewerIsLocalPanelAndOnlyShellHasNativeBridge() throws Exception {
         String source = read("src/main/java/com/pucky/device/MainActivity.java");
+        String webPanel = section(source, "private View buildWebPanel", "private View buildTranscriptPanel");
 
         assertTrue("Rich replies should use a WebView detail viewer",
                 source.contains("new WebView"));
@@ -135,8 +142,11 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("webParams.topMargin"));
         assertTrue("Rich replies should keep scrollable page content above the cover navigation area",
                 source.contains("applyWebViewSafePadding(webView"));
-        assertFalse("Rich replies must not receive native bridge powers",
-                source.contains("addJavascriptInterface"));
+        assertTrue("Only the cached shell should receive the PuckyAndroid bridge",
+                count(source, "addJavascriptInterface") == 1
+                        && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")"));
+        assertFalse("Rich reply panels must not receive native bridge powers",
+                webPanel.contains("addJavascriptInterface"));
     }
 
     @Test
@@ -189,9 +199,71 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue(source.contains("uiController.replyCardsSet"));
         assertTrue(source.contains("uiController.replyCardsGet"));
         assertTrue(source.contains("uiController.replyCardsClear"));
+        assertTrue(source.contains("\"ui.bundle.status\""));
+        assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
+        assertTrue(source.contains("\"ui.bundle.refresh\""));
+        assertTrue(source.contains("\"ui.shell.mode.get\""));
+        assertTrue(source.contains("\"ui.shell.mode.set\""));
+        assertTrue(source.contains("uiBundleController.status()"));
+        assertTrue(source.contains("uiBundleController.installDownloaded"));
+        assertTrue(source.contains("uiBundleController.refresh"));
+        assertTrue(source.contains("settingsStore.setUiShellMode"));
+    }
+
+    @Test
+    public void cachedHtmlUiShellHasVerifiedBundleAndBridgeBoundary() throws Exception {
+        String bridge = read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java");
+        String bundles = read("src/main/java/com/pucky/device/ui/UiBundleController.java");
+        String fallback = read("src/main/assets/pucky_fallback/index.html");
+
+        assertTrue("HTML bridge should expose one Promise-style postMessage entrypoint",
+                bridge.contains("@JavascriptInterface")
+                        && bridge.contains("public void postMessage(String raw)")
+                        && bridge.contains("window.Pucky&&window.Pucky.__resolve"));
+        assertTrue("HTML bridge should allow only explicit UI/player/file commands",
+                bridge.contains("case \"ui.reply_cards.get\"")
+                        && bridge.contains("case \"player.play\"")
+                        && bridge.contains("case \"player.pause\"")
+                        && bridge.contains("case \"player.seek\"")
+                        && bridge.contains("case \"ui.bundle.status\"")
+                        && bridge.contains("Command is not exposed to HTML UI"));
+        assertFalse("HTML bridge should not expose raw shell execution",
+                bridge.contains("shell.exec"));
+        assertTrue("UI bundles should verify schema, entrypoint, bridge version, and file hashes",
+                bundles.contains("pucky.ui_bundle.v1")
+                        && bundles.contains("min_native_bridge_version")
+                        && bundles.contains("sha256(file)")
+                        && bundles.contains("UI bundle path traversal rejected"));
+        assertTrue("UI bundles should atomically keep previous/current directories and fallback shell",
+                bundles.contains("\"staging-\"")
+                        && bundles.contains("renameTo(previous)")
+                        && bundles.contains("renameTo(current)")
+                        && bundles.contains("file:///android_asset/pucky_fallback/index.html"));
+        assertTrue("Fallback asset should be a tiny bundled offline shell",
+                fallback.contains("Pucky is reconnecting")
+                        && fallback.contains("cached HTML UI bundle"));
     }
 
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8);
+    }
+
+    private static String section(String source, String startNeedle, String endNeedle) {
+        int start = source.indexOf(startNeedle);
+        int end = source.indexOf(endNeedle, start + startNeedle.length());
+        if (start < 0 || end < 0) {
+            return "";
+        }
+        return source.substring(start, end);
+    }
+
+    private static int count(String source, String needle) {
+        int total = 0;
+        int index = 0;
+        while ((index = source.indexOf(needle, index)) >= 0) {
+            total++;
+            index += needle.length();
+        }
+        return total;
     }
 }

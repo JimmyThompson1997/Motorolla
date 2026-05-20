@@ -29,6 +29,7 @@ public final class ReplyCardTest {
                         .put("media_label", "Inbox chart"));
         JSONObject input = new JSONObject()
                 .put("title", " Morning launch ")
+                .put("session_id", " pucky_abc123 ")
                 .put("tag", " Today ")
                 .put("summary", "Brief me")
                 .put("transcript", "User: what is next?\nPucky: Brief me")
@@ -41,6 +42,7 @@ public final class ReplyCardTest {
         ReplyCard card = ReplyCard.fromJson(input);
 
         assertEquals("Morning launch", card.title());
+        assertEquals("pucky_abc123", card.sessionId());
         assertEquals("Today", card.tag());
         assertEquals("Brief me", card.summary());
         assertEquals("User: what is next?\nPucky: Brief me", card.transcript());
@@ -51,6 +53,7 @@ public final class ReplyCardTest {
         assertEquals("/tmp/reply.html", card.htmlPath());
         assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
+        assertEquals("pucky_abc123", card.toJson().getString("session_id"));
         assertEquals("User: what is next?\nPucky: Brief me", card.toJson().getString("transcript"));
         assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
     }

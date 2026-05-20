@@ -1,0 +1,70 @@
+{
+  "schema": "pucky.reply_cards.v1",
+  "count": 5,
+  "cards": [
+    {
+      "session_id": "fixture_morning",
+      "title": "Morning launch",
+      "icon": "clock",
+      "accent": "#ffb000",
+      "summary": "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
+      "transcript_messages": [
+        { "role": "user", "text": "Pucky, start my morning." },
+        { "role": "assistant", "text": "Inbox triage, weather, and your first priority are ready." }
+      ],
+      "audio_path": "/mock/morning.wav",
+      "html_path": "/mock/morning.html"
+    },
+    {
+      "session_id": "fixture_leave",
+      "title": "Leaving home",
+      "icon": "bolt",
+      "accent": "#50d86a",
+      "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
+      "transcript_messages": [
+        { "role": "user", "text": "Leaving home." },
+        { "role": "assistant", "text": "Commute mode is ready. Garage status is queued." }
+      ],
+      "audio_path": "/mock/leaving.wav",
+      "html_path": "/mock/leaving.html"
+    },
+    {
+      "session_id": "fixture_meeting",
+      "title": "Meeting prep",
+      "icon": "calendar",
+      "accent": "#3a84ff",
+      "summary": "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
+      "transcript_messages": [
+        { "role": "user", "text": "What do I need before the meeting?" },
+        { "role": "assistant", "text": "Agenda, prior notes, and decision risks are lined up." }
+      ],
+      "audio_path": "/mock/meeting.wav",
+      "html_path": "/mock/meeting.html"
+    },
+    {
+      "session_id": "fixture_night",
+      "title": "Night wrap",
+      "icon": "moon",
+      "accent": "#8b63ff",
+      "summary": "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
+      "transcript_messages": [
+        { "role": "user", "text": "Wrap my day." },
+        { "role": "assistant", "text": "Loose tasks and tomorrow's first move are organized." }
+      ],
+      "audio_path": "/mock/night.wav",
+      "html_path": "/mock/night.html"
+    },
+    {
+      "session_id": "fixture_book",
+      "title": "Pocket Computers",
+      "icon": "book",
+      "accent": "#72c2ff",
+      "summary": "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
+      "transcript_messages": [
+        { "role": "assistant", "text": "Chapter narration is ready at the last saved position." }
+      ],
+      "audio_path": "/mock/pocket-computers.wav",
+      "html_path": "/mock/pocket-computers.html"
+    }
+  ]
+}

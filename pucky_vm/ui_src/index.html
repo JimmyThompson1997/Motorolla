@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Pucky Cover</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell" data-view="feed">
+      <header class="header">
+        <div class="mail-mark" aria-label="Pucky inbox">
+          <span></span>
+        </div>
+        <nav class="page-tabs" aria-label="Pucky pages">
+          <button class="tab is-active" data-route="feed">Feed</button>
+          <button class="tab" data-route="routines">Routines</button>
+          <button class="tab" data-route="sensors">Sensors</button>
+        </nav>
+      </header>
+
+      <section id="feed" class="feed" aria-label="Pucky reply feed"></section>
+      <section id="detail" class="detail-panel" aria-hidden="true"></section>
+      <section id="audioSheet" class="audio-sheet" aria-hidden="true"></section>
+      <section id="speedOverlay" class="speed-overlay" aria-hidden="true"></section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

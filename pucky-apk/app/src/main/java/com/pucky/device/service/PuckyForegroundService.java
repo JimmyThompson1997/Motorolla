@@ -51,6 +51,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.CoverDisplayGestureController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
@@ -65,6 +66,7 @@ import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.PuckyUiController;
+import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
@@ -250,6 +252,8 @@ public final class PuckyForegroundService extends Service {
                 capabilityReporter,
                 permissionReporter,
                 new PuckyUiController(this),
+                new UiBundleController(this),
+                settings,
                 new SystemController(this),
                 new IntentController(this),
                 new NoteController(this),
@@ -267,7 +271,8 @@ public final class PuckyForegroundService extends Service {
                 LiveKitController.shared(this, settings),
                 TunnelController.shared(this, settings),
                 new RemoteAdbController(this, settings, TunnelController.shared(this, settings)),
-                new AndroidSubstrateController(this));
+                new AndroidSubstrateController(this),
+                PuckyTurnController.shared(this));
         CommandRouter router = new CommandRouter(executor);
         brokerClient = new BrokerControlClient(this, settings, router, logStore);
         brokerClient.connect();

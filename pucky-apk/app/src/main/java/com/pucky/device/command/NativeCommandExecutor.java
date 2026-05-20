@@ -20,10 +20,12 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.status.StatusProvider;
 import com.pucky.device.storage.CommandLogStore;
+import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.storage.StorageProvider;
 import com.pucky.device.substrate.AndroidSubstrateController;
 import com.pucky.device.system.ShellController;
@@ -31,6 +33,7 @@ import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.PuckyUiController;
+import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
@@ -59,6 +62,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "button.events.list", "button.events.clear", "button.simulate",
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
+            "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -75,7 +79,9 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
             "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.get",
-            "ui.reply_cards.clear", "launcher.capability.get", "android.substrate"
+            "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
+            "ui.bundle.refresh", "ui.shell.mode.get", "ui.shell.mode.set",
+            "launcher.capability.get", "android.substrate"
     };
 
     private final StatusProvider statusProvider;
@@ -92,6 +98,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final CapabilityReporter capabilityReporter;
     private final PermissionReporter permissionReporter;
     private final PuckyUiController uiController;
+    private final UiBundleController uiBundleController;
+    private final SettingsStore settingsStore;
     private final SystemController systemController;
     private final IntentController intentController;
     private final NoteController noteController;
@@ -110,6 +118,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final TunnelController tunnelController;
     private final RemoteAdbController remoteAdbController;
     private final AndroidSubstrateController androidSubstrateController;
+    private final PuckyTurnController puckyTurnController;
 
     public NativeCommandExecutor(
             StatusProvider statusProvider,
@@ -126,6 +135,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             CapabilityReporter capabilityReporter,
             PermissionReporter permissionReporter,
             PuckyUiController uiController,
+            UiBundleController uiBundleController,
+            SettingsStore settingsStore,
             SystemController systemController,
             IntentController intentController,
             NoteController noteController,
@@ -143,7 +154,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             LiveKitController liveKitController,
             TunnelController tunnelController,
             RemoteAdbController remoteAdbController,
-            AndroidSubstrateController androidSubstrateController) {
+            AndroidSubstrateController androidSubstrateController,
+            PuckyTurnController puckyTurnController) {
         this.statusProvider = statusProvider;
         this.batteryProvider = batteryProvider;
         this.networkProvider = networkProvider;
@@ -158,6 +170,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.capabilityReporter = capabilityReporter;
         this.permissionReporter = permissionReporter;
         this.uiController = uiController;
+        this.uiBundleController = uiBundleController;
+        this.settingsStore = settingsStore;
         this.systemController = systemController;
         this.intentController = intentController;
         this.noteController = noteController;
@@ -176,6 +190,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.tunnelController = tunnelController;
         this.remoteAdbController = remoteAdbController;
         this.androidSubstrateController = androidSubstrateController;
+        this.puckyTurnController = puckyTurnController;
     }
 
     @Override
@@ -333,6 +348,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return voiceCaptureController.list(command.args());
             case "voice.capture.delete":
                 return voiceCaptureController.delete(command.args());
+            case "pucky.turn.status":
+                return puckyTurnController.status();
+            case "pucky.turn.start":
+                return puckyTurnController.start(command.args());
+            case "pucky.turn.stop":
+                return puckyTurnController.stop(command.args());
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":
@@ -433,6 +454,17 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.replyCardsGet();
             case "ui.reply_cards.clear":
                 return uiController.replyCardsClear();
+            case "ui.bundle.status":
+                return uiBundleController.status();
+            case "ui.bundle.install_downloaded":
+                return uiBundleController.installDownloaded(command.args());
+            case "ui.bundle.refresh":
+                return uiBundleController.refresh(command.args());
+            case "ui.shell.mode.get":
+                return uiShellMode();
+            case "ui.shell.mode.set":
+                settingsStore.setUiShellMode(command.args().optString("mode", "native"));
+                return uiShellMode();
             case "launcher.capability.get":
                 return uiController.launcherCapability();
             case "android.substrate":
@@ -468,6 +500,14 @@ public final class NativeCommandExecutor implements CommandExecutor {
         int limit = Math.max(1, Math.min(50, args.optInt("limit", 10)));
         JSONObject out = new JSONObject();
         Json.put(out, "entries", commandLogStore.tailJson(limit));
+        return out;
+    }
+
+    private JSONObject uiShellMode() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.ui_shell_mode.v1");
+        Json.put(out, "mode", settingsStore.getUiShellMode());
+        Json.put(out, "web_cached", settingsStore.isWebCachedUiEnabled());
         return out;
     }
 }

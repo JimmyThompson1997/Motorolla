@@ -21,6 +21,7 @@ local.properties
 *.aab
 *.apks
 *.zip
+pucky_vm/ui_dist/
 
 # Device evidence and bulky inspection artifacts
 .tmp/
@@ -37,6 +38,9 @@ pucky-implementation-proof/
 *.mp4
 
 # Secrets and tunnel credentials
+.env
+.env.local
+.env.*.local
 .secrets/
 *.pem
 *.key

@@ -11,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -35,10 +36,17 @@ public final class ReplyCardStore {
 
     public JSONObject replace(JSONArray cardsJson) throws CommandException {
         List<ReplyCard> cards = ReplyCard.listFromJson(cardsJson);
-        for (ReplyCard card : cards) {
-            validateAppOwnedPath(card.audioPath(), "audio_path");
-            validateAppOwnedPath(card.htmlPath(), "html_path");
-        }
+        validateCards(cards);
+        prefs().edit().putString(KEY_CARDS, ReplyCard.listToJson(cards).toString()).apply();
+        return snapshot(cards);
+    }
+
+    public JSONObject prepend(JSONObject cardJson) throws CommandException {
+        ReplyCard card = ReplyCard.fromJson(cardJson);
+        validateCard(card);
+        List<ReplyCard> cards = new ArrayList<>();
+        cards.add(card);
+        cards.addAll(cards());
         prefs().edit().putString(KEY_CARDS, ReplyCard.listToJson(cards).toString()).apply();
         return snapshot(cards);
     }
@@ -58,6 +66,17 @@ public final class ReplyCardStore {
         Json.put(out, "count", cards.size());
         Json.put(out, "cards", ReplyCard.listToJson(cards));
         return out;
+    }
+
+    private void validateCards(List<ReplyCard> cards) throws CommandException {
+        for (ReplyCard card : cards) {
+            validateCard(card);
+        }
+    }
+
+    private void validateCard(ReplyCard card) throws CommandException {
+        validateAppOwnedPath(card.audioPath(), "audio_path");
+        validateAppOwnedPath(card.htmlPath(), "html_path");
     }
 
     private void validateAppOwnedPath(String path, String field) throws CommandException {

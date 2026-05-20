@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 
 public final class ReplyCard {
+    private final String sessionId;
     private final String title;
     private final String tag;
     private final String summary;
@@ -24,6 +25,7 @@ public final class ReplyCard {
 
     public ReplyCard(
             String title,
+            String sessionId,
             String tag,
             String summary,
             String transcript,
@@ -32,6 +34,7 @@ public final class ReplyCard {
             String accent,
             String audioPath,
             String htmlPath) throws CommandException {
+        this.sessionId = optional(sessionId);
         this.title = required(title, "title");
         this.tag = optional(tag);
         this.summary = optional(summary);
@@ -49,6 +52,7 @@ public final class ReplyCard {
         }
         return new ReplyCard(
                 input.optString("title", ""),
+                input.optString("session_id", ""),
                 input.optString("tag", ""),
                 input.optString("summary", ""),
                 input.optString("transcript", input.optString("transcript_text", "")),
@@ -88,6 +92,7 @@ public final class ReplyCard {
 
     public JSONObject toJson() {
         JSONObject out = new JSONObject();
+        putOptional(out, "session_id", sessionId);
         Json.put(out, "title", title);
         putOptional(out, "tag", tag);
         putOptional(out, "summary", summary);
@@ -108,6 +113,10 @@ public final class ReplyCard {
 
     public String title() {
         return title;
+    }
+
+    public String sessionId() {
+        return sessionId;
     }
 
     public String tag() {

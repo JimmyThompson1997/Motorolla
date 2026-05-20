@@ -17,6 +17,7 @@ import com.pucky.device.command.CommandException;
 import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
@@ -38,7 +39,7 @@ public final class ButtonController {
     private static final int KEY_VOLUME_UP = KeyEvent.KEYCODE_VOLUME_UP;
     private static final int KEY_VOLUME_DOWN = KeyEvent.KEYCODE_VOLUME_DOWN;
     private static final int MAX_EVENTS = 100;
-    private static final int CONFIG_VERSION = 16;
+    private static final int CONFIG_VERSION = 17;
     private static final int DEFAULT_LONG_PRESS_MS = 250;
 
     private final Context context;
@@ -472,6 +473,14 @@ public final class ButtonController {
                     Json.put(out, "result", VoiceCaptureController.shared(context).stop(reasonArgs("button_release")));
                     Json.put(out, "status", "completed");
                     break;
+                case "pucky.turn.start":
+                    Json.put(out, "result", PuckyTurnController.shared(context).start(new JSONObject()));
+                    Json.put(out, "status", "completed");
+                    break;
+                case "pucky.turn.stop":
+                    Json.put(out, "result", PuckyTurnController.shared(context).stop(reasonArgs("button_release")));
+                    Json.put(out, "status", "queued");
+                    break;
                 case "speech.native.start":
                     Json.put(out, "result", NativeSpeechController.shared(context).start(new JSONObject()));
                     Json.put(out, "status", "completed");
@@ -551,7 +560,7 @@ public final class ButtonController {
         Json.put(out, "double_press_ms", 450);
         Json.put(out, "long_press_ms", DEFAULT_LONG_PRESS_MS);
         Json.put(out, "long_press_repeat_count", 1);
-        Json.put(out, "policy", "android_volume_synthetic_show_ui_hold_ptt_v16");
+        Json.put(out, "policy", "android_volume_pucky_raw_turn_v17");
         Json.put(out, "mappings", defaultMappings());
         return out;
     }
@@ -559,8 +568,8 @@ public final class ButtonController {
     private JSONObject defaultMappings() {
         JSONObject mappings = new JSONObject();
         Json.put(mappings, "volume_up_press", "volume.adjust.up");
-        Json.put(mappings, "volume_up_hold", "livekit.ptt.start");
-        Json.put(mappings, "volume_up_hold_release", "livekit.ptt.stop");
+        Json.put(mappings, "volume_up_hold", "pucky.turn.start");
+        Json.put(mappings, "volume_up_hold_release", "pucky.turn.stop");
         Json.put(mappings, "volume_down_press", "volume.adjust.down");
         Json.put(mappings, "volume_down_hold", "vox.reply.pause_toggle");
         Json.put(mappings, "volume_up_double", "none");
@@ -595,7 +604,7 @@ public final class ButtonController {
         }
         Json.put(raw, "config_version", CONFIG_VERSION);
         Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 250, 1200));
-        Json.put(raw, "policy", raw.optString("policy", "android_volume_synthetic_show_ui_hold_ptt_v16"));
+        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_raw_turn_v17"));
         Json.put(raw, "mappings", mappings);
         return raw;
     }
@@ -694,6 +703,8 @@ public final class ButtonController {
             case "voice.listen.stop_submit":
             case "voice.capture.start":
             case "voice.capture.stop":
+            case "pucky.turn.start":
+            case "pucky.turn.stop":
             case "speech.native.start":
             case "speech.native.stop":
             case "livekit.connect":
