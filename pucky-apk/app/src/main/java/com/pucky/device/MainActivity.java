@@ -105,6 +105,7 @@ public class MainActivity extends Activity {
     private View feedBottomSafeSpacer;
     private SeekBar activeAudioSeekBar;
     private TextView activeAudioTimeText;
+    private TextView activeAudioRemainingText;
     private int activeAudioDurationMs;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
@@ -657,6 +658,7 @@ public class MainActivity extends Activity {
         if (!audioSheetOpen || audioSheetCard == null) {
             activeAudioSeekBar = null;
             activeAudioTimeText = null;
+            activeAudioRemainingText = null;
             activeAudioDurationMs = 0;
             renderedAudioSheetPath = "";
             audioSheetNeedsRebuild = false;
@@ -674,6 +676,7 @@ public class MainActivity extends Activity {
         }
         activeAudioSeekBar = null;
         activeAudioTimeText = null;
+        activeAudioRemainingText = null;
         activeAudioDurationMs = 0;
         audioSheetLayer.removeAllViews();
         audioSheetLayer.setVisibility(View.VISIBLE);
@@ -726,8 +729,8 @@ public class MainActivity extends Activity {
         waveform.setPlaying(state.optBoolean("is_playing", false));
         LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(104));
-        waveParams.setMargins(0, dp(28), 0, dp(20));
+                dp(72));
+        waveParams.setMargins(0, dp(22), 0, dp(14));
         sheet.addView(waveform, waveParams);
 
         sheet.addView(audioSheetControls(), new LinearLayout.LayoutParams(
@@ -762,7 +765,7 @@ public class MainActivity extends Activity {
             public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
                 if (fromUser) {
                     trackingAudioSeek = true;
-                    updateAudioTimeText(progressValue, max);
+                    updateAudioTimeText(progressValue, activeAudioDurationMs);
                 }
             }
 
@@ -783,21 +786,31 @@ public class MainActivity extends Activity {
         activeAudioSeekBar = progress;
         activeAudioDurationMs = max;
 
-        TextView time = new TextView(this);
-        time.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
-        time.setTextColor(TEXT);
-        time.setTextSize(11);
-        time.setGravity(Gravity.CENTER);
+        LinearLayout timeRow = new LinearLayout(this);
+        timeRow.setOrientation(LinearLayout.HORIZONTAL);
+        timeRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView elapsed = audioTimeLabel(Gravity.START);
+        TextView remaining = audioTimeLabel(Gravity.END);
+        timeRow.addView(elapsed, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f));
+        timeRow.addView(remaining, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f));
         LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        timeParams.setMargins(0, dp(2), 0, dp(16));
-        stack.addView(time, timeParams);
-        activeAudioTimeText = time;
+        timeParams.setMargins(dp(12), 0, dp(12), dp(18));
+        stack.addView(timeRow, timeParams);
+        activeAudioTimeText = elapsed;
+        activeAudioRemainingText = remaining;
+        updateAudioTimeText(positionMs, durationMs);
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
+        controls.setGravity(Gravity.CENTER);
         controls.setClickable(true);
         controls.setOnClickListener(view -> {
             if (speedPickerOpen) {
@@ -805,33 +818,35 @@ public class MainActivity extends Activity {
             }
         });
 
+        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
+        speed.setContentDescription("audio_speed");
+        speed.setOnClickListener(view -> toggleSpeedPicker());
+        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(54), dp(44));
+        speedParams.setMargins(0, 0, dp(12), 0);
+        controls.addView(speed, speedParams);
+
         Button back = audioNudgeButton("\u21ba15");
         back.setContentDescription("audio_rewind_15");
         back.setOnClickListener(view -> seekRelative(-15_000));
         controls.addView(back, new LinearLayout.LayoutParams(dp(54), dp(44)));
 
         Button playPause = audioNudgeButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6");
-        playPause.setTextSize(18);
+        playPause.setTextSize(20);
         playPause.setContentDescription("audio_play_pause");
         playPause.setOnClickListener(view -> toggleActiveAudio());
-        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(64), dp(48));
-        playParams.setMargins(dp(10), 0, dp(10), 0);
+        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(72), dp(56));
+        playParams.setMargins(dp(12), 0, dp(12), 0);
         controls.addView(playPause, playParams);
 
         Button forward = audioNudgeButton("30\u21bb");
         forward.setContentDescription("audio_forward_30");
         forward.setOnClickListener(view -> seekRelative(30_000));
         controls.addView(forward, new LinearLayout.LayoutParams(dp(54), dp(44)));
-
-        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
-        speed.setContentDescription("audio_speed");
-        speed.setOnClickListener(view -> toggleSpeedPicker());
-        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(62), dp(44));
-        speedParams.setMargins(dp(14), 0, 0, 0);
-        controls.addView(speed, speedParams);
-        stack.addView(controls, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams controlsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        controlsParams.gravity = Gravity.CENTER_HORIZONTAL;
+        stack.addView(controls, controlsParams);
 
         return stack;
     }
@@ -866,6 +881,14 @@ public class MainActivity extends Activity {
         button.setPadding(0, 0, 0, 0);
         button.setBackground(roundRectNoStroke(CARD_SOFT, dp(14)));
         return button;
+    }
+
+    private TextView audioTimeLabel(int gravity) {
+        TextView label = new TextView(this);
+        label.setTextColor(MUTED);
+        label.setTextSize(11);
+        label.setGravity(gravity);
+        return label;
     }
 
     private void renderSpeedPickerOverlay() {
@@ -1129,7 +1152,8 @@ public class MainActivity extends Activity {
             savedAudioPositions.put(activeAudioPath, positionMs);
             savedAudioDurations.put(activeAudioPath, durationMs);
         }
-        if (activeAudioSeekBar == null || activeAudioTimeText == null || trackingAudioSeek) {
+        if (activeAudioSeekBar == null || activeAudioTimeText == null
+                || activeAudioRemainingText == null || trackingAudioSeek) {
             return;
         }
         int max = Math.max(1, durationMs);
@@ -1145,7 +1169,11 @@ public class MainActivity extends Activity {
         if (activeAudioTimeText == null) {
             return;
         }
-        activeAudioTimeText.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
+        activeAudioTimeText.setText(formatTime(positionMs));
+        if (activeAudioRemainingText != null) {
+            int remainingMs = Math.max(0, durationMs - positionMs);
+            activeAudioRemainingText.setText("-" + formatTime(remainingMs));
+        }
     }
 
     private void schedulePlayerTick() {
