@@ -15,8 +15,8 @@ public final class ReplyCard {
     private final String title;
     private final String tag;
     private final String summary;
+    private final String transcript;
     private final String icon;
-    private final String emoji;
     private final String accent;
     private final String audioPath;
     private final String htmlPath;
@@ -25,16 +25,16 @@ public final class ReplyCard {
             String title,
             String tag,
             String summary,
+            String transcript,
             String icon,
-            String emoji,
             String accent,
             String audioPath,
             String htmlPath) throws CommandException {
         this.title = required(title, "title");
         this.tag = optional(tag);
         this.summary = optional(summary);
+        this.transcript = optional(transcript);
         this.icon = optional(icon);
-        this.emoji = optional(emoji);
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
         this.htmlPath = optional(htmlPath);
@@ -48,8 +48,8 @@ public final class ReplyCard {
                 input.optString("title", ""),
                 input.optString("tag", ""),
                 input.optString("summary", ""),
+                input.optString("transcript", input.optString("transcript_text", "")),
                 input.optString("icon", ""),
-                input.optString("emoji", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
                 input.optString("html_path", ""));
@@ -87,8 +87,8 @@ public final class ReplyCard {
         Json.put(out, "title", title);
         putOptional(out, "tag", tag);
         putOptional(out, "summary", summary);
+        putOptional(out, "transcript", transcript);
         putOptional(out, "icon", icon);
-        putOptional(out, "emoji", emoji);
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
         putOptional(out, "html_path", htmlPath);
@@ -107,12 +107,12 @@ public final class ReplyCard {
         return summary;
     }
 
-    public String icon() {
-        return icon;
+    public String transcript() {
+        return transcript;
     }
 
-    public String emoji() {
-        return emoji;
+    public String icon() {
+        return icon;
     }
 
     public String accent() {
@@ -129,6 +129,10 @@ public final class ReplyCard {
 
     public boolean hasAudio() {
         return !audioPath.isEmpty();
+    }
+
+    public boolean hasTranscript() {
+        return !transcript.isEmpty();
     }
 
     public boolean hasHtml() {

@@ -32,14 +32,20 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("ReplyCardStore"));
         assertTrue("MainActivity should keep explicit wake-screen behavior",
                 source.contains("EXTRA_WAKE_SCREEN"));
-        assertTrue("MainActivity should render a two-part reply identity mark",
-                source.contains("identityMark(card, accent)"));
-        assertTrue("MainActivity should use an APK-owned mailbox header icon",
-                source.contains("pucky_ic_mailbox"));
+        assertTrue("MainActivity should render a simple reply identity mark",
+                source.contains("identityMark(card)"));
+        assertTrue("MainActivity should use the original Android mail header icon",
+                source.contains("android.R.drawable.ic_dialog_email"));
         assertTrue("MainActivity should map clock and bolt icons to APK-owned drawables",
                 source.contains("pucky_ic_clock") && source.contains("pucky_ic_bolt"));
+        assertTrue("MainActivity should expose transcript and web-page action icons",
+                source.contains("pucky_ic_transcript") && source.contains("pucky_ic_eye"));
+        assertTrue("MainActivity should render the in-card audio player line",
+                source.contains("audioPlayerLine()"));
         assertFalse("Reply tags should not be rendered in the feed",
                 source.contains("card.tag()"));
+        assertFalse("Reply emoji badges should not be rendered in the feed",
+                source.contains("card.emoji()"));
     }
 
     @Test

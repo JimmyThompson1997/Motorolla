@@ -2,6 +2,7 @@ package com.pucky.device;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -37,6 +38,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import com.pucky.device.assistant.PuckyAssistantController;
@@ -61,6 +63,7 @@ import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
@@ -86,7 +89,21 @@ public class MainActivity extends Activity {
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
+    private boolean trackingAudioSeek;
+    private String activeAudioPath = "";
     private long wakeScreenUntilMs;
+
+    private final Runnable playerTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!activeAudioPath.isEmpty()) {
+                if (!trackingAudioSeek) {
+                    renderHome();
+                }
+                schedulePlayerTick();
+            }
+        }
+    };
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
@@ -159,6 +176,9 @@ public class MainActivity extends Activity {
         ensureAutoConnectService();
         WakeWordController.shared(this).start(new JSONObject());
         renderCurrent();
+        if (!activeAudioPath.isEmpty()) {
+            schedulePlayerTick();
+        }
     }
 
     @Override
@@ -180,6 +200,7 @@ public class MainActivity extends Activity {
             unregisterReceiver(screenReceiver);
             screenReceiverRegistered = false;
         }
+        mainHandler.removeCallbacks(playerTick);
     }
 
     @Override
@@ -343,7 +364,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ImageView mail = new ImageView(this);
-        mail.setImageResource(R.drawable.pucky_ic_mailbox);
+        mail.setImageResource(android.R.drawable.ic_dialog_email);
         mail.setColorFilter(TEXT);
         LinearLayout.LayoutParams mailParams = new LinearLayout.LayoutParams(dp(30), dp(30));
         mailParams.setMargins(0, 0, dp(10), 0);
@@ -426,37 +447,56 @@ public class MainActivity extends Activity {
         rowParams.setMargins(0, 0, 0, dp(10));
         row.setLayoutParams(rowParams);
 
-        int accent = parseColor(card.accent(), BLUE);
-        row.addView(identityMark(card, accent), new LinearLayout.LayoutParams(dp(64), dp(56)));
+        row.addView(identityMark(card), new LinearLayout.LayoutParams(dp(44), dp(52)));
+        if (card.hasAudio()) {
+            row.setClickable(true);
+            row.setOnClickListener(view -> playReplyAudio(card));
+        }
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(12), 0, dp(8), 0);
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView title = new TextView(this);
-        title.setText(card.title());
-        title.setTextColor(TEXT);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setSingleLine(true);
-        body.addView(title);
+        if (isActiveAudioCard(card)) {
+            body.addView(audioPlayerLine());
+        } else {
+            TextView title = new TextView(this);
+            title.setText(card.title());
+            title.setTextColor(TEXT);
+            title.setTextSize(17);
+            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            title.setSingleLine(true);
+            body.addView(title);
+
+            if (!card.summary().isEmpty()) {
+                TextView preview = new TextView(this);
+                preview.setText(card.summary());
+                preview.setTextColor(TEXT);
+                preview.setTextSize(12);
+                preview.setSingleLine(true);
+                LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                previewParams.setMargins(0, dp(4), 0, 0);
+                body.addView(preview, previewParams);
+            }
+        }
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER);
-        if (card.hasAudio()) {
-            ImageButton play = iconActionButton(android.R.drawable.ic_btn_speak_now);
-            play.setOnClickListener(view -> playReplyAudio(card));
+        if (card.hasTranscript()) {
+            ImageButton transcript = iconActionButton(R.drawable.pucky_ic_transcript);
+            transcript.setOnClickListener(view -> showTranscript(card));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
             params.setMargins(0, 0, dp(8), 0);
-            actions.addView(play, params);
+            actions.addView(transcript, params);
         }
         if (card.hasHtml()) {
-            Button open = chevronButton();
-            open.setTextSize(20);
+            ImageButton open = iconActionButton(R.drawable.pucky_ic_eye);
             open.setOnClickListener(view -> openRichReply(card));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
             actions.addView(open, params);
         }
         row.addView(actions, new LinearLayout.LayoutParams(
@@ -465,38 +505,12 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private View identityMark(ReplyCard card, int accent) {
-        FrameLayout mark = new FrameLayout(this);
-
+    private View identityMark(ReplyCard card) {
         ImageView icon = new ImageView(this);
         icon.setImageResource(drawableForIcon(card.icon()));
         icon.setColorFilter(TEXT);
-        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
-        icon.setBackground(roundRect(CARD_SOFT, Color.rgb(40, 58, 78), dp(14)));
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.START | Gravity.CENTER_VERTICAL);
-        mark.addView(icon, iconParams);
-
-        if (!card.emoji().isEmpty()) {
-            TextView emoji = new TextView(this);
-            emoji.setText(card.emoji());
-            emoji.setTextSize(18);
-            emoji.setGravity(Gravity.CENTER);
-            emoji.setBackground(roundRect(Color.rgb(2, 6, 10), accent, dp(13)));
-            FrameLayout.LayoutParams emojiParams = new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.END | Gravity.BOTTOM);
-            mark.addView(emoji, emojiParams);
-        }
-        return mark;
-    }
-
-    private Button actionButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextColor(TEXT);
-        button.setTextSize(13);
-        button.setAllCaps(false);
-        button.setPadding(0, 0, 0, 0);
-        button.setBackground(roundRect(CARD_SOFT, BLUE, dp(16)));
-        return button;
+        icon.setPadding(dp(4), dp(4), dp(4), dp(4));
+        return icon;
     }
 
     private ImageButton iconActionButton(int drawableRes) {
@@ -509,10 +523,66 @@ public class MainActivity extends Activity {
         return button;
     }
 
-    private Button chevronButton() {
-        Button button = actionButton(">");
+    private View audioPlayerLine() {
+        JSONObject state = PlayerController.shared(this).state();
+        int positionMs = Math.max(0, state.optInt("position_ms", 0));
+        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
+        int max = Math.max(1, durationMs);
+
+        LinearLayout line = new LinearLayout(this);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button back = audioNudgeButton("-15");
+        back.setOnClickListener(view -> seekRelative(-15_000));
+        line.addView(back, new LinearLayout.LayoutParams(dp(42), dp(34)));
+
+        SeekBar progress = new SeekBar(this);
+        progress.setMax(max);
+        progress.setProgress(Math.min(positionMs, max));
+        progress.setPadding(dp(8), 0, dp(8), 0);
+        progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
+                if (fromUser) {
+                    trackingAudioSeek = true;
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                trackingAudioSeek = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                seekToPosition(seekBar.getProgress());
+                trackingAudioSeek = false;
+            }
+        });
+        line.addView(progress, new LinearLayout.LayoutParams(0, dp(34), 1f));
+
+        TextView time = new TextView(this);
+        time.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
+        time.setTextColor(TEXT);
+        time.setTextSize(11);
+        time.setGravity(Gravity.CENTER);
+        line.addView(time, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button forward = audioNudgeButton("+30");
+        forward.setOnClickListener(view -> seekRelative(30_000));
+        line.addView(forward, new LinearLayout.LayoutParams(dp(42), dp(34)));
+        return line;
+    }
+
+    private Button audioNudgeButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
         button.setTextColor(TEXT);
-        button.setBackground(roundRectNoStroke(Color.TRANSPARENT, dp(16)));
+        button.setTextSize(11);
+        button.setAllCaps(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setBackground(roundRectNoStroke(CARD_SOFT, dp(14)));
         return button;
     }
 
@@ -523,12 +593,151 @@ public class MainActivity extends Activity {
         Json.put(args, "source", "reply_card");
         try {
             PlayerController.shared(this).play(args);
+            activeAudioPath = card.audioPath();
             PuckyState.get().setLifecycleEvent("reply_card.audio_play");
+            renderHome();
+            schedulePlayerTick();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to play reply audio", exc);
             PuckyState.get().setLastError("Reply audio failed: " + exc.getMessage());
             PuckyState.get().broadcast(this);
         }
+    }
+
+    private void seekRelative(int deltaMs) {
+        JSONObject state = PlayerController.shared(this).state();
+        int positionMs = Math.max(0, state.optInt("position_ms", 0));
+        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
+        int targetMs = Math.max(0, positionMs + deltaMs);
+        if (durationMs > 0) {
+            targetMs = Math.min(targetMs, durationMs);
+        }
+        seekToPosition(targetMs);
+    }
+
+    private void seekToPosition(int positionMs) {
+        JSONObject args = new JSONObject();
+        Json.put(args, "position_ms", Math.max(0, positionMs));
+        try {
+            PlayerController.shared(this).seek(args);
+            renderHome();
+            schedulePlayerTick();
+        } catch (CommandException exc) {
+            Log.w(TAG, "Unable to seek reply audio", exc);
+            PuckyState.get().setLastError("Reply audio seek failed: " + exc.getMessage());
+            PuckyState.get().broadcast(this);
+        }
+    }
+
+    private boolean isActiveAudioCard(ReplyCard card) {
+        return card.hasAudio() && card.audioPath().equals(activeAudioPath);
+    }
+
+    private void schedulePlayerTick() {
+        mainHandler.removeCallbacks(playerTick);
+        mainHandler.postDelayed(playerTick, 1_000L);
+    }
+
+    private String formatTime(int ms) {
+        int totalSeconds = Math.max(0, ms / 1000);
+        int minutes = totalSeconds / 60;
+        int seconds = totalSeconds % 60;
+        return String.format(Locale.US, "%d:%02d", minutes, seconds);
+    }
+
+    private void showTranscript(ReplyCard card) {
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(18), dp(18), dp(18));
+        root.setBackgroundColor(BACKGROUND);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Transcript");
+        title.setTextColor(TEXT);
+        title.setTextSize(22);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = audioNudgeButton("Back");
+        close.setOnClickListener(view -> dialog.dismiss());
+        header.addView(close, new LinearLayout.LayoutParams(dp(76), dp(38)));
+        root.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView cardTitle = new TextView(this);
+        cardTitle.setText(card.title());
+        cardTitle.setTextColor(TEXT);
+        cardTitle.setTextSize(14);
+        LinearLayout.LayoutParams cardTitleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardTitleParams.setMargins(0, dp(6), 0, dp(14));
+        root.addView(cardTitle, cardTitleParams);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout thread = new LinearLayout(this);
+        thread.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(thread, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        for (String line : transcriptLines(card)) {
+            thread.addView(transcriptBubble(line));
+        }
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f));
+
+        dialog.setContentView(root);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        }
+    }
+
+    private List<String> transcriptLines(ReplyCard card) {
+        String raw = card.transcript().isEmpty() ? card.summary() : card.transcript();
+        List<String> lines = new ArrayList<>();
+        for (String line : raw.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                lines.add(trimmed);
+            }
+        }
+        if (lines.isEmpty()) {
+            lines.add("Transcript is not attached yet.");
+        }
+        return lines;
+    }
+
+    private View transcriptBubble(String raw) {
+        String lower = raw.toLowerCase(Locale.US);
+        boolean user = lower.startsWith("you:") || lower.startsWith("user:");
+        TextView bubble = new TextView(this);
+        bubble.setText(raw);
+        bubble.setTextColor(TEXT);
+        bubble.setTextSize(14);
+        bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
+        bubble.setBackground(roundRect(user ? CARD_SOFT : CARD, Color.rgb(33, 52, 72), dp(18)));
+
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setGravity(user ? Gravity.END : Gravity.START);
+        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
+                Math.round(getResources().getDisplayMetrics().widthPixels * 0.72f),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        wrap.addView(bubble, bubbleParams);
+        LinearLayout.LayoutParams wrapParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        wrapParams.setMargins(0, 0, 0, dp(9));
+        wrap.setLayoutParams(wrapParams);
+        return wrap;
     }
 
     private void openRichReply(ReplyCard card) {
@@ -546,7 +755,7 @@ public class MainActivity extends Activity {
         if ("bolt".equals(normalized) || "lightning".equals(normalized) || "energy".equals(normalized)) {
             return R.drawable.pucky_ic_bolt;
         }
-        return R.drawable.pucky_ic_mailbox;
+        return android.R.drawable.ic_dialog_email;
     }
 
     private int parseColor(String raw, int fallback) {

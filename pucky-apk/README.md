@@ -124,9 +124,10 @@ cover WebView no longer changes into listening/thinking/speaking visual modes. T
 ## Cover UI boundary
 
 The APK owns the cover-screen shell. The default cover home is a native reply-card feed populated through
-`ui.reply_cards.set`, where the runtime provides card text, icon/theme hints, and optional app-owned local audio or
-HTML artifact paths. The APK renders the cards, plays audio through the native player, and opens rich HTML replies
-inside a private detail Activity with an APK-owned back button.
+`ui.reply_cards.set`, where the runtime provides card text, transcript text, icon/theme hints, and optional app-owned
+local audio or HTML artifact paths. The APK renders the cards, taps on an audio card play through the native player
+and replace only the middle text lane with compact seek controls, transcript actions open a read-only chat transcript,
+and rich HTML replies open inside a private detail Activity with an APK-owned back button.
 
 Rich reply HTML can run ordinary page JavaScript for local interactivity, but it does not receive a native Android
 JavaScript bridge. Sensors, buttons, LiveKit, wake/sleep, permissions, and command execution stay native.

@@ -21,8 +21,8 @@ public final class ReplyCardTest {
                 .put("title", " Morning launch ")
                 .put("tag", " Today ")
                 .put("summary", "Brief me")
+                .put("transcript", "User: what is next?\nPucky: Brief me")
                 .put("icon", "clock")
-                .put("emoji", "\uD83D\uDCBC")
                 .put("accent", "#ffb000")
                 .put("audio_path", "/tmp/audio.m4a")
                 .put("html_path", "/tmp/reply.html");
@@ -32,13 +32,14 @@ public final class ReplyCardTest {
         assertEquals("Morning launch", card.title());
         assertEquals("Today", card.tag());
         assertEquals("Brief me", card.summary());
+        assertEquals("User: what is next?\nPucky: Brief me", card.transcript());
         assertEquals("clock", card.icon());
-        assertEquals("\uD83D\uDCBC", card.emoji());
         assertEquals("#ffb000", card.accent());
         assertEquals("/tmp/audio.m4a", card.audioPath());
         assertEquals("/tmp/reply.html", card.htmlPath());
+        assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
-        assertEquals("\uD83D\uDCBC", card.toJson().getString("emoji"));
+        assertEquals("User: what is next?\nPucky: Brief me", card.toJson().getString("transcript"));
     }
 
     @Test
