@@ -42,6 +42,9 @@ launch, capture logs, and forward local broker traffic during development.
 - `timer.cancel`
 - `ui.state.get`
 - `ui.dashboard.show`
+- `ui.reply_cards.set`
+- `ui.reply_cards.get`
+- `ui.reply_cards.clear`
 - `launcher.capability.get`
 - `runtime.stats`
 - `system.memory.get`
@@ -120,14 +123,13 @@ cover WebView no longer changes into listening/thinking/speaking visual modes. T
 
 ## Cover UI boundary
 
-The APK hosts the WebView, native bridge, buttons, LiveKit, permissions, and device APIs. It does not own the
-cover-screen visual state. Home, apps, threads, inbox, and later visual rebuilds are served by the VM at
-`/pucky-home`.
+The APK owns the cover-screen shell. The default cover home is a native reply-card feed populated through
+`ui.reply_cards.set`, where the runtime provides card text, icon/theme hints, and optional app-owned local audio or
+HTML artifact paths. The APK renders the cards, plays audio through the native player, and opens rich HTML replies
+inside a private detail Activity with an APK-owned back button.
 
-`PuckyAndroid.getNativeContext()` returns `pucky.native_context.v1` with native facts only: device id, shell theme,
-safe rectangle, and LiveKit status. `PuckyAndroid.getState()` is kept as a compatibility alias for that same native
-context. Neither bridge method emits cover `mode`, voice visual modes, transcript turns, threads, inbox items, or
-`call_visual`.
+Rich reply HTML can run ordinary page JavaScript for local interactivity, but it does not receive a native Android
+JavaScript bridge. Sensors, buttons, LiveKit, wake/sleep, permissions, and command execution stay native.
 
 ## Future assistant role note
 

@@ -8,13 +8,16 @@ import com.pucky.device.MainActivity;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.util.Json;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class PuckyUiController {
     private final Context context;
+    private final ReplyCardStore replyCards;
 
     public PuckyUiController(Context context) {
         this.context = context.getApplicationContext();
+        this.replyCards = new ReplyCardStore(this.context);
     }
 
     public JSONObject state() {
@@ -38,6 +41,25 @@ public final class PuckyUiController {
         Json.put(out, "target", "dashboard");
         Json.put(out, "connect_requested", args.optBoolean("connect", false));
         Json.put(out, "risk", "visible");
+        return out;
+    }
+
+    public JSONObject replyCardsSet(JSONObject args) throws com.pucky.device.command.CommandException {
+        JSONArray cards = args.optJSONArray("cards");
+        JSONObject out = replyCards.replace(cards);
+        PuckyState.get().setLifecycleEvent("reply_cards.updated");
+        PuckyState.get().broadcast(context);
+        return out;
+    }
+
+    public JSONObject replyCardsGet() {
+        return replyCards.snapshot();
+    }
+
+    public JSONObject replyCardsClear() {
+        JSONObject out = replyCards.clear();
+        PuckyState.get().setLifecycleEvent("reply_cards.cleared");
+        PuckyState.get().broadcast(context);
         return out;
     }
 

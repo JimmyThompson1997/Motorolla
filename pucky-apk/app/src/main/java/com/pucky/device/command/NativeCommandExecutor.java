@@ -74,7 +74,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
-            "ui.dashboard.show", "launcher.capability.get", "android.substrate"
+            "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.get",
+            "ui.reply_cards.clear", "launcher.capability.get", "android.substrate"
     };
 
     private final StatusProvider statusProvider;
@@ -426,6 +427,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.state();
             case "ui.dashboard.show":
                 return uiController.showDashboard(command.args());
+            case "ui.reply_cards.set":
+                return uiController.replyCardsSet(command.args());
+            case "ui.reply_cards.get":
+                return uiController.replyCardsGet();
+            case "ui.reply_cards.clear":
+                return uiController.replyCardsClear();
             case "launcher.capability.get":
                 return uiController.launcherCapability();
             case "android.substrate":

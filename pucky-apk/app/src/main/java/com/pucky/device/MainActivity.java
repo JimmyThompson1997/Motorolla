@@ -13,10 +13,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.Uri;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,8 +22,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
-import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,95 +31,59 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
-import android.webkit.JavascriptInterface;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 
-import com.pucky.device.adb.RemoteAdbController;
-import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.assistant.PuckyAssistantController;
-import com.pucky.device.audio.AudioController;
-import com.pucky.device.battery.BatteryProvider;
 import com.pucky.device.buttons.ButtonController;
-import com.pucky.device.camera.CameraController;
-import com.pucky.device.capabilities.CapabilityReporter;
-import com.pucky.device.capabilities.PermissionReporter;
-import com.pucky.device.command.CommandHandlingResult;
-import com.pucky.device.command.CommandRouter;
-import com.pucky.device.command.NativeCommandExecutor;
-import com.pucky.device.files.FileDownloadController;
-import com.pucky.device.intents.IntentController;
-import com.pucky.device.location.LocationController;
+import com.pucky.device.command.CommandException;
 import com.pucky.device.livekit.LiveKitController;
-import com.pucky.device.media.MediaControlController;
-import com.pucky.device.media.MediaExportController;
-import com.pucky.device.network.NetworkProvider;
-import com.pucky.device.notes.NoteController;
-import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.sensors.SensorController;
 import com.pucky.device.service.PuckyForegroundService;
-import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.state.PuckyState;
-import com.pucky.device.status.StatusProvider;
-import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.SettingsStore;
-import com.pucky.device.storage.StorageProvider;
-import com.pucky.device.substrate.AndroidSubstrateController;
-import com.pucky.device.system.ShellController;
-import com.pucky.device.system.SystemController;
-import com.pucky.device.timers.TimerController;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.PuckyUiController;
-import com.pucky.device.ui.PuckyWebBridgePolicy;
-import com.pucky.device.updates.AppUpdateController;
+import com.pucky.device.ui.ReplyCard;
+import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
-import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
     public static final String EXTRA_WAKE_SCREEN = "pucky_wake_screen";
-    private static final String HOME_PORTAL_PATH = "/pucky-home";
-    private static final int COVER_SAFE_RECT_WIDTH_PX = 992;
-    private static final int COVER_SAFE_RECT_BOTTOM_PX = 102;
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
 
-    private WebView homeWebView;
+    private static final int BACKGROUND = Color.rgb(2, 6, 10);
+    private static final int CARD = Color.rgb(8, 17, 28);
+    private static final int CARD_SOFT = Color.rgb(11, 24, 40);
+    private static final int TEXT = Color.rgb(245, 249, 255);
+    private static final int MUTED = Color.rgb(179, 201, 224);
+    private static final int BLUE = Color.rgb(58, 132, 255);
+
     private SettingsStore settingsStore;
+    private ReplyCardStore replyCardStore;
     private ButtonController buttonController;
-    private CommandRouter bridgeCommandRouter;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private boolean homePortalLoadStarted;
-    private boolean homePortalPageFinished;
-    private String lastHomePortalUrl = "";
-    private String portalSurface = "";
-    private int portalRetryCount;
-    private boolean portalRetryScheduled;
-    private String lastPortalErrorUrl = "";
-    private String lastPortalErrorDescription = "";
-    private int lastPortalErrorCode;
-    private String lastPortalErrorAt = "";
-    private ConnectivityManager.NetworkCallback portalNetworkCallback;
-    private boolean portalNetworkCallbackRegistered;
+    private LinearLayout cardList;
+    private TextView emptyView;
+    private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
     private long wakeScreenUntilMs;
@@ -148,14 +110,108 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         PuckyApplication app = (PuckyApplication) getApplication();
         settingsStore = app.settingsStore();
+        replyCardStore = new ReplyCardStore(this);
         buttonController = new ButtonController(this);
-        portalSurface = portalSurfaceFromIntent(getIntent());
         configureApplianceWindow();
         setContentView(buildHomeView());
         applySystemUiForMode();
         renderCurrent();
         handleLaunchIntent(getIntent());
         requestNeededPermissions();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        configureApplianceWindow();
+        showHomeScreen();
+        handleLaunchIntent(intent);
+        if (intent != null && "com.pucky.device.action.REQUEST_PERMISSIONS".equals(intent.getAction())) {
+            requestNeededPermissions();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        configureApplianceWindow();
+        if (!stateReceiverRegistered) {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED), RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED));
+            }
+            stateReceiverRegistered = true;
+        }
+        if (!screenReceiverRegistered) {
+            IntentFilter screenFilter = new IntentFilter();
+            screenFilter.addAction(Intent.ACTION_SCREEN_ON);
+            screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(screenReceiver, screenFilter);
+            }
+            screenReceiverRegistered = true;
+        }
+        applySystemUiForMode();
+        ensureAutoConnectService();
+        WakeWordController.shared(this).start(new JSONObject());
+        renderCurrent();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applySystemUiForMode();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (stateReceiverRegistered) {
+            unregisterReceiver(stateReceiver);
+            stateReceiverRegistered = false;
+        }
+        if (screenReceiverRegistered) {
+            unregisterReceiver(screenReceiver);
+            screenReceiverRegistered = false;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (buttonController != null) {
+            boolean handled = false;
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                handled = buttonController.handleKeyDown(event.getKeyCode(), event);
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                handled = buttonController.handleKeyUp(event.getKeyCode(), event);
+            }
+            if (handled) {
+                renderCurrent();
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
+            pendingAssistantSetupAfterPermission = false;
+            mainHandler.post(this::continueAssistantSetupFlow);
+        }
     }
 
     private void requestNeededPermissions() {
@@ -184,12 +240,8 @@ public class MainActivity extends Activity {
         } else {
             addMissingPermission(missing, Manifest.permission.READ_EXTERNAL_STORAGE);
         }
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            missing.add(Manifest.permission.CAMERA);
-        }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            missing.add(Manifest.permission.RECORD_AUDIO);
-        }
+        addMissingPermission(missing, Manifest.permission.CAMERA);
+        addMissingPermission(missing, Manifest.permission.RECORD_AUDIO);
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
                 && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
@@ -203,105 +255,6 @@ public class MainActivity extends Activity {
     private void addMissingPermission(List<String> missing, String permission) {
         if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
             missing.add(permission);
-        }
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        portalSurface = portalSurfaceFromIntent(intent);
-        configureApplianceWindow();
-        showHomeScreen();
-        handleLaunchIntent(intent);
-        if (intent != null && "com.pucky.device.action.REQUEST_PERMISSIONS".equals(intent.getAction())) {
-            requestNeededPermissions();
-        }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        configureApplianceWindow();
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED), RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED));
-        }
-        IntentFilter screenFilter = new IntentFilter();
-        screenFilter.addAction(Intent.ACTION_SCREEN_ON);
-        screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(screenReceiver, screenFilter);
-        }
-        screenReceiverRegistered = true;
-        applySystemUiForMode();
-        registerPortalNetworkCallback();
-        ensureAutoConnectService();
-        WakeWordController.shared(this).start(new JSONObject());
-        renderCurrent();
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            applySystemUiForMode();
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        unregisterReceiver(stateReceiver);
-        if (screenReceiverRegistered) {
-            unregisterReceiver(screenReceiver);
-            screenReceiverRegistered = false;
-        }
-        unregisterPortalNetworkCallback();
-    }
-
-    @Override
-    protected void onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null);
-        super.onDestroy();
-    }
-
-    @Override
-    public boolean dispatchKeyEvent(KeyEvent event) {
-        if (buttonController != null) {
-            boolean handled = false;
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                handled = buttonController.handleKeyDown(event.getKeyCode(), event);
-            } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                handled = buttonController.handleKeyUp(event.getKeyCode(), event);
-            }
-            if (handled) {
-                renderCurrent();
-                return true;
-            }
-        }
-        return super.dispatchKeyEvent(event);
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        return super.onKeyDown(keyCode, event);
-    }
-
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-        return super.onKeyUp(keyCode, event);
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
-            pendingAssistantSetupAfterPermission = false;
-            mainHandler.post(this::continueAssistantSetupFlow);
         }
     }
 
@@ -357,18 +310,6 @@ public class MainActivity extends Activity {
     }
 
     private void applySystemUiForMode() {
-        exitHomeImmersiveMode();
-    }
-
-    private void scheduleHomeImmersiveMode() {
-        mainHandler.postDelayed(() -> {
-            if (homePortalPageFinished) {
-                applySystemUiForMode();
-            }
-        }, 500);
-    }
-
-    private void exitHomeImmersiveMode() {
         Window window = getWindow();
         View decorView = window.getDecorView();
         decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
@@ -382,289 +323,77 @@ public class MainActivity extends Activity {
     }
 
     private View buildHomeView() {
-        resetCoverRefs();
-        lastHomePortalUrl = "";
-        homePortalLoadStarted = false;
-        homePortalPageFinished = false;
-        portalRetryCount = 0;
-        portalRetryScheduled = false;
-
         FrameLayout root = new FrameLayout(this);
-        int backgroundColor = Color.rgb(2, 6, 10);
-        root.setBackgroundColor(backgroundColor);
+        root.setBackgroundColor(BACKGROUND);
+        root.setPadding(dp(14), dp(16), dp(14), dp(18));
 
-        homeWebView = new WebView(this);
-        homeWebView.setBackgroundColor(backgroundColor);
-        homeWebView.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        homeWebView.setVerticalScrollBarEnabled(false);
-        homeWebView.setHorizontalScrollBarEnabled(false);
-        homeWebView.setLongClickable(true);
-        homeWebView.setOnLongClickListener(v -> {
-            showPortalSurface("admin");
-            return true;
-        });
-        WebSettings settings = homeWebView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            settings.setSafeBrowsingEnabled(true);
-        }
-        homeWebView.addJavascriptInterface(new PuckyAndroidBridge(), "PuckyAndroid");
-        homeWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                homePortalPageFinished = true;
-                portalRetryCount = 0;
-                portalRetryScheduled = false;
-                lastPortalErrorUrl = "";
-                lastPortalErrorDescription = "";
-                lastPortalErrorCode = 0;
-                lastPortalErrorAt = "";
-                lastHomePortalUrl = url == null ? "" : url;
-                Log.i(TAG, "Pucky portal loaded url=" + url);
-                PuckyState.get().setLifecycleEvent("portal.loaded");
-                scheduleHomeImmersiveMode();
-            }
-
-            @Override
-            public void onReceivedError(
-                    WebView view,
-                    WebResourceRequest request,
-                    WebResourceError error) {
-                if (request == null || request.isForMainFrame()) {
-                    String failingUrl = request == null || request.getUrl() == null
-                            ? homePortalUrl()
-                            : request.getUrl().toString();
-                    String description = error == null || error.getDescription() == null
-                            ? "unknown load error"
-                            : error.getDescription().toString();
-                    int errorCode = error == null ? 0 : error.getErrorCode();
-                    Log.w(TAG, "Pucky portal load failed url=" + failingUrl + " error=" + description);
-                    mainHandler.post(() -> handlePortalLoadFailure(failingUrl, description, errorCode));
-                }
-            }
-        });
-        root.addView(homeWebView, new FrameLayout.LayoutParams(
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(shell, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        homeWebView.post(this::loadHomePortal);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), 0, dp(8), dp(10));
+        shell.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ImageView mail = new ImageView(this);
+        mail.setImageResource(R.drawable.pucky_ic_mailbox);
+        mail.setColorFilter(TEXT);
+        LinearLayout.LayoutParams mailParams = new LinearLayout.LayoutParams(dp(30), dp(30));
+        mailParams.setMargins(0, 0, dp(10), 0);
+        header.addView(mail, mailParams);
+
+        TextView title = new TextView(this);
+        title.setText("Pucky");
+        title.setTextColor(TEXT);
+        title.setTextSize(24);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        header.addView(title);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        shell.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f));
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(content, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        emptyView = new TextView(this);
+        emptyView.setText("No replies yet.\nPucky will place agent replies here.");
+        emptyView.setTextColor(MUTED);
+        emptyView.setTextSize(18);
+        emptyView.setGravity(Gravity.CENTER);
+        emptyView.setPadding(dp(18), dp(50), dp(18), dp(50));
+        emptyView.setBackground(roundRect(CARD, Color.rgb(32, 55, 78), dp(24)));
+        content.addView(emptyView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        cardList = new LinearLayout(this);
+        cardList.setOrientation(LinearLayout.VERTICAL);
+        content.addView(cardList, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         return root;
     }
 
-    private String projectVoxBaseUrl() {
-        String broker = settingsStore == null ? "" : settingsStore.getBrokerUrl();
-        if (broker == null || broker.trim().isEmpty() || broker.contains("127.0.0.1")) {
-            return "https://jt-project-vox-codex.fly.dev";
-        }
-        String base = broker.trim()
-                .replaceFirst("^wss://", "https://")
-                .replaceFirst("^ws://", "http://");
-        int pathStart = base.indexOf("/v1/");
-        if (pathStart > 0) {
-            base = base.substring(0, pathStart);
-        }
-        return base;
-    }
-
-    private void loadHomePortal() {
-        if (homeWebView == null) {
-            return;
-        }
-        homePortalLoadStarted = true;
-        Log.i(TAG, "Loading Pucky portal width=" + homeWebView.getWidth()
-                + " height=" + homeWebView.getHeight()
-                + " surface=" + portalSurface);
-        String url = homePortalUrl();
-        Log.i(TAG, "Opening Pucky portal url=" + url);
-        homeWebView.loadUrl(url);
-    }
-
-    private String homePortalUrl() {
-        String deviceId = settingsStore == null ? "" : settingsStore.getDeviceId();
-        String base = projectVoxBaseUrl();
-        while (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
-        }
-        String token = settingsStore == null ? "" : settingsStore.getToken();
-        String url = base + HOME_PORTAL_PATH
-                + "?device_id=" + Uri.encode(deviceId == null ? "" : deviceId)
-                + "&token=" + Uri.encode(token == null ? "" : token);
-        if (!portalSurface.isEmpty()) {
-            url += "&surface=" + Uri.encode(portalSurface);
-        }
-        return url;
-    }
-
-    private JSONObject buildNativeContext() {
-        JSONObject liveKit = LiveKitController.shared(this, settingsStore).status();
-        JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.native_context.v1");
-        Json.put(out, "device_id", settingsStore == null ? "" : settingsStore.getDeviceId());
-        Json.put(out, "theme_owner", "vm_html");
-
-        JSONObject safe = new JSONObject();
-        Json.put(safe, "width_px", COVER_SAFE_RECT_WIDTH_PX);
-        Json.put(safe, "top_px", 50);
-        Json.put(safe, "bottom_px", COVER_SAFE_RECT_BOTTOM_PX);
-        Json.put(out, "safe_rect", safe);
-
-        JSONObject live = new JSONObject();
-        Json.put(live, "state", liveKit.optString("state", "unknown"));
-        Json.put(live, "connected", liveKit.optBoolean("connected", false));
-        Json.put(live, "mic_enabled", liveKit.optBoolean("mic_enabled", false));
-        Json.put(live, "room", liveKit.opt("room"));
-        Json.put(live, "remote_audio_gain", liveKit.opt("remote_audio_gain"));
-        Json.put(out, "livekit", live);
-
-        JSONObject portal = new JSONObject();
-        Json.put(portal, "surface", portalSurface);
-        Json.put(portal, "load_started", homePortalLoadStarted);
-        Json.put(portal, "page_finished", homePortalPageFinished);
-        Json.put(portal, "last_url", lastHomePortalUrl);
-        Json.put(portal, "retry_count", portalRetryCount);
-        Json.put(portal, "retry_scheduled", portalRetryScheduled);
-        JSONObject error = new JSONObject();
-        Json.put(error, "url", lastPortalErrorUrl);
-        Json.put(error, "description", lastPortalErrorDescription);
-        Json.put(error, "code", lastPortalErrorCode);
-        Json.put(error, "at", lastPortalErrorAt);
-        Json.put(portal, "last_error", error);
-        Json.put(out, "portal", portal);
-        return out;
-    }
-
-    private void handlePortalLoadFailure(String failingUrl, String description, int errorCode) {
-        homePortalPageFinished = false;
-        lastPortalErrorUrl = failingUrl == null ? "" : failingUrl;
-        lastPortalErrorDescription = description == null ? "unknown load error" : description;
-        lastPortalErrorCode = errorCode;
-        lastPortalErrorAt = Instant.now().toString();
-        PuckyState.get().setLifecycleEvent("portal.load_failed");
-        PuckyState.get().setLastError("portal load failed: " + lastPortalErrorDescription);
-        schedulePortalRetry("load_failure");
-    }
-
-    private void schedulePortalRetry(String reason) {
-        if (homeWebView == null || portalRetryScheduled) {
-            return;
-        }
-        long delayMs = PuckyWebBridgePolicy.portalRetryDelayMs(portalRetryCount);
-        portalRetryCount++;
-        portalRetryScheduled = true;
-        Log.i(TAG, "Scheduling portal retry reason=" + reason
-                + " retry_count=" + portalRetryCount
-                + " delay_ms=" + delayMs);
-        mainHandler.postDelayed(() -> {
-            portalRetryScheduled = false;
-            if (homeWebView != null && !homePortalPageFinished) {
-                loadHomePortal();
-            }
-        }, delayMs);
-    }
-
-    private void reloadPortalAfterNetworkRecovered(String reason) {
-        mainHandler.post(() -> {
-            if (homeWebView == null) {
-                return;
-            }
-            if (!homePortalPageFinished || !lastPortalErrorAt.isEmpty()) {
-                Log.i(TAG, "Reloading portal after network recovery reason=" + reason);
-                portalRetryScheduled = false;
-                loadHomePortal();
-            }
-        });
-    }
-
-    private void registerPortalNetworkCallback() {
-        if (portalNetworkCallbackRegistered) {
-            return;
-        }
-        ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager == null) {
-            return;
-        }
-        portalNetworkCallback = new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(Network network) {
-                reloadPortalAfterNetworkRecovered("network_available");
-            }
-
-            @Override
-            public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
-                if (isNetworkValidated(capabilities)) {
-                    reloadPortalAfterNetworkRecovered("network_validated");
-                }
-            }
-        };
-        try {
-            manager.registerDefaultNetworkCallback(portalNetworkCallback);
-            portalNetworkCallbackRegistered = true;
-        } catch (RuntimeException exc) {
-            Log.w(TAG, "Unable to register portal network callback", exc);
-        }
-    }
-
-    private void unregisterPortalNetworkCallback() {
-        if (!portalNetworkCallbackRegistered || portalNetworkCallback == null) {
-            portalNetworkCallback = null;
-            portalNetworkCallbackRegistered = false;
-            return;
-        }
-        ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager != null) {
-            try {
-                manager.unregisterNetworkCallback(portalNetworkCallback);
-            } catch (RuntimeException ignored) {
-                // The callback can already be detached during activity teardown.
-            }
-        }
-        portalNetworkCallback = null;
-        portalNetworkCallbackRegistered = false;
-    }
-
-    private static boolean isNetworkValidated(NetworkCapabilities capabilities) {
-        return capabilities != null
-                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
-    }
-
     private void showHomeScreen() {
-        applySystemUiForMode();
-        if (homeWebView == null) {
+        if (cardList == null) {
             setContentView(buildHomeView());
-            return;
         }
-        loadHomePortal();
-        renderHome();
-    }
-
-    private void showPortalSurface(String surface) {
-        portalSurface = normalizePortalSurface(surface);
-        showHomeScreen();
-    }
-
-    private String portalSurfaceFromIntent(Intent intent) {
-        if (intent == null) {
-            return "";
-        }
-        if (intent.getBooleanExtra("admin", false)) {
-            return "admin";
-        }
-        return normalizePortalSurface(intent.getStringExtra("surface"));
-    }
-
-    private static String normalizePortalSurface(String raw) {
-        if (raw == null) {
-            return "";
-        }
-        String normalized = raw.trim().toLowerCase();
-        if (normalized.isEmpty() || "home".equals(normalized)) {
-            return "";
-        }
-        return normalized.matches("[a-z0-9_-]{1,32}") ? normalized : "";
+        renderCurrent();
     }
 
     private void renderCurrent() {
@@ -672,222 +401,182 @@ public class MainActivity extends Activity {
     }
 
     private void renderHome() {
-        // The cover experience is rendered by the VM HTML portal loaded in the WebView.
+        if (cardList == null || replyCardStore == null) {
+            return;
+        }
+        List<ReplyCard> cards = replyCardStore.cards();
+        cardList.removeAllViews();
+        emptyView.setVisibility(cards.isEmpty() ? View.VISIBLE : View.GONE);
+        for (ReplyCard card : cards) {
+            cardList.addView(cardView(card));
+        }
     }
 
-    private void resetCoverRefs() {
-        homeWebView = null;
+    private View cardView(ReplyCard card) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(10), dp(12));
+        row.setMinimumHeight(dp(96));
+        row.setBackground(roundRect(CARD, Color.rgb(33, 52, 72), dp(18)));
+
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.setMargins(0, 0, 0, dp(10));
+        row.setLayoutParams(rowParams);
+
+        int accent = parseColor(card.accent(), BLUE);
+        row.addView(identityMark(card, accent), new LinearLayout.LayoutParams(dp(64), dp(56)));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(12), 0, dp(8), 0);
+        row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView title = new TextView(this);
+        title.setText(card.title());
+        title.setTextColor(TEXT);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setSingleLine(true);
+        body.addView(title);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        if (card.hasAudio()) {
+            ImageButton play = iconActionButton(android.R.drawable.ic_btn_speak_now);
+            play.setOnClickListener(view -> playReplyAudio(card));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
+            params.setMargins(0, 0, dp(8), 0);
+            actions.addView(play, params);
+        }
+        if (card.hasHtml()) {
+            Button open = chevronButton();
+            open.setTextSize(20);
+            open.setOnClickListener(view -> openRichReply(card));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(40));
+            actions.addView(open, params);
+        }
+        row.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
     }
 
-    private void applyForegroundBrightness(double value) {
-        double clamped = Math.max(0.02d, Math.min(1.0d, value));
-        WindowManager.LayoutParams params = getWindow().getAttributes();
-        params.screenBrightness = (float) clamped;
-        getWindow().setAttributes(params);
+    private View identityMark(ReplyCard card, int accent) {
+        FrameLayout mark = new FrameLayout(this);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(drawableForIcon(card.icon()));
+        icon.setColorFilter(TEXT);
+        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
+        icon.setBackground(roundRect(CARD_SOFT, Color.rgb(40, 58, 78), dp(14)));
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.START | Gravity.CENTER_VERTICAL);
+        mark.addView(icon, iconParams);
+
+        if (!card.emoji().isEmpty()) {
+            TextView emoji = new TextView(this);
+            emoji.setText(card.emoji());
+            emoji.setTextSize(18);
+            emoji.setGravity(Gravity.CENTER);
+            emoji.setBackground(roundRect(Color.rgb(2, 6, 10), accent, dp(13)));
+            FrameLayout.LayoutParams emojiParams = new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.END | Gravity.BOTTOM);
+            mark.addView(emoji, emojiParams);
+        }
+        return mark;
     }
 
-    private String deviceSpecJson() {
-        DisplayMetrics metrics = getResources().getDisplayMetrics();
-        JSONObject out = new JSONObject();
+    private Button actionButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(TEXT);
+        button.setTextSize(13);
+        button.setAllCaps(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setBackground(roundRect(CARD_SOFT, BLUE, dp(16)));
+        return button;
+    }
+
+    private ImageButton iconActionButton(int drawableRes) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawableRes);
+        button.setColorFilter(TEXT);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setBackground(roundRect(CARD_SOFT, BLUE, dp(16)));
+        return button;
+    }
+
+    private Button chevronButton() {
+        Button button = actionButton(">");
+        button.setTextColor(TEXT);
+        button.setBackground(roundRectNoStroke(Color.TRANSPARENT, dp(16)));
+        return button;
+    }
+
+    private void playReplyAudio(ReplyCard card) {
+        JSONObject args = new JSONObject();
+        Json.put(args, "path", card.audioPath());
+        Json.put(args, "title", card.title());
+        Json.put(args, "source", "reply_card");
         try {
-            out.put("schema", "pucky.android_device_spec.v1");
-            out.put("manufacturer", Build.MANUFACTURER);
-            out.put("model", Build.MODEL);
-            out.put("device", Build.DEVICE);
-            out.put("sdk_int", Build.VERSION.SDK_INT);
-            out.put("package_name", getPackageName());
-            out.put("screen_width_px", metrics.widthPixels);
-            out.put("screen_height_px", metrics.heightPixels);
-            out.put("density", metrics.density);
-            out.put("density_dpi", metrics.densityDpi);
-        } catch (JSONException e) {
-            Log.e(TAG, "Failed to build device spec", e);
+            PlayerController.shared(this).play(args);
+            PuckyState.get().setLifecycleEvent("reply_card.audio_play");
+        } catch (CommandException exc) {
+            Log.w(TAG, "Unable to play reply audio", exc);
+            PuckyState.get().setLastError("Reply audio failed: " + exc.getMessage());
+            PuckyState.get().broadcast(this);
         }
-        return out.toString();
     }
 
-    private synchronized CommandRouter bridgeCommandRouter() {
-        if (bridgeCommandRouter != null) {
-            return bridgeCommandRouter;
+    private void openRichReply(ReplyCard card) {
+        Intent intent = new Intent(this, RichReplyActivity.class)
+                .putExtra(RichReplyActivity.EXTRA_HTML_PATH, card.htmlPath())
+                .putExtra(RichReplyActivity.EXTRA_TITLE, card.title());
+        startActivity(intent);
+    }
+
+    private int drawableForIcon(String icon) {
+        String normalized = icon == null ? "" : icon.trim().toLowerCase();
+        if ("clock".equals(normalized) || "time".equals(normalized) || "timer".equals(normalized)) {
+            return R.drawable.pucky_ic_clock;
         }
-        CommandLogStore logStore = ((PuckyApplication) getApplication()).commandLogStore();
-        PermissionReporter permissions = new PermissionReporter(this, settingsStore);
-        CapabilityReporter capabilities = new CapabilityReporter(this, settingsStore, permissions);
-        NativeCommandExecutor executor = new NativeCommandExecutor(
-                new StatusProvider(this, settingsStore),
-                new BatteryProvider(this),
-                new NetworkProvider(this),
-                new SensorController(this),
-                new StorageProvider(this),
-                new NotificationController(this),
-                new AudioController(this),
-                new ShellController(),
-                new CameraController(this),
-                new TimerController(this),
-                logStore,
-                capabilities,
-                permissions,
-                new PuckyUiController(this),
-                new SystemController(this),
-                new IntentController(this),
-                new NoteController(this),
-                new ArtifactController(this),
-                new LocationController(this),
-                new FileDownloadController(this),
-                new MediaControlController(this),
-                new MediaExportController(this),
-                PlayerController.shared(this),
-                buttonController == null ? new ButtonController(this) : buttonController,
-                VoiceCaptureController.shared(this),
-                NativeSpeechController.shared(this),
-                WakeWordController.shared(this),
-                new AppUpdateController(this),
-                LiveKitController.shared(this, settingsStore),
-                TunnelController.shared(this, settingsStore),
-                new RemoteAdbController(this, settingsStore, TunnelController.shared(this, settingsStore)),
-                new AndroidSubstrateController(this));
-        bridgeCommandRouter = new CommandRouter(executor);
-        return bridgeCommandRouter;
+        if ("bolt".equals(normalized) || "lightning".equals(normalized) || "energy".equals(normalized)) {
+            return R.drawable.pucky_ic_bolt;
+        }
+        return R.drawable.pucky_ic_mailbox;
     }
 
-    private boolean isTrustedBridgeCaller() {
-        return PuckyWebBridgePolicy.isTrustedUrl(lastHomePortalUrl, projectVoxBaseUrl());
-    }
-
-    private String executeBridgeCommand(String raw) {
-        long started = System.currentTimeMillis();
+    private int parseColor(String raw, int fallback) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return fallback;
+        }
         try {
-            if (!isTrustedBridgeCaller()) {
-                return bridgeError("UNTRUSTED_ORIGIN", "Pucky bridge origin is not trusted", started).toString();
-            }
-            JSONObject input = new JSONObject(raw == null ? "{}" : raw);
-            String type = input.optString("type", "").trim();
-            if (type.isEmpty()) {
-                return bridgeError("MALFORMED_COMMAND", "Bridge command requires type", started).toString();
-            }
-            JSONObject args = input.optJSONObject("args");
-            if (args == null) {
-                args = new JSONObject();
-            } else {
-                args = new JSONObject(args.toString());
-            }
-            if ("shell.exec".equals(type)) {
-                PuckyWebBridgePolicy.boundShellArgs(args);
-            }
-            JSONObject command = new JSONObject();
-            Json.put(command, "schema", "pucky.command.v1");
-            Json.put(command, "id", input.optString("id", "ui_" + Long.toHexString(System.currentTimeMillis())));
-            Json.put(command, "type", type);
-            Json.put(command, "args", args);
-            Json.put(command, "created_at", Instant.now().toString());
-            Json.put(command, "ttl_ms", PuckyWebBridgePolicy.boundedTtlMs(input.optLong("ttl_ms", 30000L)));
-            CommandHandlingResult handled = bridgeCommandRouter().handle(command.toString());
-            JSONObject out = handled.toJson();
-            Json.put(out, "schema", "pucky.bridge_execute_result.v1");
-            Json.put(out, "duration_ms", System.currentTimeMillis() - started);
-            Json.put(out, "trusted_url", lastHomePortalUrl);
-            Log.i(TAG, "ui.bridge.execute type=" + type
-                    + " status=" + handled.status()
-                    + " duration_ms=" + (System.currentTimeMillis() - started));
-            return out.toString();
-        } catch (Exception exc) {
-            Log.w(TAG, "ui.bridge.execute failed", exc);
-            return bridgeError("EXECUTION_FAILED", exc.getMessage(), started).toString();
+            return Color.parseColor(raw.trim());
+        } catch (IllegalArgumentException ignored) {
+            return fallback;
         }
     }
 
-    private JSONObject bridgeError(String code, String message, long started) {
-        JSONObject error = new JSONObject();
-        Json.put(error, "code", code);
-        Json.put(error, "message", message == null ? "" : message);
-        JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.bridge_execute_result.v1");
-        Json.put(out, "command_id", "unknown");
-        Json.put(out, "type", "unknown");
-        Json.put(out, "status", "failed");
-        Json.put(out, "ack", JSONObject.NULL);
-        Json.put(out, "result", JSONObject.NULL);
-        Json.put(out, "error", error);
-        Json.put(out, "duration_ms", System.currentTimeMillis() - started);
-        Json.put(out, "trusted_url", lastHomePortalUrl);
-        return out;
+    private GradientDrawable roundRect(int fill, int stroke, int radiusPx) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(radiusPx);
+        drawable.setStroke(1, stroke);
+        return drawable;
     }
 
-    private JSONObject bridgeOk(String schema) {
-        JSONObject out = new JSONObject();
-        Json.put(out, "schema", schema);
-        Json.put(out, "ok", true);
-        return out;
+    private GradientDrawable roundRectNoStroke(int fill, int radiusPx) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(radiusPx);
+        return drawable;
     }
 
-    private final class PuckyAndroidBridge {
-        @JavascriptInterface
-        public void setBrightness(double value) {
-            mainHandler.post(() -> applyForegroundBrightness(value));
-        }
-
-        @JavascriptInterface
-        public String getDeviceSpec() {
-            return deviceSpecJson();
-        }
-
-        @JavascriptInterface
-        public String getState() {
-            return buildNativeContext().toString();
-        }
-
-        @JavascriptInterface
-        public String getNativeContext() {
-            return buildNativeContext().toString();
-        }
-
-        @JavascriptInterface
-        public String execute(String commandJson) {
-            return executeBridgeCommand(commandJson);
-        }
-
-        @JavascriptInterface
-        public String reloadUi() {
-            if (!isTrustedBridgeCaller()) {
-                return bridgeError("UNTRUSTED_ORIGIN", "Pucky bridge origin is not trusted", System.currentTimeMillis()).toString();
-            }
-            mainHandler.post(MainActivity.this::loadHomePortal);
-            return bridgeOk("pucky.bridge_reload_result.v1").toString();
-        }
-
-        @JavascriptInterface
-        public String showSurface(String surface) {
-            if (!isTrustedBridgeCaller()) {
-                return bridgeError("UNTRUSTED_ORIGIN", "Pucky bridge origin is not trusted", System.currentTimeMillis()).toString();
-            }
-            mainHandler.post(() -> showPortalSurface(surface));
-            return bridgeOk("pucky.bridge_show_surface_result.v1").toString();
-        }
-
-        @JavascriptInterface
-        public String openAssistantSetup() {
-            if (!isTrustedBridgeCaller()) {
-                return bridgeError("UNTRUSTED_ORIGIN", "Pucky bridge origin is not trusted", System.currentTimeMillis()).toString();
-            }
-            mainHandler.post(MainActivity.this::startAssistantSetupFlow);
-            return bridgeOk("pucky.bridge_assistant_setup_result.v1").toString();
-        }
-
-        @JavascriptInterface
-        public String evalTest(String js) {
-            if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
-                return bridgeError("NOT_AVAILABLE", "evalTest is debug-only", System.currentTimeMillis()).toString();
-            }
-            if (!isTrustedBridgeCaller()) {
-                return bridgeError("UNTRUSTED_ORIGIN", "Pucky bridge origin is not trusted", System.currentTimeMillis()).toString();
-            }
-            mainHandler.post(() -> {
-                if (homeWebView != null) {
-                    homeWebView.evaluateJavascript(js == null ? "" : js, null);
-                }
-            });
-            return bridgeOk("pucky.bridge_eval_test_result.v1").toString();
-        }
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void handleLaunchIntent(Intent intent) {
