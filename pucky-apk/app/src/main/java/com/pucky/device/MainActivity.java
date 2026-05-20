@@ -88,13 +88,17 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private LinearLayout cardList;
     private TextView emptyView;
+    private FrameLayout speedPickerOverlay;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
     private static String activeAudioPath = "";
     private static final Map<String, Integer> savedAudioPositions = new HashMap<>();
     private static final Map<String, Integer> savedAudioDurations = new HashMap<>();
+    private static final Map<String, Float> cardPlaybackSpeeds = new HashMap<>();
+    private static float globalPlaybackSpeed = 1.0f;
     private boolean trackingAudioSeek;
+    private boolean speedPickerOpen;
     private long wakeScreenUntilMs;
 
     private final Runnable playerTick = new Runnable() {
@@ -351,11 +355,21 @@ public class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BACKGROUND);
         root.setPadding(dp(14), dp(16), dp(14), dp(18));
+        root.setClickable(true);
+        root.setOnClickListener(view -> closeSpeedPicker());
 
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(shell, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        speedPickerOverlay = new FrameLayout(this);
+        speedPickerOverlay.setVisibility(View.GONE);
+        speedPickerOverlay.setClickable(true);
+        speedPickerOverlay.setOnClickListener(view -> closeSpeedPicker());
+        root.addView(speedPickerOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -371,15 +385,7 @@ public class MainActivity extends Activity {
         mail.setImageResource(android.R.drawable.ic_dialog_email);
         mail.setColorFilter(TEXT);
         LinearLayout.LayoutParams mailParams = new LinearLayout.LayoutParams(dp(30), dp(30));
-        mailParams.setMargins(0, 0, dp(10), 0);
         header.addView(mail, mailParams);
-
-        TextView title = new TextView(this);
-        title.setText("Pucky");
-        title.setTextColor(TEXT);
-        title.setTextSize(24);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        header.addView(title);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -391,6 +397,8 @@ public class MainActivity extends Activity {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setClickable(true);
+        content.setOnClickListener(view -> closeSpeedPicker());
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -408,6 +416,8 @@ public class MainActivity extends Activity {
 
         cardList = new LinearLayout(this);
         cardList.setOrientation(LinearLayout.VERTICAL);
+        cardList.setClickable(true);
+        cardList.setOnClickListener(view -> closeSpeedPicker());
         content.addView(cardList, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -435,6 +445,7 @@ public class MainActivity extends Activity {
         for (ReplyCard card : cards) {
             cardList.addView(cardView(card));
         }
+        renderSpeedPickerOverlay();
     }
 
     private View cardView(ReplyCard card) {
@@ -454,7 +465,7 @@ public class MainActivity extends Activity {
         row.addView(identityMark(card), new LinearLayout.LayoutParams(dp(44), dp(52)));
         if (card.hasAudio()) {
             row.setClickable(true);
-            row.setOnClickListener(view -> toggleReplyAudio(card));
+            row.setOnClickListener(view -> handleReplyCardTap(card));
         }
 
         LinearLayout body = new LinearLayout(this);
@@ -462,7 +473,7 @@ public class MainActivity extends Activity {
         body.setPadding(dp(12), 0, dp(8), 0);
         if (card.hasAudio()) {
             body.setClickable(true);
-            body.setOnClickListener(view -> toggleReplyAudio(card));
+            body.setOnClickListener(view -> handleReplyCardTap(card));
         }
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -497,7 +508,10 @@ public class MainActivity extends Activity {
         actions.setGravity(Gravity.CENTER);
         if (card.hasTranscript()) {
             ImageButton transcript = iconActionButton(R.drawable.pucky_ic_transcript);
-            transcript.setOnClickListener(view -> showTranscript(card));
+            transcript.setOnClickListener(view -> {
+                speedPickerOpen = false;
+                showTranscript(card);
+            });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
             params.setMargins(0, 0, dp(8), 0);
             actions.addView(transcript, params);
@@ -505,6 +519,7 @@ public class MainActivity extends Activity {
         if (card.hasHtml()) {
             ImageButton open = iconActionButton(R.drawable.pucky_ic_eye);
             open.setOnClickListener(view -> {
+                speedPickerOpen = false;
                 pauseActiveAudio();
                 openRichReply(card);
             });
@@ -541,20 +556,34 @@ public class MainActivity extends Activity {
         int durationMs = Math.max(0, state.optInt("duration_ms", 0));
         int max = Math.max(1, durationMs);
 
-        LinearLayout line = new LinearLayout(this);
-        line.setOrientation(LinearLayout.HORIZONTAL);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-        line.setClickable(true);
-        line.setOnClickListener(view -> toggleActiveAudio());
+        LinearLayout stack = new LinearLayout(this);
+        stack.setOrientation(LinearLayout.VERTICAL);
+        stack.setGravity(Gravity.CENTER_VERTICAL);
+        stack.setClickable(true);
+        stack.setOnClickListener(view -> {
+            if (speedPickerOpen) {
+                closeSpeedPicker();
+            }
+        });
 
-        Button back = audioNudgeButton("-15");
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        controls.setClickable(true);
+        controls.setOnClickListener(view -> {
+            if (speedPickerOpen) {
+                closeSpeedPicker();
+            }
+        });
+
+        Button back = audioNudgeButton("\u21ba15");
         back.setOnClickListener(view -> seekRelative(-15_000));
-        line.addView(back, new LinearLayout.LayoutParams(dp(42), dp(34)));
+        controls.addView(back, new LinearLayout.LayoutParams(dp(42), dp(32)));
 
         SeekBar progress = new SeekBar(this);
         progress.setMax(max);
         progress.setProgress(Math.min(positionMs, max));
-        progress.setPadding(dp(8), 0, dp(8), 0);
+        progress.setPadding(dp(6), 0, dp(6), 0);
         progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
@@ -574,7 +603,18 @@ public class MainActivity extends Activity {
                 trackingAudioSeek = false;
             }
         });
-        line.addView(progress, new LinearLayout.LayoutParams(0, dp(34), 1f));
+        controls.addView(progress, new LinearLayout.LayoutParams(0, dp(32), 1f));
+
+        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
+        speed.setOnClickListener(view -> toggleSpeedPicker());
+        controls.addView(speed, new LinearLayout.LayoutParams(dp(46), dp(32)));
+
+        Button forward = audioNudgeButton("30\u21bb");
+        forward.setOnClickListener(view -> seekRelative(30_000));
+        controls.addView(forward, new LinearLayout.LayoutParams(dp(42), dp(32)));
+        stack.addView(controls, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView time = new TextView(this);
         time.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
@@ -582,13 +622,18 @@ public class MainActivity extends Activity {
         time.setTextSize(11);
         time.setGravity(Gravity.CENTER);
         time.setClickable(true);
-        time.setOnClickListener(view -> toggleActiveAudio());
-        line.addView(time, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
+        time.setOnClickListener(view -> {
+            if (speedPickerOpen) {
+                closeSpeedPicker();
+            } else {
+                toggleActiveAudio();
+            }
+        });
+        stack.addView(time, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        Button forward = audioNudgeButton("+30");
-        forward.setOnClickListener(view -> seekRelative(30_000));
-        line.addView(forward, new LinearLayout.LayoutParams(dp(42), dp(34)));
-        return line;
+        return stack;
     }
 
     private Button audioNudgeButton(String label) {
@@ -602,12 +647,76 @@ public class MainActivity extends Activity {
         return button;
     }
 
+    private void renderSpeedPickerOverlay() {
+        if (speedPickerOverlay == null) {
+            return;
+        }
+        speedPickerOverlay.removeAllViews();
+        if (!speedPickerOpen) {
+            speedPickerOverlay.setVisibility(View.GONE);
+            speedPickerOverlay.setBackgroundColor(Color.TRANSPARENT);
+            return;
+        }
+
+        speedPickerOverlay.setVisibility(View.VISIBLE);
+        speedPickerOverlay.setBackgroundColor(Color.argb(92, 0, 0, 0));
+        speedPickerOverlay.addView(speedPickerPanel(), speedPickerPanelParams());
+    }
+
+    private LinearLayout speedPickerPanel() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setClickable(true);
+        row.setOnClickListener(view -> {
+            // Consume panel taps so only outside taps dismiss the overlay.
+        });
+        row.setBackground(roundRectNoStroke(CARD, dp(24)));
+        float[] choices = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f, 3.0f};
+        float activeSpeed = playbackSpeedForActiveCard();
+        for (float choice : choices) {
+            Button button = audioNudgeButton(speedLabel(choice));
+            if (Math.abs(choice - activeSpeed) < 0.01f) {
+                button.setBackground(roundRectNoStroke(BLUE, dp(18)));
+            }
+            button.setOnClickListener(view -> setPlaybackSpeed(choice));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
+            params.setMargins(dp(3), 0, dp(3), 0);
+            row.addView(button, params);
+        }
+        return row;
+    }
+
+    private FrameLayout.LayoutParams speedPickerPanelParams() {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        params.setMargins(dp(18), 0, dp(18), dp(28));
+        return params;
+    }
+
+    private void handleReplyCardTap(ReplyCard card) {
+        if (speedPickerOpen) {
+            closeSpeedPicker();
+            return;
+        }
+        toggleReplyAudio(card);
+    }
+
     private void toggleReplyAudio(ReplyCard card) {
         PlayerController player = PlayerController.shared(this);
         JSONObject state = player.state();
         boolean sameCard = card.audioPath().equals(activeAudioPath);
         if (sameCard && state.optBoolean("is_playing", false)) {
             pauseActiveAudio();
+            return;
+        }
+        if (sameCard && isActiveAudioCard(card) && !state.optBoolean("is_playing", false)) {
+            activeAudioPath = "";
+            speedPickerOpen = false;
+            renderHome();
             return;
         }
         if (!activeAudioPath.isEmpty() && !sameCard) {
@@ -618,6 +727,7 @@ public class MainActivity extends Activity {
         Json.put(args, "path", card.audioPath());
         Json.put(args, "title", card.title());
         Json.put(args, "source", "reply_card");
+        Json.put(args, "speed", playbackSpeedForCard(card.audioPath()));
         int startAtMs = savedAudioPositions.containsKey(card.audioPath())
                 ? savedAudioPositions.get(card.audioPath())
                 : state.optInt("position_ms", 0);
@@ -637,6 +747,7 @@ public class MainActivity extends Activity {
             JSONObject played = player.play(args);
             savedAudioDurations.put(card.audioPath(), Math.max(0, played.optInt("duration_ms", 0)));
             activeAudioPath = card.audioPath();
+            applyPlaybackSpeed(playbackSpeedForCard(card.audioPath()));
             PuckyState.get().setLifecycleEvent("reply_card.audio_play");
             renderHome();
             schedulePlayerTick();
@@ -696,6 +807,7 @@ public class MainActivity extends Activity {
             }
             JSONObject played = player.play(new JSONObject());
             savedAudioDurations.put(activeAudioPath, Math.max(0, played.optInt("duration_ms", 0)));
+            applyPlaybackSpeed(playbackSpeedForActiveCard());
             renderHome();
             schedulePlayerTick();
         } catch (CommandException exc) {
@@ -734,6 +846,59 @@ public class MainActivity extends Activity {
             PuckyState.get().setLastError("Reply audio seek failed: " + exc.getMessage());
             PuckyState.get().broadcast(this);
         }
+    }
+
+    private void toggleSpeedPicker() {
+        speedPickerOpen = !speedPickerOpen;
+        renderHome();
+    }
+
+    private void closeSpeedPicker() {
+        if (!speedPickerOpen) {
+            return;
+        }
+        speedPickerOpen = false;
+        renderHome();
+    }
+
+    private void setPlaybackSpeed(float speed) {
+        globalPlaybackSpeed = Math.max(0.75f, Math.min(3.0f, speed));
+        if (!activeAudioPath.isEmpty()) {
+            cardPlaybackSpeeds.put(activeAudioPath, globalPlaybackSpeed);
+        }
+        applyPlaybackSpeed(globalPlaybackSpeed);
+        speedPickerOpen = false;
+        renderHome();
+    }
+
+    private void applyPlaybackSpeed(float speed) {
+        JSONObject args = new JSONObject();
+        Json.put(args, "speed", speed);
+        try {
+            PlayerController.shared(this).speed(args);
+        } catch (CommandException exc) {
+            Log.w(TAG, "Unable to set reply audio speed", exc);
+            PuckyState.get().setLastError("Reply audio speed failed: " + exc.getMessage());
+            PuckyState.get().broadcast(this);
+        }
+    }
+
+    private float playbackSpeedForActiveCard() {
+        return activeAudioPath.isEmpty() ? globalPlaybackSpeed : playbackSpeedForCard(activeAudioPath);
+    }
+
+    private float playbackSpeedForCard(String audioPath) {
+        if (audioPath != null && cardPlaybackSpeeds.containsKey(audioPath)) {
+            return cardPlaybackSpeeds.get(audioPath);
+        }
+        return globalPlaybackSpeed;
+    }
+
+    private String speedLabel(float speed) {
+        if (Math.abs(speed - Math.round(speed)) < 0.01f) {
+            return String.format(Locale.US, "%dx", Math.round(speed));
+        }
+        return String.format(Locale.US, "%.2fx", speed).replaceAll("0x$", "x");
     }
 
     private boolean isActiveAudioCard(ReplyCard card) {

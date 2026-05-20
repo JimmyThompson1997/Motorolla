@@ -42,6 +42,13 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("pucky_ic_transcript") && source.contains("pucky_ic_eye"));
         assertTrue("MainActivity should render the in-card audio player line",
                 source.contains("audioPlayerLine()"));
+        assertTrue("MainActivity should offer an overlay playback speed picker",
+                source.contains("speedPickerOverlay") && source.contains("renderSpeedPickerOverlay()")
+                        && source.contains(".speed(args)"));
+        assertFalse("Playback speed choices should not be inserted into the audio card body",
+                source.contains("stack.addView(speedPicker"));
+        assertTrue("MainActivity should support the requested player/text tap cycle",
+                source.contains("activeAudioPath = \"\""));
         assertTrue("MainActivity should route transcripts to the native chat activity",
                 source.contains("TranscriptActivity.class"));
         assertTrue("MainActivity should pause active audio before opening detail views",
@@ -62,6 +69,9 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("new WebView"));
         assertTrue("Rich replies should allow normal page JavaScript",
                 source.contains("setJavaScriptEnabled(true)"));
+        assertTrue("Rich reply back button should float over the page instead of reserving top margin",
+                source.contains("Gravity.TOP | Gravity.START")
+                        && !source.contains("webParams.topMargin"));
         assertFalse("Rich replies must not receive native bridge powers",
                 source.contains("addJavascriptInterface"));
     }

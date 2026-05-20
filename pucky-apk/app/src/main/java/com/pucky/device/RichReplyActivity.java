@@ -12,8 +12,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.io.File;
 
@@ -22,9 +20,7 @@ public final class RichReplyActivity extends Activity {
     public static final String EXTRA_TITLE = "pucky_reply_title";
 
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
-    private static final int PANEL = Color.rgb(8, 17, 28);
     private static final int TEXT = Color.rgb(245, 249, 255);
-    private static final int MUTED = Color.rgb(179, 201, 224);
     private static final int BLUE = Color.rgb(58, 132, 255);
 
     @Override
@@ -59,44 +55,20 @@ public final class RichReplyActivity extends Activity {
         FrameLayout.LayoutParams webParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT);
-        webParams.topMargin = dp(58);
         root.addView(webView, webParams);
         webView.loadUrl(Uri.fromFile(html).toString());
-
-        root.addView(buildTopBar(), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(58),
-                Gravity.TOP));
-        return root;
-    }
-
-    private LinearLayout buildTopBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(10), dp(8), dp(12), dp(8));
-        bar.setBackgroundColor(PANEL);
 
         Button back = new Button(this);
         back.setText("<");
         back.setTextColor(TEXT);
         back.setTextSize(20);
         back.setAllCaps(false);
-        back.setBackground(roundRect(Color.rgb(11, 24, 40), BLUE, dp(14)));
+        back.setBackground(roundRect(BLUE, BLUE, dp(14)));
         back.setOnClickListener(view -> finish());
-        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(48), dp(42));
-        bar.addView(back, backParams);
-
-        TextView title = new TextView(this);
-        title.setText(getIntent().getStringExtra(EXTRA_TITLE) == null
-                ? "Reply"
-                : getIntent().getStringExtra(EXTRA_TITLE));
-        title.setTextColor(MUTED);
-        title.setTextSize(15);
-        title.setSingleLine(true);
-        title.setPadding(dp(12), 0, 0, 0);
-        bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        return bar;
+        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(58), dp(50), Gravity.TOP | Gravity.START);
+        backParams.setMargins(dp(12), dp(12), 0, 0);
+        root.addView(back, backParams);
+        return root;
     }
 
     private File resolveHtmlPath(String raw) {
