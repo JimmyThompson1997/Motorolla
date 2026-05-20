@@ -12,9 +12,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -32,6 +35,8 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -50,12 +55,14 @@ import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.DetailSurfaceController;
+import com.pucky.device.ui.InteractivePanelController;
 import com.pucky.device.ui.ReplyCard;
 import com.pucky.device.ui.ReplyCardStore;
+import com.pucky.device.ui.WaveformView;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -88,6 +95,9 @@ public class MainActivity extends Activity {
     private ReplyCardStore replyCardStore;
     private ButtonController buttonController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private FrameLayout rootView;
+    private FrameLayout detailPanelLayer;
+    private FrameLayout audioSheetLayer;
     private LinearLayout cardList;
     private TextView emptyView;
     private FrameLayout speedPickerOverlay;
@@ -102,6 +112,8 @@ public class MainActivity extends Activity {
     private static float globalPlaybackSpeed = 1.0f;
     private boolean trackingAudioSeek;
     private boolean speedPickerOpen;
+    private boolean audioSheetOpen;
+    private ReplyCard audioSheetCard;
     private long wakeScreenUntilMs;
 
     private final Runnable playerTick = new Runnable() {
@@ -109,7 +121,7 @@ public class MainActivity extends Activity {
         public void run() {
             if (!activeAudioPath.isEmpty()) {
                 if (!trackingAudioSeek) {
-                    renderHome();
+                    renderCurrent();
                 }
                 schedulePlayerTick();
             }
@@ -238,6 +250,23 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (speedPickerOpen) {
+            closeSpeedPicker();
+            return;
+        }
+        if (audioSheetOpen) {
+            dismissAudioSheet();
+            return;
+        }
+        if (detailPanelLayer != null && detailPanelLayer.getVisibility() == View.VISIBLE) {
+            dismissDetailPanel();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
@@ -356,15 +385,28 @@ public class MainActivity extends Activity {
 
     private View buildHomeView() {
         FrameLayout root = new FrameLayout(this);
+        rootView = root;
         root.setBackgroundColor(BACKGROUND);
-        root.setPadding(dp(14), dp(16), dp(14), dp(18));
         root.setClickable(true);
         root.setOnClickListener(view -> closeSpeedPicker());
 
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setGravity(Gravity.CENTER_HORIZONTAL);
+        shell.setPadding(dp(14), dp(16), dp(14), dp(18));
         root.addView(shell, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        detailPanelLayer = new FrameLayout(this);
+        detailPanelLayer.setVisibility(View.GONE);
+        root.addView(detailPanelLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        audioSheetLayer = new FrameLayout(this);
+        audioSheetLayer.setVisibility(View.GONE);
+        root.addView(audioSheetLayer, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -451,6 +493,7 @@ public class MainActivity extends Activity {
 
     private void renderCurrent() {
         renderHome();
+        renderAudioSheet();
     }
 
     private void renderHome() {
@@ -480,45 +523,36 @@ public class MainActivity extends Activity {
         rowParams.setMargins(0, 0, 0, dp(10));
         row.setLayoutParams(rowParams);
 
-        row.addView(identityMark(card), new LinearLayout.LayoutParams(dp(44), dp(52)));
-        if (card.hasAudio()) {
-            row.setClickable(true);
-            row.setOnClickListener(view -> handleReplyCardTap(card));
-        }
+        row.addView(card.hasAudio() ? audioIdentityButton(card) : identityMark(card),
+                new LinearLayout.LayoutParams(dp(44), dp(52)));
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(12), 0, dp(8), 0);
-        if (card.hasAudio()) {
-            body.setClickable(true);
-            body.setOnClickListener(view -> handleReplyCardTap(card));
-        }
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        if (isActiveAudioCard(card)) {
-            body.addView(audioPlayerLine());
-        } else {
-            TextView title = new TextView(this);
-            title.setText(card.title());
-            title.setTextColor(TEXT);
-            title.setTextSize(17);
-            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            title.setSingleLine(true);
-            body.addView(title);
+        TextView title = new TextView(this);
+        title.setText(card.title());
+        title.setTextColor(TEXT);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setSingleLine(true);
+        body.addView(title);
 
-            if (!card.summary().isEmpty()) {
-                TextView preview = new TextView(this);
-                preview.setText(card.summary());
-                preview.setTextColor(TEXT);
-                preview.setTextSize(12);
-                preview.setMaxLines(2);
-                preview.setEllipsize(TextUtils.TruncateAt.END);
-                LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT);
-                previewParams.setMargins(0, dp(3), 0, 0);
-                body.addView(preview, previewParams);
-            }
+        if (isPlayingAudioCard(card)) {
+            body.addView(audioWaveformLine(card));
+        } else if (!card.summary().isEmpty()) {
+            TextView preview = new TextView(this);
+            preview.setText(card.summary());
+            preview.setTextColor(TEXT);
+            preview.setTextSize(12);
+            preview.setMaxLines(2);
+            preview.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            previewParams.setMargins(0, dp(3), 0, 0);
+            body.addView(preview, previewParams);
         }
 
         LinearLayout actions = new LinearLayout(this);
@@ -535,10 +569,9 @@ public class MainActivity extends Activity {
             actions.addView(transcript, params);
         }
         if (card.hasHtml()) {
-            ImageButton open = iconActionButton(R.drawable.pucky_ic_eye);
+            ImageButton open = iconActionButton(R.drawable.pucky_ic_attachment);
             open.setOnClickListener(view -> {
                 speedPickerOpen = false;
-                pauseActiveAudio();
                 openRichReply(card);
             });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
@@ -558,6 +591,31 @@ public class MainActivity extends Activity {
         return icon;
     }
 
+    private ImageButton audioIdentityButton(ReplyCard card) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawableForIcon(card.icon()));
+        button.setColorFilter(TEXT);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setPadding(dp(4), dp(4), dp(4), dp(4));
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setContentDescription("audio_toggle_" + card.title());
+        button.setOnClickListener(view -> {
+            closeSpeedPicker();
+            toggleReplyAudio(card);
+        });
+        return button;
+    }
+
+    private View audioWaveformLine(ReplyCard card) {
+        WaveformView waveform = new WaveformView(this);
+        waveform.setAccentColor(parseColor(card.accent(), BLUE));
+        waveform.setPlaying(true);
+        waveform.setContentDescription("audio_waveform_" + card.title());
+        waveform.setPadding(0, dp(3), 0, 0);
+        waveform.setOnClickListener(view -> showAudioSheet(card));
+        return waveform;
+    }
+
     private ImageButton iconActionButton(int drawableRes) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(drawableRes);
@@ -568,7 +626,71 @@ public class MainActivity extends Activity {
         return button;
     }
 
-    private View audioPlayerLine() {
+    private void renderAudioSheet() {
+        if (audioSheetLayer == null) {
+            return;
+        }
+        audioSheetLayer.removeAllViews();
+        if (!audioSheetOpen || audioSheetCard == null) {
+            audioSheetLayer.setVisibility(View.GONE);
+            return;
+        }
+        audioSheetLayer.setVisibility(View.VISIBLE);
+        audioSheetLayer.addView(audioSheetView(audioSheetCard), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private View audioSheetView(ReplyCard card) {
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(20), dp(36), dp(20), dp(28));
+        sheet.setBackgroundColor(BACKGROUND);
+        sheet.setClickable(true);
+        sheet.setContentDescription("audio_sheet");
+        InteractivePanelController.installDownSwipeDismiss(sheet, sheet, this::dismissAudioSheet);
+
+        TextView title = new TextView(this);
+        title.setText(card.title());
+        title.setTextColor(TEXT);
+        title.setTextSize(22);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setMaxLines(2);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        sheet.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        if (!card.summary().isEmpty()) {
+            TextView summary = new TextView(this);
+            summary.setText(card.summary());
+            summary.setTextColor(MUTED);
+            summary.setTextSize(13);
+            summary.setMaxLines(2);
+            summary.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            summaryParams.setMargins(0, dp(6), 0, 0);
+            sheet.addView(summary, summaryParams);
+        }
+
+        WaveformView waveform = new WaveformView(this);
+        waveform.setAccentColor(parseColor(card.accent(), BLUE));
+        waveform.setPlaying(PlayerController.shared(this).state().optBoolean("is_playing", false));
+        LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(104));
+        waveParams.setMargins(0, dp(28), 0, dp(20));
+        sheet.addView(waveform, waveParams);
+
+        sheet.addView(audioSheetControls(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return sheet;
+    }
+
+    private View audioSheetControls() {
         JSONObject state = PlayerController.shared(this).state();
         int positionMs = Math.max(0, state.optInt("position_ms", 0));
         int durationMs = Math.max(0, state.optInt("duration_ms", 0));
@@ -584,24 +706,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.setClickable(true);
-        controls.setOnClickListener(view -> {
-            if (speedPickerOpen) {
-                closeSpeedPicker();
-            }
-        });
-
-        Button back = audioNudgeButton("\u21ba15");
-        back.setOnClickListener(view -> seekRelative(-15_000));
-        controls.addView(back, new LinearLayout.LayoutParams(dp(42), dp(32)));
-
         SeekBar progress = new SeekBar(this);
         progress.setMax(max);
         progress.setProgress(Math.min(positionMs, max));
-        progress.setPadding(dp(6), 0, dp(6), 0);
+        progress.setContentDescription("audio_scrubber");
+        progress.setPadding(0, 0, 0, 0);
         progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
@@ -621,37 +730,80 @@ public class MainActivity extends Activity {
                 trackingAudioSeek = false;
             }
         });
-        controls.addView(progress, new LinearLayout.LayoutParams(0, dp(32), 1f));
-
-        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
-        speed.setOnClickListener(view -> toggleSpeedPicker());
-        controls.addView(speed, new LinearLayout.LayoutParams(dp(46), dp(32)));
-
-        Button forward = audioNudgeButton("30\u21bb");
-        forward.setOnClickListener(view -> seekRelative(30_000));
-        controls.addView(forward, new LinearLayout.LayoutParams(dp(42), dp(32)));
-        stack.addView(controls, new LinearLayout.LayoutParams(
+        stack.addView(progress, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+                dp(36)));
 
         TextView time = new TextView(this);
         time.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
         time.setTextColor(TEXT);
         time.setTextSize(11);
         time.setGravity(Gravity.CENTER);
-        time.setClickable(true);
-        time.setOnClickListener(view -> {
+        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        timeParams.setMargins(0, dp(2), 0, dp(16));
+        stack.addView(time, timeParams);
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        controls.setClickable(true);
+        controls.setOnClickListener(view -> {
             if (speedPickerOpen) {
                 closeSpeedPicker();
-            } else {
-                toggleActiveAudio();
             }
         });
-        stack.addView(time, new LinearLayout.LayoutParams(
+
+        Button back = audioNudgeButton("\u21ba15");
+        back.setContentDescription("audio_rewind_15");
+        back.setOnClickListener(view -> seekRelative(-15_000));
+        controls.addView(back, new LinearLayout.LayoutParams(dp(54), dp(44)));
+
+        Button playPause = audioNudgeButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6");
+        playPause.setTextSize(18);
+        playPause.setContentDescription("audio_play_pause");
+        playPause.setOnClickListener(view -> toggleActiveAudio());
+        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(64), dp(48));
+        playParams.setMargins(dp(10), 0, dp(10), 0);
+        controls.addView(playPause, playParams);
+
+        Button forward = audioNudgeButton("30\u21bb");
+        forward.setContentDescription("audio_forward_30");
+        forward.setOnClickListener(view -> seekRelative(30_000));
+        controls.addView(forward, new LinearLayout.LayoutParams(dp(54), dp(44)));
+
+        Button speed = audioNudgeButton(speedLabel(playbackSpeedForActiveCard()));
+        speed.setContentDescription("audio_speed");
+        speed.setOnClickListener(view -> toggleSpeedPicker());
+        LinearLayout.LayoutParams speedParams = new LinearLayout.LayoutParams(dp(62), dp(44));
+        speedParams.setMargins(dp(14), 0, 0, 0);
+        controls.addView(speed, speedParams);
+        stack.addView(controls, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         return stack;
+    }
+
+    private void showAudioSheet(ReplyCard card) {
+        if (!card.hasAudio()) {
+            return;
+        }
+        closeSpeedPicker();
+        audioSheetCard = card;
+        audioSheetOpen = true;
+        renderAudioSheet();
+        if (audioSheetLayer != null && audioSheetLayer.getChildCount() > 0) {
+            InteractivePanelController.slideUp(audioSheetLayer.getChildAt(0));
+        }
+    }
+
+    private void dismissAudioSheet() {
+        audioSheetOpen = false;
+        audioSheetCard = null;
+        closeSpeedPicker();
+        renderAudioSheet();
     }
 
     private Button audioNudgeButton(String label) {
@@ -715,26 +867,12 @@ public class MainActivity extends Activity {
         return params;
     }
 
-    private void handleReplyCardTap(ReplyCard card) {
-        if (speedPickerOpen) {
-            closeSpeedPicker();
-            return;
-        }
-        toggleReplyAudio(card);
-    }
-
     private void toggleReplyAudio(ReplyCard card) {
         PlayerController player = PlayerController.shared(this);
         JSONObject state = player.state();
         boolean sameCard = card.audioPath().equals(activeAudioPath);
         if (sameCard && state.optBoolean("is_playing", false)) {
             pauseActiveAudio();
-            return;
-        }
-        if (sameCard && isActiveAudioCard(card) && !state.optBoolean("is_playing", false)) {
-            activeAudioPath = "";
-            speedPickerOpen = false;
-            renderHome();
             return;
         }
         if (!activeAudioPath.isEmpty() && !sameCard) {
@@ -767,7 +905,7 @@ public class MainActivity extends Activity {
             activeAudioPath = card.audioPath();
             applyPlaybackSpeed(playbackSpeedForCard(card.audioPath()));
             PuckyState.get().setLifecycleEvent("reply_card.audio_play");
-            renderHome();
+            renderCurrent();
             schedulePlayerTick();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to play reply audio", exc);
@@ -787,7 +925,7 @@ public class MainActivity extends Activity {
             savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
         }
         if (!state.optBoolean("is_playing", false)) {
-            renderHome();
+            renderCurrent();
             return;
         }
         try {
@@ -796,7 +934,7 @@ public class MainActivity extends Activity {
             savedAudioPositions.put(activeAudioPath, Math.max(0, paused.optInt("position_ms", 0)));
             savedAudioDurations.put(activeAudioPath, Math.max(0, paused.optInt("duration_ms", 0)));
             PuckyState.get().setLifecycleEvent("reply_card.audio_pause");
-            renderHome();
+            renderCurrent();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to pause reply audio", exc);
             PuckyState.get().setLastError("Reply audio pause failed: " + exc.getMessage());
@@ -826,7 +964,7 @@ public class MainActivity extends Activity {
             JSONObject played = player.play(new JSONObject());
             savedAudioDurations.put(activeAudioPath, Math.max(0, played.optInt("duration_ms", 0)));
             applyPlaybackSpeed(playbackSpeedForActiveCard());
-            renderHome();
+            renderCurrent();
             schedulePlayerTick();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to toggle active reply audio", exc);
@@ -857,7 +995,7 @@ public class MainActivity extends Activity {
                 JSONObject state = PlayerController.shared(this).state();
                 savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
             }
-            renderHome();
+            renderCurrent();
             schedulePlayerTick();
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to seek reply audio", exc);
@@ -868,7 +1006,7 @@ public class MainActivity extends Activity {
 
     private void toggleSpeedPicker() {
         speedPickerOpen = !speedPickerOpen;
-        renderHome();
+        renderCurrent();
     }
 
     private void closeSpeedPicker() {
@@ -876,7 +1014,7 @@ public class MainActivity extends Activity {
             return;
         }
         speedPickerOpen = false;
-        renderHome();
+        renderCurrent();
     }
 
     private void setPlaybackSpeed(float speed) {
@@ -886,7 +1024,7 @@ public class MainActivity extends Activity {
         }
         applyPlaybackSpeed(globalPlaybackSpeed);
         speedPickerOpen = false;
-        renderHome();
+        renderCurrent();
     }
 
     private void applyPlaybackSpeed(float speed) {
@@ -923,6 +1061,11 @@ public class MainActivity extends Activity {
         return card.hasAudio() && card.audioPath().equals(activeAudioPath);
     }
 
+    private boolean isPlayingAudioCard(ReplyCard card) {
+        return isActiveAudioCard(card)
+                && PlayerController.shared(this).state().optBoolean("is_playing", false);
+    }
+
     private void schedulePlayerTick() {
         mainHandler.removeCallbacks(playerTick);
         mainHandler.postDelayed(playerTick, 1_000L);
@@ -936,21 +1079,294 @@ public class MainActivity extends Activity {
     }
 
     private void showTranscript(ReplyCard card) {
-        pauseActiveAudio();
-        Intent intent = new Intent(this, TranscriptActivity.class)
-                .putExtra(TranscriptActivity.EXTRA_TITLE, card.title())
-                .putExtra(TranscriptActivity.EXTRA_TRANSCRIPT, card.transcript())
-                .putExtra(TranscriptActivity.EXTRA_MESSAGES_JSON, card.transcriptMessages());
-        startActivity(intent);
-        DetailSurfaceController.applyOpenTransition(this);
+        closeSpeedPicker();
+        showDetailPanel(buildTranscriptPanel(card));
     }
 
     private void openRichReply(ReplyCard card) {
-        Intent intent = new Intent(this, RichReplyActivity.class)
-                .putExtra(RichReplyActivity.EXTRA_HTML_PATH, card.htmlPath())
-                .putExtra(RichReplyActivity.EXTRA_TITLE, card.title());
-        startActivity(intent);
-        DetailSurfaceController.applyOpenTransition(this);
+        closeSpeedPicker();
+        showDetailPanel(buildWebPanel(card));
+    }
+
+    private void showDetailPanel(View panel) {
+        if (detailPanelLayer == null) {
+            return;
+        }
+        detailPanelLayer.removeAllViews();
+        detailPanelLayer.setVisibility(View.VISIBLE);
+        detailPanelLayer.addView(panel, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        InteractivePanelController.slideInFromRight(panel);
+    }
+
+    private void dismissDetailPanel() {
+        if (detailPanelLayer == null) {
+            return;
+        }
+        detailPanelLayer.removeAllViews();
+        detailPanelLayer.setVisibility(View.GONE);
+    }
+
+    private View buildWebPanel(ReplyCard card) {
+        FrameLayout panel = new FrameLayout(this);
+        panel.setBackgroundColor(BACKGROUND);
+        panel.setContentDescription("web_detail_panel");
+
+        File html = resolveAppOwnedPath(card.htmlPath(), "Reply HTML");
+        WebView webView = new WebView(this);
+        webView.setBackgroundColor(BACKGROUND);
+        webView.setClipToPadding(false);
+        webView.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
+        webView.setContentDescription("web_detail_content");
+        applyWebViewSafePadding(webView, 0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            webView.setOnApplyWindowInsetsListener((view, insets) -> {
+                int navInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+                applyWebViewSafePadding(webView, navInset);
+                return insets;
+            });
+        }
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            settings.setAllowFileAccessFromFileURLs(false);
+            settings.setAllowUniversalAccessFromFileURLs(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            settings.setSafeBrowsingEnabled(true);
+        }
+        panel.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        InteractivePanelController.installRightSwipeDismiss(webView, panel, this::dismissDetailPanel);
+        webView.loadUrl(Uri.fromFile(html).toString());
+        return panel;
+    }
+
+    private View buildTranscriptPanel(ReplyCard card) {
+        FrameLayout panel = new FrameLayout(this);
+        panel.setBackgroundColor(BACKGROUND);
+        panel.setContentDescription("transcript_detail_panel");
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, dp(88));
+        scroll.setOverScrollMode(ScrollView.OVER_SCROLL_NEVER);
+        scroll.setContentDescription("transcript_detail_content");
+        InteractivePanelController.installRightSwipeDismiss(scroll, panel, this::dismissDetailPanel);
+
+        LinearLayout thread = new LinearLayout(this);
+        thread.setOrientation(LinearLayout.VERTICAL);
+        thread.setPadding(dp(14), dp(18), dp(14), dp(24));
+        scroll.addView(thread, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        thread.addView(dayDivider("Today"));
+        for (Message message : messagesForCard(card)) {
+            thread.addView(messageRow(message));
+        }
+
+        panel.addView(scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        return panel;
+    }
+
+    private TextView dayDivider(String label) {
+        TextView divider = new TextView(this);
+        divider.setText(label);
+        divider.setTextColor(MUTED);
+        divider.setTextSize(11);
+        divider.setGravity(Gravity.CENTER);
+        divider.setPadding(0, dp(6), 0, dp(12));
+        return divider;
+    }
+
+    private ViewGroup messageRow(Message message) {
+        boolean user = message.isUser();
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(user ? Gravity.END : Gravity.START);
+        row.setPadding(0, 0, 0, dp(8));
+
+        LinearLayout bubble = new LinearLayout(this);
+        bubble.setOrientation(LinearLayout.VERTICAL);
+        bubble.setPadding(dp(12), dp(9), dp(12), dp(7));
+        bubble.setBackground(roundRect(user ? Color.rgb(16, 54, 96) : CARD, Color.rgb(33, 52, 72), dp(18)));
+
+        if (!message.mediaType.isEmpty()) {
+            bubble.addView(mediaView(message));
+        }
+        if (!message.text.isEmpty()) {
+            TextView text = new TextView(this);
+            text.setText(message.text);
+            text.setTextColor(TEXT);
+            text.setTextSize(15);
+            text.setLineSpacing(0, 1.04f);
+            bubble.addView(text);
+        }
+
+        TextView timestamp = new TextView(this);
+        timestamp.setText(message.timestamp.isEmpty() ? "now" : message.timestamp);
+        timestamp.setTextColor(MUTED);
+        timestamp.setTextSize(10);
+        timestamp.setGravity(user ? Gravity.END : Gravity.START);
+        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        timeParams.setMargins(0, dp(5), 0, 0);
+        bubble.addView(timestamp, timeParams);
+
+        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
+                Math.round(getResources().getDisplayMetrics().widthPixels * 0.76f),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        row.addView(bubble, bubbleParams);
+        return row;
+    }
+
+    private ViewGroup mediaView(Message message) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(0, 0, 0, message.text.isEmpty() ? 0 : dp(8));
+        if ("image".equals(message.mediaType)) {
+            Bitmap bitmap = decodeAppImage(message.mediaPath);
+            if (bitmap != null) {
+                ImageView image = new ImageView(this);
+                image.setImageBitmap(bitmap);
+                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setBackground(roundRect(CARD_SOFT, Color.rgb(33, 52, 72), dp(14)));
+                wrap.addView(image, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(130)));
+                return wrap;
+            }
+        }
+
+        TextView pill = new TextView(this);
+        String label = message.mediaLabel.isEmpty() ? message.mediaType : message.mediaLabel;
+        pill.setText(mediaPrefix(message.mediaType) + " " + label);
+        pill.setTextColor(TEXT);
+        pill.setTextSize(13);
+        pill.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        pill.setPadding(dp(10), dp(9), dp(10), dp(9));
+        pill.setBackground(roundRect(CARD_SOFT, BLUE, dp(14)));
+        wrap.addView(pill, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return wrap;
+    }
+
+    private String mediaPrefix(String mediaType) {
+        if ("image".equals(mediaType)) {
+            return "Image";
+        }
+        if ("video".equals(mediaType)) {
+            return "Video";
+        }
+        if ("link".equals(mediaType)) {
+            return "Link";
+        }
+        return "Attachment";
+    }
+
+    private Bitmap decodeAppImage(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            return BitmapFactory.decodeFile(resolveAppOwnedPath(raw, "Transcript image").getAbsolutePath());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private List<Message> messagesForCard(ReplyCard card) {
+        List<Message> out = messagesFromJson(card.transcriptMessages());
+        if (!out.isEmpty()) {
+            return out;
+        }
+        String raw = card.transcript();
+        if (raw == null || raw.trim().isEmpty()) {
+            out.add(new Message("pucky", "Transcript is not attached yet.", "now", "", "", ""));
+            return out;
+        }
+        for (String line : raw.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String lower = trimmed.toLowerCase(Locale.US);
+            String sender = lower.startsWith("you:") || lower.startsWith("user:") ? "user" : "pucky";
+            out.add(new Message(sender, trimmed, "now", "", "", ""));
+        }
+        return out;
+    }
+
+    private List<Message> messagesFromJson(String raw) {
+        List<Message> out = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) {
+            return out;
+        }
+        try {
+            JSONArray array = new JSONArray(raw);
+            for (int index = 0; index < array.length(); index++) {
+                JSONObject item = array.optJSONObject(index);
+                if (item == null) {
+                    continue;
+                }
+                out.add(new Message(
+                        item.optString("sender", item.optString("role", "pucky")),
+                        item.optString("text", ""),
+                        item.optString("timestamp", item.optString("time", "")),
+                        item.optString("media_type", item.optString("type", "")),
+                        item.optString("media_label", item.optString("label", "")),
+                        item.optString("media_path", item.optString("path", ""))));
+            }
+        } catch (Exception ignored) {
+            out.clear();
+        }
+        return out;
+    }
+
+    private File resolveAppOwnedPath(String raw, String label) {
+        if (raw == null || raw.trim().isEmpty()) {
+            throw new IllegalArgumentException("Missing " + label + " path");
+        }
+        try {
+            File file = new File(raw).getCanonicalFile();
+            if (!isWithin(file, getFilesDir())
+                    && !isWithin(file, getCacheDir())
+                    && !isWithin(file, getExternalFilesDir(null))) {
+                throw new IllegalArgumentException(label + " path is outside app-owned storage");
+            }
+            if (!file.exists() || !file.isFile()) {
+                throw new IllegalArgumentException(label + " file not found");
+            }
+            return file;
+        } catch (IllegalArgumentException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new IllegalArgumentException("Unable to open " + label + ": " + exc.getMessage(), exc);
+        }
+    }
+
+    private static boolean isWithin(File file, File root) throws Exception {
+        if (root == null) {
+            return false;
+        }
+        String filePath = file.getCanonicalPath();
+        String rootPath = root.getCanonicalPath();
+        return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+    }
+
+    private void applyWebViewSafePadding(WebView webView, int bottomInsetPx) {
+        int bottomPadding = Math.max(dp(88), bottomInsetPx + dp(28));
+        webView.setPadding(0, 0, 0, bottomPadding);
     }
 
     private int drawableForIcon(String icon) {
@@ -1181,5 +1597,27 @@ public class MainActivity extends Activity {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
         manager.notify(ASSISTANT_SETUP_NOTIFICATION_ID, builder.build());
+    }
+
+    private static final class Message {
+        final String sender;
+        final String text;
+        final String timestamp;
+        final String mediaType;
+        final String mediaLabel;
+        final String mediaPath;
+
+        Message(String sender, String text, String timestamp, String mediaType, String mediaLabel, String mediaPath) {
+            this.sender = sender == null ? "" : sender.trim().toLowerCase(Locale.US);
+            this.text = text == null ? "" : text.trim();
+            this.timestamp = timestamp == null ? "" : timestamp.trim();
+            this.mediaType = mediaType == null ? "" : mediaType.trim().toLowerCase(Locale.US);
+            this.mediaLabel = mediaLabel == null ? "" : mediaLabel.trim();
+            this.mediaPath = mediaPath == null ? "" : mediaPath.trim();
+        }
+
+        boolean isUser() {
+            return "user".equals(sender) || "you".equals(sender) || "me".equals(sender);
+        }
     }
 }

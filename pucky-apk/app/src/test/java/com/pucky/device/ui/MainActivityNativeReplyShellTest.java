@@ -44,21 +44,23 @@ public final class MainActivityNativeReplyShellTest {
                         && source.contains("setClipToPadding(false)")
                         && source.contains("cover_feed_bottom_safe_spacer")
                         && source.contains("applyFeedScrollSafePadding(scroll"));
-        assertTrue("MainActivity should expose transcript and web-page action icons",
-                source.contains("pucky_ic_transcript") && source.contains("pucky_ic_eye"));
-        assertTrue("MainActivity should render the in-card audio player line",
-                source.contains("audioPlayerLine()"));
+        assertTrue("MainActivity should expose transcript and attachment action icons",
+                source.contains("pucky_ic_transcript") && source.contains("pucky_ic_attachment"));
+        assertTrue("MainActivity should render title-preserving in-card waveform audio",
+                source.contains("audioWaveformLine(card)") && source.contains("WaveformView"));
         assertTrue("MainActivity should offer an overlay playback speed picker",
                 source.contains("speedPickerOverlay") && source.contains("renderSpeedPickerOverlay()")
                         && source.contains(".speed(args)"));
         assertFalse("Playback speed choices should not be inserted into the audio card body",
                 source.contains("stack.addView(speedPicker"));
-        assertTrue("MainActivity should support the requested player/text tap cycle",
-                source.contains("activeAudioPath = \"\""));
-        assertTrue("MainActivity should route transcripts to the native chat activity",
-                source.contains("TranscriptActivity.class"));
-        assertTrue("MainActivity should pause active audio before opening detail views",
-                source.contains("pauseActiveAudio()"));
+        assertTrue("MainActivity should keep audio control on the left identity icon",
+                source.contains("audioIdentityButton(card)") && source.contains("toggleReplyAudio(card)"));
+        assertFalse("Card bodies should no longer cycle play/pause/hide",
+                source.contains("setOnClickListener(view -> handleReplyCardTap(card))"));
+        assertTrue("MainActivity should route transcripts and HTML into in-activity panels",
+                source.contains("buildTranscriptPanel(card)") && source.contains("buildWebPanel(card)"));
+        assertFalse("Detail view opens should not pause active audio",
+                source.contains("pauseActiveAudio();\n        showDetailPanel"));
         assertTrue("Reply previews should allow two lines with ellipsis",
                 source.contains("setMaxLines(2)") && source.contains("TextUtils.TruncateAt.END"));
         assertFalse("Reply tags should not be rendered in the feed",
@@ -68,60 +70,60 @@ public final class MainActivityNativeReplyShellTest {
     }
 
     @Test
-    public void richReplyViewerIsLocalAndHasNoNativeBridge() throws Exception {
-        String source = read("src/main/java/com/pucky/device/RichReplyActivity.java");
+    public void richReplyViewerIsLocalPanelAndHasNoNativeBridge() throws Exception {
+        String source = read("src/main/java/com/pucky/device/MainActivity.java");
 
         assertTrue("Rich replies should use a WebView detail viewer",
                 source.contains("new WebView"));
         assertTrue("Rich replies should allow normal page JavaScript",
                 source.contains("setJavaScriptEnabled(true)"));
-        assertTrue("Rich replies should use edge swipe dismiss instead of a visible native back button",
-                source.contains("DetailSurfaceController.installEdgeSwipeDismiss(this, webView)"));
+        assertTrue("Rich replies should use interactive right-swipe dismiss instead of a visible native back button",
+                source.contains("InteractivePanelController.installRightSwipeDismiss(webView"));
         assertFalse("Rich replies should not render the old blue native back button",
-                source.contains("new Button") || source.contains("back.setText"));
+                source.contains("back.setText(\"<\")") || source.contains("webParams.topMargin"));
         assertFalse("Rich replies should not reserve a top margin",
                 source.contains("webParams.topMargin"));
         assertTrue("Rich replies should keep scrollable page content above the cover navigation area",
-                source.contains("WEB_DETAIL_BOTTOM_SAFE_PADDING_DP")
-                        && source.contains("applyWebViewSafePadding(webView"));
+                source.contains("applyWebViewSafePadding(webView"));
         assertFalse("Rich replies must not receive native bridge powers",
                 source.contains("addJavascriptInterface"));
     }
 
     @Test
-    public void detailSurfacesSlideAndDismissByEdgeSwipe() throws Exception {
+    public void detailSurfacesAndAudioSheetDragInteractively() throws Exception {
         String main = read("src/main/java/com/pucky/device/MainActivity.java");
-        String transcript = read("src/main/java/com/pucky/device/TranscriptActivity.java");
-        String controller = read("src/main/java/com/pucky/device/ui/DetailSurfaceController.java");
+        String controller = read("src/main/java/com/pucky/device/ui/InteractivePanelController.java");
 
+        assertTrue("MainActivity should keep detail panels layered over the feed",
+                main.contains("detailPanelLayer") && main.contains("showDetailPanel"));
         assertTrue("MainActivity should slide detail surfaces in from the right",
-                main.contains("DetailSurfaceController.applyOpenTransition(this)"));
-        assertTrue("Transcript detail should install the same edge-swipe dismiss behavior",
-                transcript.contains("DetailSurfaceController.installEdgeSwipeDismiss(this, scroll)"));
-        assertFalse("Transcript detail should not render the old top bar/back button",
-                transcript.contains("buildTopBar()") || transcript.contains("new Button")
-                        || transcript.contains("scrollParams.topMargin"));
-        assertTrue("Swipe dismiss helper should use an edge threshold and close animation",
-                controller.contains("EDGE_START_DP") && controller.contains("DISMISS_DISTANCE_DP")
-                        && controller.contains("pucky_detail_slide_out_right"));
-        assertTrue("Detail transition animations must be present",
+                main.contains("InteractivePanelController.slideInFromRight(panel)"));
+        assertTrue("Transcript detail should install the same right-swipe dismiss behavior",
+                main.contains("InteractivePanelController.installRightSwipeDismiss(scroll"));
+        assertTrue("Audio should have a full-screen slide-up control sheet",
+                main.contains("audioSheetLayer") && main.contains("InteractivePanelController.slideUp")
+                        && main.contains("InteractivePanelController.installDownSwipeDismiss"));
+        assertTrue("Swipe dismiss helper should drag the panel with the finger and snap or dismiss",
+                controller.contains("setTranslationX(offset)") && controller.contains("setTranslationY(offset)")
+                        && controller.contains("snapBack()") && controller.contains("DISMISS_FRACTION"));
+        assertFalse("Old activity transition animations should be gone",
                 Files.exists(Path.of("src/main/res/anim/pucky_detail_slide_in_right.xml"))
-                        && Files.exists(Path.of("src/main/res/anim/pucky_detail_slide_out_right.xml"))
-                        && Files.exists(Path.of("src/main/res/anim/pucky_detail_hold.xml")));
+                        || Files.exists(Path.of("src/main/res/anim/pucky_detail_slide_out_right.xml"))
+                        || Files.exists(Path.of("src/main/res/anim/pucky_detail_hold.xml")));
     }
 
     @Test
-    public void manifestKeepsRichReplyActivityPrivate() throws Exception {
+    public void manifestRetiresSeparateReplyActivities() throws Exception {
         String manifest = read("src/main/AndroidManifest.xml");
 
-        assertTrue("RichReplyActivity must be declared",
+        assertFalse("RichReplyActivity should be retired",
                 manifest.contains("android:name=\".RichReplyActivity\""));
-        assertTrue("RichReplyActivity must not be exported",
-                manifest.contains("android:name=\".RichReplyActivity\"")
-                        && manifest.contains("android:exported=\"false\""));
-        assertTrue("TranscriptActivity must be declared private",
-                manifest.contains("android:name=\".TranscriptActivity\"")
-                        && manifest.contains("android:exported=\"false\""));
+        assertFalse("TranscriptActivity should be retired",
+                manifest.contains("android:name=\".TranscriptActivity\""));
+        assertFalse("RichReplyActivity source should be removed",
+                Files.exists(Path.of("src/main/java/com/pucky/device/RichReplyActivity.java")));
+        assertFalse("TranscriptActivity source should be removed",
+                Files.exists(Path.of("src/main/java/com/pucky/device/TranscriptActivity.java")));
     }
 
     @Test

@@ -97,18 +97,6 @@
                 android:value="16" />
         </activity>
 
-        <activity
-            android:name=".RichReplyActivity"
-            android:exported="false"
-            android:resizeableActivity="true"
-            android:theme="@style/PuckyTheme" />
-
-        <activity
-            android:name=".TranscriptActivity"
-            android:exported="false"
-            android:resizeableActivity="true"
-            android:theme="@style/PuckyTheme" />
-
         <service
             android:name=".service.PuckyForegroundService"
             android:exported="false"
