@@ -23,6 +23,8 @@ public final class WaveformView extends View {
     private final float[] levels = new float[SAMPLE_COUNT];
     private final Object sampleLock = new Object();
     private int accent = Color.rgb(58, 132, 255);
+    private float adaptiveFloor = 0.035f;
+    private float adaptivePeak = 0.16f;
     private boolean playing;
     private int audioSessionId;
     private int capturePriority;
@@ -207,20 +209,38 @@ public final class WaveformView extends View {
         }
         synchronized (sampleLock) {
             float squareTotal = 0f;
-            float peak = 0f;
             for (byte raw : waveform) {
                 float centered = ((raw & 0xFF) - 128) / 128f;
                 float absolute = Math.abs(centered);
                 squareTotal += absolute * absolute;
-                peak = Math.max(peak, absolute);
             }
             float rms = (float) Math.sqrt(squareTotal / waveform.length);
-            float next = Math.min(1f, Math.max(0f, (rms - 0.018f) * 2.8f + peak * 0.22f));
+            updateAdaptiveRange(rms);
+            float range = Math.max(0.025f, adaptivePeak - adaptiveFloor);
+            float normalized = Math.max(0f, Math.min(1f, (rms - adaptiveFloor) / range));
+            float gated = normalized < 0.18f ? 0f : (normalized - 0.18f) / 0.82f;
+            float next = (float) Math.pow(gated, 1.55f);
             System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1);
-            levels[SAMPLE_COUNT - 1] = levels[SAMPLE_COUNT - 2] * 0.52f + next * 0.48f;
+            levels[SAMPLE_COUNT - 1] = levels[SAMPLE_COUNT - 2] * 0.38f + next * 0.62f;
             saveHistoryForSessionLocked();
         }
         postInvalidateOnAnimation();
+    }
+
+    private void updateAdaptiveRange(float rms) {
+        if (rms <= adaptiveFloor) {
+            adaptiveFloor = adaptiveFloor * 0.90f + rms * 0.10f;
+        } else {
+            adaptiveFloor = adaptiveFloor * 0.992f + rms * 0.008f;
+        }
+        adaptiveFloor = Math.max(0.006f, Math.min(0.18f, adaptiveFloor));
+
+        if (rms >= adaptivePeak) {
+            adaptivePeak = adaptivePeak * 0.84f + rms * 0.16f;
+        } else {
+            adaptivePeak = adaptivePeak * 0.985f + rms * 0.015f;
+        }
+        adaptivePeak = Math.max(adaptiveFloor + 0.035f, Math.min(0.62f, adaptivePeak));
     }
 
     private void restoreHistoryForSession(int audioSessionId) {
@@ -264,13 +284,18 @@ public final class WaveformView extends View {
     }
 
     private void drawLiveWaveform(Canvas canvas, int width, int height, float center) {
-        float baseline = Math.max(dp(1), height * 0.035f);
-        float maxAmplitude = Math.max(dp(6), height * 0.47f);
+        float baseline = Math.max(dp(1), height * 0.018f);
+        float maxAmplitude = Math.max(dp(5), height * 0.39f);
         float step = width / (float) Math.max(1, SAMPLE_COUNT - 1);
         synchronized (sampleLock) {
             for (int index = 0; index < SAMPLE_COUNT; index++) {
                 float x = index * step;
-                float shaped = (float) Math.pow(Math.max(0f, levels[index]), 0.72f);
+                float shaped = Math.max(0f, levels[index]);
+                if (shaped < 0.025f) {
+                    shaped = 0f;
+                } else {
+                    shaped = (float) Math.pow((shaped - 0.025f) / 0.975f, 0.92f);
+                }
                 float halfHeight = baseline + shaped * maxAmplitude;
                 canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint);
             }

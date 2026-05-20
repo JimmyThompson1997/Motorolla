@@ -101,6 +101,13 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("canvas.drawLine(x, center - halfHeight, x, center + halfHeight, paint)")
                         && source.contains("System.arraycopy(levels, 1, levels, 0, SAMPLE_COUNT - 1)")
                         && !source.contains("android.graphics.Path"));
+        assertTrue("WaveformView should gate RMS energy so quiet speech stays near the center line",
+                source.contains("adaptiveFloor")
+                        && source.contains("adaptivePeak")
+                        && source.contains("updateAdaptiveRange(rms)")
+                        && source.contains("normalized < 0.18f"));
+        assertFalse("WaveformView should not make every capture tall by mixing in raw peak energy",
+                source.contains("peak *"));
         assertTrue("WaveformView should preserve session history and avoid multiple views fighting over one Visualizer",
                 source.contains("SESSION_LEVEL_HISTORY")
                         && source.contains("activeCaptureOwner")
