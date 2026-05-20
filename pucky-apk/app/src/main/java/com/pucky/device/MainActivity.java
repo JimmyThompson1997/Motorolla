@@ -90,6 +90,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(179, 201, 224);
     private static final int BLUE = Color.rgb(58, 132, 255);
     private static final int COVER_FEED_BOTTOM_SAFE_PADDING_DP = 104;
+    private static final long AUDIO_PROGRESS_TICK_MS = 80L;
 
     private SettingsStore settingsStore;
     private ReplyCardStore replyCardStore;
@@ -102,6 +103,9 @@ public class MainActivity extends Activity {
     private TextView emptyView;
     private FrameLayout speedPickerOverlay;
     private View feedBottomSafeSpacer;
+    private SeekBar activeAudioSeekBar;
+    private TextView activeAudioTimeText;
+    private int activeAudioDurationMs;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
@@ -113,16 +117,25 @@ public class MainActivity extends Activity {
     private boolean trackingAudioSeek;
     private boolean speedPickerOpen;
     private boolean audioSheetOpen;
+    private boolean audioTickWasPlaying;
     private ReplyCard audioSheetCard;
     private long wakeScreenUntilMs;
 
     private final Runnable playerTick = new Runnable() {
         @Override
         public void run() {
-            if (!activeAudioPath.isEmpty()) {
-                if (!trackingAudioSeek) {
-                    renderCurrent();
-                }
+            if (activeAudioPath.isEmpty()) {
+                audioTickWasPlaying = false;
+                return;
+            }
+            JSONObject state = PlayerController.shared(MainActivity.this).state();
+            boolean isPlaying = state.optBoolean("is_playing", false);
+            updateAudioProgressControls(state);
+            if (audioTickWasPlaying && !isPlaying) {
+                renderCurrent();
+            }
+            audioTickWasPlaying = isPlaying;
+            if (isPlaying) {
                 schedulePlayerTick();
             }
         }
@@ -607,9 +620,11 @@ public class MainActivity extends Activity {
     }
 
     private View audioWaveformLine(ReplyCard card) {
+        JSONObject state = PlayerController.shared(this).state();
         WaveformView waveform = new WaveformView(this);
         waveform.setAccentColor(parseColor(card.accent(), BLUE));
-        waveform.setPlaying(true);
+        waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
+        waveform.setPlaying(state.optBoolean("is_playing", false));
         waveform.setContentDescription("audio_waveform_" + card.title());
         waveform.setPadding(0, dp(3), 0, 0);
         waveform.setOnClickListener(view -> showAudioSheet(card));
@@ -630,6 +645,9 @@ public class MainActivity extends Activity {
         if (audioSheetLayer == null) {
             return;
         }
+        activeAudioSeekBar = null;
+        activeAudioTimeText = null;
+        activeAudioDurationMs = 0;
         audioSheetLayer.removeAllViews();
         if (!audioSheetOpen || audioSheetCard == null) {
             audioSheetLayer.setVisibility(View.GONE);
@@ -677,7 +695,9 @@ public class MainActivity extends Activity {
 
         WaveformView waveform = new WaveformView(this);
         waveform.setAccentColor(parseColor(card.accent(), BLUE));
-        waveform.setPlaying(PlayerController.shared(this).state().optBoolean("is_playing", false));
+        JSONObject state = PlayerController.shared(this).state();
+        waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
+        waveform.setPlaying(state.optBoolean("is_playing", false));
         LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(104));
@@ -716,6 +736,7 @@ public class MainActivity extends Activity {
             public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
                 if (fromUser) {
                     trackingAudioSeek = true;
+                    updateAudioTimeText(progressValue, max);
                 }
             }
 
@@ -733,6 +754,8 @@ public class MainActivity extends Activity {
         stack.addView(progress, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(36)));
+        activeAudioSeekBar = progress;
+        activeAudioDurationMs = max;
 
         TextView time = new TextView(this);
         time.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
@@ -744,6 +767,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         timeParams.setMargins(0, dp(2), 0, dp(16));
         stack.addView(time, timeParams);
+        activeAudioTimeText = time;
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -1066,9 +1090,35 @@ public class MainActivity extends Activity {
                 && PlayerController.shared(this).state().optBoolean("is_playing", false);
     }
 
+    private void updateAudioProgressControls(JSONObject state) {
+        int positionMs = Math.max(0, state.optInt("position_ms", 0));
+        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
+        if (!activeAudioPath.isEmpty() && state.optBoolean("loaded", false)) {
+            savedAudioPositions.put(activeAudioPath, positionMs);
+            savedAudioDurations.put(activeAudioPath, durationMs);
+        }
+        if (activeAudioSeekBar == null || activeAudioTimeText == null || trackingAudioSeek) {
+            return;
+        }
+        int max = Math.max(1, durationMs);
+        if (max != activeAudioDurationMs) {
+            activeAudioSeekBar.setMax(max);
+            activeAudioDurationMs = max;
+        }
+        activeAudioSeekBar.setProgress(Math.min(positionMs, max));
+        updateAudioTimeText(positionMs, durationMs);
+    }
+
+    private void updateAudioTimeText(int positionMs, int durationMs) {
+        if (activeAudioTimeText == null) {
+            return;
+        }
+        activeAudioTimeText.setText(formatTime(positionMs) + " / " + formatTime(durationMs));
+    }
+
     private void schedulePlayerTick() {
         mainHandler.removeCallbacks(playerTick);
-        mainHandler.postDelayed(playerTick, 1_000L);
+        mainHandler.postDelayed(playerTick, AUDIO_PROGRESS_TICK_MS);
     }
 
     private String formatTime(int ms) {
@@ -1378,6 +1428,9 @@ public class MainActivity extends Activity {
         }
         if ("bolt".equals(normalized) || "lightning".equals(normalized) || "energy".equals(normalized)) {
             return R.drawable.pucky_ic_bolt;
+        }
+        if ("book".equals(normalized) || "audiobook".equals(normalized) || "read".equals(normalized)) {
+            return R.drawable.pucky_ic_book;
         }
         if ("calendar".equals(normalized) || "meeting".equals(normalized) || "agenda".equals(normalized)) {
             return R.drawable.pucky_ic_calendar;

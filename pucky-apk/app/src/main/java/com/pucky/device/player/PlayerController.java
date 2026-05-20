@@ -138,6 +138,7 @@ public final class PlayerController {
         Json.put(out, "queue_index", queueIndex);
         Json.put(out, "queue_count", queue.length());
         Json.put(out, "speed", playbackSpeed);
+        Json.put(out, "audio_session_id", safeAudioSessionId());
         Json.put(out, "can_set_speed", true);
         if (player == null) {
             Json.put(out, "is_playing", false);
@@ -370,6 +371,14 @@ public final class PlayerController {
     private int safeDuration() {
         try {
             return player == null ? 0 : player.getDuration();
+        } catch (IllegalStateException ignored) {
+            return 0;
+        }
+    }
+
+    private int safeAudioSessionId() {
+        try {
+            return player == null ? 0 : player.getAudioSessionId();
         } catch (IllegalStateException ignored) {
             return 0;
         }

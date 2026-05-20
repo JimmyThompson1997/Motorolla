@@ -47,7 +47,11 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue("MainActivity should expose transcript and attachment action icons",
                 source.contains("pucky_ic_transcript") && source.contains("pucky_ic_attachment"));
         assertTrue("MainActivity should render title-preserving in-card waveform audio",
-                source.contains("audioWaveformLine(card)") && source.contains("WaveformView"));
+                source.contains("audioWaveformLine(card)") && source.contains("setAudioSessionId"));
+        assertTrue("MainActivity should update audio progress without the old one-second full repaint loop",
+                source.contains("AUDIO_PROGRESS_TICK_MS = 80L")
+                        && source.contains("updateAudioProgressControls(state)")
+                        && !source.contains("mainHandler.postDelayed(playerTick, 1_000L)"));
         assertTrue("MainActivity should offer an overlay playback speed picker",
                 source.contains("speedPickerOverlay") && source.contains("renderSpeedPickerOverlay()")
                         && source.contains(".speed(args)"));
@@ -67,6 +71,27 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("card.tag()"));
         assertFalse("Reply emoji badges should not be rendered in the feed",
                 source.contains("card.emoji()"));
+    }
+
+    @Test
+    public void waveformViewUsesAndroidVisualizerWithIdleFallback() throws Exception {
+        String source = read("src/main/java/com/pucky/device/ui/WaveformView.java");
+        String player = read("src/main/java/com/pucky/device/player/PlayerController.java");
+
+        assertTrue("WaveformView should use Android's audio-session Visualizer",
+                source.contains("android.media.audiofx.Visualizer")
+                        && source.contains("new Visualizer(audioSessionId)")
+                        && source.contains("TARGET_CAPTURE_RATE_MHZ = 30_000")
+                        && source.contains("TARGET_CAPTURE_SIZE = 256"));
+        assertTrue("WaveformView should use waveform capture rather than FFT for v1",
+                source.contains("onWaveFormDataCapture")
+                        && source.contains("captureRate, true, false"));
+        assertTrue("WaveformView should keep a safe idle fallback if capture fails",
+                source.contains("visualizerUnavailable")
+                        && source.contains("drawIdleWaveform"));
+        assertTrue("Player state should expose the active audio session id",
+                player.contains("\"audio_session_id\"")
+                        && player.contains("getAudioSessionId()"));
     }
 
     @Test
