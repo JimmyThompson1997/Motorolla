@@ -2,7 +2,6 @@ package com.pucky.device;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.Dialog;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -22,6 +21,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 import android.view.Gravity;
@@ -62,8 +62,10 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
@@ -89,8 +91,10 @@ public class MainActivity extends Activity {
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
+    private static String activeAudioPath = "";
+    private static final Map<String, Integer> savedAudioPositions = new HashMap<>();
+    private static final Map<String, Integer> savedAudioDurations = new HashMap<>();
     private boolean trackingAudioSeek;
-    private String activeAudioPath = "";
     private long wakeScreenUntilMs;
 
     private final Runnable playerTick = new Runnable() {
@@ -437,8 +441,8 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(12), dp(10), dp(12));
-        row.setMinimumHeight(dp(96));
+        row.setPadding(dp(12), dp(8), dp(10), dp(8));
+        row.setMinimumHeight(dp(84));
         row.setBackground(roundRect(CARD, Color.rgb(33, 52, 72), dp(18)));
 
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
@@ -450,12 +454,16 @@ public class MainActivity extends Activity {
         row.addView(identityMark(card), new LinearLayout.LayoutParams(dp(44), dp(52)));
         if (card.hasAudio()) {
             row.setClickable(true);
-            row.setOnClickListener(view -> playReplyAudio(card));
+            row.setOnClickListener(view -> toggleReplyAudio(card));
         }
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(12), 0, dp(8), 0);
+        if (card.hasAudio()) {
+            body.setClickable(true);
+            body.setOnClickListener(view -> toggleReplyAudio(card));
+        }
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         if (isActiveAudioCard(card)) {
@@ -474,11 +482,12 @@ public class MainActivity extends Activity {
                 preview.setText(card.summary());
                 preview.setTextColor(TEXT);
                 preview.setTextSize(12);
-                preview.setSingleLine(true);
+                preview.setMaxLines(2);
+                preview.setEllipsize(TextUtils.TruncateAt.END);
                 LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
-                previewParams.setMargins(0, dp(4), 0, 0);
+                previewParams.setMargins(0, dp(3), 0, 0);
                 body.addView(preview, previewParams);
             }
         }
@@ -495,7 +504,10 @@ public class MainActivity extends Activity {
         }
         if (card.hasHtml()) {
             ImageButton open = iconActionButton(R.drawable.pucky_ic_eye);
-            open.setOnClickListener(view -> openRichReply(card));
+            open.setOnClickListener(view -> {
+                pauseActiveAudio();
+                openRichReply(card);
+            });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
             actions.addView(open, params);
         }
@@ -532,6 +544,8 @@ public class MainActivity extends Activity {
         LinearLayout line = new LinearLayout(this);
         line.setOrientation(LinearLayout.HORIZONTAL);
         line.setGravity(Gravity.CENTER_VERTICAL);
+        line.setClickable(true);
+        line.setOnClickListener(view -> toggleActiveAudio());
 
         Button back = audioNudgeButton("-15");
         back.setOnClickListener(view -> seekRelative(-15_000));
@@ -567,6 +581,8 @@ public class MainActivity extends Activity {
         time.setTextColor(TEXT);
         time.setTextSize(11);
         time.setGravity(Gravity.CENTER);
+        time.setClickable(true);
+        time.setOnClickListener(view -> toggleActiveAudio());
         line.addView(time, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button forward = audioNudgeButton("+30");
@@ -586,13 +602,40 @@ public class MainActivity extends Activity {
         return button;
     }
 
-    private void playReplyAudio(ReplyCard card) {
+    private void toggleReplyAudio(ReplyCard card) {
+        PlayerController player = PlayerController.shared(this);
+        JSONObject state = player.state();
+        boolean sameCard = card.audioPath().equals(activeAudioPath);
+        if (sameCard && state.optBoolean("is_playing", false)) {
+            pauseActiveAudio();
+            return;
+        }
+        if (!activeAudioPath.isEmpty() && !sameCard) {
+            pauseActiveAudio();
+        }
+
         JSONObject args = new JSONObject();
         Json.put(args, "path", card.audioPath());
         Json.put(args, "title", card.title());
         Json.put(args, "source", "reply_card");
+        int startAtMs = savedAudioPositions.containsKey(card.audioPath())
+                ? savedAudioPositions.get(card.audioPath())
+                : state.optInt("position_ms", 0);
+        int savedDurationMs = savedAudioDurations.containsKey(card.audioPath())
+                ? savedAudioDurations.get(card.audioPath())
+                : 0;
+        if (!sameCard) {
+            startAtMs = savedAudioPositions.containsKey(card.audioPath())
+                    ? savedAudioPositions.get(card.audioPath())
+                    : 0;
+        }
+        if (savedDurationMs > 0 && startAtMs >= savedDurationMs - 250) {
+            startAtMs = 0;
+        }
+        Json.put(args, "start_at_ms", startAtMs);
         try {
-            PlayerController.shared(this).play(args);
+            JSONObject played = player.play(args);
+            savedAudioDurations.put(card.audioPath(), Math.max(0, played.optInt("duration_ms", 0)));
             activeAudioPath = card.audioPath();
             PuckyState.get().setLifecycleEvent("reply_card.audio_play");
             renderHome();
@@ -600,6 +643,64 @@ public class MainActivity extends Activity {
         } catch (CommandException exc) {
             Log.w(TAG, "Unable to play reply audio", exc);
             PuckyState.get().setLastError("Reply audio failed: " + exc.getMessage());
+            PuckyState.get().broadcast(this);
+        }
+    }
+
+    private void pauseActiveAudio() {
+        if (activeAudioPath.isEmpty()) {
+            return;
+        }
+        PlayerController player = PlayerController.shared(this);
+        JSONObject state = player.state();
+        if (state.optBoolean("loaded", false)) {
+            savedAudioPositions.put(activeAudioPath, Math.max(0, state.optInt("position_ms", 0)));
+            savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
+        }
+        if (!state.optBoolean("is_playing", false)) {
+            renderHome();
+            return;
+        }
+        try {
+            player.pause(new JSONObject());
+            JSONObject paused = player.state();
+            savedAudioPositions.put(activeAudioPath, Math.max(0, paused.optInt("position_ms", 0)));
+            savedAudioDurations.put(activeAudioPath, Math.max(0, paused.optInt("duration_ms", 0)));
+            PuckyState.get().setLifecycleEvent("reply_card.audio_pause");
+            renderHome();
+        } catch (CommandException exc) {
+            Log.w(TAG, "Unable to pause reply audio", exc);
+            PuckyState.get().setLastError("Reply audio pause failed: " + exc.getMessage());
+            PuckyState.get().broadcast(this);
+        }
+    }
+
+    private void toggleActiveAudio() {
+        if (activeAudioPath.isEmpty()) {
+            return;
+        }
+        PlayerController player = PlayerController.shared(this);
+        JSONObject state = player.state();
+        if (state.optBoolean("is_playing", false)) {
+            pauseActiveAudio();
+            return;
+        }
+        try {
+            int positionMs = Math.max(0, state.optInt("position_ms", 0));
+            int durationMs = Math.max(0, state.optInt("duration_ms", 0));
+            if (durationMs > 0 && positionMs >= durationMs - 250) {
+                JSONObject seek = new JSONObject();
+                Json.put(seek, "position_ms", 0);
+                player.seek(seek);
+                savedAudioPositions.put(activeAudioPath, 0);
+            }
+            JSONObject played = player.play(new JSONObject());
+            savedAudioDurations.put(activeAudioPath, Math.max(0, played.optInt("duration_ms", 0)));
+            renderHome();
+            schedulePlayerTick();
+        } catch (CommandException exc) {
+            Log.w(TAG, "Unable to toggle active reply audio", exc);
+            PuckyState.get().setLastError("Reply audio toggle failed: " + exc.getMessage());
             PuckyState.get().broadcast(this);
         }
     }
@@ -617,9 +718,15 @@ public class MainActivity extends Activity {
 
     private void seekToPosition(int positionMs) {
         JSONObject args = new JSONObject();
-        Json.put(args, "position_ms", Math.max(0, positionMs));
+        int bounded = Math.max(0, positionMs);
+        Json.put(args, "position_ms", bounded);
         try {
             PlayerController.shared(this).seek(args);
+            if (!activeAudioPath.isEmpty()) {
+                savedAudioPositions.put(activeAudioPath, bounded);
+                JSONObject state = PlayerController.shared(this).state();
+                savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
+            }
             renderHome();
             schedulePlayerTick();
         } catch (CommandException exc) {
@@ -646,98 +753,12 @@ public class MainActivity extends Activity {
     }
 
     private void showTranscript(ReplyCard card) {
-        Dialog dialog = new Dialog(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(18));
-        root.setBackgroundColor(BACKGROUND);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("Transcript");
-        title.setTextColor(TEXT);
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = audioNudgeButton("Back");
-        close.setOnClickListener(view -> dialog.dismiss());
-        header.addView(close, new LinearLayout.LayoutParams(dp(76), dp(38)));
-        root.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView cardTitle = new TextView(this);
-        cardTitle.setText(card.title());
-        cardTitle.setTextColor(TEXT);
-        cardTitle.setTextSize(14);
-        LinearLayout.LayoutParams cardTitleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        cardTitleParams.setMargins(0, dp(6), 0, dp(14));
-        root.addView(cardTitle, cardTitleParams);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        LinearLayout thread = new LinearLayout(this);
-        thread.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(thread, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        for (String line : transcriptLines(card)) {
-            thread.addView(transcriptBubble(line));
-        }
-        root.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f));
-
-        dialog.setContentView(root);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        }
-    }
-
-    private List<String> transcriptLines(ReplyCard card) {
-        String raw = card.transcript().isEmpty() ? card.summary() : card.transcript();
-        List<String> lines = new ArrayList<>();
-        for (String line : raw.split("\\r?\\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
-                lines.add(trimmed);
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add("Transcript is not attached yet.");
-        }
-        return lines;
-    }
-
-    private View transcriptBubble(String raw) {
-        String lower = raw.toLowerCase(Locale.US);
-        boolean user = lower.startsWith("you:") || lower.startsWith("user:");
-        TextView bubble = new TextView(this);
-        bubble.setText(raw);
-        bubble.setTextColor(TEXT);
-        bubble.setTextSize(14);
-        bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
-        bubble.setBackground(roundRect(user ? CARD_SOFT : CARD, Color.rgb(33, 52, 72), dp(18)));
-
-        LinearLayout wrap = new LinearLayout(this);
-        wrap.setGravity(user ? Gravity.END : Gravity.START);
-        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
-                Math.round(getResources().getDisplayMetrics().widthPixels * 0.72f),
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        wrap.addView(bubble, bubbleParams);
-        LinearLayout.LayoutParams wrapParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        wrapParams.setMargins(0, 0, 0, dp(9));
-        wrap.setLayoutParams(wrapParams);
-        return wrap;
+        pauseActiveAudio();
+        Intent intent = new Intent(this, TranscriptActivity.class)
+                .putExtra(TranscriptActivity.EXTRA_TITLE, card.title())
+                .putExtra(TranscriptActivity.EXTRA_TRANSCRIPT, card.transcript())
+                .putExtra(TranscriptActivity.EXTRA_MESSAGES_JSON, card.transcriptMessages());
+        startActivity(intent);
     }
 
     private void openRichReply(ReplyCard card) {

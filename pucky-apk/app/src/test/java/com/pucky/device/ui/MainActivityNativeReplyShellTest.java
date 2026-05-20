@@ -42,6 +42,12 @@ public final class MainActivityNativeReplyShellTest {
                 source.contains("pucky_ic_transcript") && source.contains("pucky_ic_eye"));
         assertTrue("MainActivity should render the in-card audio player line",
                 source.contains("audioPlayerLine()"));
+        assertTrue("MainActivity should route transcripts to the native chat activity",
+                source.contains("TranscriptActivity.class"));
+        assertTrue("MainActivity should pause active audio before opening detail views",
+                source.contains("pauseActiveAudio()"));
+        assertTrue("Reply previews should allow two lines with ellipsis",
+                source.contains("setMaxLines(2)") && source.contains("TextUtils.TruncateAt.END"));
         assertFalse("Reply tags should not be rendered in the feed",
                 source.contains("card.tag()"));
         assertFalse("Reply emoji badges should not be rendered in the feed",
@@ -68,6 +74,9 @@ public final class MainActivityNativeReplyShellTest {
                 manifest.contains("android:name=\".RichReplyActivity\""));
         assertTrue("RichReplyActivity must not be exported",
                 manifest.contains("android:name=\".RichReplyActivity\"")
+                        && manifest.contains("android:exported=\"false\""));
+        assertTrue("TranscriptActivity must be declared private",
+                manifest.contains("android:name=\".TranscriptActivity\"")
                         && manifest.contains("android:exported=\"false\""));
     }
 

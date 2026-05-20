@@ -17,11 +17,22 @@ import java.util.List;
 public final class ReplyCardTest {
     @Test
     public void parsesRequiredTitleAndOptionalFieldsWithoutId() throws Exception {
+        JSONArray messages = new JSONArray()
+                .put(new JSONObject()
+                        .put("sender", "user")
+                        .put("text", "What is next?")
+                        .put("timestamp", "8:42 PM"))
+                .put(new JSONObject()
+                        .put("sender", "pucky")
+                        .put("text", "Brief me")
+                        .put("media_type", "image")
+                        .put("media_label", "Inbox chart"));
         JSONObject input = new JSONObject()
                 .put("title", " Morning launch ")
                 .put("tag", " Today ")
                 .put("summary", "Brief me")
                 .put("transcript", "User: what is next?\nPucky: Brief me")
+                .put("transcript_messages", messages)
                 .put("icon", "clock")
                 .put("accent", "#ffb000")
                 .put("audio_path", "/tmp/audio.m4a")
@@ -33,6 +44,7 @@ public final class ReplyCardTest {
         assertEquals("Today", card.tag());
         assertEquals("Brief me", card.summary());
         assertEquals("User: what is next?\nPucky: Brief me", card.transcript());
+        assertEquals(messages.toString(), card.transcriptMessages());
         assertEquals("clock", card.icon());
         assertEquals("#ffb000", card.accent());
         assertEquals("/tmp/audio.m4a", card.audioPath());
@@ -40,6 +52,7 @@ public final class ReplyCardTest {
         assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
         assertEquals("User: what is next?\nPucky: Brief me", card.toJson().getString("transcript"));
+        assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
     }
 
     @Test

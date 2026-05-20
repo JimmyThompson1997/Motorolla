@@ -16,6 +16,7 @@ public final class ReplyCard {
     private final String tag;
     private final String summary;
     private final String transcript;
+    private final String transcriptMessages;
     private final String icon;
     private final String accent;
     private final String audioPath;
@@ -26,6 +27,7 @@ public final class ReplyCard {
             String tag,
             String summary,
             String transcript,
+            String transcriptMessages,
             String icon,
             String accent,
             String audioPath,
@@ -34,6 +36,7 @@ public final class ReplyCard {
         this.tag = optional(tag);
         this.summary = optional(summary);
         this.transcript = optional(transcript);
+        this.transcriptMessages = optional(transcriptMessages);
         this.icon = optional(icon);
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
@@ -49,6 +52,7 @@ public final class ReplyCard {
                 input.optString("tag", ""),
                 input.optString("summary", ""),
                 input.optString("transcript", input.optString("transcript_text", "")),
+                jsonArrayString(input, "transcript_messages"),
                 input.optString("icon", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
@@ -88,6 +92,13 @@ public final class ReplyCard {
         putOptional(out, "tag", tag);
         putOptional(out, "summary", summary);
         putOptional(out, "transcript", transcript);
+        if (!transcriptMessages.isEmpty()) {
+            try {
+                Json.put(out, "transcript_messages", new JSONArray(transcriptMessages));
+            } catch (Exception ignored) {
+                putOptional(out, "transcript_messages", transcriptMessages);
+            }
+        }
         putOptional(out, "icon", icon);
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
@@ -111,6 +122,10 @@ public final class ReplyCard {
         return transcript;
     }
 
+    public String transcriptMessages() {
+        return transcriptMessages;
+    }
+
     public String icon() {
         return icon;
     }
@@ -132,7 +147,7 @@ public final class ReplyCard {
     }
 
     public boolean hasTranscript() {
-        return !transcript.isEmpty();
+        return !transcript.isEmpty() || !transcriptMessages.isEmpty();
     }
 
     public boolean hasHtml() {
@@ -150,6 +165,11 @@ public final class ReplyCard {
 
     private static String optional(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String jsonArrayString(JSONObject input, String key) {
+        JSONArray array = input.optJSONArray(key);
+        return array == null ? "" : array.toString();
     }
 
     private static void putOptional(JSONObject out, String key, String value) {
