@@ -1116,7 +1116,7 @@ public class MainActivity extends Activity {
         File html = resolveAppOwnedPath(card.htmlPath(), "Reply HTML");
         WebView webView = new WebView(this);
         webView.setBackgroundColor(BACKGROUND);
-        webView.setClipToPadding(false);
+        webView.setClipToPadding(true);
         webView.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
         webView.setContentDescription("web_detail_content");
         applyWebViewSafePadding(webView, 0);
