@@ -1140,9 +1140,11 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             settings.setSafeBrowsingEnabled(true);
         }
-        panel.addView(webView, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams webParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        webParams.bottomMargin = dp(58);
+        panel.addView(webView, webParams);
         InteractivePanelController.installRightSwipeDismiss(webView, panel, this::dismissDetailPanel);
         webView.loadUrl(Uri.fromFile(html).toString());
         return panel;
