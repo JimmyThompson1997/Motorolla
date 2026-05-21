@@ -386,9 +386,9 @@ button {
 
 .sheet-drag-zone {
   position: absolute;
-  inset: 16px 0 auto;
+  inset: 52px 0 auto;
   z-index: 4;
-  height: 44px;
+  height: 52px;
   display: flex;
   justify-content: center;
   align-items: center;
