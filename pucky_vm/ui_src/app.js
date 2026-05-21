@@ -641,8 +641,20 @@
       command: "artifact.read_base64",
       args: { path, max_bytes: 5 * 1024 * 1024 }
     });
-    const mime = result.mime_type || image.mime_type || guessImageMime(path);
+    const mime = resolvedImageMime(result, image, path);
     return `data:${mime};base64,${result.content_base64 || ""}`;
+  }
+
+  function resolvedImageMime(result, image, path) {
+    const declared = String((image && image.mime_type) || "").trim();
+    if (declared && declared !== "application/octet-stream") {
+      return declared;
+    }
+    const returned = String((result && result.mime_type) || "").trim();
+    if (returned && returned !== "application/octet-stream") {
+      return returned;
+    }
+    return guessImageMime(path);
   }
 
   function guessImageMime(path) {

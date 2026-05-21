@@ -262,6 +262,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function cardImages(card)" in app
     assert "function showImageReel(card)" in app
     assert "function resolveImageSrc(image)" in app
+    assert "function resolvedImageMime(result, image, path)" in app
+    assert 'declared !== "application/octet-stream"' in app
+    assert 'returned !== "application/octet-stream"' in app
     assert '"image-affordance"' in app
     assert 'iconSvg("image"' in app
     assert "artifact.read_base64" in app
