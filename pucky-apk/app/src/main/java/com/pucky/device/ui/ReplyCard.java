@@ -18,6 +18,7 @@ public final class ReplyCard {
     private final String summary;
     private final String transcript;
     private final String transcriptMessages;
+    private final String createdAt;
     private final String icon;
     private final String accent;
     private final String audioPath;
@@ -30,6 +31,7 @@ public final class ReplyCard {
             String summary,
             String transcript,
             String transcriptMessages,
+            String createdAt,
             String icon,
             String accent,
             String audioPath,
@@ -40,6 +42,7 @@ public final class ReplyCard {
         this.summary = optional(summary);
         this.transcript = optional(transcript);
         this.transcriptMessages = optional(transcriptMessages);
+        this.createdAt = optional(createdAt);
         this.icon = optional(icon);
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
@@ -57,6 +60,7 @@ public final class ReplyCard {
                 input.optString("summary", ""),
                 input.optString("transcript", input.optString("transcript_text", "")),
                 jsonArrayString(input, "transcript_messages"),
+                input.optString("created_at", ""),
                 input.optString("icon", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
@@ -104,6 +108,7 @@ public final class ReplyCard {
                 putOptional(out, "transcript_messages", transcriptMessages);
             }
         }
+        putOptional(out, "created_at", createdAt);
         putOptional(out, "icon", icon);
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
@@ -133,6 +138,10 @@ public final class ReplyCard {
 
     public String transcriptMessages() {
         return transcriptMessages;
+    }
+
+    public String createdAt() {
+        return createdAt;
     }
 
     public String icon() {

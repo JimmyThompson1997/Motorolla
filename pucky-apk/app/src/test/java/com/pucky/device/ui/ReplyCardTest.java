@@ -34,6 +34,7 @@ public final class ReplyCardTest {
                 .put("summary", "Brief me")
                 .put("transcript", "User: what is next?\nPucky: Brief me")
                 .put("transcript_messages", messages)
+                .put("created_at", "2026-05-20T11:05:00-07:00")
                 .put("icon", "clock")
                 .put("accent", "#ffb000")
                 .put("audio_path", "/tmp/audio.m4a")
@@ -47,6 +48,7 @@ public final class ReplyCardTest {
         assertEquals("Brief me", card.summary());
         assertEquals("User: what is next?\nPucky: Brief me", card.transcript());
         assertEquals(messages.toString(), card.transcriptMessages());
+        assertEquals("2026-05-20T11:05:00-07:00", card.createdAt());
         assertEquals("clock", card.icon());
         assertEquals("#ffb000", card.accent());
         assertEquals("/tmp/audio.m4a", card.audioPath());
@@ -54,6 +56,7 @@ public final class ReplyCardTest {
         assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
         assertEquals("pucky_abc123", card.toJson().getString("session_id"));
+        assertEquals("2026-05-20T11:05:00-07:00", card.toJson().getString("created_at"));
         assertEquals("User: what is next?\nPucky: Brief me", card.toJson().getString("transcript"));
         assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
     }

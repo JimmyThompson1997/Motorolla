@@ -7,14 +7,15 @@
       "title": "Morning launch",
       "icon": "clock",
       "accent": "#ffb000",
+      "created_at": "2026-05-20T06:33:00-07:00",
       "summary": "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
       "transcript_messages": [
-        { "role": "user", "text": "Pucky, start my morning.", "time": "6:31 AM" },
-        { "role": "assistant", "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", "time": "6:31 AM" },
-        { "role": "user", "text": "Give me the one thing that cannot slip.", "time": "6:32 AM" },
-        { "role": "assistant", "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", "time": "6:32 AM" },
-        { "role": "user", "text": "Any landmines?", "time": "6:33 AM" },
-        { "role": "assistant", "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", "time": "6:33 AM" }
+        { "role": "user", "text": "Pucky, start my morning.", "created_at": "2026-05-20T06:31:00-07:00" },
+        { "role": "assistant", "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", "created_at": "2026-05-20T06:31:00-07:00" },
+        { "role": "user", "text": "Give me the one thing that cannot slip.", "created_at": "2026-05-20T06:32:00-07:00" },
+        { "role": "assistant", "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", "created_at": "2026-05-20T06:32:00-07:00" },
+        { "role": "user", "text": "Any landmines?", "created_at": "2026-05-20T06:33:00-07:00" },
+        { "role": "assistant", "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", "created_at": "2026-05-20T06:33:00-07:00" }
       ],
       "audio_path": "/mock/morning.wav",
       "html_path": "/mock/morning.html"
@@ -24,6 +25,7 @@
       "title": "Leaving home",
       "icon": "bolt",
       "accent": "#50d86a",
+      "created_at": "2026-05-20T08:08:00-07:00",
       "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
       "transcript_messages": [
         { "role": "user", "text": "Leaving home.", "time": "8:07 AM" },
@@ -38,6 +40,7 @@
       "title": "Meeting prep",
       "icon": "calendar",
       "accent": "#3a84ff",
+      "created_at": "2026-05-19T09:46:00-07:00",
       "summary": "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
       "transcript_messages": [
         { "role": "user", "text": "What do I need before the meeting?", "time": "9:45 AM" },
@@ -54,6 +57,7 @@
       "title": "Night wrap",
       "icon": "moon",
       "accent": "#8b63ff",
+      "created_at": "2026-05-18T23:01:00-07:00",
       "summary": "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
       "transcript_messages": [
         { "role": "user", "text": "Wrap my day.", "time": "11:00 PM" },
@@ -70,6 +74,7 @@
       "title": "Pocket Computers",
       "icon": "book",
       "accent": "#72c2ff",
+      "created_at": "2026-05-09T16:13:00-07:00",
       "summary": "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
       "transcript_messages": [
         { "role": "assistant", "text": "Chapter narration is ready at the last saved position.", "time": "4:12 PM" },

@@ -73,23 +73,25 @@ def test_card_actions_have_local_read_state() -> None:
     assert "--action-accent" not in styles
 
 
-def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
+def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "function openBottomSheet(" in app
-    assert "openBottomSheet(panel, content, dismissDetail)" in app
-    assert "installVerticalDismiss(content, panel, onDismiss)" in app
-    assert "openRightPanel" not in app
-    assert "installHorizontalDismiss" not in app
+    assert "function openSideDetail(" in app
+    assert "openBottomSheet" not in app
+    assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail)' in app
+    assert 'openSideDetail(panel, card.title || "Page", content, dismissDetail)' in app
+    assert "installHorizontalDismiss(shell, panel, onDismiss)" in app
+    assert 'iconSvg("chevron_left"' in app
+    assert "function installHorizontalDismiss(" in app
+    assert "translateX(100%)" in styles
     assert "translateY(100%)" in styles
-    assert "translateX(100%)" not in styles
     assert ".detail-panel.is-open" in styles
-    assert "--sheet-bezel: 82px" in styles
-    assert "padding: var(--sheet-bezel) 18px var(--nav-safe)" in styles
-    assert "padding: var(--sheet-bezel) 20px var(--nav-safe)" in styles
-    assert "inset: 60px 0 auto" in styles
-    assert ".rich-panel" in styles
+    assert ".detail-header" in styles
+    assert "position: sticky" in styles
+    assert ".detail-back" in styles
+    assert ".detail-title" in styles
+    assert ".rich-detail" in styles
 
 
 def test_sheet_drag_waits_for_release_before_dismissal() -> None:
@@ -116,6 +118,27 @@ def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
     assert "width: 100%" in styles
     assert ".action-audio.is-playing" in styles
     assert "color: var(--accent" in styles
+
+
+def test_smart_card_and_message_timestamps_are_rendered() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    fixtures = read("fixtures/reply_cards.json")
+
+    assert "function cardTimestamp(card)" in app
+    assert "function messageTimestamp(message)" in app
+    assert "function smartTimestamp(raw, fallback = \"\")" in app
+    assert "function formatSmartTimestamp(date, now = new Date())" in app
+    assert "24 * 60 * 60 * 1000" in app
+    assert 'return "Yesterday"' in app
+    assert 'weekday: "long"' in app
+    assert 'String(date.getFullYear()).slice(-2)' in app
+    assert '"card-timestamp"' in app
+    assert ".card-timestamp" in styles
+    assert 'message.created_at || message.timestamp || ""' in app
+    assert "message.time || message.timestamp || \"\"" in app
+    assert '"created_at": "2026-05-20T06:33:00-07:00"' in fixtures
+    assert '"created_at": "2026-05-09T16:13:00-07:00"' in fixtures
 
 
 def test_audio_resume_and_completion_reset_are_explicit() -> None:
@@ -147,10 +170,10 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert '"panel-scroll transcript-panel"' in app
+    assert '"detail-content chat-detail"' in app
     assert "scrollTranscriptToLatest(content)" in app
     assert "function scrollTranscriptToLatest(content)" in app
     assert "requestAnimationFrame" in app
     assert "content.scrollTop = content.scrollHeight" in app
-    assert "transcript-panel" in app
-    assert "--sheet-bezel" in styles
+    assert ".chat-detail" in styles
+    assert ".detail-content" in styles

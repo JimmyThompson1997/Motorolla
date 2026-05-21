@@ -47,6 +47,10 @@
       filled: '<path d="M4 4h16c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H8l-5 4V6c0-1.1.9-2 2-2Zm3 5h10V7H7v2Zm0 4h7v-2H7v2Z"/>',
       outline: '<path d="M5 5h14c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H8.8L4 20.8v-14C4 5.8 4.8 5 5 5Z"/><path d="M8 9h8M8 12.5h6"/>'
     },
+    chevron_left: {
+      filled: '<path d="M15.4 5.4 14 4 6 12l8 8 1.4-1.4L8.8 12l6.6-6.6Z"/>',
+      outline: '<path d="M15 5 8 12l7 7"/>'
+    },
     checklist: {
       filled: '<path d="m9 16.2-3.5-3.5L4.1 14.1 9 19 20.3 7.7 18.9 6.3 9 16.2ZM4 6h8v2H4V6Zm0 4h8v2H4v-2Z"/>',
       outline: '<path d="m8.8 17.1-3.3-3.3"/><path d="M8.8 17.1 20 5.9"/><path d="M4 6h8M4 10h8"/>'
@@ -71,14 +75,15 @@
       title: "Morning launch",
       icon: "clock",
       accent: "#ffb000",
+      created_at: "2026-05-20T06:33:00-07:00",
       summary: "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
       transcript_messages: [
-        { role: "user", text: "Pucky, start my morning.", time: "6:31 AM" },
-        { role: "assistant", text: "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", time: "6:31 AM" },
-        { role: "user", text: "Give me the one thing that cannot slip.", time: "6:32 AM" },
-        { role: "assistant", text: "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", time: "6:32 AM" },
-        { role: "user", text: "Any landmines?", time: "6:33 AM" },
-        { role: "assistant", text: "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", time: "6:33 AM" }
+        { role: "user", text: "Pucky, start my morning.", created_at: "2026-05-20T06:31:00-07:00" },
+        { role: "assistant", text: "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", created_at: "2026-05-20T06:31:00-07:00" },
+        { role: "user", text: "Give me the one thing that cannot slip.", created_at: "2026-05-20T06:32:00-07:00" },
+        { role: "assistant", text: "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", created_at: "2026-05-20T06:32:00-07:00" },
+        { role: "user", text: "Any landmines?", created_at: "2026-05-20T06:33:00-07:00" },
+        { role: "assistant", text: "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", created_at: "2026-05-20T06:33:00-07:00" }
       ],
       audio_path: "/mock/morning.wav",
       html_path: "/mock/morning.html"
@@ -88,6 +93,7 @@
       title: "Leaving home",
       icon: "bolt",
       accent: "#50d86a",
+      created_at: "2026-05-20T08:08:00-07:00",
       summary: "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
       transcript_messages: [
         { role: "user", text: "Leaving home.", time: "8:07 AM" },
@@ -102,6 +108,7 @@
       title: "Meeting prep",
       icon: "calendar",
       accent: "#3a84ff",
+      created_at: "2026-05-19T09:46:00-07:00",
       summary: "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
       transcript_messages: [
         { role: "user", text: "What do I need before the meeting?", time: "9:45 AM" },
@@ -118,6 +125,7 @@
       title: "Night wrap",
       icon: "moon",
       accent: "#8b63ff",
+      created_at: "2026-05-18T23:01:00-07:00",
       summary: "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
       transcript_messages: [
         { role: "user", text: "Wrap my day.", time: "11:00 PM" },
@@ -134,6 +142,7 @@
       title: "Pocket Computers",
       icon: "book",
       accent: "#72c2ff",
+      created_at: "2026-05-09T16:13:00-07:00",
       summary: "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
       transcript_messages: [
         { role: "assistant", text: "Chapter narration is ready at the last saved position.", time: "4:12 PM" },
@@ -318,6 +327,7 @@
   function cardView(card) {
     const cardEl = el("article", "card");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
+    const cardStamp = cardTimestamp(card);
 
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
@@ -374,6 +384,11 @@
     }
 
     cardEl.append(identity, body, actions);
+    if (cardStamp) {
+      const stamp = el("time", "card-timestamp", cardStamp.text);
+      stamp.dateTime = cardStamp.iso;
+      cardEl.append(stamp);
+    }
     return cardEl;
   }
 
@@ -406,17 +421,17 @@
     renderFeed();
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
-    const content = el("div", "panel-scroll transcript-panel");
-    content.append(el("h1", "chat-title", card.title || "Transcript"));
+    const content = el("div", "detail-content chat-detail");
     for (const message of messages) {
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
       bubble.append(document.createTextNode(message.text || ""));
-      if (message.time) {
-        bubble.append(el("span", "bubble-meta", message.time));
+      const stamp = messageTimestamp(message);
+      if (stamp) {
+        bubble.append(el("span", "bubble-meta", stamp));
       }
       content.append(bubble);
     }
-    openBottomSheet(panel, content, dismissDetail);
+    openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     scrollTranscriptToLatest(content);
   }
 
@@ -424,7 +439,7 @@
     markRead(card, "page");
     renderFeed();
     const panel = document.getElementById("detail");
-    const content = el("div", "panel-scroll rich-panel");
+    const content = el("div", "detail-content rich-detail");
     try {
       const result = await Pucky.request({
         command: "artifact.read_base64",
@@ -435,20 +450,25 @@
       iframe.srcdoc = atob(result.content_base64 || "");
       content.append(iframe);
     } catch (error) {
-      content.append(el("h1", "chat-title", card.title || "Page"));
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
-    openBottomSheet(panel, content, dismissDetail);
+    openSideDetail(panel, card.title || "Page", content, dismissDetail);
   }
 
-  function openBottomSheet(panel, content, onDismiss) {
-    const dragZone = el("div", "sheet-drag-zone");
-    dragZone.append(el("div", "sheet-grip"));
-    panel.replaceChildren(content, dragZone);
+  function openSideDetail(panel, title, content, onDismiss) {
+    const shell = el("div", "detail-shell");
+    const header = el("header", "detail-header");
+    const back = el("button", "detail-back");
+    back.type = "button";
+    back.innerHTML = iconSvg("chevron_left", { filled: false });
+    back.setAttribute("aria-label", "Back to feed");
+    back.addEventListener("click", onDismiss);
+    header.append(back, el("h1", "detail-title", title));
+    shell.append(header, content);
+    panel.replaceChildren(shell);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
-    installVerticalDismiss(content, panel, onDismiss);
-    installVerticalDismiss(dragZone, panel, onDismiss);
+    installHorizontalDismiss(shell, panel, onDismiss);
   }
 
   function dismissDetail() {
@@ -456,6 +476,7 @@
     panel.style.transform = "";
     panel.classList.remove("is-open", "is-dragging");
     panel.setAttribute("aria-hidden", "true");
+    panel.replaceChildren();
   }
 
   function showAudioSheet(card) {
@@ -608,6 +629,22 @@
     });
   }
 
+  function installHorizontalDismiss(target, panel, onDismiss = dismissDetail) {
+    installDrag(target, {
+      axis: "x",
+      start: () => { panel.classList.add("is-dragging"); },
+      apply: value => { panel.style.transform = `translateX(${Math.max(0, value)}px)`; },
+      reset: () => {
+        panel.classList.remove("is-dragging");
+        panel.style.transform = "";
+      },
+      done: () => {
+        panel.classList.remove("is-dragging");
+        onDismiss();
+      }
+    });
+  }
+
   function installDrag(target, config) {
     let startX = 0;
     let startY = 0;
@@ -691,7 +728,9 @@
       return card.transcript_messages.map(item => ({
         role: item.role || item.sender || "assistant",
         text: item.text || item.content || "",
-        time: item.time || item.timestamp || ""
+        time: item.time || "",
+        timestamp: item.timestamp || "",
+        created_at: item.created_at || ""
       }));
     }
     if (card.transcript) {
@@ -711,6 +750,58 @@
 
   function canScrollUp(target) {
     return Boolean(target && target.scrollTop > 0);
+  }
+
+  function cardTimestamp(card) {
+    const raw = card.created_at || card.timestamp || card.time || "";
+    const text = smartTimestamp(raw, "");
+    if (!text) {
+      return null;
+    }
+    const date = parseDate(raw);
+    return { text, iso: date ? date.toISOString() : String(raw) };
+  }
+
+  function messageTimestamp(message) {
+    return smartTimestamp(
+      message.created_at || message.timestamp || "",
+      message.time || message.timestamp || ""
+    );
+  }
+
+  function smartTimestamp(raw, fallback = "") {
+    const date = parseDate(raw);
+    if (!date) {
+      return fallback;
+    }
+    return formatSmartTimestamp(date);
+  }
+
+  function parseDate(raw) {
+    if (!raw) {
+      return null;
+    }
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function formatSmartTimestamp(date, now = new Date()) {
+    const elapsedMs = now.getTime() - date.getTime();
+    if (elapsedMs >= 0 && elapsedMs < 24 * 60 * 60 * 1000) {
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    const daysAgo = Math.floor((startOfDay(now) - startOfDay(date)) / (24 * 60 * 60 * 1000));
+    if (daysAgo === 1) {
+      return "Yesterday";
+    }
+    if (daysAgo > 1 && daysAgo < 7) {
+      return date.toLocaleDateString([], { weekday: "long" });
+    }
+    return `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(-2)}`;
+  }
+
+  function startOfDay(date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   }
 
   function hasTranscript(card) {
