@@ -60,8 +60,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert "color: var(--accent" in styles
     assert ".action.is-unread" in styles
     assert "color: var(--action-accent" in styles
-    assert "--action-accent: #ffd166" in styles
-    assert "--action-accent: #6ecbff" in styles
+    assert "--action-accent: #ff5fa2" in styles
+    assert "--action-accent: #19e6c7" in styles
 
 
 def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:

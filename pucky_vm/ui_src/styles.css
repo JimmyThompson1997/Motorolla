@@ -188,11 +188,11 @@ button {
 }
 
 .action-transcript {
-  --action-accent: #ffd166;
+  --action-accent: #ff5fa2;
 }
 
 .action-page {
-  --action-accent: #6ecbff;
+  --action-accent: #19e6c7;
 }
 
 .identity.is-read,
