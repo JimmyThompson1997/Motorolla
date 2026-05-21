@@ -25,4 +25,4 @@ fi
 mkdir -p /data/home/codex
 
 cd /data/pucky-src
-exec ./pucky_vm/run_service.sh
+exec bash ./pucky_vm/run_service.sh
