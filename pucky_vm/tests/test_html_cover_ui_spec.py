@@ -85,9 +85,10 @@ def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
     assert "translateY(100%)" in styles
     assert "translateX(100%)" not in styles
     assert ".detail-panel.is-open" in styles
-    assert "--sheet-bezel: 42px" in styles
+    assert "--sheet-bezel: 82px" in styles
     assert "padding: var(--sheet-bezel) 18px var(--nav-safe)" in styles
     assert "padding: var(--sheet-bezel) 20px var(--nav-safe)" in styles
+    assert "inset: 60px 0 auto" in styles
     assert ".rich-panel" in styles
 
 

@@ -7,7 +7,7 @@
   --blue: #3a84ff;
   --soft: #0b1828;
   --nav-safe: 106px;
-  --sheet-bezel: 42px;
+  --sheet-bezel: 82px;
   color-scheme: dark;
   font-family: "Aptos", "Segoe UI", sans-serif;
 }
@@ -372,9 +372,9 @@ button {
 
 .sheet-drag-zone {
   position: absolute;
-  inset: 0 0 auto;
+  inset: 60px 0 auto;
   z-index: 4;
-  height: var(--sheet-bezel);
+  height: 44px;
   display: flex;
   justify-content: center;
   align-items: center;
