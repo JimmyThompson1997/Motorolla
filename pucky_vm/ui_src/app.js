@@ -440,23 +440,30 @@
     renderFeed();
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content rich-detail");
+    let cleanupFrameDismiss = () => {};
+    const dismissWithCleanup = () => {
+      cleanupFrameDismiss();
+      dismissDetail();
+    };
     try {
       const result = await Pucky.request({
         command: "artifact.read_base64",
         args: { path: card.html_path, max_bytes: 1024 * 1024 }
       });
       const iframe = el("iframe", "rich-frame");
-      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
       iframe.srcdoc = withDetailSwipeBridge(atob(result.content_base64 || ""));
+      iframe.addEventListener("load", () => {
+        try {
+          installHorizontalDismiss(iframe.contentDocument, panel, dismissWithCleanup);
+        } catch (error) {
+          console.warn("Pucky iframe swipe bridge unavailable", error);
+        }
+      });
       content.append(iframe);
     } catch (error) {
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
-    let cleanupFrameDismiss = () => {};
-    const dismissWithCleanup = () => {
-      cleanupFrameDismiss();
-      dismissDetail();
-    };
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
     cleanupFrameDismiss = installFrameMessageDismiss(panel, dismissWithCleanup);
   }

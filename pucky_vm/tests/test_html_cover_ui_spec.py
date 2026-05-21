@@ -82,6 +82,8 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail)' in app
     assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup)' in app
     assert "installHorizontalDismiss(shell, panel, onDismiss)" in app
+    assert "allow-same-origin" in app
+    assert "installHorizontalDismiss(iframe.contentDocument, panel, dismissWithCleanup)" in app
     assert "withDetailSwipeBridge" in app
     assert "pucky-detail-swipe" in app
     assert "installFrameMessageDismiss(panel, dismissWithCleanup)" in app
