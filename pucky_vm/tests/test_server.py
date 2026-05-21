@@ -101,10 +101,16 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(manifest["entrypoint"], "index.html")
         self.assertIn("app.js", manifest["files"])
         self.assertIn("styles.css", manifest["files"])
+        self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])
+        self.assertIn("fixtures/artifacts/morning.wav", manifest["files"])
 
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/bundle.zip", timeout=10) as response:
             self.assertEqual(response.headers.get_content_type(), "application/zip")
             self.assertGreater(len(response.read()), 1000)
+
+        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/fixtures/artifacts/morning.wav", timeout=10) as response:
+            self.assertIn(response.headers.get_content_type(), {"audio/wav", "audio/x-wav"})
+            self.assertTrue(response.read(4).startswith(b"RIFF"))
 
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
             html = response.read().decode("utf-8")

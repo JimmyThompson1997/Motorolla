@@ -1,0 +1,365 @@
+{
+  "schema": "pucky.reply_cards_deploy.v1",
+  "artifact_base_path": "fixtures/artifacts",
+  "cards": [
+    {
+      "session_id": "fixture_morning",
+      "title": "Morning launch",
+      "icon": "clock",
+      "accent": "#ffb000",
+      "created_at": "2026-05-20T06:33:00-07:00",
+      "summary": "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "Pucky, start my morning.",
+          "created_at": "2026-05-20T06:31:00-07:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.",
+          "created_at": "2026-05-20T06:31:00-07:00"
+        },
+        {
+          "role": "user",
+          "text": "Give me the one thing that cannot slip.",
+          "created_at": "2026-05-20T06:32:00-07:00"
+        },
+        {
+          "role": "assistant",
+          "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.",
+          "created_at": "2026-05-20T06:32:00-07:00"
+        },
+        {
+          "role": "user",
+          "text": "Any landmines?",
+          "created_at": "2026-05-20T06:33:00-07:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.",
+          "created_at": "2026-05-20T06:33:00-07:00"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_morning",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the morning request.",
+            "items": [
+              {
+                "label": "calendar_lookup",
+                "status": "completed"
+              },
+              {
+                "label": "weather_scan",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing the launch brief.",
+            "items": [
+              {
+                "label": "inbox_triage",
+                "status": "completed"
+              },
+              {
+                "label": "unused_tool_probe",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "morning.wav",
+      "html_artifact": "morning.html",
+      "images": [
+        {
+          "artifact": "morning-map.svg",
+          "mime_type": "image/svg+xml",
+          "title": "Morning route sketch",
+          "alt": "Generated morning route sketch"
+        },
+        {
+          "artifact": "morning-brief.svg",
+          "mime_type": "image/svg+xml",
+          "title": "Launch brief image",
+          "alt": "Generated launch brief image"
+        }
+      ]
+    },
+    {
+      "session_id": "fixture_leave",
+      "title": "Leaving home",
+      "icon": "bolt",
+      "accent": "#50d86a",
+      "created_at": "2026-05-20T08:08:00-07:00",
+      "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "Leaving home.",
+          "time": "8:07 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.",
+          "time": "8:07 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.",
+          "time": "8:08 AM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_leave",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the commute request.",
+            "items": [
+              {
+                "label": "route_scan",
+                "status": "completed"
+              },
+              {
+                "label": "garage_state",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Keeping the reply glanceable.",
+            "items": [
+              {
+                "label": "drive_mode",
+                "status": "completed"
+              },
+              {
+                "label": "long_read_fetch",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "leaving.wav",
+      "html_artifact": "leaving.html"
+    },
+    {
+      "session_id": "fixture_meeting",
+      "title": "Meeting prep",
+      "icon": "calendar",
+      "accent": "#3a84ff",
+      "created_at": "2026-05-19T09:46:00-07:00",
+      "summary": "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "What do I need before the meeting?",
+          "time": "9:45 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.",
+          "time": "9:45 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.",
+          "time": "9:46 AM"
+        },
+        {
+          "role": "user",
+          "text": "Give me a good first sentence.",
+          "time": "9:46 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'",
+          "time": "9:46 AM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_meeting",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the meeting thread.",
+            "items": [
+              {
+                "label": "agenda_search",
+                "status": "completed"
+              },
+              {
+                "label": "thread_summary",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing the decision frame.",
+            "items": [
+              {
+                "label": "objection_scan",
+                "status": "completed"
+              },
+              {
+                "label": "calendar_conflict_probe",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "meeting.wav",
+      "html_artifact": "meeting.html"
+    },
+    {
+      "session_id": "fixture_night",
+      "title": "Night wrap",
+      "icon": "moon",
+      "accent": "#8b63ff",
+      "created_at": "2026-05-18T23:01:00-07:00",
+      "summary": "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "Wrap my day.",
+          "time": "11:00 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.",
+          "time": "11:00 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.",
+          "time": "11:01 PM"
+        },
+        {
+          "role": "user",
+          "text": "Dim everything except urgent calls.",
+          "time": "11:01 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Done. Quiet mode is staged, and urgent callers remain allowed.",
+          "time": "11:01 PM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_night",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the day wrap.",
+            "items": [
+              {
+                "label": "task_sweep",
+                "status": "completed"
+              },
+              {
+                "label": "notification_state",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Choosing tomorrow's first move.",
+            "items": [
+              {
+                "label": "priority_rank",
+                "status": "completed"
+              },
+              {
+                "label": "late_night_workflow",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "night.wav",
+      "html_artifact": "night.html"
+    },
+    {
+      "session_id": "fixture_book",
+      "title": "Pocket Computers",
+      "icon": "book",
+      "accent": "#72c2ff",
+      "created_at": "2026-05-09T16:13:00-07:00",
+      "summary": "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
+      "transcript_messages": [
+        {
+          "role": "assistant",
+          "text": "Chapter narration is ready at the last saved position.",
+          "time": "4:12 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.",
+          "time": "4:12 PM"
+        },
+        {
+          "role": "user",
+          "text": "Resume softly and keep the speed where I left it.",
+          "time": "4:13 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Ready. Playback will resume with the saved position and speed.",
+          "time": "4:13 PM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_book",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking audiobook state.",
+            "items": [
+              {
+                "label": "saved_position",
+                "status": "completed"
+              },
+              {
+                "label": "speed_setting",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing gentle playback.",
+            "items": [
+              {
+                "label": "player_resume",
+                "status": "completed"
+              },
+              {
+                "label": "chapter_fetch_retry",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "pocket-computers.wav",
+      "html_artifact": "pocket-computers.html"
+    }
+  ]
+}

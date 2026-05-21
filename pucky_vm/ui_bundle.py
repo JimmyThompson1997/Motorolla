@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,30 @@ from tempfile import TemporaryDirectory
 
 UI_SRC = Path(__file__).with_name("ui_src")
 UI_DIST = Path(__file__).with_name("ui_dist")
-DEFAULT_VERSION = os.environ.get("PUCKY_UI_VERSION", "dev")
 DEFAULT_CREATED_AT = os.environ.get("PUCKY_UI_CREATED_AT")
+
+
+def default_version() -> str:
+    explicit = os.environ.get("PUCKY_UI_VERSION", "").strip()
+    if explicit:
+        return explicit
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=UI_SRC.parent.parent,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        sha = result.stdout.strip()
+        if sha:
+            return "git-" + sha
+    except Exception:
+        pass
+    return "dev"
+
+
+DEFAULT_VERSION = default_version()
 
 
 def build_ui_bundle(

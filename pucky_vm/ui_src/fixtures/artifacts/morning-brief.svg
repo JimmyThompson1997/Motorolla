@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620">
+  <rect width="900" height="620" rx="34" fill="#102316"/>
+  <circle cx="710" cy="140" r="86" fill="#50d86a" opacity="0.28"/>
+  <path d="M90 460 270 260l120 130 105-150 315 220H90Z" fill="#f5f9ff" opacity="0.92"/>
+  <path d="M130 125h420" stroke="#50d86a" stroke-width="22" stroke-linecap="round"/>
+  <text x="130" y="205" fill="#f5f9ff" font-family="Arial, sans-serif" font-size="56" font-weight="800">Launch Brief</text>
+  <text x="130" y="268" fill="#d8e5f2" font-family="Arial, sans-serif" font-size="28">Pucky generated image fixture</text>
+</svg>

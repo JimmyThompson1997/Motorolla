@@ -78,9 +78,24 @@ Build a local bundle:
 python -m pucky_vm.ui_bundle --out .tmp\pucky_ui_bundle --version local-dev
 ```
 
+If `--version` and `PUCKY_UI_VERSION` are omitted, the bundle version defaults
+to `git-<short-sha>` when the source tree has git metadata.
+
 Serve the latest source/bundle from the VM service:
 
 - `GET /ui/pucky/latest/`
 - `GET /ui/pucky/latest/manifest.json`
 - `GET /ui/pucky/latest/bundle.zip`
 - `GET /ui/pucky/fixtures/reply_cards.json`
+
+Deploy cover fixture cards through the normal command path:
+
+```powershell
+python -m pucky_vm.tools.deploy_cover_fixture
+```
+
+The deploy helper refuses to run from a dirty git workspace. It refreshes the
+cached HTML bundle, downloads committed fixture artifacts through
+`file.download`, writes cards with returned app-owned paths through
+`ui.reply_cards.set`, and records evidence under `.tmp/`. Do not seed fixture
+state with direct `adb push`, `run-as`, or SharedPreferences edits.
