@@ -21,6 +21,11 @@ def default_version() -> str:
     explicit = os.environ.get("PUCKY_UI_VERSION", "").strip()
     if explicit:
         return explicit
+    revision_file = UI_SRC.parent / ".pucky_ui_version"
+    if revision_file.exists():
+        revision = revision_file.read_text(encoding="utf-8").strip()
+        if revision:
+            return revision
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

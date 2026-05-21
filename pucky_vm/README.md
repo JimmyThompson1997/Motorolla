@@ -79,7 +79,8 @@ python -m pucky_vm.ui_bundle --out .tmp\pucky_ui_bundle --version local-dev
 ```
 
 If `--version` and `PUCKY_UI_VERSION` are omitted, the bundle version defaults
-to `git-<short-sha>` when the source tree has git metadata.
+to `git-<short-sha>` when the source tree has git metadata, or to the contents
+of `pucky_vm/.pucky_ui_version` for archive-based VM deploys.
 
 Serve the latest source/bundle from the VM service:
 
