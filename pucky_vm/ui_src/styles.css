@@ -6,10 +6,18 @@
   --muted: #b3c9e0;
   --blue: #3a84ff;
   --soft: #0b1828;
+  --viewport-h: 100vh;
   --nav-safe: 106px;
   --sheet-top: 16px;
   color-scheme: dark;
   font-family: "Aptos", "Segoe UI", sans-serif;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --viewport-h: 100dvh;
+    --nav-safe: clamp(96px, 10dvh, 118px);
+  }
 }
 
 * {
@@ -40,6 +48,7 @@ button {
 .app-shell {
   position: fixed;
   inset: 0;
+  min-height: var(--viewport-h);
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -361,6 +370,7 @@ button {
 .trace-sheet {
   position: fixed;
   inset: 0;
+  min-height: var(--viewport-h);
   z-index: 10;
   background: var(--bg);
   transition: transform 340ms cubic-bezier(0.16, 0.84, 0.24, 1);
@@ -398,7 +408,7 @@ button {
 }
 
 .panel-scroll {
-  height: 100%;
+  height: var(--viewport-h);
   overflow-y: auto;
   padding: 18px 18px var(--nav-safe);
   scrollbar-width: none;
@@ -410,7 +420,7 @@ button {
 }
 
 .detail-shell {
-  height: 100%;
+  height: var(--viewport-h);
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -602,7 +612,7 @@ button {
 }
 
 .sheet-inner {
-  height: 100%;
+  height: var(--viewport-h);
   padding: var(--sheet-top) 20px var(--nav-safe);
   display: flex;
   flex-direction: column;
@@ -610,7 +620,7 @@ button {
 }
 
 .trace-inner {
-  height: 100%;
+  height: var(--viewport-h);
   padding: var(--sheet-top) 16px var(--nav-safe);
   display: flex;
   flex-direction: column;
@@ -635,7 +645,7 @@ button {
 }
 
 .trace-card {
-  max-height: calc(100vh - var(--nav-safe) - 30px);
+  max-height: calc(var(--viewport-h) - var(--nav-safe) - 30px);
   overflow-y: auto;
   padding: 18px 18px 20px;
   border-radius: 22px;
