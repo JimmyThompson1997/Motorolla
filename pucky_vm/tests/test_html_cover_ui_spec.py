@@ -269,6 +269,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"image-reel-count"' in app
     assert "Previous image" in app
     assert "Next image" in app
+    assert "chevron_right" in app
     assert '"image-affordance"' in app
     assert 'iconSvg("image"' in app
     assert "artifact.read_base64" in app
@@ -278,6 +279,8 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-reel-nav" in styles
     assert ".image-reel-count" in styles
     assert ".image-reel-img" in styles
+    assert "height: 52vh" in styles
+    assert "max-height: 540px" in styles
     assert "object-fit: contain" in styles
 
 
