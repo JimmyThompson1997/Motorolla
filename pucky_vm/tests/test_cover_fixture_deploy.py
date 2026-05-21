@@ -21,18 +21,23 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
 
     assert spec["schema"] == "pucky.reply_cards_deploy.v1"
     assert "/mock/" not in encoded
-    assert "/sdcard/" not in encoded
     assert ".tmp" not in encoded
     assert "Trace UI fixture" not in encoded
     assert '"/data/user/0/' not in encoded
     assert '"audio_path"' not in encoded
     assert "html_path" not in encoded
-    assert "public_audio_path" not in encoded
-    assert "public_audio_playlist_path" not in encoded
+    assert encoded.count("public_audio_path") == 1
+    assert encoded.count("public_audio_playlist_path") == 1
 
     artifacts = set()
     for card in spec["cards"]:
-        artifacts.add(card["audio_artifact"])
+        if card["session_id"] == "fixture_book":
+            assert "audio_artifact" not in card
+            assert card["public_audio_path"].endswith("_full.wav")
+            assert card["public_audio_playlist_path"].endswith(".m3u")
+            assert "/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/" in card["public_audio_playlist_path"]
+        else:
+            artifacts.add(card["audio_artifact"])
         artifacts.add(card["html_artifact"])
         for image in card.get("images", []):
             artifacts.add(image["artifact"])
@@ -115,7 +120,49 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 
-def test_build_cards_rejects_public_device_audio_paths() -> None:
+def test_build_cards_allows_only_the_public_audiobook_directory() -> None:
+    args = argparse.Namespace(
+        vm_base_url="https://pucky.fly.dev",
+        artifact_base_path="/ui/pucky/latest/",
+        max_artifact_bytes=1024 * 1024,
+    )
+
+    cards, downloads = deploy_cover_fixture.build_cards(
+        args,
+        {
+            "artifact_base_path": "fixtures/artifacts",
+            "cards": [
+                {
+                    "session_id": "fixture_book",
+                    "title": "Pocket Computers",
+                    "public_audio_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav",
+                    "public_audio_playlist_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u",
+                }
+            ],
+        },
+    )
+
+    assert downloads == []
+    assert cards[0]["audio_path"].startswith("/sdcard/Podcasts/From_Pocket_Computers")
+    assert cards[0]["audio_playlist_path"].endswith(".m3u")
+
+    with pytest.raises(deploy_cover_fixture.DeployError):
+        deploy_cover_fixture.build_cards(
+            args,
+            {
+                "artifact_base_path": "fixtures/artifacts",
+                "cards": [
+                    {
+                        "session_id": "fixture_book",
+                        "title": "Pocket Computers",
+                        "public_audio_path": "/sdcard/Podcasts/book.wav",
+                    }
+                ],
+            },
+        )
+
+
+def test_fixture_book_cannot_regress_to_tiny_audio_artifact() -> None:
     args = argparse.Namespace(
         vm_base_url="https://pucky.fly.dev",
         artifact_base_path="/ui/pucky/latest/",
@@ -131,7 +178,7 @@ def test_build_cards_rejects_public_device_audio_paths() -> None:
                     {
                         "session_id": "fixture_book",
                         "title": "Pocket Computers",
-                        "public_audio_path": "/sdcard/Podcasts/book.wav",
+                        "audio_artifact": "pocket-computers.wav",
                     }
                 ],
             },
