@@ -298,7 +298,7 @@ button {
 .panel-scroll {
   height: 100%;
   overflow-y: auto;
-  padding: 44px 18px var(--nav-safe);
+  padding: 52px 18px var(--nav-safe);
   scrollbar-width: none;
   touch-action: pan-y;
 }
@@ -348,28 +348,28 @@ button {
 
 .rich-frame {
   width: 100%;
-  height: calc(100vh - var(--nav-safe) - 44px);
-  min-height: calc(100vh - var(--nav-safe) - 44px);
+  height: calc(100vh - var(--nav-safe) - 52px);
+  min-height: calc(100vh - var(--nav-safe) - 52px);
   border: 0;
   border-radius: 0;
   background: white;
 }
 
 .rich-panel {
-  padding: 44px 0 var(--nav-safe);
+  padding: 52px 0 var(--nav-safe);
 }
 
 .sheet-inner {
   height: 100%;
-  padding: 44px 20px var(--nav-safe);
+  padding: 52px 20px var(--nav-safe);
   touch-action: pan-y;
 }
 
 .sheet-drag-zone {
   position: absolute;
-  inset: 18px 0 auto;
+  inset: 34px 0 auto;
   z-index: 4;
-  height: 42px;
+  height: 48px;
   display: flex;
   justify-content: center;
   align-items: center;
