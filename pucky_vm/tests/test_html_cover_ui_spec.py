@@ -28,23 +28,28 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     styles = read("styles.css")
 
     assert 'id="pageTabs"' in html
+    assert "const RETRO_SYMBOLS" in app
+    assert "function topIconSvg(" in app
     assert "const PAGE_TABS" in app
     assert "renderTabs()" in app
     assert 'route: "feed"' in app
+    assert 'route: "calls"' in app
+    assert 'route: "texts"' in app
     assert 'route: "routines"' in app
     assert 'route: "sensors"' in app
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
-    assert ".tab.is-active .material-icon" in styles
-    assert ".tab:not(.is-active) .material-icon" in styles
+    assert ".retro-icon" in styles
+    assert ".tab.is-active .retro-icon" in styles
+    assert ".tab:not(.is-active) .retro-icon" in styles
 
 
 def test_card_actions_have_local_read_state() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "READ_STATE_KEY" in app
+    assert 'READ_STATE_KEY = "pucky.cover.read_actions.v2"' in app
     assert "readActions" in app
     assert "function markRead(card, action)" in app
     assert "function isActionRead(card, action)" in app
@@ -52,8 +57,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert 'markRead(card, "transcript")' in app
     assert 'markRead(card, "page")' in app
     assert 'actionStateClass(card, "audio")' in app
-    assert 'actionStateClass(card, "transcript")' in app
     assert 'actionStateClass(card, "page")' in app
+    assert 'iconSvg("chat"' not in app
     assert "action-transcript" not in app
     assert "action-page" not in app
     assert ".identity.is-unread" in styles
@@ -75,6 +80,8 @@ def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
     assert "translateY(100%)" in styles
     assert "translateX(100%)" not in styles
     assert ".detail-panel.is-open" in styles
+    assert "padding: 66px 18px var(--nav-safe)" in styles
+    assert "padding: 66px 20px var(--nav-safe)" in styles
 
 
 def test_audio_resume_and_completion_reset_are_explicit() -> None:

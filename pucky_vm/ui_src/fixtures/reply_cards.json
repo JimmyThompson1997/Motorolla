@@ -9,8 +9,12 @@
       "accent": "#ffb000",
       "summary": "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
       "transcript_messages": [
-        { "role": "user", "text": "Pucky, start my morning." },
-        { "role": "assistant", "text": "Inbox triage, weather, and your first priority are ready." }
+        { "role": "user", "text": "Pucky, start my morning.", "time": "6:31 AM" },
+        { "role": "assistant", "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", "time": "6:31 AM" },
+        { "role": "user", "text": "Give me the one thing that cannot slip.", "time": "6:32 AM" },
+        { "role": "assistant", "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", "time": "6:32 AM" },
+        { "role": "user", "text": "Any landmines?", "time": "6:33 AM" },
+        { "role": "assistant", "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", "time": "6:33 AM" }
       ],
       "audio_path": "/mock/morning.wav",
       "html_path": "/mock/morning.html"
@@ -22,8 +26,9 @@
       "accent": "#50d86a",
       "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
       "transcript_messages": [
-        { "role": "user", "text": "Leaving home." },
-        { "role": "assistant", "text": "Commute mode is ready. Garage status is queued." }
+        { "role": "user", "text": "Leaving home.", "time": "8:07 AM" },
+        { "role": "assistant", "text": "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.", "time": "8:07 AM" },
+        { "role": "assistant", "text": "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.", "time": "8:08 AM" }
       ],
       "audio_path": "/mock/leaving.wav",
       "html_path": "/mock/leaving.html"
@@ -35,8 +40,11 @@
       "accent": "#3a84ff",
       "summary": "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
       "transcript_messages": [
-        { "role": "user", "text": "What do I need before the meeting?" },
-        { "role": "assistant", "text": "Agenda, prior notes, and decision risks are lined up." }
+        { "role": "user", "text": "What do I need before the meeting?", "time": "9:45 AM" },
+        { "role": "assistant", "text": "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.", "time": "9:45 AM" },
+        { "role": "assistant", "text": "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.", "time": "9:46 AM" },
+        { "role": "user", "text": "Give me a good first sentence.", "time": "9:46 AM" },
+        { "role": "assistant", "text": "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'", "time": "9:46 AM" }
       ],
       "audio_path": "/mock/meeting.wav",
       "html_path": "/mock/meeting.html"
@@ -48,8 +56,11 @@
       "accent": "#8b63ff",
       "summary": "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
       "transcript_messages": [
-        { "role": "user", "text": "Wrap my day." },
-        { "role": "assistant", "text": "Loose tasks and tomorrow's first move are organized." }
+        { "role": "user", "text": "Wrap my day.", "time": "11:00 PM" },
+        { "role": "assistant", "text": "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.", "time": "11:00 PM" },
+        { "role": "assistant", "text": "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.", "time": "11:01 PM" },
+        { "role": "user", "text": "Dim everything except urgent calls.", "time": "11:01 PM" },
+        { "role": "assistant", "text": "Done. Quiet mode is staged, and urgent callers remain allowed.", "time": "11:01 PM" }
       ],
       "audio_path": "/mock/night.wav",
       "html_path": "/mock/night.html"
@@ -61,7 +72,10 @@
       "accent": "#72c2ff",
       "summary": "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
       "transcript_messages": [
-        { "role": "assistant", "text": "Chapter narration is ready at the last saved position." }
+        { "role": "assistant", "text": "Chapter narration is ready at the last saved position.", "time": "4:12 PM" },
+        { "role": "assistant", "text": "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.", "time": "4:12 PM" },
+        { "role": "user", "text": "Resume softly and keep the speed where I left it.", "time": "4:13 PM" },
+        { "role": "assistant", "text": "Ready. Playback will resume with the saved position and speed.", "time": "4:13 PM" }
       ],
       "audio_path": "/mock/pocket-computers.wav",
       "html_path": "/mock/pocket-computers.html"

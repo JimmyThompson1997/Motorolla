@@ -1,5 +1,5 @@
 (() => {
-  const READ_STATE_KEY = "pucky.cover.read_actions.v1";
+  const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const COMPLETE_EPSILON_MS = 500;
 
   const MATERIAL_SYMBOLS = {
@@ -45,8 +45,33 @@
     }
   };
 
+  const RETRO_SYMBOLS = {
+    mail: {
+      filled: '<path d="M3 5h18v14H3V5Zm2 3v2h2v2h2v2h6v-2h2v-2h2V8h-2v2h-2v2H9v-2H7V8H5Z"/>',
+      outline: '<path d="M3 5h18v14H3V5Z"/><path d="M5 8h2v2h2v2h6v-2h2V8h2"/>'
+    },
+    phone: {
+      filled: '<path d="M7 3h5v5h-2v3h2v3h3v-2h5v5h-2v2h-4v-2h-3v-2H9v-3H7V9H5V5h2V3Z"/>',
+      outline: '<path d="M7 3h5v5h-2v3h2v3h3v-2h5v5h-2v2h-4v-2h-3v-2H9v-3H7V9H5V5h2V3Z"/>'
+    },
+    text: {
+      filled: '<path d="M4 5h16v12H9l-5 4V5Zm3 4h10V7H7v2Zm0 4h8v-2H7v2Z"/>',
+      outline: '<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M7 8h10M7 12h8"/>'
+    },
+    checklist: {
+      filled: '<path d="M5 5h10v2H5V5Zm0 5h7v2H5v-2Zm0 5h5v2H5v-2Zm10 0h2v2h2v2h-4v-2h-2v-2h2Zm1-8h2V5h2v4h-4V7Z"/>',
+      outline: '<path d="M5 6h9M5 11h7M5 16h5"/><path d="m14 16 2 2 4-5"/><path d="m15 8 2 2 3-5"/>'
+    },
+    sensors: {
+      filled: '<path d="M11 10h2v2h2v2h-2v2h-2v-2H9v-2h2v-2Zm-6 0h2v4H5v-4Zm12 0h2v4h-2v-4ZM3 8h2v8H3V8Zm16 0h2v8h-2V8Z"/>',
+      outline: '<path d="M12 8v8M8 12h8"/><path d="M5 9v6M19 9v6M2.8 7v10M21.2 7v10"/>'
+    }
+  };
+
   const PAGE_TABS = [
     { route: "feed", icon: "mail", label: "Inbox" },
+    { route: "calls", icon: "phone", label: "Calls" },
+    { route: "texts", icon: "text", label: "Texts" },
     { route: "routines", icon: "checklist", label: "Routines" },
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
@@ -59,8 +84,12 @@
       accent: "#ffb000",
       summary: "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
       transcript_messages: [
-        { role: "user", text: "Pucky, start my morning." },
-        { role: "assistant", text: "Inbox triage, weather, and your first priority are ready." }
+        { role: "user", text: "Pucky, start my morning.", time: "6:31 AM" },
+        { role: "assistant", text: "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", time: "6:31 AM" },
+        { role: "user", text: "Give me the one thing that cannot slip.", time: "6:32 AM" },
+        { role: "assistant", text: "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", time: "6:32 AM" },
+        { role: "user", text: "Any landmines?", time: "6:33 AM" },
+        { role: "assistant", text: "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", time: "6:33 AM" }
       ],
       audio_path: "/mock/morning.wav",
       html_path: "/mock/morning.html"
@@ -72,8 +101,9 @@
       accent: "#50d86a",
       summary: "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
       transcript_messages: [
-        { role: "user", text: "Leaving home." },
-        { role: "assistant", text: "Commute mode is ready. Garage status is queued." }
+        { role: "user", text: "Leaving home.", time: "8:07 AM" },
+        { role: "assistant", text: "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.", time: "8:07 AM" },
+        { role: "assistant", text: "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.", time: "8:08 AM" }
       ],
       audio_path: "/mock/leaving.wav",
       html_path: "/mock/leaving.html"
@@ -85,8 +115,11 @@
       accent: "#3a84ff",
       summary: "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
       transcript_messages: [
-        { role: "user", text: "What do I need before the meeting?" },
-        { role: "assistant", text: "Agenda, prior notes, and decision risks are lined up." }
+        { role: "user", text: "What do I need before the meeting?", time: "9:45 AM" },
+        { role: "assistant", text: "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.", time: "9:45 AM" },
+        { role: "assistant", text: "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.", time: "9:46 AM" },
+        { role: "user", text: "Give me a good first sentence.", time: "9:46 AM" },
+        { role: "assistant", text: "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'", time: "9:46 AM" }
       ],
       audio_path: "/mock/meeting.wav",
       html_path: "/mock/meeting.html"
@@ -98,8 +131,11 @@
       accent: "#8b63ff",
       summary: "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
       transcript_messages: [
-        { role: "user", text: "Wrap my day." },
-        { role: "assistant", text: "Loose tasks and tomorrow's first move are organized." }
+        { role: "user", text: "Wrap my day.", time: "11:00 PM" },
+        { role: "assistant", text: "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.", time: "11:00 PM" },
+        { role: "assistant", text: "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.", time: "11:01 PM" },
+        { role: "user", text: "Dim everything except urgent calls.", time: "11:01 PM" },
+        { role: "assistant", text: "Done. Quiet mode is staged, and urgent callers remain allowed.", time: "11:01 PM" }
       ],
       audio_path: "/mock/night.wav",
       html_path: "/mock/night.html"
@@ -111,7 +147,10 @@
       accent: "#72c2ff",
       summary: "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
       transcript_messages: [
-        { role: "assistant", text: "Chapter narration is ready at the last saved position." }
+        { role: "assistant", text: "Chapter narration is ready at the last saved position.", time: "4:12 PM" },
+        { role: "assistant", text: "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.", time: "4:12 PM" },
+        { role: "user", text: "Resume softly and keep the speed where I left it.", time: "4:13 PM" },
+        { role: "assistant", text: "Ready. Playback will resume with the saved position and speed.", time: "4:13 PM" }
       ],
       audio_path: "/mock/pocket-computers.wav",
       html_path: "/mock/pocket-computers.html"
@@ -226,8 +265,9 @@
       return state.player;
     }
     if (command === "artifact.read_base64") {
+      const title = String(args.path || "Pucky page").replace(/^.*\//, "").replace(/\.html$/i, "").replace(/-/g, " ");
       return {
-        content_base64: btoa("<!doctype html><style>body{font-family:sans-serif;padding:24px;line-height:1.4}</style><h1>Pucky page</h1><p>This is a browser-mode rich reply preview.</p>")
+        content_base64: btoa(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:Georgia,serif;background:#fff8e7;color:#17202a;padding:22px;line-height:1.45}h1{font:800 30px/1.05 system-ui,sans-serif;margin:0 0 14px}section{margin:18px 0;padding:14px;border:2px solid #17202a;box-shadow:5px 5px 0 #f2b705}p{font-size:16px}.tag{display:inline-block;background:#17202a;color:white;padding:4px 8px;margin-bottom:10px}</style><h1>${title}</h1><section><span class="tag">rich reply</span><p>This is a longer HTML artifact preview so the cover sheet has to scroll. It is intentionally text-heavy for layout testing.</p><p>The final agent version can ship charts, images, controls, route pages, or generated documents here. The APK only needs to cache and display the bundle safely.</p></section><section><p>Second section: a compact brief, a decision, a risk list, and a next action. This tests whether the iframe gets enough vertical room without swallowing the bottom safe area.</p><p>Keep this scrolling naturally. No giant dead band at the top, no clipped bottom controls, and no mystery margins.</p></section>`)
       };
     }
     throw new Error(`Unsupported browser mock command: ${command}`);
@@ -263,7 +303,7 @@
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
-    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
+    button.innerHTML = topIconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
       state.route = tab.route;
       render();
@@ -320,17 +360,6 @@
     }
 
     const actions = el("div", "card-actions");
-    if (hasTranscript(card)) {
-      const transcript = el("button", `action ${actionStateClass(card, "transcript")}`);
-      transcript.type = "button";
-      transcript.innerHTML = iconSvg("chat", { filled: true });
-      transcript.setAttribute("aria-label", `Open transcript for ${card.title}`);
-      transcript.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showTranscript(card);
-      });
-      actions.append(transcript);
-    }
     if (card.html_path) {
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
@@ -467,10 +496,10 @@
     wrap.append(scrub);
 
     const controls = el("div", "controls");
-    controls.append(control("15", () => seekRelative(-15000)));
-    controls.append(control(state.player.is_playing ? "||" : ">", () => toggleAudio(card)));
-    controls.append(control("30", () => seekRelative(30000)));
-    controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card)));
+    controls.append(control("15", () => seekRelative(-15000), "control-skip"));
+    controls.append(control(state.player.is_playing ? "||" : ">", () => toggleAudio(card), "control-play"));
+    controls.append(control("30", () => seekRelative(30000), "control-skip"));
+    controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card), "control-speed"));
     wrap.append(controls);
     installVerticalDismiss(wrap, sheet, dismissAudioSheet);
     installVerticalDismiss(dragZone, sheet, dismissAudioSheet);
@@ -546,8 +575,8 @@
     render();
   }
 
-  function control(label, action) {
-    const button = el("button", "control", label);
+  function control(label, action, extraClass = "") {
+    const button = el("button", `control ${extraClass}`.trim(), label);
     button.type = "button";
     button.addEventListener("click", action);
     return button;
@@ -755,6 +784,19 @@
     return MATERIAL_SYMBOLS[value] ? value : "mail";
   }
 
+  function normalizeTopIcon(icon) {
+    const value = String(icon || "").toLowerCase();
+    return RETRO_SYMBOLS[value] ? value : "mail";
+  }
+
+  function topIconSvg(icon, options = {}) {
+    const name = normalizeTopIcon(icon);
+    const filled = options.filled !== false;
+    const symbol = RETRO_SYMBOLS[name] || RETRO_SYMBOLS.mail;
+    const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
+    return `<svg class="retro-icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  }
+
   function iconSvg(icon, options = {}) {
     const name = normalizeIcon(icon);
     const filled = options.filled !== false;
@@ -796,6 +838,12 @@
       }
     }
   }, 250);
+
+  setInterval(() => {
+    if (state.activePath && state.player.is_playing) {
+      render();
+    }
+  }, 90);
 
   loadCards();
 })();
