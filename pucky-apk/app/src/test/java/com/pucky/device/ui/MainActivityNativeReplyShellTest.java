@@ -123,6 +123,11 @@ public final class MainActivityNativeReplyShellTest {
         assertTrue("Player state should expose the active audio session id",
                 player.contains("\"audio_session_id\"")
                         && player.contains("getAudioSessionId()"));
+        assertTrue("Player queue should accept an allowed M3U playlist for audiobook cards",
+                player.contains("playlist_path")
+                        && player.contains("queueItemsFromPlaylist")
+                        && player.contains("#EXTINF:")
+                        && player.contains("Playlist must be an .m3u file"));
     }
 
     @Test
@@ -225,6 +230,7 @@ public final class MainActivityNativeReplyShellTest {
                         && bridge.contains("case \"player.play\"")
                         && bridge.contains("case \"player.pause\"")
                         && bridge.contains("case \"player.seek\"")
+                        && bridge.contains("case \"player.queue.set\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
         assertFalse("HTML bridge should not expose raw shell execution",

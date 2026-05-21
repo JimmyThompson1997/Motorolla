@@ -22,6 +22,7 @@ public final class ReplyCard {
     private final String icon;
     private final String accent;
     private final String audioPath;
+    private final String audioPlaylistPath;
     private final String htmlPath;
     private final String images;
     private final String trace;
@@ -37,6 +38,7 @@ public final class ReplyCard {
             String icon,
             String accent,
             String audioPath,
+            String audioPlaylistPath,
             String htmlPath,
             String images,
             String trace) throws CommandException {
@@ -50,6 +52,7 @@ public final class ReplyCard {
         this.icon = optional(icon);
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
+        this.audioPlaylistPath = optional(audioPlaylistPath);
         this.htmlPath = optional(htmlPath);
         this.images = jsonArrayOrBlank(images, "images");
         this.trace = jsonObjectOrBlank(trace, "trace");
@@ -70,6 +73,7 @@ public final class ReplyCard {
                 input.optString("icon", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
+                input.optString("audio_playlist_path", ""),
                 input.optString("html_path", ""),
                 jsonArrayString(input, "images"),
                 jsonObjectString(input, "trace"));
@@ -120,6 +124,7 @@ public final class ReplyCard {
         putOptional(out, "icon", icon);
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
+        putOptional(out, "audio_playlist_path", audioPlaylistPath);
         putOptional(out, "html_path", htmlPath);
         putOptionalJsonArray(out, "images", images);
         putOptionalJsonObject(out, "trace", trace);
@@ -164,6 +169,10 @@ public final class ReplyCard {
 
     public String audioPath() {
         return audioPath;
+    }
+
+    public String audioPlaylistPath() {
+        return audioPlaylistPath;
     }
 
     public String htmlPath() {

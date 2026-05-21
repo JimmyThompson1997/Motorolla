@@ -83,6 +83,12 @@ public final class PuckyWebBridge {
                 return player.seek(args);
             case "player.speed":
                 return player.speed(args);
+            case "player.queue.set":
+                return player.queueSet(args);
+            case "player.queue.next":
+                return player.queueNext(args);
+            case "player.queue.previous":
+                return player.queuePrevious(args);
             case "file.download":
                 return new FileDownloadController(context).download(args);
             case "artifact.read_base64":

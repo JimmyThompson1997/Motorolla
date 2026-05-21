@@ -20,6 +20,8 @@ public final class ReplyCardStore {
     private static final String PREFS = "pucky_reply_cards";
     private static final String KEY_CARDS = "cards_json";
     private static final int MAX_TRACE_BYTES = 64 * 1024;
+    private static final String PUBLIC_AUDIOBOOK_DIR =
+            File.separator + "Podcasts" + File.separator + "From_Pocket_Computers_to_Planetary_Platforms";
 
     private final Context context;
 
@@ -77,7 +79,8 @@ public final class ReplyCardStore {
     }
 
     private void validateCard(ReplyCard card) throws CommandException {
-        validateAppOwnedPath(card.audioPath(), "audio_path");
+        validateAudioPath(card.audioPath(), "audio_path");
+        validateAudioPath(card.audioPlaylistPath(), "audio_playlist_path");
         validateAppOwnedPath(card.htmlPath(), "html_path");
         validateImagePaths(card.images());
         validateTrace(card.trace());
@@ -149,6 +152,38 @@ public final class ReplyCardStore {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     "Unable to validate " + field + ": " + exc.getMessage());
         }
+    }
+
+    private void validateAudioPath(String path, String field) throws CommandException {
+        if (path == null || path.trim().isEmpty()) {
+            return;
+        }
+        try {
+            File file = new File(path).getCanonicalFile();
+            if (!file.isAbsolute()) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                        field + " must be an absolute path");
+            }
+            if (!isWithin(file, context.getFilesDir())
+                    && !isWithin(file, context.getCacheDir())
+                    && !isWithin(file, context.getExternalFilesDir(null))
+                    && !isAllowedPublicAudiobook(file)) {
+                throw new CommandException(CommandErrorCodes.PERMISSION_MISSING,
+                        field + " is outside Pucky playback storage");
+            }
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    "Unable to validate " + field + ": " + exc.getMessage());
+        }
+    }
+
+    private boolean isAllowedPublicAudiobook(File file) throws Exception {
+        File sharedStorage = new File("/storage/emulated/0" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        File sdcard = new File("/sdcard" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        File legacySdcard = new File("/mnt/sdcard" + PUBLIC_AUDIOBOOK_DIR).getCanonicalFile();
+        return isWithin(file, sharedStorage) || isWithin(file, sdcard) || isWithin(file, legacySdcard);
     }
 
     private static boolean isWithin(File file, File root) throws Exception {

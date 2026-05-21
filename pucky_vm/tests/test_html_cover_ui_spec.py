@@ -196,6 +196,20 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "rememberPlayerProgress(current)" in app
 
 
+def test_audiobook_cards_use_native_playlist_queue() -> None:
+    app = read("app.js")
+    fixtures = read("fixtures/reply_cards.json")
+
+    assert '"audio_playlist_path": "/mock/pocket-computers.m3u"' in fixtures
+    assert "function hasAudio(card)" in app
+    assert "function audioControlKey(card)" in app
+    assert "function isSameAudioCard(player, card)" in app
+    assert 'command: "player.queue.set"' in app
+    assert "playlist_path: card.audio_playlist_path" in app
+    assert "samePath(player.source, card.audio_playlist_path)" in app
+    assert "sameCompleted = same && isCompletePlayback(current)" in app
+
+
 def test_manual_pause_rewinds_one_second_before_bookmarking() -> None:
     app = read("app.js")
 

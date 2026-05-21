@@ -14,7 +14,9 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.time.Instant;
 
 public final class PlayerController {
@@ -164,6 +166,9 @@ public final class PlayerController {
 
     public synchronized JSONObject queueSet(JSONObject args) throws CommandException {
         JSONArray items = args.optJSONArray("items");
+        if ((items == null || items.length() == 0) && !args.optString("playlist_path", "").trim().isEmpty()) {
+            items = queueItemsFromPlaylist(args.optString("playlist_path", "").trim());
+        }
         if (items == null || items.length() == 0) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "player.queue.set requires non-empty items");
         }
@@ -180,6 +185,46 @@ public final class PlayerController {
         JSONObject out = state();
         Json.put(out, "queue", queue);
         return out;
+    }
+
+    private JSONArray queueItemsFromPlaylist(String playlistPath) throws CommandException {
+        File playlist = resolvePlaylistPath(playlistPath);
+        JSONArray items = new JSONArray();
+        String pendingTitle = "";
+        try (BufferedReader reader = new BufferedReader(new FileReader(playlist))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) {
+                    continue;
+                }
+                if (trimmed.startsWith("#EXTINF:")) {
+                    int comma = trimmed.indexOf(',');
+                    pendingTitle = comma >= 0 ? trimmed.substring(comma + 1).trim() : "";
+                    continue;
+                }
+                if (trimmed.startsWith("#")) {
+                    continue;
+                }
+                File itemFile = new File(trimmed);
+                if (!itemFile.isAbsolute()) {
+                    itemFile = new File(playlist.getParentFile(), trimmed);
+                }
+                JSONObject item = new JSONObject();
+                Json.put(item, "path", itemFile.getCanonicalPath());
+                Json.put(item, "title", pendingTitle.isEmpty() ? itemFile.getName() : pendingTitle);
+                Json.put(item, "source", playlist.getCanonicalPath());
+                Json.add(items, item);
+                pendingTitle = "";
+            }
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    "Unable to read playlist: " + exc.getMessage());
+        }
+        if (items.length() == 0) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "playlist contains no playable items");
+        }
+        return items;
     }
 
     public synchronized JSONObject queueNext(JSONObject args) throws CommandException {
@@ -425,6 +470,29 @@ public final class PlayerController {
             }
             if (!file.exists() || !file.isFile()) {
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "Player asset file not found");
+            }
+            return file;
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
+        }
+    }
+
+    private File resolvePlaylistPath(String path) throws CommandException {
+        try {
+            File file = new File(path).getCanonicalFile();
+            if (!isWithin(file, context.getFilesDir())
+                    && !isWithin(file, context.getCacheDir())
+                    && !isWithin(file, context.getExternalFilesDir(null))
+                    && !isAllowedPublicAudiobook(file)) {
+                throw new CommandException(CommandErrorCodes.PERMISSION_MISSING, "Playlist is outside Pucky playback storage");
+            }
+            if (!file.exists() || !file.isFile()) {
+                throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "Playlist file not found");
+            }
+            if (!file.getName().toLowerCase().endsWith(".m3u")) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Playlist must be an .m3u file");
             }
             return file;
         } catch (CommandException exc) {

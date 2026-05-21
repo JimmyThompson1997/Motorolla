@@ -132,6 +132,12 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
         prefix = "pucky_fixture_" + "".join(ch if ch.isalnum() else "_" for ch in session_id)
         audio_artifact = card.pop("audio_artifact", "")
         html_artifact = card.pop("html_artifact", "")
+        public_audio_path = card.pop("public_audio_path", "")
+        public_audio_playlist_path = card.pop("public_audio_playlist_path", "")
+        if public_audio_path:
+            card["audio_path"] = public_audio_path
+        if public_audio_playlist_path:
+            card["audio_playlist_path"] = public_audio_playlist_path
         if audio_artifact:
             downloaded = download_artifact(args, artifact_name=audio_artifact, artifact_base=artifact_base, filename_prefix=prefix)
             downloads.append({"field": "audio_path", "artifact": audio_artifact, "download": downloaded})

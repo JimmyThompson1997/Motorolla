@@ -171,6 +171,7 @@
         { "role": "assistant", "text": "Ready. Playback will resume with the saved position and speed.", "time": "4:13 PM" }
       ],
       "audio_path": "/mock/pocket-computers.wav",
+      "audio_playlist_path": "/mock/pocket-computers.m3u",
       "html_path": "/mock/pocket-computers.html",
       "trace": {
         "schema": "pucky.turn_trace.v1",

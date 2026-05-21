@@ -175,6 +175,7 @@
         { role: "assistant", text: "Ready. Playback will resume with the saved position and speed.", time: "4:13 PM" }
       ],
       audio_path: "/mock/pocket-computers.wav",
+      audio_playlist_path: "/mock/pocket-computers.m3u",
       html_path: "/mock/pocket-computers.html"
     }
   ];
@@ -254,17 +255,43 @@
       return state.player;
     }
     if (command === "player.play") {
+      const nextPath = args.path || state.player.path || state.activePath;
+      const nextSource = args.path ? null : (state.player.source || null);
       state.activePath = args.path || state.activePath;
-      const start = args.start_at_ms ?? state.savedPositions.get(normalizePath(state.activePath)) ?? 0;
+      const start = args.start_at_ms ?? state.savedPositions.get(normalizePath(nextPath)) ?? 0;
       state.player = {
         schema: "pucky.player_state.v1",
         loaded: true,
         state: "playing",
         is_playing: true,
-        path: state.activePath,
+        path: nextPath,
+        source: nextSource,
         position_ms: start,
         duration_ms: 1000 * 60 * 19 + 57000,
+        queue_index: state.player.queue_index ?? -1,
+        queue_count: state.player.queue_count ?? 0,
         speed: state.speedByPath.get(normalizePath(state.activePath)) || 1,
+        can_seek: true,
+        audio_session_id: 1
+      };
+      return state.player;
+    }
+    if (command === "player.queue.set") {
+      const playlist = args.playlist_path || "";
+      const first = playlist ? `${playlist}#track1` : String((args.items && args.items[0] && args.items[0].path) || "");
+      state.activePath = playlist || first || state.activePath;
+      state.player = {
+        schema: "pucky.player_state.v1",
+        loaded: true,
+        state: "loaded",
+        is_playing: false,
+        path: first,
+        source: playlist || null,
+        position_ms: 0,
+        duration_ms: 1000 * 60 * 19 + 57000,
+        queue_index: Number(args.index || 0),
+        queue_count: playlist ? 83 : ((args.items && args.items.length) || 1),
+        speed: state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
         can_seek: true,
         audio_session_id: 1
       };
@@ -425,7 +452,7 @@
     }
 
     const actions = el("div", "card-actions");
-    if (card.audio_path) {
+    if (hasAudio(card)) {
       const audio = el("button", isActiveCard(card) && state.player.is_playing
         ? "action action-audio is-playing"
         : "action action-audio");
@@ -464,12 +491,33 @@
     try {
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
-      const same = current && samePath(current.path, card.audio_path);
+      const same = isSameAudioCard(current, card);
+      const sameCompleted = same && isCompletePlayback(current);
       if (same && current.is_playing) {
         state.player = await pauseWithRewind();
+      } else if (same && !sameCompleted) {
+        state.activePath = audioControlKey(card);
+        state.player = await Pucky.request({
+          command: "player.play",
+          args: { start_at_ms: savedPositionFor(current.path) }
+        });
+        rememberPlayerProgress(state.player);
+      } else if (card.audio_playlist_path) {
+        state.activePath = audioControlKey(card);
+        markRead(card, "audio");
+        const queued = await Pucky.request({
+          command: "player.queue.set",
+          args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
+        });
+        const start = savedPositionFor(queued.path);
+        state.player = await Pucky.request({
+          command: "player.play",
+          args: { start_at_ms: start }
+        });
+        rememberPlayerProgress(state.player);
       } else {
         const start = savedPositionFor(card.audio_path);
-        state.activePath = card.audio_path;
+        state.activePath = audioControlKey(card);
         markRead(card, "audio");
         forgetCompleted(card.audio_path);
         state.player = await Pucky.request({
@@ -738,7 +786,7 @@
   }
 
   function waveform(card, className, count) {
-    const key = card.audio_path || card.session_id || card.title;
+    const key = audioControlKey(card);
     if (!state.waveHistory.has(key)) {
       state.waveHistory.set(key, Array.from({ length: count }, () => 0));
     }
@@ -752,7 +800,7 @@
     const row = el("div", className);
     row.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (card.audio_path) {
+      if (hasAudio(card)) {
         showAudioSheet(card);
       }
     });
@@ -772,7 +820,7 @@
       const button = el("button", speed === current ? "is-active" : "", `${speed}x`);
       button.addEventListener("click", async (event) => {
         event.stopPropagation();
-        state.speedByPath.set(normalizePath(card.audio_path), speed);
+        state.speedByPath.set(normalizePath(audioControlKey(card)), speed);
         state.player = await Pucky.request({ command: "player.speed", args: { speed } });
         closeSpeedPicker();
         render();
@@ -1159,8 +1207,24 @@
   }
 
   function isActiveCard(card) {
-    return Boolean(card.audio_path
-      && (samePath(state.activePath, card.audio_path) || samePath(state.player.path, card.audio_path)));
+    return isSameAudioCard(state.player, card) || samePath(state.activePath, audioControlKey(card));
+  }
+
+  function hasAudio(card) {
+    return Boolean(card.audio_path || card.audio_playlist_path);
+  }
+
+  function audioControlKey(card) {
+    return card.audio_playlist_path || card.audio_path || card.session_id || card.title || "";
+  }
+
+  function isSameAudioCard(player, card) {
+    if (!player || !hasAudio(card)) {
+      return false;
+    }
+    return samePath(player.path, card.audio_path)
+      || samePath(player.source, card.audio_playlist_path)
+      || samePath(state.activePath, audioControlKey(card));
   }
 
   function samePath(left, right) {

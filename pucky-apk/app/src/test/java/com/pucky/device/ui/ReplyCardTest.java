@@ -54,6 +54,7 @@ public final class ReplyCardTest {
                 .put("icon", "clock")
                 .put("accent", "#ffb000")
                 .put("audio_path", "/tmp/audio.m4a")
+                .put("audio_playlist_path", "/tmp/book.m3u")
                 .put("html_path", "/tmp/reply.html")
                 .put("images", images)
                 .put("trace", trace);
@@ -70,6 +71,7 @@ public final class ReplyCardTest {
         assertEquals("clock", card.icon());
         assertEquals("#ffb000", card.accent());
         assertEquals("/tmp/audio.m4a", card.audioPath());
+        assertEquals("/tmp/book.m3u", card.audioPlaylistPath());
         assertEquals("/tmp/reply.html", card.htmlPath());
         assertEquals(images.toString(), card.images());
         assertEquals(trace.toString(), card.trace());
@@ -78,6 +80,7 @@ public final class ReplyCardTest {
         assertEquals("pucky_abc123", card.toJson().getString("session_id"));
         assertEquals("2026-05-20T11:05:00-07:00", card.toJson().getString("created_at"));
         assertEquals("User: what is next?\nPucky: Brief me", card.toJson().getString("transcript"));
+        assertEquals("/tmp/book.m3u", card.toJson().getString("audio_playlist_path"));
         assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
         assertEquals(1, card.toJson().getJSONArray("images").length());
         assertEquals("pucky.turn_trace.v1", card.toJson().getJSONObject("trace").getString("schema"));
