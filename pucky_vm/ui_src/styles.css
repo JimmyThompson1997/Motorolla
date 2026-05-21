@@ -559,7 +559,7 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0;
+  padding: 0 0 var(--nav-safe);
 }
 
 .rich-swipe-edge {

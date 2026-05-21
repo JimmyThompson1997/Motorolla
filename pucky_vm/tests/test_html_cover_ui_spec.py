@@ -133,7 +133,7 @@ def test_rich_pages_fill_detail_space_and_mock_paths_have_fallback() -> None:
     assert "flex: 1 1 auto" in styles
     assert ".rich-detail" in styles
     assert "display: flex" in styles
-    assert "padding: 0;" in styles
+    assert "padding: 0 0 var(--nav-safe)" in styles
 
 
 def test_sheet_drag_waits_for_release_before_dismissal() -> None:
