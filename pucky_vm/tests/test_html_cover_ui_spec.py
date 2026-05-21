@@ -97,12 +97,14 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup)' in app
     assert "installHorizontalDismiss(shell, panel, onDismiss)" in app
     assert "allow-same-origin" in app
-    assert "installIframeHorizontalDismiss(iframe, panel, dismissWithCleanup)" in app
+    assert '"rich-swipe-edge"' in app
+    assert "installHorizontalDismiss(edge, panel, dismissWithCleanup)" in app
+    assert "installIframeHorizontalDismiss" not in app
     assert "installFrameMessageDismiss" not in app
     assert "withDetailSwipeBridge" not in app
     assert "pucky-detail-swipe" not in app
     assert "requestAnimationFrame(applyFrame)" in app
-    assert "is-horizontal-dragging" in app
+    assert ".rich-swipe-edge" in styles
     assert 'iconSvg("chevron_left"' in app
     assert "function installHorizontalDismiss(" in app
     assert "translateX(100%)" in styles

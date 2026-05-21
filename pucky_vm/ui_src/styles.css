@@ -464,15 +464,20 @@ button {
   border: 0;
   border-radius: 0;
   background: white;
-  touch-action: pan-y;
-}
-
-.rich-frame.is-horizontal-dragging {
-  pointer-events: none;
+  touch-action: auto;
 }
 
 .rich-detail {
+  position: relative;
   padding: 0 0 var(--nav-safe);
+}
+
+.rich-swipe-edge {
+  position: absolute;
+  inset: 0 auto var(--nav-safe) 0;
+  z-index: 2;
+  width: 96px;
+  touch-action: pan-y;
 }
 
 .sheet-inner {

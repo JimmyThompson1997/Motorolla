@@ -456,9 +456,9 @@
     renderFeed();
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content rich-detail");
-    let cleanupFrameDismiss = () => {};
+    let cleanupEdgeDismiss = () => {};
     const dismissWithCleanup = () => {
-      cleanupFrameDismiss();
+      cleanupEdgeDismiss();
       dismissDetail();
     };
     try {
@@ -469,19 +469,15 @@
       const iframe = el("iframe", "rich-frame");
       iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
       iframe.srcdoc = atob(result.content_base64 || "");
-      iframe.addEventListener("load", () => {
-        cleanupFrameDismiss();
-        try {
-          cleanupFrameDismiss = installIframeHorizontalDismiss(iframe, panel, dismissWithCleanup);
-        } catch (error) {
-          console.warn("Pucky iframe swipe bridge unavailable", error);
-        }
-      });
-      content.append(iframe);
+      content.append(iframe, el("div", "rich-swipe-edge"));
     } catch (error) {
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
+    const edge = content.querySelector(".rich-swipe-edge");
+    if (edge) {
+      cleanupEdgeDismiss = installHorizontalDismiss(edge, panel, dismissWithCleanup);
+    }
   }
 
   function openSideDetail(panel, title, content, onDismiss) {
@@ -692,17 +688,6 @@
         }
         onDismiss();
       }
-    });
-  }
-
-  function installIframeHorizontalDismiss(iframe, panel, onDismiss = dismissDetail) {
-    const doc = iframe.contentDocument;
-    if (!doc) {
-      return () => {};
-    }
-    return installHorizontalDismiss(doc, panel, onDismiss, {
-      confirm: () => { iframe.classList.add("is-horizontal-dragging"); },
-      reset: () => { iframe.classList.remove("is-horizontal-dragging"); }
     });
   }
 
