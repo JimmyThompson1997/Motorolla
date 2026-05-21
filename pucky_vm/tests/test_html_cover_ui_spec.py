@@ -79,7 +79,7 @@ def test_card_actions_have_local_read_state() -> None:
 def test_card_actions_are_aligned_to_content_row() -> None:
     styles = read("styles.css")
 
-    assert "grid-template-rows: auto minmax(42px, auto)" in styles
+    assert "grid-template-rows: auto minmax(48px, auto)" in styles
     assert ".card-timestamp" in styles
     assert "grid-row: 1;" in styles
     assert ".card-actions" in styles
@@ -115,6 +115,25 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert ".detail-back" in styles
     assert ".detail-title" in styles
     assert ".rich-detail" in styles
+
+
+def test_rich_pages_fill_detail_space_and_mock_paths_have_fallback() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "function mockArtifactResult(path)" in app
+    assert "function isMockHtmlArtifact(path)" in app
+    assert "function richFrame(result)" in app
+    assert 'if (isMockHtmlArtifact(card.html_path))' in app
+    assert "mockArtifactResult(card.html_path)" in app
+    assert "height: calc(100vh - 58px - var(--nav-safe))" not in styles
+    assert "min-height: calc(100vh - 58px - var(--nav-safe))" not in styles
+    assert ".rich-frame" in styles
+    assert "height: 100%" in styles
+    assert "flex: 1 1 auto" in styles
+    assert ".rich-detail" in styles
+    assert "display: flex" in styles
+    assert "padding: 0;" in styles
 
 
 def test_sheet_drag_waits_for_release_before_dismissal() -> None:
@@ -218,3 +237,51 @@ def test_audio_sheet_uses_compact_icon_controls() -> None:
     assert ".control-play .material-icon" in styles
     assert "time-elapsed" in app
     assert "time-remaining" in app
+
+
+def test_generated_images_open_as_html_reel_not_native_previews() -> None:
+    app = read("app.js")
+    html = read("index.html")
+    styles = read("styles.css")
+
+    assert 'id="traceSheet"' in html
+    assert "function cardImages(card)" in app
+    assert "function showImageReel(card)" in app
+    assert "function resolveImageSrc(image)" in app
+    assert '"image-affordance"' in app
+    assert 'iconSvg("image"' in app
+    assert "artifact.read_base64" in app
+    assert ".image-affordance" in styles
+    assert ".image-reel" in styles
+    assert ".image-reel-img" in styles
+    assert "object-fit: cover" in styles
+
+
+def test_turn_trace_is_single_gear_sheet_with_thinking_rows() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    fixtures = read("fixtures/reply_cards.json")
+
+    assert "function showTurnTrace(card, message = null, index = 0)" in app
+    assert "function dismissTraceSheet()" in app
+    assert "function thinkingLogEntries(card, message = null, index = 0)" in app
+    assert "function cleanTraceLabel(label)" in app
+    assert 'replace(/_/g, " ")' in app
+    assert "function traceStatusClass(status)" in app
+    assert '"bubble-trace-action"' in app
+    assert '"trace-action"' not in app
+    assert 'iconSvg("settings"' in app
+    assert "mockTraceFor(card, message, index)" in app
+    assert "raw JSON" not in app
+    assert "token usage" not in app.lower()
+    assert ".trace-sheet" in styles
+    assert ".trace-card" in styles
+    assert ".trace-thought" in styles
+    assert ".trace-tool-row" in styles
+    assert ".trace-dot.success" in styles
+    assert ".trace-dot.failed" in styles
+    assert ".bubble-trace-action" in styles
+    assert ".card.has-trace" not in styles
+    assert fixtures.count('"trace": {') == 5
+    assert fixtures.count('"kind": "thinking"') == 5
+    assert fixtures.count('"kind": "reasoning"') == 5

@@ -41,8 +41,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 37
-        versionName "0.2.36-right-slide-ui"
+        versionCode 38
+        versionName "0.2.37-paperclip-rich-page"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

@@ -18,7 +18,29 @@
         { "role": "assistant", "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", "created_at": "2026-05-20T06:33:00-07:00" }
       ],
       "audio_path": "/mock/morning.wav",
-      "html_path": "/mock/morning.html"
+      "html_path": "/mock/morning.html",
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_morning",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the morning request.",
+            "items": [
+              { "label": "calendar_lookup", "status": "completed" },
+              { "label": "weather_scan", "status": "completed" }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing the launch brief.",
+            "items": [
+              { "label": "inbox_triage", "status": "completed" },
+              { "label": "unused_tool_probe", "status": "failed" }
+            ]
+          }
+        ]
+      }
     },
     {
       "session_id": "fixture_leave",
@@ -33,7 +55,29 @@
         { "role": "assistant", "text": "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.", "time": "8:08 AM" }
       ],
       "audio_path": "/mock/leaving.wav",
-      "html_path": "/mock/leaving.html"
+      "html_path": "/mock/leaving.html",
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_leave",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the commute request.",
+            "items": [
+              { "label": "route_scan", "status": "completed" },
+              { "label": "garage_state", "status": "completed" }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Keeping the reply glanceable.",
+            "items": [
+              { "label": "drive_mode", "status": "completed" },
+              { "label": "long_read_fetch", "status": "failed" }
+            ]
+          }
+        ]
+      }
     },
     {
       "session_id": "fixture_meeting",
@@ -50,7 +94,29 @@
         { "role": "assistant", "text": "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'", "time": "9:46 AM" }
       ],
       "audio_path": "/mock/meeting.wav",
-      "html_path": "/mock/meeting.html"
+      "html_path": "/mock/meeting.html",
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_meeting",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the meeting thread.",
+            "items": [
+              { "label": "agenda_search", "status": "completed" },
+              { "label": "thread_summary", "status": "completed" }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing the decision frame.",
+            "items": [
+              { "label": "objection_scan", "status": "completed" },
+              { "label": "calendar_conflict_probe", "status": "failed" }
+            ]
+          }
+        ]
+      }
     },
     {
       "session_id": "fixture_night",
@@ -67,7 +133,29 @@
         { "role": "assistant", "text": "Done. Quiet mode is staged, and urgent callers remain allowed.", "time": "11:01 PM" }
       ],
       "audio_path": "/mock/night.wav",
-      "html_path": "/mock/night.html"
+      "html_path": "/mock/night.html",
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_night",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking the day wrap.",
+            "items": [
+              { "label": "task_sweep", "status": "completed" },
+              { "label": "notification_state", "status": "completed" }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Choosing tomorrow's first move.",
+            "items": [
+              { "label": "priority_rank", "status": "completed" },
+              { "label": "late_night_workflow", "status": "failed" }
+            ]
+          }
+        ]
+      }
     },
     {
       "session_id": "fixture_book",
@@ -83,7 +171,29 @@
         { "role": "assistant", "text": "Ready. Playback will resume with the saved position and speed.", "time": "4:13 PM" }
       ],
       "audio_path": "/mock/pocket-computers.wav",
-      "html_path": "/mock/pocket-computers.html"
+      "html_path": "/mock/pocket-computers.html",
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_book",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking audiobook state.",
+            "items": [
+              { "label": "saved_position", "status": "completed" },
+              { "label": "speed_setting", "status": "completed" }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Preparing gentle playback.",
+            "items": [
+              { "label": "player_resume", "status": "completed" },
+              { "label": "chapter_fetch_retry", "status": "failed" }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

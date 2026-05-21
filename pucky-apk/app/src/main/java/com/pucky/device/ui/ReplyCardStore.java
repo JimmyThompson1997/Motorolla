@@ -11,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.List;
 public final class ReplyCardStore {
     private static final String PREFS = "pucky_reply_cards";
     private static final String KEY_CARDS = "cards_json";
+    private static final int MAX_TRACE_BYTES = 64 * 1024;
 
     private final Context context;
 
@@ -77,6 +79,52 @@ public final class ReplyCardStore {
     private void validateCard(ReplyCard card) throws CommandException {
         validateAppOwnedPath(card.audioPath(), "audio_path");
         validateAppOwnedPath(card.htmlPath(), "html_path");
+        validateImagePaths(card.images());
+        validateTrace(card.trace());
+    }
+
+    private void validateImagePaths(String imagesJson) throws CommandException {
+        if (imagesJson == null || imagesJson.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONArray images = new JSONArray(imagesJson);
+            for (int index = 0; index < images.length(); index++) {
+                JSONObject image = images.optJSONObject(index);
+                if (image == null) {
+                    throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                            "images[" + index + "] must be an object");
+                }
+                validateAppOwnedPath(firstPath(image), "images[" + index + "].path");
+            }
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "Unable to validate images: " + exc.getMessage());
+        }
+    }
+
+    private void validateTrace(String traceJson) throws CommandException {
+        if (traceJson == null || traceJson.trim().isEmpty()) {
+            return;
+        }
+        if (traceJson.getBytes(StandardCharsets.UTF_8).length > MAX_TRACE_BYTES) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "trace exceeds " + MAX_TRACE_BYTES + " bytes");
+        }
+    }
+
+    private String firstPath(JSONObject image) {
+        String path = image.optString("path", "").trim();
+        if (!path.isEmpty()) {
+            return path;
+        }
+        path = image.optString("local_path", "").trim();
+        if (!path.isEmpty()) {
+            return path;
+        }
+        return image.optString("image_path", "").trim();
     }
 
     private void validateAppOwnedPath(String path, String field) throws CommandException {

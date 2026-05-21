@@ -74,6 +74,14 @@
     sensors: {
       filled: '<path d="M7.1 7.1 5.7 5.7C4.1 7.3 3 9.5 3 12s1.1 4.7 2.7 6.3l1.4-1.4C5.8 15.6 5 13.9 5 12s.8-3.6 2.1-4.9Zm11.2-1.4-1.4 1.4C18.2 8.4 19 10.1 19 12s-.8 3.6-2.1 4.9l1.4 1.4C19.9 16.7 21 14.5 21 12s-1.1-4.7-2.7-6.3ZM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/>',
       outline: '<path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/><circle cx="12" cy="12" r="3.5"/>'
+    },
+    image: {
+      filled: '<path d="M5 4h14c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm2.2 12h9.7l-3.1-4.1-2.4 3.1-1.8-2.2L7.2 16ZM8 9.5A1.5 1.5 0 1 0 8 6.5a1.5 1.5 0 0 0 0 3Z"/>',
+      outline: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8" cy="9" r="1.6"/><path d="m6.5 16 3.1-3.4 2.2 2.5 2.5-3.2 3.5 4.1H6.5Z"/>'
+    },
+    settings: {
+      filled: '<path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.2 7.2 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.2 7.2 0 0 0 7 6L4.6 5l-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5L7 18a7.2 7.2 0 0 0 2.6 1.5L10 22h4l.4-2.5A7.2 7.2 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/>',
+      outline: '<path d="m10.2 3-.4 2.2a7 7 0 0 0-2.1.9L5.6 5.2 3.7 8.5l1.8 1.3a7.7 7.7 0 0 0 0 2.4l-1.8 1.3 1.9 3.3 2.1-.9a7 7 0 0 0 2.1.9l.4 2.2h3.6l.4-2.2a7 7 0 0 0 2.1-.9l2.1.9 1.9-3.3-1.8-1.3a7.7 7.7 0 0 0 0-2.4l1.8-1.3-1.9-3.3-2.1.9a7 7 0 0 0-2.1-.9L13.8 3h-3.6Z"/><circle cx="12" cy="12" r="3.1"/>'
     }
   };
 
@@ -180,6 +188,7 @@
     completedPaths: new Set(),
     speedByPath: new Map(),
     sheetCard: null,
+    traceCard: null,
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -279,12 +288,40 @@
       return state.player;
     }
     if (command === "artifact.read_base64") {
-      const title = String(args.path || "Pucky page").replace(/^.*\//, "").replace(/\.html$/i, "").replace(/-/g, " ");
-      return {
-        content_base64: btoa(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:Georgia,serif;background:#fff8e7;color:#17202a;padding:22px;line-height:1.45}h1{font:800 30px/1.05 system-ui,sans-serif;margin:0 0 14px}section{margin:18px 0;padding:14px;border:2px solid #17202a;box-shadow:5px 5px 0 #f2b705}p{font-size:16px}.tag{display:inline-block;background:#17202a;color:white;padding:4px 8px;margin-bottom:10px}</style><h1>${title}</h1><section><span class="tag">rich reply</span><p>This is a longer HTML artifact preview so the cover sheet has to scroll. It is intentionally text-heavy for layout testing.</p><p>The final agent version can ship charts, images, controls, route pages, or generated documents here. The APK only needs to cache and display the bundle safely.</p></section><section><p>Second section: a compact brief, a decision, a risk list, and a next action. This tests whether the iframe gets enough vertical room without swallowing the bottom safe area.</p><p>Keep this scrolling naturally. No giant dead band at the top, no clipped bottom controls, and no mystery margins.</p></section>`)
-      };
+      return mockArtifactResult(args.path);
     }
     throw new Error(`Unsupported browser mock command: ${command}`);
+  }
+
+  function mockArtifactResult(path) {
+    const value = String(path || "");
+    const title = mockArtifactTitle(value);
+    if (/\.(avif|gif|jpe?g|png|svg|webp)$/i.test(value)) {
+      const svg = `<!doctype svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#0b1828"/><stop offset=".58" stop-color="#1f6feb"/><stop offset="1" stop-color="#ffb000"/></linearGradient></defs><rect width="900" height="620" fill="url(#g)"/><circle cx="705" cy="132" r="82" fill="#f5f9ff" opacity=".18"/><path d="M85 472 292 250l135 152 116-148 245 218H85Z" fill="#f5f9ff" opacity=".88"/><text x="70" y="96" fill="#f5f9ff" font-family="Arial,sans-serif" font-size="44" font-weight="800">${title}</text></svg>`;
+      return {
+        mime_type: "image/svg+xml",
+        content_base64: btoa(svg)
+      };
+    }
+    return {
+      mime_type: "text/html",
+      content_base64: btoa(mockHtmlArtifact(title))
+    };
+  }
+
+  function mockArtifactTitle(path) {
+    return String(path || "Pucky page")
+      .replace(/^.*\//, "")
+      .replace(/\.[a-z0-9]+$/i, "")
+      .replace(/-/g, " ");
+  }
+
+  function mockHtmlArtifact(title) {
+    return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:Georgia,serif;background:#fff8e7;color:#17202a;padding:22px;line-height:1.45}h1{font:800 30px/1.05 system-ui,sans-serif;margin:0 0 14px}section{margin:18px 0;padding:14px;border:2px solid #17202a;box-shadow:5px 5px 0 #f2b705}p{font-size:16px}.tag{display:inline-block;background:#17202a;color:white;padding:4px 8px;margin-bottom:10px}</style><h1>${title}</h1><section><span class="tag">rich reply</span><p>This is a longer HTML artifact preview so the cover sheet has to scroll. It is intentionally text-heavy for layout testing.</p><p>The final agent version can ship charts, images, controls, route pages, or generated documents here. The APK only needs to cache and display the bundle safely.</p></section><section><p>Second section: a compact brief, a decision, a risk list, and a next action. This tests whether the iframe gets enough vertical room without swallowing the bottom safe area.</p><p>Keep this scrolling naturally. No giant dead band at the top, no clipped bottom controls, and no mystery margins.</p></section>`;
+  }
+
+  function isMockHtmlArtifact(path) {
+    return /^\/mock\/[^/]+\.html$/i.test(String(path || ""));
   }
 
   async function loadCards() {
@@ -341,9 +378,23 @@
   }
 
   function cardView(card) {
+    const images = cardImages(card);
+    const wrapper = el("div", images.length ? "card-wrap has-images" : "card-wrap");
     const cardEl = el("article", isActionRead(card, "audio") ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
+
+    if (images.length) {
+      const imagesButton = el("button", "image-affordance");
+      imagesButton.type = "button";
+      imagesButton.innerHTML = `${iconSvg("image", { filled: true })}<span class="image-count">${images.length}</span>`;
+      imagesButton.setAttribute("aria-label", `Open ${images.length} image${images.length === 1 ? "" : "s"} for ${card.title}`);
+      imagesButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showImageReel(card);
+      });
+      wrapper.append(imagesButton);
+    }
 
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
@@ -405,7 +456,8 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    return cardEl;
+    wrapper.append(cardEl);
+    return wrapper;
   }
 
   async function toggleAudio(card) {
@@ -438,15 +490,26 @@
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
     const content = el("div", "detail-content chat-detail");
-    for (const message of messages) {
+    messages.forEach((message, index) => {
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
       bubble.append(document.createTextNode(message.text || ""));
+      if (message.role !== "user") {
+        const trace = el("button", "bubble-trace-action");
+        trace.type = "button";
+        trace.innerHTML = iconSvg("settings", { filled: false });
+        trace.setAttribute("aria-label", "Open thinking log");
+        trace.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showTurnTrace(card, message, index);
+        });
+        bubble.append(trace);
+      }
       const stamp = messageTimestamp(message);
       if (stamp) {
         bubble.append(el("span", "bubble-meta", stamp));
       }
       content.append(bubble);
-    }
+    });
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     scrollTranscriptToLatest(content);
   }
@@ -466,18 +529,124 @@
         command: "artifact.read_base64",
         args: { path: card.html_path, max_bytes: 1024 * 1024 }
       });
-      const iframe = el("iframe", "rich-frame");
-      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-      iframe.srcdoc = atob(result.content_base64 || "");
-      content.append(iframe, el("div", "rich-swipe-edge"));
+      content.append(richFrame(result), el("div", "rich-swipe-edge"));
     } catch (error) {
-      content.append(el("p", "preview", `Page unavailable: ${error.message}`));
+      if (isMockHtmlArtifact(card.html_path)) {
+        content.append(richFrame(mockArtifactResult(card.html_path)), el("div", "rich-swipe-edge"));
+      } else {
+        content.append(el("p", "preview", `Page unavailable: ${error.message}`));
+      }
     }
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
     const edge = content.querySelector(".rich-swipe-edge");
     if (edge) {
       cleanupEdgeDismiss = installHorizontalDismiss(edge, panel, dismissWithCleanup);
     }
+  }
+
+  function richFrame(result) {
+    const iframe = el("iframe", "rich-frame");
+    iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
+    iframe.srcdoc = atob(result.content_base64 || "");
+    return iframe;
+  }
+
+  async function showImageReel(card) {
+    const images = cardImages(card);
+    const panel = document.getElementById("detail");
+    const content = el("div", "detail-content image-reel");
+    if (!images.length) {
+      content.append(el("p", "preview", "No images are attached to this reply."));
+    }
+    for (let index = 0; index < images.length; index++) {
+      const image = images[index];
+      const frame = el("figure", "image-frame");
+      const imageEl = document.createElement("img");
+      imageEl.className = "image-reel-img";
+      imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
+      imageEl.decoding = "async";
+      try {
+        imageEl.src = await resolveImageSrc(image);
+      } catch (error) {
+        frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
+      }
+      if (imageEl.src) {
+        frame.append(imageEl);
+      }
+      if (image.title || image.alt) {
+        frame.append(el("figcaption", "image-caption", image.title || image.alt));
+      }
+      content.append(frame);
+    }
+    openSideDetail(panel, card.title || "Images", content, dismissDetail);
+  }
+
+  async function resolveImageSrc(image) {
+    if (image.src || image.data_url) {
+      return String(image.src || image.data_url);
+    }
+    const path = image.path || image.local_path || image.image_path;
+    if (!path) {
+      throw new Error("image path is missing");
+    }
+    const result = await Pucky.request({
+      command: "artifact.read_base64",
+      args: { path, max_bytes: 5 * 1024 * 1024 }
+    });
+    const mime = result.mime_type || image.mime_type || guessImageMime(path);
+    return `data:${mime};base64,${result.content_base64 || ""}`;
+  }
+
+  function guessImageMime(path) {
+    const value = String(path || "").toLowerCase();
+    if (value.endsWith(".jpg") || value.endsWith(".jpeg")) return "image/jpeg";
+    if (value.endsWith(".webp")) return "image/webp";
+    if (value.endsWith(".gif")) return "image/gif";
+    if (value.endsWith(".svg")) return "image/svg+xml";
+    return "image/png";
+  }
+
+  function showTurnTrace(card, message = null, index = 0) {
+    state.traceCard = card;
+    const sheet = document.getElementById("traceSheet");
+    const wrap = el("div", "trace-inner");
+    const dragZone = el("div", "sheet-drag-zone");
+    dragZone.append(el("div", "sheet-grip"));
+    wrap.append(dragZone);
+
+    const traceCard = el("article", "trace-card");
+    traceCard.append(el("h1", "trace-title", "Thinking Log"));
+    const entries = thinkingLogEntries(card, message, index);
+    if (!entries.length) {
+      traceCard.append(el("p", "trace-empty", "No activity details for this reply."));
+    }
+    for (const entry of entries) {
+      const block = el("section", "trace-entry");
+      block.append(el("p", "trace-thought", entry.title));
+      const rows = el("div", "trace-tools");
+      for (const item of entry.items) {
+        const row = el("div", "trace-tool-row");
+        row.append(el("i", `trace-dot ${traceStatusClass(item.status)}`));
+        row.append(el("span", "trace-tool-label", cleanTraceLabel(item.label)));
+        rows.append(row);
+      }
+      block.append(rows);
+      traceCard.append(block);
+    }
+    wrap.append(traceCard);
+    installVerticalDismiss(wrap, sheet, dismissTraceSheet);
+    sheet.replaceChildren(wrap);
+    sheet.setAttribute("aria-hidden", "false");
+    sheet.classList.add("is-open");
+  }
+
+  function dismissTraceSheet() {
+    const sheet = document.getElementById("traceSheet");
+    sheet.style.transform = "";
+    sheet.classList.remove("is-open", "is-dragging");
+    sheet.setAttribute("aria-hidden", "true");
+    sheet.replaceChildren();
+    state.traceCard = null;
   }
 
   function openSideDetail(panel, title, content, onDismiss) {
@@ -887,6 +1056,106 @@
 
   function hasTranscript(card) {
     return Boolean(card.transcript || (Array.isArray(card.transcript_messages) && card.transcript_messages.length));
+  }
+
+  function cardImages(card) {
+    return Array.isArray(card?.images)
+      ? card.images.filter(image => image && (image.path || image.local_path || image.image_path || image.src || image.data_url))
+      : [];
+  }
+
+  function hasTrace(card) {
+    return thinkingLogEntries(card).length > 0;
+  }
+
+  function thinkingLogEntries(card, message = null, index = 0) {
+    const trace = traceForTurn(card, message, index);
+    const sections = Array.isArray(trace.sections) ? trace.sections : [];
+    const entries = [];
+    for (const section of sections) {
+      if (!section || !["thinking", "reasoning"].includes(String(section.kind || "").toLowerCase())) {
+        continue;
+      }
+      const title = String(section.title || section.text || section.summary || "").trim();
+      const items = traceItems(section.items);
+      if (title || items.length) {
+        entries.push({ title: title || "Thinking", items });
+      }
+    }
+    if (!entries.length && Array.isArray(trace.thinking)) {
+      for (const item of trace.thinking) {
+        const title = String(item.title || item.text || item.summary || item).trim();
+        if (title) {
+          entries.push({ title, items: traceItems(item.items) });
+        }
+      }
+    }
+    return entries;
+  }
+
+  function traceForTurn(card, message = null, index = 0) {
+    if (message && typeof message.trace === "object") {
+      return message.trace;
+    }
+    if (card && typeof card.trace === "object") {
+      return card.trace;
+    }
+    return mockTraceFor(card, message, index);
+  }
+
+  function mockTraceFor(card, message = null, index = 0) {
+    const title = String(card?.title || "reply").toLowerCase();
+    const text = String(message?.text || card?.summary || "the reply").replace(/\s+/g, " ").trim();
+    const short = text ? text.slice(0, 42) : "the reply";
+    return {
+      schema: "pucky.turn_trace.v1",
+      turn_id: `${card?.session_id || "fixture"}_${index}`,
+      sections: [
+        {
+          kind: "thinking",
+          title: `Checking ${title}.`,
+          items: [
+            { label: "ui_reply_cards_get", status: "completed" },
+            { label: "artifact_read_base64", status: "completed" }
+          ]
+        },
+        {
+          kind: "reasoning",
+          title: `Preparing: ${short}${text.length > short.length ? "..." : ""}`,
+          items: [
+            { label: "message_outline", status: "completed" },
+            { label: "unused_tool_probe", status: "failed" }
+          ]
+        }
+      ]
+    };
+  }
+
+  function traceItems(items) {
+    if (!Array.isArray(items)) {
+      return [];
+    }
+    return items
+      .filter(item => item && (item.label || item.name || item.tool || item.command))
+      .map(item => ({
+        label: item.label || item.name || item.tool || item.command,
+        status: item.status || item.state || item.result || ""
+      }));
+  }
+
+  function cleanTraceLabel(label) {
+    return String(label || "").replace(/_/g, " ").trim();
+  }
+
+  function traceStatusClass(status) {
+    const value = String(status || "").toLowerCase();
+    if (["completed", "complete", "success", "succeeded", "ok", "done", "true"].includes(value)) {
+      return "success";
+    }
+    if (["failed", "failure", "error", "errored", "cancelled", "canceled", "false"].includes(value)) {
+      return "failed";
+    }
+    return "neutral";
   }
 
   function isActiveCard(card) {

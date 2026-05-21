@@ -153,21 +153,68 @@ button {
   line-height: 1.35;
 }
 
+.card-wrap {
+  position: relative;
+  margin: 0 0 10px;
+}
+
+.card-wrap.has-images {
+  padding-top: 22px;
+}
+
+.card-wrap .card {
+  margin: 0;
+}
+
 .card {
   position: relative;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(42px, auto);
-  column-gap: 0;
-  row-gap: 2px;
+  grid-template-columns: 44px minmax(0, 1fr) 98px;
+  grid-template-rows: auto minmax(48px, auto);
+  column-gap: 6px;
+  row-gap: 5px;
   align-items: center;
   min-height: 84px;
   margin: 0 0 10px;
-  padding: 8px 10px 8px 12px;
+  padding: 8px 12px 8px 12px;
   border: 1px solid rgba(33, 52, 72, 0.92);
   border-radius: 18px;
   background: var(--card);
   overflow: hidden;
+}
+
+.image-affordance {
+  position: absolute;
+  top: 0;
+  right: 13px;
+  z-index: 2;
+  height: 30px;
+  min-width: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(8, 17, 28, 0.98);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent, #72c2ff) 48%, rgba(245, 249, 255, 0.18));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+}
+
+.image-affordance .material-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.image-count {
+  min-width: 14px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 850;
+  text-align: center;
 }
 
 .card.card-unread {
@@ -229,7 +276,7 @@ button {
   min-width: 0;
   width: 100%;
   display: block;
-  padding: 0 8px 0 12px;
+  padding: 0 6px 0 12px;
   text-align: left;
 }
 
@@ -245,7 +292,7 @@ button {
 }
 
 .preview {
-  margin: 3px 0 0;
+  margin: 7px 0 0;
   color: var(--text);
   font-size: 12px;
   line-height: 1.24;
@@ -262,8 +309,10 @@ button {
   align-self: center;
   justify-self: end;
   display: flex;
-  gap: 8px;
+  gap: 7px;
   align-items: center;
+  justify-content: flex-end;
+  width: 98px;
 }
 
 .action {
@@ -308,7 +357,8 @@ button {
 }
 
 .detail-panel,
-.audio-sheet {
+.audio-sheet,
+.trace-sheet {
   position: fixed;
   inset: 0;
   z-index: 10;
@@ -330,12 +380,20 @@ button {
   transform: translateY(100%);
 }
 
-.audio-sheet.is-open {
+.trace-sheet {
+  z-index: 13;
+  transform: translateY(100%);
+  background: rgba(2, 6, 10, 0.72);
+}
+
+.audio-sheet.is-open,
+.trace-sheet.is-open {
   transform: translateY(0);
 }
 
 .detail-panel.is-dragging,
-.audio-sheet.is-dragging {
+.audio-sheet.is-dragging,
+.trace-sheet.is-dragging {
   transition: none;
 }
 
@@ -435,6 +493,7 @@ button {
 }
 
 .bubble {
+  position: relative;
   max-width: 78%;
   margin: 10px 0;
   padding: 12px 14px;
@@ -445,9 +504,36 @@ button {
   font-size: 16px;
 }
 
+.bubble.assistant {
+  padding-right: 38px;
+  padding-bottom: 30px;
+}
+
 .bubble.user {
   margin-left: auto;
   background: #1f6feb;
+}
+
+.bubble-trace-action {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  display: grid;
+  place-items: center;
+  color: rgba(245, 249, 255, 0.78);
+}
+
+.bubble-trace-action .material-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .bubble-meta {
@@ -459,8 +545,9 @@ button {
 
 .rich-frame {
   width: 100%;
-  height: calc(100vh - 58px - var(--nav-safe));
-  min-height: calc(100vh - 58px - var(--nav-safe));
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   border: 0;
   border-radius: 0;
   background: white;
@@ -469,15 +556,49 @@ button {
 
 .rich-detail {
   position: relative;
-  padding: 0 0 var(--nav-safe);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 
 .rich-swipe-edge {
   position: absolute;
-  inset: 0 auto var(--nav-safe) 0;
+  inset: 0 auto 0 0;
   z-index: 2;
   width: 96px;
   touch-action: pan-y;
+}
+
+.image-reel {
+  padding: 14px 14px var(--nav-safe);
+  display: grid;
+  gap: 14px;
+}
+
+.image-frame {
+  margin: 0;
+  min-height: 310px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--soft);
+  border: 1px solid rgba(245, 249, 255, 0.12);
+}
+
+.image-reel-img {
+  width: 100%;
+  min-height: 310px;
+  max-height: 610px;
+  display: block;
+  object-fit: cover;
+  background: #07101a;
+}
+
+.image-caption {
+  padding: 10px 12px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .sheet-inner {
@@ -485,6 +606,15 @@ button {
   padding: var(--sheet-top) 20px var(--nav-safe);
   display: flex;
   flex-direction: column;
+  touch-action: pan-y;
+}
+
+.trace-inner {
+  height: 100%;
+  padding: var(--sheet-top) 16px var(--nav-safe);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   touch-action: pan-y;
 }
 
@@ -502,6 +632,88 @@ button {
   margin: 0 auto;
   border-radius: 999px;
   background: rgba(245, 249, 255, 0.28);
+}
+
+.trace-card {
+  max-height: calc(100vh - var(--nav-safe) - 30px);
+  overflow-y: auto;
+  padding: 18px 18px 20px;
+  border-radius: 22px;
+  background: rgba(8, 17, 28, 0.98);
+  border: 1px solid rgba(245, 249, 255, 0.12);
+  box-shadow: 0 -12px 34px rgba(0, 0, 0, 0.42);
+  scrollbar-width: none;
+}
+
+.trace-card::-webkit-scrollbar {
+  display: none;
+}
+
+.trace-title {
+  margin: 0 0 14px;
+  font-size: 24px;
+  line-height: 1.05;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.trace-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.trace-entry {
+  padding: 0 0 16px;
+}
+
+.trace-entry:last-child {
+  padding-bottom: 0;
+}
+
+.trace-thought {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.28;
+  font-weight: 720;
+}
+
+.trace-tools {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+}
+
+.trace-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.trace-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 999px;
+  background: rgba(245, 249, 255, 0.44);
+}
+
+.trace-dot.success {
+  background: #43d06c;
+}
+
+.trace-dot.failed {
+  background: #ff5a64;
+}
+
+.trace-dot.neutral {
+  background: rgba(245, 249, 255, 0.44);
 }
 
 .sheet-summary {

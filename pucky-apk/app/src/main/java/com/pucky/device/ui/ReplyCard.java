@@ -23,6 +23,8 @@ public final class ReplyCard {
     private final String accent;
     private final String audioPath;
     private final String htmlPath;
+    private final String images;
+    private final String trace;
 
     public ReplyCard(
             String title,
@@ -35,7 +37,9 @@ public final class ReplyCard {
             String icon,
             String accent,
             String audioPath,
-            String htmlPath) throws CommandException {
+            String htmlPath,
+            String images,
+            String trace) throws CommandException {
         this.sessionId = optional(sessionId);
         this.title = required(title, "title");
         this.tag = optional(tag);
@@ -47,6 +51,8 @@ public final class ReplyCard {
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
         this.htmlPath = optional(htmlPath);
+        this.images = jsonArrayOrBlank(images, "images");
+        this.trace = jsonObjectOrBlank(trace, "trace");
     }
 
     public static ReplyCard fromJson(JSONObject input) throws CommandException {
@@ -64,7 +70,9 @@ public final class ReplyCard {
                 input.optString("icon", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
-                input.optString("html_path", ""));
+                input.optString("html_path", ""),
+                jsonArrayString(input, "images"),
+                jsonObjectString(input, "trace"));
     }
 
     public static List<ReplyCard> listFromJson(JSONArray input) throws CommandException {
@@ -113,6 +121,8 @@ public final class ReplyCard {
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
         putOptional(out, "html_path", htmlPath);
+        putOptionalJsonArray(out, "images", images);
+        putOptionalJsonObject(out, "trace", trace);
         return out;
     }
 
@@ -160,6 +170,14 @@ public final class ReplyCard {
         return htmlPath;
     }
 
+    public String images() {
+        return images;
+    }
+
+    public String trace() {
+        return trace;
+    }
+
     public boolean hasAudio() {
         return !audioPath.isEmpty();
     }
@@ -185,14 +203,87 @@ public final class ReplyCard {
         return value == null ? "" : value.trim();
     }
 
-    private static String jsonArrayString(JSONObject input, String key) {
-        JSONArray array = input.optJSONArray(key);
-        return array == null ? "" : array.toString();
+    private static String jsonArrayString(JSONObject input, String key) throws CommandException {
+        Object value = input.opt(key);
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof JSONArray) {
+            return value.toString();
+        }
+        if (value instanceof String) {
+            return jsonArrayOrBlank((String) value, key);
+        }
+        throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                "reply card " + key + " must be an array");
+    }
+
+    private static String jsonObjectString(JSONObject input, String key) throws CommandException {
+        Object value = input.opt(key);
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof JSONObject) {
+            return value.toString();
+        }
+        if (value instanceof String) {
+            return jsonObjectOrBlank((String) value, key);
+        }
+        throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                "reply card " + key + " must be an object");
+    }
+
+    private static String jsonArrayOrBlank(String value, String field) throws CommandException {
+        String trimmed = optional(value);
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        try {
+            return new JSONArray(trimmed).toString();
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "reply card " + field + " must be valid JSON array");
+        }
+    }
+
+    private static String jsonObjectOrBlank(String value, String field) throws CommandException {
+        String trimmed = optional(value);
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        try {
+            return new JSONObject(trimmed).toString();
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "reply card " + field + " must be valid JSON object");
+        }
     }
 
     private static void putOptional(JSONObject out, String key, String value) {
         if (!value.isEmpty()) {
             Json.put(out, key, value);
+        }
+    }
+
+    private static void putOptionalJsonArray(JSONObject out, String key, String value) {
+        if (value.isEmpty()) {
+            return;
+        }
+        try {
+            Json.put(out, key, new JSONArray(value));
+        } catch (Exception ignored) {
+            putOptional(out, key, value);
+        }
+    }
+
+    private static void putOptionalJsonObject(JSONObject out, String key, String value) {
+        if (value.isEmpty()) {
+            return;
+        }
+        try {
+            Json.put(out, key, new JSONObject(value));
+        } catch (Exception ignored) {
+            putOptional(out, key, value);
         }
     }
 }
