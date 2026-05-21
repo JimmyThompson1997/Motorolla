@@ -184,15 +184,7 @@ button {
 }
 
 .action.is-unread {
-  color: var(--action-accent, #72c2ff);
-}
-
-.action-transcript {
-  --action-accent: #ff5fa2;
-}
-
-.action-page {
-  --action-accent: #19e6c7;
+  color: var(--text);
 }
 
 .identity.is-read,

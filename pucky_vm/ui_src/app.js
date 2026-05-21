@@ -321,7 +321,7 @@
 
     const actions = el("div", "card-actions");
     if (hasTranscript(card)) {
-      const transcript = el("button", `action action-transcript ${actionStateClass(card, "transcript")}`);
+      const transcript = el("button", `action ${actionStateClass(card, "transcript")}`);
       transcript.type = "button";
       transcript.innerHTML = iconSvg("chat", { filled: true });
       transcript.setAttribute("aria-label", `Open transcript for ${card.title}`);
@@ -332,7 +332,7 @@
       actions.append(transcript);
     }
     if (card.html_path) {
-      const page = el("button", `action action-page ${actionStateClass(card, "page")}`);
+      const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
       page.innerHTML = iconSvg("attachment", { filled: true });
       page.setAttribute("aria-label", `Open page for ${card.title}`);

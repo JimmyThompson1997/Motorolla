@@ -54,14 +54,13 @@ def test_card_actions_have_local_read_state() -> None:
     assert 'actionStateClass(card, "audio")' in app
     assert 'actionStateClass(card, "transcript")' in app
     assert 'actionStateClass(card, "page")' in app
-    assert "action-transcript" in app
-    assert "action-page" in app
+    assert "action-transcript" not in app
+    assert "action-page" not in app
     assert ".identity.is-unread" in styles
     assert "color: var(--accent" in styles
     assert ".action.is-unread" in styles
-    assert "color: var(--action-accent" in styles
-    assert "--action-accent: #ff5fa2" in styles
-    assert "--action-accent: #19e6c7" in styles
+    assert ".action.is-read" in styles
+    assert "--action-accent" not in styles
 
 
 def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
