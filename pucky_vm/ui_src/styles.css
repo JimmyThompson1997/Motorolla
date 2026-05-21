@@ -179,9 +179,20 @@ button {
   stroke: none;
 }
 
-.identity.is-unread,
-.action.is-unread {
+.identity.is-unread {
   color: var(--accent, #72c2ff);
+}
+
+.action.is-unread {
+  color: var(--action-accent, #72c2ff);
+}
+
+.action-transcript {
+  --action-accent: #ffd166;
+}
+
+.action-page {
+  --action-accent: #6ecbff;
 }
 
 .identity.is-read,

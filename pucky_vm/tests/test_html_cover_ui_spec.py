@@ -42,6 +42,7 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
 
 def test_card_actions_have_local_read_state() -> None:
     app = read("app.js")
+    styles = read("styles.css")
 
     assert "READ_STATE_KEY" in app
     assert "readActions" in app
@@ -53,6 +54,14 @@ def test_card_actions_have_local_read_state() -> None:
     assert 'actionStateClass(card, "audio")' in app
     assert 'actionStateClass(card, "transcript")' in app
     assert 'actionStateClass(card, "page")' in app
+    assert "action-transcript" in app
+    assert "action-page" in app
+    assert ".identity.is-unread" in styles
+    assert "color: var(--accent" in styles
+    assert ".action.is-unread" in styles
+    assert "color: var(--action-accent" in styles
+    assert "--action-accent: #ffd166" in styles
+    assert "--action-accent: #6ecbff" in styles
 
 
 def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
