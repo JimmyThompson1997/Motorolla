@@ -651,7 +651,8 @@
             await renderImage();
           });
           controls.append(previous, el("span", "image-reel-count", `${index + 1} / ${images.length}`), next);
-          viewer.replaceChildren(frame, controls);
+          frame.append(controls);
+          viewer.replaceChildren(frame);
         } else {
           viewer.replaceChildren(frame);
         }

@@ -595,6 +595,7 @@ button {
 }
 
 .image-frame {
+  position: relative;
   margin: 0;
   height: 52vh;
   min-height: 320px;
@@ -621,6 +622,10 @@ button {
 }
 
 .image-reel-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
