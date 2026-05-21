@@ -12,22 +12,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -37,34 +30,21 @@ import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.ImageButton;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.SeekBar;
-import android.widget.TextView;
 
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.buttons.ButtonController;
-import com.pucky.device.command.CommandException;
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.tunnel.TunnelController;
-import com.pucky.device.ui.InteractivePanelController;
 import com.pucky.device.ui.PuckyWebBridge;
-import com.pucky.device.ui.ReplyCard;
 import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.ui.UiBundleController;
-import com.pucky.device.ui.WaveformView;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -72,10 +52,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PuckyMainActivity";
@@ -84,77 +61,24 @@ public class MainActivity extends Activity {
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
-
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
-    private static final int CARD = Color.rgb(8, 17, 28);
-    private static final int CARD_SOFT = Color.rgb(11, 24, 40);
-    private static final int TEXT = Color.rgb(245, 249, 255);
-    private static final int MUTED = Color.rgb(179, 201, 224);
-    private static final int BLUE = Color.rgb(58, 132, 255);
-    private static final int COVER_FEED_BOTTOM_SAFE_PADDING_DP = 104;
-    private static final long AUDIO_PROGRESS_TICK_MS = 80L;
 
     private SettingsStore settingsStore;
     private ReplyCardStore replyCardStore;
     private UiBundleController uiBundleController;
     private ButtonController buttonController;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private FrameLayout rootView;
-    private FrameLayout detailPanelLayer;
-    private FrameLayout audioSheetLayer;
-    private LinearLayout cardList;
-    private TextView emptyView;
-    private FrameLayout speedPickerOverlay;
     private WebView webShell;
     private PuckyWebBridge webBridge;
-    private boolean webShellMode;
-    private View feedBottomSafeSpacer;
-    private SeekBar activeAudioSeekBar;
-    private TextView activeAudioTimeText;
-    private TextView activeAudioRemainingText;
-    private int activeAudioDurationMs;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
-    private static String activeAudioPath = "";
-    private static final Map<String, Integer> savedAudioPositions = new HashMap<>();
-    private static final Map<String, Integer> savedAudioDurations = new HashMap<>();
-    private static final Map<String, Float> cardPlaybackSpeeds = new HashMap<>();
-    private static float globalPlaybackSpeed = 1.0f;
-    private boolean trackingAudioSeek;
-    private boolean speedPickerOpen;
-    private boolean audioSheetOpen;
-    private boolean audioSheetNeedsRebuild;
-    private boolean audioTickWasPlaying;
-    private ReplyCard audioSheetCard;
-    private String renderedAudioSheetPath = "";
     private long wakeScreenUntilMs;
-
-    private final Runnable playerTick = new Runnable() {
-        @Override
-        public void run() {
-            if (activeAudioPath.isEmpty()) {
-                audioTickWasPlaying = false;
-                return;
-            }
-            JSONObject state = PlayerController.shared(MainActivity.this).state();
-            boolean isPlaying = state.optBoolean("is_playing", false);
-            updateAudioProgressControls(state);
-            if (audioTickWasPlaying && !isPlaying) {
-                audioSheetNeedsRebuild = audioSheetOpen;
-                renderCurrent();
-            }
-            audioTickWasPlaying = isPlaying;
-            if (isPlaying) {
-                schedulePlayerTick();
-            }
-        }
-    };
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            renderCurrent();
+            emitWebPlayerState();
         }
     };
 
@@ -163,7 +87,7 @@ public class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             String action = intent == null ? "" : intent.getAction();
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
-                mainHandler.post(MainActivity.this::renderCurrent);
+                mainHandler.post(MainActivity.this::emitWebPlayerState);
             }
         }
     };
@@ -173,14 +97,13 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         PuckyApplication app = (PuckyApplication) getApplication();
         settingsStore = app.settingsStore();
+        settingsStore.setUiShellMode("web_cached");
         replyCardStore = new ReplyCardStore(this);
         uiBundleController = new UiBundleController(this);
         buttonController = new ButtonController(this);
-        webShellMode = settingsStore.isWebCachedUiEnabled();
         configureApplianceWindow();
-        setContentView(webShellMode ? buildWebShellView() : buildHomeView());
+        setContentView(buildWebShellView());
         applySystemUiForMode();
-        renderCurrent();
         handleLaunchIntent(getIntent());
         requestNeededPermissions();
     }
@@ -190,8 +113,8 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         configureApplianceWindow();
-        showHomeScreen();
         handleLaunchIntent(intent);
+        showHomeScreen();
         if (intent != null && "com.pucky.device.action.REQUEST_PERMISSIONS".equals(intent.getAction())) {
             requestNeededPermissions();
         }
@@ -201,6 +124,69 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         configureApplianceWindow();
+        registerStateReceivers();
+        applySystemUiForMode();
+        ensureAutoConnectService();
+        WakeWordController.shared(this).start(new JSONObject());
+        emitWebPlayerState();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applySystemUiForMode();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        unregisterStateReceivers();
+    }
+
+    @Override
+    protected void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (buttonController != null) {
+            boolean handled = false;
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                handled = buttonController.handleKeyDown(event.getKeyCode(), event);
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                handled = buttonController.handleKeyUp(event.getKeyCode(), event);
+            }
+            if (handled) {
+                emitWebPlayerState();
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (webShell != null && webShell.canGoBack()) {
+            webShell.goBack();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
+            pendingAssistantSetupAfterPermission = false;
+            mainHandler.post(this::continueAssistantSetupFlow);
+        }
+    }
+
+    private void registerStateReceivers() {
         if (!stateReceiverRegistered) {
             if (Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(stateReceiver, new IntentFilter(PuckyState.ACTION_CHANGED), RECEIVER_NOT_EXPORTED);
@@ -220,26 +206,9 @@ public class MainActivity extends Activity {
             }
             screenReceiverRegistered = true;
         }
-        applySystemUiForMode();
-        ensureAutoConnectService();
-        WakeWordController.shared(this).start(new JSONObject());
-        renderCurrent();
-        if (!activeAudioPath.isEmpty()) {
-            schedulePlayerTick();
-        }
     }
 
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            applySystemUiForMode();
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
+    private void unregisterStateReceivers() {
         if (stateReceiverRegistered) {
             unregisterReceiver(stateReceiver);
             stateReceiverRegistered = false;
@@ -247,56 +216,6 @@ public class MainActivity extends Activity {
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver);
             screenReceiverRegistered = false;
-        }
-        mainHandler.removeCallbacks(playerTick);
-    }
-
-    @Override
-    protected void onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null);
-        super.onDestroy();
-    }
-
-    @Override
-    public boolean dispatchKeyEvent(KeyEvent event) {
-        if (buttonController != null) {
-            boolean handled = false;
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                handled = buttonController.handleKeyDown(event.getKeyCode(), event);
-            } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                handled = buttonController.handleKeyUp(event.getKeyCode(), event);
-            }
-            if (handled) {
-                renderCurrent();
-                return true;
-            }
-        }
-        return super.dispatchKeyEvent(event);
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (speedPickerOpen) {
-            closeSpeedPicker();
-            return;
-        }
-        if (audioSheetOpen) {
-            dismissAudioSheet();
-            return;
-        }
-        if (detailPanelLayer != null && detailPanelLayer.getVisibility() == View.VISIBLE) {
-            dismissDetailPanel();
-            return;
-        }
-        super.onBackPressed();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_ASSISTANT_SETUP_PERMISSIONS && pendingAssistantSetupAfterPermission) {
-            pendingAssistantSetupAfterPermission = false;
-            mainHandler.post(this::continueAssistantSetupFlow);
         }
     }
 
@@ -408,110 +327,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    private View buildHomeView() {
-        FrameLayout root = new FrameLayout(this);
-        rootView = root;
-        root.setBackgroundColor(BACKGROUND);
-        root.setClickable(true);
-        root.setOnClickListener(view -> closeSpeedPicker());
-
-        LinearLayout shell = new LinearLayout(this);
-        shell.setOrientation(LinearLayout.VERTICAL);
-        shell.setGravity(Gravity.CENTER_HORIZONTAL);
-        shell.setPadding(dp(14), dp(16), dp(14), dp(18));
-        root.addView(shell, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        detailPanelLayer = new FrameLayout(this);
-        detailPanelLayer.setVisibility(View.GONE);
-        root.addView(detailPanelLayer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        audioSheetLayer = new FrameLayout(this);
-        audioSheetLayer.setVisibility(View.GONE);
-        root.addView(audioSheetLayer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        speedPickerOverlay = new FrameLayout(this);
-        speedPickerOverlay.setVisibility(View.GONE);
-        speedPickerOverlay.setClickable(true);
-        speedPickerOverlay.setOnClickListener(view -> closeSpeedPicker());
-        root.addView(speedPickerOverlay, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(8), 0, dp(8), dp(10));
-        shell.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        ImageView mail = new ImageView(this);
-        mail.setImageResource(android.R.drawable.ic_dialog_email);
-        mail.setColorFilter(TEXT);
-        LinearLayout.LayoutParams mailParams = new LinearLayout.LayoutParams(dp(30), dp(30));
-        header.addView(mail, mailParams);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        applyFeedScrollSafePadding(scroll, 0);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            scroll.setOnApplyWindowInsetsListener((view, insets) -> {
-                int navInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
-                applyFeedScrollSafePadding(scroll, navInset);
-                return insets;
-            });
-        }
-        shell.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f));
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setClickable(true);
-        content.setOnClickListener(view -> closeSpeedPicker());
-        scroll.addView(content, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        emptyView = new TextView(this);
-        emptyView.setText("No replies yet.\nPucky will place agent replies here.");
-        emptyView.setTextColor(MUTED);
-        emptyView.setTextSize(18);
-        emptyView.setGravity(Gravity.CENTER);
-        emptyView.setPadding(dp(18), dp(50), dp(18), dp(50));
-        emptyView.setBackground(roundRect(CARD, Color.rgb(32, 55, 78), dp(24)));
-        content.addView(emptyView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        cardList = new LinearLayout(this);
-        cardList.setOrientation(LinearLayout.VERTICAL);
-        cardList.setClickable(true);
-        cardList.setOnClickListener(view -> closeSpeedPicker());
-        content.addView(cardList, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        feedBottomSafeSpacer = new View(this);
-        feedBottomSafeSpacer.setContentDescription("cover_feed_bottom_safe_spacer");
-        content.addView(feedBottomSafeSpacer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(COVER_FEED_BOTTOM_SAFE_PADDING_DP)));
-        return root;
-    }
-
     private View buildWebShellView() {
         FrameLayout root = new FrameLayout(this);
-        rootView = root;
         root.setBackgroundColor(BACKGROUND);
 
         webShell = new WebView(this);
@@ -550,1099 +367,19 @@ public class MainActivity extends Activity {
     }
 
     private void showHomeScreen() {
-        webShellMode = settingsStore != null && settingsStore.isWebCachedUiEnabled();
-        if (webShellMode) {
-            if (webShell == null) {
-                setContentView(buildWebShellView());
-            } else {
-                loadWebShell();
-            }
-            return;
+        settingsStore.setUiShellMode("web_cached");
+        if (webShell == null) {
+            setContentView(buildWebShellView());
+        } else {
+            loadWebShell();
         }
-        if (cardList == null) {
-            setContentView(buildHomeView());
-        }
-        renderCurrent();
-    }
-
-    private void renderCurrent() {
-        if (webShellMode) {
-            emitWebPlayerState();
-            return;
-        }
-        renderHome();
-        renderAudioSheet();
+        emitWebPlayerState();
     }
 
     private void emitWebPlayerState() {
         if (webBridge != null) {
             webBridge.emit("player.state", PlayerController.shared(this).state());
         }
-    }
-
-    private void renderHome() {
-        if (cardList == null || replyCardStore == null) {
-            return;
-        }
-        List<ReplyCard> cards = replyCardStore.cards();
-        cardList.removeAllViews();
-        emptyView.setVisibility(cards.isEmpty() ? View.VISIBLE : View.GONE);
-        for (ReplyCard card : cards) {
-            cardList.addView(cardView(card));
-        }
-        renderSpeedPickerOverlay();
-    }
-
-    private View cardView(ReplyCard card) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(8), dp(10), dp(8));
-        row.setMinimumHeight(dp(84));
-        row.setBackground(roundRect(CARD, Color.rgb(33, 52, 72), dp(18)));
-
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowParams.setMargins(0, 0, 0, dp(10));
-        row.setLayoutParams(rowParams);
-
-        row.addView(card.hasAudio() ? audioIdentityButton(card) : identityMark(card),
-                new LinearLayout.LayoutParams(dp(44), dp(52)));
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(12), 0, dp(8), 0);
-        row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView title = new TextView(this);
-        title.setText(card.title());
-        title.setTextColor(TEXT);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setSingleLine(true);
-        body.addView(title);
-
-        if (isPlayingAudioCard(card)) {
-            body.addView(audioWaveformLine(card));
-        } else if (!card.summary().isEmpty()) {
-            TextView preview = new TextView(this);
-            preview.setText(card.summary());
-            preview.setTextColor(TEXT);
-            preview.setTextSize(12);
-            preview.setMaxLines(2);
-            preview.setEllipsize(TextUtils.TruncateAt.END);
-            LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            previewParams.setMargins(0, dp(3), 0, 0);
-            body.addView(preview, previewParams);
-        }
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER);
-        if (card.hasTranscript()) {
-            ImageButton transcript = iconActionButton(R.drawable.pucky_ic_transcript);
-            transcript.setOnClickListener(view -> {
-                speedPickerOpen = false;
-                showTranscript(card);
-            });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
-            params.setMargins(0, 0, dp(8), 0);
-            actions.addView(transcript, params);
-        }
-        if (card.hasHtml()) {
-            ImageButton open = iconActionButton(R.drawable.pucky_ic_attachment);
-            open.setOnClickListener(view -> {
-                speedPickerOpen = false;
-                openRichReply(card);
-            });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(40));
-            actions.addView(open, params);
-        }
-        row.addView(actions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        return row;
-    }
-
-    private View identityMark(ReplyCard card) {
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(drawableForIcon(card.icon()));
-        icon.setColorFilter(TEXT);
-        icon.setPadding(dp(4), dp(4), dp(4), dp(4));
-        return icon;
-    }
-
-    private ImageButton audioIdentityButton(ReplyCard card) {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(drawableForIcon(card.icon()));
-        button.setColorFilter(TEXT);
-        button.setScaleType(ImageView.ScaleType.CENTER);
-        button.setPadding(dp(4), dp(4), dp(4), dp(4));
-        button.setBackgroundColor(Color.TRANSPARENT);
-        button.setContentDescription("audio_toggle_" + card.title());
-        button.setOnClickListener(view -> {
-            closeSpeedPicker();
-            toggleReplyAudio(card);
-        });
-        return button;
-    }
-
-    private View audioWaveformLine(ReplyCard card) {
-        JSONObject state = PlayerController.shared(this).state();
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(3), 0, 0);
-        row.setContentDescription("audio_waveform_row_" + card.title());
-
-        WaveformView waveform = new WaveformView(this);
-        waveform.setAccentColor(parseColor(card.accent(), BLUE));
-        waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
-        waveform.setPlaying(state.optBoolean("is_playing", false));
-        waveform.setContentDescription("audio_waveform_" + card.title());
-        waveform.setOnClickListener(view -> showAudioSheet(card));
-        row.addView(waveform, new LinearLayout.LayoutParams(0, dp(32), 1f));
-        row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(32), 1f));
-        return row;
-    }
-
-    private ImageButton iconActionButton(int drawableRes) {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(drawableRes);
-        button.setColorFilter(TEXT);
-        button.setScaleType(ImageView.ScaleType.CENTER);
-        button.setPadding(dp(9), dp(9), dp(9), dp(9));
-        button.setBackground(roundRect(CARD_SOFT, BLUE, dp(16)));
-        return button;
-    }
-
-    private void renderAudioSheet() {
-        if (audioSheetLayer == null) {
-            return;
-        }
-        if (!audioSheetOpen || audioSheetCard == null) {
-            activeAudioSeekBar = null;
-            activeAudioTimeText = null;
-            activeAudioRemainingText = null;
-            activeAudioDurationMs = 0;
-            renderedAudioSheetPath = "";
-            audioSheetNeedsRebuild = false;
-            audioSheetLayer.removeAllViews();
-            audioSheetLayer.setVisibility(View.GONE);
-            return;
-        }
-        String requestedPath = audioSheetCard.audioPath();
-        if (!audioSheetNeedsRebuild
-                && requestedPath.equals(renderedAudioSheetPath)
-                && audioSheetLayer.getChildCount() > 0) {
-            updateAudioProgressControls(PlayerController.shared(this).state());
-            audioSheetLayer.setVisibility(View.VISIBLE);
-            return;
-        }
-        activeAudioSeekBar = null;
-        activeAudioTimeText = null;
-        activeAudioRemainingText = null;
-        activeAudioDurationMs = 0;
-        audioSheetLayer.removeAllViews();
-        audioSheetLayer.setVisibility(View.VISIBLE);
-        audioSheetLayer.addView(audioSheetView(audioSheetCard), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-        renderedAudioSheetPath = requestedPath;
-        audioSheetNeedsRebuild = false;
-    }
-
-    private View audioSheetView(ReplyCard card) {
-        LinearLayout sheet = new LinearLayout(this);
-        sheet.setOrientation(LinearLayout.VERTICAL);
-        sheet.setPadding(dp(20), dp(36), dp(20), dp(28));
-        sheet.setBackgroundColor(BACKGROUND);
-        sheet.setClickable(true);
-        sheet.setContentDescription("audio_sheet");
-        InteractivePanelController.installDownSwipeDismiss(sheet, sheet, this::dismissAudioSheet);
-
-        TextView title = new TextView(this);
-        title.setText(card.title());
-        title.setTextColor(TEXT);
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setMaxLines(2);
-        title.setEllipsize(TextUtils.TruncateAt.END);
-        sheet.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        if (!card.summary().isEmpty()) {
-            TextView summary = new TextView(this);
-            summary.setText(card.summary());
-            summary.setTextColor(MUTED);
-            summary.setTextSize(13);
-            summary.setMaxLines(2);
-            summary.setEllipsize(TextUtils.TruncateAt.END);
-            LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            summaryParams.setMargins(0, dp(6), 0, 0);
-            sheet.addView(summary, summaryParams);
-        }
-
-        WaveformView waveform = new WaveformView(this);
-        waveform.setAccentColor(parseColor(card.accent(), BLUE));
-        waveform.setCapturePriority(1);
-        JSONObject state = PlayerController.shared(this).state();
-        waveform.setAudioSessionId(state.optInt("audio_session_id", 0));
-        waveform.setPlaying(state.optBoolean("is_playing", false));
-        LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(72));
-        waveParams.setMargins(0, dp(22), 0, dp(14));
-        sheet.addView(waveform, waveParams);
-
-        sheet.addView(audioSheetControls(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        return sheet;
-    }
-
-    private View audioSheetControls() {
-        JSONObject state = PlayerController.shared(this).state();
-        int positionMs = Math.max(0, state.optInt("position_ms", 0));
-        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
-        int max = Math.max(1, durationMs);
-
-        LinearLayout stack = new LinearLayout(this);
-        stack.setOrientation(LinearLayout.VERTICAL);
-        stack.setGravity(Gravity.CENTER_VERTICAL);
-        stack.setClickable(true);
-        stack.setOnClickListener(view -> {
-            if (speedPickerOpen) {
-                closeSpeedPicker();
-            }
-        });
-
-        SeekBar progress = new SeekBar(this);
-        progress.setMax(max);
-        progress.setProgress(Math.min(positionMs, max));
-        progress.setContentDescription("audio_scrubber");
-        progress.setPadding(dp(12), 0, dp(12), 0);
-        progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser) {
-                if (fromUser) {
-                    trackingAudioSeek = true;
-                    updateAudioTimeText(progressValue, activeAudioDurationMs);
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-                trackingAudioSeek = true;
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                seekToPosition(seekBar.getProgress());
-                trackingAudioSeek = false;
-            }
-        });
-        stack.addView(progress, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(36)));
-        activeAudioSeekBar = progress;
-        activeAudioDurationMs = max;
-
-        LinearLayout timeRow = new LinearLayout(this);
-        timeRow.setOrientation(LinearLayout.HORIZONTAL);
-        timeRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView elapsed = audioTimeLabel(Gravity.START);
-        TextView remaining = audioTimeLabel(Gravity.END);
-        timeRow.addView(elapsed, new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f));
-        timeRow.addView(remaining, new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f));
-        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        timeParams.setMargins(dp(12), 0, dp(12), dp(18));
-        stack.addView(timeRow, timeParams);
-        activeAudioTimeText = elapsed;
-        activeAudioRemainingText = remaining;
-        updateAudioTimeText(positionMs, durationMs);
-
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER);
-        controls.setClickable(true);
-        controls.setOnClickListener(view -> {
-            if (speedPickerOpen) {
-                closeSpeedPicker();
-            }
-        });
-
-        Button speed = audioTransportButton(speedLabel(playbackSpeedForActiveCard()), 14);
-        speed.setContentDescription("audio_speed");
-        speed.setOnClickListener(view -> toggleSpeedPicker());
-        controls.addView(audioControlSlot(speed, dp(48), dp(48)), audioControlSlotParams());
-
-        ImageButton back = audioTransportIconButton(R.drawable.pucky_ic_replay_15);
-        back.setContentDescription("audio_rewind_15");
-        back.setOnClickListener(view -> seekRelative(-15_000));
-        controls.addView(audioControlSlot(back, dp(52), dp(52)), audioControlSlotParams());
-
-        Button playPause = audioTransportButton(state.optBoolean("is_playing", false) ? "\u275a\u275a" : "\u25b6", 32);
-        playPause.setContentDescription("audio_play_pause");
-        playPause.setOnClickListener(view -> toggleActiveAudio());
-        controls.addView(audioControlSlot(playPause, dp(72), dp(58)), audioControlSlotParams());
-
-        ImageButton forward = audioTransportIconButton(R.drawable.pucky_ic_forward_30);
-        forward.setContentDescription("audio_forward_30");
-        forward.setOnClickListener(view -> seekRelative(30_000));
-        controls.addView(audioControlSlot(forward, dp(52), dp(52)), audioControlSlotParams());
-        controls.addView(new View(this), audioControlSlotParams());
-        LinearLayout.LayoutParams controlsParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        controlsParams.gravity = Gravity.CENTER_HORIZONTAL;
-        stack.addView(controls, controlsParams);
-
-        return stack;
-    }
-
-    private void showAudioSheet(ReplyCard card) {
-        if (!card.hasAudio()) {
-            return;
-        }
-        closeSpeedPicker();
-        audioSheetCard = card;
-        audioSheetOpen = true;
-        audioSheetNeedsRebuild = true;
-        renderAudioSheet();
-        if (audioSheetLayer != null && audioSheetLayer.getChildCount() > 0) {
-            InteractivePanelController.slideUp(audioSheetLayer.getChildAt(0));
-        }
-    }
-
-    private void dismissAudioSheet() {
-        audioSheetOpen = false;
-        audioSheetCard = null;
-        closeSpeedPicker();
-        renderAudioSheet();
-    }
-
-    private Button audioNudgeButton(String label) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextColor(TEXT);
-        button.setTextSize(11);
-        button.setAllCaps(false);
-        button.setPadding(0, 0, 0, 0);
-        button.setBackground(roundRectNoStroke(CARD_SOFT, dp(14)));
-        return button;
-    }
-
-    private FrameLayout audioControlSlot(View child, int width, int height) {
-        FrameLayout slot = new FrameLayout(this);
-        FrameLayout.LayoutParams childParams = new FrameLayout.LayoutParams(width, height, Gravity.CENTER);
-        slot.addView(child, childParams);
-        return slot;
-    }
-
-    private LinearLayout.LayoutParams audioControlSlotParams() {
-        return new LinearLayout.LayoutParams(0, dp(58), 1f);
-    }
-
-    private ImageButton audioTransportIconButton(int drawableRes) {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(drawableRes);
-        button.setColorFilter(TEXT);
-        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        button.setPadding(dp(6), dp(6), dp(6), dp(6));
-        button.setBackgroundColor(Color.TRANSPARENT);
-        button.setMinimumWidth(0);
-        button.setMinimumHeight(0);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            button.setStateListAnimator(null);
-        }
-        return button;
-    }
-
-    private Button audioTransportButton(String label, float textSizeSp) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextColor(TEXT);
-        button.setTextSize(textSizeSp);
-        button.setAllCaps(false);
-        button.setGravity(Gravity.CENTER);
-        button.setIncludeFontPadding(false);
-        button.setMinWidth(0);
-        button.setMinHeight(0);
-        button.setMinimumWidth(0);
-        button.setMinimumHeight(0);
-        button.setPadding(0, 0, 0, 0);
-        button.setBackgroundColor(Color.TRANSPARENT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            button.setStateListAnimator(null);
-        }
-        return button;
-    }
-
-    private TextView audioTimeLabel(int gravity) {
-        TextView label = new TextView(this);
-        label.setTextColor(MUTED);
-        label.setTextSize(11);
-        label.setGravity(gravity);
-        return label;
-    }
-
-    private void renderSpeedPickerOverlay() {
-        if (speedPickerOverlay == null) {
-            return;
-        }
-        speedPickerOverlay.removeAllViews();
-        if (!speedPickerOpen) {
-            speedPickerOverlay.setVisibility(View.GONE);
-            speedPickerOverlay.setBackgroundColor(Color.TRANSPARENT);
-            return;
-        }
-
-        speedPickerOverlay.setVisibility(View.VISIBLE);
-        speedPickerOverlay.setBackgroundColor(Color.argb(92, 0, 0, 0));
-        speedPickerOverlay.addView(speedPickerPanel(), speedPickerPanelParams());
-    }
-
-    private LinearLayout speedPickerPanel() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-        row.setPadding(dp(10), dp(10), dp(10), dp(10));
-        row.setClickable(true);
-        row.setOnClickListener(view -> {
-            // Consume panel taps so only outside taps dismiss the overlay.
-        });
-        row.setBackground(roundRectNoStroke(CARD, dp(24)));
-        float[] choices = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f, 3.0f};
-        float activeSpeed = playbackSpeedForActiveCard();
-        for (float choice : choices) {
-            Button button = audioNudgeButton(speedLabel(choice));
-            if (Math.abs(choice - activeSpeed) < 0.01f) {
-                button.setBackground(roundRectNoStroke(BLUE, dp(18)));
-            }
-            button.setOnClickListener(view -> setPlaybackSpeed(choice));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
-            params.setMargins(dp(3), 0, dp(3), 0);
-            row.addView(button, params);
-        }
-        return row;
-    }
-
-    private FrameLayout.LayoutParams speedPickerPanelParams() {
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        params.setMargins(dp(18), 0, dp(18), dp(28));
-        return params;
-    }
-
-    private void toggleReplyAudio(ReplyCard card) {
-        PlayerController player = PlayerController.shared(this);
-        JSONObject state = player.state();
-        boolean sameCard = card.audioPath().equals(activeAudioPath);
-        if (sameCard && state.optBoolean("is_playing", false)) {
-            pauseActiveAudio();
-            return;
-        }
-        if (!activeAudioPath.isEmpty() && !sameCard) {
-            pauseActiveAudio();
-        }
-
-        JSONObject args = new JSONObject();
-        Json.put(args, "path", card.audioPath());
-        Json.put(args, "title", card.title());
-        Json.put(args, "source", "reply_card");
-        Json.put(args, "speed", playbackSpeedForCard(card.audioPath()));
-        int startAtMs = savedAudioPositions.containsKey(card.audioPath())
-                ? savedAudioPositions.get(card.audioPath())
-                : state.optInt("position_ms", 0);
-        int savedDurationMs = savedAudioDurations.containsKey(card.audioPath())
-                ? savedAudioDurations.get(card.audioPath())
-                : 0;
-        if (!sameCard) {
-            startAtMs = savedAudioPositions.containsKey(card.audioPath())
-                    ? savedAudioPositions.get(card.audioPath())
-                    : 0;
-        }
-        if (savedDurationMs > 0 && startAtMs >= savedDurationMs - 250) {
-            startAtMs = 0;
-        }
-        Json.put(args, "start_at_ms", startAtMs);
-        try {
-            JSONObject played = player.play(args);
-            savedAudioDurations.put(card.audioPath(), Math.max(0, played.optInt("duration_ms", 0)));
-            activeAudioPath = card.audioPath();
-            applyPlaybackSpeed(playbackSpeedForCard(card.audioPath()));
-            PuckyState.get().setLifecycleEvent("reply_card.audio_play");
-            audioSheetNeedsRebuild = audioSheetOpen;
-            renderCurrent();
-            schedulePlayerTick();
-        } catch (CommandException exc) {
-            Log.w(TAG, "Unable to play reply audio", exc);
-            PuckyState.get().setLastError("Reply audio failed: " + exc.getMessage());
-            PuckyState.get().broadcast(this);
-        }
-    }
-
-    private void pauseActiveAudio() {
-        if (activeAudioPath.isEmpty()) {
-            return;
-        }
-        PlayerController player = PlayerController.shared(this);
-        JSONObject state = player.state();
-        if (state.optBoolean("loaded", false)) {
-            savedAudioPositions.put(activeAudioPath, Math.max(0, state.optInt("position_ms", 0)));
-            savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
-        }
-        if (!state.optBoolean("is_playing", false)) {
-            audioSheetNeedsRebuild = audioSheetOpen;
-            renderCurrent();
-            return;
-        }
-        try {
-            player.pause(new JSONObject());
-            JSONObject paused = player.state();
-            savedAudioPositions.put(activeAudioPath, Math.max(0, paused.optInt("position_ms", 0)));
-            savedAudioDurations.put(activeAudioPath, Math.max(0, paused.optInt("duration_ms", 0)));
-            PuckyState.get().setLifecycleEvent("reply_card.audio_pause");
-            audioSheetNeedsRebuild = audioSheetOpen;
-            renderCurrent();
-        } catch (CommandException exc) {
-            Log.w(TAG, "Unable to pause reply audio", exc);
-            PuckyState.get().setLastError("Reply audio pause failed: " + exc.getMessage());
-            PuckyState.get().broadcast(this);
-        }
-    }
-
-    private void toggleActiveAudio() {
-        if (activeAudioPath.isEmpty()) {
-            return;
-        }
-        PlayerController player = PlayerController.shared(this);
-        JSONObject state = player.state();
-        if (state.optBoolean("is_playing", false)) {
-            pauseActiveAudio();
-            return;
-        }
-        try {
-            int positionMs = Math.max(0, state.optInt("position_ms", 0));
-            int durationMs = Math.max(0, state.optInt("duration_ms", 0));
-            if (durationMs > 0 && positionMs >= durationMs - 250) {
-                JSONObject seek = new JSONObject();
-                Json.put(seek, "position_ms", 0);
-                player.seek(seek);
-                savedAudioPositions.put(activeAudioPath, 0);
-            }
-            JSONObject played = player.play(new JSONObject());
-            savedAudioDurations.put(activeAudioPath, Math.max(0, played.optInt("duration_ms", 0)));
-            applyPlaybackSpeed(playbackSpeedForActiveCard());
-            audioSheetNeedsRebuild = audioSheetOpen;
-            renderCurrent();
-            schedulePlayerTick();
-        } catch (CommandException exc) {
-            Log.w(TAG, "Unable to toggle active reply audio", exc);
-            PuckyState.get().setLastError("Reply audio toggle failed: " + exc.getMessage());
-            PuckyState.get().broadcast(this);
-        }
-    }
-
-    private void seekRelative(int deltaMs) {
-        JSONObject state = PlayerController.shared(this).state();
-        int positionMs = Math.max(0, state.optInt("position_ms", 0));
-        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
-        int targetMs = Math.max(0, positionMs + deltaMs);
-        if (durationMs > 0) {
-            targetMs = Math.min(targetMs, durationMs);
-        }
-        seekToPosition(targetMs);
-    }
-
-    private void seekToPosition(int positionMs) {
-        JSONObject args = new JSONObject();
-        int bounded = Math.max(0, positionMs);
-        Json.put(args, "position_ms", bounded);
-        try {
-            PlayerController.shared(this).seek(args);
-            if (!activeAudioPath.isEmpty()) {
-                savedAudioPositions.put(activeAudioPath, bounded);
-                JSONObject state = PlayerController.shared(this).state();
-                savedAudioDurations.put(activeAudioPath, Math.max(0, state.optInt("duration_ms", 0)));
-            }
-            renderCurrent();
-            schedulePlayerTick();
-        } catch (CommandException exc) {
-            Log.w(TAG, "Unable to seek reply audio", exc);
-            PuckyState.get().setLastError("Reply audio seek failed: " + exc.getMessage());
-            PuckyState.get().broadcast(this);
-        }
-    }
-
-    private void toggleSpeedPicker() {
-        speedPickerOpen = !speedPickerOpen;
-        renderCurrent();
-    }
-
-    private void closeSpeedPicker() {
-        if (!speedPickerOpen) {
-            return;
-        }
-        speedPickerOpen = false;
-        renderCurrent();
-    }
-
-    private void setPlaybackSpeed(float speed) {
-        globalPlaybackSpeed = Math.max(0.75f, Math.min(3.0f, speed));
-        if (!activeAudioPath.isEmpty()) {
-            cardPlaybackSpeeds.put(activeAudioPath, globalPlaybackSpeed);
-        }
-        applyPlaybackSpeed(globalPlaybackSpeed);
-        speedPickerOpen = false;
-        audioSheetNeedsRebuild = audioSheetOpen;
-        renderCurrent();
-    }
-
-    private void applyPlaybackSpeed(float speed) {
-        JSONObject args = new JSONObject();
-        Json.put(args, "speed", speed);
-        try {
-            PlayerController.shared(this).speed(args);
-        } catch (CommandException exc) {
-            Log.w(TAG, "Unable to set reply audio speed", exc);
-            PuckyState.get().setLastError("Reply audio speed failed: " + exc.getMessage());
-            PuckyState.get().broadcast(this);
-        }
-    }
-
-    private float playbackSpeedForActiveCard() {
-        return activeAudioPath.isEmpty() ? globalPlaybackSpeed : playbackSpeedForCard(activeAudioPath);
-    }
-
-    private float playbackSpeedForCard(String audioPath) {
-        if (audioPath != null && cardPlaybackSpeeds.containsKey(audioPath)) {
-            return cardPlaybackSpeeds.get(audioPath);
-        }
-        return globalPlaybackSpeed;
-    }
-
-    private String speedLabel(float speed) {
-        if (Math.abs(speed - Math.round(speed)) < 0.01f) {
-            return String.format(Locale.US, "%dx", Math.round(speed));
-        }
-        return String.format(Locale.US, "%.2fx", speed).replaceAll("0x$", "x");
-    }
-
-    private boolean isActiveAudioCard(ReplyCard card) {
-        return card.hasAudio() && card.audioPath().equals(activeAudioPath);
-    }
-
-    private boolean isPlayingAudioCard(ReplyCard card) {
-        return isActiveAudioCard(card)
-                && PlayerController.shared(this).state().optBoolean("is_playing", false);
-    }
-
-    private void updateAudioProgressControls(JSONObject state) {
-        int positionMs = Math.max(0, state.optInt("position_ms", 0));
-        int durationMs = Math.max(0, state.optInt("duration_ms", 0));
-        if (!activeAudioPath.isEmpty() && state.optBoolean("loaded", false)) {
-            savedAudioPositions.put(activeAudioPath, positionMs);
-            savedAudioDurations.put(activeAudioPath, durationMs);
-        }
-        if (activeAudioSeekBar == null || activeAudioTimeText == null
-                || activeAudioRemainingText == null || trackingAudioSeek) {
-            return;
-        }
-        int max = Math.max(1, durationMs);
-        if (max != activeAudioDurationMs) {
-            activeAudioSeekBar.setMax(max);
-            activeAudioDurationMs = max;
-        }
-        activeAudioSeekBar.setProgress(Math.min(positionMs, max));
-        updateAudioTimeText(positionMs, durationMs);
-    }
-
-    private void updateAudioTimeText(int positionMs, int durationMs) {
-        if (activeAudioTimeText == null) {
-            return;
-        }
-        activeAudioTimeText.setText(formatTime(positionMs));
-        if (activeAudioRemainingText != null) {
-            int remainingMs = Math.max(0, durationMs - positionMs);
-            activeAudioRemainingText.setText("-" + formatTime(remainingMs));
-        }
-    }
-
-    private void schedulePlayerTick() {
-        mainHandler.removeCallbacks(playerTick);
-        mainHandler.postDelayed(playerTick, AUDIO_PROGRESS_TICK_MS);
-    }
-
-    private String formatTime(int ms) {
-        int totalSeconds = Math.max(0, ms / 1000);
-        int minutes = totalSeconds / 60;
-        int seconds = totalSeconds % 60;
-        return String.format(Locale.US, "%d:%02d", minutes, seconds);
-    }
-
-    private void showTranscript(ReplyCard card) {
-        closeSpeedPicker();
-        showDetailPanel(buildTranscriptPanel(card));
-    }
-
-    private void openRichReply(ReplyCard card) {
-        closeSpeedPicker();
-        showDetailPanel(buildWebPanel(card));
-    }
-
-    private void showDetailPanel(View panel) {
-        if (detailPanelLayer == null) {
-            return;
-        }
-        detailPanelLayer.removeAllViews();
-        detailPanelLayer.setVisibility(View.VISIBLE);
-        detailPanelLayer.addView(panel, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-        InteractivePanelController.slideInFromRight(panel);
-    }
-
-    private void dismissDetailPanel() {
-        if (detailPanelLayer == null) {
-            return;
-        }
-        detailPanelLayer.removeAllViews();
-        detailPanelLayer.setVisibility(View.GONE);
-    }
-
-    private View buildWebPanel(ReplyCard card) {
-        FrameLayout panel = new FrameLayout(this);
-        panel.setBackgroundColor(BACKGROUND);
-        panel.setContentDescription("web_detail_panel");
-
-        File html = resolveAppOwnedPath(card.htmlPath(), "Reply HTML");
-        WebView webView = new WebView(this);
-        webView.setBackgroundColor(BACKGROUND);
-        webView.setClipToPadding(true);
-        webView.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
-        webView.setContentDescription("web_detail_content");
-        applyWebViewSafePadding(webView, 0);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            webView.setOnApplyWindowInsetsListener((view, insets) -> {
-                int navInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
-                applyWebViewSafePadding(webView, navInset);
-                return insets;
-            });
-        }
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(false);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            settings.setAllowFileAccessFromFileURLs(false);
-            settings.setAllowUniversalAccessFromFileURLs(false);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            settings.setSafeBrowsingEnabled(true);
-        }
-        FrameLayout.LayoutParams webParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT);
-        webParams.bottomMargin = dp(58);
-        panel.addView(webView, webParams);
-        InteractivePanelController.installRightSwipeDismiss(webView, panel, this::dismissDetailPanel);
-        webView.loadUrl(Uri.fromFile(html).toString());
-        return panel;
-    }
-
-    private View buildTranscriptPanel(ReplyCard card) {
-        FrameLayout panel = new FrameLayout(this);
-        panel.setBackgroundColor(BACKGROUND);
-        panel.setContentDescription("transcript_detail_panel");
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setClipToPadding(false);
-        scroll.setPadding(0, 0, 0, dp(88));
-        scroll.setOverScrollMode(ScrollView.OVER_SCROLL_NEVER);
-        scroll.setContentDescription("transcript_detail_content");
-        InteractivePanelController.installRightSwipeDismiss(scroll, panel, this::dismissDetailPanel);
-
-        LinearLayout thread = new LinearLayout(this);
-        thread.setOrientation(LinearLayout.VERTICAL);
-        thread.setPadding(dp(14), dp(18), dp(14), dp(24));
-        scroll.addView(thread, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        thread.addView(dayDivider("Today"));
-        for (Message message : messagesForCard(card)) {
-            thread.addView(messageRow(message));
-        }
-
-        panel.addView(scroll, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-        return panel;
-    }
-
-    private TextView dayDivider(String label) {
-        TextView divider = new TextView(this);
-        divider.setText(label);
-        divider.setTextColor(MUTED);
-        divider.setTextSize(11);
-        divider.setGravity(Gravity.CENTER);
-        divider.setPadding(0, dp(6), 0, dp(12));
-        return divider;
-    }
-
-    private ViewGroup messageRow(Message message) {
-        boolean user = message.isUser();
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(user ? Gravity.END : Gravity.START);
-        row.setPadding(0, 0, 0, dp(8));
-
-        LinearLayout bubble = new LinearLayout(this);
-        bubble.setOrientation(LinearLayout.VERTICAL);
-        bubble.setPadding(dp(12), dp(9), dp(12), dp(7));
-        bubble.setBackground(roundRect(user ? Color.rgb(16, 54, 96) : CARD, Color.rgb(33, 52, 72), dp(18)));
-
-        if (!message.mediaType.isEmpty()) {
-            bubble.addView(mediaView(message));
-        }
-        if (!message.text.isEmpty()) {
-            TextView text = new TextView(this);
-            text.setText(message.text);
-            text.setTextColor(TEXT);
-            text.setTextSize(15);
-            text.setLineSpacing(0, 1.04f);
-            bubble.addView(text);
-        }
-
-        TextView timestamp = new TextView(this);
-        timestamp.setText(message.timestamp.isEmpty() ? "now" : message.timestamp);
-        timestamp.setTextColor(MUTED);
-        timestamp.setTextSize(10);
-        timestamp.setGravity(user ? Gravity.END : Gravity.START);
-        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        timeParams.setMargins(0, dp(5), 0, 0);
-        bubble.addView(timestamp, timeParams);
-
-        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
-                Math.round(getResources().getDisplayMetrics().widthPixels * 0.76f),
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        row.addView(bubble, bubbleParams);
-        return row;
-    }
-
-    private ViewGroup mediaView(Message message) {
-        LinearLayout wrap = new LinearLayout(this);
-        wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setPadding(0, 0, 0, message.text.isEmpty() ? 0 : dp(8));
-        if ("image".equals(message.mediaType)) {
-            Bitmap bitmap = decodeAppImage(message.mediaPath);
-            if (bitmap != null) {
-                ImageView image = new ImageView(this);
-                image.setImageBitmap(bitmap);
-                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                image.setBackground(roundRect(CARD_SOFT, Color.rgb(33, 52, 72), dp(14)));
-                wrap.addView(image, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(130)));
-                return wrap;
-            }
-        }
-
-        TextView pill = new TextView(this);
-        String label = message.mediaLabel.isEmpty() ? message.mediaType : message.mediaLabel;
-        pill.setText(mediaPrefix(message.mediaType) + " " + label);
-        pill.setTextColor(TEXT);
-        pill.setTextSize(13);
-        pill.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        pill.setPadding(dp(10), dp(9), dp(10), dp(9));
-        pill.setBackground(roundRect(CARD_SOFT, BLUE, dp(14)));
-        wrap.addView(pill, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        return wrap;
-    }
-
-    private String mediaPrefix(String mediaType) {
-        if ("image".equals(mediaType)) {
-            return "Image";
-        }
-        if ("video".equals(mediaType)) {
-            return "Video";
-        }
-        if ("link".equals(mediaType)) {
-            return "Link";
-        }
-        return "Attachment";
-    }
-
-    private Bitmap decodeAppImage(String raw) {
-        if (raw == null || raw.trim().isEmpty()) {
-            return null;
-        }
-        try {
-            return BitmapFactory.decodeFile(resolveAppOwnedPath(raw, "Transcript image").getAbsolutePath());
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private List<Message> messagesForCard(ReplyCard card) {
-        List<Message> out = messagesFromJson(card.transcriptMessages());
-        if (!out.isEmpty()) {
-            return out;
-        }
-        String raw = card.transcript();
-        if (raw == null || raw.trim().isEmpty()) {
-            out.add(new Message("pucky", "Transcript is not attached yet.", "now", "", "", ""));
-            return out;
-        }
-        for (String line : raw.split("\\r?\\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            String lower = trimmed.toLowerCase(Locale.US);
-            String sender = lower.startsWith("you:") || lower.startsWith("user:") ? "user" : "pucky";
-            out.add(new Message(sender, trimmed, "now", "", "", ""));
-        }
-        return out;
-    }
-
-    private List<Message> messagesFromJson(String raw) {
-        List<Message> out = new ArrayList<>();
-        if (raw == null || raw.trim().isEmpty()) {
-            return out;
-        }
-        try {
-            JSONArray array = new JSONArray(raw);
-            for (int index = 0; index < array.length(); index++) {
-                JSONObject item = array.optJSONObject(index);
-                if (item == null) {
-                    continue;
-                }
-                out.add(new Message(
-                        item.optString("sender", item.optString("role", "pucky")),
-                        item.optString("text", ""),
-                        item.optString("timestamp", item.optString("time", "")),
-                        item.optString("media_type", item.optString("type", "")),
-                        item.optString("media_label", item.optString("label", "")),
-                        item.optString("media_path", item.optString("path", ""))));
-            }
-        } catch (Exception ignored) {
-            out.clear();
-        }
-        return out;
-    }
-
-    private File resolveAppOwnedPath(String raw, String label) {
-        if (raw == null || raw.trim().isEmpty()) {
-            throw new IllegalArgumentException("Missing " + label + " path");
-        }
-        try {
-            File file = new File(raw).getCanonicalFile();
-            if (!isWithin(file, getFilesDir())
-                    && !isWithin(file, getCacheDir())
-                    && !isWithin(file, getExternalFilesDir(null))) {
-                throw new IllegalArgumentException(label + " path is outside app-owned storage");
-            }
-            if (!file.exists() || !file.isFile()) {
-                throw new IllegalArgumentException(label + " file not found");
-            }
-            return file;
-        } catch (IllegalArgumentException exc) {
-            throw exc;
-        } catch (Exception exc) {
-            throw new IllegalArgumentException("Unable to open " + label + ": " + exc.getMessage(), exc);
-        }
-    }
-
-    private static boolean isWithin(File file, File root) throws Exception {
-        if (root == null) {
-            return false;
-        }
-        String filePath = file.getCanonicalPath();
-        String rootPath = root.getCanonicalPath();
-        return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
-    }
-
-    private void applyWebViewSafePadding(WebView webView, int bottomInsetPx) {
-        int bottomPadding = Math.max(dp(88), bottomInsetPx + dp(28));
-        webView.setPadding(0, 0, 0, bottomPadding);
-    }
-
-    private int drawableForIcon(String icon) {
-        String normalized = icon == null ? "" : icon.trim().toLowerCase();
-        if ("clock".equals(normalized) || "time".equals(normalized) || "timer".equals(normalized)) {
-            return R.drawable.pucky_ic_clock;
-        }
-        if ("bolt".equals(normalized) || "lightning".equals(normalized) || "energy".equals(normalized)) {
-            return R.drawable.pucky_ic_bolt;
-        }
-        if ("book".equals(normalized) || "audiobook".equals(normalized) || "read".equals(normalized)) {
-            return R.drawable.pucky_ic_book;
-        }
-        if ("calendar".equals(normalized) || "meeting".equals(normalized) || "agenda".equals(normalized)) {
-            return R.drawable.pucky_ic_calendar;
-        }
-        if ("moon".equals(normalized) || "night".equals(normalized) || "bedtime".equals(normalized)) {
-            return R.drawable.pucky_ic_moon;
-        }
-        return android.R.drawable.ic_dialog_email;
-    }
-
-    private void applyFeedScrollSafePadding(ScrollView scroll, int bottomInsetPx) {
-        int bottomPadding = Math.max(dp(COVER_FEED_BOTTOM_SAFE_PADDING_DP), bottomInsetPx + dp(36));
-        scroll.setPadding(0, 0, 0, bottomPadding);
-    }
-
-    private int parseColor(String raw, int fallback) {
-        if (raw == null || raw.trim().isEmpty()) {
-            return fallback;
-        }
-        try {
-            return Color.parseColor(raw.trim());
-        } catch (IllegalArgumentException ignored) {
-            return fallback;
-        }
-    }
-
-    private GradientDrawable roundRect(int fill, int stroke, int radiusPx) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fill);
-        drawable.setCornerRadius(radiusPx);
-        drawable.setStroke(1, stroke);
-        return drawable;
-    }
-
-    private GradientDrawable roundRectNoStroke(int fill, int radiusPx) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fill);
-        drawable.setCornerRadius(radiusPx);
-        return drawable;
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void handleLaunchIntent(Intent intent) {
@@ -1665,8 +402,7 @@ public class MainActivity extends Activity {
             }
         }
         if (intent.hasExtra("ui_shell_mode")) {
-            String mode = intent.getStringExtra("ui_shell_mode");
-            settingsStore.setUiShellMode(mode);
+            settingsStore.setUiShellMode(intent.getStringExtra("ui_shell_mode"));
             Log.i(TAG, "Set UI shell mode from launch extra: " + settingsStore.getUiShellMode());
             uiSurfaceChanged = true;
         }
@@ -1711,7 +447,6 @@ public class MainActivity extends Activity {
         }
         if (uiSurfaceChanged) {
             showHomeScreen();
-            renderCurrent();
         }
     }
 
@@ -1765,7 +500,7 @@ public class MainActivity extends Activity {
     private void syncProvisioningState() {
         PuckyState.get().setDeviceId(settingsStore.getDeviceId());
         PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
-        renderCurrent();
+        emitWebPlayerState();
     }
 
     private boolean shouldStartAssistantSetup(Intent intent) {
@@ -1846,27 +581,5 @@ public class MainActivity extends Activity {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
         manager.notify(ASSISTANT_SETUP_NOTIFICATION_ID, builder.build());
-    }
-
-    private static final class Message {
-        final String sender;
-        final String text;
-        final String timestamp;
-        final String mediaType;
-        final String mediaLabel;
-        final String mediaPath;
-
-        Message(String sender, String text, String timestamp, String mediaType, String mediaLabel, String mediaPath) {
-            this.sender = sender == null ? "" : sender.trim().toLowerCase(Locale.US);
-            this.text = text == null ? "" : text.trim();
-            this.timestamp = timestamp == null ? "" : timestamp.trim();
-            this.mediaType = mediaType == null ? "" : mediaType.trim().toLowerCase(Locale.US);
-            this.mediaLabel = mediaLabel == null ? "" : mediaLabel.trim();
-            this.mediaPath = mediaPath == null ? "" : mediaPath.trim();
-        }
-
-        boolean isUser() {
-            return "user".equals(sender) || "you".equals(sender) || "me".equals(sender);
-        }
     }
 }

@@ -280,7 +280,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-reel-count" in styles
     assert ".image-reel-img" in styles
     assert "position: relative" in styles
-    assert "bottom: 14px" in styles
+    assert "top: 14px" in styles
     assert "height: 52vh" in styles
     assert "max-height: 540px" in styles
     assert "object-fit: contain" in styles

@@ -77,16 +77,15 @@ public final class SettingsStore {
     }
 
     public String getUiShellMode() {
-        return prefs.getString(UI_SHELL_MODE, "native").trim();
+        return "web_cached";
     }
 
     public boolean isWebCachedUiEnabled() {
-        return "web_cached".equals(getUiShellMode());
+        return true;
     }
 
     public void setUiShellMode(String mode) {
-        String normalized = "web_cached".equals(mode == null ? "" : mode.trim()) ? "web_cached" : "native";
-        prefs.edit().putString(UI_SHELL_MODE, normalized).apply();
+        prefs.edit().putString(UI_SHELL_MODE, "web_cached").apply();
     }
 
     public boolean isAutoConnectEnabled() {

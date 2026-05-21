@@ -463,7 +463,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "ui.shell.mode.get":
                 return uiShellMode();
             case "ui.shell.mode.set":
-                settingsStore.setUiShellMode(command.args().optString("mode", "native"));
+                settingsStore.setUiShellMode(command.args().optString("mode", "web_cached"));
                 return uiShellMode();
             case "launcher.capability.get":
                 return uiController.launcherCapability();

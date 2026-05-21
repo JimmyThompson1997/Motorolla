@@ -1278,7 +1278,10 @@
   }
 
   function normalizePath(path) {
-    return String(path || "").replace(/^\/data\/user\/0\//, "/data/data/");
+    return String(path || "")
+      .replace(/^\/data\/user\/0\//, "/data/data/")
+      .replace(/^\/mnt\/sdcard\//, "/storage/emulated/0/")
+      .replace(/^\/sdcard\//, "/storage/emulated/0/");
   }
 
   function savedPositionFor(path) {
@@ -1403,7 +1406,6 @@
       try {
         state.player = await Pucky.request({ command: "player.state", args: {} });
         if (state.player.path) {
-          state.activePath = state.player.path;
           rememberPlayerProgress(state.player);
         }
         render();

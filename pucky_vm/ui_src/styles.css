@@ -625,7 +625,7 @@ button {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 14px;
+  top: 14px;
   display: flex;
   align-items: center;
   justify-content: center;

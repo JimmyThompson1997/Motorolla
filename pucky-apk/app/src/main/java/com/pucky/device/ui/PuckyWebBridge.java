@@ -102,7 +102,7 @@ public final class PuckyWebBridge {
             case "ui.shell.mode.get":
                 return shellMode();
             case "ui.shell.mode.set":
-                settings.setUiShellMode(args.optString("mode", "native"));
+                settings.setUiShellMode(args.optString("mode", "web_cached"));
                 return shellMode();
             default:
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE,
