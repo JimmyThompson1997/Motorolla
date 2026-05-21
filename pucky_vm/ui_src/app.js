@@ -237,6 +237,7 @@
     __event(name, payload) {
       if (name === "player.state") {
         state.player = payload || state.player;
+        syncActivePathFromPlayer(state.player);
         rememberPlayerProgress(state.player);
         render();
       }
@@ -1253,7 +1254,10 @@
   }
 
   function isActiveCard(card) {
-    return isSameAudioCard(state.player, card) || samePath(state.activePath, audioControlKey(card));
+    if (playerHasAudioIdentity(state.player)) {
+      return isSameAudioCard(state.player, card);
+    }
+    return samePath(state.activePath, audioControlKey(card));
   }
 
   function hasAudio(card) {
@@ -1265,12 +1269,25 @@
   }
 
   function isSameAudioCard(player, card) {
-    if (!player || !hasAudio(card)) {
+    if (!playerHasAudioIdentity(player) || !hasAudio(card)) {
       return false;
     }
     return samePath(player.path, card.audio_path)
-      || samePath(player.source, card.audio_playlist_path)
-      || samePath(state.activePath, audioControlKey(card));
+      || samePath(player.source, card.audio_playlist_path);
+  }
+
+  function playerHasAudioIdentity(player) {
+    return Boolean(player && (player.path || player.source));
+  }
+
+  function syncActivePathFromPlayer(player) {
+    if (!playerHasAudioIdentity(player)) {
+      return;
+    }
+    const matched = state.cards.find(card => isSameAudioCard(player, card));
+    if (matched) {
+      state.activePath = audioControlKey(matched);
+    }
   }
 
   function samePath(left, right) {

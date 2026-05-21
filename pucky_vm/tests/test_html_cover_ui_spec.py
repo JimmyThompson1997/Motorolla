@@ -204,6 +204,11 @@ def test_audiobook_cards_use_native_playlist_queue() -> None:
     assert "function hasAudio(card)" in app
     assert "function audioControlKey(card)" in app
     assert "function isSameAudioCard(player, card)" in app
+    assert "function playerHasAudioIdentity(player)" in app
+    assert "function syncActivePathFromPlayer(player)" in app
+    assert "if (playerHasAudioIdentity(state.player))" in app
+    assert "syncActivePathFromPlayer(state.player)" in app
+    assert "|| samePath(state.activePath, audioControlKey(card))" not in app
     assert 'command: "player.queue.set"' in app
     assert "playlist_path: card.audio_playlist_path" in app
     assert "samePath(player.source, card.audio_playlist_path)" in app
