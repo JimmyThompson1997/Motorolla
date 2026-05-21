@@ -1422,6 +1422,7 @@
     if (state.activePath) {
       try {
         state.player = await Pucky.request({ command: "player.state", args: {} });
+        syncActivePathFromPlayer(state.player);
         if (state.player.path) {
           rememberPlayerProgress(state.player);
         }
