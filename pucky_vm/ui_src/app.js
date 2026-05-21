@@ -35,6 +35,18 @@
       filled: '<path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5Z"/>',
       outline: '<path d="M16.5 6v11.5a4 4 0 0 1-8 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6"/>'
     },
+    mic: {
+      filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
+      outline: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 10.8c0 3.5 2.7 6.2 6.5 6.2s6.5-2.7 6.5-6.2"/><path d="M12 17v4"/>'
+    },
+    phone: {
+      filled: '<path d="M6.62 10.79c1.44 2.83 3.76 5.15 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.61 21 3 13.39 3 4c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2Z"/>',
+      outline: '<path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.1-2.1c.3-.3.7-.4 1.1-.2 1.1.4 2.3.6 3.6.6v4.8C10.6 20.5 3.5 13.4 3.5 4h4.8c0 1.3.2 2.5.6 3.6.1.4 0 .8-.2 1.1l-2.1 2.1Z"/>'
+    },
+    text: {
+      filled: '<path d="M4 4h16c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H8l-5 4V6c0-1.1.9-2 2-2Zm3 5h10V7H7v2Zm0 4h7v-2H7v2Z"/>',
+      outline: '<path d="M5 5h14c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H8.8L4 20.8v-14C4 5.8 4.8 5 5 5Z"/><path d="M8 9h8M8 12.5h6"/>'
+    },
     checklist: {
       filled: '<path d="m9 16.2-3.5-3.5L4.1 14.1 9 19 20.3 7.7 18.9 6.3 9 16.2ZM4 6h8v2H4V6Zm0 4h8v2H4v-2Z"/>',
       outline: '<path d="m8.8 17.1-3.3-3.3"/><path d="M8.8 17.1 20 5.9"/><path d="M4 6h8M4 10h8"/>'
@@ -42,29 +54,6 @@
     sensors: {
       filled: '<path d="M7.1 7.1 5.7 5.7C4.1 7.3 3 9.5 3 12s1.1 4.7 2.7 6.3l1.4-1.4C5.8 15.6 5 13.9 5 12s.8-3.6 2.1-4.9Zm11.2-1.4-1.4 1.4C18.2 8.4 19 10.1 19 12s-.8 3.6-2.1 4.9l1.4 1.4C19.9 16.7 21 14.5 21 12s-1.1-4.7-2.7-6.3ZM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/>',
       outline: '<path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/><circle cx="12" cy="12" r="3.5"/>'
-    }
-  };
-
-  const RETRO_SYMBOLS = {
-    mail: {
-      filled: '<path d="M3 5h18v14H3V5Zm2 3v2h2v2h2v2h6v-2h2v-2h2V8h-2v2h-2v2H9v-2H7V8H5Z"/>',
-      outline: '<path d="M3 5h18v14H3V5Z"/><path d="M5 8h2v2h2v2h6v-2h2V8h2"/>'
-    },
-    phone: {
-      filled: '<path d="M7 3h5v5h-2v3h2v3h3v-2h5v5h-2v2h-4v-2h-3v-2H9v-3H7V9H5V5h2V3Z"/>',
-      outline: '<path d="M7 3h5v5h-2v3h2v3h3v-2h5v5h-2v2h-4v-2h-3v-2H9v-3H7V9H5V5h2V3Z"/>'
-    },
-    text: {
-      filled: '<path d="M4 5h16v12H9l-5 4V5Zm3 4h10V7H7v2Zm0 4h8v-2H7v2Z"/>',
-      outline: '<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M7 8h10M7 12h8"/>'
-    },
-    checklist: {
-      filled: '<path d="M5 5h10v2H5V5Zm0 5h7v2H5v-2Zm0 5h5v2H5v-2Zm10 0h2v2h2v2h-4v-2h-2v-2h2Zm1-8h2V5h2v4h-4V7Z"/>',
-      outline: '<path d="M5 6h9M5 11h7M5 16h5"/><path d="m14 16 2 2 4-5"/><path d="m15 8 2 2 3-5"/>'
-    },
-    sensors: {
-      filled: '<path d="M11 10h2v2h2v2h-2v2h-2v-2H9v-2h2v-2Zm-6 0h2v4H5v-4Zm12 0h2v4h-2v-4ZM3 8h2v8H3V8Zm16 0h2v8h-2V8Z"/>',
-      outline: '<path d="M12 8v8M8 12h8"/><path d="M5 9v6M19 9v6M2.8 7v10M21.2 7v10"/>'
     }
   };
 
@@ -303,7 +292,7 @@
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
-    button.innerHTML = topIconSvg(tab.icon, { filled: tab.route === state.route });
+    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
       state.route = tab.route;
       render();
@@ -333,12 +322,11 @@
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
     identity.innerHTML = iconSvg(card.icon, { filled: true });
-    identity.setAttribute("aria-label", card.audio_path ? `Play ${card.title}` : card.title);
+    identity.setAttribute("aria-label", isActionRead(card, "audio") ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (card.audio_path) {
-        toggleAudio(card);
-      }
+      toggleRead(card, "audio");
+      renderFeed();
     });
 
     const body = el("div", "card-body");
@@ -360,6 +348,17 @@
     }
 
     const actions = el("div", "card-actions");
+    if (card.audio_path) {
+      const audio = el("button", "action action-audio");
+      audio.type = "button";
+      audio.innerHTML = iconSvg("mic", { filled: true });
+      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : "Play"} ${card.title}`);
+      audio.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleAudio(card);
+      });
+      actions.append(audio);
+    }
     if (card.html_path) {
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
@@ -755,6 +754,19 @@
     persistReadActions();
   }
 
+  function markUnread(card, action) {
+    state.readActions.delete(actionKey(card, action));
+    persistReadActions();
+  }
+
+  function toggleRead(card, action) {
+    if (isActionRead(card, action)) {
+      markUnread(card, action);
+    } else {
+      markRead(card, action);
+    }
+  }
+
   function isActionRead(card, action) {
     return state.readActions.has(actionKey(card, action));
   }
@@ -782,19 +794,6 @@
   function normalizeIcon(icon) {
     const value = String(icon || "").toLowerCase();
     return MATERIAL_SYMBOLS[value] ? value : "mail";
-  }
-
-  function normalizeTopIcon(icon) {
-    const value = String(icon || "").toLowerCase();
-    return RETRO_SYMBOLS[value] ? value : "mail";
-  }
-
-  function topIconSvg(icon, options = {}) {
-    const name = normalizeTopIcon(icon);
-    const filled = options.filled !== false;
-    const symbol = RETRO_SYMBOLS[name] || RETRO_SYMBOLS.mail;
-    const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
-    return `<svg class="retro-icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
   function iconSvg(icon, options = {}) {
