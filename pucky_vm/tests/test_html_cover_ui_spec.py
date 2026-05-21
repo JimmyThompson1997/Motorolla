@@ -28,22 +28,26 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     styles = read("styles.css")
 
     assert 'id="pageTabs"' in html
-    assert "const RETRO_SYMBOLS" not in app
-    assert "function topIconSvg(" not in app
+    assert "const RETRO_TAB_SYMBOLS" in app
+    assert "function topIconSvg(" in app
     assert "const PAGE_TABS" in app
     assert "renderTabs()" in app
-    assert "button.innerHTML = iconSvg(tab.icon" in app
+    assert "button.innerHTML = topIconSvg(tab.icon" in app
     assert 'route: "feed"' in app
+    assert 'icon: "mailbox"' in app
+    assert 'route: "morning"' in app
+    assert 'icon: "coffee"' in app
+    assert 'route: "alerts"' in app
+    assert 'icon: "bell"' in app
     assert 'route: "calls"' in app
-    assert 'route: "texts"' in app
-    assert 'route: "routines"' in app
     assert 'route: "sensors"' in app
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
-    assert ".retro-icon" not in styles
-    assert ".tab.is-active .material-icon" in styles
-    assert ".tab:not(.is-active) .material-icon" in styles
+    assert ".retro-tab-icon" in styles
+    assert "shape-rendering: crispEdges" in styles
+    assert ".tab.is-active .retro-tab-icon" in styles
+    assert ".tab:not(.is-active) .retro-tab-icon" in styles
 
 
 def test_card_actions_have_local_read_state() -> None:

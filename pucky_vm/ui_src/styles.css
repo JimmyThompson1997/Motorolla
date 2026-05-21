@@ -76,19 +76,23 @@ button {
 }
 
 .tab {
-  width: 38px;
-  height: 34px;
+  width: 43px;
+  height: 38px;
   border: 0;
   background: transparent;
   border-radius: 12px;
   color: rgba(245, 249, 255, 0.92);
   display: grid;
   place-items: center;
-  padding: 3px;
+  padding: 2px;
 }
 
 .tab.is-active {
   color: var(--text);
+}
+
+.tab:not(.is-active) {
+  color: rgba(245, 249, 255, 0.76);
 }
 
 .material-icon {
@@ -123,6 +127,30 @@ button {
   stroke-width: 2.05;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.retro-tab-icon {
+  width: 31px;
+  height: 31px;
+  display: block;
+  color: currentColor;
+  fill: currentColor;
+  stroke: none;
+  shape-rendering: crispEdges;
+  filter: drop-shadow(0 0 7px rgba(245, 249, 255, 0.14));
+}
+
+.retro-tab-icon .pixel-cutout {
+  fill: var(--bg);
+}
+
+.tab.is-active .retro-tab-icon {
+  opacity: 1;
+  filter: drop-shadow(0 0 10px rgba(245, 249, 255, 0.24));
+}
+
+.tab:not(.is-active) .retro-tab-icon {
+  opacity: 0.9;
 }
 
 .feed {

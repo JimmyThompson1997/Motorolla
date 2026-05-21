@@ -90,12 +90,35 @@
   };
 
   const PAGE_TABS = [
-    { route: "feed", icon: "mail", label: "Inbox" },
+    { route: "feed", icon: "mailbox", label: "Inbox" },
+    { route: "morning", icon: "coffee", label: "Morning" },
+    { route: "alerts", icon: "bell", label: "Alerts" },
     { route: "calls", icon: "phone", label: "Calls" },
-    { route: "texts", icon: "text", label: "Texts" },
-    { route: "routines", icon: "checklist", label: "Routines" },
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
+
+  const RETRO_TAB_SYMBOLS = {
+    mailbox: {
+      filled: '<rect x="3" y="8" width="15" height="10"/><rect x="5" y="6" width="11" height="2"/><rect x="7" y="4" width="7" height="2"/><rect x="18" y="11" width="3" height="7"/><rect x="2" y="18" width="19" height="2"/><rect class="pixel-cutout" x="7" y="11" width="7" height="4"/><rect x="8" y="12" width="5" height="2"/>',
+      outline: '<rect x="3" y="8" width="2" height="10"/><rect x="16" y="8" width="2" height="10"/><rect x="5" y="6" width="11" height="2"/><rect x="7" y="4" width="7" height="2"/><rect x="5" y="16" width="11" height="2"/><rect x="18" y="11" width="3" height="7"/><rect x="2" y="18" width="19" height="2"/><rect x="7" y="11" width="7" height="2"/>'
+    },
+    coffee: {
+      filled: '<rect x="5" y="8" width="11" height="9"/><rect x="16" y="10" width="4" height="6"/><rect class="pixel-cutout" x="17" y="11" width="2" height="4"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>',
+      outline: '<rect x="5" y="8" width="2" height="9"/><rect x="14" y="8" width="2" height="9"/><rect x="7" y="8" width="7" height="2"/><rect x="7" y="15" width="7" height="2"/><rect x="16" y="10" width="4" height="2"/><rect x="18" y="12" width="2" height="4"/><rect x="16" y="16" width="3" height="2"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>'
+    },
+    bell: {
+      filled: '<rect x="9" y="3" width="6" height="2"/><rect x="6" y="6" width="12" height="3"/><rect x="5" y="9" width="14" height="7"/><rect x="3" y="16" width="18" height="2"/><rect x="10" y="19" width="4" height="2"/>',
+      outline: '<rect x="9" y="3" width="6" height="2"/><rect x="6" y="6" width="2" height="3"/><rect x="16" y="6" width="2" height="3"/><rect x="5" y="9" width="2" height="7"/><rect x="17" y="9" width="2" height="7"/><rect x="7" y="6" width="10" height="2"/><rect x="7" y="14" width="10" height="2"/><rect x="3" y="16" width="18" height="2"/><rect x="10" y="19" width="4" height="2"/>'
+    },
+    phone: {
+      filled: '<rect x="7" y="2" width="10" height="20"/><rect class="pixel-cutout" x="9" y="5" width="6" height="13"/><rect x="10" y="19" width="4" height="1"/>',
+      outline: '<rect x="7" y="2" width="10" height="2"/><rect x="7" y="20" width="10" height="2"/><rect x="7" y="4" width="2" height="16"/><rect x="15" y="4" width="2" height="16"/><rect x="10" y="18" width="4" height="1"/>'
+    },
+    sensors: {
+      filled: '<rect x="10" y="9" width="4" height="4"/><rect x="4" y="8" width="2" height="8"/><rect x="18" y="8" width="2" height="8"/><rect x="7" y="5" width="2" height="2"/><rect x="15" y="5" width="2" height="2"/><rect x="7" y="17" width="2" height="2"/><rect x="15" y="17" width="2" height="2"/><rect x="2" y="6" width="2" height="2"/><rect x="20" y="6" width="2" height="2"/><rect x="2" y="16" width="2" height="2"/><rect x="20" y="16" width="2" height="2"/>',
+      outline: '<rect x="10" y="9" width="4" height="4"/><rect x="4" y="8" width="2" height="8"/><rect x="18" y="8" width="2" height="8"/><rect x="7" y="5" width="2" height="2"/><rect x="15" y="5" width="2" height="2"/><rect x="7" y="17" width="2" height="2"/><rect x="15" y="17" width="2" height="2"/><rect x="2" y="6" width="2" height="2"/><rect x="20" y="6" width="2" height="2"/><rect x="2" y="16" width="2" height="2"/><rect x="20" y="16" width="2" height="2"/>'
+    }
+  };
 
   const MOCK_CARDS = [
     {
@@ -386,7 +409,7 @@
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
-    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
+    button.innerHTML = topIconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
       state.route = tab.route;
       render();
@@ -1438,6 +1461,13 @@
     const symbol = MATERIAL_SYMBOLS[name] || MATERIAL_SYMBOLS.mail;
     const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function topIconSvg(icon, options = {}) {
+    const filled = options.filled !== false;
+    const symbol = RETRO_TAB_SYMBOLS[icon] || RETRO_TAB_SYMBOLS.mailbox;
+    const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
+    return `<svg class="retro-tab-icon ${filled ? "is-filled" : "is-outline"}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
   function formatTime(ms) {
