@@ -594,6 +594,7 @@
   function installVerticalDismiss(target, panel, onDismiss = dismissAudioSheet) {
     installDrag(target, {
       axis: "y",
+      scrollTarget: target,
       start: () => { panel.classList.add("is-dragging"); },
       apply: value => { panel.style.transform = `translateY(${Math.max(0, value)}px)`; },
       reset: () => {
@@ -627,6 +628,13 @@
       const primary = config.axis === "x" ? dx : dy;
       const cross = config.axis === "x" ? Math.abs(dy) : Math.abs(dx);
       if (primary > 8 && primary > cross) {
+        if (config.axis === "y" && canScrollUp(config.scrollTarget)) {
+          dragging = false;
+          if (config.reset) {
+            config.reset();
+          }
+          return;
+        }
         if (event && event.cancelable) {
           event.preventDefault();
         }
@@ -699,6 +707,10 @@
     requestAnimationFrame(() => {
       content.scrollTop = content.scrollHeight;
     });
+  }
+
+  function canScrollUp(target) {
+    return Boolean(target && target.scrollTop > 0);
   }
 
   function hasTranscript(card) {

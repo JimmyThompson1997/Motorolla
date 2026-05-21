@@ -99,6 +99,9 @@ def test_sheet_drag_waits_for_release_before_dismissal() -> None:
     assert "if (delta > threshold())" in app
     assert "config.done();" in app
     assert "config.reset();" in app
+    assert "scrollTarget: target" in app
+    assert "function canScrollUp(target)" in app
+    assert "target.scrollTop > 0" in app
 
 
 def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
