@@ -605,26 +605,55 @@
     const content = el("div", "detail-content image-reel");
     if (!images.length) {
       content.append(el("p", "preview", "No images are attached to this reply."));
-    }
-    for (let index = 0; index < images.length; index++) {
-      const image = images[index];
-      const frame = el("figure", "image-frame");
-      const imageEl = document.createElement("img");
-      imageEl.className = "image-reel-img";
-      imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
-      imageEl.decoding = "async";
-      try {
-        imageEl.src = await resolveImageSrc(image);
-      } catch (error) {
-        frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
-      }
-      if (imageEl.src) {
-        frame.append(imageEl);
-      }
-      if (image.title || image.alt) {
-        frame.append(el("figcaption", "image-caption", image.title || image.alt));
-      }
-      content.append(frame);
+    } else {
+      let index = 0;
+      const viewer = el("div", "image-viewer");
+      const renderImage = async () => {
+        const image = images[index];
+        const frame = el("figure", "image-frame");
+        const imageEl = document.createElement("img");
+        imageEl.className = "image-reel-img";
+        imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
+        imageEl.decoding = "async";
+        try {
+          imageEl.src = await resolveImageSrc(image);
+        } catch (error) {
+          frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
+        }
+        if (imageEl.src) {
+          frame.append(imageEl);
+        }
+        if (image.title || image.alt) {
+          frame.append(el("figcaption", "image-caption", image.title || image.alt));
+        }
+        if (images.length > 1) {
+          const controls = el("div", "image-reel-controls");
+          const previous = el("button", "image-reel-nav");
+          previous.type = "button";
+          previous.innerHTML = iconSvg("chevron_left", { filled: false });
+          previous.setAttribute("aria-label", "Previous image");
+          previous.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            index = (index + images.length - 1) % images.length;
+            await renderImage();
+          });
+          const next = el("button", "image-reel-nav");
+          next.type = "button";
+          next.innerHTML = iconSvg("chevron_right", { filled: false });
+          next.setAttribute("aria-label", "Next image");
+          next.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            index = (index + 1) % images.length;
+            await renderImage();
+          });
+          controls.append(previous, el("span", "image-reel-count", `${index + 1} / ${images.length}`), next);
+          viewer.replaceChildren(frame, controls);
+        } else {
+          viewer.replaceChildren(frame);
+        }
+      };
+      content.append(viewer);
+      await renderImage();
     }
     openSideDetail(panel, card.title || "Images", content, dismissDetail);
   }

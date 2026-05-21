@@ -265,13 +265,20 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function resolvedImageMime(result, image, path)" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
+    assert '"image-reel-nav"' in app
+    assert '"image-reel-count"' in app
+    assert "Previous image" in app
+    assert "Next image" in app
     assert '"image-affordance"' in app
     assert 'iconSvg("image"' in app
     assert "artifact.read_base64" in app
     assert ".image-affordance" in styles
     assert ".image-reel" in styles
+    assert ".image-viewer" in styles
+    assert ".image-reel-nav" in styles
+    assert ".image-reel-count" in styles
     assert ".image-reel-img" in styles
-    assert "object-fit: cover" in styles
+    assert "object-fit: contain" in styles
 
 
 def test_turn_trace_is_single_gear_sheet_with_thinking_rows() -> None:
