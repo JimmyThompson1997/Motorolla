@@ -412,13 +412,13 @@
   }
 
   function openBottomSheet(panel, content, onDismiss) {
-    const grip = el("div", "sheet-grip");
-    content.prepend(grip);
-    panel.replaceChildren(content);
+    const dragZone = el("div", "sheet-drag-zone");
+    dragZone.append(el("div", "sheet-grip"));
+    panel.replaceChildren(content, dragZone);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
     installVerticalDismiss(content, panel, onDismiss);
-    installVerticalDismiss(grip, panel, onDismiss);
+    installVerticalDismiss(dragZone, panel, onDismiss);
   }
 
   function dismissDetail() {
@@ -443,7 +443,8 @@
       return;
     }
     const wrap = el("div", "sheet-inner");
-    wrap.append(el("div", "sheet-grip"));
+    const dragZone = el("div", "sheet-drag-zone");
+    dragZone.append(el("div", "sheet-grip"));
     wrap.append(el("h1", "sheet-title", card.title || "Audio"));
     wrap.append(el("p", "sheet-summary", card.summary || ""));
     const wave = waveform(card, "sheet-wave", 92);
@@ -472,7 +473,8 @@
     controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card)));
     wrap.append(controls);
     installVerticalDismiss(wrap, sheet, dismissAudioSheet);
-    sheet.replaceChildren(wrap);
+    installVerticalDismiss(dragZone, sheet, dismissAudioSheet);
+    sheet.replaceChildren(wrap, dragZone);
   }
 
   function dismissAudioSheet() {
