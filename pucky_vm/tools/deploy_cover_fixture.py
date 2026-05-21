@@ -17,13 +17,8 @@ DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
 DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"
 DEFAULT_ARTIFACT_BASE_PATH = "/ui/pucky/latest/"
-BAD_DEVICE_STRINGS = ("/mock/", "\\mock\\", ".tmp", "Trace UI fixture")
-FORBIDDEN_MANIFEST_FIELDS = ("audio_path", "html_path")
-PUBLIC_AUDIOBOOK_PREFIXES = (
-    "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/",
-    "/mnt/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/",
-    "/storage/emulated/0/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/",
-)
+BAD_DEVICE_STRINGS = ("/mock/", "\\mock\\", ".tmp", "/sdcard/", "\\sdcard\\", "Trace UI fixture")
+FORBIDDEN_MANIFEST_FIELDS = ("public_audio_path", "public_audio_playlist_path", "audio_path", "html_path")
 
 
 class DeployError(RuntimeError):
@@ -128,19 +123,6 @@ def app_owned_path(download: dict[str, Any], artifact_name: str) -> str:
     return path
 
 
-def validate_public_audiobook_path(path: str, *, field: str) -> str:
-    value = str(path or "").strip().replace("\\", "/")
-    if not value:
-        return ""
-    if not any(value.startswith(prefix) for prefix in PUBLIC_AUDIOBOOK_PREFIXES):
-        raise DeployError(f"{field} must stay inside the approved public audiobook directory.")
-    if field == "public_audio_playlist_path" and not value.lower().endswith(".m3u"):
-        raise DeployError("public_audio_playlist_path must point at an .m3u playlist.")
-    if field == "public_audio_path" and not value.lower().endswith(".wav"):
-        raise DeployError("public_audio_path must point at a .wav audiobook track.")
-    return value
-
-
 def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     artifact_base = str(spec.get("artifact_base_path") or "fixtures/artifacts").strip("/")
     cards: list[dict[str, Any]] = []
@@ -154,17 +136,6 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
         prefix = "pucky_fixture_" + "".join(ch if ch.isalnum() else "_" for ch in session_id)
         audio_artifact = card.pop("audio_artifact", "")
         html_artifact = card.pop("html_artifact", "")
-        public_audio_path = card.pop("public_audio_path", "")
-        public_audio_playlist_path = card.pop("public_audio_playlist_path", "")
-        if session_id == "fixture_book" and audio_artifact:
-            raise DeployError("fixture_book must use the real public audiobook playlist, not an audio artifact.")
-        if public_audio_path:
-            card["audio_path"] = validate_public_audiobook_path(public_audio_path, field="public_audio_path")
-        if public_audio_playlist_path:
-            card["audio_playlist_path"] = validate_public_audiobook_path(
-                public_audio_playlist_path,
-                field="public_audio_playlist_path",
-            )
         if audio_artifact:
             downloaded = download_artifact(args, artifact_name=audio_artifact, artifact_base=artifact_base, filename_prefix=prefix)
             downloads.append({"field": "audio_path", "artifact": audio_artifact, "download": downloaded})
