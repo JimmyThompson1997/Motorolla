@@ -1,16 +1,56 @@
 (() => {
-  const ICONS = {
-    clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l4 2"/></svg>',
-    bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg>',
-    calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M13 14h3"/></svg>',
-    moon: '<svg viewBox="0 0 24 24"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 7 7 0 1 0 20 15.5z"/></svg>',
-    book: '<svg viewBox="0 0 24 24"><path d="M5 4h8a3 3 0 0 1 3 3v13H8a3 3 0 0 0-3 3z"/><path d="M19 4h-3a3 3 0 0 0-3 3v13h3a3 3 0 0 1 3 3z"/></svg>',
-    mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>'
+  const READ_STATE_KEY = "pucky.cover.read_actions.v1";
+  const COMPLETE_EPSILON_MS = 500;
+
+  const MATERIAL_SYMBOLS = {
+    mail: {
+      filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
+      outline: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/><path d="m4.4 18 5.7-5.1"/><path d="m19.6 18-5.7-5.1"/>'
+    },
+    clock: {
+      filled: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 17c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7Zm1-12h-2v6l5 3 1-1.73-4-2.27V7Z"/>',
+      outline: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.3v5.1l3.8 2.2"/>'
+    },
+    bolt: {
+      filled: '<path d="M7 2h10l-3.2 7H20L9 22l2.3-8H5l2-12Z"/>',
+      outline: '<path d="M13.5 2.8 5.7 13.2h5.7L9.9 21.2l8.4-10.4h-5.8l1-8Z"/>'
+    },
+    calendar: {
+      filled: '<path d="M7 2h2v2h6V2h2v2h1c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h1V2Zm11 8H6v10h12V10Z"/>',
+      outline: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M13 14h3"/>'
+    },
+    moon: {
+      filled: '<path d="M21 14.4C19.7 18.8 15.6 22 10.8 22 5.4 22 1 17.6 1 12.2 1 7.4 4.2 3.3 8.6 2c-.8 1.3-1.2 2.8-1.2 4.4 0 5.6 4.6 10.2 10.2 10.2 1.6 0 3.1-.4 4.4-1.2Z"/>',
+      outline: '<path d="M20.8 14.8A8.8 8.8 0 1 1 9.2 3.2a7.3 7.3 0 0 0 11.6 11.6Z"/>'
+    },
+    book: {
+      filled: '<path d="M4 5.5C4 4.67 4.67 4 5.5 4H11c.74 0 1.43.24 2 .65.57-.41 1.26-.65 2-.65h3.5c.83 0 1.5.67 1.5 1.5V19c0 .55-.45 1-1 1h-4c-.67 0-1.31.22-1.84.62-.1.08-.22.12-.35.12h-1.62c-.13 0-.25-.04-.35-.12C10.31 20.22 9.67 20 9 20H5c-.55 0-1-.45-1-1V5.5ZM6 6v12h3c.72 0 1.4.16 2 .45V6.25c-.31-.16-.65-.25-1-.25H6Zm7 .25v12.2c.6-.29 1.28-.45 2-.45h3V6h-3c-.35 0-.69.09-1 .25Z"/>',
+      outline: '<path d="M5 5h5.2c1 0 1.8.3 2.8.9V20c-.9-.7-1.9-1-3-1H5V5Z"/><path d="M19 5h-4.2c-.9 0-1.8.3-2.8.9V20c.9-.7 1.9-1 3-1h4V5Z"/>'
+    },
+    chat: {
+      filled: '<path d="M4 4h16c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H8l-5 4V6c0-1.1.9-2 2-2Z"/>',
+      outline: '<path d="M5 5h14c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H9l-5 4V6.8C4 5.8 4.8 5 5 5Z"/><path d="M8 9h8M8 12.5h6"/>'
+    },
+    attachment: {
+      filled: '<path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5Z"/>',
+      outline: '<path d="M16.5 6v11.5a4 4 0 0 1-8 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6"/>'
+    },
+    checklist: {
+      filled: '<path d="m9 16.2-3.5-3.5L4.1 14.1 9 19 20.3 7.7 18.9 6.3 9 16.2ZM4 6h8v2H4V6Zm0 4h8v2H4v-2Z"/>',
+      outline: '<path d="m8.8 17.1-3.3-3.3"/><path d="M8.8 17.1 20 5.9"/><path d="M4 6h8M4 10h8"/>'
+    },
+    sensors: {
+      filled: '<path d="M7.1 7.1 5.7 5.7C4.1 7.3 3 9.5 3 12s1.1 4.7 2.7 6.3l1.4-1.4C5.8 15.6 5 13.9 5 12s.8-3.6 2.1-4.9Zm11.2-1.4-1.4 1.4C18.2 8.4 19 10.1 19 12s-.8 3.6-2.1 4.9l1.4 1.4C19.9 16.7 21 14.5 21 12s-1.1-4.7-2.7-6.3ZM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/>',
+      outline: '<path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/><circle cx="12" cy="12" r="3.5"/>'
+    }
   };
-  const ACTIONS = {
-    transcript: '<svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>',
-    page: '<svg viewBox="0 0 24 24"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>'
-  };
+
+  const PAGE_TABS = [
+    { route: "feed", icon: "mail", label: "Inbox" },
+    { route: "routines", icon: "checklist", label: "Routines" },
+    { route: "sensors", icon: "sensors", label: "Sensors" }
+  ];
+
   const MOCK_CARDS = [
     {
       session_id: "mock_morning",
@@ -80,12 +120,15 @@
 
   const state = {
     cards: [],
+    route: "feed",
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: new Map(),
+    completedPaths: new Set(),
     speedByPath: new Map(),
     sheetCard: null,
     waveHistory: new Map(),
+    readActions: loadReadActions(),
     drag: null
   };
 
@@ -127,6 +170,7 @@
     __event(name, payload) {
       if (name === "player.state") {
         state.player = payload || state.player;
+        rememberPlayerProgress(state.player);
         render();
       }
     }
@@ -149,33 +193,35 @@
     }
     if (command === "player.play") {
       state.activePath = args.path || state.activePath;
-      const start = args.start_at_ms ?? state.savedPositions.get(state.activePath) ?? 0;
+      const start = args.start_at_ms ?? state.savedPositions.get(normalizePath(state.activePath)) ?? 0;
       state.player = {
         schema: "pucky.player_state.v1",
         loaded: true,
+        state: "playing",
         is_playing: true,
         path: state.activePath,
         position_ms: start,
         duration_ms: 1000 * 60 * 19 + 57000,
-        speed: state.speedByPath.get(state.activePath) || 1,
+        speed: state.speedByPath.get(normalizePath(state.activePath)) || 1,
         can_seek: true,
         audio_session_id: 1
       };
       return state.player;
     }
     if (command === "player.pause") {
-      state.player = { ...state.player, is_playing: false };
+      state.player = { ...state.player, state: "paused", is_playing: false };
       return state.player;
     }
     if (command === "player.seek") {
       state.player = { ...state.player, position_ms: Math.max(0, Number(args.position_ms || 0)) };
+      rememberPlayerProgress(state.player);
       return state.player;
     }
     if (command === "player.speed") {
       const speed = Math.max(0.5, Math.min(3, Number(args.speed || 1)));
       state.player = { ...state.player, speed };
       if (state.activePath) {
-        state.speedByPath.set(state.activePath, speed);
+        state.speedByPath.set(normalizePath(state.activePath), speed);
       }
       return state.player;
     }
@@ -198,12 +244,41 @@
   }
 
   function render() {
+    renderTabs();
     renderFeed();
     renderAudioSheet();
   }
 
+  function renderTabs() {
+    const tabs = document.getElementById("pageTabs");
+    if (!tabs) {
+      return;
+    }
+    tabs.replaceChildren(...PAGE_TABS.map(tabView));
+  }
+
+  function tabView(tab) {
+    const button = el("button", tab.route === state.route ? "tab is-active" : "tab");
+    button.type = "button";
+    button.dataset.route = tab.route;
+    button.setAttribute("aria-label", tab.label);
+    button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
+    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
+    button.addEventListener("click", () => {
+      state.route = tab.route;
+      render();
+    });
+    return button;
+  }
+
   function renderFeed() {
     const feed = document.getElementById("feed");
+    document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
+    if (state.route !== "feed") {
+      const current = PAGE_TABS.find(tab => tab.route === state.route);
+      feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
+      return;
+    }
     if (!state.cards.length) {
       feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
       return;
@@ -215,13 +290,10 @@
     const cardEl = el("article", "card");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
 
-    const identity = el("button", "identity");
+    const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
-    identity.innerHTML = ICONS[normalizeIcon(card.icon)] || ICONS.mail;
+    identity.innerHTML = iconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", card.audio_path ? `Play ${card.title}` : card.title);
-    if (isActiveCard(card)) {
-      identity.classList.add("audio-active");
-    }
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
       if (card.audio_path) {
@@ -249,9 +321,9 @@
 
     const actions = el("div", "card-actions");
     if (hasTranscript(card)) {
-      const transcript = el("button", "action");
+      const transcript = el("button", `action ${actionStateClass(card, "transcript")}`);
       transcript.type = "button";
-      transcript.innerHTML = ACTIONS.transcript;
+      transcript.innerHTML = iconSvg("chat", { filled: true });
       transcript.setAttribute("aria-label", `Open transcript for ${card.title}`);
       transcript.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -260,9 +332,9 @@
       actions.append(transcript);
     }
     if (card.html_path) {
-      const page = el("button", "action");
+      const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
-      page.innerHTML = ACTIONS.page;
+      page.innerHTML = iconSvg("attachment", { filled: true });
       page.setAttribute("aria-label", `Open page for ${card.title}`);
       page.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -278,16 +350,21 @@
   async function toggleAudio(card) {
     try {
       const current = await Pucky.request({ command: "player.state", args: {} });
+      rememberPlayerProgress(current);
       const same = current && samePath(current.path, card.audio_path);
       if (same && current.is_playing) {
         state.player = await Pucky.request({ command: "player.pause", args: {} });
+        rememberPlayerProgress(state.player);
       } else {
         const start = savedPositionFor(card.audio_path);
         state.activePath = card.audio_path;
+        markRead(card, "audio");
+        forgetCompleted(card.audio_path);
         state.player = await Pucky.request({
           command: "player.play",
           args: { path: card.audio_path, title: card.title, start_at_ms: start }
         });
+        rememberPlayerProgress(state.player);
       }
       render();
     } catch (error) {
@@ -296,6 +373,8 @@
   }
 
   function showTranscript(card) {
+    markRead(card, "transcript");
+    renderFeed();
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
     const content = el("div", "panel-scroll");
@@ -308,12 +387,14 @@
       }
       content.append(bubble);
     }
-    openRightPanel(panel, content);
+    openBottomSheet(panel, content, dismissDetail);
   }
 
   async function showRichPage(card) {
+    markRead(card, "page");
+    renderFeed();
     const panel = document.getElementById("detail");
-    const content = el("div", "panel-scroll");
+    const content = el("div", "panel-scroll rich-panel");
     try {
       const result = await Pucky.request({
         command: "artifact.read_base64",
@@ -327,22 +408,23 @@
       content.append(el("h1", "chat-title", card.title || "Page"));
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
-    openRightPanel(panel, content);
+    openBottomSheet(panel, content, dismissDetail);
   }
 
-  function openRightPanel(panel, content) {
-    const edge = el("div", "edge-swipe");
-    panel.replaceChildren(content, edge);
+  function openBottomSheet(panel, content, onDismiss) {
+    const grip = el("div", "sheet-grip");
+    content.prepend(grip);
+    panel.replaceChildren(content);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
-    installHorizontalDismiss(content, panel);
-    installHorizontalDismiss(edge, panel);
+    installVerticalDismiss(content, panel, onDismiss);
+    installVerticalDismiss(grip, panel, onDismiss);
   }
 
   function dismissDetail() {
     const panel = document.getElementById("detail");
     panel.style.transform = "";
-    panel.classList.remove("is-open");
+    panel.classList.remove("is-open", "is-dragging");
     panel.setAttribute("aria-hidden", "true");
   }
 
@@ -361,6 +443,7 @@
       return;
     }
     const wrap = el("div", "sheet-inner");
+    wrap.append(el("div", "sheet-grip"));
     wrap.append(el("h1", "sheet-title", card.title || "Audio"));
     wrap.append(el("p", "sheet-summary", card.summary || ""));
     const wave = waveform(card, "sheet-wave", 92);
@@ -375,6 +458,7 @@
     range.value = String(Math.max(0, state.player.position_ms || 0));
     range.addEventListener("change", async () => {
       state.player = await Pucky.request({ command: "player.seek", args: { position_ms: Number(range.value) } });
+      rememberPlayerProgress(state.player);
       renderAudioSheet();
     });
     scrub.append(range);
@@ -387,14 +471,14 @@
     controls.append(control("30", () => seekRelative(30000)));
     controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card)));
     wrap.append(controls);
-    installVerticalDismiss(wrap, sheet);
+    installVerticalDismiss(wrap, sheet, dismissAudioSheet);
     sheet.replaceChildren(wrap);
   }
 
   function dismissAudioSheet() {
     const sheet = document.getElementById("audioSheet");
     sheet.style.transform = "";
-    sheet.classList.remove("is-open");
+    sheet.classList.remove("is-open", "is-dragging");
     sheet.setAttribute("aria-hidden", "true");
     state.sheetCard = null;
   }
@@ -434,7 +518,7 @@
       const button = el("button", speed === current ? "is-active" : "", `${speed}x`);
       button.addEventListener("click", async (event) => {
         event.stopPropagation();
-        state.speedByPath.set(card.audio_path, speed);
+        state.speedByPath.set(normalizePath(card.audio_path), speed);
         state.player = await Pucky.request({ command: "player.speed", args: { speed } });
         closeSpeedPicker();
         render();
@@ -456,6 +540,7 @@
   async function seekRelative(delta) {
     const next = Math.max(0, Math.min(state.player.duration_ms || 0, (state.player.position_ms || 0) + delta));
     state.player = await Pucky.request({ command: "player.seek", args: { position_ms: next } });
+    rememberPlayerProgress(state.player);
     render();
   }
 
@@ -466,21 +551,19 @@
     return button;
   }
 
-  function installHorizontalDismiss(target, panel) {
-    installDrag(target, {
-      axis: "x",
-      apply: value => { panel.style.transform = `translateX(${Math.max(0, value)}px)`; },
-      reset: () => { panel.style.transform = ""; },
-      done: () => dismissDetail()
-    });
-  }
-
-  function installVerticalDismiss(target, panel) {
+  function installVerticalDismiss(target, panel, onDismiss = dismissAudioSheet) {
     installDrag(target, {
       axis: "y",
+      start: () => { panel.classList.add("is-dragging"); },
       apply: value => { panel.style.transform = `translateY(${Math.max(0, value)}px)`; },
-      reset: () => { panel.style.transform = ""; },
-      done: () => dismissAudioSheet()
+      reset: () => {
+        panel.classList.remove("is-dragging");
+        panel.style.transform = "";
+      },
+      done: () => {
+        panel.classList.remove("is-dragging");
+        onDismiss();
+      }
     });
   }
 
@@ -493,6 +576,9 @@
       startX = x;
       startY = y;
       dragging = true;
+      if (config.start) {
+        config.start();
+      }
     };
     const move = (x, y, event) => {
       if (!dragging) return;
@@ -559,7 +645,7 @@
   function messagesForCard(card) {
     if (Array.isArray(card.transcript_messages) && card.transcript_messages.length) {
       return card.transcript_messages.map(item => ({
-        role: item.role || "assistant",
+        role: item.role || item.sender || "assistant",
         text: item.text || item.content || "",
         time: item.time || item.timestamp || ""
       }));
@@ -591,16 +677,89 @@
   }
 
   function savedPositionFor(path) {
-    return state.savedPositions.get(normalizePath(path)) || 0;
+    const normalized = normalizePath(path);
+    if (state.completedPaths.has(normalized)) {
+      return 0;
+    }
+    return state.savedPositions.get(normalized) || 0;
   }
 
   function rememberPosition(path, position) {
     state.savedPositions.set(normalizePath(path), position);
   }
 
+  function isCompletePlayback(player) {
+    if (!player || !player.path) {
+      return false;
+    }
+    const duration = Number(player.duration_ms || 0);
+    const position = Number(player.position_ms || 0);
+    return player.state === "completed" || (duration > 0 && position >= Math.max(0, duration - COMPLETE_EPSILON_MS));
+  }
+
+  function rememberPlayerProgress(player) {
+    if (!player || !player.path) {
+      return;
+    }
+    const normalized = normalizePath(player.path);
+    if (isCompletePlayback(player)) {
+      state.completedPaths.add(normalized);
+      rememberPosition(player.path, 0);
+      return;
+    }
+    state.completedPaths.delete(normalized);
+    rememberPosition(player.path, Math.max(0, Number(player.position_ms || 0)));
+  }
+
+  function forgetCompleted(path) {
+    state.completedPaths.delete(normalizePath(path));
+  }
+
+  function actionKey(card, action) {
+    return `${card.session_id || card.title || card.audio_path || "card"}:${action}`;
+  }
+
+  function markRead(card, action) {
+    state.readActions.add(actionKey(card, action));
+    persistReadActions();
+  }
+
+  function isActionRead(card, action) {
+    return state.readActions.has(actionKey(card, action));
+  }
+
+  function actionStateClass(card, action) {
+    return isActionRead(card, action) ? "is-read" : "is-unread";
+  }
+
+  function loadReadActions() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(READ_STATE_KEY) || "[]"));
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function persistReadActions() {
+    try {
+      localStorage.setItem(READ_STATE_KEY, JSON.stringify(Array.from(state.readActions)));
+    } catch (_) {
+      // Read state is a visual affordance; failure should never break the shell.
+    }
+  }
+
   function normalizeIcon(icon) {
     const value = String(icon || "").toLowerCase();
-    return ICONS[value] ? value : "mail";
+    return MATERIAL_SYMBOLS[value] ? value : "mail";
+  }
+
+  function iconSvg(icon, options = {}) {
+    const name = normalizeIcon(icon);
+    const filled = options.filled !== false;
+    const className = options.className || "material-icon";
+    const symbol = MATERIAL_SYMBOLS[name] || MATERIAL_SYMBOLS.mail;
+    const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
+    return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
   function formatTime(ms) {
@@ -627,7 +786,7 @@
         state.player = await Pucky.request({ command: "player.state", args: {} });
         if (state.player.path) {
           state.activePath = state.player.path;
-          rememberPosition(state.activePath, state.player.position_ms || 0);
+          rememberPlayerProgress(state.player);
         }
         render();
       } catch (_) {

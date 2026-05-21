@@ -48,32 +48,14 @@ button {
 .header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 8px 10px;
+  gap: 10px;
+  padding: 0 8px 12px;
   flex: 0 0 auto;
-}
-
-.mail-mark {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  color: var(--text);
-}
-
-.mail-mark svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 3.4;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
 }
 
 .page-tabs {
-  display: none;
-  gap: 8px;
+  display: flex;
+  gap: 12px;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -84,17 +66,49 @@ button {
 }
 
 .tab {
-  border: 1px solid rgba(58, 132, 255, 0.45);
-  background: rgba(11, 24, 40, 0.72);
-  border-radius: 999px;
-  padding: 8px 12px;
-  color: var(--muted);
-  white-space: nowrap;
+  width: 38px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  border-radius: 12px;
+  color: rgba(245, 249, 255, 0.92);
+  display: grid;
+  place-items: center;
+  padding: 3px;
 }
 
 .tab.is-active {
-  background: rgba(58, 132, 255, 0.18);
   color: var(--text);
+}
+
+.material-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.material-icon path,
+.material-icon circle,
+.material-icon rect {
+  vector-effect: non-scaling-stroke;
+}
+
+.tab .material-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.tab.is-active .material-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
+.tab:not(.is-active) .material-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.05;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .feed {
@@ -118,6 +132,19 @@ button {
   text-align: center;
   padding: 32px 18px;
   font-size: 18px;
+  line-height: 1.35;
+}
+
+.placeholder-page {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: var(--card);
+  color: var(--muted);
+  text-align: center;
+  padding: 32px 18px;
+  font-size: 16px;
   line-height: 1.35;
 }
 
@@ -145,18 +172,21 @@ button {
   padding: 0;
 }
 
-.identity svg {
-  width: 31px;
-  height: 31px;
-  stroke: var(--text);
-  fill: none;
-  stroke-width: 2.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.identity .material-icon {
+  width: 29px;
+  height: 29px;
+  fill: currentColor;
+  stroke: none;
 }
 
-.identity.audio-active svg {
-  stroke: var(--accent, #72c2ff);
+.identity.is-unread,
+.action.is-unread {
+  color: var(--accent, #72c2ff);
+}
+
+.identity.is-read,
+.action.is-read {
+  color: var(--text);
 }
 
 .card-body {
@@ -197,23 +227,21 @@ button {
 }
 
 .action {
-  width: 48px;
-  height: 40px;
-  border: 1px solid var(--blue);
-  border-radius: 16px;
+  width: 42px;
+  height: 38px;
+  border: 0;
+  border-radius: 14px;
   background: transparent;
   display: grid;
   place-items: center;
+  padding: 6px;
 }
 
-.action svg {
-  width: 26px;
-  height: 26px;
-  fill: none;
-  stroke: var(--text);
-  stroke-width: 2.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.action .material-icon {
+  width: 25px;
+  height: 25px;
+  fill: currentColor;
+  stroke: none;
 }
 
 .wave-row {
@@ -241,43 +269,39 @@ button {
   inset: 0;
   z-index: 10;
   background: var(--bg);
-  transform: translateX(100%);
-  transition: transform 180ms ease-out;
+  transform: translateY(100%);
+  transition: transform 340ms cubic-bezier(0.16, 0.84, 0.24, 1);
   will-change: transform;
 }
 
 .detail-panel.is-open {
-  transform: translateX(0);
+  transform: translateY(0);
 }
 
 .audio-sheet {
   z-index: 12;
   transform: translateY(100%);
-  transition-duration: 340ms;
-  transition-timing-function: cubic-bezier(0.16, 0.84, 0.24, 1);
 }
 
 .audio-sheet.is-open {
   transform: translateY(0);
 }
 
+.detail-panel.is-dragging,
+.audio-sheet.is-dragging {
+  transition: none;
+}
+
 .panel-scroll {
   height: 100%;
   overflow-y: auto;
-  padding: 24px 20px var(--nav-safe);
+  padding: 18px 20px var(--nav-safe);
   scrollbar-width: none;
+  touch-action: pan-y;
 }
 
 .panel-scroll::-webkit-scrollbar {
   display: none;
-}
-
-.edge-swipe {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 104px;
-  z-index: 2;
-  touch-action: pan-y;
 }
 
 .chat-title,
@@ -330,6 +354,15 @@ button {
 .sheet-inner {
   height: 100%;
   padding: 36px 20px var(--nav-safe);
+  touch-action: pan-y;
+}
+
+.sheet-grip {
+  width: 42px;
+  height: 4px;
+  margin: 0 auto 18px;
+  border-radius: 999px;
+  background: rgba(245, 249, 255, 0.28);
 }
 
 .sheet-summary {
