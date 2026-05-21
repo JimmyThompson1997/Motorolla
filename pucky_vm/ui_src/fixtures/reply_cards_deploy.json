@@ -358,8 +358,7 @@
           }
         ]
       },
-      "public_audio_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav",
-      "public_audio_playlist_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u",
+      "audio_artifact": "pocket-computers.wav",
       "html_artifact": "pocket-computers.html"
     }
   ]

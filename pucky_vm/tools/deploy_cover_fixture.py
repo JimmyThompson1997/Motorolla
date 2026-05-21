@@ -17,7 +17,8 @@ DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
 DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"
 DEFAULT_ARTIFACT_BASE_PATH = "/ui/pucky/latest/"
-BAD_DEVICE_STRINGS = ("/mock/", "\\mock\\", ".tmp", "Trace UI fixture")
+BAD_DEVICE_STRINGS = ("/mock/", "\\mock\\", ".tmp", "/sdcard/", "\\sdcard\\", "Trace UI fixture")
+FORBIDDEN_MANIFEST_FIELDS = ("public_audio_path", "public_audio_playlist_path", "audio_path", "html_path")
 
 
 class DeployError(RuntimeError):
@@ -128,16 +129,13 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
     downloads: list[dict[str, Any]] = []
     for raw_card in spec.get("cards", []):
         card = dict(raw_card)
+        for field in FORBIDDEN_MANIFEST_FIELDS:
+            if field in card:
+                raise DeployError(f"Fixture deploy manifest must not contain {field}; use repo artifacts instead.")
         session_id = str(card.get("session_id") or card.get("title") or "fixture")
         prefix = "pucky_fixture_" + "".join(ch if ch.isalnum() else "_" for ch in session_id)
         audio_artifact = card.pop("audio_artifact", "")
         html_artifact = card.pop("html_artifact", "")
-        public_audio_path = card.pop("public_audio_path", "")
-        public_audio_playlist_path = card.pop("public_audio_playlist_path", "")
-        if public_audio_path:
-            card["audio_path"] = public_audio_path
-        if public_audio_playlist_path:
-            card["audio_playlist_path"] = public_audio_playlist_path
         if audio_artifact:
             downloaded = download_artifact(args, artifact_name=audio_artifact, artifact_base=artifact_base, filename_prefix=prefix)
             downloads.append({"field": "audio_path", "artifact": audio_artifact, "download": downloaded})

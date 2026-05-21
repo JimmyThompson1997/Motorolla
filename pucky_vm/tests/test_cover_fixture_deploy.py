@@ -24,14 +24,15 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
     assert ".tmp" not in encoded
     assert "Trace UI fixture" not in encoded
     assert '"/data/user/0/' not in encoded
+    assert "/sdcard/" not in encoded
     assert '"audio_path"' not in encoded
     assert "html_path" not in encoded
-    assert "public_audio_playlist_path" in encoded
+    assert "public_audio_path" not in encoded
+    assert "public_audio_playlist_path" not in encoded
 
     artifacts = set()
     for card in spec["cards"]:
-        if "audio_artifact" in card:
-            artifacts.add(card["audio_artifact"])
+        artifacts.add(card["audio_artifact"])
         artifacts.add(card["html_artifact"])
         for image in card.get("images", []):
             artifacts.add(image["artifact"])
@@ -114,33 +115,27 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 
-def test_build_cards_preserves_public_audiobook_playlist_without_download() -> None:
+def test_build_cards_rejects_public_device_audio_paths() -> None:
     args = argparse.Namespace(
         vm_base_url="https://pucky.fly.dev",
         artifact_base_path="/ui/pucky/latest/",
         max_artifact_bytes=1024 * 1024,
     )
-    public_audio = "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav"
-    public_playlist = "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u"
 
-    cards, downloads = deploy_cover_fixture.build_cards(
-        args,
-        {
-            "artifact_base_path": "fixtures/artifacts",
-            "cards": [
-                {
-                    "session_id": "fixture_book",
-                    "title": "Pocket Computers",
-                    "public_audio_path": public_audio,
-                    "public_audio_playlist_path": public_playlist,
-                }
-            ],
-        },
-    )
-
-    assert downloads == []
-    assert cards[0]["audio_path"] == public_audio
-    assert cards[0]["audio_playlist_path"] == public_playlist
+    with pytest.raises(deploy_cover_fixture.DeployError):
+        deploy_cover_fixture.build_cards(
+            args,
+            {
+                "artifact_base_path": "fixtures/artifacts",
+                "cards": [
+                    {
+                        "session_id": "fixture_book",
+                        "title": "Pocket Computers",
+                        "public_audio_path": "/sdcard/Podcasts/book.wav",
+                    }
+                ],
+            },
+        )
 
 
 def test_build_cards_rejects_mock_paths(monkeypatch: pytest.MonkeyPatch) -> None:
