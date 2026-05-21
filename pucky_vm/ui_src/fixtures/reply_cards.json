@@ -15,7 +15,25 @@
         { "role": "user", "text": "Give me the one thing that cannot slip.", "created_at": "2026-05-20T06:32:00-07:00" },
         { "role": "assistant", "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", "created_at": "2026-05-20T06:32:00-07:00" },
         { "role": "user", "text": "Any landmines?", "created_at": "2026-05-20T06:33:00-07:00" },
-        { "role": "assistant", "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", "created_at": "2026-05-20T06:33:00-07:00" }
+        {
+          "role": "assistant",
+          "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.",
+          "created_at": "2026-05-20T06:33:00-07:00",
+          "images": [
+            {
+              "path": "/mock/morning-map.svg",
+              "mime_type": "image/svg+xml",
+              "title": "Morning route sketch",
+              "alt": "Generated morning route sketch"
+            },
+            {
+              "path": "/mock/morning-brief.svg",
+              "mime_type": "image/svg+xml",
+              "title": "Launch brief image",
+              "alt": "Generated launch brief image"
+            }
+          ]
+        }
       ],
       "audio_path": "/mock/morning.wav",
       "html_path": "/mock/morning.html",

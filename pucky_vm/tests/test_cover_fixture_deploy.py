@@ -39,8 +39,10 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
         else:
             artifacts.add(card["audio_artifact"])
         artifacts.add(card["html_artifact"])
-        for image in card.get("images", []):
-            artifacts.add(image["artifact"])
+        assert "images" not in card
+        for message in card.get("transcript_messages", []):
+            for image in message.get("images", []):
+                artifacts.add(image["artifact"])
         assert card.get("trace", {}).get("schema") == "pucky.turn_trace.v1"
 
     for name in artifacts:
@@ -104,7 +106,13 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
                 "title": "Morning launch",
                 "audio_artifact": "morning.wav",
                 "html_artifact": "morning.html",
-                "images": [{"artifact": "morning-map.svg", "title": "Map"}],
+                "transcript_messages": [
+                    {
+                        "role": "assistant",
+                        "text": "Here is the route sketch.",
+                        "images": [{"artifact": "morning-map.svg", "title": "Map"}],
+                    }
+                ],
                 "trace": {"schema": "pucky.turn_trace.v1", "sections": []},
             }
         ],
@@ -116,7 +124,8 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
     assert len(downloads) == 3
     assert cards[0]["audio_path"].startswith("/data/user/0/")
     assert cards[0]["html_path"].startswith("/data/user/0/")
-    assert cards[0]["images"][0]["path"].startswith("/data/user/0/")
+    assert "images" not in cards[0]
+    assert cards[0]["transcript_messages"][0]["images"][0]["path"].startswith("/data/user/0/")
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 

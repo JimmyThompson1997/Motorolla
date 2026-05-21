@@ -262,10 +262,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
+    fixture = read("fixtures/reply_cards_deploy.json")
 
     assert 'id="traceSheet"' in html
     assert "function cardImages(card)" in app
-    assert "function showImageReel(card)" in app
+    assert "function messageImages(card, message, index, messages)" in app
+    assert "function chatMediaBubble(card, images)" in app
+    assert "function showImageReel(card, imageSet = null)" in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
     assert 'declared !== "application/octet-stream"' in app
@@ -275,10 +278,15 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "Previous image" in app
     assert "Next image" in app
     assert "chevron_right" in app
-    assert '"image-affordance"' in app
-    assert 'iconSvg("image"' in app
+    assert '"image-affordance"' not in app
+    assert ".image-affordance" not in styles
+    assert "card-wrap.has-images" not in styles
+    assert '"chat-media"' in app
+    assert ".chat-media" in styles
+    assert ".chat-media-grid" in styles
+    assert ".chat-media-multiple" in styles
+    assert ".chat-media-count" in styles
     assert "artifact.read_base64" in app
-    assert ".image-affordance" in styles
     assert ".image-reel" in styles
     assert ".image-viewer" in styles
     assert ".image-reel-nav" in styles
@@ -289,6 +297,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "height: 52vh" in styles
     assert "max-height: 540px" in styles
     assert "object-fit: contain" in styles
+    assert '"transcript_messages"' in fixture
+    assert fixture.count('"artifact": "morning-map.svg"') == 1
+    assert fixture.count('"artifact": "morning-brief.svg"') == 1
 
 
 def test_turn_trace_is_single_gear_sheet_with_thinking_rows() -> None:

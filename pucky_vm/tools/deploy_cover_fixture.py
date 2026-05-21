@@ -128,6 +128,32 @@ def app_owned_path(download: dict[str, Any], artifact_name: str) -> str:
     return path
 
 
+def download_images(
+    args: argparse.Namespace,
+    *,
+    images: list[dict[str, Any]],
+    artifact_base: str,
+    filename_prefix: str,
+    downloads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    downloaded_images: list[dict[str, Any]] = []
+    for index, image in enumerate(images or []):
+        image_copy = dict(image)
+        image_artifact = image_copy.pop("artifact", "")
+        if not image_artifact:
+            continue
+        downloaded = download_artifact(
+            args,
+            artifact_name=image_artifact,
+            artifact_base=artifact_base,
+            filename_prefix=f"{filename_prefix}_image_{index + 1}",
+        )
+        downloads.append({"field": "images", "artifact": image_artifact, "download": downloaded})
+        image_copy["path"] = app_owned_path(downloaded, image_artifact)
+        downloaded_images.append(image_copy)
+    return downloaded_images
+
+
 def validate_public_audiobook_path(path: str, *, field: str) -> str:
     value = str(path or "").strip().replace("\\", "/")
     if not value:
@@ -173,20 +199,34 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
             downloaded = download_artifact(args, artifact_name=html_artifact, artifact_base=artifact_base, filename_prefix=prefix)
             downloads.append({"field": "html_path", "artifact": html_artifact, "download": downloaded})
             card["html_path"] = app_owned_path(downloaded, html_artifact)
-        images = []
-        for index, image in enumerate(card.get("images") or []):
-            image_copy = dict(image)
-            image_artifact = image_copy.pop("artifact", "")
-            if not image_artifact:
-                continue
-            downloaded = download_artifact(args, artifact_name=image_artifact, artifact_base=artifact_base, filename_prefix=f"{prefix}_image_{index + 1}")
-            downloads.append({"field": "images", "artifact": image_artifact, "download": downloaded})
-            image_copy["path"] = app_owned_path(downloaded, image_artifact)
-            images.append(image_copy)
+        images = download_images(
+            args,
+            images=card.get("images") or [],
+            artifact_base=artifact_base,
+            filename_prefix=prefix,
+            downloads=downloads,
+        )
         if images:
             card["images"] = images
         else:
             card.pop("images", None)
+        messages = []
+        for message_index, message in enumerate(card.get("transcript_messages") or []):
+            message_copy = dict(message)
+            message_images = download_images(
+                args,
+                images=message_copy.get("images") or [],
+                artifact_base=artifact_base,
+                filename_prefix=f"{prefix}_message_{message_index + 1}",
+                downloads=downloads,
+            )
+            if message_images:
+                message_copy["images"] = message_images
+            else:
+                message_copy.pop("images", None)
+            messages.append(message_copy)
+        if messages:
+            card["transcript_messages"] = messages
         cards.append(card)
     if nested_contains(cards, BAD_DEVICE_STRINGS):
         raise DeployError("Final card payload contains mock, temp, or fixture-only strings.")
@@ -204,6 +244,11 @@ def artifact_names(spec: dict[str, Any]) -> list[str]:
             value = str(image.get("artifact") or "").strip()
             if value:
                 names.append(value)
+        for message in card.get("transcript_messages") or []:
+            for image in message.get("images") or []:
+                value = str(image.get("artifact") or "").strip()
+                if value:
+                    names.append(value)
     return sorted(set(names))
 
 

@@ -410,23 +410,10 @@
   }
 
   function cardView(card) {
-    const images = cardImages(card);
-    const wrapper = el("div", images.length ? "card-wrap has-images" : "card-wrap");
+    const wrapper = el("div", "card-wrap");
     const cardEl = el("article", isActionRead(card, "audio") ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
-
-    if (images.length) {
-      const imagesButton = el("button", "image-affordance");
-      imagesButton.type = "button";
-      imagesButton.innerHTML = `${iconSvg("image", { filled: true })}<span class="image-count">${images.length}</span>`;
-      imagesButton.setAttribute("aria-label", `Open ${images.length} image${images.length === 1 ? "" : "s"} for ${card.title}`);
-      imagesButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showImageReel(card);
-      });
-      wrapper.append(imagesButton);
-    }
 
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
@@ -544,6 +531,10 @@
     const messages = messagesForCard(card);
     const content = el("div", "detail-content chat-detail");
     messages.forEach((message, index) => {
+      const images = messageImages(card, message, index, messages);
+      if (message.role !== "user" && images.length) {
+        content.append(chatMediaBubble(card, images));
+      }
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
       bubble.append(document.createTextNode(message.text || ""));
       if (message.role !== "user") {
@@ -565,6 +556,33 @@
     });
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     scrollTranscriptToLatest(content);
+  }
+
+  function chatMediaBubble(card, images) {
+    const media = el("button", images.length > 1 ? "chat-media chat-media-multiple" : "chat-media");
+    media.type = "button";
+    media.setAttribute("aria-label", `Open ${images.length} generated image${images.length === 1 ? "" : "s"}`);
+    media.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showImageReel(card, images);
+    });
+    const grid = el("span", "chat-media-grid");
+    images.slice(0, 4).forEach((image, index) => {
+      const tile = el("span", "chat-media-tile");
+      const imageEl = document.createElement("img");
+      imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
+      imageEl.decoding = "async";
+      tile.append(imageEl);
+      resolveImageSrc(image)
+        .then(src => { imageEl.src = src; })
+        .catch(() => { tile.append(el("span", "chat-media-error", "Image unavailable")); });
+      if (images.length > 1 && index === Math.min(images.length, 4) - 1) {
+        tile.append(el("span", "chat-media-count", `${images.length}`));
+      }
+      grid.append(tile);
+    });
+    media.append(grid);
+    return media;
   }
 
   async function showRichPage(card) {
@@ -604,8 +622,8 @@
     return iframe;
   }
 
-  async function showImageReel(card) {
-    const images = cardImages(card);
+  async function showImageReel(card, imageSet = null) {
+    const images = normalizedImages(imageSet || cardImages(card));
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content image-reel");
     if (!images.length) {
@@ -1075,7 +1093,8 @@
         text: item.text || item.content || "",
         time: item.time || "",
         timestamp: item.timestamp || "",
-        created_at: item.created_at || ""
+        created_at: item.created_at || "",
+        images: normalizedImages(item.images)
       }));
     }
     if (card.transcript) {
@@ -1154,9 +1173,30 @@
   }
 
   function cardImages(card) {
-    return Array.isArray(card?.images)
-      ? card.images.filter(image => image && (image.path || image.local_path || image.image_path || image.src || image.data_url))
+    return normalizedImages(card?.images);
+  }
+
+  function normalizedImages(images) {
+    return Array.isArray(images)
+      ? images.filter(image => image && (image.path || image.local_path || image.image_path || image.src || image.data_url))
       : [];
+  }
+
+  function messageImages(card, message, index, messages) {
+    const direct = normalizedImages(message?.images);
+    if (direct.length) {
+      return direct;
+    }
+    return index === lastAssistantMessageIndex(messages) ? cardImages(card) : [];
+  }
+
+  function lastAssistantMessageIndex(messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role !== "user") {
+        return index;
+      }
+    }
+    return -1;
   }
 
   function hasTrace(card) {

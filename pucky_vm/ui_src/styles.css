@@ -167,10 +167,6 @@ button {
   margin: 0 0 10px;
 }
 
-.card-wrap.has-images {
-  padding-top: 22px;
-}
-
 .card-wrap .card {
   margin: 0;
 }
@@ -190,40 +186,6 @@ button {
   border-radius: 18px;
   background: var(--card);
   overflow: hidden;
-}
-
-.image-affordance {
-  position: absolute;
-  top: 0;
-  right: 13px;
-  z-index: 2;
-  height: 30px;
-  min-width: 50px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: rgba(8, 17, 28, 0.98);
-  color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--accent, #72c2ff) 48%, rgba(245, 249, 255, 0.18));
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
-}
-
-.image-affordance .material-icon {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-  stroke: none;
-}
-
-.image-count {
-  min-width: 14px;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 850;
-  text-align: center;
 }
 
 .card.card-unread {
@@ -522,6 +484,74 @@ button {
 .bubble.user {
   margin-left: auto;
   background: #1f6feb;
+}
+
+.chat-media {
+  max-width: min(78%, 340px);
+  margin: 10px 0 4px;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(245, 249, 255, 0.12);
+  border-radius: 18px;
+  background: #0d2034;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.chat-media-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 240px;
+}
+
+.chat-media-multiple .chat-media-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chat-media-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(245, 249, 255, 0.06);
+}
+
+.chat-media-tile img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.chat-media-count {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.54);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.chat-media-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .bubble-trace-action {
