@@ -447,12 +447,80 @@
       });
       const iframe = el("iframe", "rich-frame");
       iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
-      iframe.srcdoc = atob(result.content_base64 || "");
+      iframe.srcdoc = withDetailSwipeBridge(atob(result.content_base64 || ""));
       content.append(iframe);
     } catch (error) {
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
-    openSideDetail(panel, card.title || "Page", content, dismissDetail);
+    let cleanupFrameDismiss = () => {};
+    const dismissWithCleanup = () => {
+      cleanupFrameDismiss();
+      dismissDetail();
+    };
+    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
+    cleanupFrameDismiss = installFrameMessageDismiss(panel, dismissWithCleanup);
+  }
+
+  function withDetailSwipeBridge(html) {
+    const bridge = `<script>
+(() => {
+  let active = false;
+  const send = (phase, point) => {
+    parent.postMessage({
+      type: "pucky-detail-swipe",
+      phase,
+      x: point.clientX,
+      y: point.clientY
+    }, "*");
+  };
+  const pointFromTouch = event => event.changedTouches && event.changedTouches[0];
+  addEventListener("pointerdown", event => {
+    active = true;
+    send("start", event);
+  }, { passive: true });
+  addEventListener("pointermove", event => {
+    if (!active) return;
+    send("move", event);
+  }, { passive: false });
+  addEventListener("pointerup", event => {
+    if (!active) return;
+    send("end", event);
+    active = false;
+  }, { passive: true });
+  addEventListener("pointercancel", event => {
+    if (!active) return;
+    send("end", event);
+    active = false;
+  }, { passive: true });
+  addEventListener("touchstart", event => {
+    const touch = pointFromTouch(event);
+    if (!touch) return;
+    active = true;
+    send("start", touch);
+  }, { passive: true });
+  addEventListener("touchmove", event => {
+    const touch = pointFromTouch(event);
+    if (!active || !touch) return;
+    send("move", touch);
+  }, { passive: true });
+  addEventListener("touchend", event => {
+    const touch = pointFromTouch(event);
+    if (!active || !touch) return;
+    send("end", touch);
+    active = false;
+  }, { passive: true });
+  addEventListener("touchcancel", event => {
+    const touch = pointFromTouch(event);
+    if (!active || !touch) return;
+    send("end", touch);
+    active = false;
+  }, { passive: true });
+})();
+<\/script>`;
+    if (/<\/body>/i.test(html)) {
+      return html.replace(/<\/body>/i, `${bridge}</body>`);
+    }
+    return `${html}${bridge}`;
   }
 
   function openSideDetail(panel, title, content, onDismiss) {
@@ -643,6 +711,56 @@
         onDismiss();
       }
     });
+  }
+
+  function installFrameMessageDismiss(panel, onDismiss = dismissDetail) {
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    const threshold = () => window.innerWidth * 0.22;
+    const reset = () => {
+      panel.classList.remove("is-dragging");
+      panel.style.transform = "";
+    };
+    const finish = (x, y) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = x - startX;
+      const dy = y - startY;
+      if (dx > threshold() && dx > Math.abs(dy)) {
+        panel.classList.remove("is-dragging");
+        onDismiss();
+      } else {
+        reset();
+      }
+    };
+    const onMessage = event => {
+      const data = event.data || {};
+      if (data.type !== "pucky-detail-swipe" || !panel.classList.contains("is-open")) {
+        return;
+      }
+      const x = Number(data.x) || 0;
+      const y = Number(data.y) || 0;
+      if (data.phase === "start") {
+        startX = x;
+        startY = y;
+        dragging = true;
+        panel.classList.add("is-dragging");
+        return;
+      }
+      if (!dragging) return;
+      const dx = x - startX;
+      const dy = y - startY;
+      if (data.phase === "move" && dx > 8 && dx > Math.abs(dy)) {
+        panel.style.transform = `translateX(${Math.max(0, dx)}px)`;
+        return;
+      }
+      if (data.phase === "end") {
+        finish(x, y);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }
 
   function installDrag(target, config) {

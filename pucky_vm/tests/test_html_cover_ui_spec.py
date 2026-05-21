@@ -80,8 +80,11 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert "function openSideDetail(" in app
     assert "openBottomSheet" not in app
     assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail)' in app
-    assert 'openSideDetail(panel, card.title || "Page", content, dismissDetail)' in app
+    assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup)' in app
     assert "installHorizontalDismiss(shell, panel, onDismiss)" in app
+    assert "withDetailSwipeBridge" in app
+    assert "pucky-detail-swipe" in app
+    assert "installFrameMessageDismiss(panel, dismissWithCleanup)" in app
     assert 'iconSvg("chevron_left"' in app
     assert "function installHorizontalDismiss(" in app
     assert "translateX(100%)" in styles
