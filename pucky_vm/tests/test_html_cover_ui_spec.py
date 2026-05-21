@@ -85,9 +85,33 @@ def test_transcript_and_pages_share_bottom_sheet_navigation() -> None:
     assert "translateY(100%)" in styles
     assert "translateX(100%)" not in styles
     assert ".detail-panel.is-open" in styles
-    assert "padding: 52px 18px var(--nav-safe)" in styles
-    assert "padding: 52px 20px var(--nav-safe)" in styles
+    assert "--sheet-bezel: 42px" in styles
+    assert "padding: var(--sheet-bezel) 18px var(--nav-safe)" in styles
+    assert "padding: var(--sheet-bezel) 20px var(--nav-safe)" in styles
     assert ".rich-panel" in styles
+
+
+def test_sheet_drag_waits_for_release_before_dismissal() -> None:
+    app = read("app.js")
+
+    assert "primary > threshold()" not in app.split("const finish =")[0]
+    assert "const delta = config.axis" in app
+    assert "if (delta > threshold())" in app
+    assert "config.done();" in app
+    assert "config.reset();" in app
+
+
+def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert 'waveform(card, "wave-row"' in app
+    assert '"action action-audio is-playing"' in app
+    assert ".wave-row" in styles
+    assert "width: 50%" not in styles
+    assert "width: 100%" in styles
+    assert ".action-audio.is-playing" in styles
+    assert "color: var(--accent" in styles
 
 
 def test_audio_resume_and_completion_reset_are_explicit() -> None:
@@ -101,3 +125,28 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "savedPositionFor(path)" in app
     assert "return 0;" in app
     assert "rememberPlayerProgress(current)" in app
+
+
+def test_manual_pause_rewinds_one_second_before_bookmarking() -> None:
+    app = read("app.js")
+
+    assert "async function pauseWithRewind()" in app
+    assert 'command: "player.pause"' in app
+    assert 'Number(paused.position_ms || 0) - 1000' in app
+    assert 'command: "player.seek"' in app
+    assert 'position_ms: rewindTo' in app
+    assert "rememberPlayerProgress(rewound)" in app
+    assert "state.player = await pauseWithRewind()" in app
+
+
+def test_transcript_initial_open_scrolls_to_latest_message() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert '"panel-scroll transcript-panel"' in app
+    assert "scrollTranscriptToLatest(content)" in app
+    assert "function scrollTranscriptToLatest(content)" in app
+    assert "requestAnimationFrame" in app
+    assert "content.scrollTop = content.scrollHeight" in app
+    assert "transcript-panel" in app
+    assert "--sheet-bezel" in styles

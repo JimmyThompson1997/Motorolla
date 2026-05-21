@@ -7,6 +7,7 @@
   --blue: #3a84ff;
   --soft: #0b1828;
   --nav-safe: 106px;
+  --sheet-bezel: 42px;
   color-scheme: dark;
   font-family: "Aptos", "Segoe UI", sans-serif;
 }
@@ -247,8 +248,12 @@ button {
   stroke: none;
 }
 
+.action-audio.is-playing {
+  color: var(--accent, #72c2ff);
+}
+
 .wave-row {
-  width: 50%;
+  width: 100%;
   height: 32px;
   margin-top: 5px;
   display: flex;
@@ -298,7 +303,7 @@ button {
 .panel-scroll {
   height: 100%;
   overflow-y: auto;
-  padding: 52px 18px var(--nav-safe);
+  padding: var(--sheet-bezel) 18px var(--nav-safe);
   scrollbar-width: none;
   touch-action: pan-y;
 }
@@ -348,28 +353,28 @@ button {
 
 .rich-frame {
   width: 100%;
-  height: calc(100vh - var(--nav-safe) - 52px);
-  min-height: calc(100vh - var(--nav-safe) - 52px);
+  height: calc(100vh - var(--nav-safe) - var(--sheet-bezel));
+  min-height: calc(100vh - var(--nav-safe) - var(--sheet-bezel));
   border: 0;
   border-radius: 0;
   background: white;
 }
 
 .rich-panel {
-  padding: 52px 0 var(--nav-safe);
+  padding: var(--sheet-bezel) 0 var(--nav-safe);
 }
 
 .sheet-inner {
   height: 100%;
-  padding: 52px 20px var(--nav-safe);
+  padding: var(--sheet-bezel) 20px var(--nav-safe);
   touch-action: pan-y;
 }
 
 .sheet-drag-zone {
   position: absolute;
-  inset: 34px 0 auto;
+  inset: 0 0 auto;
   z-index: 4;
-  height: 48px;
+  height: var(--sheet-bezel);
   display: flex;
   justify-content: center;
   align-items: center;

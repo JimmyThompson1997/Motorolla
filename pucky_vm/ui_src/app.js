@@ -349,7 +349,9 @@
 
     const actions = el("div", "card-actions");
     if (card.audio_path) {
-      const audio = el("button", "action action-audio");
+      const audio = el("button", isActiveCard(card) && state.player.is_playing
+        ? "action action-audio is-playing"
+        : "action action-audio");
       audio.type = "button";
       audio.innerHTML = iconSvg("mic", { filled: true });
       audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : "Play"} ${card.title}`);
@@ -381,8 +383,7 @@
       rememberPlayerProgress(current);
       const same = current && samePath(current.path, card.audio_path);
       if (same && current.is_playing) {
-        state.player = await Pucky.request({ command: "player.pause", args: {} });
-        rememberPlayerProgress(state.player);
+        state.player = await pauseWithRewind();
       } else {
         const start = savedPositionFor(card.audio_path);
         state.activePath = card.audio_path;
@@ -405,7 +406,7 @@
     renderFeed();
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
-    const content = el("div", "panel-scroll");
+    const content = el("div", "panel-scroll transcript-panel");
     content.append(el("h1", "chat-title", card.title || "Transcript"));
     for (const message of messages) {
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
@@ -416,6 +417,7 @@
       content.append(bubble);
     }
     openBottomSheet(panel, content, dismissDetail);
+    scrollTranscriptToLatest(content);
   }
 
   async function showRichPage(card) {
@@ -574,6 +576,14 @@
     render();
   }
 
+  async function pauseWithRewind() {
+    const paused = await Pucky.request({ command: "player.pause", args: {} });
+    const rewindTo = Math.max(0, Number(paused.position_ms || 0) - 1000);
+    const rewound = await Pucky.request({ command: "player.seek", args: { position_ms: rewindTo } });
+    rememberPlayerProgress(rewound);
+    return rewound;
+  }
+
   function control(label, action, extraClass = "") {
     const button = el("button", `control ${extraClass}`.trim(), label);
     button.type = "button";
@@ -621,10 +631,6 @@
           event.preventDefault();
         }
         config.apply(primary);
-        if (primary > threshold()) {
-          dragging = false;
-          config.done();
-        }
       }
     };
     const finish = (x, y) => {
@@ -687,6 +693,12 @@
       });
     }
     return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
+  }
+
+  function scrollTranscriptToLatest(content) {
+    requestAnimationFrame(() => {
+      content.scrollTop = content.scrollHeight;
+    });
   }
 
   function hasTranscript(card) {
