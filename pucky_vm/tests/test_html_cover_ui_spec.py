@@ -61,6 +61,7 @@ def test_card_actions_have_local_read_state() -> None:
     assert 'markRead(card, "page")' in app
     assert 'actionStateClass(card, "audio")' in app
     assert 'actionStateClass(card, "page")' in app
+    assert '"card card-unread"' in app
     assert 'iconSvg("mic"' in app
     assert "toggleRead(card, \"audio\")" in app
     assert 'iconSvg("chat"' not in app
@@ -68,9 +69,22 @@ def test_card_actions_have_local_read_state() -> None:
     assert "action-page" not in app
     assert ".identity.is-unread" in styles
     assert "color: var(--accent" in styles
+    assert ".card.card-unread" in styles
+    assert "border-color: color-mix" in styles
     assert ".action.is-unread" in styles
     assert ".action.is-read" in styles
     assert "--action-accent" not in styles
+
+
+def test_card_actions_are_aligned_to_content_row() -> None:
+    styles = read("styles.css")
+
+    assert "grid-template-rows: auto minmax(42px, auto)" in styles
+    assert ".card-timestamp" in styles
+    assert "grid-row: 1;" in styles
+    assert ".card-actions" in styles
+    assert "grid-row: 2;" in styles
+    assert "align-self: center;" in styles
 
 
 def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
@@ -83,10 +97,12 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup)' in app
     assert "installHorizontalDismiss(shell, panel, onDismiss)" in app
     assert "allow-same-origin" in app
-    assert "installHorizontalDismiss(iframe.contentDocument, panel, dismissWithCleanup)" in app
-    assert "withDetailSwipeBridge" in app
-    assert "pucky-detail-swipe" in app
-    assert "installFrameMessageDismiss(panel, dismissWithCleanup)" in app
+    assert "installIframeHorizontalDismiss(iframe, panel, dismissWithCleanup)" in app
+    assert "installFrameMessageDismiss" not in app
+    assert "withDetailSwipeBridge" not in app
+    assert "pucky-detail-swipe" not in app
+    assert "requestAnimationFrame(applyFrame)" in app
+    assert "is-horizontal-dragging" in app
     assert 'iconSvg("chevron_left"' in app
     assert "function installHorizontalDismiss(" in app
     assert "translateX(100%)" in styles
@@ -104,7 +120,7 @@ def test_sheet_drag_waits_for_release_before_dismissal() -> None:
 
     assert "primary > threshold()" not in app.split("const finish =")[0]
     assert "const delta = config.axis" in app
-    assert "if (delta > threshold())" in app
+    assert "if (confirmed && delta > threshold())" in app
     assert "config.done();" in app
     assert "config.reset();" in app
     assert "scrollTarget: target" in app
@@ -182,3 +198,21 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     assert "content.scrollTop = content.scrollHeight" in app
     assert ".chat-detail" in styles
     assert ".detail-content" in styles
+
+
+def test_audio_sheet_uses_compact_icon_controls() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "--sheet-bezel: 82px" not in styles
+    assert "--sheet-top: 16px" in styles
+    assert 'iconControl("replay_15"' in app
+    assert 'iconControl(state.player.is_playing ? "pause" : "play_arrow"' in app
+    assert 'iconControl("forward_30"' in app
+    assert 'control("15"' not in app
+    assert 'control("30"' not in app
+    assert 'state.player.is_playing ? "||" : ">"' not in app
+    assert ".control-skip .material-icon" in styles
+    assert ".control-play .material-icon" in styles
+    assert "time-elapsed" in app
+    assert "time-remaining" in app

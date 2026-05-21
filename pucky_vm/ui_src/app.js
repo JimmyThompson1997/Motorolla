@@ -39,6 +39,22 @@
       filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
       outline: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 10.8c0 3.5 2.7 6.2 6.5 6.2s6.5-2.7 6.5-6.2"/><path d="M12 17v4"/>'
     },
+    play_arrow: {
+      filled: '<path d="M8 5v14l11-7L8 5Z"/>',
+      outline: '<path d="M8 5v14l11-7-11-7Z"/>'
+    },
+    pause: {
+      filled: '<path d="M7 5h3v14H7V5Zm7 0h3v14h-3V5Z"/>',
+      outline: '<path d="M7 5h3v14H7V5ZM14 5h3v14h-3V5Z"/>'
+    },
+    replay_15: {
+      filled: '<path d="M12 5V2L7 7l5 5V8.1c3.4 0 6.1 2.7 6.1 6.1 0 1.8-.8 3.4-2 4.5l1.4 1.5c1.6-1.5 2.6-3.6 2.6-6 0-4.5-3.6-8.1-8.1-8.1Z"/><text x="7.2" y="17" font-size="6.5" font-weight="850" fill="currentColor">15</text>',
+      outline: '<path d="M12 5V2L7 7l5 5V8.1c3.4 0 6.1 2.7 6.1 6.1 0 1.8-.8 3.4-2 4.5"/><text x="7.2" y="17" font-size="6.5" font-weight="850" fill="currentColor">15</text>'
+    },
+    forward_30: {
+      filled: '<path d="M12 5V2l5 5-5 5V8.1c-3.4 0-6.1 2.7-6.1 6.1 0 1.8.8 3.4 2 4.5l-1.4 1.5c-1.6-1.5-2.6-3.6-2.6-6 0-4.5 3.6-8.1 8.1-8.1Z"/><text x="8" y="17" font-size="6.5" font-weight="850" fill="currentColor">30</text>',
+      outline: '<path d="M12 5V2l5 5-5 5V8.1c-3.4 0-6.1 2.7-6.1 6.1 0 1.8.8 3.4 2 4.5"/><text x="8" y="17" font-size="6.5" font-weight="850" fill="currentColor">30</text>'
+    },
     phone: {
       filled: '<path d="M6.62 10.79c1.44 2.83 3.76 5.15 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.61 21 3 13.39 3 4c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2Z"/>',
       outline: '<path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.1-2.1c.3-.3.7-.4 1.1-.2 1.1.4 2.3.6 3.6.6v4.8C10.6 20.5 3.5 13.4 3.5 4h4.8c0 1.3.2 2.5.6 3.6.1.4 0 .8-.2 1.1l-2.1 2.1Z"/>'
@@ -325,7 +341,7 @@
   }
 
   function cardView(card) {
-    const cardEl = el("article", "card");
+    const cardEl = el("article", isActionRead(card, "audio") ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
 
@@ -452,10 +468,11 @@
       });
       const iframe = el("iframe", "rich-frame");
       iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-      iframe.srcdoc = withDetailSwipeBridge(atob(result.content_base64 || ""));
+      iframe.srcdoc = atob(result.content_base64 || "");
       iframe.addEventListener("load", () => {
+        cleanupFrameDismiss();
         try {
-          installHorizontalDismiss(iframe.contentDocument, panel, dismissWithCleanup);
+          cleanupFrameDismiss = installIframeHorizontalDismiss(iframe, panel, dismissWithCleanup);
         } catch (error) {
           console.warn("Pucky iframe swipe bridge unavailable", error);
         }
@@ -465,69 +482,6 @@
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
-    cleanupFrameDismiss = installFrameMessageDismiss(panel, dismissWithCleanup);
-  }
-
-  function withDetailSwipeBridge(html) {
-    const bridge = `<script>
-(() => {
-  let active = false;
-  const send = (phase, point) => {
-    parent.postMessage({
-      type: "pucky-detail-swipe",
-      phase,
-      x: point.clientX,
-      y: point.clientY
-    }, "*");
-  };
-  const pointFromTouch = event => event.changedTouches && event.changedTouches[0];
-  addEventListener("pointerdown", event => {
-    active = true;
-    send("start", event);
-  }, { passive: true });
-  addEventListener("pointermove", event => {
-    if (!active) return;
-    send("move", event);
-  }, { passive: false });
-  addEventListener("pointerup", event => {
-    if (!active) return;
-    send("end", event);
-    active = false;
-  }, { passive: true });
-  addEventListener("pointercancel", event => {
-    if (!active) return;
-    send("end", event);
-    active = false;
-  }, { passive: true });
-  addEventListener("touchstart", event => {
-    const touch = pointFromTouch(event);
-    if (!touch) return;
-    active = true;
-    send("start", touch);
-  }, { passive: true });
-  addEventListener("touchmove", event => {
-    const touch = pointFromTouch(event);
-    if (!active || !touch) return;
-    send("move", touch);
-  }, { passive: true });
-  addEventListener("touchend", event => {
-    const touch = pointFromTouch(event);
-    if (!active || !touch) return;
-    send("end", touch);
-    active = false;
-  }, { passive: true });
-  addEventListener("touchcancel", event => {
-    const touch = pointFromTouch(event);
-    if (!active || !touch) return;
-    send("end", touch);
-    active = false;
-  }, { passive: true });
-})();
-<\/script>`;
-    if (/<\/body>/i.test(html)) {
-      return html.replace(/<\/body>/i, `${bridge}</body>`);
-    }
-    return `${html}${bridge}`;
   }
 
   function openSideDetail(panel, title, content, onDismiss) {
@@ -571,6 +525,7 @@
     const wrap = el("div", "sheet-inner");
     const dragZone = el("div", "sheet-drag-zone");
     dragZone.append(el("div", "sheet-grip"));
+    wrap.append(dragZone);
     wrap.append(el("h1", "sheet-title", card.title || "Audio"));
     wrap.append(el("p", "sheet-summary", card.summary || ""));
     const wave = waveform(card, "sheet-wave", 92);
@@ -589,18 +544,24 @@
       renderAudioSheet();
     });
     scrub.append(range);
-    scrub.append(el("div", "time-row", `${formatTime(state.player.position_ms || 0)} / ${formatTime(state.player.duration_ms || 0)}`));
+    const elapsed = Math.max(0, state.player.position_ms || 0);
+    const duration = Math.max(0, state.player.duration_ms || 0);
+    const timeRow = el("div", "time-row");
+    timeRow.append(
+      el("span", "time-elapsed", formatTime(elapsed)),
+      el("span", "time-remaining", `-${formatTime(Math.max(0, duration - elapsed))}`)
+    );
+    scrub.append(timeRow);
     wrap.append(scrub);
 
     const controls = el("div", "controls");
-    controls.append(control("15", () => seekRelative(-15000), "control-skip"));
-    controls.append(control(state.player.is_playing ? "||" : ">", () => toggleAudio(card), "control-play"));
-    controls.append(control("30", () => seekRelative(30000), "control-skip"));
-    controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card), "control-speed"));
+    controls.append(iconControl("replay_15", "Back 15 seconds", () => seekRelative(-15000), "control-skip"));
+    controls.append(iconControl(state.player.is_playing ? "pause" : "play_arrow", state.player.is_playing ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
+    controls.append(iconControl("forward_30", "Forward 30 seconds", () => seekRelative(30000), "control-skip"));
+    controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card), "control-speed", "Playback speed"));
     wrap.append(controls);
     installVerticalDismiss(wrap, sheet, dismissAudioSheet);
-    installVerticalDismiss(dragZone, sheet, dismissAudioSheet);
-    sheet.replaceChildren(wrap, dragZone);
+    sheet.replaceChildren(wrap);
   }
 
   function dismissAudioSheet() {
@@ -680,10 +641,17 @@
     return rewound;
   }
 
-  function control(label, action, extraClass = "") {
+  function control(label, action, extraClass = "", ariaLabel = label) {
     const button = el("button", `control ${extraClass}`.trim(), label);
     button.type = "button";
+    button.setAttribute("aria-label", ariaLabel);
     button.addEventListener("click", action);
+    return button;
+  }
+
+  function iconControl(icon, label, action, extraClass = "") {
+    const button = control("", action, extraClass, label);
+    button.innerHTML = iconSvg(icon, { filled: true });
     return button;
   }
 
@@ -704,94 +672,77 @@
     });
   }
 
-  function installHorizontalDismiss(target, panel, onDismiss = dismissDetail) {
-    installDrag(target, {
+  function installHorizontalDismiss(target, panel, onDismiss = dismissDetail, hooks = {}) {
+    return installDrag(target, {
       axis: "x",
       start: () => { panel.classList.add("is-dragging"); },
+      confirm: hooks.confirm,
       apply: value => { panel.style.transform = `translateX(${Math.max(0, value)}px)`; },
       reset: () => {
         panel.classList.remove("is-dragging");
         panel.style.transform = "";
+        if (hooks.reset) {
+          hooks.reset();
+        }
       },
       done: () => {
         panel.classList.remove("is-dragging");
+        if (hooks.reset) {
+          hooks.reset();
+        }
         onDismiss();
       }
     });
   }
 
-  function installFrameMessageDismiss(panel, onDismiss = dismissDetail) {
-    let startX = 0;
-    let startY = 0;
-    let dragging = false;
-    const threshold = () => window.innerWidth * 0.22;
-    const reset = () => {
-      panel.classList.remove("is-dragging");
-      panel.style.transform = "";
-    };
-    const finish = (x, y) => {
-      if (!dragging) return;
-      dragging = false;
-      const dx = x - startX;
-      const dy = y - startY;
-      if (dx > threshold() && dx > Math.abs(dy)) {
-        panel.classList.remove("is-dragging");
-        onDismiss();
-      } else {
-        reset();
-      }
-    };
-    const onMessage = event => {
-      const data = event.data || {};
-      if (data.type !== "pucky-detail-swipe" || !panel.classList.contains("is-open")) {
-        return;
-      }
-      const x = Number(data.x) || 0;
-      const y = Number(data.y) || 0;
-      if (data.phase === "start") {
-        startX = x;
-        startY = y;
-        dragging = true;
-        panel.classList.add("is-dragging");
-        return;
-      }
-      if (!dragging) return;
-      const dx = x - startX;
-      const dy = y - startY;
-      if (data.phase === "move" && dx > 8 && dx > Math.abs(dy)) {
-        panel.style.transform = `translateX(${Math.max(0, dx)}px)`;
-        return;
-      }
-      if (data.phase === "end") {
-        finish(x, y);
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+  function installIframeHorizontalDismiss(iframe, panel, onDismiss = dismissDetail) {
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      return () => {};
+    }
+    return installHorizontalDismiss(doc, panel, onDismiss, {
+      confirm: () => { iframe.classList.add("is-horizontal-dragging"); },
+      reset: () => { iframe.classList.remove("is-horizontal-dragging"); }
+    });
   }
 
   function installDrag(target, config) {
     let startX = 0;
     let startY = 0;
-    let dragging = false;
+    let active = false;
+    let confirmed = false;
+    let raf = 0;
+    let pendingValue = 0;
+    const cleanup = [];
     const threshold = () => (config.axis === "x" ? window.innerWidth : window.innerHeight) * 0.22;
+    const applyFrame = () => {
+      raf = 0;
+      config.apply(pendingValue);
+    };
+    const scheduleApply = value => {
+      pendingValue = value;
+      if (!raf) {
+        raf = requestAnimationFrame(applyFrame);
+      }
+    };
     const begin = (x, y) => {
       startX = x;
       startY = y;
-      dragging = true;
+      active = true;
+      confirmed = false;
       if (config.start) {
         config.start();
       }
     };
     const move = (x, y, event) => {
-      if (!dragging) return;
+      if (!active) return;
       const dx = x - startX;
       const dy = y - startY;
       const primary = config.axis === "x" ? dx : dy;
       const cross = config.axis === "x" ? Math.abs(dy) : Math.abs(dx);
       if (primary > 8 && primary > cross) {
         if (config.axis === "y" && canScrollUp(config.scrollTarget)) {
-          dragging = false;
+          active = false;
           if (config.reset) {
             config.reset();
           }
@@ -800,52 +751,72 @@
         if (event && event.cancelable) {
           event.preventDefault();
         }
-        config.apply(primary);
+        if (!confirmed) {
+          confirmed = true;
+          if (config.confirm) {
+            config.confirm();
+          }
+        }
+        scheduleApply(primary);
       }
     };
     const finish = (x, y) => {
-      if (!dragging) return;
-      dragging = false;
+      if (!active) return;
+      active = false;
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
       const delta = config.axis === "x" ? x - startX : y - startY;
-      if (delta > threshold()) {
+      if (confirmed && delta > threshold()) {
         config.done();
       } else {
         config.reset();
       }
     };
-    target.addEventListener("pointerdown", event => {
+    const add = (type, handler, options) => {
+      target.addEventListener(type, handler, options);
+      cleanup.push(() => target.removeEventListener(type, handler, options));
+    };
+    add("pointerdown", event => {
       begin(event.clientX, event.clientY);
       if (target.setPointerCapture) {
         target.setPointerCapture(event.pointerId);
       }
     });
-    target.addEventListener("pointermove", event => {
+    add("pointermove", event => {
       move(event.clientX, event.clientY, event);
     });
-    target.addEventListener("pointerup", event => {
+    add("pointerup", event => {
       finish(event.clientX, event.clientY);
     });
-    target.addEventListener("pointercancel", event => {
+    add("pointercancel", event => {
       finish(event.clientX, event.clientY);
     });
-    target.addEventListener("touchstart", event => {
+    add("touchstart", event => {
       if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY);
       }
     }, { passive: true });
-    target.addEventListener("touchmove", event => {
+    add("touchmove", event => {
       if (event.touches.length) {
         move(event.touches[0].clientX, event.touches[0].clientY, event);
       }
     }, { passive: false });
-    target.addEventListener("touchend", event => {
+    add("touchend", event => {
       const touch = event.changedTouches[0];
       finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
     });
-    target.addEventListener("touchcancel", event => {
+    add("touchcancel", event => {
       const touch = event.changedTouches[0];
       finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
     });
+    return () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+      }
+      cleanup.forEach(remove => remove());
+    };
   }
 
   function messagesForCard(card) {

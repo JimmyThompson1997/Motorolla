@@ -7,7 +7,7 @@
   --blue: #3a84ff;
   --soft: #0b1828;
   --nav-safe: 106px;
-  --sheet-bezel: 82px;
+  --sheet-top: 16px;
   color-scheme: dark;
   font-family: "Aptos", "Segoe UI", sans-serif;
 }
@@ -94,6 +94,10 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
+.material-icon text {
+  font-family: "Aptos", "Segoe UI", sans-serif;
+}
+
 .tab .material-icon {
   width: 28px;
   height: 28px;
@@ -153,7 +157,9 @@ button {
   position: relative;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto;
-  gap: 0;
+  grid-template-rows: auto minmax(42px, auto);
+  column-gap: 0;
+  row-gap: 2px;
   align-items: center;
   min-height: 84px;
   margin: 0 0 10px;
@@ -164,10 +170,19 @@ button {
   overflow: hidden;
 }
 
+.card.card-unread {
+  border-color: color-mix(in srgb, var(--accent, #72c2ff) 45%, rgba(33, 52, 72, 0.92));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent, #72c2ff) 16%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent, #72c2ff) 10%, transparent);
+}
+
 .card-timestamp {
-  position: absolute;
-  top: 11px;
-  right: 16px;
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  align-self: start;
+  padding: 2px 4px 0 0;
   color: rgba(245, 249, 255, 0.62);
   font-size: 11px;
   font-weight: 750;
@@ -176,6 +191,9 @@ button {
 }
 
 .identity {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
   width: 44px;
   height: 52px;
   border-radius: 0;
@@ -206,6 +224,8 @@ button {
 }
 
 .card-body {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   min-width: 0;
   width: 100%;
   display: block;
@@ -237,6 +257,10 @@ button {
 }
 
 .card-actions {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  justify-self: end;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -318,7 +342,7 @@ button {
 .panel-scroll {
   height: 100%;
   overflow-y: auto;
-  padding: var(--sheet-bezel) 18px var(--nav-safe);
+  padding: 18px 18px var(--nav-safe);
   scrollbar-width: none;
   touch-action: pan-y;
 }
@@ -440,6 +464,11 @@ button {
   border: 0;
   border-radius: 0;
   background: white;
+  touch-action: pan-y;
+}
+
+.rich-frame.is-horizontal-dragging {
+  pointer-events: none;
 }
 
 .rich-detail {
@@ -448,15 +477,14 @@ button {
 
 .sheet-inner {
   height: 100%;
-  padding: var(--sheet-bezel) 20px var(--nav-safe);
+  padding: var(--sheet-top) 20px var(--nav-safe);
+  display: flex;
+  flex-direction: column;
   touch-action: pan-y;
 }
 
 .sheet-drag-zone {
-  position: absolute;
-  inset: 60px 0 auto;
-  z-index: 4;
-  height: 44px;
+  height: 18px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -485,11 +513,11 @@ button {
 
 .sheet-wave {
   width: 100%;
-  height: 72px;
+  height: 78px;
   display: flex;
   align-items: center;
   gap: 3px;
-  margin: 22px 0 14px;
+  margin: 18px 0 12px;
 }
 
 .scrub {
@@ -506,7 +534,7 @@ button {
 .time-row {
   display: flex;
   justify-content: space-between;
-  padding: 0 12px 14px;
+  padding: 0 4px 12px;
   color: var(--muted);
   font-size: 12px;
 }
@@ -515,34 +543,52 @@ button {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 14px;
+  margin-top: 6px;
 }
 
 .control {
-  min-width: 48px;
-  height: 48px;
+  min-width: 42px;
+  height: 42px;
   border-radius: 999px;
-  background: rgba(11, 24, 40, 0.72);
+  background: transparent;
   color: var(--text);
   display: grid;
   place-items: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
 }
 
+.control .material-icon {
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.control-skip .material-icon {
+  width: 34px;
+  height: 34px;
+}
+
 .control-play {
-  min-width: 62px;
-  height: 62px;
+  min-width: 66px;
+  height: 66px;
   background: rgba(245, 249, 255, 0.96);
   color: var(--bg);
-  font-size: 20px;
+}
+
+.control-play .material-icon {
+  width: 34px;
+  height: 34px;
 }
 
 .control-speed {
   min-width: 58px;
+  height: 40px;
   padding: 0 12px;
   font-size: 13px;
+  background: rgba(11, 24, 40, 0.72);
 }
 
 .speed-overlay {
