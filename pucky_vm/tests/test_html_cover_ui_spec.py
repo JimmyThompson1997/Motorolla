@@ -35,7 +35,8 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "button.innerHTML = iconSvg(tab.icon" in app
     assert 'route: "feed"' in app
     assert 'icon: "mailbox"' not in app
-    assert 'icon: "bell"' in app
+    assert 'icon: "bell"' not in app
+    assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
     assert 'route: "morning"' in app
     assert 'icon: "coffee"' in app

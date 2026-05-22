@@ -98,7 +98,7 @@
   };
 
   const PAGE_TABS = [
-    { route: "feed", icon: "bell", label: "Home" },
+    { route: "feed", icon: "mail", label: "Home" },
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "messages", icon: "chat", label: "Messages" },
