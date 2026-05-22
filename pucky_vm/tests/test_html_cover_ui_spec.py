@@ -563,8 +563,11 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function currentImageGalleryIndex(track)" in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
+    assert "function isPdfMedia(item)" in app
+    assert "function mediaDocumentPreview(item, variant)" in app
     assert "function richFrame(result, path = \"\")" in app
     assert "mime === \"application/pdf\"" in app
+    assert "mime === \"application/pdf\" ||" in app
     assert "data:application/pdf;base64" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
@@ -589,10 +592,15 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-affordance" not in styles
     assert "card-wrap.has-images" not in styles
     assert '"chat-media"' in app
+    assert "media-doc-preview" in app
+    assert "${images.length} items" in app
     assert ".chat-media" in styles
     assert ".chat-media-rail" in styles
     assert ".chat-media::after" in styles
     assert ".chat-media-count" in styles
+    assert ".media-doc-preview" in styles
+    assert ".media-doc-preview.is-gallery" in styles
+    assert ".media-doc-badge" in styles
     assert "artifact.read_base64" in app
     assert ".image-reel" in styles
     assert ".image-gallery" in styles
@@ -610,11 +618,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert fixture.count('"artifact": "morning-map.svg"') == 1
     assert fixture.count('"artifact": "morning-brief.svg"') == 1
     assert fixture.count('"artifact": "commute-dashboard.png"') == 2
-    assert fixture.count('"artifact": "meeting-room.jpg"') == 1
+    assert fixture.count('"artifact": "meeting-room.jpg"') == 2
     assert fixture.count('"artifact": "night-wrap.png"') == 1
+    assert fixture.count('"artifact": "meeting-decision.pdf"') == 1
     assert '"html_artifact": "meeting-decision.pdf"' in fixture
     assert '"mime_type": "image/png"' in fixture
     assert '"mime_type": "image/jpeg"' in fixture
+    assert '"mime_type": "application/pdf"' in fixture
 
 
 def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:

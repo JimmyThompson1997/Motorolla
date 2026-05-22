@@ -57,6 +57,18 @@
               "mime_type": "image/png",
               "title": "PNG weather window",
               "alt": "Generated PNG morning dashboard"
+            },
+            {
+              "artifact": "meeting-room.jpg",
+              "mime_type": "image/jpeg",
+              "title": "JPEG meeting snapshot",
+              "alt": "Generated JPEG meeting snapshot"
+            },
+            {
+              "artifact": "meeting-decision.pdf",
+              "mime_type": "application/pdf",
+              "title": "PDF decision brief",
+              "alt": "Generated PDF decision brief"
             }
           ]
         }

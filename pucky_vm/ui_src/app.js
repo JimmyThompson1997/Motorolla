@@ -891,28 +891,32 @@
   function chatMediaBubble(card, images) {
     const media = el("div", "chat-media");
     media.setAttribute("role", "group");
-    media.setAttribute("aria-label", `Open ${images.length} generated image${images.length === 1 ? "" : "s"}`);
+    media.setAttribute("aria-label", `Open ${images.length} generated media item${images.length === 1 ? "" : "s"}`);
     const rail = el("div", "chat-media-rail");
     rail.dataset.dragIgnore = "true";
     images.forEach((image, index) => {
       const tile = el("button", "chat-media-tile");
       tile.type = "button";
-      tile.setAttribute("aria-label", `Open generated image ${index + 1} of ${images.length}`);
+      tile.setAttribute("aria-label", `Open generated media ${index + 1} of ${images.length}`);
       tile.addEventListener("click", (event) => {
         event.stopPropagation();
         showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
       });
-      const imageEl = document.createElement("img");
-      imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
-      imageEl.decoding = "async";
-      tile.append(imageEl);
-      resolveImageSrc(image)
-        .then(src => { imageEl.src = src; })
-        .catch(() => { tile.append(el("span", "chat-media-error", "Image unavailable")); });
+      if (isPdfMedia(image)) {
+        tile.append(mediaDocumentPreview(image, "chat"));
+      } else {
+        const imageEl = document.createElement("img");
+        imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
+        imageEl.decoding = "async";
+        tile.append(imageEl);
+        resolveImageSrc(image)
+          .then(src => { imageEl.src = src; })
+          .catch(() => { tile.append(el("span", "chat-media-error", "Image unavailable")); });
+      }
       rail.append(tile);
     });
     if (images.length > 1) {
-      media.append(el("span", "chat-media-count", `${images.length} images`));
+      media.append(el("span", "chat-media-count", `${images.length} items`));
     }
     media.append(rail);
     return media;
@@ -1021,17 +1025,21 @@
       images.forEach((image, index) => {
         const slide = el("figure", "image-slide");
         const frame = el("div", "image-slide-frame");
-        const imageEl = document.createElement("img");
-        imageEl.className = "image-reel-img";
-        imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
-        imageEl.decoding = "async";
-        frame.append(imageEl);
-        resolveImageSrc(image)
-          .then(src => { imageEl.src = src; })
-          .catch(error => {
-            imageEl.remove();
-            frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
-          });
+        if (isPdfMedia(image)) {
+          frame.append(mediaDocumentPreview(image, "gallery"));
+        } else {
+          const imageEl = document.createElement("img");
+          imageEl.className = "image-reel-img";
+          imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
+          imageEl.decoding = "async";
+          frame.append(imageEl);
+          resolveImageSrc(image)
+            .then(src => { imageEl.src = src; })
+            .catch(error => {
+              imageEl.remove();
+              frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
+            });
+        }
         const meta = el("figcaption", "image-reel-meta");
         const caption = image.title || image.alt || "";
         if (caption) {
@@ -1093,6 +1101,20 @@
     if (value.endsWith(".gif")) return "image/gif";
     if (value.endsWith(".svg")) return "image/svg+xml";
     return "image/png";
+  }
+
+  function isPdfMedia(item) {
+    const mime = String((item && item.mime_type) || "").toLowerCase();
+    const path = String((item && (item.path || item.local_path || item.image_path || item.src || item.data_url)) || "");
+    return mime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(path);
+  }
+
+  function mediaDocumentPreview(item, variant) {
+    const wrap = el("div", `media-doc-preview ${variant === "gallery" ? "is-gallery" : "is-chat"}`);
+    wrap.append(el("div", "media-doc-badge", "PDF"));
+    wrap.append(el("strong", "media-doc-title", item.title || "PDF document"));
+    wrap.append(el("span", "media-doc-subtitle", variant === "gallery" ? "Cached document preview" : "Tap to view"));
+    return wrap;
   }
 
   function showTurnTrace(card, message = null, index = 0) {
