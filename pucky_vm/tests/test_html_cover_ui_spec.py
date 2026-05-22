@@ -526,6 +526,9 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
     assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
     assert "function loadNavState()" in app
+    assert "function shouldResetNavState()" in app
+    assert 'params.get("reset_nav") === "1"' in app
+    assert "localStorage.removeItem(NAV_STATE_KEY)" in app
     assert "function persistNavState()" in app
     assert "function restoreNavStateAfterCards()" in app
     assert "function installFeedScrollPersistence()" in app

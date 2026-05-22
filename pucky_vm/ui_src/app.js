@@ -2304,10 +2304,23 @@
 
   function loadNavState() {
     try {
+      if (shouldResetNavState()) {
+        localStorage.removeItem(NAV_STATE_KEY);
+        return {};
+      }
       const parsed = JSON.parse(localStorage.getItem(NAV_STATE_KEY) || "{}");
       return parsed && typeof parsed === "object" ? parsed : {};
     } catch (_) {
       return {};
+    }
+  }
+
+  function shouldResetNavState() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return params.get("reset_nav") === "1";
+    } catch (_) {
+      return false;
     }
   }
 

@@ -21,7 +21,8 @@ public final class MainActivityWebViewShellTest {
                         && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")")
                         && count(source, "new WebView") == 1);
         assertTrue("MainActivity should always load the cached or bundled HTML entrypoint",
-                source.contains("webShell.loadUrl(uiBundleController.entrypointUrl())"));
+                source.contains("String url = uiBundleController.entrypointUrl();")
+                        && source.contains("webShell.loadUrl(url)"));
 
         String[] forbidden = {
                 "buildHomeView",
@@ -114,9 +115,10 @@ public final class MainActivityWebViewShellTest {
                 source.contains("handleLaunchIntent(intent);\n        showHomeScreen();"));
         assertTrue("Explicit show_home should remain the intentional reset path",
                 source.contains("boolean showHomeRequested = intent.getBooleanExtra(\"show_home\", false);")
-                        && source.contains("clearSavedWebNavigation();")
-                        && source.contains("localStorage.removeItem('pucky.cover.nav_state.v1')")
-                        && source.contains("if (uiSurfaceChanged || showHomeRequested)"));
+                        && source.contains("if (uiSurfaceChanged || showHomeRequested)")
+                        && source.contains("showHomeScreen(showHomeRequested)")
+                        && source.contains("loadWebShell(boolean resetNavigation)")
+                        && source.contains("reset_nav=1"));
         assertFalse("ui_shell_mode is collapsed to web_cached and should not reload the UI by itself",
                 source.contains("Set UI shell mode from launch extra: \" + settingsStore.getUiShellMode());\n            uiSurfaceChanged = true;"));
         assertTrue("UI bundle installs should still refresh the WebView surface",

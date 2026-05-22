@@ -360,32 +360,35 @@ public class MainActivity extends Activity {
     }
 
     private void loadWebShell() {
+        loadWebShell(false);
+    }
+
+    private void loadWebShell(boolean resetNavigation) {
         if (webShell != null && uiBundleController != null) {
-            webShell.loadUrl(uiBundleController.entrypointUrl());
+            String url = uiBundleController.entrypointUrl();
+            if (resetNavigation) {
+                url = url + (url.contains("?") ? "&" : "?") + "reset_nav=1";
+            }
+            webShell.loadUrl(url);
         }
     }
 
     private void showHomeScreen() {
+        showHomeScreen(false);
+    }
+
+    private void showHomeScreen(boolean resetNavigation) {
         settingsStore.setUiShellMode("web_cached");
         if (webShell == null) {
             setContentView(buildWebShellView());
-        } else {
-            loadWebShell();
         }
+        loadWebShell(resetNavigation);
         emitWebPlayerState();
     }
 
     private void emitWebPlayerState() {
         if (webBridge != null) {
             webBridge.emit("player.state", PlayerController.shared(this).state());
-        }
-    }
-
-    private void clearSavedWebNavigation() {
-        if (webShell != null) {
-            webShell.evaluateJavascript(
-                    "try{localStorage.removeItem('pucky.cover.nav_state.v1');}catch(e){}",
-                    null);
         }
     }
 
@@ -452,11 +455,8 @@ public class MainActivity extends Activity {
         if (shouldStartAssistantSetup(intent)) {
             startAssistantSetupFlow();
         }
-        if (showHomeRequested) {
-            clearSavedWebNavigation();
-        }
         if (uiSurfaceChanged || showHomeRequested) {
-            showHomeScreen();
+            showHomeScreen(showHomeRequested);
         }
     }
 
