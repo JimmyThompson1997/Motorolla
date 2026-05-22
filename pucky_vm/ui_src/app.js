@@ -479,6 +479,11 @@
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = iconSvg(filter.icon, { filled: selected });
     button.addEventListener("click", () => {
+      if (selected) {
+        state.openTrayRoute = null;
+        render();
+        return;
+      }
       state.feedIconFilter = filter.key;
       render();
     });

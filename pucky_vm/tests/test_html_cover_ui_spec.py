@@ -81,6 +81,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert 'accent: card.accent || "#f5f9ff"' in app
     assert '"route-tray-label"' not in app
     assert '"Show"' not in app
+    assert "if (selected) {" in app
+    assert "state.openTrayRoute = null;" in app
     assert "state.feedIconFilter = filter.key" in app
     assert "feed.replaceChildren(...cards.map(cardView))" in app
     assert "No ${icon} replies yet." in app
