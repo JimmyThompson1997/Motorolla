@@ -12,6 +12,7 @@ import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.sensors.CoverDisplayGestureController;
+import com.pucky.device.sensors.PhysicalGestureFeedbackController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.util.Json;
 
@@ -131,6 +132,18 @@ public final class SystemController {
 
     public JSONObject coverDisplayGestureTrigger(JSONObject args) {
         return CoverDisplayGestureController.shared(context).trigger(args);
+    }
+
+    public JSONObject physicalGestureFeedbackStatus() {
+        return PhysicalGestureFeedbackController.shared(context).status();
+    }
+
+    public JSONObject physicalGestureFeedbackSet(JSONObject args) {
+        return PhysicalGestureFeedbackController.shared(context).configure(args);
+    }
+
+    public JSONObject physicalGestureFeedbackTrigger(JSONObject args) {
+        return PhysicalGestureFeedbackController.shared(context).trigger(args);
     }
 
     public JSONObject benchmark(JSONObject args) throws CommandException {
