@@ -1132,7 +1132,6 @@
     if (card.summary) {
       player.append(el("p", "audio-summary", card.summary));
     }
-    player.append(waveform(card, "audio-wave", 96));
     player.append(audioScrubber(card));
     player.append(audioControls(card));
     content.append(player);
@@ -1144,10 +1143,6 @@
   }
 
   function refreshAudioDetail(card, existing) {
-    const wave = existing.querySelector(".audio-wave");
-    if (wave) {
-      wave.replaceWith(waveform(card, "audio-wave", 96));
-    }
     const scrub = existing.querySelector(".audio-scrub");
     if (scrub) {
       updateAudioScrubPreview(card, scrub, playbackPositionForCard(card));
