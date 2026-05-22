@@ -59,6 +59,31 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert ".tab:not(.is-active) .material-icon" in styles
 
 
+def test_voice_status_dot_renders_and_can_preview_states() -> None:
+    app = read("app.js")
+    html = read("index.html")
+    styles = read("styles.css")
+
+    assert 'id="voiceStatus"' in html
+    assert 'aria-label="Voice state: listening"' in html
+    assert 'const VOICE_STATES = ["listening", "hearing", "speaking", "off"]' in app
+    assert "voiceState: initialVoiceState()" in app
+    assert "renderVoiceStatus()" in app
+    assert 'if (name === "voice.state")' in app
+    assert "function renderVoiceStatus()" in app
+    assert "function nextVoiceState(current)" in app
+    assert "function initialVoiceState()" in app
+    assert "function normalizeVoiceState(input)" in app
+    assert "state.voiceState = nextVoiceState(state.voiceState)" in app
+    assert ".voice-status" in styles
+    assert ".voice-status-listening" in styles
+    assert ".voice-status-hearing" in styles
+    assert ".voice-status-speaking" in styles
+    assert ".voice-status-off" in styles
+    assert "@keyframes voicePulse" in styles
+    assert "@keyframes voiceRing" in styles
+
+
 def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     app = read("app.js")
     styles = read("styles.css")

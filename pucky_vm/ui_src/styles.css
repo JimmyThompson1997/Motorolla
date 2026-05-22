@@ -133,6 +133,107 @@ button {
   stroke-linejoin: round;
 }
 
+.voice-status {
+  --voice-color: #3a84ff;
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 9;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+
+.voice-status::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--voice-color);
+  box-shadow:
+    0 0 0 4px rgba(245, 249, 255, 0.035),
+    0 0 18px color-mix(in srgb, var(--voice-color) 62%, transparent);
+}
+
+.voice-status::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: inherit;
+  border: 1px solid color-mix(in srgb, var(--voice-color) 50%, transparent);
+  opacity: 0.42;
+  transform: translate(-50%, -50%);
+}
+
+.voice-status-listening {
+  --voice-color: #3a84ff;
+}
+
+.voice-status-hearing {
+  --voice-color: #ff3b30;
+}
+
+.voice-status-hearing::before {
+  box-shadow:
+    0 0 0 4px rgba(255, 59, 48, 0.08),
+    0 0 20px rgba(255, 59, 48, 0.55);
+}
+
+.voice-status-speaking {
+  --voice-color: #3a84ff;
+}
+
+.voice-status-speaking::before {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-speaking::after {
+  animation: voiceRing 1.15s ease-in-out infinite;
+}
+
+.voice-status-off {
+  --voice-color: #586574;
+  opacity: 0.42;
+}
+
+.voice-status-off::before {
+  box-shadow: 0 0 0 4px rgba(245, 249, 255, 0.025);
+}
+
+@keyframes voicePulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    box-shadow:
+      0 0 0 4px rgba(58, 132, 255, 0.05),
+      0 0 12px rgba(58, 132, 255, 0.42);
+  }
+
+  50% {
+    transform: scale(1.08);
+    box-shadow:
+      0 0 0 6px rgba(58, 132, 255, 0.1),
+      0 0 26px rgba(58, 132, 255, 0.8);
+  }
+}
+
+@keyframes voiceRing {
+  0% {
+    transform: translate(-50%, -50%) scale(0.78);
+    opacity: 0.56;
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scale(1.28);
+    opacity: 0;
+  }
+}
+
 .route-tray {
   position: absolute;
   top: 66px;

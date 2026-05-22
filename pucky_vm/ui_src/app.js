@@ -106,6 +106,8 @@
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
 
+  const VOICE_STATES = ["listening", "hearing", "speaking", "off"];
+
   const MOCK_SETTINGS = [
     {
       icon: "mic",
@@ -229,6 +231,7 @@
     route: "feed",
     openTrayRoute: null,
     feedIconFilter: "",
+    voiceState: initialVoiceState(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: new Map(),
@@ -282,6 +285,10 @@
         syncActivePathFromPlayer(state.player);
         rememberPlayerProgress(state.player);
         render();
+      }
+      if (name === "voice.state") {
+        state.voiceState = normalizeVoiceState(payload);
+        renderVoiceStatus();
       }
     }
   };
@@ -411,6 +418,7 @@
 
   function render() {
     renderTabs();
+    renderVoiceStatus();
     renderRouteTray();
     renderFeed();
     renderAudioSheet();
@@ -422,6 +430,56 @@
       return;
     }
     tabs.replaceChildren(...PAGE_TABS.map(tabView));
+  }
+
+  function renderVoiceStatus() {
+    const indicator = document.getElementById("voiceStatus");
+    if (!indicator) {
+      return;
+    }
+    const voiceState = normalizeVoiceState(state.voiceState);
+    indicator.className = `voice-status voice-status-${voiceState}`;
+    indicator.setAttribute("aria-label", `Voice state: ${voiceState}. Tap to preview the next state.`);
+    indicator.title = `Voice: ${voiceState}`;
+    if (!indicator.dataset.bound) {
+      indicator.dataset.bound = "true";
+      indicator.addEventListener("click", () => {
+        state.voiceState = nextVoiceState(state.voiceState);
+        renderVoiceStatus();
+      });
+    }
+  }
+
+  function nextVoiceState(current) {
+    const normalized = normalizeVoiceState(current);
+    const index = VOICE_STATES.indexOf(normalized);
+    return VOICE_STATES[(index + 1) % VOICE_STATES.length];
+  }
+
+  function initialVoiceState() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return normalizeVoiceState(params.get("voice") || "listening");
+    } catch (_) {
+      return "listening";
+    }
+  }
+
+  function normalizeVoiceState(input) {
+    const raw = typeof input === "object" && input
+      ? String(input.state || input.mode || input.voice_state || "")
+      : String(input || "");
+    const value = raw.trim().toLowerCase();
+    if (["hearing", "recording", "capturing", "sending", "speech"].includes(value)) {
+      return "hearing";
+    }
+    if (["speaking", "talking", "tts", "playing"].includes(value)) {
+      return "speaking";
+    }
+    if (["off", "disabled", "unavailable", "muted"].includes(value)) {
+      return "off";
+    }
+    return "listening";
   }
 
   function tabView(tab) {
