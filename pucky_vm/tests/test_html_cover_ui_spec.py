@@ -562,7 +562,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function resolvedImageMime(result, image, path)" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
-    assert "showImageReel(card, images, index)" in app
+    assert "showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) })" in app
+    assert "const dismissGallery = () =>" in app
+    assert "if (onDismiss)" in app
     assert '"chat-media-rail"' in app
     assert '"image-gallery-track"' in app
     assert "rail.dataset.dragIgnore = \"true\"" in app

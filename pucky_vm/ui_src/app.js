@@ -893,7 +893,7 @@
       tile.setAttribute("aria-label", `Open generated image ${index + 1} of ${images.length}`);
       tile.addEventListener("click", (event) => {
         event.stopPropagation();
-        showImageReel(card, images, index);
+        showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
       });
       const imageEl = document.createElement("img");
       imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
@@ -964,7 +964,17 @@
     const images = normalizedImages(imageSet || restorableImagesForCard(card));
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content image-reel");
+    const onDismiss = typeof restoreOptions.onDismiss === "function" ? restoreOptions.onDismiss : null;
     const startIndex = Math.max(0, Math.min(images.length - 1, Number(restoreOptions.initialIndex ?? restoreOptions.imageIndex ?? 0)));
+    const dismissGallery = () => {
+      panel.style.transform = "";
+      panel.classList.remove("is-dragging");
+      if (onDismiss) {
+        onDismiss();
+      } else {
+        dismissDetail();
+      }
+    };
     if (!images.length) {
       content.append(el("p", "preview", "No images are attached to this reply."));
     } else {
@@ -1005,7 +1015,7 @@
         }
       });
     }
-    openSideDetail(panel, card.title || "Images", content, dismissDetail);
+    openSideDetail(panel, card.title || "Images", content, dismissGallery);
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
     restoreScrollPosition(content, restoreOptions.scrollTop);
