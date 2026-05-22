@@ -466,9 +466,15 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert '"scrub-slider"' in app
     assert 'slider.addEventListener("pointermove"' in app
     assert 'slider.addEventListener("pointerup"' in app
+    assert 'slider.addEventListener("touchmove"' in app
+    assert "event.stopPropagation()" in app
     assert "setPointerCapture" in app
     assert "releasePointerCapture" in app
     assert "function scrubPositionFromPointer(slider, event, durationMs)" in app
+    assert "function scrubPositionFromClientX(slider, clientX, durationMs)" in app
+    assert "function isDragIgnoredTarget(target)" in app
+    assert "isDragIgnoredTarget(event.target)" in app
+    assert 'slider.dataset.dragIgnore = "true"' in app
     assert "function updateAudioScrubPreview(card, scrub, positionMs)" in app
     assert "function updateTimestampPreview(card, positionMs)" in app
     assert "scrubbingAudioKey" in app
@@ -480,6 +486,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert ".scrub-knob" in styles
     assert "padding: 0 clamp(44px, 5vw, 64px)" in styles
     assert "touch-action: none" in styles
+    assert "pointer-events: none" in styles
     assert "overscroll-behavior: contain" in styles
     assert "time-elapsed" in app
     assert "time-remaining" in app

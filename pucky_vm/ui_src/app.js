@@ -1166,6 +1166,7 @@
     slider.tabIndex = 0;
     slider.setAttribute("role", "slider");
     slider.setAttribute("aria-label", "Audio position");
+    slider.dataset.dragIgnore = "true";
     slider.append(el("span", "scrub-track"), el("span", "scrub-fill"), el("span", "scrub-knob"));
     updateScrubSlider(slider, position, duration);
     let commitPending = false;
@@ -1183,8 +1184,12 @@
       previewAudioScrub(card, scrub, next);
       return next;
     };
-    slider.addEventListener("pointerdown", (event) => {
+    const stopScrubEvent = (event) => {
       event.preventDefault();
+      event.stopPropagation();
+    };
+    slider.addEventListener("pointerdown", (event) => {
+      stopScrubEvent(event);
       slider.focus();
       if (event.pointerId !== undefined) {
         slider.setPointerCapture?.(event.pointerId);
@@ -1196,14 +1201,14 @@
       if (state.scrubbingAudioKey !== audioStateKey(card)) {
         return;
       }
-      event.preventDefault();
+      stopScrubEvent(event);
       previewFromPointer(event);
     });
     slider.addEventListener("pointerup", (event) => {
       if (state.scrubbingAudioKey !== audioStateKey(card)) {
         return;
       }
-      event.preventDefault();
+      stopScrubEvent(event);
       const next = previewFromPointer(event);
       if (event.pointerId !== undefined) {
         slider.releasePointerCapture?.(event.pointerId);
@@ -1211,9 +1216,43 @@
       commit(next);
     });
     slider.addEventListener("pointercancel", (event) => {
+      event.stopPropagation();
       if (event.pointerId !== undefined) {
         slider.releasePointerCapture?.(event.pointerId);
       }
+      stopAudioScrub(card);
+    });
+    slider.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+      stopScrubEvent(event);
+      slider.focus();
+      startAudioScrub(card, Number(slider.dataset.positionMs || 0));
+      previewAudioScrub(card, scrub, scrubPositionFromClientX(slider, touch.clientX, duration));
+    }, { passive: false });
+    slider.addEventListener("touchmove", (event) => {
+      const touch = event.touches[0];
+      if (!touch || state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      previewAudioScrub(card, scrub, scrubPositionFromClientX(slider, touch.clientX, duration));
+    }, { passive: false });
+    slider.addEventListener("touchend", (event) => {
+      if (state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      const touch = event.changedTouches[0];
+      const next = touch
+        ? scrubPositionFromClientX(slider, touch.clientX, duration)
+        : Number(slider.dataset.positionMs || 0);
+      commit(next);
+    });
+    slider.addEventListener("touchcancel", (event) => {
+      event.stopPropagation();
       stopAudioScrub(card);
     });
     slider.addEventListener("keydown", (event) => {
@@ -1306,9 +1345,13 @@
   }
 
   function scrubPositionFromPointer(slider, event, durationMs) {
+    return scrubPositionFromClientX(slider, event.clientX, durationMs);
+  }
+
+  function scrubPositionFromClientX(slider, clientX, durationMs) {
     const rect = slider.getBoundingClientRect();
     const width = Math.max(1, rect.width);
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / width));
+    const ratio = Math.max(0, Math.min(1, (Number(clientX || 0) - rect.left) / width));
     return clampAudioPosition(ratio * durationMs, durationMs);
   }
 
@@ -1606,6 +1649,9 @@
       cleanup.push(() => target.removeEventListener(type, handler, options));
     };
     add("pointerdown", event => {
+      if (isDragIgnoredTarget(event.target)) {
+        return;
+      }
       begin(event.clientX, event.clientY);
       if (target.setPointerCapture) {
         target.setPointerCapture(event.pointerId);
@@ -1621,6 +1667,9 @@
       finish(event.clientX, event.clientY);
     });
     add("touchstart", event => {
+      if (isDragIgnoredTarget(event.target)) {
+        return;
+      }
       if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY);
       }
@@ -1644,6 +1693,12 @@
       }
       cleanup.forEach(remove => remove());
     };
+  }
+
+  function isDragIgnoredTarget(target) {
+    return Boolean(target && target.closest && target.closest(
+      "button, input, select, textarea, a, iframe, [role='slider'], [data-drag-ignore='true']"
+    ));
   }
 
   function messagesForCard(card) {

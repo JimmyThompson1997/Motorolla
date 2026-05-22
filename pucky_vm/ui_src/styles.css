@@ -1199,6 +1199,7 @@ button {
   right: 0;
   height: 5px;
   border-radius: 999px;
+  pointer-events: none;
 }
 
 .scrub-track {
@@ -1220,6 +1221,7 @@ button {
   background: #1976d2;
   box-shadow: 0 0 0 5px rgba(25, 118, 210, 0.16);
   transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .scrub-slider:focus-visible .scrub-knob {
