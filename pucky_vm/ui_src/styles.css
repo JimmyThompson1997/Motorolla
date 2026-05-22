@@ -136,12 +136,13 @@ button {
 
 .voice-status {
   --voice-color: #3a84ff;
+  --voice-status-size: 38px;
   position: fixed;
-  top: 14px;
+  top: calc((45px - var(--voice-status-size)) / 2);
   right: 18px;
   z-index: 100;
-  width: 38px;
-  height: 38px;
+  width: var(--voice-status-size);
+  height: var(--voice-status-size);
   border-radius: 999px;
   display: grid;
   place-items: center;

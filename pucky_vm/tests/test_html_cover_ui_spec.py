@@ -84,7 +84,11 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     assert "function normalizeVoiceState(input)" in app
     assert "state.voiceState = nextVoiceState(state.voiceState)" in app
     assert ".voice-status" in styles
+    voice_status_block = styles.split(".voice-status {", 1)[1].split("}", 1)[0]
     assert "position: fixed" in styles
+    assert "--voice-status-size: 38px" in styles
+    assert "top: calc((45px - var(--voice-status-size)) / 2)" in styles
+    assert "top: 14px" not in voice_status_block
     assert "z-index: 100" in styles
     assert ".voice-status-listening" in styles
     assert ".voice-status-hearing" in styles
