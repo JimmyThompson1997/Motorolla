@@ -871,6 +871,8 @@ button {
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
+  touch-action: pan-y;
+  scroll-behavior: smooth;
 }
 
 .chat-media-rail::-webkit-scrollbar {
@@ -1111,6 +1113,14 @@ button {
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
+  touch-action: pan-y;
+  scroll-behavior: smooth;
+}
+
+.chat-media-rail.is-touch-paging,
+.image-gallery-track.is-touch-paging {
+  scroll-snap-type: none;
+  scroll-behavior: auto;
 }
 
 .image-gallery-track::-webkit-scrollbar {

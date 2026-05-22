@@ -919,6 +919,7 @@
       media.append(el("span", "chat-media-count", `${images.length} items`));
     }
     media.append(rail);
+    installOneSlidePager(rail);
     return media;
   }
 
@@ -1053,6 +1054,7 @@
       });
       gallery.append(track);
       content.append(gallery, el("div", "image-swipe-edge"));
+      installOneSlidePager(track);
       requestAnimationFrame(() => {
         const slide = track.children[startIndex];
         if (slide) {
@@ -2588,6 +2590,84 @@
       }
     });
     return bestIndex;
+  }
+
+  function installOneSlidePager(track) {
+    if (!track || track.dataset.oneSlidePagerBound) {
+      return;
+    }
+    track.dataset.oneSlidePagerBound = "true";
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startIndex = 0;
+    let active = false;
+    let horizontal = false;
+    const reset = () => {
+      active = false;
+      horizontal = false;
+      track.classList.remove("is-touch-paging");
+    };
+    const snapTo = (index, behavior = "smooth") => {
+      const clamped = Math.max(0, Math.min(track.children.length - 1, index));
+      const slide = track.children[clamped];
+      if (slide) {
+        track.scrollTo({ left: Number(slide.offsetLeft || 0), behavior });
+      }
+    };
+    track.addEventListener("touchstart", event => {
+      if (event.touches.length !== 1 || !track.children.length) {
+        return;
+      }
+      const touch = event.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      startLeft = Number(track.scrollLeft || 0);
+      startIndex = currentImageGalleryIndex(track);
+      active = true;
+      horizontal = false;
+    }, { passive: true });
+    track.addEventListener("touchmove", event => {
+      if (!active || event.touches.length !== 1) {
+        return;
+      }
+      const touch = event.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (!horizontal && Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+        return;
+      }
+      if (!horizontal && Math.abs(dy) > Math.abs(dx)) {
+        reset();
+        return;
+      }
+      horizontal = true;
+      track.classList.add("is-touch-paging");
+      event.preventDefault();
+      track.scrollLeft = startLeft - dx;
+    }, { passive: false });
+    track.addEventListener("touchend", event => {
+      if (!active) {
+        return;
+      }
+      const changed = event.changedTouches && event.changedTouches[0];
+      const dx = changed ? changed.clientX - startX : startLeft - Number(track.scrollLeft || 0);
+      if (!horizontal) {
+        snapTo(currentImageGalleryIndex(track));
+        reset();
+        return;
+      }
+      const threshold = Math.min(96, Math.max(34, track.clientWidth * 0.14));
+      const direction = Math.abs(dx) >= threshold ? (dx < 0 ? 1 : -1) : 0;
+      snapTo(startIndex + direction);
+      reset();
+    }, { passive: true });
+    track.addEventListener("touchcancel", () => {
+      if (active) {
+        snapTo(startIndex);
+      }
+      reset();
+    }, { passive: true });
   }
 
   function restoreScrollPosition(target, scrollTop) {
