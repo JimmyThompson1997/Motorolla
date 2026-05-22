@@ -23,6 +23,7 @@ import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
+import com.pucky.device.speech.SpeechEchoController;
 import com.pucky.device.status.StatusProvider;
 import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.SettingsStore;
@@ -66,6 +67,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
+            "speech.echo.status", "speech.echo.start", "speech.echo.stop",
+            "speech.echo.last", "speech.echo.list", "speech.echo.delete",
             "livekit.status", "livekit.session.request", "livekit.connect",
             "livekit.disconnect", "livekit.mic.set", "livekit.ptt.start",
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
@@ -114,6 +117,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final ButtonController buttonController;
     private final VoiceCaptureController voiceCaptureController;
     private final NativeSpeechController nativeSpeechController;
+    private final SpeechEchoController speechEchoController;
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
     private final LiveKitController liveKitController;
@@ -151,6 +155,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             ButtonController buttonController,
             VoiceCaptureController voiceCaptureController,
             NativeSpeechController nativeSpeechController,
+            SpeechEchoController speechEchoController,
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
             LiveKitController liveKitController,
@@ -186,6 +191,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.buttonController = buttonController;
         this.voiceCaptureController = voiceCaptureController;
         this.nativeSpeechController = nativeSpeechController;
+        this.speechEchoController = speechEchoController;
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
         this.liveKitController = liveKitController;
@@ -378,6 +384,18 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return nativeSpeechController.list(command.args());
             case "speech.native.delete":
                 return nativeSpeechController.delete(command.args());
+            case "speech.echo.status":
+                return speechEchoController.status();
+            case "speech.echo.start":
+                return speechEchoController.start(command.args());
+            case "speech.echo.stop":
+                return speechEchoController.stop(command.args());
+            case "speech.echo.last":
+                return speechEchoController.last(command.args());
+            case "speech.echo.list":
+                return speechEchoController.list(command.args());
+            case "speech.echo.delete":
+                return speechEchoController.delete(command.args());
             case "livekit.status":
                 return liveKitController.status();
             case "livekit.session.request":

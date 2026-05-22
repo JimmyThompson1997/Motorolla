@@ -12,14 +12,18 @@ import java.util.regex.Pattern;
 
 public final class PuckyTurnSourceTest {
     @Test
-    public void buttonDefaultsRouteVolumeHoldToRawPuckyTurn() throws Exception {
+    public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToEcho() throws Exception {
         String source = read("src/main/java/com/pucky/device/buttons/ButtonController.java");
 
-        assertTrue(source.contains("\"android_volume_pucky_raw_turn_v17\""));
+        assertTrue(source.contains("\"android_volume_pucky_raw_turn_echo_v18\""));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold\", \"pucky.turn.start\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold_release\", \"pucky.turn.stop\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.start\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.stop\")"));
         assertTrue(source.contains("PuckyTurnController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("PuckyTurnController.shared(context).stop(reasonArgs(\"button_release\"))"));
+        assertTrue(source.contains("SpeechEchoController.shared(context).start(new JSONObject())"));
+        assertTrue(source.contains("SpeechEchoController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertFalse(source.contains("Json.put(mappings, \"volume_up_hold\", \"livekit.ptt.start\")"));
     }
 

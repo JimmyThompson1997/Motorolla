@@ -104,7 +104,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("physical.gesture.feedback", "physical.gesture.feedback.status/physical.gesture.feedback.set/physical.gesture.feedback.trigger",
                 hasAnySensor() ? "experimental" : "blocked_by_hardware",
                 "foreground_service", "audible_haptic", "android.permission.VIBRATE", "not_recorded",
-                "Experimental raw accel/gyro/gravity detector: single chop plays a ping and strong double back tap plays two haptics for pickup/catch testing."));
+                "Experimental raw accel/gyro/gravity detector: single chop speaks a short TTS phrase and strong double back tap plays two haptics for pickup/catch testing."));
         Json.add(out, cap("screen.lock", "screen.lock.status/screen.lock.request/screen.lock.open_accessibility_settings",
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
@@ -154,6 +154,9 @@ public final class CapabilityReporter {
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));
+        Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete",
+                speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
+                "Strict on-device SpeechRecognizer hold-to-talk echo test: local STT final text is spoken back through Android TTS with no broker or agent call."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",
@@ -295,6 +298,15 @@ public final class CapabilityReporter {
 
     private String nativeSpeechStatus() {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            return "blocked_by_platform";
+        }
+        return permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO)
+                ? "implemented_untested"
+                : "blocked_by_permission";
+    }
+
+    private String speechEchoStatus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
             return "blocked_by_platform";
         }
         return permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO)
