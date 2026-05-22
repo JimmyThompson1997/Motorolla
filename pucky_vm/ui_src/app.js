@@ -1,5 +1,6 @@
 (() => {
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
+  const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
   const COMPLETE_EPSILON_MS = 500;
 
   const MATERIAL_SYMBOLS = {
@@ -234,7 +235,7 @@
     cards: [],
     route: "feed",
     openTrayRoute: null,
-    feedIconFilter: "",
+    excludedFeedIcons: loadFeedIconExcludes(),
     voiceState: initialVoiceState(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
@@ -534,7 +535,7 @@
   }
 
   function filterIconButton(filter) {
-    const selected = state.feedIconFilter === filter.key;
+    const selected = isFeedIconIncluded(filter.key);
     const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
     button.type = "button";
     button.dataset.filterIcon = filter.key || "all";
@@ -543,13 +544,11 @@
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = iconSvg(filter.icon, { filled: selected });
     button.addEventListener("click", () => {
-      if (selected) {
-        state.openTrayRoute = null;
-        render();
+      if (!filter.key) {
+        clearFeedIconExcludes();
         return;
       }
-      state.feedIconFilter = filter.key;
-      render();
+      toggleFeedIcon(filter.key);
     });
     return button;
   }
@@ -579,22 +578,21 @@
   }
 
   function filteredFeedEmptyView() {
-    const icon = state.feedIconFilter || "mail";
     const empty = el("div", "empty feed-filter-empty");
     empty.append(
       el("div", "feed-filter-empty-icon", ""),
-      el("div", "", `No ${icon} replies yet.`),
-      el("small", "", "Tap the mail icon above to show everything.")
+      el("div", "", "No selected replies."),
+      el("small", "", "Tap icons above to add card types back to the feed.")
     );
-    empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg(icon, { filled: true });
+    empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg("mail", { filled: true });
     return empty;
   }
 
   function filteredFeedCards() {
-    if (!state.feedIconFilter) {
+    if (!state.excludedFeedIcons.size) {
       return state.cards;
     }
-    return state.cards.filter(card => cardIconKey(card) === state.feedIconFilter);
+    return state.cards.filter(card => isFeedIconIncluded(cardIconKey(card)));
   }
 
   function uniqueFeedIcons() {
@@ -624,9 +622,45 @@
   }
 
   function clearMissingFeedIconFilter() {
-    if (state.feedIconFilter && !uniqueFeedIcons().includes(state.feedIconFilter)) {
-      state.feedIconFilter = "";
+    const validIcons = new Set(uniqueFeedIcons());
+    let changed = false;
+    Array.from(state.excludedFeedIcons).forEach(icon => {
+      if (!validIcons.has(icon)) {
+        state.excludedFeedIcons.delete(icon);
+        changed = true;
+      }
+    });
+    if (changed) {
+      persistFeedIconExcludes();
     }
+  }
+
+  function isFeedIconIncluded(icon) {
+    const key = String(icon || "");
+    if (!key) {
+      return state.excludedFeedIcons.size === 0;
+    }
+    return !state.excludedFeedIcons.has(key);
+  }
+
+  function toggleFeedIcon(icon) {
+    const key = String(icon || "");
+    if (!key) {
+      return;
+    }
+    if (state.excludedFeedIcons.has(key)) {
+      state.excludedFeedIcons.delete(key);
+    } else {
+      state.excludedFeedIcons.add(key);
+    }
+    persistFeedIconExcludes();
+    render();
+  }
+
+  function clearFeedIconExcludes() {
+    state.excludedFeedIcons.clear();
+    persistFeedIconExcludes();
+    render();
   }
 
   function settingsPageView() {
@@ -1777,6 +1811,22 @@
       localStorage.setItem(READ_STATE_KEY, JSON.stringify(Array.from(state.readActions)));
     } catch (_) {
       // Read state is a visual affordance; failure should never break the shell.
+    }
+  }
+
+  function loadFeedIconExcludes() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(FEED_ICON_EXCLUDES_KEY) || "[]"));
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function persistFeedIconExcludes() {
+    try {
+      localStorage.setItem(FEED_ICON_EXCLUDES_KEY, JSON.stringify(Array.from(state.excludedFeedIcons)));
+    } catch (_) {
+      // Feed filters are convenience state; the default all-included feed is safe.
     }
   }
 

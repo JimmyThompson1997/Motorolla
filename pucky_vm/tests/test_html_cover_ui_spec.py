@@ -106,7 +106,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     styles = read("styles.css")
 
     assert "openTrayRoute: null" in app
-    assert 'feedIconFilter: ""' in app
+    assert 'FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1"' in app
+    assert "excludedFeedIcons: loadFeedIconExcludes()" in app
     assert "renderRouteTray()" in app
     assert "function renderRouteTray()" in app
     assert "function homeIconFilterTrayView()" in app
@@ -116,6 +117,11 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "function filteredFeedCards()" in app
     assert "function cardIconKey(card)" in app
     assert "function clearMissingFeedIconFilter()" in app
+    assert "function isFeedIconIncluded(icon)" in app
+    assert "function toggleFeedIcon(icon)" in app
+    assert "function clearFeedIconExcludes()" in app
+    assert "function loadFeedIconExcludes()" in app
+    assert "function persistFeedIconExcludes()" in app
     assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
     assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
     assert '{ key: "", icon: "mail", label: "All replies", accent: "#f5f9ff" }' in app
@@ -123,11 +129,15 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert 'accent: card.accent || "#f5f9ff"' in app
     assert '"route-tray-label"' not in app
     assert '"Show"' not in app
-    assert "if (selected) {" in app
-    assert "state.openTrayRoute = null;" in app
-    assert "state.feedIconFilter = filter.key" in app
+    assert "clearFeedIconExcludes();" in app
+    assert "toggleFeedIcon(filter.key);" in app
+    assert "state.excludedFeedIcons.add(key)" in app
+    assert "state.excludedFeedIcons.delete(key)" in app
+    assert "state.excludedFeedIcons.clear()" in app
+    assert "state.openTrayRoute = null;\n        render();\n        return;" not in app
+    assert "state.feedIconFilter" not in app
     assert "feed.replaceChildren(...cards.map(cardView))" in app
-    assert "No ${icon} replies yet." in app
+    assert "No selected replies." in app
     assert ".route-tray" in styles
     assert "position: absolute;" in styles
     assert "top: 45px;" in styles
