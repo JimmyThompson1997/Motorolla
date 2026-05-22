@@ -53,9 +53,9 @@ public final class PhysicalGestureFeedbackController {
     private static final long START_ARM_DELAY_MS = 1_500L;
     private static final long CHOP_PING_DELAY_MS = 600L;
     private static final float HINGE_CLOSED_MAX_DEGREES = 20f;
-    private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 400L;
-    private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 320L;
-    private static final long DOUBLE_TAP_BUZZ_GAP_MS = 160L;
+    private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 200L;
+    private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 280L;
+    private static final long DOUBLE_TAP_BUZZ_GAP_MS = 100L;
     private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 1_650L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
     private static final int SENSOR_RATE_US = 10_000;
