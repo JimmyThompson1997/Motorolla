@@ -232,8 +232,14 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert "translateY(100%)" in styles
     assert ".detail-panel.is-open" in styles
     assert ".detail-header" in styles
+    assert "flex: 0 0 50px" in styles
+    assert "grid-template-columns: 50px minmax(0, 1fr) 50px" in styles
+    assert "width: 50px" in styles
+    assert "height: 50px" in styles
     assert "position: sticky" in styles
     assert ".detail-back" in styles
+    assert "width: 27px" in styles
+    assert "height: 27px" in styles
     assert ".detail-title" in styles
     assert ".rich-detail" in styles
 
@@ -359,6 +365,9 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     assert "content.scrollTop = content.scrollHeight" in app
     assert ".chat-detail" in styles
     assert ".detail-content" in styles
+    assert ".bubble.assistant" in styles
+    assert "width: 100%" in styles
+    assert "max-width: 100%" in styles
 
 
 def test_audio_sheet_uses_compact_icon_controls() -> None:
