@@ -51,10 +51,7 @@ public final class PhysicalGestureFeedbackController {
     private static final long GYRO_TAP_GUARD_MS = 180L;
     private static final long GRAVITY_WINDOW_MS = 900L;
     private static final long START_ARM_DELAY_MS = 1_500L;
-    private static final long CHOP_RETURN_TIMEOUT_MS = 1_600L;
-    private static final long CHOP_RETURN_QUIET_MS = 120L;
-    private static final float CHOP_RETURN_GRAVITY_DELTA = 2.2f;
-    private static final float CHOP_RETURN_GYRO_QUIET = 1.8f;
+    private static final long CHOP_PING_DELAY_MS = 600L;
     private static final float HINGE_CLOSED_MAX_DEGREES = 20f;
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 400L;
     private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 500L;
@@ -87,13 +84,6 @@ public final class PhysicalGestureFeedbackController {
     private long doubleTapCount;
     private String lastError = "";
     private float[] lastAccel;
-    private boolean chopPendingReturn;
-    private long chopPendingAtMs;
-    private long chopPendingDeadlineMs;
-    private long chopQuietStartedAtMs;
-    private float chopPendingPeakGyro;
-    private float chopPendingGravityDelta;
-    private TimedVector chopNeutralGravity;
     private boolean hingeKnown;
     private long lastHingeAtMs;
     private float lastHingeAngle = Float.NaN;
@@ -135,9 +125,6 @@ public final class PhysicalGestureFeedbackController {
             Json.put(out, "cooldown_remaining_ms", Math.max(0L, cooldownUntilMs - now));
             Json.put(out, "chop_count", chopCount);
             Json.put(out, "double_tap_count", doubleTapCount);
-            Json.put(out, "chop_pending_return", chopPendingReturn);
-            Json.put(out, "chop_return_deadline_remaining_ms",
-                    chopPendingReturn ? Math.max(0L, chopPendingDeadlineMs - now) : 0L);
             Json.put(out, "closed_gate_known", closedGateKnownLocked(now));
             Json.put(out, "closed_gate_closed", closedForChopLocked(now));
             Json.put(out, "hinge_angle", hingeKnown ? lastHingeAngle : JSONObject.NULL);
@@ -180,7 +167,6 @@ public final class PhysicalGestureFeedbackController {
                 recentEvents.clear();
                 chopCount = 0L;
                 doubleTapCount = 0L;
-                clearPendingChopLocked();
             }
             editor.apply();
         }
@@ -299,13 +285,8 @@ public final class PhysicalGestureFeedbackController {
 
     private void handleGyroLocked(long now, float[] values) {
         float gyro = magnitude(values);
-        updatePendingChopQuietLocked(now, gyro);
         gyroPeaks.addLast(new TimedScalar(now, gyro));
         pruneGyroLocked(now);
-        evaluatePendingChopReturnLocked(now);
-        if (chopPendingReturn) {
-            return;
-        }
         if (!chopEnabled() || now < cooldownUntilMs || gyro < chopGyro()) {
             return;
         }
@@ -322,14 +303,8 @@ public final class PhysicalGestureFeedbackController {
         cooldownUntilMs = now + cooldownMs();
         lastTapCandidateAtMs = 0L;
         lastTapPeakAtMs = 0L;
-        chopPendingReturn = true;
-        chopPendingAtMs = now;
-        chopPendingDeadlineMs = now + CHOP_RETURN_TIMEOUT_MS;
-        chopPendingPeakGyro = gyro;
-        chopPendingGravityDelta = gravityDelta;
-        chopQuietStartedAtMs = 0L;
-        chopNeutralGravity = gravityReferenceForChopLocked(now);
-        addEventLocked("single_chop_detected", "waiting_for_return", gyro, gravityDelta);
+        addEventLocked("single_chop_detected", "delayed_ping", gyro, gravityDelta);
+        playChopPing("single_chop");
     }
 
     private void handleAccelLocked(long now, float[] values) {
@@ -383,7 +358,6 @@ public final class PhysicalGestureFeedbackController {
         while (!gravitySamples.isEmpty() && now - gravitySamples.peekFirst().atMs > GRAVITY_WINDOW_MS) {
             gravitySamples.removeFirst();
         }
-        evaluatePendingChopReturnLocked(now);
     }
 
     private void rememberHingeLocked(long now, float[] values) {
@@ -393,10 +367,6 @@ public final class PhysicalGestureFeedbackController {
         hingeKnown = true;
         lastHingeAtMs = now;
         lastHingeAngle = values[0];
-        if (chopPendingReturn && !closedForChopLocked(now)) {
-            addEventLocked("single_chop_cancelled", "not_closed", chopPendingPeakGyro, lastHingeAngle);
-            clearPendingChopLocked();
-        }
     }
 
     private float gravityDeltaLocked(long now) {
@@ -415,88 +385,6 @@ public final class PhysicalGestureFeedbackController {
             max = Math.max(max, delta);
         }
         return max;
-    }
-
-    private TimedVector gravityReferenceForChopLocked(long now) {
-        while (!gravitySamples.isEmpty() && now - gravitySamples.peekFirst().atMs > GRAVITY_WINDOW_MS) {
-            gravitySamples.removeFirst();
-        }
-        if (gravitySamples.isEmpty()) {
-            return null;
-        }
-        TimedVector latest = gravitySamples.peekLast();
-        TimedVector reference = gravitySamples.peekFirst();
-        float maxDelta = -1f;
-        for (TimedVector sample : gravitySamples) {
-            float delta = vectorDelta(latest, sample);
-            if (delta > maxDelta) {
-                maxDelta = delta;
-                reference = sample;
-            }
-        }
-        return reference;
-    }
-
-    private void updatePendingChopQuietLocked(long now, float gyro) {
-        if (!chopPendingReturn) {
-            return;
-        }
-        if (gyro <= CHOP_RETURN_GYRO_QUIET) {
-            if (chopQuietStartedAtMs <= 0L) {
-                chopQuietStartedAtMs = now;
-            }
-            return;
-        }
-        chopQuietStartedAtMs = 0L;
-    }
-
-    private void evaluatePendingChopReturnLocked(long now) {
-        if (!chopPendingReturn) {
-            return;
-        }
-        float returnDelta = chopReturnDeltaLocked(now);
-        boolean returned = returnDelta <= CHOP_RETURN_GRAVITY_DELTA;
-        boolean quiet = chopQuietStartedAtMs > 0L && now - chopQuietStartedAtMs >= CHOP_RETURN_QUIET_MS;
-        if (returned && quiet) {
-            completePendingChopLocked("return_to_neutral", returnDelta);
-            return;
-        }
-        if (now >= chopPendingDeadlineMs) {
-            completePendingChopLocked("return_timeout", returnDelta);
-        }
-    }
-
-    private float chopReturnDeltaLocked(long now) {
-        while (!gravitySamples.isEmpty() && now - gravitySamples.peekFirst().atMs > GRAVITY_WINDOW_MS) {
-            gravitySamples.removeFirst();
-        }
-        TimedVector latest = gravitySamples.peekLast();
-        if (latest == null || chopNeutralGravity == null) {
-            return Float.MAX_VALUE;
-        }
-        return vectorDelta(latest, chopNeutralGravity);
-    }
-
-    private void completePendingChopLocked(String reason, float returnDelta) {
-        long now = SystemClock.elapsedRealtime();
-        if (!closedForChopLocked(now)) {
-            addEventLocked("single_chop_cancelled", "not_closed", chopPendingPeakGyro, hingeKnown ? lastHingeAngle : -1f);
-            clearPendingChopLocked();
-            return;
-        }
-        addEventLocked("single_chop_returned", reason, chopPendingPeakGyro, returnDelta);
-        clearPendingChopLocked();
-        playChopPing("single_chop_" + reason);
-    }
-
-    private void clearPendingChopLocked() {
-        chopPendingReturn = false;
-        chopPendingAtMs = 0L;
-        chopPendingDeadlineMs = 0L;
-        chopQuietStartedAtMs = 0L;
-        chopPendingPeakGyro = 0f;
-        chopPendingGravityDelta = 0f;
-        chopNeutralGravity = null;
     }
 
     private void pruneGyroLocked(long now) {
@@ -518,6 +406,21 @@ public final class PhysicalGestureFeedbackController {
 
     private void playChopPing(String reason) {
         try {
+            new Handler(context.getMainLooper()).postDelayed(() -> runChopPing(reason), CHOP_PING_DELAY_MS);
+            synchronized (lock) {
+                addEventLocked("ping_scheduled", reason, 0f, 0f);
+            }
+        } catch (RuntimeException exc) {
+            synchronized (lock) {
+                lastError = "ping failed: " + exc.getMessage();
+                addEventLocked("ping_failed", reason, 0f, 0f);
+            }
+            Log.w(TAG, "chop ping failed", exc);
+        }
+    }
+
+    private void runChopPing(String reason) {
+        try {
             ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
             generator.startTone(ToneGenerator.TONE_PROP_ACK, 120);
             synchronized (lock) {
@@ -536,7 +439,7 @@ public final class PhysicalGestureFeedbackController {
                 lastError = "ping failed: " + exc.getMessage();
                 addEventLocked("ping_failed", reason, 0f, 0f);
             }
-            Log.w(TAG, "chop ping failed", exc);
+            Log.w(TAG, "delayed chop ping failed", exc);
         }
     }
 
@@ -661,7 +564,6 @@ public final class PhysicalGestureFeedbackController {
         lastTapCandidateAtMs = 0L;
         lastTapPeakAtMs = 0L;
         cooldownUntilMs = 0L;
-        clearPendingChopLocked();
         hingeKnown = false;
         lastHingeAtMs = 0L;
         lastHingeAngle = Float.NaN;
@@ -773,13 +675,6 @@ public final class PhysicalGestureFeedbackController {
             return 0f;
         }
         return (float) Math.sqrt(values[0] * values[0] + values[1] * values[1] + values[2] * values[2]);
-    }
-
-    private static float vectorDelta(TimedVector a, TimedVector b) {
-        if (a == null || b == null) {
-            return Float.MAX_VALUE;
-        }
-        return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z);
     }
 
     private static float clampFloat(float value, float min, float max) {
