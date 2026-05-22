@@ -48,6 +48,13 @@ public final class SpeechEchoController {
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int ACCEPTED_CHIME_VOLUME = 85;
+    private static final String FORMATTING_OFF = "off";
+    private static final String FORMATTING_LATENCY = "latency";
+    private static final String FORMATTING_QUALITY = "quality";
+    private static final String LANGUAGE_SWITCH_OFF = "off";
+    private static final String LANGUAGE_SWITCH_BALANCED = "balanced";
+    private static final String LANGUAGE_SWITCH_QUICK_RESPONSE = "quick_response";
+    private static final String LANGUAGE_SWITCH_HIGH_PRECISION = "high_precision";
 
     private static SpeechEchoController shared;
 
@@ -83,6 +90,9 @@ public final class SpeechEchoController {
         Json.put(out, "record_audio_granted", hasRecordAudio());
         Json.put(out, "on_device_available", onDeviceRecognitionAvailable());
         Json.put(out, "recognizer_mode", "strict_on_device");
+        Json.put(out, "default_formatting_mode", FORMATTING_QUALITY);
+        Json.put(out, "default_language_detection", true);
+        Json.put(out, "default_language_switch", LANGUAGE_SWITCH_OFF);
         Json.put(out, "tts_ready", ttsReady);
         Json.put(out, "tts_initializing", ttsInitializing);
         Json.put(out, "tts_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
@@ -231,7 +241,14 @@ public final class SpeechEchoController {
         Json.put(session, "source", "android_speech_recognizer");
         Json.put(session, "recognizer_mode", "strict_on_device");
         Json.put(session, "language", args.optString("language", Locale.getDefault().toLanguageTag()));
-        Json.put(session, "partial_results", true);
+        String formattingMode = formattingMode(args);
+        Json.put(session, "formatting_mode", formattingMode);
+        Json.put(session, "formatting_enabled", !FORMATTING_OFF.equals(formattingMode));
+        Json.put(session, "formatting_result_semantics",
+                "when_supported_first_hypothesis_is_formatted_second_is_raw");
+        Json.put(session, "language_detection_enabled", args.optBoolean("language_detection", true));
+        Json.put(session, "language_switch", languageSwitchMode(args));
+        Json.put(session, "partial_results", partialResults(args));
         Json.put(session, "started_at", Instant.now().toString());
         Json.put(session, "started_elapsed_ms", SystemClock.elapsedRealtime());
         Json.put(session, "echo_prefix", "");
@@ -270,10 +287,12 @@ public final class SpeechEchoController {
             Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, session.optString("language", Locale.getDefault().toLanguageTag()));
-            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, session.optBoolean("partial_results", false));
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
             intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
             intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
+            addFormattingExtras(intent, session);
+            addLanguageExtras(intent, session);
             recognizer.startListening(intent);
         } catch (RuntimeException exc) {
             failActive("start_failed", exc.getClass().getSimpleName() + ": " + exc.getMessage(), false);
@@ -339,6 +358,11 @@ public final class SpeechEchoController {
         }
 
         @Override
+        public void onLanguageDetection(Bundle results) {
+            recordLanguageDetection(sessionId, results);
+        }
+
+        @Override
         public void onEvent(int eventType, Bundle params) {
         }
     }
@@ -354,6 +378,10 @@ public final class SpeechEchoController {
         Json.put(active, "alternatives", array(values));
         Json.put(active, "confidence_scores", array(confidences));
         Json.put(active, "text", text);
+        if (active.optBoolean("formatting_enabled", false)) {
+            Json.put(active, "formatted_text", text);
+            Json.put(active, "raw_text", second(values));
+        }
         if (text.trim().isEmpty()) {
             failActive("empty_transcript", "SpeechRecognizer returned no transcript text", true);
             return;
@@ -661,6 +689,36 @@ public final class SpeechEchoController {
         }
     }
 
+    private synchronized void recordLanguageDetection(String sessionId, Bundle results) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        JSONObject item = new JSONObject();
+        String detected = results.getString(SpeechRecognizer.DETECTED_LANGUAGE);
+        int confidence = results.getInt(SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL,
+                SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_UNKNOWN);
+        int switchResult = results.getInt(SpeechRecognizer.LANGUAGE_SWITCH_RESULT,
+                SpeechRecognizer.LANGUAGE_SWITCH_RESULT_NOT_ATTEMPTED);
+        Json.put(item, "at", Instant.now().toString());
+        Json.put(item, "elapsed_ms", elapsedMs(active));
+        Json.put(item, "detected_language", detected == null ? JSONObject.NULL : detected);
+        Json.put(item, "confidence_level", confidence);
+        Json.put(item, "confidence_name", languageConfidenceName(confidence));
+        Json.put(item, "language_switch_result", switchResult);
+        Json.put(item, "language_switch_result_name", languageSwitchResultName(switchResult));
+
+        JSONArray events = active.optJSONArray("language_detection_events");
+        if (events == null) {
+            events = new JSONArray();
+            Json.put(active, "language_detection_events", events);
+        }
+        Json.add(events, item);
+        Json.put(active, "detected_language", detected == null ? JSONObject.NULL : detected);
+        Json.put(active, "language_detection_confidence_level", confidence);
+        Json.put(active, "language_detection_confidence_name", languageConfidenceName(confidence));
+        Json.put(active, "language_switch_result", languageSwitchResultName(switchResult));
+    }
+
     private long elapsedMsForSession(String sessionId) {
         synchronized (this) {
             if (active != null && sessionId.equals(active.optString("session_id"))) {
@@ -682,6 +740,42 @@ public final class SpeechEchoController {
     private boolean onDeviceRecognitionAvailable() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
+    }
+
+    private void addFormattingExtras(Intent intent, JSONObject session) {
+        if (!session.optBoolean("formatting_enabled", false)
+                || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return;
+        }
+        String mode = session.optString("formatting_mode", FORMATTING_QUALITY);
+        String strategy = FORMATTING_LATENCY.equals(mode)
+                ? RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY
+                : RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY;
+        intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, strategy);
+        intent.putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true);
+    }
+
+    private void addLanguageExtras(Intent intent, JSONObject session) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return;
+        }
+        if (session.optBoolean("language_detection_enabled", true)) {
+            intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true);
+        }
+        String switchMode = session.optString("language_switch", LANGUAGE_SWITCH_OFF);
+        if (LANGUAGE_SWITCH_OFF.equals(switchMode)) {
+            return;
+        }
+        if (LANGUAGE_SWITCH_QUICK_RESPONSE.equals(switchMode)) {
+            intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
+                    RecognizerIntent.LANGUAGE_SWITCH_QUICK_RESPONSE);
+        } else if (LANGUAGE_SWITCH_HIGH_PRECISION.equals(switchMode)) {
+            intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
+                    RecognizerIntent.LANGUAGE_SWITCH_HIGH_PRECISION);
+        } else {
+            intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
+                    RecognizerIntent.LANGUAGE_SWITCH_BALANCED);
+        }
     }
 
     private JSONObject lastSession() {
@@ -730,6 +824,75 @@ public final class SpeechEchoController {
             return "";
         }
         return values.get(0);
+    }
+
+    private static String second(ArrayList<String> values) {
+        if (values == null || values.size() < 2 || values.get(1) == null) {
+            return "";
+        }
+        return values.get(1);
+    }
+
+    private static boolean partialResults(JSONObject args) {
+        if (args.has("partial_results")) {
+            return args.optBoolean("partial_results", false);
+        }
+        return args.optBoolean("partials", false);
+    }
+
+    private static String formattingMode(JSONObject args) {
+        String raw = args.optString("formatting_mode", args.optString("formatting", FORMATTING_QUALITY))
+                .trim()
+                .toLowerCase(Locale.US);
+        if (FORMATTING_OFF.equals(raw) || "none".equals(raw) || "false".equals(raw)) {
+            return FORMATTING_OFF;
+        }
+        if (FORMATTING_LATENCY.equals(raw) || "fast".equals(raw)) {
+            return FORMATTING_LATENCY;
+        }
+        return FORMATTING_QUALITY;
+    }
+
+    private static String languageSwitchMode(JSONObject args) {
+        String raw = args.optString("language_switch", LANGUAGE_SWITCH_OFF).trim().toLowerCase(Locale.US);
+        if (LANGUAGE_SWITCH_BALANCED.equals(raw) || "true".equals(raw) || "on".equals(raw)) {
+            return LANGUAGE_SWITCH_BALANCED;
+        }
+        if (LANGUAGE_SWITCH_QUICK_RESPONSE.equals(raw) || "quick".equals(raw)) {
+            return LANGUAGE_SWITCH_QUICK_RESPONSE;
+        }
+        if (LANGUAGE_SWITCH_HIGH_PRECISION.equals(raw) || "precision".equals(raw)) {
+            return LANGUAGE_SWITCH_HIGH_PRECISION;
+        }
+        return LANGUAGE_SWITCH_OFF;
+    }
+
+    private static String languageConfidenceName(int value) {
+        switch (value) {
+            case SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_NOT_CONFIDENT:
+                return "not_confident";
+            case SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_CONFIDENT:
+                return "confident";
+            case SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_HIGHLY_CONFIDENT:
+                return "highly_confident";
+            case SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_UNKNOWN:
+            default:
+                return "unknown";
+        }
+    }
+
+    private static String languageSwitchResultName(int value) {
+        switch (value) {
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SUCCEEDED:
+                return "succeeded";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_FAILED:
+                return "failed";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SKIPPED_NO_MODEL:
+                return "skipped_no_model";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_NOT_ATTEMPTED:
+            default:
+                return "not_attempted";
+        }
     }
 
     private static JSONArray array(ArrayList<String> values) {
