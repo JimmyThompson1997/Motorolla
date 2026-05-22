@@ -107,6 +107,22 @@ public final class MainActivityWebViewShellTest {
     }
 
     @Test
+    public void wakeNewIntentDoesNotForceWebViewBackHome() throws Exception {
+        String source = read("src/main/java/com/pucky/device/MainActivity.java");
+
+        assertFalse("onNewIntent should preserve the current WebView screen for wake-only intents",
+                source.contains("handleLaunchIntent(intent);\n        showHomeScreen();"));
+        assertTrue("Explicit show_home should remain the intentional reset path",
+                source.contains("boolean showHomeRequested = intent.getBooleanExtra(\"show_home\", false);")
+                        && source.contains("if (uiSurfaceChanged || showHomeRequested)"));
+        assertFalse("ui_shell_mode is collapsed to web_cached and should not reload the UI by itself",
+                source.contains("Set UI shell mode from launch extra: \" + settingsStore.getUiShellMode());\n            uiSurfaceChanged = true;"));
+        assertTrue("UI bundle installs should still refresh the WebView surface",
+                source.contains("if (intent.hasExtra(\"ui_bundle_path\"))")
+                        && source.contains("uiSurfaceChanged = true;"));
+    }
+
+    @Test
     public void retiredJavaUiAssetsAreDeleted() {
         String[] retired = {
                 "src/main/java/com/pucky/device/ui/WaveformView.java",

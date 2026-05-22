@@ -112,7 +112,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "openTrayRoute: null" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route)" in app
     assert 'FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1"' in app
     assert "excludedFeedIcons: loadFeedIconExcludes()" in app
     assert "renderRouteTray()" in app
@@ -228,8 +228,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert 'markRead(card, "audio")' in app
     assert 'markRead(card, "transcript")' in app
     assert 'markRead(card, "page")' in app
-    assert 'markRead(card, "transcript");\n    markCardRead(card);' in app
-    assert 'markRead(card, "page");\n    markCardRead(card);' in app
+    assert 'if (!options.restoring) {\n      markRead(card, "transcript");\n      markCardRead(card);' in app
+    assert 'if (!options.restoring) {\n      markRead(card, "page");\n      markCardRead(card);' in app
     assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
     assert "cardStateClass(card)" in app
     assert 'actionStateClass(card, "page")' in app
@@ -456,12 +456,12 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
 
     assert 'id="audioSheet"' not in html
     assert ".audio-sheet" not in styles
-    assert "function showAudioDetail(card)" in app
+    assert "function showAudioDetail(card, options = {})" in app
     assert "function renderAudioDetail()" in app
     assert "function refreshAudioDetail(card, existing)" in app
     assert "existing.dataset.audioKey === audioStateKey(card)" in app
     assert "content.dataset.audioKey = audioStateKey(card)" in app
-    assert 'openSideDetail(panel, card.title || "Audio", audioDetailContent(card), dismissAudioDetail)' in app
+    assert 'openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail)' in app
     assert '"detail-content audio-detail"' in app
     assert ".audio-detail" in styles
     assert ".audio-controls" in styles
@@ -516,6 +516,34 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert 'return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`' in app
 
 
+def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
+    app = read("app.js")
+
+    assert 'const NAV_STATE_KEY = "pucky.cover.nav_state.v1"' in app
+    assert "const persistedNavState = loadNavState();" in app
+    assert "route: initialRoute(persistedNavState.route)" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route)" in app
+    assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
+    assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
+    assert "function loadNavState()" in app
+    assert "function persistNavState()" in app
+    assert "function restoreNavStateAfterCards()" in app
+    assert "function installFeedScrollPersistence()" in app
+    assert "function installDetailScrollPersistence(content, type)" in app
+    assert "function restoreScrollPosition(target, scrollTop)" in app
+    assert "function findCardBySessionId(sessionId)" in app
+    assert "restoreNavStateAfterCards();" in app
+    assert "showAudioDetail(card, { restoring: true" in app
+    assert "showTranscript(card, { restoring: true" in app
+    assert "showRichPage(card, { restoring: true" in app
+    assert "showImageReel(card, null, { restoring: true" in app
+    assert "timestamp_scroll_top" in app
+    assert "state.navDetail = null" in app
+    assert 'window.addEventListener("pagehide", persistNavState)' in app
+    assert 'document.addEventListener("visibilitychange"' in app
+    assert "installFeedScrollPersistence();" in app
+
+
 def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     app = read("app.js")
     html = read("index.html")
@@ -525,8 +553,11 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert 'id="traceSheet"' in html
     assert "function cardImages(card)" in app
     assert "function messageImages(card, message, index, messages)" in app
+    assert "function restorableImagesForCard(card)" in app
     assert "function chatMediaBubble(card, images)" in app
-    assert "function showImageReel(card, imageSet = null, initialIndex = 0)" in app
+    assert "function showImageReel(card, imageSet = null, options = {})" in app
+    assert "const restoreOptions = typeof options === \"number\"" in app
+    assert "function currentImageGalleryIndex(track)" in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
     assert 'declared !== "application/octet-stream"' in app

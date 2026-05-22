@@ -114,7 +114,6 @@ public class MainActivity extends Activity {
         setIntent(intent);
         configureApplianceWindow();
         handleLaunchIntent(intent);
-        showHomeScreen();
         if (intent != null && "com.pucky.device.action.REQUEST_PERMISSIONS".equals(intent.getAction())) {
             requestNeededPermissions();
         }
@@ -387,6 +386,7 @@ public class MainActivity extends Activity {
             return;
         }
         boolean uiSurfaceChanged = false;
+        boolean showHomeRequested = intent.getBooleanExtra("show_home", false);
         if (intent.hasExtra("ui_bundle_path")) {
             String bundlePath = intent.getStringExtra("ui_bundle_path");
             try {
@@ -404,7 +404,6 @@ public class MainActivity extends Activity {
         if (intent.hasExtra("ui_shell_mode")) {
             settingsStore.setUiShellMode(intent.getStringExtra("ui_shell_mode"));
             Log.i(TAG, "Set UI shell mode from launch extra: " + settingsStore.getUiShellMode());
-            uiSurfaceChanged = true;
         }
         String provisioningJson = provisioningJsonFromIntent(intent);
         if (provisioningJson != null) {
@@ -445,7 +444,7 @@ public class MainActivity extends Activity {
         if (shouldStartAssistantSetup(intent)) {
             startAssistantSetupFlow();
         }
-        if (uiSurfaceChanged) {
+        if (uiSurfaceChanged || showHomeRequested) {
             showHomeScreen();
         }
     }

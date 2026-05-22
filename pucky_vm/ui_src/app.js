@@ -2,6 +2,7 @@
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
+  const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -240,10 +241,14 @@
   ];
 
   const persistedAudioState = loadAudioState();
+  const persistedNavState = loadNavState();
   const state = {
     cards: [],
-    route: "feed",
-    openTrayRoute: null,
+    route: initialRoute(persistedNavState.route),
+    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route),
+    feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
+    navDetail: normalizeNavDetail(persistedNavState.detail),
+    navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
     voiceState: initialVoiceState(),
     activePath: "",
@@ -438,6 +443,7 @@
     }
     clearMissingFeedIconFilter();
     render();
+    restoreNavStateAfterCards();
   }
 
   function render() {
@@ -516,13 +522,18 @@
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
+      rememberFeedScroll();
       if (state.route === tab.route) {
         state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
       } else {
         state.route = tab.route;
         state.openTrayRoute = null;
       }
+      persistNavState();
       render();
+      if (state.route === "feed") {
+        restoreFeedScroll();
+      }
     });
     return button;
   }
@@ -667,6 +678,7 @@
     }
     persistFeedIconExcludes();
     render();
+    persistNavState();
   }
 
   function settingsPageView() {
@@ -820,11 +832,16 @@
     }
   }
 
-  function showTranscript(card) {
+  function showTranscript(card, options = {}) {
     state.audioCard = null;
-    markRead(card, "transcript");
-    markCardRead(card);
+    if (!options.restoring) {
+      markRead(card, "transcript");
+      markCardRead(card);
+    }
     renderFeed();
+    if (options.restoring) {
+      restoreFeedScroll();
+    }
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
     const content = el("div", "detail-content chat-detail");
@@ -855,7 +872,13 @@
     });
     content.append(stack);
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
-    scrollTranscriptToLatest(content);
+    rememberNavDetail("transcript", card, options);
+    installDetailScrollPersistence(content, "transcript");
+    if (options.restoring) {
+      restoreScrollPosition(content, options.scrollTop);
+    } else {
+      scrollTranscriptToLatest(content);
+    }
   }
 
   function chatMediaBubble(card, images) {
@@ -888,11 +911,16 @@
     return media;
   }
 
-  async function showRichPage(card) {
+  async function showRichPage(card, options = {}) {
     state.audioCard = null;
-    markRead(card, "page");
-    markCardRead(card);
+    if (!options.restoring) {
+      markRead(card, "page");
+      markCardRead(card);
+    }
     renderFeed();
+    if (options.restoring) {
+      restoreFeedScroll();
+    }
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content rich-detail");
     let cleanupEdgeDismiss = () => {};
@@ -914,6 +942,9 @@
       }
     }
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
+    rememberNavDetail("page", card, options);
+    installDetailScrollPersistence(content, "page");
+    restoreScrollPosition(content, options.scrollTop);
     const edge = content.querySelector(".rich-swipe-edge");
     if (edge) {
       cleanupEdgeDismiss = installHorizontalDismiss(edge, panel, dismissWithCleanup);
@@ -927,12 +958,13 @@
     return iframe;
   }
 
-  async function showImageReel(card, imageSet = null, initialIndex = 0) {
+  async function showImageReel(card, imageSet = null, options = {}) {
     state.audioCard = null;
-    const images = normalizedImages(imageSet || cardImages(card));
+    const restoreOptions = typeof options === "number" ? { initialIndex: options } : options;
+    const images = normalizedImages(imageSet || restorableImagesForCard(card));
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content image-reel");
-    const startIndex = Math.max(0, Math.min(images.length - 1, Number(initialIndex || 0)));
+    const startIndex = Math.max(0, Math.min(images.length - 1, Number(restoreOptions.initialIndex ?? restoreOptions.imageIndex ?? 0)));
     if (!images.length) {
       content.append(el("p", "preview", "No images are attached to this reply."));
     } else {
@@ -974,6 +1006,9 @@
       });
     }
     openSideDetail(panel, card.title || "Images", content, dismissDetail);
+    rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
+    installDetailScrollPersistence(content, "images");
+    restoreScrollPosition(content, restoreOptions.scrollTop);
   }
 
   async function resolveImageSrc(image) {
@@ -1075,16 +1110,23 @@
 
   function dismissDetail() {
     const panel = document.getElementById("detail");
+    state.navDetail = null;
+    persistNavState();
     panel.style.transform = "";
     panel.classList.remove("is-open", "is-dragging");
     panel.setAttribute("aria-hidden", "true");
     panel.replaceChildren();
   }
 
-  function showAudioDetail(card) {
+  function showAudioDetail(card, options = {}) {
     state.audioCard = card;
     const panel = document.getElementById("detail");
-    openSideDetail(panel, card.title || "Audio", audioDetailContent(card), dismissAudioDetail);
+    const content = audioDetailContent(card);
+    openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail);
+    rememberNavDetail("audio", card, options);
+    installDetailScrollPersistence(content, "audio");
+    restoreScrollPosition(content, options.scrollTop);
+    restoreTimestampScroll(content, options.timestampScrollTop);
   }
 
   function renderAudioDetail() {
@@ -1111,6 +1153,7 @@
     const chapterScroll = existing.querySelector(".timestamp-list")?.scrollTop || 0;
     const next = audioDetailContent(card);
     existing.replaceWith(next);
+    installDetailScrollPersistence(next, "audio");
     const nextList = next.querySelector(".timestamp-list");
     if (nextList) {
       nextList.scrollTop = chapterScroll;
@@ -1870,6 +1913,21 @@
     return index === lastAssistantMessageIndex(messages) ? cardImages(card) : [];
   }
 
+  function restorableImagesForCard(card) {
+    const direct = cardImages(card);
+    if (direct.length) {
+      return direct;
+    }
+    const messages = messagesForCard(card);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const images = normalizedImages(messages[index]?.images);
+      if (images.length) {
+        return images;
+      }
+    }
+    return [];
+  }
+
   function lastAssistantMessageIndex(messages) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role !== "user") {
@@ -2234,6 +2292,255 @@
     return isActionRead(card, action) ? "is-read" : "is-unread";
   }
 
+  function loadNavState() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(NAV_STATE_KEY) || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function initialRoute(route) {
+    const value = String(route || "");
+    return PAGE_TABS.some(tab => tab.route === value) ? value : "feed";
+  }
+
+  function initialOpenTrayRoute(openTrayRoute, route) {
+    const value = String(openTrayRoute || "");
+    const normalizedRoute = initialRoute(route);
+    return value && value === normalizedRoute ? value : null;
+  }
+
+  function scrollNumber(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
+  }
+
+  function normalizeNavDetail(detail) {
+    if (!detail || typeof detail !== "object") {
+      return null;
+    }
+    const type = String(detail.type || "");
+    if (!["audio", "transcript", "page", "images"].includes(type)) {
+      return null;
+    }
+    const sessionId = String(detail.session_id || "");
+    if (!sessionId) {
+      return null;
+    }
+    const normalized = {
+      type,
+      session_id: sessionId,
+      scroll_top: scrollNumber(detail.scroll_top ?? detail.scrollTop)
+    };
+    if (type === "audio") {
+      normalized.timestamp_scroll_top = scrollNumber(detail.timestamp_scroll_top ?? detail.timestampScrollTop);
+    }
+    if (type === "images") {
+      normalized.image_index = scrollNumber(detail.image_index ?? detail.imageIndex);
+    }
+    return normalized;
+  }
+
+  function cardSessionId(card) {
+    return String(card?.session_id || "");
+  }
+
+  function findCardBySessionId(sessionId) {
+    const target = String(sessionId || "");
+    return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
+  }
+
+  function rememberFeedScroll() {
+    const feed = document.getElementById("feed");
+    if (feed && state.route === "feed") {
+      state.feedScrollTop = scrollNumber(feed.scrollTop);
+    }
+  }
+
+  function restoreFeedScroll() {
+    if (state.route === "feed") {
+      restoreScrollPosition(document.getElementById("feed"), state.feedScrollTop);
+    }
+  }
+
+  function captureCurrentDetailScroll() {
+    if (!state.navDetail) {
+      return;
+    }
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      return;
+    }
+    const content = panel.querySelector(".detail-content");
+    if (!content) {
+      return;
+    }
+    state.navDetail = {
+      ...state.navDetail,
+      scroll_top: scrollNumber(content.scrollTop)
+    };
+    const timestamps = content.querySelector(".timestamp-list");
+    if (state.navDetail.type === "audio" && timestamps) {
+      state.navDetail.timestamp_scroll_top = scrollNumber(timestamps.scrollTop);
+    }
+    const imageTrack = content.querySelector(".image-gallery-track");
+    if (state.navDetail.type === "images" && imageTrack) {
+      state.navDetail.image_index = currentImageGalleryIndex(imageTrack);
+    }
+  }
+
+  function persistNavState() {
+    try {
+      rememberFeedScroll();
+      captureCurrentDetailScroll();
+      localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
+        route: initialRoute(state.route),
+        open_tray_route: state.openTrayRoute || null,
+        feed_scroll_top: state.feedScrollTop,
+        detail: normalizeNavDetail(state.navDetail),
+        updated_at: Date.now()
+      }));
+    } catch (_) {
+      // Navigation restore is a convenience layer; the UI should keep working without storage.
+    }
+  }
+
+  function rememberNavDetail(type, card, options = {}) {
+    const sessionId = cardSessionId(card);
+    if (!sessionId) {
+      state.navDetail = null;
+      persistNavState();
+      return;
+    }
+    state.navDetail = normalizeNavDetail({
+      type,
+      session_id: sessionId,
+      scroll_top: options.scrollTop ?? options.scroll_top,
+      timestamp_scroll_top: options.timestampScrollTop ?? options.timestamp_scroll_top,
+      image_index: options.imageIndex ?? options.image_index
+    });
+    persistNavState();
+  }
+
+  function installFeedScrollPersistence() {
+    const feed = document.getElementById("feed");
+    if (!feed || feed.dataset.navScrollBound) {
+      return;
+    }
+    feed.dataset.navScrollBound = "true";
+    feed.addEventListener("scroll", debounce(() => {
+      rememberFeedScroll();
+      persistNavState();
+    }, 120), { passive: true });
+  }
+
+  function installDetailScrollPersistence(content, type) {
+    if (!content || content.dataset.navScrollBound) {
+      return;
+    }
+    content.dataset.navScrollBound = "true";
+    const save = debounce(() => {
+      if (!state.navDetail || state.navDetail.type !== type) {
+        return;
+      }
+      captureCurrentDetailScroll();
+      persistNavState();
+    }, 120);
+    content.addEventListener("scroll", save, { passive: true });
+    const timestamps = content.querySelector(".timestamp-list");
+    if (timestamps) {
+      timestamps.addEventListener("scroll", save, { passive: true });
+    }
+    const imageTrack = content.querySelector(".image-gallery-track");
+    if (imageTrack) {
+      imageTrack.addEventListener("scroll", save, { passive: true });
+    }
+  }
+
+  function currentImageGalleryIndex(track) {
+    if (!track || !track.children.length) {
+      return 0;
+    }
+    const scrollLeft = Number(track.scrollLeft || 0);
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    Array.from(track.children).forEach((child, index) => {
+      const distance = Math.abs(Number(child.offsetLeft || 0) - scrollLeft);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+    return bestIndex;
+  }
+
+  function restoreScrollPosition(target, scrollTop) {
+    if (!target) {
+      return;
+    }
+    const top = scrollNumber(scrollTop);
+    requestAnimationFrame(() => {
+      target.scrollTop = top;
+    });
+  }
+
+  function restoreTimestampScroll(content, scrollTop) {
+    const timestamps = content?.querySelector(".timestamp-list");
+    restoreScrollPosition(timestamps, scrollTop);
+  }
+
+  function restoreNavStateAfterCards() {
+    if (state.navRestored) {
+      return;
+    }
+    state.navRestored = true;
+    restoreFeedScroll();
+    const detail = normalizeNavDetail(state.navDetail);
+    if (!detail) {
+      persistNavState();
+      return;
+    }
+    const card = findCardBySessionId(detail.session_id);
+    if (!card) {
+      state.navDetail = null;
+      persistNavState();
+      return;
+    }
+    if (detail.type === "audio" && hasAudio(card)) {
+      showAudioDetail(card, { restoring: true, scrollTop: detail.scroll_top, timestampScrollTop: detail.timestamp_scroll_top });
+      return;
+    }
+    if (detail.type === "transcript") {
+      showTranscript(card, { restoring: true, scrollTop: detail.scroll_top });
+      return;
+    }
+    if (detail.type === "page" && card.html_path) {
+      showRichPage(card, { restoring: true, scrollTop: detail.scroll_top });
+      return;
+    }
+    if (detail.type === "images") {
+      showImageReel(card, null, { restoring: true, scrollTop: detail.scroll_top, initialIndex: detail.image_index });
+      return;
+    }
+    state.navDetail = null;
+    persistNavState();
+  }
+
+  function debounce(callback, waitMs) {
+    let timer = 0;
+    return (...args) => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      timer = window.setTimeout(() => {
+        timer = 0;
+        callback(...args);
+      }, waitMs);
+    };
+  }
+
   function loadReadActions() {
     try {
       return new Set(JSON.parse(localStorage.getItem(READ_STATE_KEY) || "[]"));
@@ -2369,6 +2676,14 @@
     }
   }, 90);
 
+  window.addEventListener("pagehide", persistNavState);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      persistNavState();
+    }
+  });
+
   installFeedRubberBand();
+  installFeedScrollPersistence();
   loadCards();
 })();
