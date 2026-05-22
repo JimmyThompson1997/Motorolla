@@ -91,6 +91,10 @@
       filled: '<path d="M5 4h14c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm2.2 12h9.7l-3.1-4.1-2.4 3.1-1.8-2.2L7.2 16ZM8 9.5A1.5 1.5 0 1 0 8 6.5a1.5 1.5 0 0 0 0 3Z"/>',
       outline: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8" cy="9" r="1.6"/><path d="m6.5 16 3.1-3.4 2.2 2.5 2.5-3.2 3.5 4.1H6.5Z"/>'
     },
+    log: {
+      filled: '<path d="M6 3h10l3 3v15H6c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2Zm9 1.5V7h2.5L15 4.5ZM8 10h8v-1.8H8V10Zm0 4h8v-1.8H8V14Zm0 4h5.5v-1.8H8V18Z"/>',
+      outline: '<path d="M6 3.5h9.2L20 8.3V20a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 20V5A1.5 1.5 0 0 1 6 3.5Z"/><path d="M15 4v4h4"/><path d="M8 10h8M8 14h8M8 18h5.5"/>'
+    },
     settings: {
       filled: '<path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.2 7.2 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.2 7.2 0 0 0 7 6L4.6 5l-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5L7 18a7.2 7.2 0 0 0 2.6 1.5L10 22h4l.4-2.5A7.2 7.2 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/>',
       outline: '<path d="m10.2 3-.4 2.2a7 7 0 0 0-2.1.9L5.6 5.2 3.7 8.5l1.8 1.3a7.7 7.7 0 0 0 0 2.4l-1.8 1.3 1.9 3.3 2.1-.9a7 7 0 0 0 2.1.9l.4 2.2h3.6l.4-2.2a7 7 0 0 0 2.1-.9l2.1.9 1.9-3.3-1.8-1.3a7.7 7.7 0 0 0 0-2.4l1.8-1.3-1.9-3.3-2.1.9a7 7 0 0 0-2.1-.9L13.8 3h-3.6Z"/><circle cx="12" cy="12" r="3.1"/>'
@@ -785,8 +789,8 @@
       if (message.role !== "user") {
         const trace = el("button", "bubble-trace-action");
         trace.type = "button";
-        trace.innerHTML = iconSvg("settings", { filled: false });
-        trace.setAttribute("aria-label", "Open thinking log");
+        trace.innerHTML = iconSvg("log", { filled: false });
+        trace.setAttribute("aria-label", "Open thinking logs");
         trace.addEventListener("click", (event) => {
           event.stopPropagation();
           showTurnTrace(card, message, index);
@@ -974,7 +978,7 @@
     wrap.append(dragZone);
 
     const traceCard = el("article", "trace-card");
-    traceCard.append(el("h1", "trace-title", "Thinking Log"));
+    traceCard.append(el("h1", "trace-title", "Thinking Logs"));
     const entries = thinkingLogEntries(card, message, index);
     if (!entries.length) {
       traceCard.append(el("p", "trace-empty", "No activity details for this reply."));

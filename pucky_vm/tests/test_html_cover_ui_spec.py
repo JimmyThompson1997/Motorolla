@@ -232,14 +232,14 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert "translateY(100%)" in styles
     assert ".detail-panel.is-open" in styles
     assert ".detail-header" in styles
-    assert "flex: 0 0 50px" in styles
-    assert "grid-template-columns: 50px minmax(0, 1fr) 50px" in styles
-    assert "width: 50px" in styles
-    assert "height: 50px" in styles
+    assert "flex: 0 0 45px" in styles
+    assert "grid-template-columns: 45px minmax(0, 1fr) 45px" in styles
+    assert "width: 45px" in styles
+    assert "height: 45px" in styles
     assert "position: sticky" in styles
     assert ".detail-back" in styles
-    assert "width: 27px" in styles
-    assert "height: 27px" in styles
+    assert "width: 24px" in styles
+    assert "height: 24px" in styles
     assert ".detail-title" in styles
     assert ".rich-detail" in styles
 
@@ -432,7 +432,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert fixture.count('"artifact": "morning-brief.svg"') == 1
 
 
-def test_turn_trace_is_single_gear_sheet_with_thinking_rows() -> None:
+def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     app = read("app.js")
     styles = read("styles.css")
     fixtures = read("fixtures/reply_cards.json")
@@ -445,7 +445,10 @@ def test_turn_trace_is_single_gear_sheet_with_thinking_rows() -> None:
     assert "function traceStatusClass(status)" in app
     assert '"bubble-trace-action"' in app
     assert '"trace-action"' not in app
-    assert 'iconSvg("settings"' in app
+    assert 'log: {' in app
+    assert 'iconSvg("log"' in app
+    assert "Open thinking logs" in app
+    assert "Thinking Logs" in app
     assert "mockTraceFor(card, message, index)" in app
     assert "raw JSON" not in app
     assert "token usage" not in app.lower()
