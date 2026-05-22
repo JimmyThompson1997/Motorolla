@@ -780,7 +780,21 @@ button {
 }
 
 .chat-detail {
-  padding: 18px 18px var(--nav-safe);
+  padding: 18px;
+}
+
+.chat-stack {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.chat-stack > .bubble,
+.chat-stack > .chat-media {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .chat-title,
@@ -937,7 +951,7 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 0 var(--nav-safe);
+  padding: 0;
 }
 
 .rich-swipe-edge {

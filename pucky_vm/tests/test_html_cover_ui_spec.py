@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -9,6 +10,12 @@ UI = ROOT / "ui_src"
 
 def read(name: str) -> str:
     return (UI / name).read_text(encoding="utf-8")
+
+
+def css_block(styles: str, selector: str) -> str:
+    match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>.*?)\n\}}", styles, re.S)
+    assert match, f"Missing CSS selector {selector}"
+    return match.group("body")
 
 
 def test_html_ui_uses_bundled_material_icon_registry() -> None:
@@ -304,7 +311,9 @@ def test_rich_pages_fill_detail_space_and_mock_paths_have_fallback() -> None:
     assert "flex: 1 1 auto" in styles
     assert ".rich-detail" in styles
     assert "display: flex" in styles
-    assert "padding: 0 0 var(--nav-safe)" in styles
+    rich_detail = css_block(styles, ".rich-detail")
+    assert "padding: 0;" in rich_detail
+    assert "var(--nav-safe)" not in rich_detail
 
 
 def test_sheet_drag_waits_for_release_before_dismissal() -> None:
@@ -418,15 +427,26 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     styles = read("styles.css")
 
     assert '"detail-content chat-detail"' in app
+    assert 'const stack = el("div", "chat-stack")' in app
+    assert "stack.append(bubble)" in app
+    assert "content.append(stack)" in app
     assert "scrollTranscriptToLatest(content)" in app
     assert "function scrollTranscriptToLatest(content)" in app
     assert "requestAnimationFrame" in app
     assert "content.scrollTop = content.scrollHeight" in app
     assert ".chat-detail" in styles
+    assert ".chat-stack" in styles
     assert ".detail-content" in styles
     assert ".bubble.assistant" in styles
     assert "width: 100%" in styles
     assert "max-width: 100%" in styles
+    chat_detail = css_block(styles, ".chat-detail")
+    assert "padding: 18px;" in chat_detail
+    assert "var(--nav-safe)" not in chat_detail
+    chat_stack = css_block(styles, ".chat-stack")
+    assert "min-height: 100%;" in chat_stack
+    assert "display: flex;" in chat_stack
+    assert "justify-content: flex-end;" in chat_stack
 
 
 def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:

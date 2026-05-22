@@ -828,10 +828,11 @@
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
     const content = el("div", "detail-content chat-detail");
+    const stack = el("div", "chat-stack");
     messages.forEach((message, index) => {
       const images = messageImages(card, message, index, messages);
       if (message.role !== "user" && images.length) {
-        content.append(chatMediaBubble(card, images));
+        stack.append(chatMediaBubble(card, images));
       }
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
       bubble.append(document.createTextNode(message.text || ""));
@@ -850,8 +851,9 @@
       if (stamp) {
         bubble.append(el("span", "bubble-meta", stamp));
       }
-      content.append(bubble);
+      stack.append(bubble);
     });
+    content.append(stack);
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     scrollTranscriptToLatest(content);
   }
