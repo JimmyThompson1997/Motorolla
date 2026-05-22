@@ -1,7 +1,10 @@
 (() => {
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
+  const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const COMPLETE_EPSILON_MS = 500;
+  const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
+  const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
 
   const MATERIAL_SYMBOLS = {
     mail: {
@@ -226,11 +229,17 @@
         { role: "assistant", text: "Ready. Playback will resume with the saved position and speed.", time: "4:13 PM" }
       ],
       audio_path: "/mock/pocket-computers.wav",
-      audio_playlist_path: "/mock/pocket-computers.m3u",
+      audio_timestamps: [
+        { id: "chapter-01", title: "Prologue - The Phone Before the Phone", start_ms: 0, end_ms: 403260, detail: "6:43", kind: "prologue" },
+        { id: "chapter-03", title: "Chapter 1 - The Portable Future Before It Fit in a Pocket", start_ms: 406080, end_ms: 2741520, detail: "38:55 across 3 segments", kind: "chapter" },
+        { id: "chapter-14", title: "Chapter 10 - The iPhone Demo and the Reframing of the Phone", start_ms: 22422900, end_ms: 24921850, detail: "41:39 across 3 segments", kind: "chapter" },
+        { id: "chapter-31", title: "Postscript - The Runtime Phone", start_ms: 66065430, end_ms: 69897470, detail: "1:03:52 across 4 segments", kind: "postscript" }
+      ],
       html_path: "/mock/pocket-computers.html"
     }
   ];
 
+  const persistedAudioState = loadAudioState();
   const state = {
     cards: [],
     route: "feed",
@@ -239,10 +248,13 @@
     voiceState: initialVoiceState(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
-    savedPositions: new Map(),
-    completedPaths: new Set(),
-    speedByPath: new Map(),
-    sheetCard: null,
+    savedPositions: numberMapFromObject(persistedAudioState.positions),
+    completedPaths: new Set(Array.isArray(persistedAudioState.completed) ? persistedAudioState.completed : []),
+    speedByPath: numberMapFromObject(persistedAudioState.speeds),
+    selectedTimestampByPath: stringMapFromObject(persistedAudioState.selected_timestamps),
+    scrubPreviewByPath: new Map(),
+    scrubbingAudioKey: "",
+    audioCard: null,
     traceCard: null,
     waveHistory: new Map(),
     readActions: loadReadActions(),
@@ -316,8 +328,8 @@
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
       const nextSource = args.path ? null : (state.player.source || null);
-      state.activePath = args.path || state.activePath;
-      const start = args.start_at_ms ?? state.savedPositions.get(normalizePath(nextPath)) ?? 0;
+      state.activePath = nextSource || args.path || state.activePath;
+      const start = args.start_at_ms ?? savedPositionFor(nextSource || nextPath) ?? 0;
       state.player = {
         schema: "pucky.player_state.v1",
         loaded: true,
@@ -326,7 +338,7 @@
         path: nextPath,
         source: nextSource,
         position_ms: start,
-        duration_ms: 1000 * 60 * 19 + 57000,
+        duration_ms: mockDurationForPath(nextSource || nextPath),
         queue_index: state.player.queue_index ?? -1,
         queue_count: state.player.queue_count ?? 0,
         speed: state.speedByPath.get(normalizePath(state.activePath)) || 1,
@@ -347,7 +359,7 @@
         path: first,
         source: playlist || null,
         position_ms: 0,
-        duration_ms: 1000 * 60 * 19 + 57000,
+        duration_ms: mockDurationForPath(playlist || first),
         queue_index: Number(args.index || 0),
         queue_count: playlist ? 83 : ((args.items && args.items.length) || 1),
         speed: state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
@@ -370,6 +382,7 @@
       state.player = { ...state.player, speed };
       if (state.activePath) {
         state.speedByPath.set(normalizePath(state.activePath), speed);
+        persistAudioState();
       }
       return state.player;
     }
@@ -377,6 +390,12 @@
       return mockArtifactResult(args.path);
     }
     throw new Error(`Unsupported browser mock command: ${command}`);
+  }
+
+  function mockDurationForPath(path) {
+    return /pocket-computers/i.test(String(path || ""))
+      ? MOCK_AUDIOBOOK_DURATION_MS
+      : MOCK_STANDARD_DURATION_MS;
   }
 
   function mockArtifactResult(path) {
@@ -426,7 +445,7 @@
     renderVoiceStatus();
     renderRouteTray();
     renderFeed();
-    renderAudioSheet();
+    renderAudioDetail();
   }
 
   function renderTabs() {
@@ -721,10 +740,13 @@
         : "action action-audio");
       audio.type = "button";
       audio.innerHTML = iconSvg("mic", { filled: true });
-      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : "Play"} ${card.title}`);
-      audio.addEventListener("click", (event) => {
+      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Open player for" : "Play"} ${card.title}`);
+      audio.addEventListener("click", async (event) => {
         event.stopPropagation();
-        toggleAudio(card);
+        if (!isActiveCard(card) || !state.player.is_playing) {
+          await toggleAudio(card);
+        }
+        showAudioDetail(card);
       });
       actions.append(audio);
     }
@@ -762,8 +784,9 @@
         state.activePath = audioControlKey(card);
         state.player = await Pucky.request({
           command: "player.play",
-          args: { start_at_ms: savedPositionFor(current.path) }
+          args: { start_at_ms: savedPositionFor(current.source || current.path) }
         });
+        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       } else if (card.audio_playlist_path) {
         state.activePath = audioControlKey(card);
@@ -771,11 +794,12 @@
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
         });
-        const start = savedPositionFor(queued.path);
+        const start = savedPositionFor(audioControlKey(card));
         state.player = await Pucky.request({
           command: "player.play",
           args: { start_at_ms: start }
         });
+        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       } else {
         const start = savedPositionFor(card.audio_path);
@@ -785,6 +809,7 @@
           command: "player.play",
           args: { path: card.audio_path, title: card.title, start_at_ms: start }
         });
+        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       }
       markRead(card, "audio");
@@ -796,6 +821,7 @@
   }
 
   function showTranscript(card) {
+    state.audioCard = null;
     markRead(card, "transcript");
     markCardRead(card);
     renderFeed();
@@ -858,6 +884,7 @@
   }
 
   async function showRichPage(card) {
+    state.audioCard = null;
     markRead(card, "page");
     markCardRead(card);
     renderFeed();
@@ -896,6 +923,7 @@
   }
 
   async function showImageReel(card, imageSet = null) {
+    state.audioCard = null;
     const images = normalizedImages(imageSet || cardImages(card));
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content image-reel");
@@ -1060,68 +1088,369 @@
     panel.replaceChildren();
   }
 
-  function showAudioSheet(card) {
-    state.sheetCard = card;
-    renderAudioSheet();
-    const sheet = document.getElementById("audioSheet");
-    sheet.setAttribute("aria-hidden", "false");
-    sheet.classList.add("is-open");
+  function showAudioDetail(card) {
+    state.audioCard = card;
+    const panel = document.getElementById("detail");
+    openSideDetail(panel, card.title || "Audio", audioDetailContent(card), dismissAudioDetail);
   }
 
-  function renderAudioSheet() {
-    const sheet = document.getElementById("audioSheet");
-    const card = state.sheetCard;
+  function renderAudioDetail() {
+    const card = state.audioCard;
     if (!card) {
       return;
     }
-    const wrap = el("div", "sheet-inner");
-    const dragZone = el("div", "sheet-drag-zone");
-    dragZone.append(el("div", "sheet-grip"));
-    wrap.append(dragZone);
-    wrap.append(el("h1", "sheet-title", card.title || "Audio"));
-    wrap.append(el("p", "sheet-summary", card.summary || ""));
-    const wave = waveform(card, "sheet-wave", 92);
-    wave.addEventListener("click", () => {});
-    wrap.append(wave);
-
-    const scrub = el("div", "scrub");
-    const range = document.createElement("input");
-    range.type = "range";
-    range.min = "0";
-    range.max = String(Math.max(1, state.player.duration_ms || 1));
-    range.value = String(Math.max(0, state.player.position_ms || 0));
-    range.addEventListener("change", async () => {
-      state.player = await Pucky.request({ command: "player.seek", args: { position_ms: Number(range.value) } });
-      rememberPlayerProgress(state.player);
-      renderAudioSheet();
-    });
-    scrub.append(range);
-    const elapsed = Math.max(0, state.player.position_ms || 0);
-    const duration = Math.max(0, state.player.duration_ms || 0);
-    const timeRow = el("div", "time-row");
-    timeRow.append(
-      el("span", "time-elapsed", formatTime(elapsed)),
-      el("span", "time-remaining", `-${formatTime(Math.max(0, duration - elapsed))}`)
-    );
-    scrub.append(timeRow);
-    wrap.append(scrub);
-
-    const controls = el("div", "controls");
-    controls.append(iconControl("replay_15", "Back 15 seconds", () => seekRelative(-15000), "control-skip"));
-    controls.append(iconControl(state.player.is_playing ? "pause" : "play_arrow", state.player.is_playing ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
-    controls.append(iconControl("forward_30", "Forward 30 seconds", () => seekRelative(30000), "control-skip"));
-    controls.append(control(`${state.player.speed || 1}x`, () => openSpeedPicker(card), "control-speed", "Playback speed"));
-    wrap.append(controls);
-    installVerticalDismiss(wrap, sheet, dismissAudioSheet);
-    sheet.replaceChildren(wrap);
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      state.audioCard = null;
+      return;
+    }
+    const existing = panel.querySelector(".audio-detail");
+    if (!existing) {
+      return;
+    }
+    if (state.scrubbingAudioKey === audioStateKey(card)) {
+      return;
+    }
+    if (existing.dataset.audioKey === audioStateKey(card)) {
+      refreshAudioDetail(card, existing);
+      return;
+    }
+    const chapterScroll = existing.querySelector(".timestamp-list")?.scrollTop || 0;
+    const next = audioDetailContent(card);
+    existing.replaceWith(next);
+    const nextList = next.querySelector(".timestamp-list");
+    if (nextList) {
+      nextList.scrollTop = chapterScroll;
+    }
   }
 
-  function dismissAudioSheet() {
-    const sheet = document.getElementById("audioSheet");
-    sheet.style.transform = "";
-    sheet.classList.remove("is-open", "is-dragging");
-    sheet.setAttribute("aria-hidden", "true");
-    state.sheetCard = null;
+  function audioDetailContent(card) {
+    const content = el("div", "detail-content audio-detail");
+    content.dataset.audioKey = audioStateKey(card);
+    content.style.setProperty("--accent", card.accent || "#72c2ff");
+    const player = el("section", "audio-player");
+    if (card.summary) {
+      player.append(el("p", "audio-summary", card.summary));
+    }
+    player.append(waveform(card, "audio-wave", 96));
+    player.append(audioScrubber(card));
+    player.append(audioControls(card));
+    content.append(player);
+    const timestamps = timestampListView(card);
+    if (timestamps) {
+      content.append(timestamps);
+    }
+    return content;
+  }
+
+  function refreshAudioDetail(card, existing) {
+    const wave = existing.querySelector(".audio-wave");
+    if (wave) {
+      wave.replaceWith(waveform(card, "audio-wave", 96));
+    }
+    const scrub = existing.querySelector(".audio-scrub");
+    if (scrub) {
+      updateAudioScrubPreview(card, scrub, playbackPositionForCard(card));
+    }
+    const controls = existing.querySelector(".audio-controls");
+    if (controls) {
+      controls.replaceWith(audioControls(card));
+    }
+  }
+
+  function audioScrubber(card) {
+    const scrub = el("div", "scrub audio-scrub");
+    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const position = clampAudioPosition(playbackPositionForCard(card), duration);
+    const slider = el("div", "scrub-slider");
+    slider.tabIndex = 0;
+    slider.setAttribute("role", "slider");
+    slider.setAttribute("aria-label", "Audio position");
+    slider.dataset.dragIgnore = "true";
+    slider.append(el("span", "scrub-track"), el("span", "scrub-fill"), el("span", "scrub-knob"));
+    updateScrubSlider(slider, position, duration);
+    let commitPending = false;
+    const commit = (positionMs) => {
+      if (commitPending) {
+        return;
+      }
+      commitPending = true;
+      commitAudioScrub(card, positionMs).finally(() => {
+        commitPending = false;
+      });
+    };
+    const previewFromPointer = (event) => {
+      const next = scrubPositionFromPointer(slider, event, duration);
+      previewAudioScrub(card, scrub, next);
+      return next;
+    };
+    const stopScrubEvent = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    slider.addEventListener("pointerdown", (event) => {
+      stopScrubEvent(event);
+      slider.focus();
+      if (event.pointerId !== undefined) {
+        slider.setPointerCapture?.(event.pointerId);
+      }
+      startAudioScrub(card, Number(slider.dataset.positionMs || 0));
+      previewFromPointer(event);
+    });
+    slider.addEventListener("pointermove", (event) => {
+      if (state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      previewFromPointer(event);
+    });
+    slider.addEventListener("pointerup", (event) => {
+      if (state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      const next = previewFromPointer(event);
+      if (event.pointerId !== undefined) {
+        slider.releasePointerCapture?.(event.pointerId);
+      }
+      commit(next);
+    });
+    slider.addEventListener("pointercancel", (event) => {
+      event.stopPropagation();
+      if (event.pointerId !== undefined) {
+        slider.releasePointerCapture?.(event.pointerId);
+      }
+      stopAudioScrub(card);
+    });
+    slider.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+      stopScrubEvent(event);
+      slider.focus();
+      startAudioScrub(card, Number(slider.dataset.positionMs || 0));
+      previewAudioScrub(card, scrub, scrubPositionFromClientX(slider, touch.clientX, duration));
+    }, { passive: false });
+    slider.addEventListener("touchmove", (event) => {
+      const touch = event.touches[0];
+      if (!touch || state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      previewAudioScrub(card, scrub, scrubPositionFromClientX(slider, touch.clientX, duration));
+    }, { passive: false });
+    slider.addEventListener("touchend", (event) => {
+      if (state.scrubbingAudioKey !== audioStateKey(card)) {
+        return;
+      }
+      stopScrubEvent(event);
+      const touch = event.changedTouches[0];
+      const next = touch
+        ? scrubPositionFromClientX(slider, touch.clientX, duration)
+        : Number(slider.dataset.positionMs || 0);
+      commit(next);
+    });
+    slider.addEventListener("touchcancel", (event) => {
+      event.stopPropagation();
+      stopAudioScrub(card);
+    });
+    slider.addEventListener("keydown", (event) => {
+      const current = Number(slider.dataset.positionMs || 0);
+      const smallStep = 15000;
+      const largeStep = 60000;
+      let next = current;
+      if (event.key === "ArrowLeft") next = current - smallStep;
+      else if (event.key === "ArrowRight") next = current + smallStep;
+      else if (event.key === "PageDown") next = current - largeStep;
+      else if (event.key === "PageUp") next = current + largeStep;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = duration;
+      else return;
+      event.preventDefault();
+      const positionMs = clampAudioPosition(next, duration);
+      previewAudioScrub(card, scrub, positionMs);
+      commit(positionMs);
+    });
+    scrub.append(slider);
+    const timeRow = el("div", "time-row");
+    timeRow.append(
+      el("span", "time-elapsed", formatTime(position)),
+      el("span", "time-remaining", `-${formatTime(Math.max(0, duration - position))}`)
+    );
+    scrub.append(timeRow);
+    return scrub;
+  }
+
+  function previewAudioScrub(card, scrub, rawPosition) {
+    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const positionMs = clampAudioPosition(rawPosition, duration);
+    startAudioScrub(card, positionMs);
+    state.activePath = audioControlKey(card);
+    if (isActiveCard(card)) {
+      state.player = { ...state.player, position_ms: positionMs };
+    }
+    updateAudioScrubPreview(card, scrub, positionMs);
+  }
+
+  async function commitAudioScrub(card, rawPosition) {
+    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const positionMs = clampAudioPosition(rawPosition, duration);
+    const marker = currentTimestamp(card, positionMs);
+    if (marker) {
+      rememberSelectedTimestamp(card, marker);
+    }
+    try {
+      state.activePath = audioControlKey(card);
+      const current = await Pucky.request({ command: "player.state", args: {} });
+      rememberPlayerProgress(current);
+      const same = isSameAudioCard(current, card);
+      if (!same && card.audio_playlist_path) {
+        await Pucky.request({
+          command: "player.queue.set",
+          args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
+        });
+      } else if (!same && card.audio_path) {
+        await Pucky.request({
+          command: "player.play",
+          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs }
+        });
+      }
+      state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
+      rememberPlayerProgress(state.player);
+      stopAudioScrub(card);
+      render();
+    } catch (error) {
+      showToast(error.message);
+      stopAudioScrub(card);
+      renderAudioDetail();
+    }
+  }
+
+  function updateAudioScrubPreview(card, scrub, positionMs) {
+    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const slider = scrub.querySelector(".scrub-slider");
+    if (slider) {
+      updateScrubSlider(slider, positionMs, duration);
+    }
+    const elapsed = scrub.querySelector(".time-elapsed");
+    if (elapsed) {
+      elapsed.textContent = formatTime(positionMs);
+    }
+    const remaining = scrub.querySelector(".time-remaining");
+    if (remaining) {
+      remaining.textContent = `-${formatTime(Math.max(0, duration - positionMs))}`;
+    }
+    updateTimestampPreview(card, positionMs);
+  }
+
+  function scrubPositionFromPointer(slider, event, durationMs) {
+    return scrubPositionFromClientX(slider, event.clientX, durationMs);
+  }
+
+  function scrubPositionFromClientX(slider, clientX, durationMs) {
+    const rect = slider.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const ratio = Math.max(0, Math.min(1, (Number(clientX || 0) - rect.left) / width));
+    return clampAudioPosition(ratio * durationMs, durationMs);
+  }
+
+  function updateScrubSlider(slider, positionMs, durationMs) {
+    const duration = Math.max(0, Number(durationMs || 0));
+    const position = clampAudioPosition(positionMs, duration);
+    const ratio = duration > 0 ? position / duration : 0;
+    slider.dataset.positionMs = String(Math.round(position));
+    slider.style.setProperty("--progress", String(ratio));
+    slider.setAttribute("aria-valuemin", "0");
+    slider.setAttribute("aria-valuemax", String(Math.round(duration)));
+    slider.setAttribute("aria-valuenow", String(Math.round(position)));
+    slider.setAttribute("aria-valuetext", `${formatTime(position)} of ${formatTime(duration)}`);
+  }
+
+  function updateTimestampPreview(card, positionMs) {
+    const current = currentTimestamp(card, positionMs);
+    const selectedId = current?.id || selectedTimestampFor(card);
+    document.querySelectorAll(".timestamp-row[data-timestamp-id]").forEach(row => {
+      row.classList.toggle("is-active", Boolean(selectedId && row.dataset.timestampId === selectedId));
+    });
+  }
+
+  function audioControls(card) {
+    const controls = el("div", "audio-controls");
+    const speed = isActiveCard(card) ? (state.player.speed || speedForCard(card)) : speedForCard(card);
+    controls.append(control(formatSpeed(speed), () => openSpeedPicker(card), "control-speed", "Playback speed"));
+    const cluster = el("div", "transport-cluster");
+    cluster.append(iconControl("replay_15", "Back 15 seconds", () => seekRelative(-15000), "control-skip"));
+    cluster.append(iconControl(state.player.is_playing && isActiveCard(card) ? "pause" : "play_arrow", state.player.is_playing && isActiveCard(card) ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
+    cluster.append(iconControl("forward_30", "Forward 30 seconds", () => seekRelative(30000), "control-skip"));
+    controls.append(cluster, el("span", "control-spacer"));
+    return controls;
+  }
+
+  function timestampListView(card) {
+    const markers = audioTimestamps(card);
+    if (!markers.length) {
+      return null;
+    }
+    const section = el("section", "timestamp-list");
+    section.setAttribute("aria-label", "Audio chapters");
+    section.append(el("h2", "timestamp-list-header", "Chapters"));
+    const current = currentTimestamp(card, playbackPositionForCard(card));
+    const selectedId = current?.id || selectedTimestampFor(card);
+    markers.forEach(marker => {
+      const row = el("button", marker.id === selectedId ? "timestamp-row is-active" : "timestamp-row");
+      row.type = "button";
+      row.dataset.timestampId = marker.id;
+      row.setAttribute("aria-label", `Jump to ${marker.title}`);
+      row.addEventListener("click", () => jumpToTimestamp(card, marker));
+      row.append(el("span", "timestamp-time", formatTime(marker.start_ms)));
+      const copy = el("span", "timestamp-copy");
+      copy.append(el("span", "timestamp-title", marker.title));
+      if (marker.detail) {
+        copy.append(el("span", "timestamp-detail", marker.detail));
+      }
+      row.append(copy);
+      section.append(row);
+    });
+    return section;
+  }
+
+  async function jumpToTimestamp(card, marker) {
+    try {
+      const positionMs = Math.max(0, Number(marker.start_ms || 0));
+      rememberSelectedTimestamp(card, marker);
+      markRead(card, "audio");
+      markCardRead(card);
+      const current = await Pucky.request({ command: "player.state", args: {} });
+      rememberPlayerProgress(current);
+      const same = isSameAudioCard(current, card);
+      state.activePath = audioControlKey(card);
+      if (!same && card.audio_playlist_path) {
+        await Pucky.request({
+          command: "player.queue.set",
+          args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
+        });
+      } else if (!same && card.audio_path) {
+        await Pucky.request({
+          command: "player.play",
+          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs }
+        });
+      }
+      state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
+      if (!state.player.is_playing) {
+        state.player = await Pucky.request({ command: "player.play", args: { start_at_ms: positionMs } });
+      }
+      await applySavedSpeedForCard(card);
+      rememberPlayerProgress(state.player);
+      render();
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  function dismissAudioDetail() {
+    state.audioCard = null;
+    dismissDetail();
   }
 
   function waveform(card, className, count) {
@@ -1140,7 +1469,7 @@
     row.addEventListener("click", (event) => {
       event.stopPropagation();
       if (hasAudio(card)) {
-        showAudioSheet(card);
+        showAudioDetail(card);
       }
     });
     for (const level of levels.slice(-count)) {
@@ -1153,13 +1482,13 @@
 
   function openSpeedPicker(card) {
     const overlay = document.getElementById("speedOverlay");
-    const current = Number(state.player.speed || 1);
+    const current = Number(isActiveCard(card) ? (state.player.speed || speedForCard(card)) : speedForCard(card));
     const menu = el("div", "speed-menu");
     for (const speed of [0.75, 1, 1.25, 1.5, 2, 2.5, 3]) {
       const button = el("button", speed === current ? "is-active" : "", `${speed}x`);
       button.addEventListener("click", async (event) => {
         event.stopPropagation();
-        state.speedByPath.set(normalizePath(audioControlKey(card)), speed);
+        rememberSpeed(card, speed);
         state.player = await Pucky.request({ command: "player.speed", args: { speed } });
         closeSpeedPicker();
         render();
@@ -1207,7 +1536,7 @@
     return button;
   }
 
-  function installVerticalDismiss(target, panel, onDismiss = dismissAudioSheet) {
+  function installVerticalDismiss(target, panel, onDismiss = dismissTraceSheet) {
     installDrag(target, {
       axis: "y",
       scrollTarget: target,
@@ -1320,6 +1649,9 @@
       cleanup.push(() => target.removeEventListener(type, handler, options));
     };
     add("pointerdown", event => {
+      if (isDragIgnoredTarget(event.target)) {
+        return;
+      }
       begin(event.clientX, event.clientY);
       if (target.setPointerCapture) {
         target.setPointerCapture(event.pointerId);
@@ -1335,6 +1667,9 @@
       finish(event.clientX, event.clientY);
     });
     add("touchstart", event => {
+      if (isDragIgnoredTarget(event.target)) {
+        return;
+      }
       if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY);
       }
@@ -1358,6 +1693,12 @@
       }
       cleanup.forEach(remove => remove());
     };
+  }
+
+  function isDragIgnoredTarget(target) {
+    return Boolean(target && target.closest && target.closest(
+      "button, input, select, textarea, a, iframe, [role='slider'], [data-drag-ignore='true']"
+    ));
   }
 
   function messagesForCard(card) {
@@ -1659,6 +2000,14 @@
     return card.audio_playlist_path || card.audio_path || card.session_id || card.title || "";
   }
 
+  function audioStateKey(card) {
+    return normalizePath(audioControlKey(card));
+  }
+
+  function playerStateKey(player) {
+    return normalizePath((player && (player.source || player.path)) || state.activePath || "");
+  }
+
   function isSameAudioCard(player, card) {
     if (!playerHasAudioIdentity(player) || !hasAudio(card)) {
       return false;
@@ -1702,6 +2051,116 @@
 
   function rememberPosition(path, position) {
     state.savedPositions.set(normalizePath(path), position);
+    persistAudioState();
+  }
+
+  function speedForCard(card) {
+    return Number(state.speedByPath.get(audioStateKey(card)) || 1);
+  }
+
+  function rememberSpeed(card, speed) {
+    state.speedByPath.set(audioStateKey(card), speed);
+    persistAudioState();
+  }
+
+  function selectedTimestampFor(card) {
+    return state.selectedTimestampByPath.get(audioStateKey(card)) || "";
+  }
+
+  function rememberSelectedTimestamp(card, marker) {
+    if (!marker || !marker.id) {
+      return;
+    }
+    state.selectedTimestampByPath.set(audioStateKey(card), marker.id);
+    persistAudioState();
+  }
+
+  async function applySavedSpeedForCard(card) {
+    const speed = speedForCard(card);
+    if (!Number.isFinite(speed) || Math.abs(speed - Number(state.player.speed || 1)) < 0.001) {
+      return;
+    }
+    state.player = await Pucky.request({ command: "player.speed", args: { speed } });
+  }
+
+  function playbackPositionForCard(card) {
+    const preview = scrubPreviewForCard(card);
+    if (Number.isFinite(preview)) {
+      return preview;
+    }
+    if (isActiveCard(card)) {
+      return Number(state.player.position_ms || 0);
+    }
+    return savedPositionFor(audioControlKey(card));
+  }
+
+  function scrubPreviewForCard(card) {
+    return Number(state.scrubPreviewByPath.get(audioStateKey(card)));
+  }
+
+  function rememberScrubPreview(card, positionMs) {
+    const position = clampAudioPosition(positionMs, Math.max(0, Number(state.player.duration_ms || 0)));
+    state.scrubPreviewByPath.set(audioStateKey(card), position);
+  }
+
+  function startAudioScrub(card, positionMs) {
+    state.scrubbingAudioKey = audioStateKey(card);
+    rememberScrubPreview(card, positionMs);
+  }
+
+  function stopAudioScrub(card) {
+    const key = audioStateKey(card);
+    if (state.scrubbingAudioKey === key) {
+      state.scrubbingAudioKey = "";
+    }
+    clearScrubPreview(card);
+  }
+
+  function clearScrubPreview(card) {
+    state.scrubPreviewByPath.delete(audioStateKey(card));
+  }
+
+  function clampAudioPosition(positionMs, durationMs) {
+    const position = Math.max(0, Number(positionMs || 0));
+    const duration = Math.max(0, Number(durationMs || 0));
+    return duration > 0 ? Math.min(duration, position) : position;
+  }
+
+  function audioTimestamps(card) {
+    const raw = Array.isArray(card.audio_timestamps) ? card.audio_timestamps : [];
+    return raw.map((item, index) => {
+      const startMs = Number(item && item.start_ms);
+      if (!Number.isFinite(startMs) || startMs < 0) {
+        return null;
+      }
+      const endMs = Number(item && item.end_ms);
+      const title = String((item && item.title) || "").trim();
+      return {
+        id: String((item && item.id) || `timestamp-${index + 1}`),
+        title: title || `Timestamp ${index + 1}`,
+        start_ms: Math.round(startMs),
+        end_ms: Number.isFinite(endMs) && endMs >= startMs ? Math.round(endMs) : null,
+        detail: String((item && item.detail) || "").trim(),
+        kind: String((item && item.kind) || "").trim()
+      };
+    }).filter(Boolean).sort((left, right) => left.start_ms - right.start_ms);
+  }
+
+  function currentTimestamp(card, positionMs) {
+    const markers = audioTimestamps(card);
+    if (!markers.length) {
+      return null;
+    }
+    const position = Math.max(0, Number(positionMs || 0));
+    let current = markers[0];
+    for (const marker of markers) {
+      if (marker.start_ms <= position) {
+        current = marker;
+      } else {
+        break;
+      }
+    }
+    return current;
   }
 
   function isCompletePlayback(player) {
@@ -1714,21 +2173,23 @@
   }
 
   function rememberPlayerProgress(player) {
-    if (!player || !player.path) {
+    const key = playerStateKey(player);
+    if (!player || !key) {
       return;
     }
-    const normalized = normalizePath(player.path);
     if (isCompletePlayback(player)) {
-      state.completedPaths.add(normalized);
-      rememberPosition(player.path, 0);
+      state.completedPaths.add(key);
+      rememberPosition(key, 0);
+      persistAudioState();
       return;
     }
-    state.completedPaths.delete(normalized);
-    rememberPosition(player.path, Math.max(0, Number(player.position_ms || 0)));
+    state.completedPaths.delete(key);
+    rememberPosition(key, Math.max(0, Number(player.position_ms || 0)));
   }
 
   function forgetCompleted(path) {
     state.completedPaths.delete(normalizePath(path));
+    persistAudioState();
   }
 
   function actionKey(card, action) {
@@ -1817,6 +2278,52 @@
     }
   }
 
+  function loadAudioState() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(AUDIO_STATE_KEY) || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function numberMapFromObject(value) {
+    const entries = value && typeof value === "object" ? Object.entries(value) : [];
+    return new Map(entries
+      .map(([key, item]) => [normalizePath(key), Number(item)])
+      .filter(([, item]) => Number.isFinite(item)));
+  }
+
+  function stringMapFromObject(value) {
+    const entries = value && typeof value === "object" ? Object.entries(value) : [];
+    return new Map(entries.map(([key, item]) => [normalizePath(key), String(item || "")]));
+  }
+
+  function objectFromMap(map) {
+    return Object.fromEntries(Array.from(map.entries()).filter(([key]) => key));
+  }
+
+  function persistAudioState() {
+    try {
+      localStorage.setItem(AUDIO_STATE_KEY, JSON.stringify({
+        positions: objectFromMap(state.savedPositions),
+        speeds: objectFromMap(state.speedByPath),
+        completed: Array.from(state.completedPaths),
+        selected_timestamps: objectFromMap(state.selectedTimestampByPath)
+      }));
+    } catch (_) {
+      // Audio resume state is opportunistic; playback should continue without storage.
+    }
+  }
+
+  function formatSpeed(speed) {
+    const value = Number(speed || 1);
+    if (!Number.isFinite(value)) {
+      return "1x";
+    }
+    return `${String(Math.round(value * 100) / 100).replace(/\.0$/, "")}x`;
+  }
+
   function normalizeIcon(icon) {
     const value = String(icon || "").toLowerCase();
     return MATERIAL_SYMBOLS[value] ? value : "mail";
@@ -1833,8 +2340,12 @@
 
   function formatTime(ms) {
     const total = Math.max(0, Math.round(Number(ms || 0) / 1000));
-    const minutes = Math.floor(total / 60);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
     const seconds = total % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 

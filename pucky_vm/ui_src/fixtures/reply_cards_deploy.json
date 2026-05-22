@@ -358,9 +358,258 @@
           }
         ]
       },
-      "public_audio_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav",
-      "public_audio_playlist_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u",
-      "html_artifact": "pocket-computers.html"
+      "html_artifact": "pocket-computers.html",
+      "device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/From_Pocket_Computers_to_Planetary_Platforms_Kokoro_George.m4a",
+      "audio_timestamps": [
+        {
+          "id": "chapter-01",
+          "title": "Prologue - The Phone Before the Phone",
+          "start_ms": 0,
+          "end_ms": 403260,
+          "detail": "6:43",
+          "kind": "prologue"
+        },
+        {
+          "id": "chapter-02",
+          "title": "Part I",
+          "start_ms": 403260,
+          "end_ms": 406080,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-03",
+          "title": "Chapter 1 - The Portable Future Before It Fit in a Pocket",
+          "start_ms": 406080,
+          "end_ms": 2741520,
+          "detail": "38:55 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-04",
+          "title": "Chapter 2 - Newton and the Perils of Ambition",
+          "start_ms": 2741520,
+          "end_ms": 4995170,
+          "detail": "37:34 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-05",
+          "title": "Chapter 3 - General Magic and the Future That Arrived Too Early",
+          "start_ms": 4995170,
+          "end_ms": 7531090,
+          "detail": "42:16 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-06",
+          "title": "Chapter 4 - Palm and the Beauty of Doing Less",
+          "start_ms": 7531090,
+          "end_ms": 10105380,
+          "detail": "42:54 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-07",
+          "title": "Part II",
+          "start_ms": 10105380,
+          "end_ms": 10108880,
+          "detail": "0:04",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-08",
+          "title": "Chapter 5 - The Communicator Era",
+          "start_ms": 10108880,
+          "end_ms": 12512750,
+          "detail": "40:04 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-09",
+          "title": "Chapter 6 - BlackBerry and the Machine That Made Email Urgent",
+          "start_ms": 12512750,
+          "end_ms": 14940750,
+          "detail": "40:28 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-10",
+          "title": "Chapter 7 - Feature Phones, Fashion Phones, and the Mobile Internet That Wasn't Quite",
+          "start_ms": 14940750,
+          "end_ms": 17144310,
+          "detail": "36:44 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-11",
+          "title": "Part III",
+          "start_ms": 17144310,
+          "end_ms": 17146700,
+          "detail": "0:02",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-12",
+          "title": "Chapter 8 - The iPod as Smartphone Prequel",
+          "start_ms": 17146700,
+          "end_ms": 20220590,
+          "detail": "51:14 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-13",
+          "title": "Chapter 9 - The Phone Apple Didn't Want to Make This Way",
+          "start_ms": 20220590,
+          "end_ms": 22422900,
+          "detail": "36:42 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-14",
+          "title": "Chapter 10 - The iPhone Demo and the Reframing of the Phone",
+          "start_ms": 22422900,
+          "end_ms": 24921850,
+          "detail": "41:39 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-15",
+          "title": "Chapter 11 - From Web Apps to the App Store",
+          "start_ms": 24921850,
+          "end_ms": 28599370,
+          "detail": "1:01:18 across 4 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-16",
+          "title": "Chapter 12 - Android and the Race to Become the Other Smartphone Platform",
+          "start_ms": 28599370,
+          "end_ms": 31521000,
+          "detail": "48:42 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-17",
+          "title": "Part V",
+          "start_ms": 31521000,
+          "end_ms": 31523940,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-18",
+          "title": "Chapter 13 - Nokia and the Cost of Winning the Old Game",
+          "start_ms": 31523940,
+          "end_ms": 34575250,
+          "detail": "50:51 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-19",
+          "title": "Chapter 14 - BlackBerry After the Keyboard",
+          "start_ms": 34575250,
+          "end_ms": 37049750,
+          "detail": "41:15 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-20",
+          "title": "Chapter 15 - Palm, Microsoft, and the Beautiful Losers",
+          "start_ms": 37049750,
+          "end_ms": 40037420,
+          "detail": "49:48 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-21",
+          "title": "Chapter 16 - The Graveyard of Smartphone Experiments",
+          "start_ms": 40037420,
+          "end_ms": 42747150,
+          "detail": "45:10 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-22",
+          "title": "Part VI",
+          "start_ms": 42747150,
+          "end_ms": 42750520,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-23",
+          "title": "Chapter 17 - Samsung, Scale, and the Android Hardware War",
+          "start_ms": 42750520,
+          "end_ms": 46360790,
+          "detail": "1:00:10 across 4 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-24",
+          "title": "Chapter 18 - The Camera Takes Over the Phone",
+          "start_ms": 46360790,
+          "end_ms": 49400970,
+          "detail": "50:40 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-25",
+          "title": "Chapter 19 - Pricing the Pocket Computer",
+          "start_ms": 49400970,
+          "end_ms": 52206410,
+          "detail": "46:45 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-26",
+          "title": "Chapter 20 - Apps, Attention, and the Phone as Marketplace",
+          "start_ms": 52206410,
+          "end_ms": 55029910,
+          "detail": "47:04 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-27",
+          "title": "Chapter 21 - The Global Smartphone Majority",
+          "start_ms": 55029910,
+          "end_ms": 57728940,
+          "detail": "44:59 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-28",
+          "title": "Chapter 22 - The Phone as Remote Control for Life",
+          "start_ms": 57728940,
+          "end_ms": 60775420,
+          "detail": "50:46 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-29",
+          "title": "Chapter 23 - After the Smartphone?",
+          "start_ms": 60775420,
+          "end_ms": 64195570,
+          "detail": "57:00 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-30",
+          "title": "Epilogue - The Device That Ate Everything",
+          "start_ms": 64195570,
+          "end_ms": 66065430,
+          "detail": "31:10 across 2 segments",
+          "kind": "epilogue"
+        },
+        {
+          "id": "chapter-31",
+          "title": "Postscript - The Runtime Phone",
+          "start_ms": 66065430,
+          "end_ms": 69897470,
+          "detail": "1:03:52 across 4 segments",
+          "kind": "postscript"
+        }
+      ]
     }
   ]
 }
