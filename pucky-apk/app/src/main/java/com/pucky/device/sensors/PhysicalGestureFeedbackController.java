@@ -438,7 +438,7 @@ public final class PhysicalGestureFeedbackController {
 
     private void runChopPing(String reason) {
         try {
-            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, 100);
             generator.startTone(ToneGenerator.TONE_PROP_ACK, 120);
             synchronized (lock) {
                 addEventLocked("ping_started", reason, 0f, 0f);
