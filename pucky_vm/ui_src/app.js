@@ -902,7 +902,7 @@
         event.stopPropagation();
         showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
       });
-      if (isPdfMedia(image)) {
+      if (isDocumentMedia(image)) {
         tile.append(mediaDocumentPreview(image, "chat"));
       } else {
         const imageEl = document.createElement("img");
@@ -1025,7 +1025,7 @@
       images.forEach((image, index) => {
         const slide = el("figure", "image-slide");
         const frame = el("div", "image-slide-frame");
-        if (isPdfMedia(image)) {
+        if (isDocumentMedia(image)) {
           frame.append(mediaDocumentPreview(image, "gallery"));
         } else {
           const imageEl = document.createElement("img");
@@ -1104,15 +1104,47 @@
   }
 
   function isPdfMedia(item) {
+    return mediaDocumentMeta(item).kind === "pdf";
+  }
+
+  function isDocumentMedia(item) {
+    return mediaDocumentMeta(item).kind !== "";
+  }
+
+  function mediaDocumentMeta(item) {
     const mime = String((item && item.mime_type) || "").toLowerCase();
     const path = String((item && (item.path || item.local_path || item.image_path || item.src || item.data_url)) || "");
-    return mime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(path);
+    const lowerPath = path.toLowerCase();
+    if (mime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(lowerPath)) {
+      return { kind: "pdf", label: "PDF", title: "PDF document" };
+    }
+    if (
+      mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      /\.docx(?:$|[?#])/i.test(lowerPath)
+    ) {
+      return { kind: "docx", label: "DOCX", title: "Word document" };
+    }
+    if (
+      mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      /\.xlsx(?:$|[?#])/i.test(lowerPath)
+    ) {
+      return { kind: "xlsx", label: "XLSX", title: "Spreadsheet" };
+    }
+    if (
+      mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+      /\.pptx(?:$|[?#])/i.test(lowerPath)
+    ) {
+      return { kind: "pptx", label: "PPTX", title: "Presentation" };
+    }
+    return { kind: "", label: "FILE", title: "Document" };
   }
 
   function mediaDocumentPreview(item, variant) {
+    const meta = mediaDocumentMeta(item);
     const wrap = el("div", `media-doc-preview ${variant === "gallery" ? "is-gallery" : "is-chat"}`);
-    wrap.append(el("div", "media-doc-badge", "PDF"));
-    wrap.append(el("strong", "media-doc-title", item.title || "PDF document"));
+    wrap.dataset.kind = meta.kind || "file";
+    wrap.append(el("div", "media-doc-badge", meta.label));
+    wrap.append(el("strong", "media-doc-title", item.title || meta.title));
     wrap.append(el("span", "media-doc-subtitle", variant === "gallery" ? "Cached document preview" : "Tap to view"));
     return wrap;
   }

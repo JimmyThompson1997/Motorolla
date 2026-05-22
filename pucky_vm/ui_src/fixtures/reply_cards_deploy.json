@@ -41,34 +41,28 @@
           "created_at": "2026-05-20T06:33:00-07:00",
           "images": [
             {
-              "artifact": "morning-map.svg",
-              "mime_type": "image/svg+xml",
-              "title": "Morning route sketch",
-              "alt": "Generated morning route sketch"
-            },
-            {
-              "artifact": "morning-brief.svg",
-              "mime_type": "image/svg+xml",
-              "title": "Launch brief image",
-              "alt": "Generated launch brief image"
-            },
-            {
-              "artifact": "commute-dashboard.png",
+              "artifact": "real-alfred-square.png",
               "mime_type": "image/png",
-              "title": "PNG weather window",
-              "alt": "Generated PNG morning dashboard"
+              "title": "Real PNG app image",
+              "alt": "Real laptop PNG from Downloads"
             },
             {
-              "artifact": "meeting-room.jpg",
+              "artifact": "real-alfred-logo.jpg",
               "mime_type": "image/jpeg",
-              "title": "JPEG meeting snapshot",
-              "alt": "Generated JPEG meeting snapshot"
+              "title": "Real JPEG logo",
+              "alt": "Real laptop JPEG from Downloads"
             },
             {
-              "artifact": "meeting-decision.pdf",
+              "artifact": "real-pocket-computers.pdf",
               "mime_type": "application/pdf",
-              "title": "PDF decision brief",
-              "alt": "Generated PDF decision brief"
+              "title": "Real PDF book",
+              "alt": "Real Pocket Computers PDF from Downloads"
+            },
+            {
+              "artifact": "real-pocket-computers.docx",
+              "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "title": "Real DOCX manuscript",
+              "alt": "Real Pocket Computers DOCX from Downloads"
             }
           ]
         }

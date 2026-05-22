@@ -914,6 +914,27 @@ button {
   color: var(--text);
 }
 
+.media-doc-preview[data-kind="docx"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(58, 132, 255, 0.42), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(58, 132, 255, 0.20)),
+    #151e2d;
+}
+
+.media-doc-preview[data-kind="xlsx"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(80, 216, 106, 0.38), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(80, 216, 106, 0.18)),
+    #14251c;
+}
+
+.media-doc-preview[data-kind="pptx"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(255, 176, 0, 0.42), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(255, 176, 0, 0.20)),
+    #2a1d12;
+}
+
 .media-doc-preview.is-gallery {
   justify-content: center;
   align-items: center;
@@ -932,6 +953,18 @@ button {
   font-size: 17px;
   font-weight: 950;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.25);
+}
+
+.media-doc-preview[data-kind="docx"] .media-doc-badge {
+  background: #2f6fed;
+}
+
+.media-doc-preview[data-kind="xlsx"] .media-doc-badge {
+  background: #25a85a;
+}
+
+.media-doc-preview[data-kind="pptx"] .media-doc-badge {
+  background: #e87b22;
 }
 
 .media-doc-preview.is-gallery .media-doc-badge {
