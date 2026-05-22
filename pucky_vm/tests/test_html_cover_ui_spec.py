@@ -301,7 +301,7 @@ def test_rich_pages_fill_detail_space_and_mock_paths_have_fallback() -> None:
 
     assert "function mockArtifactResult(path)" in app
     assert "function isMockHtmlArtifact(path)" in app
-    assert "function richFrame(result)" in app
+    assert "function richFrame(result, path = \"\")" in app
     assert 'if (isMockHtmlArtifact(card.html_path))' in app
     assert "mockArtifactResult(card.html_path)" in app
     assert "height: calc(100vh - 58px - var(--nav-safe))" not in styles
@@ -563,6 +563,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function currentImageGalleryIndex(track)" in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
+    assert "function richFrame(result, path = \"\")" in app
+    assert "mime === \"application/pdf\"" in app
+    assert "data:application/pdf;base64" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
     assert "showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) })" in app
@@ -606,6 +609,12 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"transcript_messages"' in fixture
     assert fixture.count('"artifact": "morning-map.svg"') == 1
     assert fixture.count('"artifact": "morning-brief.svg"') == 1
+    assert fixture.count('"artifact": "commute-dashboard.png"') == 2
+    assert fixture.count('"artifact": "meeting-room.jpg"') == 1
+    assert fixture.count('"artifact": "night-wrap.png"') == 1
+    assert '"html_artifact": "meeting-decision.pdf"' in fixture
+    assert '"mime_type": "image/png"' in fixture
+    assert '"mime_type": "image/jpeg"' in fixture
 
 
 def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:

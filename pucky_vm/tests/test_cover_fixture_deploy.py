@@ -66,6 +66,9 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/morning.wav" in files
     assert "fixtures/artifacts/morning.html" in files
     assert "fixtures/artifacts/morning-map.svg" in files
+    assert "fixtures/artifacts/commute-dashboard.png" in files
+    assert "fixtures/artifacts/meeting-room.jpg" in files
+    assert "fixtures/artifacts/meeting-decision.pdf" in files
 
 
 def test_deploy_helper_uses_command_path_and_no_adb_shortcuts() -> None:

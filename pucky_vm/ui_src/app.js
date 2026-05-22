@@ -413,6 +413,13 @@
         content_base64: btoa(svg)
       };
     }
+    if (/\.pdf$/i.test(value)) {
+      const pdf = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 594] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n4 0 obj\n<< /Length 86 >>\nstream\nBT /F1 24 Tf 48 522 Td (${title}) Tj /F1 13 Tf 0 -36 Td (PDF fixture preview) Tj ET\nendstream\nendobj\n5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF`;
+      return {
+        mime_type: "application/pdf",
+        content_base64: btoa(pdf)
+      };
+    }
     return {
       mime_type: "text/html",
       content_base64: btoa(mockHtmlArtifact(title))
@@ -933,10 +940,10 @@
         command: "artifact.read_base64",
         args: { path: card.html_path, max_bytes: 1024 * 1024 }
       });
-      content.append(richFrame(result), el("div", "rich-swipe-edge"));
+        content.append(richFrame(result, card.html_path), el("div", "rich-swipe-edge"));
     } catch (error) {
       if (isMockHtmlArtifact(card.html_path)) {
-        content.append(richFrame(mockArtifactResult(card.html_path)), el("div", "rich-swipe-edge"));
+        content.append(richFrame(mockArtifactResult(card.html_path), card.html_path), el("div", "rich-swipe-edge"));
       } else {
         content.append(el("p", "preview", `Page unavailable: ${error.message}`));
       }
@@ -951,10 +958,16 @@
     }
   }
 
-  function richFrame(result) {
+  function richFrame(result, path = "") {
     const iframe = el("iframe", "rich-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-    iframe.srcdoc = atob(result.content_base64 || "");
+    const mime = String((result && result.mime_type) || "").toLowerCase();
+    const content = String((result && result.content_base64) || "");
+    if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
+      iframe.src = `data:application/pdf;base64,${content}`;
+    } else {
+      iframe.srcdoc = atob(content);
+    }
     return iframe;
   }
 
