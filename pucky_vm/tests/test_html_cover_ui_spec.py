@@ -526,35 +526,47 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function cardImages(card)" in app
     assert "function messageImages(card, message, index, messages)" in app
     assert "function chatMediaBubble(card, images)" in app
-    assert "function showImageReel(card, imageSet = null)" in app
+    assert "function showImageReel(card, imageSet = null, initialIndex = 0)" in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
-    assert '"image-reel-nav"' in app
+    assert "showImageReel(card, images, index)" in app
+    assert '"chat-media-rail"' in app
+    assert '"image-gallery-track"' in app
+    assert "rail.dataset.dragIgnore = \"true\"" in app
+    assert "track.dataset.dragIgnore = \"true\"" in app
+    assert '"image-swipe-edge"' in app
+    assert '"image-reel-nav"' not in app
+    assert "Previous image" not in app
+    assert "Next image" not in app
+    assert 'iconSvg("chevron_right"' not in app
+    assert '"chat-media-grid"' not in app
+    assert ".chat-media-grid" not in styles
+    assert ".chat-media-multiple" not in styles
+    assert ".image-reel-nav" not in styles
     assert '"image-reel-count"' in app
-    assert "Previous image" in app
-    assert "Next image" in app
-    assert "chevron_right" in app
     assert '"image-affordance"' not in app
     assert ".image-affordance" not in styles
     assert "card-wrap.has-images" not in styles
     assert '"chat-media"' in app
     assert ".chat-media" in styles
-    assert ".chat-media-grid" in styles
-    assert ".chat-media-multiple" in styles
+    assert ".chat-media-rail" in styles
+    assert ".chat-media::after" in styles
     assert ".chat-media-count" in styles
     assert "artifact.read_base64" in app
     assert ".image-reel" in styles
-    assert ".image-viewer" in styles
-    assert ".image-reel-nav" in styles
+    assert ".image-gallery" in styles
+    assert ".image-gallery-track" in styles
+    assert ".image-swipe-edge" in styles
+    assert ".image-slide" in styles
+    assert ".image-slide-frame" in styles
     assert ".image-reel-count" in styles
-    assert ".image-reel-img" in styles
-    assert "position: relative" in styles
-    assert "top: 14px" in styles
-    assert "height: 52vh" in styles
-    assert "max-height: 540px" in styles
+    assert ".image-reel-meta" in styles
+    assert "scroll-snap-type: x mandatory" in styles
     assert "object-fit: contain" in styles
+    assert "height: 52vh" not in styles
+    assert "max-height: 540px" not in styles
     assert '"transcript_messages"' in fixture
     assert fixture.count('"artifact": "morning-map.svg"') == 1
     assert fixture.count('"artifact": "morning-brief.svg"') == 1

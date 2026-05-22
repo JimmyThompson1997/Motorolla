@@ -859,16 +859,19 @@
   }
 
   function chatMediaBubble(card, images) {
-    const media = el("button", images.length > 1 ? "chat-media chat-media-multiple" : "chat-media");
-    media.type = "button";
+    const media = el("div", "chat-media");
+    media.setAttribute("role", "group");
     media.setAttribute("aria-label", `Open ${images.length} generated image${images.length === 1 ? "" : "s"}`);
-    media.addEventListener("click", (event) => {
-      event.stopPropagation();
-      showImageReel(card, images);
-    });
-    const grid = el("span", "chat-media-grid");
-    images.slice(0, 4).forEach((image, index) => {
-      const tile = el("span", "chat-media-tile");
+    const rail = el("div", "chat-media-rail");
+    rail.dataset.dragIgnore = "true";
+    images.forEach((image, index) => {
+      const tile = el("button", "chat-media-tile");
+      tile.type = "button";
+      tile.setAttribute("aria-label", `Open generated image ${index + 1} of ${images.length}`);
+      tile.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showImageReel(card, images, index);
+      });
       const imageEl = document.createElement("img");
       imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
       imageEl.decoding = "async";
@@ -876,12 +879,12 @@
       resolveImageSrc(image)
         .then(src => { imageEl.src = src; })
         .catch(() => { tile.append(el("span", "chat-media-error", "Image unavailable")); });
-      if (images.length > 1 && index === Math.min(images.length, 4) - 1) {
-        tile.append(el("span", "chat-media-count", `${images.length}`));
-      }
-      grid.append(tile);
+      rail.append(tile);
     });
-    media.append(grid);
+    if (images.length > 1) {
+      media.append(el("span", "chat-media-count", `${images.length} images`));
+    }
+    media.append(rail);
     return media;
   }
 
@@ -924,63 +927,51 @@
     return iframe;
   }
 
-  async function showImageReel(card, imageSet = null) {
+  async function showImageReel(card, imageSet = null, initialIndex = 0) {
     state.audioCard = null;
     const images = normalizedImages(imageSet || cardImages(card));
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content image-reel");
+    const startIndex = Math.max(0, Math.min(images.length - 1, Number(initialIndex || 0)));
     if (!images.length) {
       content.append(el("p", "preview", "No images are attached to this reply."));
     } else {
-      let index = 0;
-      const viewer = el("div", "image-viewer");
-      const renderImage = async () => {
-        const image = images[index];
-        const frame = el("figure", "image-frame");
+      const gallery = el("div", "image-gallery");
+      const track = el("div", "image-gallery-track");
+      track.dataset.dragIgnore = "true";
+      images.forEach((image, index) => {
+        const slide = el("figure", "image-slide");
+        const frame = el("div", "image-slide-frame");
         const imageEl = document.createElement("img");
         imageEl.className = "image-reel-img";
         imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
         imageEl.decoding = "async";
-        try {
-          imageEl.src = await resolveImageSrc(image);
-        } catch (error) {
-          frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
-        }
-        if (imageEl.src) {
-          frame.append(imageEl);
-        }
-        if (image.title || image.alt) {
-          frame.append(el("figcaption", "image-caption", image.title || image.alt));
+        frame.append(imageEl);
+        resolveImageSrc(image)
+          .then(src => { imageEl.src = src; })
+          .catch(error => {
+            imageEl.remove();
+            frame.append(el("p", "preview", `Image unavailable: ${error.message}`));
+          });
+        const meta = el("figcaption", "image-reel-meta");
+        const caption = image.title || image.alt || "";
+        if (caption) {
+          meta.append(el("span", "image-caption", caption));
         }
         if (images.length > 1) {
-          const controls = el("div", "image-reel-controls");
-          const previous = el("button", "image-reel-nav");
-          previous.type = "button";
-          previous.innerHTML = iconSvg("chevron_left", { filled: false });
-          previous.setAttribute("aria-label", "Previous image");
-          previous.addEventListener("click", async (event) => {
-            event.stopPropagation();
-            index = (index + images.length - 1) % images.length;
-            await renderImage();
-          });
-          const next = el("button", "image-reel-nav");
-          next.type = "button";
-          next.innerHTML = iconSvg("chevron_right", { filled: false });
-          next.setAttribute("aria-label", "Next image");
-          next.addEventListener("click", async (event) => {
-            event.stopPropagation();
-            index = (index + 1) % images.length;
-            await renderImage();
-          });
-          controls.append(previous, el("span", "image-reel-count", `${index + 1} / ${images.length}`), next);
-          frame.append(controls);
-          viewer.replaceChildren(frame);
-        } else {
-          viewer.replaceChildren(frame);
+          meta.append(el("span", "image-reel-count", `${index + 1} / ${images.length}`));
         }
-      };
-      content.append(viewer);
-      await renderImage();
+        slide.append(frame, meta);
+        track.append(slide);
+      });
+      gallery.append(track);
+      content.append(gallery, el("div", "image-swipe-edge"));
+      requestAnimationFrame(() => {
+        const slide = track.children[startIndex];
+        if (slide) {
+          track.scrollLeft = slide.offsetLeft;
+        }
+      });
     }
     openSideDetail(panel, card.title || "Images", content, dismissDetail);
   }
