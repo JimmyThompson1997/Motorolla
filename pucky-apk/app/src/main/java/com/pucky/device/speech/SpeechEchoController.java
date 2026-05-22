@@ -31,6 +31,8 @@ import org.json.JSONObject;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.Set;
 
@@ -46,7 +48,6 @@ public final class SpeechEchoController {
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int ACCEPTED_CHIME_VOLUME = 85;
-    private static final String ECHO_PREFIX = "I heard: ";
 
     private static SpeechEchoController shared;
 
@@ -200,6 +201,24 @@ public final class SpeechEchoController {
         return out;
     }
 
+    public JSONObject voices(JSONObject args) {
+        ensureTtsReady();
+        waitForTtsReady(Math.max(0L, Math.min(2_500L, args.optLong("wait_ms", 1_200L))));
+        boolean localOnly = args.optBoolean("local_only", false);
+        int limit = Math.max(1, Math.min(200, args.optInt("limit", 120)));
+        synchronized (this) {
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.speech_echo_voices.v1");
+            Json.put(out, "tts_ready", ttsReady);
+            Json.put(out, "tts_initializing", ttsInitializing);
+            Json.put(out, "selected_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
+            Json.put(out, "selected_voice_network_required", ttsReady ? ttsVoiceNetworkRequired : JSONObject.NULL);
+            Json.put(out, "local_only", localOnly);
+            Json.put(out, "voices", speaker == null ? new JSONArray() : voicesJson(speaker, localOnly, limit));
+            return out;
+        }
+    }
+
     private JSONObject newSession(JSONObject args) {
         String sessionId = args.optString("session_id", "").trim();
         if (sessionId.isEmpty()) {
@@ -215,7 +234,7 @@ public final class SpeechEchoController {
         Json.put(session, "partial_results", true);
         Json.put(session, "started_at", Instant.now().toString());
         Json.put(session, "started_elapsed_ms", SystemClock.elapsedRealtime());
-        Json.put(session, "echo_prefix", ECHO_PREFIX);
+        Json.put(session, "echo_prefix", "");
         Json.put(session, "broker_delivery_status", "disabled_local_echo");
         Json.put(session, "agent_runtime", "none");
         return session;
@@ -343,7 +362,7 @@ public final class SpeechEchoController {
         Json.put(active, "accepted_at", Instant.now().toString());
         Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
         String sessionId = active.optString("session_id");
-        String echoText = ECHO_PREFIX + text;
+        String echoText = text;
         Json.put(active, "tts_text", echoText);
         Json.put(active, "tts_status", "scheduled");
         JSONObject finished = active;
@@ -441,6 +460,25 @@ public final class SpeechEchoController {
             ttsInitializing = false;
             ttsVoiceName = selected == null ? "" : selected.getName();
             ttsVoiceNetworkRequired = selected != null && selected.isNetworkConnectionRequired();
+            notifyAll();
+        }
+    }
+
+    private void waitForTtsReady(long waitMs) {
+        long deadline = SystemClock.elapsedRealtime() + waitMs;
+        synchronized (this) {
+            while (!ttsReady && ttsInitializing && waitMs > 0L) {
+                long remaining = deadline - SystemClock.elapsedRealtime();
+                if (remaining <= 0L) {
+                    return;
+                }
+                try {
+                    wait(remaining);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
     }
 
@@ -468,6 +506,38 @@ public final class SpeechEchoController {
     private boolean voiceNeedsInstall(Voice voice) {
         Set<String> features = voice.getFeatures();
         return features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED);
+    }
+
+    private JSONArray voicesJson(TextToSpeech tts, boolean localOnly, int limit) {
+        ArrayList<Voice> voices = new ArrayList<>();
+        Set<Voice> raw = tts.getVoices();
+        if (raw != null) {
+            for (Voice voice : raw) {
+                if (voice == null) {
+                    continue;
+                }
+                boolean local = !voice.isNetworkConnectionRequired() && !voiceNeedsInstall(voice);
+                if (!localOnly || local) {
+                    voices.add(voice);
+                }
+            }
+        }
+        Collections.sort(voices, Comparator.comparing(Voice::getName));
+        JSONArray out = new JSONArray();
+        int count = Math.min(limit, voices.size());
+        for (int i = 0; i < count; i++) {
+            Voice voice = voices.get(i);
+            JSONObject item = new JSONObject();
+            Locale locale = voice.getLocale();
+            Json.put(item, "name", voice.getName());
+            Json.put(item, "locale", locale == null ? JSONObject.NULL : locale.toLanguageTag());
+            Json.put(item, "network_required", voice.isNetworkConnectionRequired());
+            Json.put(item, "needs_install", voiceNeedsInstall(voice));
+            Json.put(item, "quality", voice.getQuality());
+            Json.put(item, "latency", voice.getLatency());
+            Json.add(out, item);
+        }
+        return out;
     }
 
     private void speakEcho(String sessionId, String text) {

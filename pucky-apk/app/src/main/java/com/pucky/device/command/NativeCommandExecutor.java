@@ -69,6 +69,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.native.last", "speech.native.list", "speech.native.delete",
             "speech.echo.status", "speech.echo.start", "speech.echo.stop",
             "speech.echo.last", "speech.echo.list", "speech.echo.delete",
+            "speech.echo.voices",
             "livekit.status", "livekit.session.request", "livekit.connect",
             "livekit.disconnect", "livekit.mic.set", "livekit.ptt.start",
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
@@ -396,6 +397,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoController.list(command.args());
             case "speech.echo.delete":
                 return speechEchoController.delete(command.args());
+            case "speech.echo.voices":
+                return speechEchoController.voices(command.args());
             case "livekit.status":
                 return liveKitController.status();
             case "livekit.session.request":
