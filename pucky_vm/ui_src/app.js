@@ -91,9 +91,9 @@
       filled: '<path d="M5 4h14c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm2.2 12h9.7l-3.1-4.1-2.4 3.1-1.8-2.2L7.2 16ZM8 9.5A1.5 1.5 0 1 0 8 6.5a1.5 1.5 0 0 0 0 3Z"/>',
       outline: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8" cy="9" r="1.6"/><path d="m6.5 16 3.1-3.4 2.2 2.5 2.5-3.2 3.5 4.1H6.5Z"/>'
     },
-    log: {
-      filled: '<path d="M6 3h10l3 3v15H6c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2Zm9 1.5V7h2.5L15 4.5ZM8 10h8v-1.8H8V10Zm0 4h8v-1.8H8V14Zm0 4h5.5v-1.8H8V18Z"/>',
-      outline: '<path d="M6 3.5h9.2L20 8.3V20a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 20V5A1.5 1.5 0 0 1 6 3.5Z"/><path d="M15 4v4h4"/><path d="M8 10h8M8 14h8M8 18h5.5"/>'
+    lightbulb_2: {
+      filled: '<path d="M9 21h6v-2H9v2Zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26A6.98 6.98 0 0 0 19 9c0-3.86-3.14-7-7-7Zm2.05 11.06-.55.34V16h-3v-2.6l-.55-.34A4.93 4.93 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.67-.84 3.23-2.95 4.06ZM10 10.2h4V8.5h-4v1.7Z"/>',
+      outline: '<path d="M9 21h6"/><path d="M9.5 18h5"/><path d="M9.5 15.8v-2.4A5.6 5.6 0 0 1 6.5 8.5 5.5 5.5 0 0 1 12 3a5.5 5.5 0 0 1 5.5 5.5 5.6 5.6 0 0 1-3 4.9v2.4"/><path d="M10 9h4"/><path d="M12 3V1.8"/><path d="m5.5 4.2-.9-.9"/><path d="m18.5 4.2.9-.9"/>'
     },
     settings: {
       filled: '<path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.2 7.2 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.2 7.2 0 0 0 7 6L4.6 5l-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5L7 18a7.2 7.2 0 0 0 2.6 1.5L10 22h4l.4-2.5A7.2 7.2 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/>',
@@ -437,21 +437,23 @@
   }
 
   function renderVoiceStatus() {
-    const indicator = document.getElementById("voiceStatus");
-    if (!indicator) {
+    const indicators = document.querySelectorAll("[data-voice-status]");
+    if (!indicators.length) {
       return;
     }
     const voiceState = normalizeVoiceState(state.voiceState);
-    indicator.className = `voice-status voice-status-${voiceState}`;
-    indicator.setAttribute("aria-label", `Voice state: ${voiceState}. Tap to preview the next state.`);
-    indicator.title = `Voice: ${voiceState}`;
-    if (!indicator.dataset.bound) {
-      indicator.dataset.bound = "true";
-      indicator.addEventListener("click", () => {
-        state.voiceState = nextVoiceState(state.voiceState);
-        renderVoiceStatus();
-      });
-    }
+    indicators.forEach(indicator => {
+      indicator.className = `voice-status voice-status-${voiceState}`;
+      indicator.setAttribute("aria-label", `Voice state: ${voiceState}. Tap to preview the next state.`);
+      indicator.title = `Voice: ${voiceState}`;
+      if (!indicator.dataset.bound) {
+        indicator.dataset.bound = "true";
+        indicator.addEventListener("click", () => {
+          state.voiceState = nextVoiceState(state.voiceState);
+          renderVoiceStatus();
+        });
+      }
+    });
   }
 
   function nextVoiceState(current) {
@@ -789,7 +791,7 @@
       if (message.role !== "user") {
         const trace = el("button", "bubble-trace-action");
         trace.type = "button";
-        trace.innerHTML = iconSvg("log", { filled: false });
+        trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
         trace.setAttribute("aria-label", "Open thinking logs");
         trace.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -1021,11 +1023,20 @@
     back.setAttribute("aria-label", "Back to feed");
     back.addEventListener("click", onDismiss);
     header.append(back, el("h1", "detail-title", title));
-    shell.append(header, content);
+    shell.append(header, voiceStatusButton(), content);
     panel.replaceChildren(shell);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
+    renderVoiceStatus();
     installHorizontalDismiss(shell, panel, onDismiss);
+  }
+
+  function voiceStatusButton() {
+    const button = el("button", "voice-status voice-status-listening");
+    button.type = "button";
+    button.dataset.voiceStatus = "true";
+    button.setAttribute("aria-label", "Voice state: listening");
+    return button;
   }
 
   function dismissDetail() {

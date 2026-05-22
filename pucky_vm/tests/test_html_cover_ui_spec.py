@@ -65,12 +65,16 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     styles = read("styles.css")
 
     assert 'id="voiceStatus"' in html
+    assert "data-voice-status" in html
     assert 'aria-label="Voice state: listening"' in html
     assert 'const VOICE_STATES = ["listening", "hearing", "speaking", "off"]' in app
     assert "voiceState: initialVoiceState()" in app
     assert "renderVoiceStatus()" in app
     assert 'if (name === "voice.state")' in app
     assert "function renderVoiceStatus()" in app
+    assert 'document.querySelectorAll("[data-voice-status]")' in app
+    assert "function voiceStatusButton()" in app
+    assert "shell.append(header, voiceStatusButton(), content)" in app
     assert "function nextVoiceState(current)" in app
     assert "function initialVoiceState()" in app
     assert "function normalizeVoiceState(input)" in app
@@ -445,8 +449,8 @@ def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     assert "function traceStatusClass(status)" in app
     assert '"bubble-trace-action"' in app
     assert '"trace-action"' not in app
-    assert 'log: {' in app
-    assert 'iconSvg("log"' in app
+    assert 'lightbulb_2: {' in app
+    assert 'iconSvg("lightbulb_2"' in app
     assert "Open thinking logs" in app
     assert "Thinking Logs" in app
     assert "mockTraceFor(card, message, index)" in app
