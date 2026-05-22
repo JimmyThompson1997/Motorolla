@@ -69,19 +69,31 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "function renderRouteTray()" in app
     assert "function homeIconFilterTrayView()" in app
     assert "function filterIconButton(filter)" in app
+    assert "function uniqueFeedIconFilters()" in app
     assert "function uniqueFeedIcons()" in app
     assert "function filteredFeedCards()" in app
     assert "function cardIconKey(card)" in app
     assert "function clearMissingFeedIconFilter()" in app
     assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
     assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
-    assert '{ key: "", icon: "mail", label: "All replies" }' in app
+    assert '{ key: "", icon: "mail", label: "All replies", accent: "#f5f9ff" }' in app
+    assert "button.style.setProperty(\"--filter-accent\"" in app
+    assert 'accent: card.accent || "#f5f9ff"' in app
+    assert '"route-tray-label"' not in app
+    assert '"Show"' not in app
     assert "state.feedIconFilter = filter.key" in app
     assert "feed.replaceChildren(...cards.map(cardView))" in app
     assert "No ${icon} replies yet." in app
     assert ".route-tray" in styles
+    assert "position: absolute;" in styles
+    assert "top: 66px;" in styles
+    assert "pointer-events: none;" in styles
+    assert "pointer-events: auto;" in styles
+    assert ".route-tray-label" not in styles
     assert ".route-tray-icons" in styles
     assert ".filter-icon.is-selected" in styles
+    assert "var(--filter-accent" in styles
+    assert '.filter-icon[data-filter-icon="all"].is-selected' in styles
     assert ".feed-filter-empty" in styles
 
 

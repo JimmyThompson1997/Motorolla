@@ -459,14 +459,13 @@
 
   function homeIconFilterTrayView() {
     const shell = el("div", "route-tray-shell");
-    const label = el("span", "route-tray-label", "Show");
     const icons = el("div", "route-tray-icons");
     const filters = [
-      { key: "", icon: "mail", label: "All replies" },
-      ...uniqueFeedIcons().map(icon => ({ key: icon, icon, label: `${icon} replies` }))
+      { key: "", icon: "mail", label: "All replies", accent: "#f5f9ff" },
+      ...uniqueFeedIconFilters()
     ];
     icons.append(...filters.map(filter => filterIconButton(filter)));
-    shell.append(label, icons);
+    shell.append(icons);
     return shell;
   }
 
@@ -475,6 +474,7 @@
     const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
     button.type = "button";
     button.dataset.filterIcon = filter.key || "all";
+    button.style.setProperty("--filter-accent", filter.accent || "#f5f9ff");
     button.setAttribute("aria-label", filter.label);
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = iconSvg(filter.icon, { filled: selected });
@@ -529,16 +529,25 @@
   }
 
   function uniqueFeedIcons() {
+    return uniqueFeedIconFilters().map(filter => filter.key);
+  }
+
+  function uniqueFeedIconFilters() {
     const seen = new Set();
-    const icons = [];
+    const filters = [];
     state.cards.forEach(card => {
       const icon = cardIconKey(card);
       if (!seen.has(icon)) {
         seen.add(icon);
-        icons.push(icon);
+        filters.push({
+          key: icon,
+          icon,
+          label: `${icon} replies`,
+          accent: card.accent || "#f5f9ff"
+        });
       }
     });
-    return icons;
+    return filters;
   }
 
   function cardIconKey(card) {
