@@ -484,7 +484,9 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert 'player.append(waveform(card, "audio-wave"' not in app
     assert "min-height: 148px" in styles
     assert ".timestamp-row.is-active" in styles
-    assert '"timestamp-row is-active"' in app
+    assert ".timestamp-row.is-selected" in styles
+    assert "rowClasses.push(\"is-active\")" in app
+    assert "rowClasses.push(\"is-selected\")" in app
     assert '"scrub-slider"' in app
     assert 'slider.addEventListener("pointermove"' in app
     assert 'slider.addEventListener("pointerup"' in app
@@ -499,10 +501,18 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert 'slider.dataset.dragIgnore = "true"' in app
     assert "function updateAudioScrubPreview(card, scrub, positionMs)" in app
     assert "function updateTimestampPreview(card, positionMs)" in app
+    assert "function updateScrubChapterPreview(card, slider, positionMs, durationMs)" in app
+    assert "function appendScrubChapterTicks(slider, card, durationMs)" in app
+    assert "function scrubChapterBubble()" in app
     assert "scrubbingAudioKey" in app
     assert "function startAudioScrub(card, positionMs)" in app
     assert "state.scrubbingAudioKey === audioStateKey(card)" in app
     assert "row.dataset.timestampId = marker.id" in app
+    assert ".scrub-chapter-tick" in styles
+    assert ".scrub-chapter-marker" in styles
+    assert ".scrub-chapter-range" in styles
+    assert ".scrub-chapter-bubble" in styles
+    assert ".timestamp-play" in styles
     assert ".audio-scrub" in styles
     assert ".scrub-slider" in styles
     assert ".scrub-knob" in styles
@@ -514,6 +524,42 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "time-remaining" in app
     assert "const hours = Math.floor(total / 3600)" in app
     assert 'return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`' in app
+
+
+def test_chapter_rows_preview_before_commit_and_keep_transport_play_pure() -> None:
+    app = read("app.js")
+
+    preview = re.search(r"function previewTimestamp\(card, marker\) \{(?P<body>.*?)\n  \}", app, re.S)
+    assert preview, "Missing previewTimestamp"
+    assert "rememberSelectedTimestamp(card, marker)" in preview.group("body")
+    assert "Pucky.request" not in preview.group("body")
+    assert 'command: "player.seek"' not in preview.group("body")
+    assert 'command: "player.play"' not in preview.group("body")
+    assert 'command: "player.queue.set"' not in preview.group("body")
+
+    assert "function handleTimestampRowClick(card, marker, event)" in app
+    assert "event.detail > 1" in app
+    assert "now - previous.at < 420" in app
+    assert "previewTimestamp(card, marker)" in app
+    assert "commitTimestamp(card, marker)" in app
+    assert 'const row = el("div", rowClasses.join(" "))' in app
+    assert 'row.setAttribute("role", "button")' in app
+    assert 'row.addEventListener("keydown", (event) => handleTimestampRowKeydown(card, marker, event))' in app
+    assert 'row.addEventListener("click", (event) => handleTimestampRowClick(card, marker, event))' in app
+    assert 'iconControl("play_arrow", `Play ${marker.title} from ${formatTime(marker.start_ms)}`' in app
+    assert "event.stopPropagation();" in app
+    assert "function handleTimestampRowKeydown(card, marker, event)" in app
+
+    controls = re.search(r"function audioControls\(card\) \{(?P<body>.*?)\n  \}", app, re.S)
+    assert controls, "Missing audioControls"
+    assert "toggleAudio(card)" in controls.group("body")
+    assert "commitTimestamp" not in controls.group("body")
+    assert "previewTimestamp" not in controls.group("body")
+
+    commit = re.search(r"async function commitTimestamp\(card, marker\) \{(?P<body>.*?)\n  \}", app, re.S)
+    assert commit, "Missing commitTimestamp"
+    assert 'command: "player.seek"' in commit.group("body")
+    assert 'command: "player.play"' in commit.group("body")
 
 
 def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:

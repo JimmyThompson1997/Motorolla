@@ -259,6 +259,7 @@
     selectedTimestampByPath: stringMapFromObject(persistedAudioState.selected_timestamps),
     scrubPreviewByPath: new Map(),
     scrubbingAudioKey: "",
+    timestampTap: null,
     audioCard: null,
     traceCard: null,
     waveHistory: new Map(),
@@ -1294,15 +1295,24 @@
 
   function audioScrubber(card) {
     const scrub = el("div", "scrub audio-scrub");
-    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const duration = audioDurationForCard(card);
     const position = clampAudioPosition(playbackPositionForCard(card), duration);
     const slider = el("div", "scrub-slider");
     slider.tabIndex = 0;
     slider.setAttribute("role", "slider");
     slider.setAttribute("aria-label", "Audio position");
     slider.dataset.dragIgnore = "true";
-    slider.append(el("span", "scrub-track"), el("span", "scrub-fill"), el("span", "scrub-knob"));
+    slider.append(el("span", "scrub-track"));
+    appendScrubChapterTicks(slider, card, duration);
+    slider.append(
+      el("span", "scrub-chapter-range"),
+      el("span", "scrub-fill"),
+      el("span", "scrub-chapter-marker"),
+      scrubChapterBubble(),
+      el("span", "scrub-knob")
+    );
     updateScrubSlider(slider, position, duration);
+    updateScrubChapterPreview(card, slider, position, duration);
     let commitPending = false;
     const commit = (positionMs) => {
       if (commitPending) {
@@ -1417,7 +1427,7 @@
   }
 
   function previewAudioScrub(card, scrub, rawPosition) {
-    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const duration = audioDurationForCard(card);
     const positionMs = clampAudioPosition(rawPosition, duration);
     startAudioScrub(card, positionMs);
     state.activePath = audioControlKey(card);
@@ -1428,7 +1438,7 @@
   }
 
   async function commitAudioScrub(card, rawPosition) {
-    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const duration = audioDurationForCard(card);
     const positionMs = clampAudioPosition(rawPosition, duration);
     const marker = currentTimestamp(card, positionMs);
     if (marker) {
@@ -1462,10 +1472,11 @@
   }
 
   function updateAudioScrubPreview(card, scrub, positionMs) {
-    const duration = Math.max(0, Number(state.player.duration_ms || 0));
+    const duration = audioDurationForCard(card);
     const slider = scrub.querySelector(".scrub-slider");
     if (slider) {
       updateScrubSlider(slider, positionMs, duration);
+      updateScrubChapterPreview(card, slider, positionMs, duration);
     }
     const elapsed = scrub.querySelector(".time-elapsed");
     if (elapsed) {
@@ -1501,11 +1512,85 @@
     slider.setAttribute("aria-valuetext", `${formatTime(position)} of ${formatTime(duration)}`);
   }
 
+  function appendScrubChapterTicks(slider, card, durationMs) {
+    const duration = Math.max(0, Number(durationMs || 0));
+    if (duration <= 0) {
+      return;
+    }
+    audioTimestamps(card).forEach(marker => {
+      const tick = el("span", "scrub-chapter-tick");
+      const ratio = clampAudioPosition(marker.start_ms, duration) / duration;
+      tick.style.setProperty("--tick", String(ratio));
+      tick.setAttribute("aria-hidden", "true");
+      tick.title = marker.title;
+      slider.append(tick);
+    });
+  }
+
+  function scrubChapterBubble() {
+    const bubble = el("span", "scrub-chapter-bubble");
+    bubble.setAttribute("aria-hidden", "true");
+    bubble.append(
+      el("strong", "scrub-chapter-time"),
+      el("span", "scrub-chapter-title"),
+      el("span", "scrub-chapter-hint")
+    );
+    return bubble;
+  }
+
+  function updateScrubChapterPreview(card, slider, positionMs, durationMs) {
+    const duration = Math.max(0, Number(durationMs || 0));
+    const scrubbing = state.scrubbingAudioKey === audioStateKey(card);
+    const marker = scrubbing ? currentTimestamp(card, positionMs) : selectedTimestamp(card);
+    if (!marker || duration <= 0) {
+      slider.classList.remove("has-chapter-preview", "is-scrub-previewing");
+      return;
+    }
+    const previewPosition = scrubbing ? positionMs : marker.start_ms;
+    const previewRatio = clampAudioPosition(previewPosition, duration) / duration;
+    const rangeStart = clampAudioPosition(marker.start_ms, duration) / duration;
+    const rangeEnd = marker.end_ms === null
+      ? rangeStart
+      : clampAudioPosition(marker.end_ms, duration) / duration;
+    slider.classList.add("has-chapter-preview");
+    slider.classList.toggle("is-scrub-previewing", scrubbing);
+    slider.style.setProperty("--chapter-preview", String(previewRatio));
+    slider.style.setProperty("--chapter-range-start", String(rangeStart));
+    slider.style.setProperty("--chapter-range-width", String(Math.max(0, rangeEnd - rangeStart)));
+    const time = slider.querySelector(".scrub-chapter-time");
+    if (time) {
+      time.textContent = `${formatTime(previewPosition)} · ${chapterLabel(marker)}`;
+    }
+    const title = slider.querySelector(".scrub-chapter-title");
+    if (title) {
+      title.textContent = marker.title;
+    }
+    const hint = slider.querySelector(".scrub-chapter-hint");
+    if (hint) {
+      hint.textContent = scrubbing ? "Release to seek" : "Double-tap chapter to play";
+    }
+  }
+
+  function chapterLabel(marker) {
+    const match = String(marker?.title || "").match(/^(Prologue|Postscript|Chapter\s+\d+)/i);
+    return match ? match[1] : "Chapter";
+  }
+
   function updateTimestampPreview(card, positionMs) {
     const current = currentTimestamp(card, positionMs);
-    const selectedId = current?.id || selectedTimestampFor(card);
+    const activeId = current?.id || "";
+    const selectedId = selectedTimestampFor(card);
     document.querySelectorAll(".timestamp-row[data-timestamp-id]").forEach(row => {
-      row.classList.toggle("is-active", Boolean(selectedId && row.dataset.timestampId === selectedId));
+      const active = Boolean(activeId && row.dataset.timestampId === activeId);
+      const selected = Boolean(selectedId && row.dataset.timestampId === selectedId);
+      row.classList.toggle("is-active", active);
+      row.classList.toggle("is-selected", selected);
+      row.setAttribute("aria-pressed", selected ? "true" : "false");
+      const play = row.querySelector(".timestamp-play");
+      if (play) {
+        play.tabIndex = selected ? 0 : -1;
+        play.setAttribute("aria-hidden", selected ? "false" : "true");
+      }
     });
   }
 
@@ -1530,13 +1615,20 @@
     section.setAttribute("aria-label", "Audio chapters");
     section.append(el("h2", "timestamp-list-header", "Chapters"));
     const current = currentTimestamp(card, playbackPositionForCard(card));
-    const selectedId = current?.id || selectedTimestampFor(card);
+    const activeId = current?.id || "";
+    const selectedId = selectedTimestampFor(card);
     markers.forEach(marker => {
-      const row = el("button", marker.id === selectedId ? "timestamp-row is-active" : "timestamp-row");
-      row.type = "button";
+      const rowClasses = ["timestamp-row"];
+      if (marker.id === activeId) rowClasses.push("is-active");
+      if (marker.id === selectedId) rowClasses.push("is-selected");
+      const row = el("div", rowClasses.join(" "));
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
       row.dataset.timestampId = marker.id;
-      row.setAttribute("aria-label", `Jump to ${marker.title}`);
-      row.addEventListener("click", () => jumpToTimestamp(card, marker));
+      row.setAttribute("aria-pressed", marker.id === selectedId ? "true" : "false");
+      row.setAttribute("aria-label", `Select ${marker.title}. Double tap or use the row play button to play from ${formatTime(marker.start_ms)}.`);
+      row.addEventListener("click", (event) => handleTimestampRowClick(card, marker, event));
+      row.addEventListener("keydown", (event) => handleTimestampRowKeydown(card, marker, event));
       row.append(el("span", "timestamp-time", formatTime(marker.start_ms)));
       const copy = el("span", "timestamp-copy");
       copy.append(el("span", "timestamp-title", marker.title));
@@ -1544,12 +1636,53 @@
         copy.append(el("span", "timestamp-detail", marker.detail));
       }
       row.append(copy);
+      const play = iconControl("play_arrow", `Play ${marker.title} from ${formatTime(marker.start_ms)}`, (event) => {
+        event.stopPropagation();
+        commitTimestamp(card, marker);
+      }, "timestamp-play");
+      play.tabIndex = marker.id === selectedId ? 0 : -1;
+      play.setAttribute("aria-hidden", marker.id === selectedId ? "false" : "true");
+      row.append(play);
       section.append(row);
     });
     return section;
   }
 
-  async function jumpToTimestamp(card, marker) {
+  function handleTimestampRowClick(card, marker, event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = `${audioStateKey(card)}:${marker.id}`;
+    const now = Date.now();
+    const previous = state.timestampTap;
+    const isDoubleTap = (event.detail > 1) || (previous && previous.key === key && now - previous.at < 420);
+    state.timestampTap = isDoubleTap ? null : { key, at: now };
+    if (isDoubleTap) {
+      commitTimestamp(card, marker);
+      return;
+    }
+    previewTimestamp(card, marker);
+  }
+
+  function handleTimestampRowKeydown(card, marker, event) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    previewTimestamp(card, marker);
+  }
+
+  function previewTimestamp(card, marker) {
+    rememberSelectedTimestamp(card, marker);
+    const panel = document.getElementById("detail");
+    const scrub = panel?.querySelector(".audio-scrub");
+    if (scrub) {
+      updateAudioScrubPreview(card, scrub, playbackPositionForCard(card));
+    }
+    updateTimestampPreview(card, playbackPositionForCard(card));
+  }
+
+  async function commitTimestamp(card, marker) {
     try {
       const positionMs = Math.max(0, Number(marker.start_ms || 0));
       rememberSelectedTimestamp(card, marker);
@@ -1580,6 +1713,10 @@
     } catch (error) {
       showToast(error.message);
     }
+  }
+
+  async function jumpToTimestamp(card, marker) {
+    return commitTimestamp(card, marker);
   }
 
   function dismissAudioDetail() {
@@ -2248,7 +2385,7 @@
   }
 
   function rememberScrubPreview(card, positionMs) {
-    const position = clampAudioPosition(positionMs, Math.max(0, Number(state.player.duration_ms || 0)));
+    const position = clampAudioPosition(positionMs, audioDurationForCard(card));
     state.scrubPreviewByPath.set(audioStateKey(card), position);
   }
 
@@ -2273,6 +2410,15 @@
     const position = Math.max(0, Number(positionMs || 0));
     const duration = Math.max(0, Number(durationMs || 0));
     return duration > 0 ? Math.min(duration, position) : position;
+  }
+
+  function audioDurationForCard(card) {
+    const playerDuration = Number(state.player.duration_ms || 0);
+    if (playerDuration > 0 && isActiveCard(card)) {
+      return playerDuration;
+    }
+    const markers = audioTimestamps(card);
+    return markers.reduce((max, marker) => Math.max(max, Number(marker.end_ms || marker.start_ms || 0)), 0);
   }
 
   function audioTimestamps(card) {
@@ -2310,6 +2456,14 @@
       }
     }
     return current;
+  }
+
+  function selectedTimestamp(card) {
+    const selectedId = selectedTimestampFor(card);
+    if (!selectedId) {
+      return null;
+    }
+    return audioTimestamps(card).find(marker => marker.id === selectedId) || null;
   }
 
   function isCompletePlayback(player) {
