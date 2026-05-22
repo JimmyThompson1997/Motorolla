@@ -227,6 +227,8 @@
   const state = {
     cards: [],
     route: "feed",
+    openTrayRoute: null,
+    feedIconFilter: "",
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: new Map(),
@@ -403,11 +405,13 @@
     } catch (error) {
       state.cards = MOCK_CARDS;
     }
+    clearMissingFeedIconFilter();
     render();
   }
 
   function render() {
     renderTabs();
+    renderRouteTray();
     renderFeed();
     renderAudioSheet();
   }
@@ -428,7 +432,54 @@
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
-      state.route = tab.route;
+      if (state.route === tab.route) {
+        state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
+      } else {
+        state.route = tab.route;
+        state.openTrayRoute = null;
+      }
+      render();
+    });
+    return button;
+  }
+
+  function renderRouteTray() {
+    const tray = document.getElementById("routeTray");
+    if (!tray) {
+      return;
+    }
+    if (state.route !== "feed" || state.openTrayRoute !== "feed") {
+      tray.hidden = true;
+      tray.replaceChildren();
+      return;
+    }
+    tray.hidden = false;
+    tray.replaceChildren(homeIconFilterTrayView());
+  }
+
+  function homeIconFilterTrayView() {
+    const shell = el("div", "route-tray-shell");
+    const label = el("span", "route-tray-label", "Show");
+    const icons = el("div", "route-tray-icons");
+    const filters = [
+      { key: "", icon: "mail", label: "All replies" },
+      ...uniqueFeedIcons().map(icon => ({ key: icon, icon, label: `${icon} replies` }))
+    ];
+    icons.append(...filters.map(filter => filterIconButton(filter)));
+    shell.append(label, icons);
+    return shell;
+  }
+
+  function filterIconButton(filter) {
+    const selected = state.feedIconFilter === filter.key;
+    const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
+    button.type = "button";
+    button.dataset.filterIcon = filter.key || "all";
+    button.setAttribute("aria-label", filter.label);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+    button.innerHTML = iconSvg(filter.icon, { filled: selected });
+    button.addEventListener("click", () => {
+      state.feedIconFilter = filter.key;
       render();
     });
     return button;
@@ -450,7 +501,54 @@
       feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
       return;
     }
-    feed.replaceChildren(...state.cards.map(cardView));
+    const cards = filteredFeedCards();
+    if (!cards.length) {
+      feed.replaceChildren(filteredFeedEmptyView());
+      return;
+    }
+    feed.replaceChildren(...cards.map(cardView));
+  }
+
+  function filteredFeedEmptyView() {
+    const icon = state.feedIconFilter || "mail";
+    const empty = el("div", "empty feed-filter-empty");
+    empty.append(
+      el("div", "feed-filter-empty-icon", ""),
+      el("div", "", `No ${icon} replies yet.`),
+      el("small", "", "Tap the mail icon above to show everything.")
+    );
+    empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg(icon, { filled: true });
+    return empty;
+  }
+
+  function filteredFeedCards() {
+    if (!state.feedIconFilter) {
+      return state.cards;
+    }
+    return state.cards.filter(card => cardIconKey(card) === state.feedIconFilter);
+  }
+
+  function uniqueFeedIcons() {
+    const seen = new Set();
+    const icons = [];
+    state.cards.forEach(card => {
+      const icon = cardIconKey(card);
+      if (!seen.has(icon)) {
+        seen.add(icon);
+        icons.push(icon);
+      }
+    });
+    return icons;
+  }
+
+  function cardIconKey(card) {
+    return normalizeIcon(card && card.icon);
+  }
+
+  function clearMissingFeedIconFilter() {
+    if (state.feedIconFilter && !uniqueFeedIcons().includes(state.feedIconFilter)) {
+      state.feedIconFilter = "";
+    }
   }
 
   function settingsPageView() {

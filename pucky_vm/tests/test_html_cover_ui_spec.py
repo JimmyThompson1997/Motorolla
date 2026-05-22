@@ -28,6 +28,7 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     styles = read("styles.css")
 
     assert 'id="pageTabs"' in html
+    assert 'id="routeTray"' in html
     assert "const RETRO_TAB_SYMBOLS" not in app
     assert "function topIconSvg(" not in app
     assert "const PAGE_TABS" in app
@@ -56,6 +57,32 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "shape-rendering: crispEdges" not in styles
     assert ".tab.is-active .material-icon" in styles
     assert ".tab:not(.is-active) .material-icon" in styles
+
+
+def test_active_home_tab_opens_real_icon_filter_tray() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "openTrayRoute: null" in app
+    assert 'feedIconFilter: ""' in app
+    assert "renderRouteTray()" in app
+    assert "function renderRouteTray()" in app
+    assert "function homeIconFilterTrayView()" in app
+    assert "function filterIconButton(filter)" in app
+    assert "function uniqueFeedIcons()" in app
+    assert "function filteredFeedCards()" in app
+    assert "function cardIconKey(card)" in app
+    assert "function clearMissingFeedIconFilter()" in app
+    assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
+    assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
+    assert '{ key: "", icon: "mail", label: "All replies" }' in app
+    assert "state.feedIconFilter = filter.key" in app
+    assert "feed.replaceChildren(...cards.map(cardView))" in app
+    assert "No ${icon} replies yet." in app
+    assert ".route-tray" in styles
+    assert ".route-tray-icons" in styles
+    assert ".filter-icon.is-selected" in styles
+    assert ".feed-filter-empty" in styles
 
 
 def test_settings_tab_renders_mock_html_settings_page() -> None:
