@@ -613,7 +613,7 @@ public final class PhysicalGestureFeedbackController {
     }
 
     private static float defaultTapAccelDelta() {
-        return 12.0f;
+        return 10.0f;
     }
 
     private static float defaultTapMaxGyro() {
