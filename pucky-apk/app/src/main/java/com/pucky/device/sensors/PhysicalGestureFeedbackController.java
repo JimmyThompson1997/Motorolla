@@ -56,8 +56,9 @@ public final class PhysicalGestureFeedbackController {
     private static final float CHOP_RETURN_GRAVITY_DELTA = 2.2f;
     private static final float CHOP_RETURN_GYRO_QUIET = 1.8f;
     private static final float HINGE_CLOSED_MAX_DEGREES = 20f;
-    private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 500L;
-    private static final long DOUBLE_TAP_BUZZ_DURATION_MS = 1_000L;
+    private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 400L;
+    private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 500L;
+    private static final long DOUBLE_TAP_BUZZ_GAP_MS = 120L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
     private static final int SENSOR_RATE_US = 10_000;
     private static final int MAX_RECENT_EVENTS = 80;
@@ -353,7 +354,7 @@ public final class PhysicalGestureFeedbackController {
                 doubleTapCount++;
                 cooldownUntilMs = now + cooldownMs();
                 lastTapCandidateAtMs = 0L;
-                addEventLocked("double_back_tap_detected", "delayed_max_buzz", accelDelta, recentGyro);
+                addEventLocked("double_back_tap_detected", "delayed_double_buzz", accelDelta, recentGyro);
                 playDoubleTapBuzz("double_back_tap");
                 return;
             }
@@ -548,7 +549,7 @@ public final class PhysicalGestureFeedbackController {
                 }
                 return;
             }
-            new Handler(context.getMainLooper()).postDelayed(() -> runMaxBuzz(vibrator, reason),
+            new Handler(context.getMainLooper()).postDelayed(() -> runDoubleBuzz(vibrator, reason),
                     DOUBLE_TAP_BUZZ_DELAY_MS);
             synchronized (lock) {
                 addEventLocked("buzz_scheduled", reason, 0f, 0f);
@@ -562,24 +563,25 @@ public final class PhysicalGestureFeedbackController {
         }
     }
 
-    private void runMaxBuzz(Vibrator vibrator, String reason) {
+    private void runDoubleBuzz(Vibrator vibrator, String reason) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(
-                        DOUBLE_TAP_BUZZ_DURATION_MS,
-                        MAX_VIBRATION_AMPLITUDE));
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                        new long[]{DOUBLE_TAP_BUZZ_PULSE_MS, DOUBLE_TAP_BUZZ_GAP_MS, DOUBLE_TAP_BUZZ_PULSE_MS},
+                        new int[]{MAX_VIBRATION_AMPLITUDE, 0, MAX_VIBRATION_AMPLITUDE},
+                        -1));
             } else {
-                vibrator.vibrate(DOUBLE_TAP_BUZZ_DURATION_MS);
+                vibrator.vibrate(new long[]{0L, DOUBLE_TAP_BUZZ_PULSE_MS, DOUBLE_TAP_BUZZ_GAP_MS, DOUBLE_TAP_BUZZ_PULSE_MS}, -1);
             }
             synchronized (lock) {
-                addEventLocked("buzz_started", reason, 0f, 0f);
+                addEventLocked("buzz_started", reason, DOUBLE_TAP_BUZZ_PULSE_MS, 2f);
             }
         } catch (RuntimeException exc) {
             synchronized (lock) {
                 lastError = "buzz failed: " + exc.getMessage();
                 addEventLocked("buzz_failed", reason, 0f, 0f);
             }
-            Log.w(TAG, "delayed double tap buzz failed", exc);
+            Log.w(TAG, "delayed double tap double buzz failed", exc);
         }
     }
 
