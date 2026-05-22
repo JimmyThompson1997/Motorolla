@@ -54,8 +54,9 @@ public final class PhysicalGestureFeedbackController {
     private static final long CHOP_PING_DELAY_MS = 600L;
     private static final float HINGE_CLOSED_MAX_DEGREES = 20f;
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 400L;
-    private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 500L;
-    private static final long DOUBLE_TAP_BUZZ_GAP_MS = 120L;
+    private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 400L;
+    private static final long DOUBLE_TAP_BUZZ_GAP_MS = 100L;
+    private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 1_650L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
     private static final int SENSOR_RATE_US = 10_000;
     private static final int MAX_RECENT_EVENTS = 80;
@@ -327,7 +328,7 @@ public final class PhysicalGestureFeedbackController {
             long gap = now - previousTapAt;
             if (gap >= TAP_MIN_GAP_MS && gap <= TAP_MAX_GAP_MS) {
                 doubleTapCount++;
-                cooldownUntilMs = now + cooldownMs();
+                cooldownUntilMs = now + Math.max(cooldownMs(), DOUBLE_TAP_FEEDBACK_GUARD_MS);
                 lastTapCandidateAtMs = 0L;
                 addEventLocked("double_back_tap_detected", "delayed_double_buzz", accelDelta, recentGyro);
                 playDoubleTapBuzz("double_back_tap");
@@ -470,8 +471,8 @@ public final class PhysicalGestureFeedbackController {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator.vibrate(VibrationEffect.createWaveform(
-                        new long[]{DOUBLE_TAP_BUZZ_PULSE_MS, DOUBLE_TAP_BUZZ_GAP_MS, DOUBLE_TAP_BUZZ_PULSE_MS},
-                        new int[]{MAX_VIBRATION_AMPLITUDE, 0, MAX_VIBRATION_AMPLITUDE},
+                        new long[]{0L, DOUBLE_TAP_BUZZ_PULSE_MS, DOUBLE_TAP_BUZZ_GAP_MS, DOUBLE_TAP_BUZZ_PULSE_MS},
+                        new int[]{0, MAX_VIBRATION_AMPLITUDE, 0, MAX_VIBRATION_AMPLITUDE},
                         -1));
             } else {
                 vibrator.vibrate(new long[]{0L, DOUBLE_TAP_BUZZ_PULSE_MS, DOUBLE_TAP_BUZZ_GAP_MS, DOUBLE_TAP_BUZZ_PULSE_MS}, -1);
