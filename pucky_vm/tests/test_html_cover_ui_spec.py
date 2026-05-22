@@ -167,16 +167,24 @@ def test_card_actions_have_local_read_state() -> None:
     assert "readActions" in app
     assert "function markRead(card, action)" in app
     assert "function markUnread(card, action)" in app
+    assert "function markCardRead(card)" in app
+    assert "function toggleCardRead(card)" in app
+    assert "function isCardRead(card)" in app
+    assert "function cardStateClass(card)" in app
     assert "function toggleRead(card, action)" in app
     assert "function isActionRead(card, action)" in app
+    assert 'markRead(card, "card")' in app
     assert 'markRead(card, "audio")' in app
     assert 'markRead(card, "transcript")' in app
     assert 'markRead(card, "page")' in app
-    assert 'actionStateClass(card, "audio")' in app
+    assert 'markRead(card, "transcript");\n    markCardRead(card);' in app
+    assert 'markRead(card, "page");\n    markCardRead(card);' in app
+    assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
+    assert "cardStateClass(card)" in app
     assert 'actionStateClass(card, "page")' in app
     assert '"card card-unread"' in app
     assert 'iconSvg("mic"' in app
-    assert "toggleRead(card, \"audio\")" in app
+    assert "toggleCardRead(card)" in app
     assert 'iconSvg("chat"' not in app
     assert "action-transcript" not in app
     assert "action-page" not in app

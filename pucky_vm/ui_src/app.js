@@ -655,17 +655,17 @@
 
   function cardView(card) {
     const wrapper = el("div", "card-wrap");
-    const cardEl = el("article", isActionRead(card, "audio") ? "card" : "card card-unread");
+    const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
 
-    const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
+    const identity = el("button", `identity ${cardStateClass(card)}`);
     identity.type = "button";
     identity.innerHTML = iconSvg(card.icon, { filled: true });
-    identity.setAttribute("aria-label", isActionRead(card, "audio") ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
+    identity.setAttribute("aria-label", isCardRead(card) ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleRead(card, "audio");
+      toggleCardRead(card);
       renderFeed();
     });
 
@@ -740,7 +740,6 @@
         rememberPlayerProgress(state.player);
       } else if (card.audio_playlist_path) {
         state.activePath = audioControlKey(card);
-        markRead(card, "audio");
         const queued = await Pucky.request({
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
@@ -754,7 +753,6 @@
       } else {
         const start = savedPositionFor(card.audio_path);
         state.activePath = audioControlKey(card);
-        markRead(card, "audio");
         forgetCompleted(card.audio_path);
         state.player = await Pucky.request({
           command: "player.play",
@@ -762,6 +760,8 @@
         });
         rememberPlayerProgress(state.player);
       }
+      markRead(card, "audio");
+      markCardRead(card);
       render();
     } catch (error) {
       showToast(error.message);
@@ -770,6 +770,7 @@
 
   function showTranscript(card) {
     markRead(card, "transcript");
+    markCardRead(card);
     renderFeed();
     const panel = document.getElementById("detail");
     const messages = messagesForCard(card);
@@ -831,6 +832,7 @@
 
   async function showRichPage(card) {
     markRead(card, "page");
+    markCardRead(card);
     renderFeed();
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content rich-detail");
@@ -1636,6 +1638,30 @@
   function markUnread(card, action) {
     state.readActions.delete(actionKey(card, action));
     persistReadActions();
+  }
+
+  function markCardRead(card) {
+    markRead(card, "card");
+  }
+
+  function markCardUnread(card) {
+    ["card", "audio", "transcript", "page"].forEach(action => markUnread(card, action));
+  }
+
+  function toggleCardRead(card) {
+    if (isCardRead(card)) {
+      markCardUnread(card);
+    } else {
+      markCardRead(card);
+    }
+  }
+
+  function isCardRead(card) {
+    return ["card", "audio", "transcript", "page"].some(action => isActionRead(card, action));
+  }
+
+  function cardStateClass(card) {
+    return isCardRead(card) ? "is-read" : "is-unread";
   }
 
   function toggleRead(card, action) {
