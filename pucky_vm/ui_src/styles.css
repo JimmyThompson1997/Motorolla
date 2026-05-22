@@ -306,12 +306,6 @@ button {
     0 0 16px color-mix(in srgb, var(--filter-accent, #f5f9ff) 16%, transparent);
 }
 
-.filter-icon[data-filter-icon="all"].is-selected {
-  color: var(--bg);
-  background: var(--text);
-  box-shadow: none;
-}
-
 .filter-icon .material-icon {
   width: 22px;
   height: 22px;

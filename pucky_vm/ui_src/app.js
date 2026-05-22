@@ -525,10 +525,7 @@
   function homeIconFilterTrayView() {
     const shell = el("div", "route-tray-shell");
     const icons = el("div", "route-tray-icons");
-    const filters = [
-      { key: "", icon: "mail", label: "All replies", accent: "#f5f9ff" },
-      ...uniqueFeedIconFilters()
-    ];
+    const filters = uniqueFeedIconFilters();
     icons.append(...filters.map(filter => filterIconButton(filter)));
     shell.append(icons);
     return shell;
@@ -538,16 +535,12 @@
     const selected = isFeedIconIncluded(filter.key);
     const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
     button.type = "button";
-    button.dataset.filterIcon = filter.key || "all";
+    button.dataset.filterIcon = filter.key;
     button.style.setProperty("--filter-accent", filter.accent || "#f5f9ff");
     button.setAttribute("aria-label", filter.label);
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = iconSvg(filter.icon, { filled: selected });
     button.addEventListener("click", () => {
-      if (!filter.key) {
-        clearFeedIconExcludes();
-        return;
-      }
       toggleFeedIcon(filter.key);
     });
     return button;
@@ -653,12 +646,6 @@
     } else {
       state.excludedFeedIcons.add(key);
     }
-    persistFeedIconExcludes();
-    render();
-  }
-
-  function clearFeedIconExcludes() {
-    state.excludedFeedIcons.clear();
     persistFeedIconExcludes();
     render();
   }
