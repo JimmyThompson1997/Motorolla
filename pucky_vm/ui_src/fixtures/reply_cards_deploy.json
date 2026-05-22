@@ -96,7 +96,6 @@
       "session_id": "fixture_leave",
       "title": "Leaving home",
       "icon": "bolt",
-      "icon_style": "retro",
       "accent": "#50d86a",
       "created_at": "2026-05-20T08:08:00-07:00",
       "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",

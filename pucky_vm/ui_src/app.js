@@ -7,6 +7,14 @@
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
       outline: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/><path d="m4.4 18 5.7-5.1"/><path d="m19.6 18-5.7-5.1"/>'
     },
+    bell: {
+      filled: '<path d="M12 22a2.8 2.8 0 0 0 2.8-2.5H9.2A2.8 2.8 0 0 0 12 22Zm7-5-2-2v-5.2c0-3.1-1.7-5.6-4.5-6.3V2h-1v1.5C8.7 4.2 7 6.7 7 9.8V15l-2 2v1h14v-1Z"/>',
+      outline: '<path d="M7 15V9.8c0-3 2-5.3 5-5.3s5 2.3 5 5.3V15l2 2H5l2-2Z"/><path d="M10 19.5h4"/><path d="M12 2v2.5"/>'
+    },
+    coffee: {
+      filled: '<path d="M4 7h12v7.5A4.5 4.5 0 0 1 11.5 19h-3A4.5 4.5 0 0 1 4 14.5V7Zm12 2h2.5a2.5 2.5 0 0 1 0 5H16V9Zm0 2v1h2.5a.5.5 0 0 0 0-1H16ZM3 20h15v2H3v-2ZM7 2h1.5v3H7V2Zm4 0h1.5v3H11V2Z"/>',
+      outline: '<path d="M4.5 7.5h11v7A4.5 4.5 0 0 1 11 19H9a4.5 4.5 0 0 1-4.5-4.5v-7Z"/><path d="M15.5 9h3a2.5 2.5 0 0 1 0 5h-3"/><path d="M3 20.5h15"/><path d="M7.5 2v3M12 2v3"/>'
+    },
     clock: {
       filled: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 17c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7Zm1-12h-2v6l5 3 1-1.73-4-2.27V7Z"/>',
       outline: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.3v5.1l3.8 2.2"/>'
@@ -92,37 +100,10 @@
   const PAGE_TABS = [
     { route: "feed", icon: "bell", label: "Home" },
     { route: "morning", icon: "coffee", label: "Morning" },
-    { route: "calls", icon: "handset", label: "Calls" },
+    { route: "calls", icon: "phone", label: "Calls" },
     { route: "messages", icon: "chat", label: "Messages" },
-    { route: "sensors", icon: "radar", label: "Sensors" }
+    { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
-
-  const RETRO_TAB_SYMBOLS = {
-    coffee: {
-      filled: '<rect x="5" y="8" width="11" height="9"/><rect x="16" y="10" width="4" height="6"/><rect class="pixel-cutout" x="17" y="11" width="2" height="4"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>',
-      outline: '<rect x="5" y="8" width="2" height="9"/><rect x="14" y="8" width="2" height="9"/><rect x="7" y="8" width="7" height="2"/><rect x="7" y="15" width="7" height="2"/><rect x="16" y="10" width="4" height="2"/><rect x="18" y="12" width="2" height="4"/><rect x="16" y="16" width="3" height="2"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>'
-    },
-    bell: {
-      filled: '<rect x="10" y="3" width="4" height="2"/><rect x="8" y="5" width="8" height="2"/><rect x="6" y="7" width="12" height="2"/><rect x="5" y="9" width="14" height="6"/><rect x="4" y="15" width="16" height="2"/><rect x="9" y="18" width="6" height="2"/><rect class="pixel-cutout" x="7" y="11" width="2" height="3"/><rect class="pixel-cutout" x="15" y="11" width="2" height="3"/>',
-      outline: '<rect x="10" y="3" width="4" height="2"/><rect x="8" y="5" width="2" height="2"/><rect x="14" y="5" width="2" height="2"/><rect x="6" y="7" width="2" height="2"/><rect x="16" y="7" width="2" height="2"/><rect x="5" y="9" width="2" height="6"/><rect x="17" y="9" width="2" height="6"/><rect x="7" y="7" width="10" height="2"/><rect x="7" y="14" width="10" height="2"/><rect x="4" y="15" width="16" height="2"/><rect x="9" y="18" width="6" height="2"/>'
-    },
-    handset: {
-      filled: '<path d="M5 5h6v5H8v3h2v2h2v2h3v-3h5v6h-5v-2h-4v-2H9v-2H7v-3H5V5Z"/>',
-      outline: '<rect x="5" y="5" width="6" height="2"/><rect x="5" y="7" width="2" height="5"/><rect x="7" y="12" width="2" height="2"/><rect x="9" y="14" width="2" height="2"/><rect x="11" y="16" width="4" height="2"/><rect x="15" y="14" width="5" height="2"/><rect x="18" y="16" width="2" height="4"/><rect x="15" y="18" width="4" height="2"/>'
-    },
-    chat: {
-      filled: '<rect x="4" y="5" width="16" height="11"/><rect x="7" y="16" width="4" height="3"/><rect class="pixel-cutout" x="7" y="9" width="2" height="2"/><rect class="pixel-cutout" x="11" y="9" width="2" height="2"/><rect class="pixel-cutout" x="15" y="9" width="2" height="2"/>',
-      outline: '<rect x="4" y="5" width="16" height="2"/><rect x="4" y="7" width="2" height="9"/><rect x="18" y="7" width="2" height="9"/><rect x="6" y="14" width="12" height="2"/><rect x="7" y="16" width="4" height="3"/><rect x="7" y="9" width="2" height="2"/><rect x="11" y="9" width="2" height="2"/><rect x="15" y="9" width="2" height="2"/>'
-    },
-    radar: {
-      filled: '<rect x="11" y="5" width="2" height="11"/><rect x="8" y="17" width="8" height="2"/><rect x="10" y="15" width="4" height="2"/><rect x="6" y="7" width="2" height="3"/><rect x="4" y="10" width="2" height="5"/><rect x="16" y="7" width="2" height="3"/><rect x="18" y="10" width="2" height="5"/><rect x="2" y="12" width="2" height="4"/><rect x="20" y="12" width="2" height="4"/>',
-      outline: '<rect x="11" y="5" width="2" height="11"/><rect x="8" y="17" width="8" height="2"/><rect x="10" y="15" width="4" height="2"/><rect x="6" y="7" width="2" height="3"/><rect x="4" y="10" width="2" height="5"/><rect x="16" y="7" width="2" height="3"/><rect x="18" y="10" width="2" height="5"/><rect x="2" y="12" width="2" height="4"/><rect x="20" y="12" width="2" height="4"/>'
-    },
-    bolt: {
-      filled: '<path d="M14 2h5l-4 7h5L8 22l3-9H6L14 2Z"/>',
-      outline: '<path d="M14 2h5v2h-4l-2 4h6v2h-3v2h-2v2h-2v2h-2v3H8v-6H6v-2h4l1-3h1V6h1V4h1V2Z"/>'
-    }
-  };
 
   const MOCK_CARDS = [
     {
@@ -147,7 +128,6 @@
       session_id: "mock_leave",
       title: "Leaving home",
       icon: "bolt",
-      icon_style: "retro",
       accent: "#50d86a",
       created_at: "2026-05-20T08:08:00-07:00",
       summary: "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
@@ -414,7 +394,7 @@
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
-    button.innerHTML = topIconSvg(tab.icon, { filled: tab.route === state.route });
+    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
       state.route = tab.route;
       render();
@@ -445,7 +425,7 @@
 
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
-    identity.innerHTML = cardIdentityIconSvg(card);
+    identity.innerHTML = iconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", isActionRead(card, "audio") ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1466,27 +1446,6 @@
     const symbol = MATERIAL_SYMBOLS[name] || MATERIAL_SYMBOLS.mail;
     const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-  }
-
-  function cardIdentityIconSvg(card) {
-    if (shouldUseRetroCardIcon(card)) {
-      return topIconSvg(card.icon || "bolt", { filled: true, className: "retro-card-icon" });
-    }
-    return iconSvg(card.icon, { filled: true });
-  }
-
-  function shouldUseRetroCardIcon(card) {
-    const id = String(card?.session_id || "").toLowerCase();
-    const title = String(card?.title || "").toLowerCase();
-    return card?.icon_style === "retro" || id === "fixture_leave" || id === "mock_leave" || title === "leaving home";
-  }
-
-  function topIconSvg(icon, options = {}) {
-    const filled = options.filled !== false;
-    const className = options.className || "retro-tab-icon";
-    const symbol = RETRO_TAB_SYMBOLS[icon] || RETRO_TAB_SYMBOLS.bell;
-    const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
-    return `<svg class="${className} ${filled ? "is-filled" : "is-outline"}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
   function formatTime(ms) {
