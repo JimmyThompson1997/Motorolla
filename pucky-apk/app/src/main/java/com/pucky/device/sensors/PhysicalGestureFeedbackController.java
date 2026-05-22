@@ -56,7 +56,7 @@ public final class PhysicalGestureFeedbackController {
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 200L;
     private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 200L;
     private static final long DOUBLE_TAP_BUZZ_GAP_MS = 250L;
-    private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 2_500L;
+    private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 1_000L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
     private static final int SENSOR_RATE_US = 10_000;
     private static final int MAX_RECENT_EVENTS = 80;
@@ -629,7 +629,7 @@ public final class PhysicalGestureFeedbackController {
     }
 
     private static float defaultTapAccelDelta() {
-        return 10.0f;
+        return 8.0f;
     }
 
     private static float defaultTapMaxGyro() {
@@ -637,11 +637,11 @@ public final class PhysicalGestureFeedbackController {
     }
 
     private static float defaultChopGyro() {
-        return 7.0f;
+        return 5.5f;
     }
 
     private static float defaultChopGravityDelta() {
-        return 3.5f;
+        return 2.5f;
     }
 
     private static long defaultCooldownMs() {
