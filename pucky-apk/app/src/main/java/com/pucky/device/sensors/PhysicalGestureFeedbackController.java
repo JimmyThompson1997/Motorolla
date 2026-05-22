@@ -56,7 +56,7 @@ public final class PhysicalGestureFeedbackController {
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 200L;
     private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 200L;
     private static final long DOUBLE_TAP_BUZZ_GAP_MS = 250L;
-    private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 1_650L;
+    private static final long DOUBLE_TAP_FEEDBACK_GUARD_MS = 2_500L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
     private static final int SENSOR_RATE_US = 10_000;
     private static final int MAX_RECENT_EVENTS = 80;
@@ -81,6 +81,7 @@ public final class PhysicalGestureFeedbackController {
     private long lastTapCandidateAtMs;
     private long lastTapPeakAtMs;
     private long cooldownUntilMs;
+    private long tapFeedbackGuardUntilMs;
     private long chopCount;
     private long doubleTapCount;
     private String lastError = "";
@@ -124,6 +125,7 @@ public final class PhysicalGestureFeedbackController {
             Json.put(out, "chop_gravity_delta", chopGravityDelta());
             Json.put(out, "cooldown_ms", cooldownMs());
             Json.put(out, "cooldown_remaining_ms", Math.max(0L, cooldownUntilMs - now));
+            Json.put(out, "tap_feedback_guard_remaining_ms", Math.max(0L, tapFeedbackGuardUntilMs - now));
             Json.put(out, "chop_count", chopCount);
             Json.put(out, "double_tap_count", doubleTapCount);
             Json.put(out, "closed_gate_known", closedGateKnownLocked(now));
@@ -302,8 +304,7 @@ public final class PhysicalGestureFeedbackController {
         }
         chopCount++;
         cooldownUntilMs = now + cooldownMs();
-        lastTapCandidateAtMs = 0L;
-        lastTapPeakAtMs = 0L;
+        clearTapTrackingLocked();
         addEventLocked("single_chop_detected", "delayed_ping", gyro, gravityDelta);
         playChopPing("single_chop");
     }
@@ -311,7 +312,15 @@ public final class PhysicalGestureFeedbackController {
     private void handleAccelLocked(long now, float[] values) {
         float accelDelta = accelDeltaLocked(values);
         lastAccel = values;
-        if (!doubleTapEnabled() || now < cooldownUntilMs || accelDelta < tapAccelDelta()) {
+        if (!doubleTapEnabled()) {
+            clearTapTrackingLocked();
+            return;
+        }
+        if (now < tapFeedbackGuardUntilMs || now < cooldownUntilMs) {
+            clearTapTrackingLocked();
+            return;
+        }
+        if (accelDelta < tapAccelDelta()) {
             return;
         }
         if (now - lastTapPeakAtMs < TAP_DEBOUNCE_MS) {
@@ -328,8 +337,10 @@ public final class PhysicalGestureFeedbackController {
             long gap = now - previousTapAt;
             if (gap >= TAP_MIN_GAP_MS && gap <= TAP_MAX_GAP_MS) {
                 doubleTapCount++;
-                cooldownUntilMs = now + Math.max(cooldownMs(), DOUBLE_TAP_FEEDBACK_GUARD_MS);
-                lastTapCandidateAtMs = 0L;
+                long guardUntil = now + Math.max(cooldownMs(), DOUBLE_TAP_FEEDBACK_GUARD_MS);
+                cooldownUntilMs = guardUntil;
+                tapFeedbackGuardUntilMs = guardUntil;
+                clearTapTrackingLocked();
                 addEventLocked("double_back_tap_detected", "delayed_double_buzz", accelDelta, recentGyro);
                 playDoubleTapBuzz("double_back_tap");
                 return;
@@ -340,6 +351,11 @@ public final class PhysicalGestureFeedbackController {
         }
         lastTapCandidateAtMs = now;
         addEventLocked("tap_candidate", "waiting_for_second_tap", accelDelta, recentGyro);
+    }
+
+    private void clearTapTrackingLocked() {
+        lastTapCandidateAtMs = 0L;
+        lastTapPeakAtMs = 0L;
     }
 
     private float accelDeltaLocked(float[] values) {
@@ -563,9 +579,9 @@ public final class PhysicalGestureFeedbackController {
         gravitySamples.clear();
         gyroPeaks.clear();
         lastAccel = null;
-        lastTapCandidateAtMs = 0L;
-        lastTapPeakAtMs = 0L;
+        clearTapTrackingLocked();
         cooldownUntilMs = 0L;
+        tapFeedbackGuardUntilMs = 0L;
         hingeKnown = false;
         lastHingeAtMs = 0L;
         lastHingeAngle = Float.NaN;
