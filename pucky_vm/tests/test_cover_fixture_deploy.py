@@ -26,16 +26,21 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
     assert '"/data/user/0/' not in encoded
     assert '"audio_path"' not in encoded
     assert "html_path" not in encoded
-    assert encoded.count("public_audio_path") == 1
-    assert encoded.count("public_audio_playlist_path") == 1
+    assert encoded.count("device_audio_path") == 1
+    assert "public_audio_path" not in encoded
+    assert "public_audio_playlist_path" not in encoded
 
     artifacts = set()
     for card in spec["cards"]:
         if card["session_id"] == "fixture_book":
             assert "audio_artifact" not in card
-            assert card["public_audio_path"].endswith("_full.wav")
-            assert card["public_audio_playlist_path"].endswith(".m3u")
-            assert "/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/" in card["public_audio_playlist_path"]
+            assert card["device_audio_path"].endswith("_Kokoro_George.m4a")
+            assert "/Android/data/com.pucky.device.debug/files/audiobooks/" in card["device_audio_path"]
+            assert "public_audio_path" not in card
+            assert "public_audio_playlist_path" not in card
+            assert len(card["audio_timestamps"]) == 31
+            assert card["audio_timestamps"][0]["title"].startswith("Prologue")
+            assert card["audio_timestamps"][-1]["kind"] == "postscript"
         else:
             artifacts.add(card["audio_artifact"])
         artifacts.add(card["html_artifact"])
@@ -129,7 +134,7 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 
-def test_build_cards_allows_only_the_public_audiobook_directory() -> None:
+def test_build_cards_accepts_validated_device_audiobook_path() -> None:
     args = argparse.Namespace(
         vm_base_url="https://pucky.fly.dev",
         artifact_base_path="/ui/pucky/latest/",
@@ -144,16 +149,18 @@ def test_build_cards_allows_only_the_public_audiobook_directory() -> None:
                 {
                     "session_id": "fixture_book",
                     "title": "Pocket Computers",
-                    "public_audio_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav",
-                    "public_audio_playlist_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u",
+                    "device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/From_Pocket_Computers_to_Planetary_Platforms_Kokoro_George.m4a",
+                    "audio_timestamps": [{"id": "chapter-01", "title": "Prologue", "start_ms": 0}],
                 }
             ],
         },
     )
 
     assert downloads == []
-    assert cards[0]["audio_path"].startswith("/sdcard/Podcasts/From_Pocket_Computers")
-    assert cards[0]["audio_playlist_path"].endswith(".m3u")
+    assert cards[0]["audio_path"].startswith("/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/")
+    assert cards[0]["audio_path"].endswith(".m4a")
+    assert "audio_playlist_path" not in cards[0]
+    assert cards[0]["audio_timestamps"][0]["id"] == "chapter-01"
 
     with pytest.raises(deploy_cover_fixture.DeployError):
         deploy_cover_fixture.build_cards(
@@ -164,11 +171,53 @@ def test_build_cards_allows_only_the_public_audiobook_directory() -> None:
                     {
                         "session_id": "fixture_book",
                         "title": "Pocket Computers",
-                        "public_audio_path": "/sdcard/Podcasts/book.wav",
+                        "device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/book.tmp.wav",
                     }
                 ],
             },
         )
+
+    with pytest.raises(deploy_cover_fixture.DeployError):
+        deploy_cover_fixture.build_cards(
+            args,
+            {
+                "artifact_base_path": "fixtures/artifacts",
+                "cards": [
+                    {
+                        "session_id": "fixture_book",
+                        "title": "Pocket Computers",
+                        "device_audio_path": "/mock/book.m4a",
+                    }
+                ],
+            },
+        )
+
+
+def test_public_audiobook_playlist_support_stays_available() -> None:
+    args = argparse.Namespace(
+        vm_base_url="https://pucky.fly.dev",
+        artifact_base_path="/ui/pucky/latest/",
+        max_artifact_bytes=1024 * 1024,
+    )
+
+    cards, downloads = deploy_cover_fixture.build_cards(
+        args,
+        {
+            "artifact_base_path": "fixtures/artifacts",
+            "cards": [
+                {
+                    "session_id": "another_book",
+                    "title": "Another Book",
+                    "public_audio_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/001_01_Prologue_The_Phone_Before_the_Phone_full.wav",
+                    "public_audio_playlist_path": "/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/From_Pocket_Computers_to_Planetary_Platforms.m3u",
+                }
+            ],
+        },
+    )
+
+    assert downloads == []
+    assert cards[0]["audio_path"].startswith("/sdcard/Podcasts/From_Pocket_Computers")
+    assert cards[0]["audio_playlist_path"].endswith(".m3u")
 
 
 def test_fixture_book_cannot_regress_to_tiny_audio_artifact() -> None:

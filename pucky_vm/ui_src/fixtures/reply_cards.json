@@ -10,11 +10,31 @@
       "created_at": "2026-05-20T06:33:00-07:00",
       "summary": "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
       "transcript_messages": [
-        { "role": "user", "text": "Pucky, start my morning.", "created_at": "2026-05-20T06:31:00-07:00" },
-        { "role": "assistant", "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", "created_at": "2026-05-20T06:31:00-07:00" },
-        { "role": "user", "text": "Give me the one thing that cannot slip.", "created_at": "2026-05-20T06:32:00-07:00" },
-        { "role": "assistant", "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", "created_at": "2026-05-20T06:32:00-07:00" },
-        { "role": "user", "text": "Any landmines?", "created_at": "2026-05-20T06:33:00-07:00" },
+        {
+          "role": "user",
+          "text": "Pucky, start my morning.",
+          "created_at": "2026-05-20T06:31:00-07:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.",
+          "created_at": "2026-05-20T06:31:00-07:00"
+        },
+        {
+          "role": "user",
+          "text": "Give me the one thing that cannot slip.",
+          "created_at": "2026-05-20T06:32:00-07:00"
+        },
+        {
+          "role": "assistant",
+          "text": "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.",
+          "created_at": "2026-05-20T06:32:00-07:00"
+        },
+        {
+          "role": "user",
+          "text": "Any landmines?",
+          "created_at": "2026-05-20T06:33:00-07:00"
+        },
         {
           "role": "assistant",
           "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.",
@@ -45,16 +65,28 @@
             "kind": "thinking",
             "title": "Checking the morning request.",
             "items": [
-              { "label": "calendar_lookup", "status": "completed" },
-              { "label": "weather_scan", "status": "completed" }
+              {
+                "label": "calendar_lookup",
+                "status": "completed"
+              },
+              {
+                "label": "weather_scan",
+                "status": "completed"
+              }
             ]
           },
           {
             "kind": "reasoning",
             "title": "Preparing the launch brief.",
             "items": [
-              { "label": "inbox_triage", "status": "completed" },
-              { "label": "unused_tool_probe", "status": "failed" }
+              {
+                "label": "inbox_triage",
+                "status": "completed"
+              },
+              {
+                "label": "unused_tool_probe",
+                "status": "failed"
+              }
             ]
           }
         ]
@@ -68,9 +100,21 @@
       "created_at": "2026-05-20T08:08:00-07:00",
       "summary": "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
       "transcript_messages": [
-        { "role": "user", "text": "Leaving home.", "time": "8:07 AM" },
-        { "role": "assistant", "text": "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.", "time": "8:07 AM" },
-        { "role": "assistant", "text": "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.", "time": "8:08 AM" }
+        {
+          "role": "user",
+          "text": "Leaving home.",
+          "time": "8:07 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.",
+          "time": "8:07 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.",
+          "time": "8:08 AM"
+        }
       ],
       "audio_path": "/mock/leaving.wav",
       "html_path": "/mock/leaving.html",
@@ -82,16 +126,28 @@
             "kind": "thinking",
             "title": "Checking the commute request.",
             "items": [
-              { "label": "route_scan", "status": "completed" },
-              { "label": "garage_state", "status": "completed" }
+              {
+                "label": "route_scan",
+                "status": "completed"
+              },
+              {
+                "label": "garage_state",
+                "status": "completed"
+              }
             ]
           },
           {
             "kind": "reasoning",
             "title": "Keeping the reply glanceable.",
             "items": [
-              { "label": "drive_mode", "status": "completed" },
-              { "label": "long_read_fetch", "status": "failed" }
+              {
+                "label": "drive_mode",
+                "status": "completed"
+              },
+              {
+                "label": "long_read_fetch",
+                "status": "failed"
+              }
             ]
           }
         ]
@@ -105,11 +161,31 @@
       "created_at": "2026-05-19T09:46:00-07:00",
       "summary": "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
       "transcript_messages": [
-        { "role": "user", "text": "What do I need before the meeting?", "time": "9:45 AM" },
-        { "role": "assistant", "text": "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.", "time": "9:45 AM" },
-        { "role": "assistant", "text": "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.", "time": "9:46 AM" },
-        { "role": "user", "text": "Give me a good first sentence.", "time": "9:46 AM" },
-        { "role": "assistant", "text": "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'", "time": "9:46 AM" }
+        {
+          "role": "user",
+          "text": "What do I need before the meeting?",
+          "time": "9:45 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.",
+          "time": "9:45 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.",
+          "time": "9:46 AM"
+        },
+        {
+          "role": "user",
+          "text": "Give me a good first sentence.",
+          "time": "9:46 AM"
+        },
+        {
+          "role": "assistant",
+          "text": "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'",
+          "time": "9:46 AM"
+        }
       ],
       "audio_path": "/mock/meeting.wav",
       "html_path": "/mock/meeting.html",
@@ -121,16 +197,28 @@
             "kind": "thinking",
             "title": "Checking the meeting thread.",
             "items": [
-              { "label": "agenda_search", "status": "completed" },
-              { "label": "thread_summary", "status": "completed" }
+              {
+                "label": "agenda_search",
+                "status": "completed"
+              },
+              {
+                "label": "thread_summary",
+                "status": "completed"
+              }
             ]
           },
           {
             "kind": "reasoning",
             "title": "Preparing the decision frame.",
             "items": [
-              { "label": "objection_scan", "status": "completed" },
-              { "label": "calendar_conflict_probe", "status": "failed" }
+              {
+                "label": "objection_scan",
+                "status": "completed"
+              },
+              {
+                "label": "calendar_conflict_probe",
+                "status": "failed"
+              }
             ]
           }
         ]
@@ -144,11 +232,31 @@
       "created_at": "2026-05-18T23:01:00-07:00",
       "summary": "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
       "transcript_messages": [
-        { "role": "user", "text": "Wrap my day.", "time": "11:00 PM" },
-        { "role": "assistant", "text": "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.", "time": "11:00 PM" },
-        { "role": "assistant", "text": "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.", "time": "11:01 PM" },
-        { "role": "user", "text": "Dim everything except urgent calls.", "time": "11:01 PM" },
-        { "role": "assistant", "text": "Done. Quiet mode is staged, and urgent callers remain allowed.", "time": "11:01 PM" }
+        {
+          "role": "user",
+          "text": "Wrap my day.",
+          "time": "11:00 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.",
+          "time": "11:00 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.",
+          "time": "11:01 PM"
+        },
+        {
+          "role": "user",
+          "text": "Dim everything except urgent calls.",
+          "time": "11:01 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Done. Quiet mode is staged, and urgent callers remain allowed.",
+          "time": "11:01 PM"
+        }
       ],
       "audio_path": "/mock/night.wav",
       "html_path": "/mock/night.html",
@@ -160,16 +268,28 @@
             "kind": "thinking",
             "title": "Checking the day wrap.",
             "items": [
-              { "label": "task_sweep", "status": "completed" },
-              { "label": "notification_state", "status": "completed" }
+              {
+                "label": "task_sweep",
+                "status": "completed"
+              },
+              {
+                "label": "notification_state",
+                "status": "completed"
+              }
             ]
           },
           {
             "kind": "reasoning",
             "title": "Choosing tomorrow's first move.",
             "items": [
-              { "label": "priority_rank", "status": "completed" },
-              { "label": "late_night_workflow", "status": "failed" }
+              {
+                "label": "priority_rank",
+                "status": "completed"
+              },
+              {
+                "label": "late_night_workflow",
+                "status": "failed"
+              }
             ]
           }
         ]
@@ -183,13 +303,28 @@
       "created_at": "2026-05-09T16:13:00-07:00",
       "summary": "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
       "transcript_messages": [
-        { "role": "assistant", "text": "Chapter narration is ready at the last saved position.", "time": "4:12 PM" },
-        { "role": "assistant", "text": "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.", "time": "4:12 PM" },
-        { "role": "user", "text": "Resume softly and keep the speed where I left it.", "time": "4:13 PM" },
-        { "role": "assistant", "text": "Ready. Playback will resume with the saved position and speed.", "time": "4:13 PM" }
+        {
+          "role": "assistant",
+          "text": "Chapter narration is ready at the last saved position.",
+          "time": "4:12 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.",
+          "time": "4:12 PM"
+        },
+        {
+          "role": "user",
+          "text": "Resume softly and keep the speed where I left it.",
+          "time": "4:13 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Ready. Playback will resume with the saved position and speed.",
+          "time": "4:13 PM"
+        }
       ],
       "audio_path": "/mock/pocket-computers.wav",
-      "audio_playlist_path": "/mock/pocket-computers.m3u",
       "html_path": "/mock/pocket-computers.html",
       "trace": {
         "schema": "pucky.turn_trace.v1",
@@ -199,20 +334,282 @@
             "kind": "thinking",
             "title": "Checking audiobook state.",
             "items": [
-              { "label": "saved_position", "status": "completed" },
-              { "label": "speed_setting", "status": "completed" }
+              {
+                "label": "saved_position",
+                "status": "completed"
+              },
+              {
+                "label": "speed_setting",
+                "status": "completed"
+              }
             ]
           },
           {
             "kind": "reasoning",
             "title": "Preparing gentle playback.",
             "items": [
-              { "label": "player_resume", "status": "completed" },
-              { "label": "chapter_fetch_retry", "status": "failed" }
+              {
+                "label": "player_resume",
+                "status": "completed"
+              },
+              {
+                "label": "chapter_fetch_retry",
+                "status": "failed"
+              }
             ]
           }
         ]
-      }
+      },
+      "audio_timestamps": [
+        {
+          "id": "chapter-01",
+          "title": "Prologue - The Phone Before the Phone",
+          "start_ms": 0,
+          "end_ms": 403260,
+          "detail": "6:43",
+          "kind": "prologue"
+        },
+        {
+          "id": "chapter-02",
+          "title": "Part I",
+          "start_ms": 403260,
+          "end_ms": 406080,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-03",
+          "title": "Chapter 1 - The Portable Future Before It Fit in a Pocket",
+          "start_ms": 406080,
+          "end_ms": 2741520,
+          "detail": "38:55 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-04",
+          "title": "Chapter 2 - Newton and the Perils of Ambition",
+          "start_ms": 2741520,
+          "end_ms": 4995170,
+          "detail": "37:34 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-05",
+          "title": "Chapter 3 - General Magic and the Future That Arrived Too Early",
+          "start_ms": 4995170,
+          "end_ms": 7531090,
+          "detail": "42:16 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-06",
+          "title": "Chapter 4 - Palm and the Beauty of Doing Less",
+          "start_ms": 7531090,
+          "end_ms": 10105380,
+          "detail": "42:54 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-07",
+          "title": "Part II",
+          "start_ms": 10105380,
+          "end_ms": 10108880,
+          "detail": "0:04",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-08",
+          "title": "Chapter 5 - The Communicator Era",
+          "start_ms": 10108880,
+          "end_ms": 12512750,
+          "detail": "40:04 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-09",
+          "title": "Chapter 6 - BlackBerry and the Machine That Made Email Urgent",
+          "start_ms": 12512750,
+          "end_ms": 14940750,
+          "detail": "40:28 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-10",
+          "title": "Chapter 7 - Feature Phones, Fashion Phones, and the Mobile Internet That Wasn't Quite",
+          "start_ms": 14940750,
+          "end_ms": 17144310,
+          "detail": "36:44 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-11",
+          "title": "Part III",
+          "start_ms": 17144310,
+          "end_ms": 17146700,
+          "detail": "0:02",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-12",
+          "title": "Chapter 8 - The iPod as Smartphone Prequel",
+          "start_ms": 17146700,
+          "end_ms": 20220590,
+          "detail": "51:14 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-13",
+          "title": "Chapter 9 - The Phone Apple Didn't Want to Make This Way",
+          "start_ms": 20220590,
+          "end_ms": 22422900,
+          "detail": "36:42 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-14",
+          "title": "Chapter 10 - The iPhone Demo and the Reframing of the Phone",
+          "start_ms": 22422900,
+          "end_ms": 24921850,
+          "detail": "41:39 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-15",
+          "title": "Chapter 11 - From Web Apps to the App Store",
+          "start_ms": 24921850,
+          "end_ms": 28599370,
+          "detail": "1:01:18 across 4 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-16",
+          "title": "Chapter 12 - Android and the Race to Become the Other Smartphone Platform",
+          "start_ms": 28599370,
+          "end_ms": 31521000,
+          "detail": "48:42 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-17",
+          "title": "Part V",
+          "start_ms": 31521000,
+          "end_ms": 31523940,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-18",
+          "title": "Chapter 13 - Nokia and the Cost of Winning the Old Game",
+          "start_ms": 31523940,
+          "end_ms": 34575250,
+          "detail": "50:51 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-19",
+          "title": "Chapter 14 - BlackBerry After the Keyboard",
+          "start_ms": 34575250,
+          "end_ms": 37049750,
+          "detail": "41:15 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-20",
+          "title": "Chapter 15 - Palm, Microsoft, and the Beautiful Losers",
+          "start_ms": 37049750,
+          "end_ms": 40037420,
+          "detail": "49:48 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-21",
+          "title": "Chapter 16 - The Graveyard of Smartphone Experiments",
+          "start_ms": 40037420,
+          "end_ms": 42747150,
+          "detail": "45:10 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-22",
+          "title": "Part VI",
+          "start_ms": 42747150,
+          "end_ms": 42750520,
+          "detail": "0:03",
+          "kind": "part"
+        },
+        {
+          "id": "chapter-23",
+          "title": "Chapter 17 - Samsung, Scale, and the Android Hardware War",
+          "start_ms": 42750520,
+          "end_ms": 46360790,
+          "detail": "1:00:10 across 4 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-24",
+          "title": "Chapter 18 - The Camera Takes Over the Phone",
+          "start_ms": 46360790,
+          "end_ms": 49400970,
+          "detail": "50:40 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-25",
+          "title": "Chapter 19 - Pricing the Pocket Computer",
+          "start_ms": 49400970,
+          "end_ms": 52206410,
+          "detail": "46:45 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-26",
+          "title": "Chapter 20 - Apps, Attention, and the Phone as Marketplace",
+          "start_ms": 52206410,
+          "end_ms": 55029910,
+          "detail": "47:04 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-27",
+          "title": "Chapter 21 - The Global Smartphone Majority",
+          "start_ms": 55029910,
+          "end_ms": 57728940,
+          "detail": "44:59 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-28",
+          "title": "Chapter 22 - The Phone as Remote Control for Life",
+          "start_ms": 57728940,
+          "end_ms": 60775420,
+          "detail": "50:46 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-29",
+          "title": "Chapter 23 - After the Smartphone?",
+          "start_ms": 60775420,
+          "end_ms": 64195570,
+          "detail": "57:00 across 3 segments",
+          "kind": "chapter"
+        },
+        {
+          "id": "chapter-30",
+          "title": "Epilogue - The Device That Ate Everything",
+          "start_ms": 64195570,
+          "end_ms": 66065430,
+          "detail": "31:10 across 2 segments",
+          "kind": "epilogue"
+        },
+        {
+          "id": "chapter-31",
+          "title": "Postscript - The Runtime Phone",
+          "start_ms": 66065430,
+          "end_ms": 69897470,
+          "detail": "1:03:52 across 4 segments",
+          "kind": "postscript"
+        }
+      ]
     }
   ]
 }

@@ -151,7 +151,6 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert '.filter-icon[data-filter-icon="all"].is-selected' not in styles
     assert ".feed-filter-empty" in styles
 
-
 def test_feed_has_subtle_edge_rubber_band() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -359,7 +358,12 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     app = read("app.js")
 
     assert "const COMPLETE_EPSILON_MS = 500" in app
+    assert "const AUDIO_STATE_KEY = \"pucky.cover.audio_state.v1\"" in app
     assert "completedPaths" in app
+    assert "speedByPath" in app
+    assert "selectedTimestampByPath" in app
+    assert "function loadAudioState()" in app
+    assert "function persistAudioState()" in app
     assert "function isCompletePlayback(player)" in app
     assert "function rememberPlayerProgress(player)" in app
     assert "function forgetCompleted(path)" in app
@@ -368,11 +372,16 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "rememberPlayerProgress(current)" in app
 
 
-def test_audiobook_cards_use_native_playlist_queue() -> None:
+def test_audiobook_card_uses_single_file_with_timestamps() -> None:
     app = read("app.js")
     fixtures = read("fixtures/reply_cards.json")
+    deploy_fixture = read("fixtures/reply_cards_deploy.json")
 
-    assert '"audio_playlist_path": "/mock/pocket-computers.m3u"' in fixtures
+    assert '"audio_path": "/mock/pocket-computers.wav"' in fixtures
+    assert '"audio_timestamps"' in fixtures
+    assert '"audio_playlist_path": "/mock/pocket-computers.m3u"' not in fixtures
+    assert '"device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/From_Pocket_Computers_to_Planetary_Platforms_Kokoro_George.m4a"' in deploy_fixture
+    assert '"public_audio_playlist_path"' not in deploy_fixture
     assert "function hasAudio(card)" in app
     assert "function audioControlKey(card)" in app
     assert "function isSameAudioCard(player, card)" in app
@@ -385,6 +394,11 @@ def test_audiobook_cards_use_native_playlist_queue() -> None:
     assert "playlist_path: card.audio_playlist_path" in app
     assert "samePath(player.source, card.audio_playlist_path)" in app
     assert "sameCompleted = same && isCompletePlayback(current)" in app
+    assert "function audioTimestamps(card)" in app
+    assert "function timestampListView(card)" in app
+    assert "function jumpToTimestamp(card, marker)" in app
+    assert 'command: "player.seek"' in app
+    assert "position_ms: positionMs" in app
 
 
 def test_manual_pause_rewinds_one_second_before_bookmarking() -> None:
@@ -415,22 +429,62 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     assert "max-width: 100%" in styles
 
 
-def test_audio_sheet_uses_compact_icon_controls() -> None:
+def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     app = read("app.js")
+    html = read("index.html")
     styles = read("styles.css")
 
+    assert 'id="audioSheet"' not in html
+    assert ".audio-sheet" not in styles
+    assert "function showAudioDetail(card)" in app
+    assert "function renderAudioDetail()" in app
+    assert "function refreshAudioDetail(card, existing)" in app
+    assert "existing.dataset.audioKey === audioStateKey(card)" in app
+    assert "content.dataset.audioKey = audioStateKey(card)" in app
+    assert 'openSideDetail(panel, card.title || "Audio", audioDetailContent(card), dismissAudioDetail)' in app
+    assert '"detail-content audio-detail"' in app
+    assert ".audio-detail" in styles
+    assert ".audio-controls" in styles
+    assert "grid-template-columns: minmax(66px, 1fr) auto minmax(66px, 1fr)" in styles
+    assert ".transport-cluster" in styles
+    assert ".control-spacer" in styles
+    assert "showAudioSheet" not in app
+    assert "renderAudioSheet" not in app
     assert "--sheet-bezel: 82px" not in styles
     assert "--sheet-top: 16px" in styles
     assert 'iconControl("replay_15"' in app
-    assert 'iconControl(state.player.is_playing ? "pause" : "play_arrow"' in app
+    assert 'iconControl(state.player.is_playing && isActiveCard(card) ? "pause" : "play_arrow"' in app
     assert 'iconControl("forward_30"' in app
     assert 'control("15"' not in app
     assert 'control("30"' not in app
     assert 'state.player.is_playing ? "||" : ">"' not in app
     assert ".control-skip .material-icon" in styles
     assert ".control-play .material-icon" in styles
+    assert ".timestamp-list" in styles
+    assert ".timestamp-row.is-active" in styles
+    assert '"timestamp-row is-active"' in app
+    assert '"scrub-slider"' in app
+    assert 'slider.addEventListener("pointermove"' in app
+    assert 'slider.addEventListener("pointerup"' in app
+    assert "setPointerCapture" in app
+    assert "releasePointerCapture" in app
+    assert "function scrubPositionFromPointer(slider, event, durationMs)" in app
+    assert "function updateAudioScrubPreview(card, scrub, positionMs)" in app
+    assert "function updateTimestampPreview(card, positionMs)" in app
+    assert "scrubbingAudioKey" in app
+    assert "function startAudioScrub(card, positionMs)" in app
+    assert "state.scrubbingAudioKey === audioStateKey(card)" in app
+    assert "row.dataset.timestampId = marker.id" in app
+    assert ".audio-scrub" in styles
+    assert ".scrub-slider" in styles
+    assert ".scrub-knob" in styles
+    assert "padding: 0 clamp(44px, 5vw, 64px)" in styles
+    assert "touch-action: none" in styles
+    assert "overscroll-behavior: contain" in styles
     assert "time-elapsed" in app
     assert "time-remaining" in app
+    assert "const hours = Math.floor(total / 3600)" in app
+    assert 'return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`' in app
 
 
 def test_generated_images_open_as_html_reel_not_native_previews() -> None:

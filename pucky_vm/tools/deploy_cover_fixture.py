@@ -24,6 +24,12 @@ PUBLIC_AUDIOBOOK_PREFIXES = (
     "/mnt/sdcard/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/",
     "/storage/emulated/0/Podcasts/From_Pocket_Computers_to_Planetary_Platforms/",
 )
+DEVICE_AUDIOBOOK_PREFIXES = (
+    "/sdcard/Android/data/com.pucky.device.debug/files/audiobooks/",
+    "/mnt/sdcard/Android/data/com.pucky.device.debug/files/audiobooks/",
+    "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/",
+)
+DEVICE_AUDIO_EXTENSIONS = (".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav")
 
 
 class DeployError(RuntimeError):
@@ -167,6 +173,19 @@ def validate_public_audiobook_path(path: str, *, field: str) -> str:
     return value
 
 
+def validate_device_audio_path(path: str, *, field: str = "device_audio_path") -> str:
+    value = str(path or "").strip().replace("\\", "/")
+    if not value:
+        return ""
+    if any(needle in value for needle in BAD_DEVICE_STRINGS):
+        raise DeployError(f"{field} must not use mock, temp, or fixture-only paths.")
+    if not any(value.startswith(prefix) for prefix in DEVICE_AUDIOBOOK_PREFIXES):
+        raise DeployError(f"{field} must stay inside the approved app audiobook directory.")
+    if not value.lower().endswith(DEVICE_AUDIO_EXTENSIONS):
+        raise DeployError(f"{field} must point at an audio file.")
+    return value
+
+
 def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     artifact_base = str(spec.get("artifact_base_path") or "fixtures/artifacts").strip("/")
     cards: list[dict[str, Any]] = []
@@ -180,10 +199,15 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
         prefix = "pucky_fixture_" + "".join(ch if ch.isalnum() else "_" for ch in session_id)
         audio_artifact = card.pop("audio_artifact", "")
         html_artifact = card.pop("html_artifact", "")
+        device_audio_path = card.pop("device_audio_path", "")
         public_audio_path = card.pop("public_audio_path", "")
         public_audio_playlist_path = card.pop("public_audio_playlist_path", "")
         if session_id == "fixture_book" and audio_artifact:
-            raise DeployError("fixture_book must use the real public audiobook playlist, not an audio artifact.")
+            raise DeployError("fixture_book must use the real audiobook path, not an audio artifact.")
+        if device_audio_path and (audio_artifact or public_audio_path or public_audio_playlist_path):
+            raise DeployError("device_audio_path cannot be combined with another audio source.")
+        if device_audio_path:
+            card["audio_path"] = validate_device_audio_path(device_audio_path)
         if public_audio_path:
             card["audio_path"] = validate_public_audiobook_path(public_audio_path, field="public_audio_path")
         if public_audio_playlist_path:

@@ -23,6 +23,7 @@ public final class ReplyCard {
     private final String accent;
     private final String audioPath;
     private final String audioPlaylistPath;
+    private final String audioTimestamps;
     private final String htmlPath;
     private final String images;
     private final String trace;
@@ -39,6 +40,7 @@ public final class ReplyCard {
             String accent,
             String audioPath,
             String audioPlaylistPath,
+            String audioTimestamps,
             String htmlPath,
             String images,
             String trace) throws CommandException {
@@ -53,6 +55,7 @@ public final class ReplyCard {
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
         this.audioPlaylistPath = optional(audioPlaylistPath);
+        this.audioTimestamps = jsonArrayOrBlank(audioTimestamps, "audio_timestamps");
         this.htmlPath = optional(htmlPath);
         this.images = jsonArrayOrBlank(images, "images");
         this.trace = jsonObjectOrBlank(trace, "trace");
@@ -74,6 +77,7 @@ public final class ReplyCard {
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
                 input.optString("audio_playlist_path", ""),
+                jsonArrayString(input, "audio_timestamps"),
                 input.optString("html_path", ""),
                 jsonArrayString(input, "images"),
                 jsonObjectString(input, "trace"));
@@ -125,6 +129,7 @@ public final class ReplyCard {
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
         putOptional(out, "audio_playlist_path", audioPlaylistPath);
+        putOptionalJsonArray(out, "audio_timestamps", audioTimestamps);
         putOptional(out, "html_path", htmlPath);
         putOptionalJsonArray(out, "images", images);
         putOptionalJsonObject(out, "trace", trace);
@@ -175,6 +180,10 @@ public final class ReplyCard {
         return audioPlaylistPath;
     }
 
+    public String audioTimestamps() {
+        return audioTimestamps;
+    }
+
     public String htmlPath() {
         return htmlPath;
     }
@@ -188,7 +197,7 @@ public final class ReplyCard {
     }
 
     public boolean hasAudio() {
-        return !audioPath.isEmpty();
+        return !audioPath.isEmpty() || !audioPlaylistPath.isEmpty();
     }
 
     public boolean hasTranscript() {
