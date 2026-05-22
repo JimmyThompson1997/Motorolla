@@ -4,7 +4,12 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
 import android.media.MediaRecorder;
+import android.media.ToneGenerator;
+import android.os.Build;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -21,9 +26,14 @@ public final class VoiceCaptureController {
     private static final String PREFS = "pucky_voice_capture";
     private static final String CAPTURES = "captures_json";
     private static final int MAX_CAPTURES = 100;
-    private static final int DEFAULT_MAX_DURATION_MS = 30000;
-    private static final int HARD_MAX_DURATION_MS = 120000;
+    private static final int DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000;
+    private static final int HARD_MAX_DURATION_MS = 30 * 60 * 1000;
     private static final int MIN_FINALIZE_DURATION_MS = 1200;
+    private static final int READY_HAPTIC_MS = 55;
+    private static final int RELEASE_HAPTIC_MS = 40;
+    private static final int HAPTIC_AMPLITUDE = 220;
+    private static final int ERROR_HAPTIC_AMPLITUDE = 255;
+    private static final int SAVED_CHIME_VOLUME = 85;
 
     private static VoiceCaptureController shared;
 
@@ -40,6 +50,8 @@ public final class VoiceCaptureController {
         long startedElapsedMs;
         int maxDurationMs;
         String sampleTag;
+        String audioSource;
+        boolean feedback;
     }
 
     public VoiceCaptureController(Context context) {
@@ -65,6 +77,7 @@ public final class VoiceCaptureController {
     }
 
     public synchronized JSONObject start(JSONObject args) throws CommandException {
+        boolean feedback = args.optBoolean("feedback", false);
         requireRecordPermission();
         if (active != null) {
             JSONObject out = new JSONObject();
@@ -78,7 +91,7 @@ public final class VoiceCaptureController {
         if (!format.isEmpty() && !"m4a".equals(format)) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Only m4a voice capture is supported");
         }
-        String audioSource = args.optString("audio_source", "mic").trim().toLowerCase(Locale.US);
+        String audioSource = args.optString("audio_source", "voice_recognition").trim().toLowerCase(Locale.US);
         int source = audioSource(audioSource);
         int maxDurationMs = clamp(args.optInt("max_duration_ms", DEFAULT_MAX_DURATION_MS),
                 1000, HARD_MAX_DURATION_MS);
@@ -94,16 +107,18 @@ public final class VoiceCaptureController {
             next.setAudioSource(source);
             next.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             next.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            next.setAudioEncodingBitRate(96000);
+            next.setAudioEncodingBitRate(128000);
             next.setAudioSamplingRate(44100);
             next.setOutputFile(file.getAbsolutePath());
-            next.setMaxDuration(maxDurationMs);
             next.prepare();
             next.start();
         } catch (Exception exc) {
             safeRelease(next);
             //noinspection ResultOfMethodCallIgnored
             file.delete();
+            if (feedback) {
+                buzzError();
+            }
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     "Unable to start voice capture: " + exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
@@ -115,9 +130,14 @@ public final class VoiceCaptureController {
         capture.startedElapsedMs = android.os.SystemClock.elapsedRealtime();
         capture.maxDurationMs = maxDurationMs;
         capture.sampleTag = args.optString("sample_tag", "");
+        capture.audioSource = audioSource;
+        capture.feedback = feedback;
         recorder = next;
         active = capture;
         scheduleAutoStop(sessionId, maxDurationMs);
+        if (feedback) {
+            buzzOneShot(READY_HAPTIC_MS, HAPTIC_AMPLITUDE);
+        }
 
         JSONObject out = activeJson(capture);
         Json.put(out, "schema", "pucky.voice_capture_start.v1");
@@ -133,12 +153,18 @@ public final class VoiceCaptureController {
             Json.put(out, "state", "idle");
             Json.put(out, "result", "no_active_capture");
             Json.put(out, "last_completed", latestCompletedValue());
+            if (args.optBoolean("feedback", false)) {
+                buzzError();
+            }
             return out;
         }
         String requested = args.optString("session_id", "").trim();
         if (!requested.isEmpty() && !requested.equals(active.sessionId)) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
                     "Active capture session is " + active.sessionId + ", not " + requested);
+        }
+        if (active.feedback) {
+            buzzOneShot(RELEASE_HAPTIC_MS, HAPTIC_AMPLITUDE);
         }
         return finishActive(args.optString("reason", "command_stop"));
     }
@@ -219,11 +245,17 @@ public final class VoiceCaptureController {
         if (!stopOk) {
             //noinspection ResultOfMethodCallIgnored
             capture.file.delete();
+            if (capture.feedback) {
+                buzzError();
+            }
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     "Unable to stop voice capture cleanly after " + durationMs + "ms: " + stopError);
         }
         JSONObject completed = completedJson(capture, durationMs, reason);
         appendCapture(completed);
+        if (capture.feedback) {
+            playSavedChime();
+        }
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.voice_capture_stop.v1");
         Json.put(out, "state", "completed");
@@ -269,6 +301,7 @@ public final class VoiceCaptureController {
         Json.put(out, "device_path", capture.file.getAbsolutePath());
         Json.put(out, "filename", capture.file.getName());
         Json.put(out, "mime_type", "audio/mp4");
+        Json.put(out, "audio_source", capture.audioSource == null || capture.audioSource.isEmpty() ? JSONObject.NULL : capture.audioSource);
         Json.put(out, "max_duration_ms", capture.maxDurationMs);
         Json.put(out, "sample_tag", capture.sampleTag == null || capture.sampleTag.isEmpty() ? JSONObject.NULL : capture.sampleTag);
         return out;
@@ -336,6 +369,55 @@ public final class VoiceCaptureController {
                 }
             }
         }, "pucky-voice-capture-autostop").start();
+    }
+
+    private void buzzOneShot(long millis, int amplitude) {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(millis, Math.max(1, Math.min(255, amplitude))));
+            } else {
+                vibrator.vibrate(millis);
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void buzzError() {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                        new long[] {0L, 80L, 80L, 120L},
+                        new int[] {0, ERROR_HAPTIC_AMPLITUDE, 0, ERROR_HAPTIC_AMPLITUDE},
+                        -1));
+            } else {
+                vibrator.vibrate(new long[] {0L, 80L, 80L, 120L}, -1);
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void playSavedChime() {
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, SAVED_CHIME_VOLUME);
+            generator.startTone(ToneGenerator.TONE_PROP_PROMPT, 150);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(280L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-voice-capture-saved-chime").start();
+        } catch (RuntimeException ignored) {
+        }
     }
 
     private JSONArray capturesJson() {

@@ -40,7 +40,7 @@ public final class ButtonController {
     private static final int KEY_VOLUME_UP = KeyEvent.KEYCODE_VOLUME_UP;
     private static final int KEY_VOLUME_DOWN = KeyEvent.KEYCODE_VOLUME_DOWN;
     private static final int MAX_EVENTS = 100;
-    private static final int CONFIG_VERSION = 18;
+    private static final int CONFIG_VERSION = 19;
     private static final int DEFAULT_LONG_PRESS_MS = 250;
 
     private final Context context;
@@ -472,11 +472,11 @@ public final class ButtonController {
                     Json.put(out, "status", "placeholder");
                     break;
                 case "voice.capture.start":
-                    Json.put(out, "result", VoiceCaptureController.shared(context).start(new JSONObject()));
+                    Json.put(out, "result", VoiceCaptureController.shared(context).start(voiceCaptureButtonArgs()));
                     Json.put(out, "status", "completed");
                     break;
                 case "voice.capture.stop":
-                    Json.put(out, "result", VoiceCaptureController.shared(context).stop(reasonArgs("button_release")));
+                    Json.put(out, "result", VoiceCaptureController.shared(context).stop(voiceCaptureStopArgs("button_release")));
                     Json.put(out, "status", "completed");
                     break;
                 case "pucky.turn.start":
@@ -574,7 +574,7 @@ public final class ButtonController {
         Json.put(out, "double_press_ms", 450);
         Json.put(out, "long_press_ms", DEFAULT_LONG_PRESS_MS);
         Json.put(out, "long_press_repeat_count", 1);
-        Json.put(out, "policy", "android_volume_pucky_raw_turn_echo_v18");
+        Json.put(out, "policy", "android_volume_pucky_raw_turn_capture_v19");
         Json.put(out, "mappings", defaultMappings());
         return out;
     }
@@ -585,8 +585,8 @@ public final class ButtonController {
         Json.put(mappings, "volume_up_hold", "pucky.turn.start");
         Json.put(mappings, "volume_up_hold_release", "pucky.turn.stop");
         Json.put(mappings, "volume_down_press", "volume.adjust.down");
-        Json.put(mappings, "volume_down_hold", "speech.echo.start");
-        Json.put(mappings, "volume_down_hold_release", "speech.echo.stop");
+        Json.put(mappings, "volume_down_hold", "voice.capture.start");
+        Json.put(mappings, "volume_down_hold_release", "voice.capture.stop");
         Json.put(mappings, "volume_up_double", "none");
         Json.put(mappings, "volume_down_double", "none");
         Json.put(mappings, "volume_both_press", "none");
@@ -619,7 +619,7 @@ public final class ButtonController {
         }
         Json.put(raw, "config_version", CONFIG_VERSION);
         Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 250, 1200));
-        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_raw_turn_echo_v18"));
+        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_raw_turn_capture_v19"));
         Json.put(raw, "mappings", mappings);
         return raw;
     }
@@ -756,6 +756,21 @@ public final class ButtonController {
     private JSONObject reasonArgs(String reason) {
         JSONObject out = new JSONObject();
         Json.put(out, "reason", reason);
+        return out;
+    }
+
+    private JSONObject voiceCaptureButtonArgs() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "format", "m4a");
+        Json.put(out, "audio_source", "voice_recognition");
+        Json.put(out, "sample_tag", "volume_down_walkie");
+        Json.put(out, "feedback", true);
+        return out;
+    }
+
+    private JSONObject voiceCaptureStopArgs(String reason) {
+        JSONObject out = reasonArgs(reason);
+        Json.put(out, "feedback", true);
         return out;
     }
 

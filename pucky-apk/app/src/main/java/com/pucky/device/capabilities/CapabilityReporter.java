@@ -133,8 +133,8 @@ public final class CapabilityReporter {
                 "Sets Android STREAM_MUSIC volume to a bounded level or percent for deterministic audio tests."));
         Json.add(out, cap("voice.capture", "voice.capture.start/voice.capture.stop/voice.capture.status/voice.capture.last/voice.capture.list/voice.capture.delete",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
-                "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "MediaRecorder microphone capture to app-owned .m4a artifacts. This is the diagnostic bridge before LiveKit PTT."));
+                "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
+                "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Volume-down walkie testing records until release without SpeechRecognizer endpointing."));
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_config_required" : "blocked_by_permission",
                 "foreground_service", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
