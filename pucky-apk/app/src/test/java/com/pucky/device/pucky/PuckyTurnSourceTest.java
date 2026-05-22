@@ -28,6 +28,18 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
+    public void volumeDownCapturePlaysBackSavedRawAudio() throws Exception {
+        String source = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
+
+        assertTrue(source.contains("import android.media.MediaPlayer;"));
+        assertTrue(source.contains("playCapturePlayback(capture.file"));
+        assertTrue(source.contains("setDataSource(file.getAbsolutePath())"));
+        assertTrue(source.contains("stopPlaybackLocked();"));
+        assertFalse(source.contains("SpeechRecognizer"));
+        assertFalse(source.contains("TextToSpeech"));
+    }
+
+    @Test
     public void nativeCommandExecutorAllowlistsPuckyTurnCommands() throws Exception {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
