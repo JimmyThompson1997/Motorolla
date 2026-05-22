@@ -1369,6 +1369,83 @@
     return Boolean(target && target.scrollTop > 0);
   }
 
+  function installFeedRubberBand() {
+    const feed = document.getElementById("feed");
+    if (!feed || feed.dataset.rubberBandBound) {
+      return;
+    }
+    feed.dataset.rubberBandBound = "true";
+
+    let startY = 0;
+    let active = false;
+    let offset = 0;
+    let raf = 0;
+
+    const atTop = () => feed.scrollTop <= 0;
+    const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
+    const apply = nextOffset => {
+      offset = nextOffset;
+      if (raf) {
+        return;
+      }
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        feed.style.transform = offset ? `translateY(${offset}px)` : "";
+      });
+    };
+    const reset = () => {
+      active = false;
+      offset = 0;
+      feed.classList.remove("is-rubber-banding");
+      feed.classList.add("is-rubber-band-release");
+      feed.style.transform = "";
+      window.setTimeout(() => {
+        feed.classList.remove("is-rubber-band-release");
+      }, 340);
+    };
+
+    feed.addEventListener("touchstart", event => {
+      if (!event.touches.length || state.route !== "feed") {
+        return;
+      }
+      startY = event.touches[0].clientY;
+      active = false;
+    }, { passive: true });
+
+    feed.addEventListener("touchmove", event => {
+      if (!event.touches.length || state.route !== "feed") {
+        return;
+      }
+      const dy = event.touches[0].clientY - startY;
+      const edgePull = (dy > 0 && atTop()) || (dy < 0 && atBottom());
+      if (!edgePull) {
+        if (active) {
+          reset();
+        }
+        return;
+      }
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      active = true;
+      feed.classList.add("is-rubber-banding");
+      feed.classList.remove("is-rubber-band-release");
+      const eased = Math.min(30, Math.pow(Math.abs(dy), 0.72));
+      apply(Math.sign(dy) * eased);
+    }, { passive: false });
+
+    feed.addEventListener("touchend", () => {
+      if (active) {
+        reset();
+      }
+    });
+    feed.addEventListener("touchcancel", () => {
+      if (active) {
+        reset();
+      }
+    });
+  }
+
   function cardTimestamp(card) {
     const raw = card.created_at || card.timestamp || card.time || "";
     const text = smartTimestamp(raw, "");
@@ -1756,5 +1833,6 @@
     }
   }, 90);
 
+  installFeedRubberBand();
   loadCards();
 })();

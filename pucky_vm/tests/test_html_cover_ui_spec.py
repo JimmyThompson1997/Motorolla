@@ -92,6 +92,9 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     assert "z-index: 100" in styles
     assert ".voice-status-listening" in styles
     assert ".voice-status-hearing" in styles
+    assert ".voice-status-hearing::before" in styles
+    assert ".voice-status-hearing::after" in styles
+    assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-speaking" in styles
     assert ".voice-status-off" in styles
     assert "@keyframes voicePulse" in styles
@@ -127,7 +130,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "No ${icon} replies yet." in app
     assert ".route-tray" in styles
     assert "position: absolute;" in styles
-    assert "top: 66px;" in styles
+    assert "top: 45px;" in styles
+    assert "top: 66px;" not in styles
     assert "pointer-events: none;" in styles
     assert "pointer-events: auto;" in styles
     assert ".route-tray-label" not in styles
@@ -136,6 +140,23 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "var(--filter-accent" in styles
     assert '.filter-icon[data-filter-icon="all"].is-selected' in styles
     assert ".feed-filter-empty" in styles
+
+
+def test_feed_has_subtle_edge_rubber_band() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "function installFeedRubberBand()" in app
+    assert "feed.dataset.rubberBandBound" in app
+    assert 'state.route !== "feed"' in app
+    assert "Math.pow(Math.abs(dy), 0.72)" in app
+    assert "Math.min(30" in app
+    assert 'feed.classList.add("is-rubber-banding")' in app
+    assert 'feed.classList.add("is-rubber-band-release")' in app
+    assert "installFeedRubberBand();" in app
+    assert "overscroll-behavior-y: contain;" in styles
+    assert ".feed.is-rubber-banding" in styles
+    assert ".feed.is-rubber-band-release" in styles
 
 
 def test_settings_tab_renders_mock_html_settings_page() -> None:
