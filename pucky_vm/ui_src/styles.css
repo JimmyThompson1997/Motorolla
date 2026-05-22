@@ -872,7 +872,6 @@ button {
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   touch-action: pan-y;
-  scroll-behavior: smooth;
 }
 
 .chat-media-rail::-webkit-scrollbar {
@@ -890,6 +889,7 @@ button {
   border-radius: 16px;
   color: var(--text);
   scroll-snap-align: start;
+  scroll-snap-stop: always;
 }
 
 .chat-media-tile img {
@@ -1114,7 +1114,6 @@ button {
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   touch-action: pan-y;
-  scroll-behavior: smooth;
 }
 
 .chat-media-rail.is-touch-paging,
@@ -1137,6 +1136,7 @@ button {
   flex-direction: column;
   gap: 12px;
   scroll-snap-align: start;
+  scroll-snap-stop: always;
 }
 
 .image-slide-frame {

@@ -563,8 +563,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function currentImageGalleryIndex(track)" in app
     assert "function installOneSlidePager(track)" in app
     assert "track.dataset.oneSlidePagerBound" in app
-    assert "snapTo(startIndex + direction)" in app
+    assert "const animateTo = (targetLeft, speed = 0, onComplete = reset) =>" in app
+    assert "const settleDurationFor = (distance, speed) =>" in app
+    assert "const flick = Math.abs(releaseVelocity) >= 0.32" in app
+    assert "Math.min(82, Math.max(28, track.clientWidth * 0.11))" in app
+    assert "snapTo(startIndex + direction, { velocity: releaseVelocity })" in app
     assert "track.scrollLeft = startLeft - dx" in app
+    assert "behavior: \"smooth\"" not in app
     assert "function resolveImageSrc(image)" in app
     assert "function resolvedImageMime(result, image, path)" in app
     assert "function isPdfMedia(item)" in app
@@ -622,9 +627,11 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-reel-count" in styles
     assert ".image-reel-meta" in styles
     assert "scroll-snap-type: x mandatory" in styles
+    assert "scroll-snap-stop: always" in styles
     assert "touch-action: pan-y" in styles
     assert ".image-gallery-track.is-touch-paging" in styles
     assert "scroll-snap-type: none" in styles
+    assert "scroll-behavior: smooth" not in styles
     assert "object-fit: contain" in styles
     assert "height: 52vh" not in styles
     assert "max-height: 540px" not in styles

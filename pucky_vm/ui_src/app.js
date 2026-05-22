@@ -2601,29 +2601,84 @@
     let startY = 0;
     let startLeft = 0;
     let startIndex = 0;
+    let startTime = 0;
+    let lastX = 0;
+    let lastTime = 0;
+    let velocityX = 0;
+    let settleRaf = 0;
     let active = false;
     let horizontal = false;
+    const stopSettle = () => {
+      if (settleRaf) {
+        cancelAnimationFrame(settleRaf);
+        settleRaf = 0;
+      }
+      track.classList.remove("is-touch-settling");
+    };
     const reset = () => {
       active = false;
       horizontal = false;
-      track.classList.remove("is-touch-paging");
+      track.classList.remove("is-touch-paging", "is-touch-settling");
     };
-    const snapTo = (index, behavior = "smooth") => {
+    const easeOutCubic = value => 1 - Math.pow(1 - value, 3);
+    const settleDurationFor = (distance, speed) => {
+      const base = distance > 180 ? 172 : 138;
+      const velocityBoost = Math.min(46, Math.abs(speed) * 82);
+      return Math.max(108, Math.round(base - velocityBoost));
+    };
+    const animateTo = (targetLeft, speed = 0, onComplete = reset) => {
+      stopSettle();
+      const fromLeft = Number(track.scrollLeft || 0);
+      const distance = targetLeft - fromLeft;
+      if (Math.abs(distance) < 1) {
+        track.scrollLeft = targetLeft;
+        onComplete();
+        return;
+      }
+      const duration = settleDurationFor(Math.abs(distance), speed);
+      const startedAt = performance.now();
+      track.classList.add("is-touch-paging", "is-touch-settling");
+      const step = now => {
+        const elapsed = Math.min(1, (now - startedAt) / duration);
+        track.scrollLeft = fromLeft + distance * easeOutCubic(elapsed);
+        if (elapsed < 1) {
+          settleRaf = requestAnimationFrame(step);
+          return;
+        }
+        settleRaf = 0;
+        track.scrollLeft = targetLeft;
+        onComplete();
+      };
+      settleRaf = requestAnimationFrame(step);
+    };
+    const snapTo = (index, options = {}) => {
       const clamped = Math.max(0, Math.min(track.children.length - 1, index));
       const slide = track.children[clamped];
       if (slide) {
-        track.scrollTo({ left: Number(slide.offsetLeft || 0), behavior });
+        const targetLeft = Number(slide.offsetLeft || 0);
+        if (options.animate === false) {
+          stopSettle();
+          track.scrollLeft = targetLeft;
+          reset();
+          return;
+        }
+        animateTo(targetLeft, options.velocity || 0, options.onComplete || reset);
       }
     };
     track.addEventListener("touchstart", event => {
       if (event.touches.length !== 1 || !track.children.length) {
         return;
       }
+      stopSettle();
       const touch = event.touches[0];
       startX = touch.clientX;
       startY = touch.clientY;
       startLeft = Number(track.scrollLeft || 0);
       startIndex = currentImageGalleryIndex(track);
+      startTime = performance.now();
+      lastX = startX;
+      lastTime = startTime;
+      velocityX = 0;
       active = true;
       horizontal = false;
     }, { passive: true });
@@ -2632,6 +2687,7 @@
         return;
       }
       const touch = event.touches[0];
+      const now = performance.now();
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
       if (!horizontal && Math.abs(dx) < 8 && Math.abs(dy) < 8) {
@@ -2645,6 +2701,10 @@
       track.classList.add("is-touch-paging");
       event.preventDefault();
       track.scrollLeft = startLeft - dx;
+      const dt = Math.max(1, now - lastTime);
+      velocityX = (touch.clientX - lastX) / dt;
+      lastX = touch.clientX;
+      lastTime = now;
     }, { passive: false });
     track.addEventListener("touchend", event => {
       if (!active) {
@@ -2653,20 +2713,21 @@
       const changed = event.changedTouches && event.changedTouches[0];
       const dx = changed ? changed.clientX - startX : startLeft - Number(track.scrollLeft || 0);
       if (!horizontal) {
-        snapTo(currentImageGalleryIndex(track));
-        reset();
+        snapTo(currentImageGalleryIndex(track), { animate: false });
         return;
       }
-      const threshold = Math.min(96, Math.max(34, track.clientWidth * 0.14));
-      const direction = Math.abs(dx) >= threshold ? (dx < 0 ? 1 : -1) : 0;
-      snapTo(startIndex + direction);
-      reset();
+      const elapsed = Math.max(1, performance.now() - startTime);
+      const averageVelocity = dx / elapsed;
+      const releaseVelocity = Math.abs(velocityX) > Math.abs(averageVelocity) ? velocityX : averageVelocity;
+      const threshold = Math.min(82, Math.max(28, track.clientWidth * 0.11));
+      const flick = Math.abs(releaseVelocity) >= 0.32 && Math.abs(dx) >= 16;
+      const direction = Math.abs(dx) >= threshold || flick ? (dx < 0 ? 1 : -1) : 0;
+      snapTo(startIndex + direction, { velocity: releaseVelocity });
     }, { passive: true });
     track.addEventListener("touchcancel", () => {
       if (active) {
-        snapTo(startIndex);
+        snapTo(startIndex, { velocity: velocityX });
       }
-      reset();
     }, { passive: true });
   }
 
