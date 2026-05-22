@@ -964,11 +964,35 @@
     const mime = String((result && result.mime_type) || "").toLowerCase();
     const content = String((result && result.content_base64) || "");
     if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
-      iframe.src = `data:application/pdf;base64,${content}`;
+      iframe.srcdoc = pdfArtifactHtml(result, path, content);
     } else {
       iframe.srcdoc = atob(content);
     }
     return iframe;
+  }
+
+  function pdfArtifactHtml(result, path, contentBase64) {
+    const name = String(path || "PDF artifact").replace(/^.*\//, "") || "PDF artifact";
+    const bytes = Number((result && result.bytes) || 0);
+    const size = bytes > 0 ? `${Math.round(bytes / 1024)} KB` : "cached artifact";
+    const href = contentBase64 ? `data:application/pdf;base64,${contentBase64}` : "#";
+    return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7fb;color:#101820;font-family:Arial,sans-serif}
+      main{box-sizing:border-box;width:min(86vw,540px);padding:28px;border-radius:28px;background:white;box-shadow:0 18px 70px rgba(16,24,32,.18)}
+      .icon{width:72px;height:88px;border-radius:10px;background:#e53935;color:white;display:grid;place-items:center;font-weight:900;font-size:22px;margin-bottom:20px}
+      h1{font-size:28px;line-height:1.05;margin:0 0 12px}
+      p{font-size:16px;line-height:1.45;color:#435063;margin:0 0 14px}
+      a{display:inline-block;margin-top:8px;padding:12px 16px;border-radius:999px;background:#101820;color:white;text-decoration:none;font-weight:800}
+    </style><main><div class="icon">PDF</div><h1>${escapeHtml(name)}</h1><p>${escapeHtml(size)}. Android WebView does not render PDF pages natively, so Pucky is showing this cached-document placeholder instead of a blank pane.</p><p>A future pass can add PDF.js thumbnails or native document opening.</p><a href="${href}">Open PDF data</a></main>`;
+  }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   async function showImageReel(card, imageSet = null, options = {}) {
