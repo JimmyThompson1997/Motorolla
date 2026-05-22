@@ -49,6 +49,7 @@ public final class PhysicalGestureFeedbackController {
     private static final long GYRO_TAP_GUARD_MS = 180L;
     private static final long GRAVITY_WINDOW_MS = 900L;
     private static final long START_ARM_DELAY_MS = 1_500L;
+    private static final long CHOP_PING_DELAY_MS = 500L;
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 1_000L;
     private static final long DOUBLE_TAP_BUZZ_DURATION_MS = 1_000L;
     private static final int MAX_VIBRATION_AMPLITUDE = 255;
@@ -281,7 +282,7 @@ public final class PhysicalGestureFeedbackController {
         cooldownUntilMs = now + cooldownMs();
         lastTapCandidateAtMs = 0L;
         lastTapPeakAtMs = 0L;
-        addEventLocked("single_chop_detected", "ping", gyro, gravityDelta);
+        addEventLocked("single_chop_detected", "delayed_ping", gyro, gravityDelta);
         playChopPing("single_chop");
     }
 
@@ -375,8 +376,26 @@ public final class PhysicalGestureFeedbackController {
 
     private void playChopPing(String reason) {
         try {
+            new Handler(context.getMainLooper()).postDelayed(() -> runChopPing(reason), CHOP_PING_DELAY_MS);
+            synchronized (lock) {
+                addEventLocked("ping_scheduled", reason, 0f, 0f);
+            }
+        } catch (RuntimeException exc) {
+            synchronized (lock) {
+                lastError = "ping failed: " + exc.getMessage();
+                addEventLocked("ping_failed", reason, 0f, 0f);
+            }
+            Log.w(TAG, "chop ping failed", exc);
+        }
+    }
+
+    private void runChopPing(String reason) {
+        try {
             ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
             generator.startTone(ToneGenerator.TONE_PROP_ACK, 120);
+            synchronized (lock) {
+                addEventLocked("ping_started", reason, 0f, 0f);
+            }
             new Thread(() -> {
                 try {
                     Thread.sleep(220L);
@@ -390,7 +409,7 @@ public final class PhysicalGestureFeedbackController {
                 lastError = "ping failed: " + exc.getMessage();
                 addEventLocked("ping_failed", reason, 0f, 0f);
             }
-            Log.w(TAG, "chop ping failed", exc);
+            Log.w(TAG, "delayed chop ping failed", exc);
         }
     }
 
