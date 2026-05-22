@@ -381,6 +381,14 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void clearSavedWebNavigation() {
+        if (webShell != null) {
+            webShell.evaluateJavascript(
+                    "try{localStorage.removeItem('pucky.cover.nav_state.v1');}catch(e){}",
+                    null);
+        }
+    }
+
     private void handleLaunchIntent(Intent intent) {
         if (intent == null) {
             return;
@@ -443,6 +451,9 @@ public class MainActivity extends Activity {
         }
         if (shouldStartAssistantSetup(intent)) {
             startAssistantSetupFlow();
+        }
+        if (showHomeRequested) {
+            clearSavedWebNavigation();
         }
         if (uiSurfaceChanged || showHomeRequested) {
             showHomeScreen();

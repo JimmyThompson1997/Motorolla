@@ -114,6 +114,8 @@ public final class MainActivityWebViewShellTest {
                 source.contains("handleLaunchIntent(intent);\n        showHomeScreen();"));
         assertTrue("Explicit show_home should remain the intentional reset path",
                 source.contains("boolean showHomeRequested = intent.getBooleanExtra(\"show_home\", false);")
+                        && source.contains("clearSavedWebNavigation();")
+                        && source.contains("localStorage.removeItem('pucky.cover.nav_state.v1')")
                         && source.contains("if (uiSurfaceChanged || showHomeRequested)"));
         assertFalse("ui_shell_mode is collapsed to web_cached and should not reload the UI by itself",
                 source.contains("Set UI shell mode from launch extra: \" + settingsStore.getUiShellMode());\n            uiSurfaceChanged = true;"));
