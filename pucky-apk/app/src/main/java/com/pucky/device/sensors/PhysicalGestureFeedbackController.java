@@ -6,14 +6,15 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
+import android.media.AudioAttributes;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
 import com.pucky.device.util.Json;
@@ -52,6 +53,8 @@ public final class PhysicalGestureFeedbackController {
     private static final long GRAVITY_WINDOW_MS = 900L;
     private static final long START_ARM_DELAY_MS = 1_500L;
     private static final long CHOP_PING_DELAY_MS = 600L;
+    private static final String CHOP_SPOKEN_PHRASE = "Program me";
+    private static final String CHOP_SPEECH_UTTERANCE_ID = "pucky_chop_program_me";
     private static final float HINGE_CLOSED_MAX_DEGREES = 20f;
     private static final long DOUBLE_TAP_BUZZ_DELAY_MS = 200L;
     private static final long DOUBLE_TAP_BUZZ_PULSE_MS = 200L;
@@ -75,8 +78,11 @@ public final class PhysicalGestureFeedbackController {
     private HandlerThread sensorThread;
     private Handler sensorHandler;
     private SensorEventListener listener;
+    private TextToSpeech chopSpeech;
 
     private boolean running;
+    private boolean chopSpeechReady;
+    private boolean chopSpeechInitializing;
     private long startedAtMs;
     private long lastTapCandidateAtMs;
     private long lastTapPeakAtMs;
@@ -89,6 +95,7 @@ public final class PhysicalGestureFeedbackController {
     private boolean hingeKnown;
     private long lastHingeAtMs;
     private float lastHingeAngle = Float.NaN;
+    private String pendingChopSpeechReason;
 
     private PhysicalGestureFeedbackController(Context context) {
         this.context = context.getApplicationContext();
@@ -116,6 +123,10 @@ public final class PhysicalGestureFeedbackController {
             Json.put(out, "enabled", enabled());
             Json.put(out, "chop_enabled", chopEnabled());
             Json.put(out, "double_tap_enabled", doubleTapEnabled());
+            Json.put(out, "chop_feedback", "speech");
+            Json.put(out, "chop_phrase", CHOP_SPOKEN_PHRASE);
+            Json.put(out, "speech_ready", chopSpeechReady);
+            Json.put(out, "speech_initializing", chopSpeechInitializing);
             Json.put(out, "running", running);
             Json.put(out, "started_at_ms", startedAtMs);
             Json.put(out, "armed", running && now - startedAtMs >= START_ARM_DELAY_MS);
@@ -186,7 +197,7 @@ public final class PhysicalGestureFeedbackController {
     public JSONObject trigger(JSONObject args) {
         String gesture = args.optString("gesture", "double_back_tap").trim().toLowerCase(Locale.US);
         if ("chop".equals(gesture) || "single_chop".equals(gesture)) {
-            playChopPing("manual_trigger");
+            playChopSpeech("manual_trigger");
         } else {
             playDoubleTapBuzz("manual_trigger");
         }
@@ -206,6 +217,7 @@ public final class PhysicalGestureFeedbackController {
     }
 
     public void start() {
+        boolean shouldWarmSpeech = false;
         synchronized (lock) {
             if (!enabled() || running) {
                 return;
@@ -244,6 +256,10 @@ public final class PhysicalGestureFeedbackController {
             startedAtMs = SystemClock.elapsedRealtime();
             lastError = "";
             addEventLocked("controller_started", "registered_" + registeredSensors.size(), 0f, 0f);
+            shouldWarmSpeech = true;
+        }
+        if (shouldWarmSpeech) {
+            ensureChopSpeechReady();
         }
     }
 
@@ -305,8 +321,8 @@ public final class PhysicalGestureFeedbackController {
         chopCount++;
         cooldownUntilMs = now + cooldownMs();
         clearTapTrackingLocked();
-        addEventLocked("single_chop_detected", "delayed_ping", gyro, gravityDelta);
-        playChopPing("single_chop");
+        addEventLocked("single_chop_detected", "delayed_speech", gyro, gravityDelta);
+        playChopSpeech("single_chop");
     }
 
     private void handleAccelLocked(long now, float[] values) {
@@ -421,42 +437,137 @@ public final class PhysicalGestureFeedbackController {
         return peak;
     }
 
-    private void playChopPing(String reason) {
-        try {
-            new Handler(context.getMainLooper()).postDelayed(() -> runChopPing(reason), CHOP_PING_DELAY_MS);
-            synchronized (lock) {
-                addEventLocked("ping_scheduled", reason, 0f, 0f);
+    private void ensureChopSpeechReady() {
+        synchronized (lock) {
+            if (chopSpeech != null || chopSpeechInitializing) {
+                return;
             }
-        } catch (RuntimeException exc) {
-            synchronized (lock) {
-                lastError = "ping failed: " + exc.getMessage();
-                addEventLocked("ping_failed", reason, 0f, 0f);
+            chopSpeechInitializing = true;
+        }
+        new Handler(context.getMainLooper()).post(() -> {
+            try {
+                ChopSpeechInitListener initListener = new ChopSpeechInitListener();
+                TextToSpeech speaker = new TextToSpeech(context, initListener);
+                initListener.attach(speaker);
+            } catch (RuntimeException exc) {
+                synchronized (lock) {
+                    chopSpeechInitializing = false;
+                    lastError = "speech init failed: " + exc.getMessage();
+                    addEventLocked("speech_failed", "init_exception", 0f, 0f);
+                }
+                Log.w(TAG, "chop speech init failed", exc);
             }
-            Log.w(TAG, "chop ping failed", exc);
+        });
+    }
+
+    private void handleChopSpeechInit(TextToSpeech speaker, int status) {
+        if (speaker == null) {
+            synchronized (lock) {
+                chopSpeechInitializing = false;
+                lastError = "speech init failed: missing speaker";
+                addEventLocked("speech_failed", "missing_speaker", 0f, 0f);
+            }
+            return;
+        }
+        if (status != TextToSpeech.SUCCESS) {
+            synchronized (lock) {
+                chopSpeechInitializing = false;
+                lastError = "speech init failed: " + status;
+                addEventLocked("speech_failed", "init_status_" + status, 0f, 0f);
+            }
+            speaker.shutdown();
+            return;
+        }
+        int language = speaker.setLanguage(Locale.US);
+        if (language == TextToSpeech.LANG_MISSING_DATA || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+            synchronized (lock) {
+                chopSpeechInitializing = false;
+                lastError = "speech init failed: unsupported locale";
+                addEventLocked("speech_failed", "unsupported_locale", 0f, 0f);
+            }
+            speaker.shutdown();
+            return;
+        }
+        speaker.setSpeechRate(1.0f);
+        speaker.setPitch(1.0f);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            speaker.setAudioAttributes(new AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .build());
+        }
+        String pendingReason = null;
+        boolean keepSpeaker = true;
+        synchronized (lock) {
+            chopSpeechInitializing = false;
+            if (!running) {
+                keepSpeaker = false;
+            } else {
+                chopSpeech = speaker;
+                chopSpeechReady = true;
+                lastError = "";
+                pendingReason = pendingChopSpeechReason;
+                pendingChopSpeechReason = null;
+                addEventLocked("speech_ready", CHOP_SPOKEN_PHRASE, 0f, 0f);
+            }
+        }
+        if (!keepSpeaker) {
+            speaker.shutdown();
+            return;
+        }
+        if (pendingReason != null) {
+            final String reason = pendingReason;
+            new Handler(context.getMainLooper()).post(() -> runChopSpeech(reason));
         }
     }
 
-    private void runChopPing(String reason) {
+    private void playChopSpeech(String reason) {
         try {
-            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, 100);
-            generator.startTone(ToneGenerator.TONE_PROP_ACK, 120);
+            ensureChopSpeechReady();
+            new Handler(context.getMainLooper()).postDelayed(() -> runChopSpeech(reason), CHOP_PING_DELAY_MS);
             synchronized (lock) {
-                addEventLocked("ping_started", reason, 0f, 0f);
+                addEventLocked("speech_scheduled", reason, 0f, 0f);
             }
-            new Thread(() -> {
-                try {
-                    Thread.sleep(220L);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-                generator.release();
-            }, "pucky-chop-ping-release").start();
         } catch (RuntimeException exc) {
             synchronized (lock) {
-                lastError = "ping failed: " + exc.getMessage();
-                addEventLocked("ping_failed", reason, 0f, 0f);
+                lastError = "speech failed: " + exc.getMessage();
+                addEventLocked("speech_failed", reason, 0f, 0f);
             }
-            Log.w(TAG, "delayed chop ping failed", exc);
+            Log.w(TAG, "chop speech failed", exc);
+        }
+    }
+
+    private void runChopSpeech(String reason) {
+        try {
+            TextToSpeech speaker;
+            synchronized (lock) {
+                speaker = chopSpeechReady ? chopSpeech : null;
+                if (speaker == null) {
+                    pendingChopSpeechReason = reason;
+                    addEventLocked("speech_waiting", reason, 0f, 0f);
+                }
+            }
+            if (speaker == null) {
+                ensureChopSpeechReady();
+                return;
+            }
+            Bundle params = new Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
+            int result = speaker.speak(CHOP_SPOKEN_PHRASE, TextToSpeech.QUEUE_FLUSH, params, CHOP_SPEECH_UTTERANCE_ID);
+            synchronized (lock) {
+                if (result == TextToSpeech.SUCCESS) {
+                    addEventLocked("speech_started", reason, 0f, 0f);
+                } else {
+                    lastError = "speech failed: speak returned " + result;
+                    addEventLocked("speech_failed", "speak_return_" + result, 0f, 0f);
+                }
+            }
+        } catch (RuntimeException exc) {
+            synchronized (lock) {
+                lastError = "speech failed: " + exc.getMessage();
+                addEventLocked("speech_failed", reason, 0f, 0f);
+            }
+            Log.w(TAG, "delayed chop speech failed", exc);
         }
     }
 
@@ -586,6 +697,17 @@ public final class PhysicalGestureFeedbackController {
         lastHingeAtMs = 0L;
         lastHingeAngle = Float.NaN;
         running = false;
+        pendingChopSpeechReason = null;
+        chopSpeechReady = false;
+        chopSpeechInitializing = false;
+        if (chopSpeech != null) {
+            try {
+                chopSpeech.stop();
+                chopSpeech.shutdown();
+            } catch (RuntimeException ignored) {
+            }
+            chopSpeech = null;
+        }
     }
 
     private boolean closedGateKnownLocked(long now) {
@@ -701,6 +823,23 @@ public final class PhysicalGestureFeedbackController {
 
     private static long clampLong(long value, long min, long max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private final class ChopSpeechInitListener implements TextToSpeech.OnInitListener {
+        private TextToSpeech speaker;
+
+        void attach(TextToSpeech speaker) {
+            this.speaker = speaker;
+        }
+
+        @Override
+        public void onInit(int status) {
+            if (speaker == null) {
+                new Handler(context.getMainLooper()).postDelayed(() -> handleChopSpeechInit(speaker, status), 25L);
+                return;
+            }
+            handleChopSpeechInit(speaker, status);
+        }
     }
 
     private static final class TimedVector {
