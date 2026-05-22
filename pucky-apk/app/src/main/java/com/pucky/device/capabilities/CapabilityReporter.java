@@ -134,7 +134,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("voice.capture", "voice.capture.start/voice.capture.stop/voice.capture.status/voice.capture.last/voice.capture.list/voice.capture.delete",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
-                "MediaRecorder hold-to-record capture to app-owned .m4a artifacts with immediate raw playback. Volume-down walkie testing records until release without SpeechRecognizer endpointing."));
+                "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Raw voice capture is save-only and does not replay recordings."));
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_config_required" : "blocked_by_permission",
                 "foreground_service", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
@@ -156,7 +156,7 @@ public final class CapabilityReporter {
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));
         Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete/speech.echo.voices",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No broker or agent call."));
+                "Strict on-device SpeechRecognizer hold-to-talk echo test with injected AudioRecord PCM, saved WAV artifacts, formatted final transcripts, language-detection logging, and Android TTS playback. No broker or agent call."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",

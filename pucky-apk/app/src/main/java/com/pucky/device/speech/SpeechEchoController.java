@@ -6,12 +6,16 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -29,6 +33,11 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,6 +57,13 @@ public final class SpeechEchoController {
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int ACCEPTED_CHIME_VOLUME = 85;
+    private static final int DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000;
+    private static final int HARD_MAX_DURATION_MS = 30 * 60 * 1000;
+    private static final int AUDIO_SAMPLE_RATE_HZ = 16000;
+    private static final int AUDIO_CHANNEL_COUNT = 1;
+    private static final int AUDIO_CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
+    private static final int AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT;
+    private static final int AUDIO_BITS_PER_SAMPLE = 16;
     private static final String FORMATTING_OFF = "off";
     private static final String FORMATTING_LATENCY = "latency";
     private static final String FORMATTING_QUALITY = "quality";
@@ -64,9 +80,12 @@ public final class SpeechEchoController {
 
     private SpeechRecognizer recognizer;
     private TextToSpeech speaker;
+    private AudioBridge audioBridge;
+    private ParcelFileDescriptor recognizerAudioSource;
     private JSONObject active;
     private boolean stopRequested;
     private boolean recognizerStarted;
+    private boolean readyBuzzed;
     private boolean ttsReady;
     private boolean ttsInitializing;
     private String ttsVoiceName = "";
@@ -89,7 +108,12 @@ public final class SpeechEchoController {
         Json.put(out, "schema", "pucky.speech_echo_status.v1");
         Json.put(out, "record_audio_granted", hasRecordAudio());
         Json.put(out, "on_device_available", onDeviceRecognitionAvailable());
+        Json.put(out, "injected_audio_available", injectedAudioAvailable());
         Json.put(out, "recognizer_mode", "strict_on_device");
+        Json.put(out, "audio_source_mode", "injected_audio_record_wav");
+        Json.put(out, "sample_rate_hz", AUDIO_SAMPLE_RATE_HZ);
+        Json.put(out, "channel_count", AUDIO_CHANNEL_COUNT);
+        Json.put(out, "encoding", "PCM_16BIT");
         Json.put(out, "default_formatting_mode", FORMATTING_QUALITY);
         Json.put(out, "default_language_detection", true);
         Json.put(out, "default_language_switch", LANGUAGE_SWITCH_OFF);
@@ -123,12 +147,31 @@ public final class SpeechEchoController {
                     "Android on-device SpeechRecognizer is unavailable on this device/build");
             return startResult(session, "failed");
         }
+        if (!injectedAudioAvailable()) {
+            appendFailedSession(session, "injected_audio_unavailable",
+                    "Android RecognizerIntent injected audio is unavailable on this device/build");
+            return startResult(session, "failed");
+        }
+
+        AudioBridge bridge;
+        try {
+            bridge = new AudioBridge(session);
+        } catch (Exception exc) {
+            appendFailedSession(session, "audio_pipe_failed",
+                    exc.getClass().getSimpleName() + ": " + exc.getMessage());
+            return startResult(session, "failed");
+        }
 
         active = session;
+        audioBridge = bridge;
+        recognizerAudioSource = bridge.recognizerReadFd();
         stopRequested = false;
         recognizerStarted = false;
+        readyBuzzed = false;
         ensureTtsReady();
+        bridge.start();
         main.postDelayed(this::startRecognizerOnMain, START_DELAY_MS);
+        scheduleAutoStop(session.optString("session_id"), session.optInt("max_duration_ms", DEFAULT_MAX_DURATION_MS));
         return startResult(session, "pending_start");
     }
 
@@ -146,17 +189,11 @@ public final class SpeechEchoController {
         Json.put(active, "stop_reason", args.optString("reason", "button_release"));
         Json.put(active, "state", recognizerStarted ? "stopping" : "cancelled_before_recognizer_start");
         buzzOneShot(RELEASE_HAPTIC_MS, HAPTIC_AMPLITUDE);
-        if (recognizerStarted) {
-            main.post(() -> {
-                try {
-                    if (recognizer != null) {
-                        recognizer.stopListening();
-                    }
-                } catch (RuntimeException exc) {
-                    failActive("stop_failed", exc.getClass().getSimpleName() + ": " + exc.getMessage(), false);
-                }
-            });
-        } else {
+        AudioBridge bridge = audioBridge;
+        if (bridge != null) {
+            bridge.requestStop();
+        }
+        if (!recognizerStarted) {
             failActive("stopped_before_start", "Button was released before SpeechRecognizer.startListening ran", false);
         }
         Json.put(out, "state", active == null ? "idle" : active.optString("state", "unknown"));
@@ -240,6 +277,13 @@ public final class SpeechEchoController {
         Json.put(session, "state", "pending_start");
         Json.put(session, "source", "android_speech_recognizer");
         Json.put(session, "recognizer_mode", "strict_on_device");
+        Json.put(session, "audio_source_mode", "injected_audio_record_wav");
+        Json.put(session, "raw_audio_container", "wav");
+        Json.put(session, "raw_audio_encoding", "PCM_16BIT");
+        Json.put(session, "sample_rate_hz", AUDIO_SAMPLE_RATE_HZ);
+        Json.put(session, "channel_count", AUDIO_CHANNEL_COUNT);
+        Json.put(session, "max_duration_ms", clamp(args.optInt("max_duration_ms", DEFAULT_MAX_DURATION_MS),
+                1000, HARD_MAX_DURATION_MS));
         Json.put(session, "language", args.optString("language", Locale.getDefault().toLanguageTag()));
         String formattingMode = formattingMode(args);
         Json.put(session, "formatting_mode", formattingMode);
@@ -282,6 +326,14 @@ public final class SpeechEchoController {
             recognizerStarted = true;
         }
         try {
+            ParcelFileDescriptor audioSource;
+            synchronized (this) {
+                audioSource = recognizerAudioSource;
+            }
+            if (audioSource == null) {
+                failActive("audio_source_missing", "No injected audio pipe is available for SpeechRecognizer", false);
+                return;
+            }
             recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
             recognizer.setRecognitionListener(new Listener(session.optString("session_id")));
             Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -291,6 +343,11 @@ public final class SpeechEchoController {
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
             intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
             intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
+            intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, audioSource);
+            intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, AUDIO_CHANNEL_COUNT);
+            intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AUDIO_ENCODING);
+            intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AUDIO_SAMPLE_RATE_HZ);
+            intent.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE);
             addFormattingExtras(intent, session);
             addLanguageExtras(intent, session);
             recognizer.startListening(intent);
@@ -308,9 +365,7 @@ public final class SpeechEchoController {
 
         @Override
         public void onReadyForSpeech(Bundle params) {
-            patch(sessionId, "ready_at", Instant.now().toString());
-            patch(sessionId, "ready_elapsed_ms", elapsedMsForSession(sessionId));
-            buzzOneShot(READY_HAPTIC_MS, HAPTIC_AMPLITUDE);
+            markRecognizerReady(sessionId);
         }
 
         @Override
@@ -372,6 +427,7 @@ public final class SpeechEchoController {
             cleanupRecognizer();
             return;
         }
+        attachAudioSnapshot(active);
         String text = first(values);
         Json.put(active, "completed_at", Instant.now().toString());
         Json.put(active, "completed_elapsed_ms", elapsedMs(active));
@@ -406,6 +462,11 @@ public final class SpeechEchoController {
             cleanupRecognizer();
             return;
         }
+        AudioBridge bridge = audioBridge;
+        if (bridge != null) {
+            bridge.requestStop();
+        }
+        attachAudioSnapshot(active);
         Json.put(active, "completed_at", Instant.now().toString());
         Json.put(active, "completed_elapsed_ms", elapsedMs(active));
         Json.put(active, "state", "failed");
@@ -646,6 +707,115 @@ public final class SpeechEchoController {
         }
     }
 
+    private synchronized void markRecognizerReady(String sessionId) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        Json.put(active, "recognizer_ready", true);
+        Json.put(active, "recognizer_ready_at", Instant.now().toString());
+        Json.put(active, "recognizer_ready_elapsed_ms", elapsedMs(active));
+        maybeBuzzReadyLocked(sessionId);
+    }
+
+    private synchronized void markAudioCaptureStarted(String sessionId, File file, int bufferSizeBytes) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        Json.put(active, "audio_capture_ready", true);
+        Json.put(active, "audio_capture_started_at", Instant.now().toString());
+        Json.put(active, "audio_capture_started_elapsed_ms", elapsedMs(active));
+        Json.put(active, "audio_record_buffer_size_bytes", bufferSizeBytes);
+        Json.put(active, "raw_audio", rawAudioJson(file, file.length(), 0L));
+        maybeBuzzReadyLocked(sessionId);
+    }
+
+    private void maybeBuzzReadyLocked(String sessionId) {
+        if (readyBuzzed || stopRequested || active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        if (!active.optBoolean("audio_capture_ready", false)
+                || !active.optBoolean("recognizer_ready", false)) {
+            return;
+        }
+        readyBuzzed = true;
+        Json.put(active, "ready_at", Instant.now().toString());
+        Json.put(active, "ready_elapsed_ms", elapsedMs(active));
+        buzzOneShot(READY_HAPTIC_MS, HAPTIC_AMPLITUDE);
+    }
+
+    private void markAudioCaptureClosed(String sessionId, File file, long bytes, long durationMs, String error) {
+        patchSession(sessionId, session -> {
+            Json.put(session, "audio_closed_at", Instant.now().toString());
+            Json.put(session, "audio_closed_elapsed_ms", elapsedMs(session));
+            Json.put(session, "raw_audio_bytes", bytes);
+            Json.put(session, "raw_audio_duration_ms", durationMs);
+            Json.put(session, "raw_audio", rawAudioJson(file, bytes, durationMs));
+            if (error != null && !error.isEmpty()) {
+                Json.put(session, "audio_capture_error", error);
+            }
+        });
+    }
+
+    private void markAudioCaptureFailed(String sessionId, String error) {
+        patchSession(sessionId, session -> {
+            Json.put(session, "audio_capture_error", error);
+            Json.put(session, "audio_capture_failed_at", Instant.now().toString());
+            Json.put(session, "audio_capture_failed_elapsed_ms", elapsedMs(session));
+        });
+        failActive("audio_capture_failed", error, false);
+    }
+
+    private void attachAudioSnapshot(JSONObject session) {
+        AudioBridge bridge = audioBridge;
+        if (bridge == null) {
+            return;
+        }
+        Json.put(session, "raw_audio_bytes", bridge.bytesWritten());
+        Json.put(session, "raw_audio_duration_ms", bridge.durationMs());
+        Json.put(session, "raw_audio", rawAudioJson(bridge.file(), bridge.bytesWritten(), bridge.durationMs()));
+    }
+
+    private JSONObject rawAudioJson(File file, long bytes, long durationMs) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "artifact_id", "art_" + Integer.toHexString(file.getAbsolutePath().hashCode()));
+        Json.put(out, "kind", "speech_echo_raw_audio");
+        Json.put(out, "container", "wav");
+        Json.put(out, "mime_type", "audio/wav");
+        Json.put(out, "encoding", "PCM_16BIT");
+        Json.put(out, "sample_rate_hz", AUDIO_SAMPLE_RATE_HZ);
+        Json.put(out, "channel_count", AUDIO_CHANNEL_COUNT);
+        Json.put(out, "bits_per_sample", AUDIO_BITS_PER_SAMPLE);
+        Json.put(out, "path", file.getAbsolutePath());
+        Json.put(out, "device_path", file.getAbsolutePath());
+        Json.put(out, "filename", file.getName());
+        Json.put(out, "bytes", file.exists() ? file.length() : bytes);
+        Json.put(out, "pcm_bytes", bytes);
+        Json.put(out, "duration_ms", durationMs);
+        Json.put(out, "exists", file.exists());
+        Json.put(out, "last_modified_ms", file.exists() ? file.lastModified() : 0L);
+        return out;
+    }
+
+    private interface SessionPatch {
+        void apply(JSONObject session);
+    }
+
+    private synchronized void patchSession(String sessionId, SessionPatch patch) {
+        if (active != null && sessionId.equals(active.optString("session_id"))) {
+            patch.apply(active);
+            return;
+        }
+        JSONArray all = sessionsJson();
+        for (int i = all.length() - 1; i >= 0; i--) {
+            JSONObject item = all.optJSONObject(i);
+            if (item != null && sessionId.equals(item.optString("session_id"))) {
+                patch.apply(item);
+                prefs.edit().putString(SESSIONS, all.toString()).commit();
+                return;
+            }
+        }
+    }
+
     private synchronized void markAcceptedChime(String sessionId) {
         JSONArray all = sessionsJson();
         for (int i = all.length() - 1; i >= 0; i--) {
@@ -742,6 +912,10 @@ public final class SpeechEchoController {
                 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
     }
 
+    private boolean injectedAudioAvailable() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU;
+    }
+
     private void addFormattingExtras(Intent intent, JSONObject session) {
         if (!session.optBoolean("formatting_enabled", false)
                 || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -806,6 +980,18 @@ public final class SpeechEchoController {
     }
 
     private void cleanupRecognizer() {
+        AudioBridge bridge;
+        ParcelFileDescriptor audioSource;
+        synchronized (this) {
+            bridge = audioBridge;
+            audioBridge = null;
+            audioSource = recognizerAudioSource;
+            recognizerAudioSource = null;
+        }
+        if (bridge != null) {
+            bridge.requestStop();
+        }
+        safeClose(audioSource);
         main.post(() -> {
             if (recognizer != null) {
                 try {
@@ -817,6 +1003,272 @@ public final class SpeechEchoController {
             recognizerStarted = false;
             stopRequested = false;
         });
+    }
+
+    private void scheduleAutoStop(String sessionId, int maxDurationMs) {
+        new Thread(() -> {
+            try {
+                Thread.sleep(maxDurationMs + 250L);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            synchronized (SpeechEchoController.this) {
+                if (active == null || !sessionId.equals(active.optString("session_id"))) {
+                    return;
+                }
+            }
+            JSONObject args = new JSONObject();
+            Json.put(args, "reason", "max_duration");
+            stop(args);
+        }, "pucky-speech-echo-autostop").start();
+    }
+
+    private final class AudioBridge implements Runnable {
+        private final String sessionId;
+        private final File file;
+        private final ParcelFileDescriptor readFd;
+        private final ParcelFileDescriptor writeFd;
+        private volatile boolean stop;
+        private volatile AudioRecord audioRecord;
+        private volatile long bytesWritten;
+        private volatile long startedElapsedMs;
+        private volatile long closedElapsedMs;
+
+        AudioBridge(JSONObject session) throws IOException {
+            this.sessionId = safeSessionId(session.optString("session_id"));
+            Json.put(session, "session_id", this.sessionId);
+            File dir = new File(context.getFilesDir(), "voice");
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw new IOException("Unable to create voice directory");
+            }
+            this.file = uniqueFile(dir, this.sessionId + ".wav");
+            ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+            this.readFd = pipe[0];
+            this.writeFd = pipe[1];
+            Json.put(session, "raw_audio", rawAudioJson(file, 0L, 0L));
+        }
+
+        ParcelFileDescriptor recognizerReadFd() {
+            return readFd;
+        }
+
+        File file() {
+            return file;
+        }
+
+        long bytesWritten() {
+            return bytesWritten;
+        }
+
+        long durationMs() {
+            long end = closedElapsedMs > 0L ? closedElapsedMs : SystemClock.elapsedRealtime();
+            return startedElapsedMs <= 0L ? 0L : Math.max(0L, end - startedElapsedMs);
+        }
+
+        void start() {
+            new Thread(this, "pucky-speech-echo-audio-bridge").start();
+        }
+
+        void requestStop() {
+            stop = true;
+            AudioRecord local = audioRecord;
+            if (local != null) {
+                try {
+                    local.stop();
+                } catch (RuntimeException ignored) {
+                }
+            } else {
+                safeClose(writeFd);
+            }
+        }
+
+        @Override
+        public void run() {
+            FileOutputStream wav = null;
+            OutputStream pipe = null;
+            AudioRecord local = null;
+            String error = "";
+            try {
+                wav = new FileOutputStream(file);
+                writeWavHeader(wav, 0L);
+                pipe = new ParcelFileDescriptor.AutoCloseOutputStream(writeFd);
+                int minBufferSize = AudioRecord.getMinBufferSize(
+                        AUDIO_SAMPLE_RATE_HZ, AUDIO_CHANNEL_CONFIG, AUDIO_ENCODING);
+                if (minBufferSize <= 0) {
+                    throw new IOException("AudioRecord.getMinBufferSize returned " + minBufferSize);
+                }
+                int bufferSize = Math.max(minBufferSize, AUDIO_SAMPLE_RATE_HZ * AUDIO_CHANNEL_COUNT);
+                AudioFormat format = new AudioFormat.Builder()
+                        .setSampleRate(AUDIO_SAMPLE_RATE_HZ)
+                        .setChannelMask(AUDIO_CHANNEL_CONFIG)
+                        .setEncoding(AUDIO_ENCODING)
+                        .build();
+                AudioRecord.Builder builder = new AudioRecord.Builder()
+                        .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                        .setAudioFormat(format)
+                        .setBufferSizeInBytes(bufferSize);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setContext(context);
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    builder.setPrivacySensitive(true);
+                }
+                local = builder.build();
+                audioRecord = local;
+                if (local.getState() != AudioRecord.STATE_INITIALIZED) {
+                    throw new IOException("AudioRecord failed to initialize");
+                }
+                local.startRecording();
+                if (local.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                    throw new IOException("AudioRecord did not enter recording state");
+                }
+                startedElapsedMs = SystemClock.elapsedRealtime();
+                markAudioCaptureStarted(sessionId, file, bufferSize);
+                byte[] buffer = new byte[Math.max(4096, Math.min(bufferSize, 16384))];
+                while (!stop) {
+                    int read = local.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+                    if (read > 0) {
+                        wav.write(buffer, 0, read);
+                        pipe.write(buffer, 0, read);
+                        bytesWritten += read;
+                    } else if (read < 0 && !stop) {
+                        throw new IOException("AudioRecord.read returned " + read);
+                    }
+                }
+            } catch (Exception exc) {
+                error = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+                if (!stop) {
+                    markAudioCaptureFailed(sessionId, error);
+                }
+            } finally {
+                stop = true;
+                safeClose(pipe);
+                safeClose(wav);
+                if (local != null) {
+                    try {
+                        if (local.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                            local.stop();
+                        }
+                    } catch (RuntimeException ignored) {
+                    }
+                    try {
+                        local.release();
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+                audioRecord = null;
+                closedElapsedMs = SystemClock.elapsedRealtime();
+                patchWavHeader(file, bytesWritten);
+                markAudioCaptureClosed(sessionId, file, bytesWritten(), durationMs(), error);
+            }
+        }
+    }
+
+    private static void writeWavHeader(OutputStream out, long pcmBytes) throws IOException {
+        long totalBytes = 36L + pcmBytes;
+        long byteRate = (long) AUDIO_SAMPLE_RATE_HZ * AUDIO_CHANNEL_COUNT * AUDIO_BITS_PER_SAMPLE / 8L;
+        byte[] header = new byte[44];
+        writeAscii(header, 0, "RIFF");
+        writeLittleEndianInt(header, 4, (int) Math.min(totalBytes, 0xFFFFFFFFL));
+        writeAscii(header, 8, "WAVE");
+        writeAscii(header, 12, "fmt ");
+        writeLittleEndianInt(header, 16, 16);
+        writeLittleEndianShort(header, 20, 1);
+        writeLittleEndianShort(header, 22, AUDIO_CHANNEL_COUNT);
+        writeLittleEndianInt(header, 24, AUDIO_SAMPLE_RATE_HZ);
+        writeLittleEndianInt(header, 28, (int) byteRate);
+        writeLittleEndianShort(header, 32, AUDIO_CHANNEL_COUNT * AUDIO_BITS_PER_SAMPLE / 8);
+        writeLittleEndianShort(header, 34, AUDIO_BITS_PER_SAMPLE);
+        writeAscii(header, 36, "data");
+        writeLittleEndianInt(header, 40, (int) Math.min(pcmBytes, 0xFFFFFFFFL));
+        out.write(header);
+    }
+
+    private static void patchWavHeader(File file, long pcmBytes) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            byte[] sizes = new byte[4];
+            writeLittleEndianInt(sizes, 0, (int) Math.min(36L + pcmBytes, 0xFFFFFFFFL));
+            raf.seek(4L);
+            raf.write(sizes);
+            writeLittleEndianInt(sizes, 0, (int) Math.min(pcmBytes, 0xFFFFFFFFL));
+            raf.seek(40L);
+            raf.write(sizes);
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void writeAscii(byte[] target, int offset, String value) {
+        for (int i = 0; i < value.length(); i++) {
+            target[offset + i] = (byte) value.charAt(i);
+        }
+    }
+
+    private static void writeLittleEndianInt(byte[] target, int offset, int value) {
+        target[offset] = (byte) (value & 0xFF);
+        target[offset + 1] = (byte) ((value >> 8) & 0xFF);
+        target[offset + 2] = (byte) ((value >> 16) & 0xFF);
+        target[offset + 3] = (byte) ((value >> 24) & 0xFF);
+    }
+
+    private static void writeLittleEndianShort(byte[] target, int offset, int value) {
+        target[offset] = (byte) (value & 0xFF);
+        target[offset + 1] = (byte) ((value >> 8) & 0xFF);
+    }
+
+    private static void safeClose(OutputStream stream) {
+        if (stream == null) {
+            return;
+        }
+        try {
+            stream.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void safeClose(ParcelFileDescriptor fd) {
+        if (fd == null) {
+            return;
+        }
+        try {
+            fd.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static String safeSessionId(String raw) {
+        String value = raw == null || raw.trim().isEmpty()
+                ? "echo_" + Long.toHexString(System.currentTimeMillis())
+                : raw.trim();
+        value = value.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (!value.startsWith("echo_")) {
+            value = "echo_" + value;
+        }
+        return value.length() > 80 ? value.substring(0, 80) : value;
+    }
+
+    private static File uniqueFile(File dir, String name) {
+        File first = new File(dir, name);
+        if (!first.exists()) {
+            return first;
+        }
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        for (int i = 1; i < 1000; i++) {
+            File candidate = new File(dir, base + "-" + i + ext);
+            if (!candidate.exists()) {
+                return candidate;
+            }
+        }
+        return new File(dir, base + "-" + System.currentTimeMillis() + ext);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static String first(ArrayList<String> values) {

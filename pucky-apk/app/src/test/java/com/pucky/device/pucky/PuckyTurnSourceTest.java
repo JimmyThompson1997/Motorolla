@@ -15,28 +15,30 @@ public final class PuckyTurnSourceTest {
     public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToCapture() throws Exception {
         String source = read("src/main/java/com/pucky/device/buttons/ButtonController.java");
 
-        assertTrue(source.contains("\"android_volume_pucky_raw_turn_capture_v19\""));
+        assertTrue(source.contains("\"android_volume_pucky_speech_echo_wav_v20\""));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold\", \"pucky.turn.start\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold_release\", \"pucky.turn.stop\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"voice.capture.start\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"voice.capture.stop\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.start\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.stop\")"));
         assertTrue(source.contains("PuckyTurnController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("PuckyTurnController.shared(context).stop(reasonArgs(\"button_release\"))"));
-        assertTrue(source.contains("VoiceCaptureController.shared(context).start(voiceCaptureButtonArgs())"));
-        assertTrue(source.contains("VoiceCaptureController.shared(context).stop(voiceCaptureStopArgs(\"button_release\"))"));
+        assertTrue(source.contains("SpeechEchoController.shared(context).start(new JSONObject())"));
+        assertTrue(source.contains("SpeechEchoController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertFalse(source.contains("Json.put(mappings, \"volume_up_hold\", \"livekit.ptt.start\")"));
     }
 
     @Test
-    public void volumeDownCapturePlaysBackSavedRawAudio() throws Exception {
-        String source = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
+    public void volumeDownEchoInjectsSavedRawAudioIntoOnDeviceSpeech() throws Exception {
+        String echo = read("src/main/java/com/pucky/device/speech/SpeechEchoController.java");
+        String capture = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
 
-        assertTrue(source.contains("import android.media.MediaPlayer;"));
-        assertTrue(source.contains("playCapturePlayback(capture.file"));
-        assertTrue(source.contains("setDataSource(file.getAbsolutePath())"));
-        assertTrue(source.contains("stopPlaybackLocked();"));
-        assertFalse(source.contains("SpeechRecognizer"));
-        assertFalse(source.contains("TextToSpeech"));
+        assertTrue(echo.contains("import android.media.AudioRecord;"));
+        assertTrue(echo.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE"));
+        assertTrue(echo.contains("RecognizerIntent.EXTRA_SEGMENTED_SESSION"));
+        assertTrue(echo.contains("SpeechRecognizer.createOnDeviceSpeechRecognizer(context)"));
+        assertTrue(echo.contains("raw_audio_container\", \"wav\""));
+        assertFalse(capture.contains("import android.media.MediaPlayer;"));
+        assertFalse(capture.contains("playCapturePlayback"));
     }
 
     @Test

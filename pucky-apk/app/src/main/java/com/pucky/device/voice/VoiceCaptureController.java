@@ -4,15 +4,12 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.media.AudioAttributes;
 import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.util.Log;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -26,7 +23,6 @@ import java.time.Instant;
 import java.util.Locale;
 
 public final class VoiceCaptureController {
-    private static final String TAG = "VoiceCapture";
     private static final String PREFS = "pucky_voice_capture";
     private static final String CAPTURES = "captures_json";
     private static final int MAX_CAPTURES = 100;
@@ -38,7 +34,6 @@ public final class VoiceCaptureController {
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int SAVED_CHIME_VOLUME = 85;
-    private static final long PLAYBACK_AFTER_CHIME_DELAY_MS = 240L;
 
     private static VoiceCaptureController shared;
 
@@ -46,7 +41,6 @@ public final class VoiceCaptureController {
     private final SharedPreferences prefs;
 
     private MediaRecorder recorder;
-    private MediaPlayer playback;
     private ActiveCapture active;
 
     private static final class ActiveCapture {
@@ -101,7 +95,6 @@ public final class VoiceCaptureController {
         int source = audioSource(audioSource);
         int maxDurationMs = clamp(args.optInt("max_duration_ms", DEFAULT_MAX_DURATION_MS),
                 1000, HARD_MAX_DURATION_MS);
-        stopPlaybackLocked();
         File dir = new File(context.getFilesDir(), "voice");
         if (!dir.exists() && !dir.mkdirs()) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Unable to create voice directory");
@@ -262,12 +255,7 @@ public final class VoiceCaptureController {
         appendCapture(completed);
         if (capture.feedback) {
             playSavedChime();
-            playCapturePlayback(capture.file, PLAYBACK_AFTER_CHIME_DELAY_MS);
         }
-        Log.i(TAG, "capture completed session=" + capture.sessionId
-                + " duration_ms=" + durationMs
-                + " bytes=" + capture.file.length()
-                + " playback=" + capture.feedback);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.voice_capture_stop.v1");
         Json.put(out, "state", "completed");
@@ -277,7 +265,6 @@ public final class VoiceCaptureController {
         Json.put(out, "session_id", capture.sessionId);
         Json.put(out, "duration_ms", durationMs);
         Json.put(out, "bytes", capture.file.length());
-        Json.put(out, "playback", capture.feedback ? "scheduled" : "disabled");
         return out;
     }
 
@@ -433,74 +420,6 @@ public final class VoiceCaptureController {
         }
     }
 
-    private void playCapturePlayback(File file, long delayMs) {
-        new Thread(() -> {
-            if (delayMs > 0L) {
-                try {
-                    Thread.sleep(delayMs);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-            MediaPlayer next = new MediaPlayer();
-            boolean assigned = false;
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    next.setAudioAttributes(new AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build());
-                } else {
-                    next.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                }
-                next.setDataSource(file.getAbsolutePath());
-                next.setVolume(1.0f, 1.0f);
-                next.setOnCompletionListener(this::releasePlayback);
-                next.setOnErrorListener((player, what, extra) -> {
-                    releasePlayback(player);
-                    return true;
-                });
-                synchronized (VoiceCaptureController.this) {
-                    stopPlaybackLocked();
-                    playback = next;
-                    assigned = true;
-                }
-                next.prepare();
-                next.start();
-                Log.i(TAG, "playback started file=" + file.getName() + " bytes=" + file.length());
-            } catch (Exception ignored) {
-                Log.w(TAG, "playback failed file=" + file.getName(), ignored);
-                if (assigned) {
-                    releasePlayback(next);
-                } else {
-                    safeRelease(next);
-                }
-            }
-        }, "pucky-voice-capture-playback").start();
-    }
-
-    private synchronized void releasePlayback(MediaPlayer player) {
-        if (playback == player) {
-            playback = null;
-            Log.i(TAG, "playback completed");
-        }
-        safeRelease(player);
-    }
-
-    private void stopPlaybackLocked() {
-        MediaPlayer current = playback;
-        playback = null;
-        if (current == null) {
-            return;
-        }
-        try {
-            current.stop();
-        } catch (RuntimeException ignored) {
-        }
-        safeRelease(current);
-    }
-
     private JSONArray capturesJson() {
         String raw = prefs.getString(CAPTURES, "[]");
         try {
@@ -555,13 +474,6 @@ public final class VoiceCaptureController {
         }
         try {
             recorder.release();
-        } catch (RuntimeException ignored) {
-        }
-    }
-
-    private static void safeRelease(MediaPlayer player) {
-        try {
-            player.release();
         } catch (RuntimeException ignored) {
         }
     }
