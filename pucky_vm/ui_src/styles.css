@@ -1154,9 +1154,9 @@ button {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   overflow: hidden;
-  padding: 10px 16px var(--nav-safe);
+  padding: 8px 16px var(--nav-safe);
   scrollbar-width: none;
 }
 
@@ -1169,11 +1169,11 @@ button {
 .audio-summary {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.22;
+  font-size: 12px;
+  line-height: 1.18;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1199,7 +1199,7 @@ button {
 .scrub-slider {
   position: relative;
   width: 100%;
-  height: 36px;
+  height: 30px;
   display: flex;
   align-items: center;
   touch-action: none;
@@ -1275,7 +1275,7 @@ button {
 
 .control {
   min-width: 42px;
-  height: 42px;
+  height: 38px;
   border-radius: 999px;
   background: transparent;
   color: var(--text);
@@ -1298,30 +1298,30 @@ button {
 }
 
 .control-play {
-  min-width: 58px;
-  height: 54px;
+  min-width: 50px;
+  height: 48px;
   background: rgba(245, 249, 255, 0.96);
   color: var(--bg);
 }
 
 .control-play .material-icon {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
 }
 
 .control-speed {
   grid-column: 1;
   justify-self: start;
   min-width: 58px;
-  height: 40px;
+  height: 36px;
   padding: 0 12px;
   font-size: 13px;
   background: rgba(11, 24, 40, 0.72);
 }
 
 .timestamp-list {
-  flex: 1 1 112px;
-  min-height: 112px;
+  flex: 1 1 148px;
+  min-height: 148px;
   overflow-y: auto;
   margin-top: 0;
   padding: 0 0 16px;
