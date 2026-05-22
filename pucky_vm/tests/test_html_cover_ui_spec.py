@@ -38,6 +38,9 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'icon: "bell"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
+    assert 'route: "settings"' in app
+    assert 'icon: "settings"' in app
+    assert 'label: "Settings"' in app
     assert 'route: "morning"' in app
     assert 'icon: "coffee"' in app
     assert 'route: "calls"' in app
@@ -53,6 +56,28 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "shape-rendering: crispEdges" not in styles
     assert ".tab.is-active .material-icon" in styles
     assert ".tab:not(.is-active) .material-icon" in styles
+
+
+def test_settings_tab_renders_mock_html_settings_page() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "const MOCK_SETTINGS" in app
+    assert 'state.route === "settings"' in app
+    assert "settingsPageView()" in app
+    assert "function settingsPageView()" in app
+    assert "function settingsRowView(setting)" in app
+    assert '"settings-page"' in app
+    assert '"settings-hero"' in app
+    assert '"settings-card"' in app
+    assert "Pucky's phone-side powers" in app
+    assert "Wake word" in app
+    assert "Cover gestures" in app
+    assert "Native bridge" in app
+    assert ".settings-page" in styles
+    assert ".settings-hero" in styles
+    assert ".settings-card" in styles
+    assert ".settings-card-value" in styles
 
 
 def test_leaving_home_uses_standard_material_card_icon() -> None:

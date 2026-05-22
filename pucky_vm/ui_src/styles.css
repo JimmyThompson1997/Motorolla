@@ -166,6 +166,117 @@ button {
   line-height: 1.35;
 }
 
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 0 var(--nav-safe);
+}
+
+.settings-hero,
+.settings-card {
+  border: 1px solid rgba(33, 52, 72, 0.92);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.settings-hero {
+  min-height: 112px;
+  border-radius: 22px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  padding: 18px 18px;
+}
+
+.settings-hero-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: linear-gradient(145deg, rgba(58, 132, 255, 0.35), rgba(139, 99, 255, 0.18));
+  box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.08);
+}
+
+.settings-hero-icon .material-icon {
+  width: 31px;
+  height: 31px;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.settings-subtitle {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.settings-card {
+  min-height: 76px;
+  border-radius: 18px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-color: color-mix(in srgb, var(--accent, #72c2ff) 36%, rgba(33, 52, 72, 0.92));
+}
+
+.settings-card-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: var(--accent, #72c2ff);
+}
+
+.settings-card-icon .material-icon {
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
+}
+
+.settings-card-copy {
+  min-width: 0;
+}
+
+.settings-card-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.05;
+  font-weight: 820;
+}
+
+.settings-card-detail {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-card-value {
+  justify-self: end;
+  max-width: 132px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.15;
+  font-weight: 780;
+  text-align: right;
+}
+
 .card-wrap {
   position: relative;
   margin: 0 0 10px;

@@ -99,10 +99,42 @@
 
   const PAGE_TABS = [
     { route: "feed", icon: "mail", label: "Home" },
+    { route: "settings", icon: "settings", label: "Settings" },
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "messages", icon: "chat", label: "Messages" },
     { route: "sensors", icon: "sensors", label: "Sensors" }
+  ];
+
+  const MOCK_SETTINGS = [
+    {
+      icon: "mic",
+      title: "Wake word",
+      value: "Pucky armed",
+      detail: "Local wake phrase test mode",
+      accent: "#72c2ff"
+    },
+    {
+      icon: "sensors",
+      title: "Cover gestures",
+      value: "Wave enabled",
+      detail: "Folded, flat, face-up guardrails",
+      accent: "#50d86a"
+    },
+    {
+      icon: "book",
+      title: "Audio cache",
+      value: "3.8 GB ready",
+      detail: "Replies and audiobook files available offline",
+      accent: "#ffb000"
+    },
+    {
+      icon: "settings",
+      title: "Native bridge",
+      value: "Connected",
+      detail: "Sensors, player, files, and permissions",
+      accent: "#8b63ff"
+    }
   ];
 
   const MOCK_CARDS = [
@@ -407,6 +439,10 @@
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
+      if (state.route === "settings") {
+        feed.replaceChildren(settingsPageView());
+        return;
+      }
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
@@ -415,6 +451,36 @@
       return;
     }
     feed.replaceChildren(...state.cards.map(cardView));
+  }
+
+  function settingsPageView() {
+    const page = el("section", "settings-page");
+    const hero = el("article", "settings-hero");
+    const heroIcon = el("div", "settings-hero-icon");
+    heroIcon.innerHTML = iconSvg("settings", { filled: true });
+    const heroCopy = el("div", "settings-hero-copy");
+    heroCopy.append(
+      el("h1", "settings-title", "Settings"),
+      el("p", "settings-subtitle", "Mock HTML control surface for Pucky's phone-side powers.")
+    );
+    hero.append(heroIcon, heroCopy);
+    page.append(hero, ...MOCK_SETTINGS.map(settingsRowView));
+    return page;
+  }
+
+  function settingsRowView(setting) {
+    const row = el("article", "settings-card");
+    row.style.setProperty("--accent", setting.accent || "#72c2ff");
+    const icon = el("div", "settings-card-icon");
+    icon.innerHTML = iconSvg(setting.icon, { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", setting.title),
+      el("p", "settings-card-detail", setting.detail)
+    );
+    const value = el("div", "settings-card-value", setting.value);
+    row.append(icon, copy, value);
+    return row;
   }
 
   function cardView(card) {
