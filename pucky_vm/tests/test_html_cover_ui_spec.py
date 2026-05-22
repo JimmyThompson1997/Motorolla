@@ -482,7 +482,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert ".control-play .material-icon" in styles
     assert ".timestamp-list" in styles
     assert 'player.append(waveform(card, "audio-wave"' not in app
-    assert "min-height: 112px" in styles
+    assert "min-height: 148px" in styles
     assert ".timestamp-row.is-active" in styles
     assert '"timestamp-row is-active"' in app
     assert '"scrub-slider"' in app
