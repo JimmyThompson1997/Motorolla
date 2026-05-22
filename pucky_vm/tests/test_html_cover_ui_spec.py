@@ -148,6 +148,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".route-tray-icons" in styles
     assert ".filter-icon.is-selected" in styles
     assert "var(--filter-accent" in styles
+    assert "color: rgba(245, 249, 255, 0.58);" in styles
     assert '.filter-icon[data-filter-icon="all"].is-selected' in styles
     assert ".feed-filter-empty" in styles
 
