@@ -90,33 +90,37 @@
   };
 
   const PAGE_TABS = [
-    { route: "feed", icon: "mailbox", label: "Inbox" },
+    { route: "feed", icon: "bell", label: "Home" },
     { route: "morning", icon: "coffee", label: "Morning" },
-    { route: "alerts", icon: "bell", label: "Alerts" },
-    { route: "calls", icon: "phone", label: "Calls" },
-    { route: "sensors", icon: "sensors", label: "Sensors" }
+    { route: "calls", icon: "handset", label: "Calls" },
+    { route: "messages", icon: "chat", label: "Messages" },
+    { route: "sensors", icon: "radar", label: "Sensors" }
   ];
 
   const RETRO_TAB_SYMBOLS = {
-    mailbox: {
-      filled: '<rect x="3" y="8" width="15" height="10"/><rect x="5" y="6" width="11" height="2"/><rect x="7" y="4" width="7" height="2"/><rect x="18" y="11" width="3" height="7"/><rect x="2" y="18" width="19" height="2"/><rect class="pixel-cutout" x="7" y="11" width="7" height="4"/><rect x="8" y="12" width="5" height="2"/>',
-      outline: '<rect x="3" y="8" width="2" height="10"/><rect x="16" y="8" width="2" height="10"/><rect x="5" y="6" width="11" height="2"/><rect x="7" y="4" width="7" height="2"/><rect x="5" y="16" width="11" height="2"/><rect x="18" y="11" width="3" height="7"/><rect x="2" y="18" width="19" height="2"/><rect x="7" y="11" width="7" height="2"/>'
-    },
     coffee: {
       filled: '<rect x="5" y="8" width="11" height="9"/><rect x="16" y="10" width="4" height="6"/><rect class="pixel-cutout" x="17" y="11" width="2" height="4"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>',
       outline: '<rect x="5" y="8" width="2" height="9"/><rect x="14" y="8" width="2" height="9"/><rect x="7" y="8" width="7" height="2"/><rect x="7" y="15" width="7" height="2"/><rect x="16" y="10" width="4" height="2"/><rect x="18" y="12" width="2" height="4"/><rect x="16" y="16" width="3" height="2"/><rect x="3" y="17" width="16" height="2"/><rect x="6" y="3" width="2" height="3"/><rect x="11" y="2" width="2" height="4"/><rect x="15" y="4" width="2" height="3"/>'
     },
     bell: {
-      filled: '<rect x="9" y="3" width="6" height="2"/><rect x="6" y="6" width="12" height="3"/><rect x="5" y="9" width="14" height="7"/><rect x="3" y="16" width="18" height="2"/><rect x="10" y="19" width="4" height="2"/>',
-      outline: '<rect x="9" y="3" width="6" height="2"/><rect x="6" y="6" width="2" height="3"/><rect x="16" y="6" width="2" height="3"/><rect x="5" y="9" width="2" height="7"/><rect x="17" y="9" width="2" height="7"/><rect x="7" y="6" width="10" height="2"/><rect x="7" y="14" width="10" height="2"/><rect x="3" y="16" width="18" height="2"/><rect x="10" y="19" width="4" height="2"/>'
+      filled: '<rect x="10" y="3" width="4" height="2"/><rect x="8" y="5" width="8" height="2"/><rect x="6" y="7" width="12" height="2"/><rect x="5" y="9" width="14" height="6"/><rect x="4" y="15" width="16" height="2"/><rect x="9" y="18" width="6" height="2"/><rect class="pixel-cutout" x="7" y="11" width="2" height="3"/><rect class="pixel-cutout" x="15" y="11" width="2" height="3"/>',
+      outline: '<rect x="10" y="3" width="4" height="2"/><rect x="8" y="5" width="2" height="2"/><rect x="14" y="5" width="2" height="2"/><rect x="6" y="7" width="2" height="2"/><rect x="16" y="7" width="2" height="2"/><rect x="5" y="9" width="2" height="6"/><rect x="17" y="9" width="2" height="6"/><rect x="7" y="7" width="10" height="2"/><rect x="7" y="14" width="10" height="2"/><rect x="4" y="15" width="16" height="2"/><rect x="9" y="18" width="6" height="2"/>'
     },
-    phone: {
-      filled: '<rect x="7" y="2" width="10" height="20"/><rect class="pixel-cutout" x="9" y="5" width="6" height="13"/><rect x="10" y="19" width="4" height="1"/>',
-      outline: '<rect x="7" y="2" width="10" height="2"/><rect x="7" y="20" width="10" height="2"/><rect x="7" y="4" width="2" height="16"/><rect x="15" y="4" width="2" height="16"/><rect x="10" y="18" width="4" height="1"/>'
+    handset: {
+      filled: '<rect x="5" y="5" width="5" height="4"/><rect x="4" y="8" width="4" height="5"/><rect x="7" y="13" width="4" height="4"/><rect x="11" y="16" width="6" height="3"/><rect x="16" y="14" width="4" height="5"/><rect x="18" y="11" width="2" height="4"/><rect class="pixel-cutout" x="7" y="7" width="2" height="2"/><rect class="pixel-cutout" x="17" y="16" width="2" height="2"/>',
+      outline: '<rect x="5" y="5" width="5" height="2"/><rect x="4" y="7" width="2" height="6"/><rect x="6" y="12" width="2" height="2"/><rect x="8" y="14" width="4" height="2"/><rect x="12" y="16" width="5" height="2"/><rect x="17" y="14" width="3" height="2"/><rect x="18" y="11" width="2" height="4"/><rect x="16" y="16" width="2" height="3"/>'
     },
-    sensors: {
-      filled: '<rect x="10" y="9" width="4" height="4"/><rect x="4" y="8" width="2" height="8"/><rect x="18" y="8" width="2" height="8"/><rect x="7" y="5" width="2" height="2"/><rect x="15" y="5" width="2" height="2"/><rect x="7" y="17" width="2" height="2"/><rect x="15" y="17" width="2" height="2"/><rect x="2" y="6" width="2" height="2"/><rect x="20" y="6" width="2" height="2"/><rect x="2" y="16" width="2" height="2"/><rect x="20" y="16" width="2" height="2"/>',
-      outline: '<rect x="10" y="9" width="4" height="4"/><rect x="4" y="8" width="2" height="8"/><rect x="18" y="8" width="2" height="8"/><rect x="7" y="5" width="2" height="2"/><rect x="15" y="5" width="2" height="2"/><rect x="7" y="17" width="2" height="2"/><rect x="15" y="17" width="2" height="2"/><rect x="2" y="6" width="2" height="2"/><rect x="20" y="6" width="2" height="2"/><rect x="2" y="16" width="2" height="2"/><rect x="20" y="16" width="2" height="2"/>'
+    chat: {
+      filled: '<rect x="4" y="5" width="16" height="11"/><rect x="7" y="16" width="4" height="3"/><rect class="pixel-cutout" x="7" y="9" width="2" height="2"/><rect class="pixel-cutout" x="11" y="9" width="2" height="2"/><rect class="pixel-cutout" x="15" y="9" width="2" height="2"/>',
+      outline: '<rect x="4" y="5" width="16" height="2"/><rect x="4" y="7" width="2" height="9"/><rect x="18" y="7" width="2" height="9"/><rect x="6" y="14" width="12" height="2"/><rect x="7" y="16" width="4" height="3"/><rect x="7" y="9" width="2" height="2"/><rect x="11" y="9" width="2" height="2"/><rect x="15" y="9" width="2" height="2"/>'
+    },
+    radar: {
+      filled: '<rect x="11" y="11" width="2" height="2"/><rect x="9" y="7" width="6" height="2"/><rect x="7" y="9" width="2" height="6"/><rect x="15" y="9" width="2" height="6"/><rect x="9" y="15" width="6" height="2"/><rect x="5" y="5" width="2" height="4"/><rect x="17" y="5" width="2" height="4"/><rect x="5" y="15" width="2" height="4"/><rect x="17" y="15" width="2" height="4"/><rect x="3" y="10" width="2" height="4"/><rect x="19" y="10" width="2" height="4"/>',
+      outline: '<rect x="11" y="11" width="2" height="2"/><rect x="9" y="7" width="6" height="2"/><rect x="7" y="9" width="2" height="2"/><rect x="7" y="13" width="2" height="2"/><rect x="15" y="9" width="2" height="2"/><rect x="15" y="13" width="2" height="2"/><rect x="9" y="15" width="6" height="2"/><rect x="5" y="5" width="2" height="4"/><rect x="17" y="5" width="2" height="4"/><rect x="5" y="15" width="2" height="4"/><rect x="17" y="15" width="2" height="4"/><rect x="3" y="10" width="2" height="4"/><rect x="19" y="10" width="2" height="4"/>'
+    },
+    bolt: {
+      filled: '<path d="M14 2h5l-4 7h5L8 22l3-9H6L14 2Z"/>',
+      outline: '<path d="M14 2h5v2h-4l-2 4h6v2h-3v2h-2v2h-2v2h-2v3H8v-6H6v-2h4l1-3h1V6h1V4h1V2Z"/>'
     }
   };
 
@@ -143,6 +147,7 @@
       session_id: "mock_leave",
       title: "Leaving home",
       icon: "bolt",
+      icon_style: "retro",
       accent: "#50d86a",
       created_at: "2026-05-20T08:08:00-07:00",
       summary: "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
@@ -440,7 +445,7 @@
 
     const identity = el("button", `identity ${actionStateClass(card, "audio")}`);
     identity.type = "button";
-    identity.innerHTML = iconSvg(card.icon, { filled: true });
+    identity.innerHTML = cardIdentityIconSvg(card);
     identity.setAttribute("aria-label", isActionRead(card, "audio") ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1463,11 +1468,25 @@
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
+  function cardIdentityIconSvg(card) {
+    if (shouldUseRetroCardIcon(card)) {
+      return topIconSvg(card.icon || "bolt", { filled: true, className: "retro-card-icon" });
+    }
+    return iconSvg(card.icon, { filled: true });
+  }
+
+  function shouldUseRetroCardIcon(card) {
+    const id = String(card?.session_id || "").toLowerCase();
+    const title = String(card?.title || "").toLowerCase();
+    return card?.icon_style === "retro" || id === "fixture_leave" || id === "mock_leave" || title === "leaving home";
+  }
+
   function topIconSvg(icon, options = {}) {
     const filled = options.filled !== false;
-    const symbol = RETRO_TAB_SYMBOLS[icon] || RETRO_TAB_SYMBOLS.mailbox;
+    const className = options.className || "retro-tab-icon";
+    const symbol = RETRO_TAB_SYMBOLS[icon] || RETRO_TAB_SYMBOLS.bell;
     const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
-    return `<svg class="retro-tab-icon ${filled ? "is-filled" : "is-outline"}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+    return `<svg class="${className} ${filled ? "is-filled" : "is-outline"}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   }
 
   function formatTime(ms) {

@@ -144,6 +144,21 @@ button {
   fill: var(--bg);
 }
 
+.retro-card-icon {
+  width: 32px;
+  height: 32px;
+  display: block;
+  color: currentColor;
+  fill: currentColor;
+  stroke: none;
+  shape-rendering: crispEdges;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent, #72c2ff) 22%, transparent));
+}
+
+.retro-card-icon .pixel-cutout {
+  fill: var(--card);
+}
+
 .tab.is-active .retro-tab-icon {
   opacity: 1;
   filter: drop-shadow(0 0 10px rgba(245, 249, 255, 0.24));

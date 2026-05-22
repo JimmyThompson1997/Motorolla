@@ -34,13 +34,17 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "renderTabs()" in app
     assert "button.innerHTML = topIconSvg(tab.icon" in app
     assert 'route: "feed"' in app
-    assert 'icon: "mailbox"' in app
+    assert 'icon: "mailbox"' not in app
+    assert 'icon: "bell"' in app
+    assert 'label: "Home"' in app
     assert 'route: "morning"' in app
     assert 'icon: "coffee"' in app
-    assert 'route: "alerts"' in app
-    assert 'icon: "bell"' in app
     assert 'route: "calls"' in app
+    assert 'icon: "handset"' in app
+    assert 'route: "messages"' in app
+    assert 'icon: "chat"' in app
     assert 'route: "sensors"' in app
+    assert 'icon: "radar"' in app
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
@@ -48,6 +52,25 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "shape-rendering: crispEdges" in styles
     assert ".tab.is-active .retro-tab-icon" in styles
     assert ".tab:not(.is-active) .retro-tab-icon" in styles
+
+
+def test_leaving_home_can_pilot_retro_card_icon_without_changing_other_cards() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    fixtures = read("fixtures/reply_cards.json")
+
+    assert "function cardIdentityIconSvg(card)" in app
+    assert "function shouldUseRetroCardIcon(card)" in app
+    assert 'className: "retro-card-icon"' in app
+    assert 'id === "fixture_leave"' in app
+    assert 'id === "mock_leave"' in app
+    assert 'card?.icon_style === "retro"' in app
+    assert 'title === "leaving home"' in app
+    assert 'identity.innerHTML = cardIdentityIconSvg(card)' in app
+    assert '"icon_style": "retro"' in fixtures
+    assert '"session_id": "fixture_leave"' in fixtures
+    assert ".retro-card-icon" in styles
+    assert "shape-rendering: crispEdges" in styles
 
 
 def test_card_actions_have_local_read_state() -> None:
