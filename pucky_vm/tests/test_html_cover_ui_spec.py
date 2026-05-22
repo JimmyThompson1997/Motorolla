@@ -53,6 +53,10 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
+    assert ".header" in styles
+    assert "height: 45px" in styles
+    assert "flex: 0 0 45px" in styles
+    assert "padding: 0 8px" in styles
     assert ".retro-tab-icon" not in styles
     assert "shape-rendering: crispEdges" not in styles
     assert ".tab.is-active .material-icon" in styles
@@ -73,13 +77,15 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     assert 'if (name === "voice.state")' in app
     assert "function renderVoiceStatus()" in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
-    assert "function voiceStatusButton()" in app
-    assert "shell.append(header, voiceStatusButton(), content)" in app
+    assert "function voiceStatusButton()" not in app
+    assert "shell.append(header, content)" in app
     assert "function nextVoiceState(current)" in app
     assert "function initialVoiceState()" in app
     assert "function normalizeVoiceState(input)" in app
     assert "state.voiceState = nextVoiceState(state.voiceState)" in app
     assert ".voice-status" in styles
+    assert "position: fixed" in styles
+    assert "z-index: 100" in styles
     assert ".voice-status-listening" in styles
     assert ".voice-status-hearing" in styles
     assert ".voice-status-speaking" in styles

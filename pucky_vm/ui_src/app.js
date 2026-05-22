@@ -1023,20 +1023,12 @@
     back.setAttribute("aria-label", "Back to feed");
     back.addEventListener("click", onDismiss);
     header.append(back, el("h1", "detail-title", title));
-    shell.append(header, voiceStatusButton(), content);
+    shell.append(header, content);
     panel.replaceChildren(shell);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
     renderVoiceStatus();
     installHorizontalDismiss(shell, panel, onDismiss);
-  }
-
-  function voiceStatusButton() {
-    const button = el("button", "voice-status voice-status-listening");
-    button.type = "button";
-    button.dataset.voiceStatus = "true";
-    button.setAttribute("aria-label", "Voice state: listening");
-    return button;
   }
 
   function dismissDetail() {
