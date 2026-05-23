@@ -2562,13 +2562,21 @@
       return;
     }
     const offset = Math.max(0, Number(options.offset) || 0);
-    const progress = Math.max(0, Math.min(1, offset / FEED_REFRESH_THRESHOLD));
     const visible = offset > 0 || options.armed || options.refreshing;
+    const label = indicator.querySelector(".feed-refresh-pill");
+    const text = options.refreshing
+      ? "Refreshing..."
+      : options.armed
+        ? "Release to refresh"
+        : "Pull to refresh";
     indicator.style.setProperty("--feed-refresh-pull", `${offset}px`);
-    indicator.style.setProperty("--feed-refresh-progress", String(progress));
     indicator.classList.toggle("is-visible", Boolean(visible));
     indicator.classList.toggle("is-armed", Boolean(options.armed));
     indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
+    if (label) {
+      label.textContent = text;
+    }
+    indicator.setAttribute("aria-label", text);
     indicator.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
@@ -2577,14 +2585,14 @@
     if (!indicator) {
       return;
     }
-    indicator.classList.add("is-resetting");
     indicator.style.setProperty("--feed-refresh-pull", "0px");
-    indicator.style.setProperty("--feed-refresh-progress", "0");
+    const label = indicator.querySelector(".feed-refresh-pill");
+    if (label) {
+      label.textContent = "Pull to refresh";
+    }
     indicator.classList.remove("is-visible", "is-armed", "is-refreshing");
+    indicator.setAttribute("aria-label", "Pull to refresh");
     indicator.setAttribute("aria-hidden", "true");
-    requestAnimationFrame(() => {
-      indicator.classList.remove("is-resetting");
-    });
   }
 
   function releaseFeedPull(feed) {

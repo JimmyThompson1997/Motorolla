@@ -398,7 +398,6 @@ button {
 
 .feed-refresh {
   --feed-refresh-pull: 0px;
-  --feed-refresh-progress: 0;
   position: relative;
   z-index: 2;
   flex: 0 0 0;
@@ -417,39 +416,24 @@ button {
   opacity: 1;
 }
 
-.feed-refresh.is-resetting {
-  transition: none;
-}
-
 .feed-refresh.is-refreshing {
   transform: translateY(calc(var(--feed-refresh-pull) - 32px));
 }
 
-.feed-refresh-spinner {
-  position: relative;
-  width: 22px;
-  height: 22px;
+.feed-refresh-pill {
+  min-width: 118px;
+  padding: 7px 13px 8px;
+  border: 1px solid rgba(245, 249, 255, 0.18);
   border-radius: 999px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  transform: rotate(calc(var(--feed-refresh-progress) * 240deg));
-  animation: feedRefreshSpin 0.21s linear infinite;
-  animation-play-state: paused;
-}
-
-.feed-refresh-spinner::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: conic-gradient(from 8deg, #f5f9ff 0deg 44deg, transparent 44deg 360deg);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-}
-
-.feed-refresh.is-refreshing .feed-refresh-spinner {
-  animation-play-state: running;
+  background: rgba(7, 13, 23, 0.86);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  color: rgba(245, 249, 255, 0.9);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  backdrop-filter: blur(14px);
 }
 
 .feed.is-rubber-banding {
@@ -462,12 +446,6 @@ button {
 
 .feed.is-feed-refreshing {
   transition: transform 180ms ease;
-}
-
-@keyframes feedRefreshSpin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .feed::-webkit-scrollbar {
