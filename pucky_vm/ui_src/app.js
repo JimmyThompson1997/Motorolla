@@ -1293,11 +1293,12 @@
       }
     };
     play.addEventListener("click", event => {
+      event.preventDefault();
       event.stopPropagation();
       toggle();
     });
-    video.addEventListener("click", event => {
-      event.stopPropagation();
+    shell.addEventListener("click", event => {
+      event.preventDefault();
       toggle();
     });
     video.addEventListener("loadedmetadata", updateVideoUi);

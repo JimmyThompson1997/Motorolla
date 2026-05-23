@@ -1305,6 +1305,7 @@ button {
   display: block;
   border: 0;
   background: #000;
+  pointer-events: none;
 }
 
 .attachment-video-play {
