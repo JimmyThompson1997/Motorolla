@@ -631,8 +631,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert 'video.setAttribute("playsinline", "")' in app
     assert 'video.setAttribute("webkit-playsinline", "")' in app
     assert '"attachment-video-play"' in app
-    assert 'shell.addEventListener("click"' in app
-    assert 'event.preventDefault();\n      event.stopPropagation();\n      toggle();' in app
+    assert 'play.addEventListener("click"' in app
+    assert 'event.stopPropagation();\n      toggle();' in app
+    assert 'shell.addEventListener("click"' not in app
     assert "function formatVideoTime(seconds)" in app
     assert "await video.play()" in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
