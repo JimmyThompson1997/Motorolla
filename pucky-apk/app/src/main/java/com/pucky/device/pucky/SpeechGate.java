@@ -5,6 +5,8 @@ import com.pucky.device.util.Json;
 import org.json.JSONObject;
 
 public final class SpeechGate {
+    private static final int CONSECUTIVE_TRIGGER_SAMPLES = 2;
+
     private final long startedElapsedMs;
     private final int threshold;
     private final long startupGuardMs;
@@ -14,6 +16,7 @@ public final class SpeechGate {
     private int peakAmplitude;
     private int samplesSeen;
     private int samplesOverThreshold;
+    private int consecutiveOverThreshold;
 
     public SpeechGate(long startedElapsedMs, int threshold, long startupGuardMs) {
         this.startedElapsedMs = startedElapsedMs;
@@ -27,10 +30,15 @@ public final class SpeechGate {
         peakAmplitude = Math.max(peakAmplitude, cleanAmplitude);
         boolean eligible = samplesSeen > 1 && nowElapsedMs - startedElapsedMs >= startupGuardMs;
         if (!eligible || cleanAmplitude < threshold) {
+            consecutiveOverThreshold = 0;
             return false;
         }
         samplesOverThreshold += 1;
+        consecutiveOverThreshold += 1;
         if (speechDetected) {
+            return false;
+        }
+        if (consecutiveOverThreshold < CONSECUTIVE_TRIGGER_SAMPLES) {
             return false;
         }
         speechDetected = true;
@@ -52,6 +60,8 @@ public final class SpeechGate {
         Json.put(out, "peak_amplitude", peakAmplitude);
         Json.put(out, "samples_seen", samplesSeen);
         Json.put(out, "samples_over_threshold", samplesOverThreshold);
+        Json.put(out, "consecutive_trigger_samples", CONSECUTIVE_TRIGGER_SAMPLES);
+        Json.put(out, "consecutive_over_threshold", consecutiveOverThreshold);
         Json.put(out, "elapsed_ms", Math.max(0L, nowElapsedMs - startedElapsedMs));
         Json.put(out, "gate_latency_ms", speechStartedElapsedMs < 0L ? -1L : Math.max(0L, speechStartedElapsedMs - startedElapsedMs));
         return out;
