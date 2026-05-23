@@ -623,6 +623,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function mediaDocumentMeta(item)" in app
     assert "function mediaDocumentPreview(item, variant)" in app
     assert "function documentPreviewSrc(item)" in app
+    assert "function isVideoMedia(item)" in app
+    assert '"chat-media-video"' in app
+    assert '"image-reel-video"' in app
+    assert "video/mp4" in app
     assert '"media-doc-render"' in app
     assert "Rendered from real local file" in app
     assert "Cached document preview" not in app
@@ -664,6 +668,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".media-doc-preview" in styles
     assert ".media-doc-render" in styles
     assert ".media-doc-label" in styles
+    assert ".chat-media-video" in styles
+    assert ".image-reel-video" in styles
+    assert ".media-doc-preview.is-gallery.has-render .media-doc-label" in styles
     assert ".media-doc-preview.is-gallery" in styles
     assert ".media-doc-badge" in styles
     assert '.media-doc-preview[data-kind="docx"]' in styles
@@ -689,12 +696,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "max-height: 540px" not in styles
     assert '"transcript_messages"' in fixture
     assert "real-alfred-square.png" not in fixture
-    assert fixture.count('"artifact": "real-laptop-app-icon.png"') == 1
-    assert fixture.count('"artifact": "real-laptop-alfred-logo.jpg"') == 1
-    assert fixture.count('"artifact": "real-pocket-computers.pdf"') == 1
-    assert fixture.count('"artifact": "real-pocket-computers.docx"') == 1
-    assert fixture.count('"preview_artifact": "real-pocket-computers-pdf-page-preview.png"') == 1
-    assert fixture.count('"preview_artifact": "real-pocket-computers-docx-page-preview.png"') == 1
+    assert "real-laptop-app-icon.png" not in fixture
+    assert fixture.count('"artifact": "real-master-through-chapter-8.pdf"') == 1
+    assert fixture.count('"artifact": "real-manuscript-chapters-0-7.docx"') == 1
+    assert fixture.count('"artifact": "real-video-4.mp4"') == 1
+    assert fixture.count('"preview_artifact": "real-master-through-chapter-8-pdf-page-1.png"') == 1
+    assert fixture.count('"preview_artifact": "real-manuscript-chapters-0-7-docx-preview.png"') == 1
+    assert '"mime_type": "video/mp4"' in fixture
     assert fixture.count('"artifact": "commute-dashboard.png"') == 1
     assert fixture.count('"artifact": "meeting-room.jpg"') == 1
     assert fixture.count('"artifact": "night-wrap.png"') == 1

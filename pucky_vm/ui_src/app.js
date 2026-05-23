@@ -903,7 +903,18 @@
         event.stopPropagation();
         showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
       });
-      if (isDocumentMedia(image)) {
+      if (isVideoMedia(image)) {
+        const video = document.createElement("video");
+        video.className = "chat-media-video";
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-label", image.title || image.alt || `Video ${index + 1}`);
+        tile.append(video);
+        resolveMediaSrc(image)
+          .then(src => { video.src = src; })
+          .catch(() => { tile.append(el("span", "chat-media-error", "Video unavailable")); });
+      } else if (isDocumentMedia(image)) {
         tile.append(mediaDocumentPreview(image, "chat"));
       } else {
         const imageEl = document.createElement("img");
@@ -1027,7 +1038,18 @@
       images.forEach((image, index) => {
         const slide = el("figure", "image-slide");
         const frame = el("div", "image-slide-frame");
-        if (isDocumentMedia(image)) {
+        if (isVideoMedia(image)) {
+          const video = document.createElement("video");
+          video.className = "image-reel-video";
+          video.controls = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          video.setAttribute("aria-label", image.title || image.alt || `Video ${index + 1}`);
+          frame.append(video);
+          resolveMediaSrc(image)
+            .then(src => { video.src = src; })
+            .catch(() => { frame.append(el("span", "chat-media-error", "Video unavailable")); });
+        } else if (isDocumentMedia(image)) {
           frame.append(mediaDocumentPreview(image, "gallery"));
         } else {
           const imageEl = document.createElement("img");
@@ -1070,6 +1092,10 @@
   }
 
   async function resolveImageSrc(image) {
+    return resolveMediaSrc(image);
+  }
+
+  async function resolveMediaSrc(image) {
     if (image.src || image.data_url) {
       return String(image.src || image.data_url);
     }
@@ -1081,11 +1107,15 @@
       command: "artifact.read_base64",
       args: { path, max_bytes: 5 * 1024 * 1024 }
     });
-    const mime = resolvedImageMime(result, image, path);
+    const mime = resolvedMediaMime(result, image, path);
     return `data:${mime};base64,${result.content_base64 || ""}`;
   }
 
   function resolvedImageMime(result, image, path) {
+    return resolvedMediaMime(result, image, path);
+  }
+
+  function resolvedMediaMime(result, image, path) {
     const declared = String((image && image.mime_type) || "").trim();
     if (declared && declared !== "application/octet-stream") {
       return declared;
@@ -1094,11 +1124,18 @@
     if (returned && returned !== "application/octet-stream") {
       return returned;
     }
-    return guessImageMime(path);
+    return guessMediaMime(path);
   }
 
   function guessImageMime(path) {
+    return guessMediaMime(path);
+  }
+
+  function guessMediaMime(path) {
     const value = String(path || "").toLowerCase();
+    if (value.endsWith(".mp4")) return "video/mp4";
+    if (value.endsWith(".webm")) return "video/webm";
+    if (value.endsWith(".mov")) return "video/quicktime";
     if (value.endsWith(".jpg") || value.endsWith(".jpeg")) return "image/jpeg";
     if (value.endsWith(".webp")) return "image/webp";
     if (value.endsWith(".gif")) return "image/gif";
@@ -1112,6 +1149,12 @@
 
   function isDocumentMedia(item) {
     return mediaDocumentMeta(item).kind !== "";
+  }
+
+  function isVideoMedia(item) {
+    const mime = String((item && item.mime_type) || "").toLowerCase();
+    const path = String((item && (item.path || item.local_path || item.image_path || item.src || item.data_url)) || "").toLowerCase();
+    return mime.startsWith("video/") || /\.(mp4|webm|mov)(?:$|[?#])/i.test(path);
   }
 
   function mediaDocumentMeta(item) {
@@ -1148,6 +1191,7 @@
     wrap.dataset.kind = meta.kind || "file";
     const previewSrc = documentPreviewSrc(item);
     if (previewSrc) {
+      wrap.classList.add("has-render");
       const image = document.createElement("img");
       image.className = "media-doc-render";
       image.alt = item.alt || `${item.title || meta.title} preview`;

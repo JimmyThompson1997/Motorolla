@@ -41,30 +41,24 @@
           "created_at": "2026-05-20T06:33:00-07:00",
           "images": [
             {
-              "artifact": "real-laptop-app-icon.png",
-              "mime_type": "image/png",
-              "title": "Real laptop PNG",
-              "alt": "Actual PNG from Downloads with PNG file signature"
-            },
-            {
-              "artifact": "real-laptop-alfred-logo.jpg",
-              "mime_type": "image/jpeg",
-              "title": "Real laptop JPEG",
-              "alt": "Actual JPEG from Downloads with JPEG file signature"
-            },
-            {
-              "artifact": "real-pocket-computers.pdf",
-              "preview_artifact": "real-pocket-computers-pdf-page-preview.png",
+              "artifact": "real-master-through-chapter-8.pdf",
+              "preview_artifact": "real-master-through-chapter-8-pdf-page-1.png",
               "mime_type": "application/pdf",
-              "title": "Real PDF book",
-              "alt": "Actual PDF from Downloads with first-page preview rendered from file text"
+              "title": "Chapter 8 PDF",
+              "alt": "Actual local PDF rendered from from_pocket_computers_to_planetary_platforms_master_through_chapter_8.pdf"
             },
             {
-              "artifact": "real-pocket-computers.docx",
-              "preview_artifact": "real-pocket-computers-docx-page-preview.png",
+              "artifact": "real-manuscript-chapters-0-7.docx",
+              "preview_artifact": "real-manuscript-chapters-0-7-docx-preview.png",
               "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-              "title": "Real DOCX manuscript",
-              "alt": "Actual DOCX from Downloads with page preview rendered from file text"
+              "title": "Chapters 0-7 DOCX",
+              "alt": "Actual local DOCX from from_pocket_computers_to_planetary_platforms_manuscript_to_date_chapters_0_7.docx"
+            },
+            {
+              "artifact": "real-video-4.mp4",
+              "mime_type": "video/mp4",
+              "title": "video_4.mp4",
+              "alt": "Actual local MP4 from Downloads"
             }
           ]
         }

@@ -66,16 +66,14 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/morning.wav" in files
     assert "fixtures/artifacts/morning.html" in files
     assert "fixtures/artifacts/morning-map.svg" in files
-    assert "fixtures/artifacts/real-laptop-app-icon.png" in files
-    assert "fixtures/artifacts/real-laptop-alfred-logo.jpg" in files
-    assert "fixtures/artifacts/real-pocket-computers.pdf" in files
-    assert "fixtures/artifacts/real-pocket-computers.docx" in files
-    assert "fixtures/artifacts/real-pocket-computers-pdf-page-preview.png" in files
-    assert "fixtures/artifacts/real-pocket-computers-docx-page-preview.png" in files
-    assert (ARTIFACTS / "real-laptop-app-icon.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert (ARTIFACTS / "real-laptop-alfred-logo.jpg").read_bytes().startswith(b"\xff\xd8\xff")
-    assert (ARTIFACTS / "real-pocket-computers.pdf").read_bytes().startswith(b"%PDF")
-    assert (ARTIFACTS / "real-pocket-computers.docx").read_bytes().startswith(b"PK")
+    assert "fixtures/artifacts/real-master-through-chapter-8.pdf" in files
+    assert "fixtures/artifacts/real-master-through-chapter-8-pdf-page-1.png" in files
+    assert "fixtures/artifacts/real-manuscript-chapters-0-7.docx" in files
+    assert "fixtures/artifacts/real-manuscript-chapters-0-7-docx-preview.png" in files
+    assert "fixtures/artifacts/real-video-4.mp4" in files
+    assert (ARTIFACTS / "real-master-through-chapter-8.pdf").read_bytes().startswith(b"%PDF")
+    assert (ARTIFACTS / "real-manuscript-chapters-0-7.docx").read_bytes().startswith(b"PK")
+    assert (ARTIFACTS / "real-video-4.mp4").read_bytes()[4:12] == b"ftypisom"
     assert "fixtures/artifacts/commute-dashboard.png" in files
     assert "fixtures/artifacts/meeting-room.jpg" in files
     assert "fixtures/artifacts/meeting-decision.pdf" in files

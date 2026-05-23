@@ -892,11 +892,17 @@ button {
   scroll-snap-stop: always;
 }
 
-.chat-media-tile img {
+.chat-media-tile img,
+.chat-media-video {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.chat-media-video {
+  pointer-events: none;
+  background: #02060a;
 }
 
 .media-doc-preview {
@@ -978,6 +984,10 @@ button {
   bottom: 22px;
   padding: 13px 15px;
   border-radius: 22px;
+}
+
+.media-doc-preview.is-gallery.has-render .media-doc-label {
+  display: none;
 }
 
 .media-doc-badge {
@@ -1188,12 +1198,18 @@ button {
     rgba(245, 249, 255, 0.035);
 }
 
-.image-reel-img {
+.image-reel-img,
+.image-reel-video {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: contain;
   background: transparent;
+}
+
+.image-reel-video {
+  background: #02060a;
+  border: 0;
 }
 
 .image-reel-meta {
