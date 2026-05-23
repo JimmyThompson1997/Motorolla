@@ -437,11 +437,16 @@ button {
   background: rgba(2, 6, 10, 0.72);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
   transform: rotate(calc(var(--feed-refresh-progress) * 240deg));
-  animation: feedRefreshSpin 0.72s linear infinite;
+  animation: feedRefreshSpin 0.42s linear infinite;
   animation-play-state: paused;
 }
 
 .feed-refresh.is-refreshing .feed-refresh-spinner {
+  border-color: rgba(58, 132, 255, 0.2);
+  border-top-color: #f5f9ff;
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.28),
+    0 0 16px rgba(58, 132, 255, 0.24);
   animation-play-state: running;
 }
 
