@@ -36,6 +36,7 @@ import com.pucky.device.speech.lab.TelemetryConsumer;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -53,7 +54,7 @@ public final class SpeechEchoLabController {
     private static final String ROUTE_REQUIRED = "route_required";
     private static final String CONFIG_VERSION = "config_version";
     private static final int MAX_SESSIONS = 80;
-    private static final int CURRENT_CONFIG_VERSION = 2;
+    private static final int CURRENT_CONFIG_VERSION = 3;
     private static final int READY_HAPTIC_MS = 55;
     private static final int RELEASE_HAPTIC_MS = 40;
     private static final int HAPTIC_AMPLITUDE = 220;
@@ -759,7 +760,9 @@ public final class SpeechEchoLabController {
                 actionStatus = "failed";
                 actionErrorCode = exc.code();
                 actionErrorMessage = exc.getMessage();
-                ttsText = failureReply(keyword);
+                ttsText = CommandErrorCodes.NO_DISPLAY_ON.equals(actionErrorCode)
+                        ? "Failed. Phone screen is off."
+                        : failureReply(keyword);
             }
         }
         String replyOverride = actionResultReplyOverride(actionResult);
@@ -1027,14 +1030,60 @@ public final class SpeechEchoLabController {
     }
 
     private void ensureDefaults() {
-        if (!prefs.contains(ENGINE) || prefs.getInt(CONFIG_VERSION, 1) < CURRENT_CONFIG_VERSION) {
-            prefs.edit()
-                    .putInt(CONFIG_VERSION, CURRENT_CONFIG_VERSION)
-                    .putString(ENGINE, ENGINE_ANDROID_CAPTURED_AUDIO_ECHO)
-                    .putBoolean(SAVE_DEBUG_AUDIO, false)
-                    .putString(ROUTE_REQUIRED, "none")
-                    .commit();
+        int storedVersion = prefs.getInt(CONFIG_VERSION, 1);
+        boolean needsDefaults = !prefs.contains(ENGINE) || storedVersion < CURRENT_CONFIG_VERSION;
+        if (!needsDefaults) {
+            return;
         }
+        SharedPreferences.Editor editor = prefs.edit()
+                .putInt(CONFIG_VERSION, CURRENT_CONFIG_VERSION)
+                .putString(ENGINE, ENGINE_ANDROID_CAPTURED_AUDIO_ECHO)
+                .putBoolean(SAVE_DEBUG_AUDIO, false)
+                .putString(ROUTE_REQUIRED, "none");
+        if (storedVersion < 3) {
+            maybeAppendTakeScreenshotPhrase(editor);
+        }
+        editor.commit();
+    }
+
+    private void maybeAppendTakeScreenshotPhrase(SharedPreferences.Editor editor) {
+        SpeechKeywordRegistry.LoadResult loaded = customKeywordLoadResult();
+        JSONArray entries = loaded.entries;
+        for (int i = 0; i < entries.length(); i++) {
+            JSONObject entry = entries.optJSONObject(i);
+            if (entry == null || !"screenshot".equals(entry.optString("id", ""))) {
+                continue;
+            }
+            JSONObject action = entry.optJSONObject("action");
+            if (action == null || !SpeechKeywordActionExecutor.COMMAND_SCREENSHOT_CAPTURE.equals(action.optString("command", ""))) {
+                return;
+            }
+            JSONArray phrases = entry.optJSONArray("phrases");
+            if (phrases == null || containsPhrase(phrases, "take screenshot")) {
+                return;
+            }
+            try {
+                JSONObject migrated = new JSONObject(entry.toString());
+                JSONArray migratedPhrases = new JSONArray(phrases.toString());
+                Json.add(migratedPhrases, "take screenshot");
+                Json.put(migrated, "phrases", migratedPhrases);
+                SpeechKeywordRegistry.SetResult set = SpeechKeywordRegistry.set(entries, migrated);
+                editor.putString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS, set.entries.toString());
+            } catch (CommandException | JSONException exc) {
+                Log.w(TAG, "Unable to migrate screenshot keyword phrase", exc);
+            }
+            return;
+        }
+    }
+
+    private static boolean containsPhrase(JSONArray phrases, String phrase) {
+        String needle = SpeechKeywordMatcher.normalize(phrase);
+        for (int i = 0; i < phrases.length(); i++) {
+            if (needle.equals(SpeechKeywordMatcher.normalize(phrases.optString(i, "")))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasRecordAudio() {

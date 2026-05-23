@@ -7,6 +7,7 @@ public final class CommandErrorCodes {
     public static final String PERMISSION_MISSING = "PERMISSION_MISSING";
     public static final String CAPABILITY_UNAVAILABLE = "CAPABILITY_UNAVAILABLE";
     public static final String EXECUTION_FAILED = "EXECUTION_FAILED";
+    public static final String NO_DISPLAY_ON = "NO_DISPLAY_ON";
 
     private CommandErrorCodes() {
     }

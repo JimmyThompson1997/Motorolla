@@ -389,6 +389,7 @@ public final class SpeechKeywordRegistry {
         Json.add(out, "screenshot");
         Json.add(out, "screen shot");
         Json.add(out, "capture screen");
+        Json.add(out, "take screenshot");
         return out;
     }
 

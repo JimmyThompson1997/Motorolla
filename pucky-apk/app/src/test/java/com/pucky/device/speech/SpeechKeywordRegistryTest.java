@@ -68,7 +68,7 @@ public final class SpeechKeywordRegistryTest {
         JSONArray corrupt = new JSONArray().put(new JSONObject().put("Count", 2).put("value", new JSONArray()));
         JSONArray valid = SpeechKeywordRegistry.loadCustomDetailed(corrupt.toString()).entries;
         SpeechKeywordRegistry.SetResult set = SpeechKeywordRegistry.set(valid,
-                keyword("screenshot", phrases("screenshot", "screen shot", "capture screen"),
+                keyword("screenshot", phrases("screenshot", "screen shot", "capture screen", "take screenshot"),
                         "Screenshot captured.", screenshotAction()));
 
         SpeechKeywordMatcher.Match match = SpeechKeywordRegistry.match("Screenshot.", set.entries);
@@ -76,6 +76,10 @@ public final class SpeechKeywordRegistryTest {
         assertTrue(match.matched);
         assertEquals("screenshot", match.id);
         assertEquals("screenshot.capture", match.action.optString("command"));
+
+        SpeechKeywordMatcher.Match takeScreenshot = SpeechKeywordRegistry.match("Take screenshot.", set.entries);
+        assertTrue(takeScreenshot.matched);
+        assertEquals("screenshot", takeScreenshot.id);
     }
 
     @Test
@@ -88,6 +92,7 @@ public final class SpeechKeywordRegistryTest {
         assertEquals("screenshot", schema.optJSONObject("example").optString("id"));
         assertTrue(schema.optJSONArray("allowed_actions").length() >= 6);
         assertTrue(schema.toString().contains("action.args must be a JSON object"));
+        assertTrue(schema.toString().contains("take screenshot"));
     }
 
     @Test

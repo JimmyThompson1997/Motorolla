@@ -7,6 +7,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.hardware.HardwareBuffer;
+import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -18,6 +19,7 @@ import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.util.Json;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -52,10 +54,11 @@ public final class ScreenshotController {
         }
         long timeoutMs = boundedLong(args == null ? DEFAULT_TIMEOUT_MS : args.optLong("timeout_ms", DEFAULT_TIMEOUT_MS),
                 MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
+        DisplaySelection display = selectOnDisplay();
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<AccessibilityService.ScreenshotResult> resultRef = new AtomicReference<>();
         AtomicInteger failureCode = new AtomicInteger(Integer.MIN_VALUE);
-        service.takeScreenshot(Display.DEFAULT_DISPLAY, Runnable::run,
+        service.takeScreenshot(display.displayId, Runnable::run,
                 new AccessibilityService.TakeScreenshotCallback() {
                     @Override
                     public void onSuccess(AccessibilityService.ScreenshotResult screenshot) {
@@ -86,7 +89,44 @@ public final class ScreenshotController {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     "Accessibility screenshot returned no bitmap buffer");
         }
-        return saveScreenshot(screenshot);
+        JSONObject saved = saveScreenshot(screenshot);
+        Json.put(saved, "selected_display_id", display.displayId);
+        Json.put(saved, "selected_display", display.selectedDisplay);
+        Json.put(saved, "display_candidates", display.candidates);
+        Json.put(saved, "multiple_on_displays", display.multipleOnDisplays);
+        return saved;
+    }
+
+    private DisplaySelection selectOnDisplay() throws CommandException {
+        DisplayManager manager = context.getSystemService(DisplayManager.class);
+        if (manager == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "DisplayManager unavailable");
+        }
+        Display[] displays = manager.getDisplays();
+        JSONArray candidates = new JSONArray();
+        Display selected = null;
+        int onCount = 0;
+        for (Display display : displays) {
+            if (display == null) {
+                continue;
+            }
+            JSONObject candidate = displayJson(display);
+            Json.add(candidates, candidate);
+            if (display.getState() == Display.STATE_ON) {
+                onCount++;
+                if (selected == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+                    selected = display;
+                }
+            }
+        }
+        if (selected == null) {
+            throw new CommandException(CommandErrorCodes.NO_DISPLAY_ON, "Failed. Phone screen is off.");
+        }
+        return new DisplaySelection(
+                selected.getDisplayId(),
+                displayJson(selected),
+                candidates,
+                onCount > 1);
     }
 
     private JSONObject saveScreenshot(AccessibilityService.ScreenshotResult screenshot) throws CommandException {
@@ -221,6 +261,55 @@ public final class ScreenshotController {
                 return "ERROR_TAKE_SCREENSHOT_SECURE_WINDOW";
             default:
                 return "ERROR_TAKE_SCREENSHOT_" + code;
+        }
+    }
+
+    private static JSONObject displayJson(Display display) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "display_id", display.getDisplayId());
+        Json.put(out, "name", display.getName());
+        Json.put(out, "state", displayStateName(display.getState()));
+        Json.put(out, "state_code", display.getState());
+        Display.Mode mode = display.getMode();
+        if (mode != null) {
+            Json.put(out, "mode_width", mode.getPhysicalWidth());
+            Json.put(out, "mode_height", mode.getPhysicalHeight());
+            Json.put(out, "refresh_rate", mode.getRefreshRate());
+        }
+        Json.put(out, "is_default_display", display.getDisplayId() == Display.DEFAULT_DISPLAY);
+        return out;
+    }
+
+    private static String displayStateName(int state) {
+        switch (state) {
+            case Display.STATE_OFF:
+                return "OFF";
+            case Display.STATE_ON:
+                return "ON";
+            case Display.STATE_DOZE:
+                return "DOZE";
+            case Display.STATE_DOZE_SUSPEND:
+                return "DOZE_SUSPEND";
+            case Display.STATE_UNKNOWN:
+                return "UNKNOWN";
+            case Display.STATE_VR:
+                return "VR";
+            default:
+                return "STATE_" + state;
+        }
+    }
+
+    private static final class DisplaySelection {
+        final int displayId;
+        final JSONObject selectedDisplay;
+        final JSONArray candidates;
+        final boolean multipleOnDisplays;
+
+        DisplaySelection(int displayId, JSONObject selectedDisplay, JSONArray candidates, boolean multipleOnDisplays) {
+            this.displayId = displayId;
+            this.selectedDisplay = selectedDisplay;
+            this.candidates = candidates;
+            this.multipleOnDisplays = multipleOnDisplays;
         }
     }
 }
