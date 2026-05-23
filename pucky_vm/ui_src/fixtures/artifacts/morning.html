@@ -2,13 +2,74 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Morning launch</title>
 <style>
-  body { margin: 0; padding: 22px; font-family: system-ui, sans-serif; background: #fff8e7; color: #17202a; line-height: 1.45; }
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 22px;
+    font-family: system-ui, sans-serif;
+    background: #fff8e7;
+    color: #17202a;
+    line-height: 1.45;
+  }
   h1 { margin: 0 0 14px; font-size: 30px; line-height: 1.05; }
-  section { margin: 16px 0; padding: 14px; border: 2px solid #17202a; box-shadow: 5px 5px 0 #f2b705; }
-  p { font-size: 16px; }
+  h2 { margin: 0 0 8px; font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; }
+  section {
+    margin: 16px 0;
+    padding: 14px;
+    border: 2px solid #17202a;
+    box-shadow: 5px 5px 0 #f2b705;
+    background: rgba(255, 255, 255, 0.48);
+  }
+  p { font-size: 16px; margin: 8px 0 0; }
+  .marker {
+    display: inline-block;
+    margin-bottom: 8px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #17202a;
+    color: #fff8e7;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .scroll-target {
+    min-height: 118px;
+  }
 </style>
 <h1>Morning launch</h1>
 <section>
+  <span class="marker">Top</span>
   <p>Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.</p>
   <p>This rich reply page is committed in the repo, served by the VM, downloaded through Pucky commands, and cached as an app-owned artifact.</p>
+</section>
+<section class="scroll-target">
+  <span class="marker">Scroll test 1</span>
+  <h2>Inbox triage</h2>
+  <p>The first block should appear near the top of the homescreen file viewer. If this page is scrollable, dragging upward should move smoothly into the later blocks without snapping back to the card feed.</p>
+  <p>Today&apos;s priority is to identify one message that needs a reply before noon and one thread that can safely wait.</p>
+</section>
+<section class="scroll-target">
+  <span class="marker">Scroll test 2</span>
+  <h2>Weather window</h2>
+  <p>The second block exists only to push the document beyond one cover-screen height. It should not be clipped by the shell header or trapped behind the Motorola bottom navigation area.</p>
+  <p>Check commute timing, rain risk, and whether errands should happen before or after the afternoon focus block.</p>
+</section>
+<section class="scroll-target">
+  <span class="marker">Scroll test 3</span>
+  <h2>Calendar scan</h2>
+  <p>The third block is a mid-document checkpoint. If you can reach this section from the homescreen paperclip file view, then the attachment content is being allowed to scroll inside the right-side detail panel.</p>
+  <p>Meetings with prep gaps should surface as a short action list instead of a wall of calendar text.</p>
+</section>
+<section class="scroll-target">
+  <span class="marker">Scroll test 4</span>
+  <h2>One thing</h2>
+  <p>The fourth block should require another scroll gesture. This is where the morning brief would highlight the one thing that cannot slip today.</p>
+  <p>For this fixture, the one thing is simply proving that a long cached HTML attachment behaves like a real scrollable document.</p>
+</section>
+<section class="scroll-target">
+  <span class="marker">Scroll test 5</span>
+  <h2>Bottom marker</h2>
+  <p>This is the bottom of the Morning Launch file attachment. Reaching this marker confirms the content is taller than the available display height and the full page can be inspected from the homescreen file icon.</p>
+  <p>If the viewer lands here and still supports the system/in-app back behavior, this file-path test is doing its job.</p>
 </section>
