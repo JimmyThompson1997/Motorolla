@@ -44,6 +44,53 @@ public final class SpeechKeywordRegistryTest {
     }
 
     @Test
+    public void malformedStoredRegistryEntriesAreIgnoredAndReported() throws Exception {
+        JSONArray corrupt = new JSONArray()
+                .put(new JSONObject()
+                        .put("Count", 2)
+                        .put("value", new JSONArray().put(flashlightKeyword())))
+                .put(keyword("location_pin", phrases("pin location"), "Location pinned.",
+                        new JSONObject()
+                                .put("command", "location.pin")
+                                .put("args", new JSONArray().put("screenshot"))));
+
+        SpeechKeywordRegistry.LoadResult loaded = SpeechKeywordRegistry.loadCustomDetailed(corrupt.toString());
+        JSONObject list = SpeechKeywordRegistry.list(loaded);
+
+        assertEquals(0, loaded.entries.length());
+        assertEquals(2, loaded.invalidEntries.length());
+        assertEquals(2, list.optInt("invalid_custom_entries_count"));
+        assertEquals(0, list.optInt("custom_count"));
+    }
+
+    @Test
+    public void cleanScreenshotKeywordMatchesAfterMalformedStoredEntriesAreIgnored() throws Exception {
+        JSONArray corrupt = new JSONArray().put(new JSONObject().put("Count", 2).put("value", new JSONArray()));
+        JSONArray valid = SpeechKeywordRegistry.loadCustomDetailed(corrupt.toString()).entries;
+        SpeechKeywordRegistry.SetResult set = SpeechKeywordRegistry.set(valid,
+                keyword("screenshot", phrases("screenshot", "screen shot", "capture screen"),
+                        "Screenshot captured.", screenshotAction()));
+
+        SpeechKeywordMatcher.Match match = SpeechKeywordRegistry.match("Screenshot.", set.entries);
+
+        assertTrue(match.matched);
+        assertEquals("screenshot", match.id);
+        assertEquals("screenshot.capture", match.action.optString("command"));
+    }
+
+    @Test
+    public void schemaGuideExplainsKeywordShapeForFutureAgents() {
+        JSONObject schema = SpeechKeywordRegistry.schemaGuide();
+
+        assertEquals("pucky.speech_echo_lab_keyword_schema.v1", schema.optString("schema"));
+        assertEquals("speech.echo.lab.keyword.set", schema.optString("command"));
+        assertEquals("exact_utterance_only", schema.optString("matching_rule"));
+        assertEquals("screenshot", schema.optJSONObject("example").optString("id"));
+        assertTrue(schema.optJSONArray("allowed_actions").length() >= 6);
+        assertTrue(schema.toString().contains("action.args must be a JSON object"));
+    }
+
+    @Test
     public void setPersistsReplacementForSameCustomId() throws Exception {
         JSONArray first = SpeechKeywordRegistry.set(new JSONArray(), flashlightKeyword()).entries;
         JSONObject replacement = keyword("flashlight", phrases("torch"), "Torch recognized.", torchAction(700));
@@ -189,6 +236,16 @@ public final class SpeechKeywordRegistryTest {
     }
 
     @Test
+    public void keywordActionArgsMustBeJsonObjectWhenPresent() throws Exception {
+        CommandException exc = expectCommandException(() ->
+                SpeechKeywordActionExecutor.sanitize(new JSONObject()
+                        .put("command", "screenshot.capture")
+                        .put("args", new JSONArray().put("bad"))));
+
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
+    }
+
+    @Test
     public void dynamicPhotoKeywordMatchesExactUtteranceOnly() throws Exception {
         SpeechKeywordRegistry.SetResult result = SpeechKeywordRegistry.set(new JSONArray(),
                 keyword("photo", phrases("photo"), "Photo captured.", photoAction(1280, 8000)));
@@ -245,6 +302,12 @@ public final class SpeechKeywordRegistryTest {
                 .put("args", new JSONObject()
                         .put("max_width", maxWidth)
                         .put("timeout_ms", timeoutMs));
+    }
+
+    private static JSONObject screenshotAction() throws Exception {
+        return new JSONObject()
+                .put("command", "screenshot.capture")
+                .put("args", new JSONObject().put("publish", true));
     }
 
     private static CommandException expectCommandException(ThrowingRunnable runnable) throws Exception {

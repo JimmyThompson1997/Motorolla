@@ -134,10 +134,7 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private static JSONObject sanitizeTorch(JSONObject action) throws CommandException {
-        JSONObject rawArgs = action.optJSONObject("args");
-        if (rawArgs == null) {
-            rawArgs = new JSONObject();
-        }
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_TORCH_SET);
         int autoOffMs = DEFAULT_TORCH_AUTO_OFF_MS;
         if (rawArgs.has("auto_off_ms")) {
             autoOffMs = rawArgs.optInt("auto_off_ms", -1);
@@ -156,10 +153,7 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private static JSONObject sanitizePhoto(JSONObject action) throws CommandException {
-        JSONObject rawArgs = action.optJSONObject("args");
-        if (rawArgs == null) {
-            rawArgs = new JSONObject();
-        }
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_PHOTO_CAPTURE);
         int maxWidth = rawArgs.optInt("max_width", DEFAULT_PHOTO_MAX_WIDTH);
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_PHOTO_TIMEOUT_MS);
         if (maxWidth < MIN_PHOTO_MAX_WIDTH || maxWidth > MAX_PHOTO_MAX_WIDTH) {
@@ -184,10 +178,7 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private static JSONObject sanitizeLocation(JSONObject action) throws CommandException {
-        JSONObject rawArgs = action.optJSONObject("args");
-        if (rawArgs == null) {
-            rawArgs = new JSONObject();
-        }
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_LOCATION_PIN);
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_LOCATION_TIMEOUT_MS);
         if (timeoutMs < 500L || timeoutMs > 30000L) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
@@ -208,10 +199,7 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private static JSONObject sanitizeScreenshot(JSONObject action) throws CommandException {
-        JSONObject rawArgs = action.optJSONObject("args");
-        if (rawArgs == null) {
-            rawArgs = new JSONObject();
-        }
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_SCREENSHOT_CAPTURE);
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_SCREENSHOT_TIMEOUT_MS);
         if (timeoutMs < 500L || timeoutMs > 10000L) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
@@ -227,10 +215,7 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private static JSONObject sanitizeVideoStart(JSONObject action) throws CommandException {
-        JSONObject rawArgs = action.optJSONObject("args");
-        if (rawArgs == null) {
-            rawArgs = new JSONObject();
-        }
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_VIDEO_CAPTURE_START);
         int maxWidth = rawArgs.optInt("max_width", DEFAULT_PHOTO_MAX_WIDTH);
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_PHOTO_TIMEOUT_MS);
         long maxDurationMs = rawArgs.optLong("max_duration_ms", DEFAULT_VIDEO_MAX_DURATION_MS);
@@ -260,11 +245,24 @@ public final class SpeechKeywordActionExecutor {
         return safe;
     }
 
-    private static JSONObject sanitizeVideoStop(JSONObject action) {
+    private static JSONObject sanitizeVideoStop(JSONObject action) throws CommandException {
+        actionArgsObject(action, COMMAND_VIDEO_CAPTURE_STOP);
         JSONObject safe = new JSONObject();
         Json.put(safe, "command", COMMAND_VIDEO_CAPTURE_STOP);
         Json.put(safe, "args", new JSONObject());
         return safe;
+    }
+
+    private static JSONObject actionArgsObject(JSONObject action, String command) throws CommandException {
+        if (!action.has("args") || action.isNull("args")) {
+            return new JSONObject();
+        }
+        JSONObject args = action.optJSONObject("args");
+        if (args == null) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    command + " keyword action args must be a JSON object");
+        }
+        return args;
     }
 
     private LocationController requireLocationController() throws CommandException {

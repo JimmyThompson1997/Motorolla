@@ -165,9 +165,9 @@ public final class CapabilityReporter {
         Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete/speech.echo.voices",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
-        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/speech.echo.lab.keyword.list/speech.echo.lab.keyword.set/speech.echo.lab.keyword.delete/speech.echo.lab.keyword.clear/speech.echo.lab.keyword.test",
+        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/speech.echo.lab.keyword.list/speech.echo.lab.keyword.set/speech.echo.lab.keyword.delete/speech.echo.lab.keyword.clear/speech.echo.lab.keyword.test/speech.echo.lab.keyword.schema",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Volume-down-only audio lab with exact-utterance keyword actions. Matched actions are recorded to Pucky Clipboard; frame-bus, VAD, and openWakeWord metrics stay isolated from volume-up, power-hold, and broker paths."));
+                "Volume-down-only audio lab with exact-utterance keyword actions. keyword.schema returns the creation contract and keyword.set rejects malformed args. Matched actions are recorded to Pucky Clipboard; frame-bus, VAD, and openWakeWord metrics stay isolated from volume-up, power-hold, and broker paths."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",

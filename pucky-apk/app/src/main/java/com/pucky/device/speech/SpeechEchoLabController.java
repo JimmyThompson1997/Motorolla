@@ -127,7 +127,7 @@ public final class SpeechEchoLabController {
         Json.put(out, "last_completed", lastSession());
         Json.put(out, "direct_echo_status", directEcho.status());
         Json.put(out, "captured_audio_echo_available", capturedAudioEchoAvailable());
-        Json.put(out, "keyword_registry", SpeechKeywordRegistry.list(customKeywordEntries()));
+        Json.put(out, "keyword_registry", SpeechKeywordRegistry.list(customKeywordLoadResult()));
         Json.put(out, "tts_ready", ttsReady);
         Json.put(out, "tts_initializing", ttsInitializing);
         Json.put(out, "tts_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
@@ -279,7 +279,11 @@ public final class SpeechEchoLabController {
     }
 
     public synchronized JSONObject keywordList() {
-        return SpeechKeywordRegistry.list(customKeywordEntries());
+        return SpeechKeywordRegistry.list(customKeywordLoadResult());
+    }
+
+    public synchronized JSONObject keywordSchema() {
+        return SpeechKeywordRegistry.schemaGuide();
     }
 
     public synchronized JSONObject keywordSet(JSONObject args) throws CommandException {
@@ -287,7 +291,12 @@ public final class SpeechEchoLabController {
         if (input == null) {
             input = args;
         }
-        SpeechKeywordRegistry.SetResult result = SpeechKeywordRegistry.set(customKeywordEntries(), input);
+        SpeechKeywordRegistry.SetResult result;
+        try {
+            result = SpeechKeywordRegistry.set(customKeywordEntries(), input);
+        } catch (CommandException exc) {
+            return SpeechKeywordRegistry.validationError("speech.echo.lab.keyword.set", exc, input);
+        }
         saveCustomKeywordEntries(result.entries);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.speech_echo_lab_keyword_set.v1");
@@ -968,7 +977,11 @@ public final class SpeechEchoLabController {
     }
 
     private JSONArray customKeywordEntries() {
-        return SpeechKeywordRegistry.loadCustom(
+        return customKeywordLoadResult().entries;
+    }
+
+    private SpeechKeywordRegistry.LoadResult customKeywordLoadResult() {
+        return SpeechKeywordRegistry.loadCustomDetailed(
                 prefs.getString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS, "[]"));
     }
 

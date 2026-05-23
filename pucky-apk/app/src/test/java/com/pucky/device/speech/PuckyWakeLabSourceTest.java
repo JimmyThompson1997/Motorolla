@@ -140,12 +140,18 @@ public final class PuckyWakeLabSourceTest {
         String clipboard = read("src/main/java/com/pucky/device/clipboard/PuckyClipboardController.java");
 
         assertTrue(controller.contains("speech.echo.lab.keyword.test requires text"));
-        assertTrue(controller.contains("SpeechKeywordRegistry.list(customKeywordEntries())"));
+        assertTrue(controller.contains("SpeechKeywordRegistry.list(customKeywordLoadResult())"));
+        assertTrue(controller.contains("SpeechKeywordRegistry.schemaGuide()"));
+        assertTrue(controller.contains("SpeechKeywordRegistry.validationError(\"speech.echo.lab.keyword.set\""));
         assertTrue(controller.contains("clipboardController.append"));
         assertTrue(registry.contains("PREF_CUSTOM_KEYWORDS"));
+        assertTrue(registry.contains("pucky.speech_echo_lab_keyword_schema.v1"));
+        assertTrue(registry.contains("invalid_custom_entries_count"));
+        assertTrue(registry.contains("action.args must be a JSON object"));
         assertTrue(registry.contains("Built-in speech keywords cannot be overwritten"));
         assertTrue(registry.contains("speech keyword phrase duplicates existing phrase"));
         assertTrue(executor.contains("COMMAND_TORCH_SET = \"torch.set\""));
+        assertTrue(executor.contains("actionArgsObject"));
         assertTrue(executor.contains("DEFAULT_TORCH_AUTO_OFF_MS = 600"));
         assertTrue(executor.contains("MIN_TORCH_AUTO_OFF_MS = 100"));
         assertTrue(executor.contains("MAX_TORCH_AUTO_OFF_MS = 1500"));

@@ -102,6 +102,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"speech.echo.lab.keyword.delete\""));
         assertTrue(source.contains("\"speech.echo.lab.keyword.clear\""));
         assertTrue(source.contains("\"speech.echo.lab.keyword.test\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.schema\""));
         assertTrue(source.contains("return speechEchoLabController.status()"));
         assertTrue(source.contains("return speechEchoLabController.start(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.stop(command.args())"));
@@ -112,6 +113,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return speechEchoLabController.keywordDelete(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.keywordClear()"));
         assertTrue(source.contains("return speechEchoLabController.keywordTest(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.keywordSchema()"));
         assertTrue(service.contains("SpeechEchoLabController.shared(this)"));
     }
 

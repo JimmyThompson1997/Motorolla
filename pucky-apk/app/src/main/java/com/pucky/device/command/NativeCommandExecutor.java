@@ -80,7 +80,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.echo.lab.config.get", "speech.echo.lab.config.set",
             "speech.echo.lab.keyword.list", "speech.echo.lab.keyword.set",
             "speech.echo.lab.keyword.delete", "speech.echo.lab.keyword.clear",
-            "speech.echo.lab.keyword.test",
+            "speech.echo.lab.keyword.test", "speech.echo.lab.keyword.schema",
             "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
             "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
@@ -444,6 +444,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.keywordClear();
             case "speech.echo.lab.keyword.test":
                 return speechEchoLabController.keywordTest(command.args());
+            case "speech.echo.lab.keyword.schema":
+                return speechEchoLabController.keywordSchema();
             case "tunnel.status":
                 return tunnelController.status();
             case "tunnel.config.set":
