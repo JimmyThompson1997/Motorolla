@@ -650,18 +650,33 @@ public final class SpeechEchoLabController {
             failActiveCapturedSession(active, "empty_transcript", "Injected-audio SpeechRecognizer returned no transcript");
             return;
         }
+        SpeechKeywordMatcher.Match keyword = SpeechKeywordMatcher.match(text);
+        String ttsText = keyword.matched ? keyword.replyText : text;
+        Json.put(active, "keyword_lab_enabled", true);
+        Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
+        Json.put(active, "keyword_normalized_transcript", keyword.normalizedTranscript);
+        Json.put(active, "keyword_match", keyword.matched);
+        Json.put(active, "keyword_match_id", keyword.matched ? keyword.id : JSONObject.NULL);
+        Json.put(active, "keyword_match_phrase", keyword.matched ? keyword.phrase : JSONObject.NULL);
+        Json.put(active, "keyword_match_source", keyword.source);
+        Json.put(active, "keyword_match_confidence", keyword.confidence);
+        Json.put(active, "keyword_match_start_index", keyword.startIndex);
+        Json.put(active, "keyword_reply_text", keyword.matched ? keyword.replyText : JSONObject.NULL);
+        Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched);
         Json.put(active, "state", "Speaking");
         Json.put(active, "accepted_at", Instant.now().toString());
         Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
-        Json.put(active, "tts_text", text);
+        Json.put(active, "tts_text", ttsText);
         Json.put(active, "tts_status", "scheduled");
         JSONObject finished = active;
         appendSession(finished);
         active = null;
         cleanupCapturedRecognizer();
         playAcceptedChime(sessionId);
-        main.postDelayed(() -> speakEcho(sessionId, text), TTS_AFTER_ACCEPTED_CHIME_MS);
-        Log.i(TAG, "captured audio echo recognized session=" + sessionId + " text_len=" + text.length());
+        main.postDelayed(() -> speakEcho(sessionId, ttsText), TTS_AFTER_ACCEPTED_CHIME_MS);
+        Log.i(TAG, "captured audio echo recognized session=" + sessionId
+                + " text_len=" + text.length()
+                + " keyword=" + (keyword.matched ? keyword.id : "none"));
     }
 
     private synchronized void failActiveCapturedSessionById(String sessionId, String code, String message) {

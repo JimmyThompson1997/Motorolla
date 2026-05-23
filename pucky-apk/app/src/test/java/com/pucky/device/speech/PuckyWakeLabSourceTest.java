@@ -113,6 +113,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("ready_after_first_audio_frame"));
         assertTrue(source.contains("recognizer_leading_padding_ms"));
         assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
+        assertTrue(source.contains("SpeechKeywordMatcher.match(text)"));
+        assertTrue(source.contains("keyword_lab_enabled"));
+        assertTrue(source.contains("keyword_reply_tts_replaces_echo"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
         assertTrue(bus.contains("addSynchronousConsumer"));
