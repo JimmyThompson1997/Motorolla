@@ -53,7 +53,6 @@ import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.CoverDisplayGestureController;
-import com.pucky.device.sensors.PhysicalGestureFeedbackController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.speech.SpeechEchoController;
@@ -105,7 +104,6 @@ public final class PuckyForegroundService extends Service {
     private boolean manualStopRequested;
     private int lastCoverDisplayState = Display.STATE_UNKNOWN;
     private CoverDisplayGestureController coverDisplayGestureController;
-    private PhysicalGestureFeedbackController physicalGestureFeedbackController;
 
     public static void start(Context context, boolean connect) {
         Intent intent = new Intent(context, PuckyForegroundService.class)
@@ -145,8 +143,6 @@ public final class PuckyForegroundService extends Service {
         registerCoverDisplayListener();
         coverDisplayGestureController = CoverDisplayGestureController.shared(this);
         coverDisplayGestureController.start();
-        physicalGestureFeedbackController = PhysicalGestureFeedbackController.shared(this);
-        physicalGestureFeedbackController.startIfEnabled();
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
@@ -199,10 +195,6 @@ public final class PuckyForegroundService extends Service {
         if (coverDisplayGestureController != null) {
             coverDisplayGestureController.stop();
             coverDisplayGestureController = null;
-        }
-        if (physicalGestureFeedbackController != null) {
-            physicalGestureFeedbackController.stop();
-            physicalGestureFeedbackController = null;
         }
         unregisterCoverDisplayListener();
         WakeWordController.shared(this).stop(new org.json.JSONObject());

@@ -83,8 +83,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
             "cover.display_gesture.status", "cover.display_gesture.set",
             "cover.display_gesture.trigger",
-            "physical.gesture.feedback.status", "physical.gesture.feedback.set",
-            "physical.gesture.feedback.trigger",
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
@@ -469,12 +467,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "cover.wave.trigger":
             case "cover.display_gesture.trigger":
                 return systemController.coverDisplayGestureTrigger(command.args());
-            case "physical.gesture.feedback.status":
-                return systemController.physicalGestureFeedbackStatus();
-            case "physical.gesture.feedback.set":
-                return systemController.physicalGestureFeedbackSet(command.args());
-            case "physical.gesture.feedback.trigger":
-                return systemController.physicalGestureFeedbackTrigger(command.args());
             case "cover.event":
                 return liveKitController.coverEvent(command.args());
             case "settings.open":
