@@ -718,7 +718,11 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".attachment-video-play" in styles
     assert ".attachment-video-time" in styles
     assert ".attachment-video-player" in styles
-    assert "pointer-events: none;" in css_block(styles, ".attachment-video-player")
+    video_play = css_block(styles, ".attachment-video-play")
+    assert "width: 100%;" in video_play
+    assert "height: 100%;" in video_play
+    assert "touch-action: manipulation;" in video_play
+    assert "pointer-events: auto;" in css_block(styles, ".attachment-video-shell.is-playing .attachment-video-play")
     assert ".document-frame" in styles
     assert ".document-detail" in styles
     document_detail = css_block(styles, ".document-detail")
