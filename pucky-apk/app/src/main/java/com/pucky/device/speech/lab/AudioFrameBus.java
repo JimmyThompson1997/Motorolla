@@ -30,6 +30,7 @@ public final class AudioFrameBus {
     public static final int AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION;
 
     private final Context context;
+    private final List<AudioFrameConsumer> synchronousConsumers = new ArrayList<>();
     private final List<ConsumerSlot> consumers = new ArrayList<>();
 
     private AudioRecord record;
@@ -52,6 +53,13 @@ public final class AudioFrameBus {
             throw new IllegalStateException("Cannot add consumers after AudioFrameBus starts");
         }
         consumers.add(new ConsumerSlot(consumer));
+    }
+
+    public synchronized void addSynchronousConsumer(AudioFrameConsumer consumer) {
+        if (running) {
+            throw new IllegalStateException("Cannot add consumers after AudioFrameBus starts");
+        }
+        synchronousConsumers.add(consumer);
     }
 
     @SuppressLint("MissingPermission")
@@ -132,7 +140,7 @@ public final class AudioFrameBus {
         stoppedAt = Instant.now().toString();
         stoppedElapsedMs = SystemClock.elapsedRealtime();
         for (ConsumerSlot slot : consumers) {
-            slot.shutdown();
+            slot.shutdownAndDrain();
         }
         Json.put(out, "result", "stopped");
         Json.put(out, "snapshot", snapshot());
@@ -151,6 +159,16 @@ public final class AudioFrameBus {
         Json.put(out, "read_errors", readErrors);
         Json.put(out, "start_error", startError.isEmpty() ? JSONObject.NULL : startError);
         JSONArray consumerReports = new JSONArray();
+        for (AudioFrameConsumer consumer : synchronousConsumers) {
+            JSONObject item = new JSONObject();
+            Json.put(item, "name", consumer.name());
+            Json.put(item, "delivery_mode", "synchronous");
+            Json.put(item, "dropped", 0);
+            Json.put(item, "busy", false);
+            Json.put(item, "last_error", JSONObject.NULL);
+            Json.put(item, "report", consumer.snapshot());
+            Json.add(consumerReports, item);
+        }
         for (ConsumerSlot slot : consumers) {
             Json.add(consumerReports, slot.snapshot());
         }
@@ -180,6 +198,13 @@ public final class AudioFrameBus {
             System.arraycopy(buffer, 0, frame, 0, read);
             long timestamp = System.nanoTime();
             framesRead += 1;
+            for (AudioFrameConsumer consumer : synchronousConsumers) {
+                try {
+                    consumer.onFrame(frame, timestamp);
+                } catch (RuntimeException exc) {
+                    readErrors += 1;
+                }
+            }
             for (ConsumerSlot slot : consumers) {
                 slot.offer(frame, timestamp);
             }
@@ -259,8 +284,20 @@ public final class AudioFrameBus {
             return out;
         }
 
-        void shutdown() {
-            executor.shutdownNow();
+        void shutdownAndDrain() {
+            executor.shutdown();
+            long deadline = SystemClock.elapsedRealtime() + 500L;
+            while (busy.get() && SystemClock.elapsedRealtime() < deadline) {
+                try {
+                    Thread.sleep(10L);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            if (busy.get()) {
+                executor.shutdownNow();
+            }
         }
     }
 }

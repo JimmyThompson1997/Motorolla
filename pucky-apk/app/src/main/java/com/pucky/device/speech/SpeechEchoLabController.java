@@ -1,13 +1,32 @@
 package com.pucky.device.speech;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.Voice;
+import android.util.Log;
 
 import com.pucky.device.audio.AudioRouteDetector;
 import com.pucky.device.speech.lab.AudioFrameBus;
 import com.pucky.device.speech.lab.OpenWakeWordConsumer;
+import com.pucky.device.speech.lab.PcmCaptureConsumer;
 import com.pucky.device.speech.lab.PreRollBuffer;
 import com.pucky.device.speech.lab.SileroVadConsumer;
 import com.pucky.device.speech.lab.TelemetryConsumer;
@@ -16,18 +35,31 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Set;
 
 public final class SpeechEchoLabController {
+    private static final String TAG = "PuckySpeechEchoLab";
     private static final String PREFS = "pucky_speech_echo_lab";
     private static final String SESSIONS = "sessions_json";
     private static final String ENGINE = "engine";
     private static final String SAVE_DEBUG_AUDIO = "save_debug_audio";
     private static final String ROUTE_REQUIRED = "route_required";
+    private static final String CONFIG_VERSION = "config_version";
     private static final int MAX_SESSIONS = 80;
+    private static final int CURRENT_CONFIG_VERSION = 2;
+    private static final int READY_HAPTIC_MS = 55;
+    private static final int RELEASE_HAPTIC_MS = 40;
+    private static final int HAPTIC_AMPLITUDE = 220;
+    private static final int ERROR_HAPTIC_AMPLITUDE = 255;
+    private static final int ACCEPTED_CHIME_VOLUME = 85;
+    private static final long TTS_AFTER_ACCEPTED_CHIME_MS = 250L;
 
     public static final String ENGINE_ANDROID_DIRECT_ECHO = "android_direct_echo";
+    public static final String ENGINE_ANDROID_CAPTURED_AUDIO_ECHO = "android_captured_audio_echo";
     public static final String ENGINE_FRAME_BUS_METRICS = "frame_bus_metrics";
     public static final String ENGINE_FRAME_BUS_VAD = "frame_bus_vad";
     public static final String ENGINE_FRAME_BUS_WAKE = "frame_bus_wake";
@@ -42,6 +74,14 @@ public final class SpeechEchoLabController {
 
     private JSONObject active;
     private AudioFrameBus frameBus;
+    private PcmCaptureConsumer pcmCapture;
+    private SpeechRecognizer capturedRecognizer;
+    private ParcelFileDescriptor capturedAudioRead;
+    private TextToSpeech speaker;
+    private boolean ttsReady;
+    private boolean ttsInitializing;
+    private String ttsVoiceName = "";
+    private boolean ttsVoiceNetworkRequired;
 
     public static SpeechEchoLabController shared(Context context) {
         SpeechEchoLabController existing = shared;
@@ -75,6 +115,10 @@ public final class SpeechEchoLabController {
         Json.put(out, "active_session", active == null ? JSONObject.NULL : active);
         Json.put(out, "last_completed", lastSession());
         Json.put(out, "direct_echo_status", directEcho.status());
+        Json.put(out, "captured_audio_echo_available", capturedAudioEchoAvailable());
+        Json.put(out, "tts_ready", ttsReady);
+        Json.put(out, "tts_initializing", ttsInitializing);
+        Json.put(out, "tts_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
         if (frameBus != null) {
             Json.put(out, "frame_bus", frameBus.snapshot());
         }
@@ -109,6 +153,9 @@ public final class SpeechEchoLabController {
         if (ENGINE_ANDROID_DIRECT_ECHO.equals(engine)) {
             return startDirectEcho(session, args == null ? new JSONObject() : args);
         }
+        if (ENGINE_ANDROID_CAPTURED_AUDIO_ECHO.equals(engine)) {
+            return startCapturedAudioEcho(session);
+        }
         return startFrameBus(session);
     }
 
@@ -137,6 +184,9 @@ public final class SpeechEchoLabController {
             Json.put(out, "result", "stopped_direct_echo");
             Json.put(out, "session", session);
             return out;
+        }
+        if (ENGINE_ANDROID_CAPTURED_AUDIO_ECHO.equals(engine)) {
+            return stopCapturedAudioEcho(out, session);
         }
 
         JSONObject busStop = frameBus == null ? new JSONObject() : frameBus.stop();
@@ -206,7 +256,8 @@ public final class SpeechEchoLabController {
             Json.put(current, ROUTE_REQUIRED, normalizeRouteRequired(args.optString(ROUTE_REQUIRED, "none")));
         }
         prefs.edit()
-                .putString(ENGINE, current.optString(ENGINE, ENGINE_ANDROID_DIRECT_ECHO))
+                .putInt(CONFIG_VERSION, CURRENT_CONFIG_VERSION)
+                .putString(ENGINE, current.optString(ENGINE, ENGINE_ANDROID_CAPTURED_AUDIO_ECHO))
                 .putBoolean(SAVE_DEBUG_AUDIO, current.optBoolean(SAVE_DEBUG_AUDIO, false))
                 .putString(ROUTE_REQUIRED, current.optString(ROUTE_REQUIRED, "none"))
                 .commit();
@@ -238,6 +289,82 @@ public final class SpeechEchoLabController {
         Json.put(session, "state", "Recording");
         JSONObject out = startResult(session, directStart.optString("state", "pending_start"));
         Json.put(out, "engine", ENGINE_ANDROID_DIRECT_ECHO);
+        return out;
+    }
+
+    private JSONObject startCapturedAudioEcho(JSONObject session) {
+        Json.put(session, "state", "Starting");
+        Json.put(session, "recognizer_mode", "strict_on_device_injected_audio");
+        Json.put(session, "capture_boundary", "volume_down_hold_release");
+        Json.put(session, "endpointing", "button_release_only");
+        if (!hasRecordAudio()) {
+            failSession(session, "permission_missing", "RECORD_AUDIO is not granted");
+            buzzError();
+            return startResult(session, "failed");
+        }
+        if (!capturedAudioEchoAvailable()) {
+            failSession(session, "captured_audio_echo_unavailable",
+                    "Android injected-audio on-device SpeechRecognizer requires API 33+ and on-device recognition");
+            buzzError();
+            return startResult(session, "failed");
+        }
+
+        frameBus = new AudioFrameBus(context);
+        pcmCapture = new PcmCaptureConsumer();
+        frameBus.addSynchronousConsumer(pcmCapture);
+        frameBus.addConsumer(new PreRollBuffer());
+        frameBus.addConsumer(new TelemetryConsumer());
+        JSONObject busStart = frameBus.start();
+        Json.put(session, "frame_bus_start", busStart);
+        if (!"started".equals(busStart.optString("result", ""))) {
+            failSession(session, "frame_bus_start_failed", busStart.optString("error", "AudioFrameBus failed to start"));
+            frameBus = null;
+            pcmCapture = null;
+            buzzError();
+            return startResult(session, "failed");
+        }
+
+        Json.put(session, "state", "Recording");
+        Json.put(session, "ready_at", Instant.now().toString());
+        Json.put(session, "ready_elapsed_ms", elapsedMs(session));
+        Json.put(session, "audio_capture", pcmCapture.snapshot());
+        Log.i(TAG, "captured audio echo recording started session=" + session.optString("session_id"));
+        buzzOneShot(READY_HAPTIC_MS, HAPTIC_AMPLITUDE);
+        JSONObject out = startResult(session, "recording");
+        Json.put(out, "engine", ENGINE_ANDROID_CAPTURED_AUDIO_ECHO);
+        return out;
+    }
+
+    private JSONObject stopCapturedAudioEcho(JSONObject out, JSONObject session) {
+        buzzOneShot(RELEASE_HAPTIC_MS, HAPTIC_AMPLITUDE);
+        JSONObject busStop = frameBus == null ? new JSONObject() : frameBus.stop();
+        PcmCaptureConsumer capture = pcmCapture;
+        short[] samples = capture == null ? new short[0] : capture.snapshotSamples();
+        JSONObject captureReport = capture == null ? new JSONObject() : capture.snapshot();
+        Json.put(session, "state", "Recognizing");
+        Json.put(session, "audio_closed_at", Instant.now().toString());
+        Json.put(session, "audio_closed_elapsed_ms", elapsedMs(session));
+        Json.put(session, "frame_bus_stop", busStop);
+        Json.put(session, "metrics", busStop.optJSONObject("snapshot"));
+        Json.put(session, "captured_audio", captureReport);
+        frameBus = null;
+        pcmCapture = null;
+
+        if (samples.length == 0) {
+            failActiveCapturedSession(session, "empty_captured_audio", "No PCM samples were captured before release");
+            Json.put(out, "result", "failed_empty_captured_audio");
+            Json.put(out, "session", session);
+            return out;
+        }
+
+        Json.put(session, "captured_audio_samples_for_stt", samples.length);
+        Json.put(session, "captured_audio_bytes_for_stt", samples.length * 2L);
+        Json.put(session, "captured_audio_duration_ms_for_stt", samples.length * 1_000L / AudioFrameBus.SAMPLE_RATE);
+        Log.i(TAG, "captured audio echo release session=" + session.optString("session_id")
+                + " samples=" + samples.length);
+        main.post(() -> startCapturedRecognizerOnMain(session.optString("session_id"), samples));
+        Json.put(out, "result", "stopped_captured_audio_started_recognition");
+        Json.put(out, "session", session);
         return out;
     }
 
@@ -277,6 +404,7 @@ public final class SpeechEchoLabController {
         Json.put(session, "route_required", config.optString(ROUTE_REQUIRED, "none"));
         Json.put(session, "route", route);
         Json.put(session, "started_at", Instant.now().toString());
+        Json.put(session, "started_elapsed_ms", SystemClock.elapsedRealtime());
         Json.put(session, "raw_audio_saved", false);
         Json.put(session, "broker_delivery_status", "disabled_lab_local");
         Json.put(session, "agent_runtime", "none");
@@ -294,12 +422,319 @@ public final class SpeechEchoLabController {
     private void failSession(JSONObject session, String code, String message) {
         Json.put(session, "state", "Failed");
         Json.put(session, "completed_at", Instant.now().toString());
+        Json.put(session, "completed_elapsed_ms", elapsedMs(session));
         Json.put(session, "error_code", code);
         Json.put(session, "error_message", message);
         appendSession(session);
         if (active == session) {
             active = null;
         }
+    }
+
+    private void startCapturedRecognizerOnMain(String sessionId, short[] samples) {
+        synchronized (this) {
+            if (active == null || !sessionId.equals(active.optString("session_id"))) {
+                return;
+            }
+            Json.put(active, "recognizer_start_at", Instant.now().toString());
+            Json.put(active, "recognizer_start_elapsed_ms", elapsedMs(active));
+            Json.put(active, "recognizer_audio_source", "EXTRA_AUDIO_SOURCE");
+            Json.put(active, "recognizer_segmented_session", "EXTRA_AUDIO_SOURCE");
+            Json.put(active, "recognizer_sample_rate", AudioFrameBus.SAMPLE_RATE);
+            Json.put(active, "recognizer_channel_count", 1);
+            Json.put(active, "recognizer_encoding", "PCM_16BIT");
+        }
+        try {
+            ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+            ParcelFileDescriptor read = pipe[0];
+            ParcelFileDescriptor write = pipe[1];
+            synchronized (this) {
+                capturedAudioRead = read;
+                capturedRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
+                capturedRecognizer.setRecognitionListener(new CapturedRecognitionListener(sessionId));
+            }
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, read);
+                intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AudioFrameBus.SAMPLE_RATE);
+                intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
+                intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
+                intent.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE);
+                intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY);
+                intent.putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true);
+            }
+            capturedRecognizer.startListening(intent);
+            writeCapturedPcmAsync(sessionId, write, samples);
+        } catch (RuntimeException | IOException exc) {
+            failActiveCapturedSessionById(sessionId, "captured_recognizer_start_failed",
+                    exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+    }
+
+    private void writeCapturedPcmAsync(String sessionId, ParcelFileDescriptor write, short[] samples) {
+        new Thread(() -> {
+            long bytesWritten = 0L;
+            patchActiveCapturedSession(sessionId, "pipe_write_started_at", Instant.now().toString());
+            try (ParcelFileDescriptor.AutoCloseOutputStream out =
+                         new ParcelFileDescriptor.AutoCloseOutputStream(write)) {
+                byte[] buffer = new byte[Math.min(8_192, Math.max(2, samples.length * 2))];
+                int offset = 0;
+                while (offset < samples.length) {
+                    int sampleCount = Math.min(buffer.length / 2, samples.length - offset);
+                    for (int i = 0; i < sampleCount; i++) {
+                        short value = samples[offset + i];
+                        buffer[i * 2] = (byte) (value & 0xff);
+                        buffer[i * 2 + 1] = (byte) ((value >> 8) & 0xff);
+                    }
+                    int byteCount = sampleCount * 2;
+                    out.write(buffer, 0, byteCount);
+                    bytesWritten += byteCount;
+                    offset += sampleCount;
+                }
+                out.flush();
+                patchActiveCapturedSession(sessionId, "pipe_write_result", "closed_after_full_clip");
+            } catch (IOException exc) {
+                patchActiveCapturedSession(sessionId, "pipe_write_result", "failed");
+                patchActiveCapturedSession(sessionId, "pipe_write_error",
+                        exc.getClass().getSimpleName() + ": " + exc.getMessage());
+            } finally {
+                patchActiveCapturedSession(sessionId, "pipe_write_completed_at", Instant.now().toString());
+                patchActiveCapturedSession(sessionId, "pipe_bytes_written", bytesWritten);
+                Log.i(TAG, "captured audio pipe closed session=" + sessionId + " bytes=" + bytesWritten);
+            }
+        }, "pucky-captured-audio-stt-pipe").start();
+    }
+
+    private final class CapturedRecognitionListener implements RecognitionListener {
+        private final String sessionId;
+        private ArrayList<String> latestSegmentValues;
+        private float[] latestSegmentConfidences;
+        private boolean completed;
+
+        CapturedRecognitionListener(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        @Override
+        public void onReadyForSpeech(Bundle params) {
+            patchActiveCapturedSession(sessionId, "recognizer_ready_at", Instant.now().toString());
+            patchActiveCapturedSession(sessionId, "recognizer_ready_elapsed_ms", elapsedMsForActive(sessionId));
+        }
+
+        @Override
+        public void onBeginningOfSpeech() {
+            patchActiveCapturedSession(sessionId, "speech_begin_at", Instant.now().toString());
+            patchActiveCapturedSession(sessionId, "speech_begin_elapsed_ms", elapsedMsForActive(sessionId));
+        }
+
+        @Override
+        public void onRmsChanged(float rmsdB) {
+        }
+
+        @Override
+        public void onBufferReceived(byte[] buffer) {
+            patchActiveCapturedSession(sessionId, "recognizer_buffer_received", true);
+        }
+
+        @Override
+        public void onEndOfSpeech() {
+            patchActiveCapturedSession(sessionId, "speech_end_at", Instant.now().toString());
+            patchActiveCapturedSession(sessionId, "speech_end_elapsed_ms", elapsedMsForActive(sessionId));
+        }
+
+        @Override
+        public void onError(int error) {
+            if (completed) {
+                return;
+            }
+            completed = true;
+            failActiveCapturedSessionById(sessionId, errorName(error),
+                    "Android on-device SpeechRecognizer injected-audio error " + error + " (" + errorName(error) + ")");
+        }
+
+        @Override
+        public void onResults(Bundle results) {
+            if (completed) {
+                return;
+            }
+            completed = true;
+            completeActiveCapturedSession(sessionId,
+                    results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION),
+                    results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES),
+                    "results");
+        }
+
+        @Override
+        public void onPartialResults(Bundle partialResults) {
+        }
+
+        @Override
+        public void onEvent(int eventType, Bundle params) {
+            patchActiveCapturedSession(sessionId, "last_recognizer_event", eventType);
+        }
+
+        @Override
+        public void onSegmentResults(Bundle segmentResults) {
+            latestSegmentValues = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            latestSegmentConfidences = segmentResults.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
+            appendSegmentResult(sessionId, latestSegmentValues, latestSegmentConfidences);
+        }
+
+        @Override
+        public void onEndOfSegmentedSession() {
+            patchActiveCapturedSession(sessionId, "segmented_session_end_at", Instant.now().toString());
+            patchActiveCapturedSession(sessionId, "segmented_session_end_elapsed_ms", elapsedMsForActive(sessionId));
+            if (completed) {
+                return;
+            }
+            completed = true;
+            completeActiveCapturedSession(sessionId, latestSegmentValues, latestSegmentConfidences, "segmented_session");
+        }
+
+        @Override
+        public void onLanguageDetection(Bundle results) {
+            recordCapturedLanguageDetection(sessionId, results);
+        }
+    }
+
+    private synchronized void completeActiveCapturedSession(
+            String sessionId, ArrayList<String> values, float[] confidences, String completionSource) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            cleanupCapturedRecognizer();
+            return;
+        }
+        String text = first(values);
+        Json.put(active, "recognition_completion_source", completionSource);
+        Json.put(active, "completed_at", Instant.now().toString());
+        Json.put(active, "completed_elapsed_ms", elapsedMs(active));
+        Json.put(active, "alternatives", array(values));
+        Json.put(active, "confidence_scores", array(confidences));
+        Json.put(active, "final_transcript", text);
+        Json.put(active, "formatted_text", text);
+        Json.put(active, "raw_text", second(values));
+        if (text.trim().isEmpty()) {
+            failActiveCapturedSession(active, "empty_transcript", "Injected-audio SpeechRecognizer returned no transcript");
+            return;
+        }
+        Json.put(active, "state", "Speaking");
+        Json.put(active, "accepted_at", Instant.now().toString());
+        Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
+        Json.put(active, "tts_text", text);
+        Json.put(active, "tts_status", "scheduled");
+        JSONObject finished = active;
+        appendSession(finished);
+        active = null;
+        cleanupCapturedRecognizer();
+        playAcceptedChime(sessionId);
+        main.postDelayed(() -> speakEcho(sessionId, text), TTS_AFTER_ACCEPTED_CHIME_MS);
+        Log.i(TAG, "captured audio echo recognized session=" + sessionId + " text_len=" + text.length());
+    }
+
+    private synchronized void failActiveCapturedSessionById(String sessionId, String code, String message) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            cleanupCapturedRecognizer();
+            return;
+        }
+        failActiveCapturedSession(active, code, message);
+    }
+
+    private synchronized void failActiveCapturedSession(JSONObject session, String code, String message) {
+        Json.put(session, "state", "Failed");
+        Json.put(session, "completed_at", Instant.now().toString());
+        Json.put(session, "completed_elapsed_ms", elapsedMs(session));
+        Json.put(session, "error_code", code);
+        Json.put(session, "error_message", message);
+        Json.put(session, "tts_status", "skipped_failed_recognition");
+        appendSession(session);
+        if (active == session) {
+            active = null;
+        }
+        cleanupCapturedRecognizer();
+        buzzError();
+        Log.w(TAG, "captured audio echo failed code=" + code + " message=" + message);
+    }
+
+    private synchronized void patchActiveCapturedSession(String sessionId, String key, Object value) {
+        if (active != null && sessionId.equals(active.optString("session_id"))) {
+            Json.put(active, key, value);
+            return;
+        }
+        updateStoredSession(sessionId, item -> Json.put(item, key, value));
+    }
+
+    private synchronized void appendSegmentResult(String sessionId, ArrayList<String> values, float[] confidences) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        JSONArray segments = active.optJSONArray("segment_results");
+        if (segments == null) {
+            segments = new JSONArray();
+            Json.put(active, "segment_results", segments);
+        }
+        JSONObject segment = new JSONObject();
+        Json.put(segment, "at", Instant.now().toString());
+        Json.put(segment, "elapsed_ms", elapsedMs(active));
+        Json.put(segment, "alternatives", array(values));
+        Json.put(segment, "confidence_scores", array(confidences));
+        Json.put(segment, "text", first(values));
+        Json.add(segments, segment);
+    }
+
+    private synchronized void recordCapturedLanguageDetection(String sessionId, Bundle results) {
+        if (active == null || !sessionId.equals(active.optString("session_id"))) {
+            return;
+        }
+        JSONObject item = new JSONObject();
+        String detected = results.getString(SpeechRecognizer.DETECTED_LANGUAGE);
+        int confidence = results.getInt(SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL,
+                SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL_UNKNOWN);
+        Json.put(item, "at", Instant.now().toString());
+        Json.put(item, "elapsed_ms", elapsedMs(active));
+        Json.put(item, "detected_language", detected == null ? JSONObject.NULL : detected);
+        Json.put(item, "confidence_level", confidence);
+        JSONArray events = active.optJSONArray("language_detection_events");
+        if (events == null) {
+            events = new JSONArray();
+            Json.put(active, "language_detection_events", events);
+        }
+        Json.add(events, item);
+        Json.put(active, "detected_language", detected == null ? JSONObject.NULL : detected);
+        Json.put(active, "language_detection_confidence_level", confidence);
+    }
+
+    private synchronized long elapsedMsForActive(String sessionId) {
+        if (active != null && sessionId.equals(active.optString("session_id"))) {
+            return elapsedMs(active);
+        }
+        return 0L;
+    }
+
+    private synchronized void cleanupCapturedRecognizer() {
+        main.post(() -> {
+            if (capturedRecognizer != null) {
+                try {
+                    capturedRecognizer.destroy();
+                } catch (RuntimeException ignored) {
+                }
+                capturedRecognizer = null;
+            }
+            if (capturedAudioRead != null) {
+                try {
+                    capturedAudioRead.close();
+                } catch (IOException ignored) {
+                }
+                capturedAudioRead = null;
+            }
+        });
     }
 
     private JSONObject mergedConfig(JSONObject args) {
@@ -319,9 +754,11 @@ public final class SpeechEchoLabController {
     private JSONObject configJson() {
         ensureDefaults();
         JSONObject out = new JSONObject();
-        Json.put(out, ENGINE, normalizeEngine(prefs.getString(ENGINE, ENGINE_ANDROID_DIRECT_ECHO)));
+        Json.put(out, CONFIG_VERSION, prefs.getInt(CONFIG_VERSION, CURRENT_CONFIG_VERSION));
+        Json.put(out, ENGINE, normalizeEngine(prefs.getString(ENGINE, ENGINE_ANDROID_CAPTURED_AUDIO_ECHO)));
         Json.put(out, SAVE_DEBUG_AUDIO, prefs.getBoolean(SAVE_DEBUG_AUDIO, false));
         Json.put(out, ROUTE_REQUIRED, normalizeRouteRequired(prefs.getString(ROUTE_REQUIRED, "none")));
+        Json.put(out, "captured_audio_echo_available", capturedAudioEchoAvailable());
         Json.put(out, "vad_enabled", ENGINE_FRAME_BUS_VAD.equals(out.optString(ENGINE))
                 || ENGINE_FRAME_BUS_WAKE.equals(out.optString(ENGINE)));
         Json.put(out, "wake_enabled", ENGINE_FRAME_BUS_WAKE.equals(out.optString(ENGINE)));
@@ -330,12 +767,230 @@ public final class SpeechEchoLabController {
     }
 
     private void ensureDefaults() {
-        if (!prefs.contains(ENGINE)) {
+        if (!prefs.contains(ENGINE) || prefs.getInt(CONFIG_VERSION, 1) < CURRENT_CONFIG_VERSION) {
             prefs.edit()
-                    .putString(ENGINE, ENGINE_ANDROID_DIRECT_ECHO)
+                    .putInt(CONFIG_VERSION, CURRENT_CONFIG_VERSION)
+                    .putString(ENGINE, ENGINE_ANDROID_CAPTURED_AUDIO_ECHO)
                     .putBoolean(SAVE_DEBUG_AUDIO, false)
                     .putString(ROUTE_REQUIRED, "none")
                     .commit();
+        }
+    }
+
+    private boolean hasRecordAudio() {
+        return context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean capturedAudioEchoAvailable() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
+    }
+
+    private long elapsedMs(JSONObject session) {
+        long start = session.optLong("started_elapsed_ms", 0L);
+        return start <= 0L ? 0L : Math.max(0L, SystemClock.elapsedRealtime() - start);
+    }
+
+    private void playAcceptedChime(String sessionId) {
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, ACCEPTED_CHIME_VOLUME);
+            generator.startTone(ToneGenerator.TONE_PROP_PROMPT, 150);
+            markAcceptedChime(sessionId);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(280L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-lab-echo-accepted-chime").start();
+        } catch (RuntimeException exc) {
+            markTts(sessionId, "accepted_chime_failed", "", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+    }
+
+    private void speakEcho(String sessionId, String text) {
+        try {
+            ensureTtsReady();
+            TextToSpeech localSpeaker;
+            synchronized (this) {
+                localSpeaker = ttsReady ? speaker : null;
+            }
+            if (localSpeaker == null) {
+                markTts(sessionId, "failed_not_ready", text, "TTS engine was not ready");
+                buzzError();
+                return;
+            }
+            Bundle params = new Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
+            int result = localSpeaker.speak(text, TextToSpeech.QUEUE_FLUSH, params, "pucky_lab_echo_" + sessionId);
+            if (result == TextToSpeech.SUCCESS) {
+                markTts(sessionId, "started", text, null);
+            } else {
+                markTts(sessionId, "failed_speak_" + result, text, "TextToSpeech.speak returned " + result);
+                buzzError();
+            }
+        } catch (RuntimeException exc) {
+            markTts(sessionId, "failed_exception", text, exc.getClass().getSimpleName() + ": " + exc.getMessage());
+            buzzError();
+        }
+    }
+
+    private void ensureTtsReady() {
+        synchronized (this) {
+            if (speaker != null || ttsInitializing) {
+                return;
+            }
+            ttsInitializing = true;
+        }
+        main.post(() -> {
+            try {
+                LabTtsInitListener listener = new LabTtsInitListener();
+                TextToSpeech created = new TextToSpeech(context, listener);
+                listener.attach(created);
+            } catch (RuntimeException exc) {
+                synchronized (this) {
+                    ttsInitializing = false;
+                    ttsReady = false;
+                    ttsVoiceName = "";
+                    notifyAll();
+                }
+            }
+        });
+    }
+
+    private void handleTtsInit(TextToSpeech created, int status) {
+        if (created == null || status != TextToSpeech.SUCCESS) {
+            synchronized (this) {
+                ttsReady = false;
+                ttsInitializing = false;
+                ttsVoiceName = "";
+                notifyAll();
+            }
+            return;
+        }
+        Locale locale = Locale.getDefault();
+        int language = created.setLanguage(locale);
+        if (language == TextToSpeech.LANG_MISSING_DATA || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+            created.setLanguage(Locale.US);
+            locale = Locale.US;
+        }
+        Voice selected = chooseLocalVoice(created, locale);
+        if (selected != null) {
+            try {
+                created.setVoice(selected);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            created.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build());
+        }
+        synchronized (this) {
+            speaker = created;
+            ttsReady = true;
+            ttsInitializing = false;
+            ttsVoiceName = selected == null ? "" : selected.getName();
+            ttsVoiceNetworkRequired = selected != null && selected.isNetworkConnectionRequired();
+            notifyAll();
+        }
+    }
+
+    private Voice chooseLocalVoice(TextToSpeech created, Locale preferredLocale) {
+        Set<Voice> voices = created.getVoices();
+        if (voices == null || voices.isEmpty()) {
+            return null;
+        }
+        Voice fallback = null;
+        for (Voice voice : voices) {
+            if (voice == null || voice.isNetworkConnectionRequired() || voiceNeedsInstall(voice)) {
+                continue;
+            }
+            if (fallback == null) {
+                fallback = voice;
+            }
+            Locale locale = voice.getLocale();
+            if (locale != null && preferredLocale.getLanguage().equals(locale.getLanguage())) {
+                return voice;
+            }
+        }
+        return fallback;
+    }
+
+    private boolean voiceNeedsInstall(Voice voice) {
+        Set<String> features = voice.getFeatures();
+        return features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED);
+    }
+
+    private synchronized void markAcceptedChime(String sessionId) {
+        updateStoredSession(sessionId, item -> {
+            Json.put(item, "accepted_chime_at", Instant.now().toString());
+            Json.put(item, "accepted_chime_elapsed_ms", elapsedMs(item));
+        });
+    }
+
+    private synchronized void markTts(String sessionId, String status, String text, String error) {
+        updateStoredSession(sessionId, item -> {
+            Json.put(item, "tts_status", status);
+            Json.put(item, "tts_at", Instant.now().toString());
+            Json.put(item, "tts_elapsed_ms", elapsedMs(item));
+            if (text != null && !text.isEmpty()) {
+                Json.put(item, "tts_text", text);
+            }
+            if (ttsReady) {
+                Json.put(item, "tts_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
+                Json.put(item, "tts_voice_network_required", ttsVoiceNetworkRequired);
+            }
+            if (error != null) {
+                Json.put(item, "tts_error", error);
+            }
+        });
+    }
+
+    private synchronized void updateStoredSession(String sessionId, SessionPatch patch) {
+        JSONArray all = sessionsJson();
+        for (int i = all.length() - 1; i >= 0; i--) {
+            JSONObject item = all.optJSONObject(i);
+            if (item != null && sessionId.equals(item.optString("session_id"))) {
+                patch.apply(item);
+                prefs.edit().putString(SESSIONS, all.toString()).commit();
+                return;
+            }
+        }
+    }
+
+    private void buzzOneShot(long millis, int amplitude) {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(millis, Math.max(1, Math.min(255, amplitude))));
+            } else {
+                vibrator.vibrate(millis);
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void buzzError() {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                        new long[] {0L, 80L, 80L, 120L},
+                        new int[] {0, ERROR_HAPTIC_AMPLITUDE, 0, ERROR_HAPTIC_AMPLITUDE},
+                        -1));
+            } else {
+                vibrator.vibrate(new long[] {0L, 80L, 80L, 120L}, -1);
+            }
+        } catch (RuntimeException ignored) {
         }
     }
 
@@ -351,12 +1006,14 @@ public final class SpeechEchoLabController {
 
     private static String normalizeEngine(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(Locale.US);
-        if (ENGINE_FRAME_BUS_METRICS.equals(value)
+        if (ENGINE_ANDROID_DIRECT_ECHO.equals(value)
+                || ENGINE_ANDROID_CAPTURED_AUDIO_ECHO.equals(value)
+                || ENGINE_FRAME_BUS_METRICS.equals(value)
                 || ENGINE_FRAME_BUS_VAD.equals(value)
                 || ENGINE_FRAME_BUS_WAKE.equals(value)) {
             return value;
         }
-        return ENGINE_ANDROID_DIRECT_ECHO;
+        return ENGINE_ANDROID_CAPTURED_AUDIO_ECHO;
     }
 
     private static String normalizeRouteRequired(String raw) {
@@ -445,6 +1102,94 @@ public final class SpeechEchoLabController {
                     syncDirectEchoCompletions();
                 }
             }, delayMs);
+        }
+    }
+
+    private static String first(ArrayList<String> values) {
+        if (values == null || values.isEmpty() || values.get(0) == null) {
+            return "";
+        }
+        return values.get(0);
+    }
+
+    private static String second(ArrayList<String> values) {
+        if (values == null || values.size() < 2 || values.get(1) == null) {
+            return "";
+        }
+        return values.get(1);
+    }
+
+    private static JSONArray array(ArrayList<String> values) {
+        JSONArray out = new JSONArray();
+        if (values != null) {
+            for (String value : values) {
+                Json.add(out, value == null ? "" : value);
+            }
+        }
+        return out;
+    }
+
+    private static JSONArray array(float[] values) {
+        JSONArray out = new JSONArray();
+        if (values != null) {
+            for (float value : values) {
+                Json.add(out, value);
+            }
+        }
+        return out;
+    }
+
+    private static String errorName(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO:
+                return "ERROR_AUDIO";
+            case SpeechRecognizer.ERROR_CLIENT:
+                return "ERROR_CLIENT";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                return "ERROR_INSUFFICIENT_PERMISSIONS";
+            case SpeechRecognizer.ERROR_NETWORK:
+                return "ERROR_NETWORK";
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                return "ERROR_NETWORK_TIMEOUT";
+            case SpeechRecognizer.ERROR_NO_MATCH:
+                return "ERROR_NO_MATCH";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
+                return "ERROR_RECOGNIZER_BUSY";
+            case SpeechRecognizer.ERROR_SERVER:
+                return "ERROR_SERVER";
+            case SpeechRecognizer.ERROR_SERVER_DISCONNECTED:
+                return "ERROR_SERVER_DISCONNECTED";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                return "ERROR_SPEECH_TIMEOUT";
+            case SpeechRecognizer.ERROR_TOO_MANY_REQUESTS:
+                return "ERROR_TOO_MANY_REQUESTS";
+            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED:
+                return "ERROR_LANGUAGE_NOT_SUPPORTED";
+            case SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE:
+                return "ERROR_LANGUAGE_UNAVAILABLE";
+            default:
+                return "ERROR_" + error;
+        }
+    }
+
+    private interface SessionPatch {
+        void apply(JSONObject session);
+    }
+
+    private final class LabTtsInitListener implements TextToSpeech.OnInitListener {
+        private TextToSpeech created;
+
+        void attach(TextToSpeech created) {
+            this.created = created;
+        }
+
+        @Override
+        public void onInit(int status) {
+            if (created == null) {
+                main.postDelayed(() -> handleTtsInit(created, status), 25L);
+                return;
+            }
+            handleTtsInit(created, status);
         }
     }
 

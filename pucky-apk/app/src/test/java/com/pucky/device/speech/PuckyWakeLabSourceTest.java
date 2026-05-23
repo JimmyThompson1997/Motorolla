@@ -68,11 +68,13 @@ public final class PuckyWakeLabSourceTest {
         String source = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
 
         assertTrue(source.contains("ENGINE_ANDROID_DIRECT_ECHO = \"android_direct_echo\""));
+        assertTrue(source.contains("ENGINE_ANDROID_CAPTURED_AUDIO_ECHO = \"android_captured_audio_echo\""));
         assertTrue(source.contains("ENGINE_FRAME_BUS_METRICS = \"frame_bus_metrics\""));
         assertTrue(source.contains("ENGINE_FRAME_BUS_VAD = \"frame_bus_vad\""));
         assertTrue(source.contains("ENGINE_FRAME_BUS_WAKE = \"frame_bus_wake\""));
         assertTrue(source.contains("SpeechEchoController.shared(this.context)"));
         assertTrue(source.contains("new AudioFrameBus(context)"));
+        assertTrue(source.contains("new PcmCaptureConsumer()"));
         assertTrue(source.contains("new SileroVadConsumer(context)"));
         assertTrue(source.contains("new OpenWakeWordConsumer(context)"));
         assertTrue(source.contains("raw_audio_saved\", false"));
@@ -92,6 +94,22 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("\"final_transcript\""));
         assertTrue(source.contains("\"state\", \"Completed\""));
         assertTrue(source.contains("\"state\", \"Failed\""));
+    }
+
+    @Test
+    public void capturedAudioEchoUsesButtonBoundedAudioSourceAndAndroidTts() throws Exception {
+        String source = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
+        String bus = read("src/main/java/com/pucky/device/speech/lab/AudioFrameBus.java");
+
+        assertTrue(source.contains("ENGINE_ANDROID_CAPTURED_AUDIO_ECHO"));
+        assertTrue(source.contains("endpointing\", \"button_release_only\""));
+        assertTrue(source.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE"));
+        assertTrue(source.contains("RecognizerIntent.EXTRA_SEGMENTED_SESSION"));
+        assertTrue(source.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE"));
+        assertTrue(source.contains("TextToSpeech.QUEUE_FLUSH"));
+        assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
+        assertTrue(source.contains("final_transcript"));
+        assertTrue(bus.contains("addSynchronousConsumer"));
     }
 
     @Test

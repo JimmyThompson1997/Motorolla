@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import com.pucky.device.speech.lab.AudioFrameBus;
+import com.pucky.device.speech.lab.PcmCaptureConsumer;
 import com.pucky.device.speech.lab.PreRollBuffer;
 import com.pucky.device.speech.lab.TelemetryConsumer;
 
@@ -49,5 +50,21 @@ public final class AudioLabPureUnitTest {
         assertEquals(3, report.getLong("samples"));
         assertEquals(100, report.getInt("max_abs_pcm16"));
         assertTrue(report.getDouble("rms_pcm16") > 0.0);
+    }
+
+    @Test
+    public void pcmCaptureKeepsFullHeldClipUntilCapacity() throws Exception {
+        PcmCaptureConsumer capture = new PcmCaptureConsumer(5);
+
+        capture.onFrame(new short[] {1, 2, 3}, 10L);
+        capture.onFrame(new short[] {4, 5, 6}, 20L);
+
+        assertArrayEquals(new short[] {1, 2, 3, 4, 5}, capture.snapshotSamples());
+        JSONObject report = capture.snapshot();
+        assertEquals(2, report.getLong("frames_seen"));
+        assertEquals(6, report.getLong("samples_seen"));
+        assertEquals(5, report.getLong("samples_captured"));
+        assertEquals(1, report.getLong("samples_dropped"));
+        assertTrue(report.getBoolean("truncated"));
     }
 }
