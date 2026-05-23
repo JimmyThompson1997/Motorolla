@@ -701,6 +701,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     document_rendered = css_block(styles, ".document-rendered")
     assert "flex: 0 0 auto;" in document_rendered
     assert "width: 100%;" in document_rendered
+    document_header = css_block(styles, ".document-rendered > header")
+    assert "position: relative;" in document_header
+    assert "position: sticky" not in document_header
+    assert "background: #fbfcff;" in document_header
     assert ".media-doc-preview.has-render .media-doc-render" in styles
     assert ".media-doc-preview.is-gallery.has-render .media-doc-label" in styles
     assert ".chat-media-video {\n  object-fit: contain;" in styles

@@ -1162,11 +1162,9 @@ button {
 }
 
 .document-rendered > header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  position: relative;
   padding: 18px 18px 14px;
-  background: rgba(251, 252, 255, 0.96);
+  background: #fbfcff;
   border-bottom: 1px solid #d9e0e8;
 }
 
