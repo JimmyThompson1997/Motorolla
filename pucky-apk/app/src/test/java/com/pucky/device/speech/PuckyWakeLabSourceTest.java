@@ -119,6 +119,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("keyword_match_strategy"));
         assertTrue(source.contains("exact_utterance"));
         assertTrue(source.contains("keyword_reply_tts_replaces_echo"));
+        assertTrue(source.contains("photo_capture_confirms_with_local_chime"));
+        assertTrue(source.contains("skipped_photo_capture_chime"));
+        assertTrue(source.contains("isPhotoCaptureAction"));
         assertTrue(source.contains("keyword_action_status"));
         assertTrue(source.contains("keyword_action_result"));
         assertTrue(source.contains("keyword_action_error_message"));

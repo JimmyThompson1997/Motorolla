@@ -747,6 +747,10 @@ public final class SpeechEchoLabController {
                 ttsText = failureReply(keyword);
             }
         }
+        boolean skipSuccessTts = keyword.matched && !actionFailed && isPhotoCaptureAction(keyword);
+        if (skipSuccessTts) {
+            ttsText = "";
+        }
         Json.put(active, "keyword_lab_enabled", true);
         Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
         Json.put(active, "keyword_normalized_transcript", keyword.normalizedTranscript);
@@ -758,7 +762,9 @@ public final class SpeechEchoLabController {
         Json.put(active, "keyword_match_confidence", keyword.confidence);
         Json.put(active, "keyword_match_start_index", keyword.startIndex);
         Json.put(active, "keyword_reply_text", keyword.matched ? keyword.replyText : JSONObject.NULL);
-        Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched);
+        Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched && !skipSuccessTts);
+        Json.put(active, "keyword_reply_tts_skipped_reason",
+                skipSuccessTts ? "photo_capture_confirms_with_local_chime" : JSONObject.NULL);
         Json.put(active, "keyword_builtin", keyword.matched ? keyword.builtin : JSONObject.NULL);
         Json.put(active, "keyword_action", keyword.hasAction() ? keyword.action : JSONObject.NULL);
         Json.put(active, "keyword_action_command",
@@ -771,21 +777,31 @@ public final class SpeechEchoLabController {
         Json.put(active, "accepted_at", Instant.now().toString());
         Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
         Json.put(active, "tts_text", ttsText);
-        Json.put(active, "tts_status", "scheduled");
+        Json.put(active, "tts_status", skipSuccessTts ? "skipped_photo_capture_chime" : "scheduled");
         JSONObject finished = active;
         appendSession(finished);
         active = null;
         cleanupCapturedRecognizer();
         if (actionFailed) {
             buzzError();
-        } else {
+        } else if (!skipSuccessTts) {
             playAcceptedChime(sessionId);
         }
-        String finalTtsText = ttsText;
-        main.postDelayed(() -> speakEcho(sessionId, finalTtsText), TTS_AFTER_ACCEPTED_CHIME_MS);
+        if (!skipSuccessTts) {
+            String finalTtsText = ttsText;
+            main.postDelayed(() -> speakEcho(sessionId, finalTtsText), TTS_AFTER_ACCEPTED_CHIME_MS);
+        } else {
+            markTts(sessionId, "skipped_photo_capture_chime", "", null);
+        }
         Log.i(TAG, "captured audio echo recognized session=" + sessionId
                 + " text_len=" + text.length()
                 + " keyword=" + (keyword.matched ? keyword.id : "none"));
+    }
+
+    private static boolean isPhotoCaptureAction(SpeechKeywordMatcher.Match keyword) {
+        return keyword != null
+                && keyword.hasAction()
+                && SpeechKeywordActionExecutor.COMMAND_PHOTO_CAPTURE.equals(keyword.action.optString("command", ""));
     }
 
     private synchronized void failActiveCapturedSessionById(String sessionId, String code, String message) {

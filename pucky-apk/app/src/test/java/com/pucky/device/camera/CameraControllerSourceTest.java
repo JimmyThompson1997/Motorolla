@@ -24,6 +24,10 @@ public final class CameraControllerSourceTest {
         assertTrue(source.contains("public_relative_path"));
         assertTrue(source.contains("app_private_path"));
         assertTrue(source.contains("visible_in_gallery"));
+        assertTrue(source.contains("playCaptureChime()"));
+        assertTrue(source.contains("pucky.photo_capture_chime.v1"));
+        assertTrue(source.contains("pucky-photo-capture-chime"));
+        assertTrue(source.contains("capture_chime"));
     }
 
     private static String read(String path) throws Exception {

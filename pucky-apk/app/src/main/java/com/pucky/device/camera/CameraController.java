@@ -13,9 +13,11 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.AudioManager;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaScannerConnection;
+import android.media.ToneGenerator;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -44,6 +46,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class CameraController {
     private static final String PUBLIC_PHOTO_RELATIVE_DIR = Environment.DIRECTORY_DCIM + "/Pucky";
+    private static final int CAPTURE_CHIME_VOLUME = 85;
+    private static final int CAPTURE_CHIME_DURATION_MS = 140;
 
     private final Context context;
     private final Handler mainHandler;
@@ -185,6 +189,7 @@ public final class CameraController {
                 String displayName = "pucky-" + System.currentTimeMillis() + ".jpg";
                 File file = writePrivatePhoto(bytes, displayName);
                 JSONObject publicPhoto = publishPhoto(bytes, displayName);
+                JSONObject captureChime = playCaptureChime();
                 JSONObject out = new JSONObject();
                 Json.put(out, "captured", true);
                 Json.put(out, "camera_id", cameraId);
@@ -195,6 +200,7 @@ public final class CameraController {
                 Json.put(out, "public_uri", publicPhoto.optString("uri", ""));
                 Json.put(out, "public_relative_path", publicPhoto.optString("relative_path", ""));
                 Json.put(out, "public_display_name", displayName);
+                Json.put(out, "capture_chime", captureChime);
                 Json.put(out, "bytes", bytes.length);
                 Json.put(out, "mime_type", "image/jpeg");
                 Json.put(out, "width", size.getWidth());
@@ -376,6 +382,32 @@ public final class CameraController {
         Json.put(result, "relative_path", relativePath);
         Json.put(result, "visible_in_gallery", true);
         return result;
+    }
+
+    private JSONObject playCaptureChime() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.photo_capture_chime.v1");
+        Json.put(out, "stream", "music");
+        Json.put(out, "volume", CAPTURE_CHIME_VOLUME);
+        Json.put(out, "duration_ms", CAPTURE_CHIME_DURATION_MS);
+        Json.put(out, "played", false);
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, CAPTURE_CHIME_VOLUME);
+            generator.startTone(ToneGenerator.TONE_PROP_ACK, CAPTURE_CHIME_DURATION_MS);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(CAPTURE_CHIME_DURATION_MS + 100L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-photo-capture-chime").start();
+            Json.put(out, "played", true);
+            Json.put(out, "tone", ToneGenerator.TONE_PROP_ACK);
+        } catch (RuntimeException exc) {
+            Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+        return out;
     }
 
     private CameraManager manager() throws CommandException {
