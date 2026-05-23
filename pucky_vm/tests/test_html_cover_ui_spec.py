@@ -120,7 +120,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
     assert ".voice-status-thinking::after" in styles
-    assert "turnThinkingSpin" not in styles
+    assert "turnThinkingSpin" in styles
     assert ".voice-status-speaking" in styles
     assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
