@@ -41,28 +41,30 @@
           "created_at": "2026-05-20T06:33:00-07:00",
           "images": [
             {
-              "artifact": "real-alfred-square.png",
+              "artifact": "real-laptop-app-icon.png",
               "mime_type": "image/png",
-              "title": "Real PNG app image",
-              "alt": "Real laptop PNG from Downloads"
+              "title": "Real laptop PNG",
+              "alt": "Actual PNG from Downloads with PNG file signature"
             },
             {
-              "artifact": "real-alfred-logo.jpg",
+              "artifact": "real-laptop-alfred-logo.jpg",
               "mime_type": "image/jpeg",
-              "title": "Real JPEG logo",
-              "alt": "Real laptop JPEG from Downloads"
+              "title": "Real laptop JPEG",
+              "alt": "Actual JPEG from Downloads with JPEG file signature"
             },
             {
               "artifact": "real-pocket-computers.pdf",
+              "preview_artifact": "real-pocket-computers-pdf-page-preview.png",
               "mime_type": "application/pdf",
               "title": "Real PDF book",
-              "alt": "Real Pocket Computers PDF from Downloads"
+              "alt": "Actual PDF from Downloads with first-page preview rendered from file text"
             },
             {
               "artifact": "real-pocket-computers.docx",
+              "preview_artifact": "real-pocket-computers-docx-page-preview.png",
               "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "title": "Real DOCX manuscript",
-              "alt": "Real Pocket Computers DOCX from Downloads"
+              "alt": "Actual DOCX from Downloads with page preview rendered from file text"
             }
           ]
         }

@@ -1146,10 +1146,30 @@
     const meta = mediaDocumentMeta(item);
     const wrap = el("div", `media-doc-preview ${variant === "gallery" ? "is-gallery" : "is-chat"}`);
     wrap.dataset.kind = meta.kind || "file";
-    wrap.append(el("div", "media-doc-badge", meta.label));
-    wrap.append(el("strong", "media-doc-title", item.title || meta.title));
-    wrap.append(el("span", "media-doc-subtitle", variant === "gallery" ? "Cached document preview" : "Tap to view"));
+    const previewSrc = documentPreviewSrc(item);
+    if (previewSrc) {
+      const image = document.createElement("img");
+      image.className = "media-doc-render";
+      image.alt = item.alt || `${item.title || meta.title} preview`;
+      image.decoding = "async";
+      image.src = previewSrc;
+      wrap.append(image);
+    }
+    const label = el("div", "media-doc-label");
+    label.append(el("span", "media-doc-badge", meta.label));
+    label.append(el("strong", "media-doc-title", item.title || meta.title));
+    label.append(el("span", "media-doc-subtitle", variant === "gallery" ? "Rendered from real local file" : "Tap to view"));
+    wrap.append(label);
     return wrap;
+  }
+
+  function documentPreviewSrc(item) {
+    const direct = item && (item.preview_path || item.preview_src || item.preview_url);
+    if (direct) {
+      return String(direct);
+    }
+    const artifact = item && item.preview_artifact;
+    return artifact ? `fixtures/artifacts/${encodeURI(String(artifact))}` : "";
   }
 
   function showTurnTrace(card, message = null, index = 0) {

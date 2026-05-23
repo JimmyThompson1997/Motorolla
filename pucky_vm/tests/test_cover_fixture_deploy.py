@@ -66,10 +66,16 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/morning.wav" in files
     assert "fixtures/artifacts/morning.html" in files
     assert "fixtures/artifacts/morning-map.svg" in files
-    assert "fixtures/artifacts/real-alfred-square.png" in files
-    assert "fixtures/artifacts/real-alfred-logo.jpg" in files
+    assert "fixtures/artifacts/real-laptop-app-icon.png" in files
+    assert "fixtures/artifacts/real-laptop-alfred-logo.jpg" in files
     assert "fixtures/artifacts/real-pocket-computers.pdf" in files
     assert "fixtures/artifacts/real-pocket-computers.docx" in files
+    assert "fixtures/artifacts/real-pocket-computers-pdf-page-preview.png" in files
+    assert "fixtures/artifacts/real-pocket-computers-docx-page-preview.png" in files
+    assert (ARTIFACTS / "real-laptop-app-icon.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (ARTIFACTS / "real-laptop-alfred-logo.jpg").read_bytes().startswith(b"\xff\xd8\xff")
+    assert (ARTIFACTS / "real-pocket-computers.pdf").read_bytes().startswith(b"%PDF")
+    assert (ARTIFACTS / "real-pocket-computers.docx").read_bytes().startswith(b"PK")
     assert "fixtures/artifacts/commute-dashboard.png" in files
     assert "fixtures/artifacts/meeting-room.jpg" in files
     assert "fixtures/artifacts/meeting-decision.pdf" in files

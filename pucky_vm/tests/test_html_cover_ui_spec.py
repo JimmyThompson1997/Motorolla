@@ -622,6 +622,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function isDocumentMedia(item)" in app
     assert "function mediaDocumentMeta(item)" in app
     assert "function mediaDocumentPreview(item, variant)" in app
+    assert "function documentPreviewSrc(item)" in app
+    assert '"media-doc-render"' in app
+    assert "Rendered from real local file" in app
+    assert "Cached document preview" not in app
     assert "function richFrame(result, path = \"\")" in app
     assert "mime === \"application/pdf\"" in app
     assert "mime === \"application/pdf\" ||" in app
@@ -658,6 +662,8 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".chat-media::after" in styles
     assert ".chat-media-count" in styles
     assert ".media-doc-preview" in styles
+    assert ".media-doc-render" in styles
+    assert ".media-doc-label" in styles
     assert ".media-doc-preview.is-gallery" in styles
     assert ".media-doc-badge" in styles
     assert '.media-doc-preview[data-kind="docx"]' in styles
@@ -682,10 +688,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "height: 52vh" not in styles
     assert "max-height: 540px" not in styles
     assert '"transcript_messages"' in fixture
-    assert fixture.count('"artifact": "real-alfred-square.png"') == 1
-    assert fixture.count('"artifact": "real-alfred-logo.jpg"') == 1
+    assert "real-alfred-square.png" not in fixture
+    assert fixture.count('"artifact": "real-laptop-app-icon.png"') == 1
+    assert fixture.count('"artifact": "real-laptop-alfred-logo.jpg"') == 1
     assert fixture.count('"artifact": "real-pocket-computers.pdf"') == 1
     assert fixture.count('"artifact": "real-pocket-computers.docx"') == 1
+    assert fixture.count('"preview_artifact": "real-pocket-computers-pdf-page-preview.png"') == 1
+    assert fixture.count('"preview_artifact": "real-pocket-computers-docx-page-preview.png"') == 1
     assert fixture.count('"artifact": "commute-dashboard.png"') == 1
     assert fixture.count('"artifact": "meeting-room.jpg"') == 1
     assert fixture.count('"artifact": "night-wrap.png"') == 1
