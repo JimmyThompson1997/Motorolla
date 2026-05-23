@@ -6,6 +6,11 @@
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
+  const FEED_REFRESH_THRESHOLD = 28;
+  const FEED_REFRESH_MAX_PULL = 72;
+  const FEED_REFRESH_HOLD_OFFSET = 46;
+  const FEED_REFRESH_MIN_DWELL_MS = 450;
+  const FEED_REFRESH_TIMEOUT_MS = 15000;
 
   const MATERIAL_SYMBOLS = {
     mail: {
@@ -266,6 +271,8 @@
     timestampTap: null,
     audioCard: null,
     traceCard: null,
+    feedRefreshPromise: null,
+    feedRefreshing: false,
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -461,10 +468,14 @@
     return /^\/mock\/[^/]+\.html$/i.test(String(path || ""));
   }
 
+  async function fetchReplyCards() {
+    const snapshot = await Pucky.request({ command: "ui.reply_cards.get", args: {} });
+    return Array.isArray(snapshot.cards) ? snapshot.cards : [];
+  }
+
   async function loadCards() {
     try {
-      const snapshot = await Pucky.request({ command: "ui.reply_cards.get", args: {} });
-      state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+      state.cards = await fetchReplyCards();
     } catch (error) {
       state.cards = MOCK_CARDS;
     }
@@ -2529,6 +2540,94 @@
     return Boolean(target && target.scrollTop > 0);
   }
 
+  function sleep(ms) {
+    return new Promise(resolve => window.setTimeout(resolve, ms));
+  }
+
+  async function withTimeout(promise, timeoutMs, message) {
+    let timeoutId = 0;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => reject(new Error(message || "Timed out")), timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  function updateFeedRefreshIndicator(options = {}) {
+    const indicator = document.getElementById("feedRefresh");
+    if (!indicator) {
+      return;
+    }
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const progress = Math.max(0, Math.min(1, offset / FEED_REFRESH_THRESHOLD));
+    const visible = offset > 0 || options.armed || options.refreshing;
+    indicator.style.setProperty("--feed-refresh-pull", `${offset}px`);
+    indicator.style.setProperty("--feed-refresh-progress", String(progress));
+    indicator.classList.toggle("is-visible", Boolean(visible));
+    indicator.classList.toggle("is-armed", Boolean(options.armed));
+    indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
+    indicator.setAttribute("aria-hidden", visible ? "false" : "true");
+  }
+
+  function releaseFeedPull(feed) {
+    feed.classList.remove("is-rubber-banding");
+    feed.classList.add("is-rubber-band-release");
+    feed.style.transform = "";
+    window.setTimeout(() => {
+      feed.classList.remove("is-rubber-band-release");
+    }, 340);
+  }
+
+  function finishFeedRefresh() {
+    const feed = document.getElementById("feed");
+    if (feed) {
+      feed.classList.remove("is-feed-refreshing");
+      releaseFeedPull(feed);
+    }
+    updateFeedRefreshIndicator({ offset: 0 });
+  }
+
+  async function refreshFeedCards() {
+    if (state.feedRefreshPromise) {
+      return state.feedRefreshPromise;
+    }
+    state.feedRefreshing = true;
+    const startedAt = Date.now();
+    const feed = document.getElementById("feed");
+    if (feed) {
+      feed.classList.remove("is-rubber-banding");
+      feed.classList.remove("is-rubber-band-release");
+      feed.classList.add("is-feed-refreshing");
+      feed.style.transform = `translateY(${FEED_REFRESH_HOLD_OFFSET}px)`;
+    }
+    updateFeedRefreshIndicator({ offset: FEED_REFRESH_HOLD_OFFSET, refreshing: true });
+
+    state.feedRefreshPromise = (async () => {
+      try {
+        state.cards = await withTimeout(fetchReplyCards(), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
+        clearMissingFeedIconFilter();
+        state.feedScrollTop = 0;
+        render();
+        restoreScrollPosition(document.getElementById("feed"), 0);
+        persistNavState();
+      } catch (_) {
+        // Keep the existing feed visible when the native card store is briefly unavailable.
+      } finally {
+        const remaining = FEED_REFRESH_MIN_DWELL_MS - (Date.now() - startedAt);
+        if (remaining > 0) {
+          await sleep(remaining);
+        }
+        state.feedRefreshing = false;
+        state.feedRefreshPromise = null;
+        finishFeedRefresh();
+      }
+    })();
+    return state.feedRefreshPromise;
+  }
+
   function installFeedRubberBand() {
     const feed = document.getElementById("feed");
     if (!feed || feed.dataset.rubberBandBound) {
@@ -2540,6 +2639,8 @@
     let active = false;
     let offset = 0;
     let raf = 0;
+    let pullDirection = "";
+    let refreshArmed = false;
 
     const atTop = () => feed.scrollTop <= 0;
     const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
@@ -2556,28 +2657,34 @@
     const reset = () => {
       active = false;
       offset = 0;
-      feed.classList.remove("is-rubber-banding");
-      feed.classList.add("is-rubber-band-release");
-      feed.style.transform = "";
-      window.setTimeout(() => {
-        feed.classList.remove("is-rubber-band-release");
-      }, 340);
+      pullDirection = "";
+      refreshArmed = false;
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      updateFeedRefreshIndicator({ offset: 0 });
+      releaseFeedPull(feed);
     };
 
     feed.addEventListener("touchstart", event => {
-      if (!event.touches.length || state.route !== "feed") {
+      if (!event.touches.length || state.route !== "feed" || state.feedRefreshing) {
         return;
       }
       startY = event.touches[0].clientY;
       active = false;
+      pullDirection = "";
+      refreshArmed = false;
     }, { passive: true });
 
     feed.addEventListener("touchmove", event => {
-      if (!event.touches.length || state.route !== "feed") {
+      if (!event.touches.length || state.route !== "feed" || state.feedRefreshing) {
         return;
       }
       const dy = event.touches[0].clientY - startY;
-      const edgePull = (dy > 0 && atTop()) || (dy < 0 && atBottom());
+      const topPull = dy > 0 && atTop();
+      const bottomPull = dy < 0 && atBottom();
+      const edgePull = topPull || bottomPull;
       if (!edgePull) {
         if (active) {
           reset();
@@ -2590,11 +2697,29 @@
       active = true;
       feed.classList.add("is-rubber-banding");
       feed.classList.remove("is-rubber-band-release");
-      const eased = Math.min(30, Math.pow(Math.abs(dy), 0.72));
+      pullDirection = topPull ? "top" : "bottom";
+      const eased = Math.min(FEED_REFRESH_MAX_PULL, Math.pow(Math.abs(dy), 0.72));
+      refreshArmed = pullDirection === "top" && eased >= FEED_REFRESH_THRESHOLD;
+      if (pullDirection === "bottom") {
+        refreshArmed = false;
+      }
+      updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0, armed: refreshArmed });
       apply(Math.sign(dy) * eased);
     }, { passive: false });
 
     feed.addEventListener("touchend", () => {
+      if (pullDirection === "top" && refreshArmed) {
+        active = false;
+        offset = 0;
+        refreshArmed = false;
+        pullDirection = "";
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+        refreshFeedCards();
+        return;
+      }
       if (active) {
         reset();
       }

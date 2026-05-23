@@ -180,17 +180,31 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
 
 def test_feed_has_subtle_edge_rubber_band() -> None:
     app = read("app.js")
+    html = read("index.html")
     styles = read("styles.css")
 
     assert "function installFeedRubberBand()" in app
     assert "feed.dataset.rubberBandBound" in app
     assert 'state.route !== "feed"' in app
+    assert "const FEED_REFRESH_THRESHOLD" in app
+    assert "const FEED_REFRESH_MAX_PULL" in app
+    assert "const FEED_REFRESH_MIN_DWELL_MS" in app
+    assert "function refreshFeedCards()" in app
+    assert "state.feedRefreshPromise" in app
+    assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
+    assert 'pullDirection === "top" && refreshArmed' in app
+    assert 'pullDirection === "bottom"' in app
     assert "Math.pow(Math.abs(dy), 0.72)" in app
-    assert "Math.min(30" in app
+    assert "Math.min(FEED_REFRESH_MAX_PULL" in app
     assert 'feed.classList.add("is-rubber-banding")' in app
     assert 'feed.classList.add("is-rubber-band-release")' in app
     assert "installFeedRubberBand();" in app
+    assert 'id="feedRefresh"' in html
+    assert 'aria-live="polite"' in html
     assert "overscroll-behavior-y: contain;" in styles
+    assert ".feed-refresh" in styles
+    assert ".feed-refresh.is-refreshing" in styles
+    assert "@keyframes feedRefreshSpin" in styles
     assert ".feed.is-rubber-banding" in styles
     assert ".feed.is-rubber-band-release" in styles
 

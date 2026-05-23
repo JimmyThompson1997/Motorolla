@@ -60,6 +60,18 @@ button {
   padding: 0 14px 0;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -384,12 +396,71 @@ button {
   will-change: transform;
 }
 
+.feed-refresh {
+  --feed-refresh-pull: 0px;
+  --feed-refresh-progress: 0;
+  position: relative;
+  z-index: 2;
+  flex: 0 0 0;
+  height: 0;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(var(--feed-refresh-pull) - 34px));
+  transition:
+    opacity 140ms ease,
+    transform 180ms ease;
+}
+
+.feed-refresh.is-visible,
+.feed-refresh.is-refreshing {
+  opacity: 1;
+}
+
+.feed-refresh.is-armed .feed-refresh-spinner {
+  border-color: rgba(58, 132, 255, 0.24);
+  border-top-color: var(--blue);
+}
+
+.feed-refresh.is-refreshing {
+  transform: translateY(calc(var(--feed-refresh-pull) - 32px));
+}
+
+.feed-refresh-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid rgba(245, 249, 255, 0.16);
+  border-top-color: rgba(245, 249, 255, 0.74);
+  background: rgba(2, 6, 10, 0.72);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  transform: rotate(calc(var(--feed-refresh-progress) * 240deg));
+  animation: feedRefreshSpin 0.72s linear infinite;
+  animation-play-state: paused;
+}
+
+.feed-refresh.is-refreshing .feed-refresh-spinner {
+  animation-play-state: running;
+}
+
 .feed.is-rubber-banding {
   transition: none;
 }
 
 .feed.is-rubber-band-release {
   transition: transform 320ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.feed.is-feed-refreshing {
+  transition: transform 180ms ease;
+}
+
+@keyframes feedRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .feed::-webkit-scrollbar {
