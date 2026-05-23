@@ -115,6 +115,8 @@ public final class PuckyWakeLabSourceTest {
         assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
         assertTrue(source.contains("SpeechKeywordMatcher.match(text)"));
         assertTrue(source.contains("keyword_lab_enabled"));
+        assertTrue(source.contains("keyword_match_strategy"));
+        assertTrue(source.contains("exact_utterance"));
         assertTrue(source.contains("keyword_reply_tts_replaces_echo"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));

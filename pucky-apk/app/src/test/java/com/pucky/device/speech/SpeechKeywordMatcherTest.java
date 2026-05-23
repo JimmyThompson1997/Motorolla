@@ -23,14 +23,14 @@ public final class SpeechKeywordMatcherTest {
     public void recognizesMicOnCanonicalAndAliases() {
         assertReply("mic on", "mic_on", "Mic on recognized.", "canonical");
         assertReply("mike on", "mic_on", "Mic on recognized.", "alias:mike on");
-        assertReply("please turn microphone on now", "mic_on", "Mic on recognized.", "alias:microphone on");
+        assertReply("microphone on", "mic_on", "Mic on recognized.", "alias:microphone on");
     }
 
     @Test
     public void recognizesMicOffCanonicalAndAliases() {
         assertReply("mic off", "mic_off", "Mic off recognized.", "canonical");
         assertReply("mike off", "mic_off", "Mic off recognized.", "alias:mike off");
-        assertReply("please microphone off now", "mic_off", "Mic off recognized.", "alias:microphone off");
+        assertReply("microphone off", "mic_off", "Mic off recognized.", "alias:microphone off");
     }
 
     @Test
@@ -42,12 +42,25 @@ public final class SpeechKeywordMatcherTest {
     }
 
     @Test
-    public void earliestKeywordWins() {
+    public void keywordsMustBeFullUtteranceMatches() {
+        assertNoMatch("Hey Pucky please mic off", "hey pucky please mic off");
+        assertNoMatch("please turn microphone on now", "please turn microphone on now");
+        assertNoMatch("Microphone off hand?", "microphone off hand");
+        assertNoMatch("You gotta skate to where the Pocky's going.", "you gotta skate to where the pocky s going");
+        assertNoMatch("camera on please", "camera on please");
+    }
+
+    @Test
+    public void punctuationAndCaseAreIgnoredForExactUtterances() {
+        assertReply("HEY, PUCKY!", "hey_pucky", "Hey Pucky recognized.", "canonical");
+        assertReply("  microphone   off  ", "mic_off", "Mic off recognized.", "alias:microphone off");
+    }
+
+    @Test
+    public void longerUtteranceWithMultipleKeywordsDoesNotMatch() {
         SpeechKeywordMatcher.Match match = SpeechKeywordMatcher.match("Hey Pucky please mic off");
 
-        assertTrue(match.matched);
-        assertEquals("hey_pucky", match.id);
-        assertEquals("Hey Pucky recognized.", match.replyText);
+        assertFalse(match.matched);
     }
 
     @Test
@@ -75,5 +88,14 @@ public final class SpeechKeywordMatcherTest {
         assertEquals(expectedId, match.id);
         assertEquals(expectedReply, match.replyText);
         assertEquals(expectedSource, match.source);
+    }
+
+    private static void assertNoMatch(String raw, String expectedNormalized) {
+        SpeechKeywordMatcher.Match match = SpeechKeywordMatcher.match(raw);
+
+        assertFalse(match.matched);
+        assertEquals(expectedNormalized, match.normalizedTranscript);
+        assertEquals("none", match.source);
+        assertEquals(-1, match.startIndex);
     }
 }

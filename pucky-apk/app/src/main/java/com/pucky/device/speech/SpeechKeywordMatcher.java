@@ -22,14 +22,11 @@ public final class SpeechKeywordMatcher {
         if (normalized.isEmpty()) {
             return best;
         }
-        String padded = " " + normalized + " ";
         for (KeywordSpec keyword : KEYWORDS) {
             for (String alias : keyword.aliases) {
-                int index = padded.indexOf(" " + alias + " ");
-                if (index < 0) {
+                if (!normalized.equals(alias)) {
                     continue;
                 }
-                int normalizedIndex = Math.max(0, index);
                 boolean canonical = alias.equals(keyword.phrase);
                 Match candidate = Match.found(
                         transcript,
@@ -39,7 +36,7 @@ public final class SpeechKeywordMatcher {
                         canonical ? "canonical" : "alias:" + alias,
                         canonical ? 1.0 : 0.85,
                         keyword.replyText,
-                        normalizedIndex,
+                        0,
                         keyword.priority);
                 if (!best.matched || candidate.isBetterThan(best)) {
                     best = candidate;

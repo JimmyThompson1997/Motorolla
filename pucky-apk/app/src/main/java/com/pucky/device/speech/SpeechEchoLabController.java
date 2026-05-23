@@ -655,6 +655,7 @@ public final class SpeechEchoLabController {
         Json.put(active, "keyword_lab_enabled", true);
         Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
         Json.put(active, "keyword_normalized_transcript", keyword.normalizedTranscript);
+        Json.put(active, "keyword_match_strategy", "exact_utterance");
         Json.put(active, "keyword_match", keyword.matched);
         Json.put(active, "keyword_match_id", keyword.matched ? keyword.id : JSONObject.NULL);
         Json.put(active, "keyword_match_phrase", keyword.matched ? keyword.phrase : JSONObject.NULL);
