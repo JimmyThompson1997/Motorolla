@@ -44,6 +44,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 public final class SpeechEchoLabController {
     private static final String TAG = "PuckySpeechEchoLab";
@@ -79,6 +80,7 @@ public final class SpeechEchoLabController {
     private final SpeechEchoController directEcho;
     private final AudioRouteDetector routeDetector;
     private final SpeechKeywordActionExecutor keywordActionExecutor;
+    private final RecipeStepExecutor recipeStepExecutor;
     private final PuckyClipboardController clipboardController;
     private final Handler main;
 
@@ -112,6 +114,7 @@ public final class SpeechEchoLabController {
         this.directEcho = SpeechEchoController.shared(this.context);
         this.routeDetector = new AudioRouteDetector(this.context);
         this.keywordActionExecutor = new SpeechKeywordActionExecutor(this.context);
+        this.recipeStepExecutor = new RecipeStepExecutor(this.context);
         this.clipboardController = PuckyClipboardController.shared(this.context);
         this.main = new Handler(Looper.getMainLooper());
         ensureDefaults();
@@ -284,7 +287,99 @@ public final class SpeechEchoLabController {
     }
 
     public synchronized JSONObject keywordSchema() {
-        return SpeechKeywordRegistry.schemaGuide();
+        JSONObject out = SpeechKeywordRegistry.schemaGuide();
+        Json.put(out, "legacy", true);
+        Json.put(out, "replacement_command", "pucky.recipes.schema");
+        Json.put(out, "replacement_note",
+                "VM-owned recipe bundles are the preferred keyword format. Legacy keyword commands remain as compatibility wrappers.");
+        Json.put(out, "recipe_schema_help", SpeechRecipeRegistry.schemaGuide());
+        return out;
+    }
+
+    public synchronized JSONObject recipesSchema() {
+        return SpeechRecipeRegistry.schemaGuide();
+    }
+
+    public synchronized JSONObject recipesList() {
+        return SpeechRecipeRegistry.list(context, storedRecipeBundleRaw(), customKeywordEntries());
+    }
+
+    public synchronized JSONObject recipesSync(JSONObject args) {
+        JSONObject input = args == null ? null : args.optJSONObject("bundle");
+        if (input == null) {
+            input = args;
+        }
+        JSONObject normalized;
+        try {
+            normalized = SpeechRecipeRegistry.normalizeBundle(input, "vm_sync");
+            SpeechRecipeRegistry.requireNoActivePhraseConflicts(SpeechRecipeRegistry.activeRecipes(
+                    SpeechRecipeRegistry.loadFallbackBundle(context),
+                    normalized,
+                    customKeywordEntries()));
+        } catch (CommandException exc) {
+            return SpeechRecipeRegistry.validationError("pucky.recipes.sync", exc, input);
+        }
+        prefs.edit().putString(SpeechRecipeRegistry.PREF_RECIPE_BUNDLE, normalized.toString()).commit();
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.recipes_sync.v1");
+        Json.put(out, "saved", true);
+        Json.put(out, "bundle", normalized);
+        Json.put(out, "active", recipesList());
+        return out;
+    }
+
+    public synchronized JSONObject recipesClear() {
+        String previous = storedRecipeBundleRaw();
+        prefs.edit().remove(SpeechRecipeRegistry.PREF_RECIPE_BUNDLE).commit();
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.recipes_clear.v1");
+        Json.put(out, "cleared", previous == null || previous.trim().isEmpty() ? 0 : 1);
+        Json.put(out, "active", recipesList());
+        return out;
+    }
+
+    public synchronized JSONObject recipesTest(JSONObject args) throws CommandException {
+        if (args == null || !args.has("text")) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "pucky.recipes.test requires text");
+        }
+        boolean execute = args.optBoolean("execute", false);
+        SpeechRecipeRegistry.RecipeMatch recipe = recipeMatch(args.optString("text", ""));
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.recipes_test.v1");
+        Json.put(out, "execute", execute);
+        Json.put(out, "match", SpeechRecipeRegistry.matchJson(recipe));
+        if (!recipe.matched || !recipe.hasSteps()) {
+            Json.put(out, "execution_status", recipe.matched ? "not_applicable" : "skipped_no_match");
+            return out;
+        }
+        Json.put(out, "execution_status", execute ? "pending" : "planned");
+        if (execute) {
+            JSONObject session = recipeTestSession(args.optString("text", ""), recipe);
+            try {
+                JSONObject execution = recipeStepExecutor.execute(recipe, session);
+                Json.put(out, "execution", execution);
+                Json.put(out, "execution_status", execution.optString("status", "unknown"));
+                if ("succeeded".equals(execution.optString("status", ""))) {
+                    Json.put(out, "success_chime", recipeStepExecutor.playSuccessChime("pucky.recipe_success_chime.v1"));
+                } else {
+                    Json.put(out, "failure_chime", recipeStepExecutor.playFailureChime("pucky.recipe_failure_chime.v1"));
+                }
+            } catch (CommandException exc) {
+                Json.put(out, "execution_status", "failed");
+                Json.put(out, "error_code", exc.code());
+                Json.put(out, "error_message", exc.getMessage());
+                Json.put(out, "failure_chime", recipeStepExecutor.playFailureChime("pucky.recipe_failure_chime.v1"));
+            }
+            Json.put(session, "keyword_action_result", out.opt("execution"));
+            JSONObject clipboard = clipboardController.append(PuckyClipboardController.entryFromLabSession(session));
+            Json.put(out, "pucky_clipboard", clipboard);
+        }
+        return out;
+    }
+
+    public JSONObject devicePrimitivesList() {
+        return RecipeStepExecutor.devicePrimitives();
     }
 
     public synchronized JSONObject keywordSet(JSONObject args) throws CommandException {
@@ -750,19 +845,30 @@ public final class SpeechEchoLabController {
             failActiveCapturedSession(active, "empty_transcript", "Injected-audio SpeechRecognizer returned no transcript");
             return;
         }
-        SpeechKeywordMatcher.Match keyword = SpeechKeywordRegistry.match(text, customKeywordEntries());
-        String ttsText = keyword.matched ? keyword.replyText : text;
-        String actionStatus = keyword.matched && keyword.hasAction() ? "planned" : "not_applicable";
+        SpeechRecipeRegistry.RecipeMatch recipe = recipeMatch(text);
+        String ttsText = recipe.matched ? recipe.replyText : text;
+        String actionStatus = recipe.matched && recipe.hasSteps() ? "planned" : "not_applicable";
         JSONObject actionResult = null;
         String actionErrorCode = "";
         String actionErrorMessage = "";
         boolean actionFailed = false;
         JSONObject keywordSuccessChime = null;
         JSONObject actionFailureChime = null;
-        if (keyword.matched && keyword.hasAction()) {
+        if (recipe.matched && recipe.hasSteps()) {
+            Json.put(active, "pucky_clipboard_entry_id", newClipboardEntryId());
             try {
-                actionResult = keywordActionExecutor.execute(keyword.action);
-                actionStatus = "succeeded";
+                JSONObject execution = recipeStepExecutor.execute(recipe, active);
+                actionResult = execution;
+                actionStatus = execution.optString("status", "unknown");
+                actionFailed = !"succeeded".equals(actionStatus);
+                if (actionFailed) {
+                    actionErrorCode = execution.optString("error_code", CommandErrorCodes.EXECUTION_FAILED);
+                    actionErrorMessage = execution.optString("error_message", "recipe execution failed");
+                    ttsText = CommandErrorCodes.NO_DISPLAY_ON.equals(actionErrorCode)
+                            ? "Failed. Phone screen is off."
+                            : failureReply(recipe);
+                    actionFailureChime = recipeStepExecutor.playFailureChime("pucky.keyword_action_failure_chime.v1");
+                }
             } catch (CommandException exc) {
                 actionFailed = true;
                 actionStatus = "failed";
@@ -770,39 +876,40 @@ public final class SpeechEchoLabController {
                 actionErrorMessage = exc.getMessage();
                 ttsText = CommandErrorCodes.NO_DISPLAY_ON.equals(actionErrorCode)
                         ? "Failed. Phone screen is off."
-                        : failureReply(keyword);
-                actionFailureChime = playKeywordFailureChimeIfNeeded(keyword);
+                        : failureReply(recipe);
+                actionFailureChime = recipeStepExecutor.playFailureChime("pucky.keyword_action_failure_chime.v1");
             }
         }
         String replyOverride = actionResultReplyOverride(actionResult);
         if (replyOverride != null) {
             ttsText = replyOverride;
         }
-        boolean skipSuccessTts = keyword.matched && !actionFailed && shouldSkipSuccessTts(keyword, actionResult);
+        boolean skipSuccessTts = recipe.matched && !actionFailed && shouldSkipSuccessTts(recipe, actionResult);
         if (skipSuccessTts) {
             ttsText = "";
         }
-        if (keyword.matched && !actionFailed) {
-            keywordSuccessChime = keywordActionExecutor.playSuccessChime("pucky.keyword_success_chime.v1");
+        if (recipe.matched && !actionFailed) {
+            keywordSuccessChime = recipeStepExecutor.playSuccessChime("pucky.keyword_success_chime.v1");
         }
         Json.put(active, "keyword_lab_enabled", true);
-        Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
-        Json.put(active, "keyword_normalized_transcript", keyword.normalizedTranscript);
+        Json.put(active, "keyword_raw_transcript", recipe.rawTranscript);
+        Json.put(active, "keyword_normalized_transcript", recipe.normalizedTranscript);
         Json.put(active, "keyword_match_strategy", "exact_utterance");
-        Json.put(active, "keyword_match", keyword.matched);
-        Json.put(active, "keyword_match_id", keyword.matched ? keyword.id : JSONObject.NULL);
-        Json.put(active, "keyword_match_phrase", keyword.matched ? keyword.phrase : JSONObject.NULL);
-        Json.put(active, "keyword_match_source", keyword.source);
-        Json.put(active, "keyword_match_confidence", keyword.confidence);
-        Json.put(active, "keyword_match_start_index", keyword.startIndex);
-        Json.put(active, "keyword_reply_text", keyword.matched ? keyword.replyText : JSONObject.NULL);
-        Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched && !skipSuccessTts);
+        Json.put(active, "keyword_match", recipe.matched);
+        Json.put(active, "keyword_match_id", recipe.matched ? recipe.id : JSONObject.NULL);
+        Json.put(active, "keyword_match_phrase", recipe.matched ? recipe.phrase : JSONObject.NULL);
+        Json.put(active, "keyword_match_source", recipe.source);
+        Json.put(active, "keyword_match_confidence", recipe.matched ? 1.0 : 0.0);
+        Json.put(active, "keyword_match_start_index", recipe.matched ? 0 : -1);
+        Json.put(active, "keyword_reply_text", recipe.matched ? recipe.replyText : JSONObject.NULL);
+        Json.put(active, "keyword_reply_tts_replaces_echo", recipe.matched && !skipSuccessTts);
         Json.put(active, "keyword_reply_tts_skipped_reason",
                 skipSuccessTts ? "keyword_action_confirms_with_local_chime" : JSONObject.NULL);
-        Json.put(active, "keyword_builtin", keyword.matched ? keyword.builtin : JSONObject.NULL);
-        Json.put(active, "keyword_action", keyword.hasAction() ? keyword.action : JSONObject.NULL);
+        Json.put(active, "keyword_builtin", recipe.matched && "fallback".equals(recipe.source));
+        Json.put(active, "keyword_recipe", recipe.matched ? recipe.recipe : JSONObject.NULL);
+        Json.put(active, "keyword_action", recipe.hasSteps() ? recipe.steps : JSONObject.NULL);
         Json.put(active, "keyword_action_command",
-                keyword.hasAction() ? keyword.action.optString("command", "") : JSONObject.NULL);
+                recipe.hasSteps() ? recipe.firstDeviceCommand().isEmpty() ? "vm_event.post" : recipe.firstDeviceCommand() : JSONObject.NULL);
         Json.put(active, "keyword_action_status", actionStatus);
         Json.put(active, "keyword_action_result", actionResult == null ? JSONObject.NULL : actionResult);
         Json.put(active, "keyword_success_chime",
@@ -811,10 +918,14 @@ public final class SpeechEchoLabController {
                 actionFailureChime == null ? JSONObject.NULL : actionFailureChime);
         Json.put(active, "keyword_action_error_code", actionErrorCode.isEmpty() ? JSONObject.NULL : actionErrorCode);
         Json.put(active, "keyword_action_error_message", actionErrorMessage.isEmpty() ? JSONObject.NULL : actionErrorMessage);
-        if (keyword.matched && keyword.hasAction()) {
+        if (recipe.matched && recipe.hasSteps()) {
             JSONObject clipboard = clipboardController.append(PuckyClipboardController.entryFromLabSession(active));
             Json.put(active, "pucky_clipboard_entry", clipboard.optJSONObject("entry"));
             Json.put(active, "pucky_clipboard_saved", clipboard.optBoolean("saved", false));
+            JSONObject entry = clipboard.optJSONObject("entry");
+            if (entry != null) {
+                Json.put(active, "pucky_clipboard_entry_id", entry.optString("entry_id", ""));
+            }
         } else {
             Json.put(active, "pucky_clipboard_saved", false);
         }
@@ -829,7 +940,7 @@ public final class SpeechEchoLabController {
         cleanupCapturedRecognizer();
         if (actionFailed) {
             buzzError();
-        } else if (!keyword.matched && !skipSuccessTts) {
+        } else if (!recipe.matched && !skipSuccessTts) {
             playAcceptedChime(sessionId);
         }
         if (!skipSuccessTts) {
@@ -840,14 +951,14 @@ public final class SpeechEchoLabController {
         }
         Log.i(TAG, "captured audio echo recognized session=" + sessionId
                 + " text_len=" + text.length()
-                + " keyword=" + (keyword.matched ? keyword.id : "none"));
+                + " recipe=" + (recipe.matched ? recipe.id : "none"));
     }
 
-    private static boolean shouldSkipSuccessTts(SpeechKeywordMatcher.Match keyword, JSONObject actionResult) {
-        return keyword != null
-                && keyword.hasAction()
+    private static boolean shouldSkipSuccessTts(SpeechRecipeRegistry.RecipeMatch recipe, JSONObject actionResult) {
+        return recipe != null
+                && recipe.hasSteps()
                 && actionResultReplyOverride(actionResult) == null
-                && isChimeOnlySuccessAction(keyword.action.optString("command", ""));
+                && isChimeOnlySuccessAction(recipe.firstDeviceCommand());
     }
 
     private JSONObject playKeywordFailureChimeIfNeeded(SpeechKeywordMatcher.Match keyword) {
@@ -867,6 +978,21 @@ public final class SpeechEchoLabController {
     private static String actionResultReplyOverride(JSONObject actionResult) {
         if (actionResult == null) {
             return null;
+        }
+        if ("pucky.recipe_execution_result.v1".equals(actionResult.optString("schema", ""))) {
+            JSONArray steps = actionResult.optJSONArray("step_results");
+            if (steps != null) {
+                for (int i = 0; i < steps.length(); i++) {
+                    JSONObject step = steps.optJSONObject(i);
+                    if (step == null) {
+                        continue;
+                    }
+                    String nested = actionResultReplyOverride(step.optJSONObject("result"));
+                    if (nested != null) {
+                        return nested;
+                    }
+                }
+            }
         }
         JSONObject result = actionResult.optJSONObject("result");
         if (result == null || !result.has("reply_text_override")) {
@@ -1006,6 +1132,14 @@ public final class SpeechEchoLabController {
         return customKeywordLoadResult().entries;
     }
 
+    private String storedRecipeBundleRaw() {
+        return prefs.getString(SpeechRecipeRegistry.PREF_RECIPE_BUNDLE, "");
+    }
+
+    private SpeechRecipeRegistry.RecipeMatch recipeMatch(String text) {
+        return SpeechRecipeRegistry.match(context, text, storedRecipeBundleRaw(), customKeywordEntries());
+    }
+
     private SpeechKeywordRegistry.LoadResult customKeywordLoadResult() {
         return SpeechKeywordRegistry.loadCustomDetailed(
                 prefs.getString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS, "[]"));
@@ -1039,11 +1173,35 @@ public final class SpeechEchoLabController {
         return out;
     }
 
-    private static String failureReply(SpeechKeywordMatcher.Match keyword) {
-        if (keyword != null && keyword.errorReplyText != null && !keyword.errorReplyText.trim().isEmpty()) {
-            return keyword.errorReplyText.trim();
+    private JSONObject recipeTestSession(String text, SpeechRecipeRegistry.RecipeMatch recipe) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_session.v1");
+        Json.put(out, "session_id", "recipe_test_" + Long.toHexString(System.currentTimeMillis()));
+        Json.put(out, "source", "recipe_test");
+        Json.put(out, "pucky_clipboard_entry_id", newClipboardEntryId());
+        Json.put(out, "keyword_raw_transcript", text);
+        Json.put(out, "keyword_normalized_transcript", recipe.normalizedTranscript);
+        Json.put(out, "keyword_match_id", recipe.matched ? recipe.id : JSONObject.NULL);
+        Json.put(out, "keyword_match_phrase", recipe.matched ? recipe.phrase : JSONObject.NULL);
+        Json.put(out, "keyword_match_source", recipe.source);
+        Json.put(out, "keyword_match_strategy", "exact_utterance");
+        Json.put(out, "keyword_action_command",
+                recipe.hasSteps() ? recipe.firstDeviceCommand().isEmpty() ? "vm_event.post" : recipe.firstDeviceCommand() : JSONObject.NULL);
+        Json.put(out, "keyword_action_status", "planned");
+        Json.put(out, "route", routeDetector.snapshot());
+        Json.put(out, "started_at", Instant.now().toString());
+        return out;
+    }
+
+    private static String newClipboardEntryId() {
+        return "clip_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private static String failureReply(SpeechRecipeRegistry.RecipeMatch recipe) {
+        if (recipe != null && recipe.errorReplyText != null && !recipe.errorReplyText.trim().isEmpty()) {
+            return recipe.errorReplyText.trim();
         }
-        String label = keyword == null ? "" : keyword.id.replace('_', ' ').replace('-', ' ').trim();
+        String label = recipe == null ? "" : recipe.id.replace('_', ' ').replace('-', ' ').trim();
         if (label.isEmpty()) {
             label = "Keyword";
         } else {

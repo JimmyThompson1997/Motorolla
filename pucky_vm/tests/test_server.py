@@ -154,14 +154,15 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, 401)
 
-    def test_raw_audio_turn_returns_text_audio_and_card(self) -> None:
+    def test_raw_audio_turn_defaults_to_card_only_without_tts(self) -> None:
         body = self.post_audio(b"audio", "audio/mp4")
 
         self.assertTrue(body["session_id"].startswith("pucky_"))
         self.assertEqual(body["turn_id"], body["session_id"])
         self.assertEqual(body["text"], "Sure, I can help.")
-        self.assertEqual(body["audio_mime_type"], "audio/wav")
-        self.assertEqual(base64.b64decode(body["audio_base64"]), b"RIFFaudio")
+        self.assertEqual(body["reply_mode"], "card_only")
+        self.assertNotIn("audio_mime_type", body)
+        self.assertNotIn("audio_base64", body)
         self.assertEqual(body["card"]["title"], "Quick Help")
         self.assertEqual(body["card"]["icon"], "bolt")
         self.assertEqual(body["card"]["html_mime_type"], "text/html")
@@ -169,16 +170,31 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("transcript", body)
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
-        self.assertEqual(self.tts.text, "Sure, I can help.")
+        self.assertFalse(hasattr(self.tts, "text"))
         telemetry = body["telemetry"]
         self.assertEqual(telemetry["turn_id"], body["turn_id"])
         self.assertEqual(telemetry["request_audio_bytes"], 5)
+        self.assertEqual(telemetry["reply_mode"], "card_only")
         self.assertIn("stt_ms", telemetry)
         self.assertIn("codex_ms", telemetry)
-        self.assertIn("tts_ms", telemetry)
+        self.assertNotIn("tts_ms", telemetry)
+        self.assertEqual(telemetry["tts_status"], "skipped_card_only")
+        self.assertEqual(telemetry["reply_audio_bytes"], 0)
         self.assertIn("response_bytes", telemetry)
         self.assertNotIn("transcript", telemetry)
         self.assertNotIn("Pucky test turn", json.dumps(telemetry))
+
+    def test_card_and_spoken_turn_returns_audio_and_tts_telemetry(self) -> None:
+        body = self.post_audio(b"audio", "audio/mp4", reply_mode="card_and_spoken")
+
+        self.assertEqual(body["reply_mode"], "card_and_spoken")
+        self.assertEqual(body["audio_mime_type"], "audio/wav")
+        self.assertEqual(base64.b64decode(body["audio_base64"]), b"RIFFaudio")
+        self.assertEqual(self.tts.text, "Sure, I can help.")
+        telemetry = body["telemetry"]
+        self.assertEqual(telemetry["reply_mode"], "card_and_spoken")
+        self.assertIn("tts_ms", telemetry)
+        self.assertEqual(telemetry["reply_audio_bytes"], len(b"RIFFaudio"))
 
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -280,13 +296,15 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def post_audio(self, audio: bytes, content_type: str, turn_id: str = "") -> dict:
+    def post_audio(self, audio: bytes, content_type: str, turn_id: str = "", reply_mode: str = "") -> dict:
         headers = {
             "Authorization": "Bearer secret",
             "Content-Type": content_type,
         }
         if turn_id:
             headers["X-Pucky-Turn-Id"] = turn_id
+        if reply_mode:
+            headers["X-Pucky-Reply-Mode"] = reply_mode
         request = urllib.request.Request(
             self.base_url + "/api/turn",
             data=audio,

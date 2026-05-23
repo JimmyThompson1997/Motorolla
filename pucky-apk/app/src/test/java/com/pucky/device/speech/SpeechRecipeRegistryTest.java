@@ -1,0 +1,164 @@
+package com.pucky.device.speech;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import com.pucky.device.command.CommandErrorCodes;
+import com.pucky.device.command.CommandException;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.Test;
+
+public final class SpeechRecipeRegistryTest {
+    @Test
+    public void recipeBundleNormalizesAndMatchesExactUtteranceOnly() throws Exception {
+        JSONObject bundle = bundle(recipe("flashlight", phrases("flashlight", "flash light"),
+                deviceStep("torch.set", new JSONObject().put("auto_off_ms", 600))));
+        JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle, "test");
+        SpeechRecipeRegistry.RecipeMatch exact = SpeechRecipeRegistry.match("Flash light!", normalized.optJSONArray("recipes"));
+        SpeechRecipeRegistry.RecipeMatch prefix = SpeechRecipeRegistry.match("turn flashlight on", normalized.optJSONArray("recipes"));
+        SpeechRecipeRegistry.RecipeMatch suffix = SpeechRecipeRegistry.match("flashlight please", normalized.optJSONArray("recipes"));
+
+        assertTrue(exact.matched);
+        assertEquals("flashlight", exact.id);
+        assertEquals("flash light", exact.phrase);
+        assertEquals("torch.set", exact.firstDeviceCommand());
+        assertFalse(prefix.matched);
+        assertFalse(suffix.matched);
+    }
+
+    @Test
+    public void vmEventStepIsAllowedAndPreserved() throws Exception {
+        JSONObject bundle = bundle(recipe("check_email", phrases("check email"),
+                new JSONObject()
+                        .put("type", "vm_event")
+                        .put("event_type", "agent.recipe_triggered")
+                        .put("args", new JSONObject().put("agent_prompt", "Check email."))));
+
+        JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle, "test");
+        SpeechRecipeRegistry.RecipeMatch match = SpeechRecipeRegistry.match("check email", normalized.optJSONArray("recipes"));
+
+        assertTrue(match.matched);
+        assertEquals("vm_event", match.steps.optJSONObject(0).optString("type"));
+        assertEquals("agent.recipe_triggered", match.steps.optJSONObject(0).optString("event_type"));
+    }
+
+    @Test
+    public void dangerousRecipeStepsAreRejected() throws Exception {
+        CommandException shell = expectCommandException(() ->
+                SpeechRecipeRegistry.normalizeBundle(bundle(recipe("danger", phrases("danger"),
+                        deviceStep("shell.exec", new JSONObject().put("command", "date")))), "test"));
+        CommandException badType = expectCommandException(() ->
+                SpeechRecipeRegistry.normalizeBundle(bundle(recipe("danger", phrases("danger"),
+                        new JSONObject().put("type", "network").put("url", "https://example.com"))), "test"));
+
+        assertEquals(CommandErrorCodes.COMMAND_NOT_ALLOWED, shell.code());
+        assertEquals(CommandErrorCodes.COMMAND_NOT_ALLOWED, badType.code());
+    }
+
+    @Test
+    public void duplicatePhrasesInsideBundleAreRejected() throws Exception {
+        CommandException exc = expectCommandException(() ->
+                SpeechRecipeRegistry.normalizeBundle(bundle(
+                        recipe("one", phrases("flashlight"), deviceStep("torch.set", new JSONObject())),
+                        recipe("two", phrases("Flashlight!"), deviceStep("torch.set", new JSONObject()))
+                ), "test"));
+
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
+    }
+
+    @Test
+    public void activePhraseConflictsAreRejectedAcrossBundles() throws Exception {
+        JSONObject fallback = SpeechRecipeRegistry.normalizeBundle(bundle(
+                recipe("mic_on", phrases("mic on"), new JSONObject()
+                        .put("type", "chime")
+                        .put("sound", "soft"))), "fallback");
+        JSONObject vm = SpeechRecipeRegistry.normalizeBundle(bundle(
+                recipe("custom_mic", phrases("Mic on!"), deviceStep("torch.set", new JSONObject()))), "vm");
+
+        CommandException exc = expectCommandException(() ->
+                SpeechRecipeRegistry.requireNoActivePhraseConflicts(
+                        SpeechRecipeRegistry.activeRecipes(fallback, vm, new JSONArray())));
+
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
+    }
+
+    @Test
+    public void legacyKeywordCanBecomeRecipeForCompatibility() throws Exception {
+        JSONObject keyword = new JSONObject()
+                .put("id", "flashlight")
+                .put("phrases", phrases("flashlight"))
+                .put("reply_text", "Flashlight recognized.")
+                .put("action", new JSONObject()
+                        .put("command", "torch.set")
+                        .put("args", new JSONObject().put("auto_off_ms", 600)));
+
+        JSONObject recipe = SpeechRecipeRegistry.legacyKeywordToRecipe(keyword);
+
+        assertEquals("flashlight", recipe.optString("id"));
+        assertEquals("device", recipe.optJSONArray("steps").optJSONObject(0).optString("type"));
+        assertEquals("torch.set", recipe.optJSONArray("steps").optJSONObject(0).optString("command"));
+    }
+
+    @Test
+    public void schemaGuidePointsFutureAgentsToRecipeCommands() {
+        JSONObject schema = SpeechRecipeRegistry.schemaGuide();
+
+        assertEquals("pucky.recipes_schema.v1", schema.optString("schema"));
+        assertTrue(schema.toString().contains("pucky.recipes.sync"));
+        assertTrue(schema.toString().contains("device.primitives.list"));
+        assertTrue(schema.toString().contains("vm_event"));
+        assertTrue(schema.toString().contains("torch.set"));
+    }
+
+    private static JSONObject bundle(JSONObject... recipes) throws Exception {
+        JSONArray array = new JSONArray();
+        for (JSONObject recipe : recipes) {
+            array.put(recipe);
+        }
+        return new JSONObject()
+                .put("schema", "pucky.recipe_bundle.v1")
+                .put("bundle_id", "test_bundle")
+                .put("version", 1)
+                .put("updated_at", "2026-05-23T00:00:00Z")
+                .put("recipes", array);
+    }
+
+    private static JSONObject recipe(String id, JSONArray phrases, JSONObject step) throws Exception {
+        return new JSONObject()
+                .put("id", id)
+                .put("phrases", phrases)
+                .put("match", "exact_utterance")
+                .put("steps", new JSONArray().put(step));
+    }
+
+    private static JSONObject deviceStep(String command, JSONObject args) throws Exception {
+        return new JSONObject()
+                .put("type", "device")
+                .put("command", command)
+                .put("args", args);
+    }
+
+    private static JSONArray phrases(String... values) {
+        JSONArray out = new JSONArray();
+        for (String value : values) {
+            out.put(value);
+        }
+        return out;
+    }
+
+    private static CommandException expectCommandException(ThrowingRunnable runnable) throws Exception {
+        try {
+            runnable.run();
+        } catch (CommandException exc) {
+            return exc;
+        }
+        throw new AssertionError("Expected CommandException");
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "pucky.recipe_bundle.v1",
+  "bundle_id": "apk_fallback",
+  "version": 1,
+  "updated_at": "2026-05-23T00:00:00Z",
+  "source": "apk_asset",
+  "recipes": [
+    {
+      "id": "hey_pucky",
+      "phrases": ["hey pucky", "hey puppy", "hey lucky", "hay pucky", "hey pocky", "hey packy", "pucky", "puppy", "pocky", "packy"],
+      "match": "exact_utterance",
+      "reply_text": "Hey Pucky recognized.",
+      "steps": [],
+      "on_success": {"sound": "soft"},
+      "on_failure": {"sound": "low_battery"}
+    },
+    {
+      "id": "mic_on",
+      "phrases": ["mic on", "mike on", "microphone on"],
+      "match": "exact_utterance",
+      "reply_text": "Mic on recognized.",
+      "steps": [],
+      "on_success": {"sound": "soft"},
+      "on_failure": {"sound": "low_battery"}
+    },
+    {
+      "id": "mic_off",
+      "phrases": ["mic off", "mike off", "microphone off"],
+      "match": "exact_utterance",
+      "reply_text": "Mic off recognized.",
+      "steps": [],
+      "on_success": {"sound": "soft"},
+      "on_failure": {"sound": "low_battery"}
+    }
+  ]
+}

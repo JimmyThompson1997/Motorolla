@@ -14,6 +14,7 @@ import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
 import com.pucky.device.voice.VoiceCaptureController;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -35,6 +36,9 @@ public final class PuckyTurnController {
     private static final String TAG = "PuckyTurnController";
     private static final String PREFS = "pucky_turns";
     private static final String LAST_STATUS = "last_status_json";
+    private static final String HISTORY = "history_json";
+    private static final int MAX_HISTORY_ITEMS = 40;
+    private static final int MAX_HISTORY_EVENTS = 40;
     private static final MediaType AUDIO_MP4 = MediaType.get("audio/mp4");
     private static final int SPEECH_GATE_THRESHOLD = VoiceCaptureController.VOICE_CAPTURE_AMPLITUDE_THRESHOLD;
     private static final long SPEECH_GATE_POLL_MS = 30L;
@@ -88,6 +92,8 @@ public final class PuckyTurnController {
         Json.put(out, "speech_gate", gate == null ? JSONObject.NULL : gate);
         Json.put(out, "configured", isConfigured());
         Json.put(out, "url", settings.getPuckyTurnUrl());
+        Json.put(out, "reply_mode", settings.getPuckyTurnReplyMode());
+        Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
         Json.put(out, "speech_detected", indicator.optBoolean("speech_detected", false));
         Json.put(out, "peak_amplitude", indicator.optInt("peak_amplitude", 0));
         Json.put(out, "samples_over_threshold", indicator.optInt("samples_over_threshold", 0));
@@ -100,6 +106,53 @@ public final class PuckyTurnController {
         Json.put(out, "speaking", indicator.optBoolean("speaking", false));
         Json.put(out, "failed", indicator.optBoolean("failed", false));
         Json.put(out, "remote_stage", indicator.optString("remote_stage", ""));
+        return out;
+    }
+
+    public JSONObject settingsGet() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_settings.v1");
+        Json.put(out, "reply_mode", settings.getPuckyTurnReplyMode());
+        Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
+        JSONArray modes = new JSONArray();
+        Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY);
+        Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN);
+        Json.put(out, "modes", modes);
+        return out;
+    }
+
+    public JSONObject settingsSet(JSONObject args) {
+        String mode = args.optString("reply_mode", args.optString("mode", SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY));
+        settings.setPuckyTurnReplyMode(mode);
+        return settingsGet();
+    }
+
+    public JSONObject history(JSONObject args) {
+        int limit = Math.max(1, Math.min(MAX_HISTORY_ITEMS, args.optInt("limit", 20)));
+        JSONArray all = turnHistoryArray();
+        JSONArray turns = new JSONArray();
+        for (int i = 0; i < all.length() && i < limit; i++) {
+            JSONObject item = all.optJSONObject(i);
+            if (item != null) {
+                Json.add(turns, item);
+            }
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_history.v1");
+        Json.put(out, "count", turns.length());
+        Json.put(out, "total", all.length());
+        Json.put(out, "turns", turns);
+        return out;
+    }
+
+    public JSONObject read(JSONObject args) {
+        String turnId = args.optString("turn_id", "");
+        String localSessionId = args.optString("local_session_id", "");
+        JSONObject found = findHistoryRecord(turnHistoryArray(), turnId, localSessionId);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_history_read.v1");
+        Json.put(out, "found", found != null);
+        Json.put(out, "turn", found == null ? JSONObject.NULL : found);
         return out;
     }
 
@@ -232,6 +285,7 @@ public final class PuckyTurnController {
                 .url(settings.getPuckyTurnUrl())
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
                 .header("X-Pucky-Turn-Id", clientTurnId)
+                .header("X-Pucky-Reply-Mode", settings.getPuckyTurnReplyMode())
                 .post(RequestBody.create(AUDIO_MP4, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
@@ -267,13 +321,24 @@ public final class PuckyTurnController {
                         Json.put(status, "reply_audio_path", card.optString("audio_path", ""));
                         Json.put(status, "reply_text_chars", parsed.text().length());
                         Json.put(status, "reply_audio_bytes", parsed.audioBytes().length);
+                        Json.put(status, "reply_card_saved", true);
+                        Json.put(status, "reply_mode", settings.getPuckyTurnReplyMode());
+                        Json.put(status, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
                         Json.put(status, "has_html", parsed.hasHtml());
                         Json.put(status, "server_telemetry", parsed.telemetry());
                         Json.put(status, "latency_server_total_ms", parsed.telemetry().optInt("total_ms", -1));
-                        JSONObject playerState = playReply(card);
-                        Json.put(status, "player_state", playerState);
                         stopTurnStatusPoll(clientTurnId);
-                        markStatus("speaking", status, null);
+                        if (settings.isPuckyTurnSpokenReplyEnabled()) {
+                            if (parsed.hasAudio()) {
+                                JSONObject playerState = playReply(card);
+                                Json.put(status, "player_state", playerState);
+                                markStatus("speaking", status, null);
+                            } else {
+                                markStatus("completed", status, null);
+                            }
+                        } else {
+                            markStatus("completed", status, null);
+                        }
                     } catch (Exception exc) {
                         stopTurnStatusPoll(clientTurnId);
                         markStatus("failed", status, exc.getClass().getSimpleName() + ": " + exc.getMessage());
@@ -449,8 +514,10 @@ public final class PuckyTurnController {
         if (!dir.exists() && !dir.mkdirs()) {
             throw new IOException("Unable to create reply directory");
         }
-        File audio = new File(dir, "reply" + audioExtension(response.audioMimeType()));
-        write(audio, response.audioBytes());
+        File audio = response.hasAudio() ? new File(dir, "reply" + audioExtension(response.audioMimeType())) : null;
+        if (audio != null) {
+            write(audio, response.audioBytes());
+        }
         String htmlPath = "";
         if (response.hasHtml()) {
             File html = new File(dir, "reply.html");
@@ -462,7 +529,9 @@ public final class PuckyTurnController {
         Json.put(card, "title", response.cardTitle());
         Json.put(card, "summary", response.text());
         Json.put(card, "icon", response.cardIcon());
-        Json.put(card, "audio_path", audio.getAbsolutePath());
+        if (audio != null) {
+            Json.put(card, "audio_path", audio.getAbsolutePath());
+        }
         if (!htmlPath.isEmpty()) {
             Json.put(card, "html_path", htmlPath);
         }
@@ -514,6 +583,7 @@ public final class PuckyTurnController {
             Json.put(out, "error", error);
             Log.w(TAG, "Pucky turn " + state + " " + error);
         }
+        upsertTurnHistory(state, out);
         prefs.edit().putString(LAST_STATUS, out.toString()).apply();
         PuckyState.get().setLifecycleEvent("pucky.turn." + state);
         PuckyState.get().broadcast(context);
@@ -529,6 +599,133 @@ public final class PuckyTurnController {
                 || "speaking".equals(state)
                 || "completed".equals(state)
                 || "failed".equals(state);
+    }
+
+    private synchronized void upsertTurnHistory(String state, JSONObject detail) {
+        if (detail == null) {
+            return;
+        }
+        String turnId = detail.optString("turn_id", "");
+        String localSessionId = detail.optString("local_session_id", detail.optString("session_id", ""));
+        if (turnId.trim().isEmpty() && localSessionId.trim().isEmpty()) {
+            return;
+        }
+        String updatedAt = detail.optString("updated_at", Instant.now().toString());
+        JSONArray history = turnHistoryArray();
+        int existingIndex = findHistoryRecordIndex(history, turnId, localSessionId);
+        JSONObject record = existingIndex >= 0 ? history.optJSONObject(existingIndex) : null;
+        if (record == null) {
+            record = new JSONObject();
+            Json.put(record, "schema", "pucky.turn_history_item.v1");
+            Json.put(record, "created_at", updatedAt);
+            Json.put(record, "events", new JSONArray());
+        }
+        if (!turnId.trim().isEmpty()) {
+            Json.put(record, "turn_id", turnId);
+        }
+        if (!localSessionId.trim().isEmpty()) {
+            Json.put(record, "local_session_id", localSessionId);
+        }
+        Json.put(record, "updated_at", updatedAt);
+        Json.put(record, "latest_state", state);
+        Json.put(record, "latest_visual_state", detail.optString("visual_state", visualStateFor(state)));
+        Json.put(record, "speech_detected", detail.optBoolean("speech_detected", record.optBoolean("speech_detected", false)));
+        JSONObject gate = detail.optJSONObject("speech_gate");
+        if (gate != null) {
+            Json.put(record, "speech_gate", gate);
+            Json.put(record, "peak_amplitude", gate.optInt("peak_amplitude", record.optInt("peak_amplitude", 0)));
+            Json.put(record, "samples_over_threshold", gate.optInt("samples_over_threshold", record.optInt("samples_over_threshold", 0)));
+            Json.put(record, "gate_latency_ms", gate.optLong("gate_latency_ms", record.optLong("gate_latency_ms", -1L)));
+        }
+        copyIfPresent(record, detail, "request_audio_bytes");
+        copyIfPresent(record, detail, "http_status");
+        copyIfPresent(record, detail, "reply_text_chars");
+        copyIfPresent(record, detail, "reply_audio_bytes");
+        copyIfPresent(record, detail, "reply_audio_path");
+        copyIfPresent(record, detail, "latency_total_ms");
+        copyIfPresent(record, detail, "latency_server_total_ms");
+        if (detail.has("server_telemetry")) {
+            Json.put(record, "server_telemetry", detail.opt("server_telemetry"));
+        }
+        copyIfPresent(record, detail, "error");
+        Json.put(record, "playback_mode", detail.optString("reply_mode", settings.getPuckyTurnReplyMode()));
+        Json.put(record, "spoken_reply_enabled", detail.optBoolean("spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled()));
+
+        JSONArray events = record.optJSONArray("events");
+        if (events == null) {
+            events = new JSONArray();
+        }
+        JSONObject event = new JSONObject();
+        Json.put(event, "state", state);
+        Json.put(event, "visual_state", detail.optString("visual_state", visualStateFor(state)));
+        Json.put(event, "updated_at", updatedAt);
+        copyIfPresent(event, detail, "phase");
+        copyIfPresent(event, detail, "remote_stage");
+        copyIfPresent(event, detail, "error");
+        copyIfPresent(event, detail, "http_status");
+        Json.add(events, event);
+        Json.put(record, "events", trimEvents(events));
+
+        JSONArray next = new JSONArray();
+        Json.add(next, record);
+        for (int i = 0; i < history.length() && next.length() < MAX_HISTORY_ITEMS; i++) {
+            if (i != existingIndex) {
+                JSONObject item = history.optJSONObject(i);
+                if (item != null) {
+                    Json.add(next, item);
+                }
+            }
+        }
+        prefs.edit().putString(HISTORY, next.toString()).commit();
+    }
+
+    private JSONArray turnHistoryArray() {
+        try {
+            return new JSONArray(prefs.getString(HISTORY, "[]"));
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private static JSONObject findHistoryRecord(JSONArray history, String turnId, String localSessionId) {
+        int index = findHistoryRecordIndex(history, turnId, localSessionId);
+        return index < 0 ? null : history.optJSONObject(index);
+    }
+
+    private static int findHistoryRecordIndex(JSONArray history, String turnId, String localSessionId) {
+        String cleanTurnId = turnId == null ? "" : turnId.trim();
+        String cleanLocalSessionId = localSessionId == null ? "" : localSessionId.trim();
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject item = history.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            if (!cleanTurnId.isEmpty() && cleanTurnId.equals(item.optString("turn_id", ""))) {
+                return i;
+            }
+            if (!cleanLocalSessionId.isEmpty() && cleanLocalSessionId.equals(item.optString("local_session_id", ""))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static JSONArray trimEvents(JSONArray events) {
+        JSONArray out = new JSONArray();
+        int start = Math.max(0, events.length() - MAX_HISTORY_EVENTS);
+        for (int i = start; i < events.length(); i++) {
+            Object item = events.opt(i);
+            if (item != null) {
+                Json.add(out, item);
+            }
+        }
+        return out;
+    }
+
+    private static void copyIfPresent(JSONObject target, JSONObject source, String key) {
+        if (source.has(key)) {
+            Json.put(target, key, source.opt(key));
+        }
     }
 
     private JSONObject lastStatus() {
@@ -559,9 +756,7 @@ public final class PuckyTurnController {
                 && voice.optBoolean("mic_on", "recording".equals(voice.optString("state", "")));
         boolean hearing = micOn && speechDetected;
         String state = "idle";
-        if (failed) {
-            state = "failed";
-        } else if (speaking) {
+        if (speaking) {
             state = "speaking";
         } else if (codexRunning) {
             state = "codex_running";
@@ -605,7 +800,7 @@ public final class PuckyTurnController {
                 || "stt_running".equals(state) || "tts_running".equals(state)) return "uploading";
         if ("codex_running".equals(state)) return "thinking";
         if ("speaking".equals(state)) return "speaking";
-        if ("failed".equals(state)) return "failed";
+        if ("failed".equals(state)) return "idle";
         return "idle";
     }
 

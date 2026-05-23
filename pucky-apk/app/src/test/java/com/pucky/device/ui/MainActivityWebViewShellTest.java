@@ -68,6 +68,8 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"player.seek\"")
                         && bridge.contains("case \"player.queue.set\"")
                         && bridge.contains("case \"pucky.turn.status\"")
+                        && bridge.contains("case \"pucky.turn.settings.get\"")
+                        && bridge.contains("case \"pucky.turn.settings.set\"")
                         && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
@@ -101,6 +103,10 @@ public final class MainActivityWebViewShellTest {
         assertTrue(bridge.contains("import com.pucky.device.pucky.PuckyTurnController;"));
         assertTrue(bridge.contains("case \"pucky.turn.status\":"));
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).status();"));
+        assertTrue(bridge.contains("case \"pucky.turn.settings.get\":"));
+        assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsGet();"));
+        assertTrue(bridge.contains("case \"pucky.turn.settings.set\":"));
+        assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsSet(args);"));
         assertTrue(activity.contains("private void emitWebTurnStatus()"));
         assertTrue(activity.contains("webBridge.emit(\"pucky.turn.status\", PuckyTurnController.shared(this).status())"));
         assertTrue(activity.contains("emitWebPlayerState();\n            emitWebTurnStatus();")

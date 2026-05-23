@@ -210,7 +210,7 @@ button {
 }
 
 .voice-status-uploading {
-  --voice-color: #76828f;
+  --voice-color: #ffb000;
 }
 
 .voice-status-uploading::before {
@@ -255,18 +255,6 @@ button {
   animation: voiceRing 1.15s ease-in-out infinite;
 }
 
-.voice-status-failed {
-  --voice-color: #ff3b30;
-}
-
-.voice-status-failed::before {
-  animation: turnFailFlash 0.9s ease-out both;
-}
-
-.voice-status-failed::after {
-  display: none;
-}
-
 @keyframes voicePulse {
   0%,
   100% {
@@ -293,19 +281,6 @@ button {
   100% {
     transform: translate(-50%, -50%) scale(1.28);
     opacity: 0;
-  }
-}
-
-@keyframes turnFailFlash {
-  0%,
-  100% {
-    transform: scale(0.92);
-    opacity: 0.72;
-  }
-
-  45% {
-    transform: scale(1.12);
-    opacity: 1;
   }
 }
 
@@ -608,6 +583,47 @@ button {
   line-height: 1.15;
   font-weight: 780;
   text-align: right;
+}
+
+.settings-reply-mode {
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+}
+
+.settings-reply-mode .settings-segment {
+  grid-column: 1 / -1;
+}
+
+.settings-segment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(245, 249, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.08);
+}
+
+.settings-segment-button {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: rgba(245, 249, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.05;
+  font-weight: 790;
+  text-align: center;
+  white-space: normal;
+  padding: 7px 6px;
+}
+
+.settings-segment-button.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent, #ffb000) 28%, rgba(245, 249, 255, 0.06));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent, #ffb000) 48%, transparent),
+    0 0 16px color-mix(in srgb, var(--accent, #ffb000) 18%, transparent);
 }
 
 .card-wrap {

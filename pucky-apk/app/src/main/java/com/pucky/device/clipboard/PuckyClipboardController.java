@@ -152,6 +152,9 @@ public final class PuckyClipboardController {
     public static JSONObject entryFromLabSession(JSONObject session) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.clipboard_entry.v1");
+        if (!session.optString("pucky_clipboard_entry_id", "").trim().isEmpty()) {
+            Json.put(out, "entry_id", session.optString("pucky_clipboard_entry_id", ""));
+        }
         Json.put(out, "source", "volume_down_lab");
         Json.put(out, "session_id", session.optString("session_id", ""));
         Json.put(out, "raw_transcript", session.optString("keyword_raw_transcript",
@@ -255,6 +258,23 @@ public final class PuckyClipboardController {
     private static JSONArray artifactsFromActionResult(JSONObject actionResult) {
         JSONArray artifacts = new JSONArray();
         if (actionResult == null) {
+            return artifacts;
+        }
+        if ("pucky.recipe_execution_result.v1".equals(actionResult.optString("schema", ""))) {
+            JSONArray steps = actionResult.optJSONArray("step_results");
+            if (steps == null) {
+                return artifacts;
+            }
+            for (int i = 0; i < steps.length(); i++) {
+                JSONObject step = steps.optJSONObject(i);
+                if (step == null || !"device".equals(step.optString("type", ""))) {
+                    continue;
+                }
+                JSONArray nested = artifactsFromActionResult(step.optJSONObject("result"));
+                for (int j = 0; j < nested.length(); j++) {
+                    Json.add(artifacts, nested.opt(j));
+                }
+            }
             return artifacts;
         }
         JSONObject result = actionResult.optJSONObject("result");

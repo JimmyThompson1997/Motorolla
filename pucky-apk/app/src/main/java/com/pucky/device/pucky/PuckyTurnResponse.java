@@ -48,9 +48,14 @@ public final class PuckyTurnResponse {
 
     public static PuckyTurnResponse fromJson(JSONObject input) throws CommandException {
         String text = required(input.optString("text", ""), "text");
-        String audioMimeType = required(input.optString("audio_mime_type", ""), "audio_mime_type");
-        String audioBase64 = required(input.optString("audio_base64", ""), "audio_base64");
-        validateBase64(audioBase64, "audio_base64");
+        String audioMimeType = optional(input.optString("audio_mime_type", ""));
+        String audioBase64 = optional(input.optString("audio_base64", ""));
+        if (!audioBase64.isEmpty()) {
+            validateBase64(audioBase64, "audio_base64");
+            if (audioMimeType.isEmpty()) {
+                audioMimeType = "audio/wav";
+            }
+        }
         JSONObject card = input.optJSONObject("card");
         String title = card == null ? "" : card.optString("title", "");
         if (title.trim().isEmpty()) {
@@ -91,9 +96,10 @@ public final class PuckyTurnResponse {
     public String audioMimeType() { return audioMimeType; }
     public String cardTitle() { return cardTitle; }
     public String cardIcon() { return cardIcon; }
+    public boolean hasAudio() { return !audioBase64.isEmpty(); }
     public boolean hasHtml() { return !htmlBase64.isEmpty(); }
     public JSONObject telemetry() { return telemetry; }
-    public byte[] audioBytes() { return Base64.getDecoder().decode(audioBase64); }
+    public byte[] audioBytes() { return audioBase64.isEmpty() ? new byte[0] : Base64.getDecoder().decode(audioBase64); }
     public byte[] htmlBytes() { return htmlBase64.isEmpty() ? new byte[0] : Base64.getDecoder().decode(htmlBase64); }
 
     private static String required(String value, String field) throws CommandException {

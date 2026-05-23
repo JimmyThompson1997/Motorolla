@@ -30,6 +30,8 @@ DEFAULT_DEVELOPER_INSTRUCTIONS = (
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 ALLOWED_CARD_ICONS = {"clock", "bolt", "calendar", "moon", "mail"}
 DEFAULT_CARD_ICON = "mail"
+REPLY_MODE_CARD_ONLY = "card_only"
+REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
 MAX_CARD_TITLE_CHARS = 64
 
 
@@ -151,10 +153,17 @@ class PuckyVoiceService:
             public.pop("_updated_epoch", None)
             return public
 
-    def handle_audio_turn(self, audio: bytes, content_type: str, turn_id: str | None = None) -> dict[str, object]:
+    def handle_audio_turn(
+        self,
+        audio: bytes,
+        content_type: str,
+        turn_id: str | None = None,
+        reply_mode: str | None = None,
+    ) -> dict[str, object]:
         if not audio:
             raise ValueError("audio body is empty")
         turn_id = _normalize_turn_id(turn_id)
+        reply_mode = _normalize_reply_mode(reply_mode)
         session_id = turn_id
         total_start = time.perf_counter()
         telemetry: dict[str, object] = {
@@ -164,6 +173,7 @@ class PuckyVoiceService:
             "upload_received_ms": 0,
             "content_type": content_type,
             "request_audio_bytes": len(audio),
+            "reply_mode": reply_mode,
             "stt_provider": "deepgram",
             "stt_model": getattr(self.stt, "model", ""),
             "tts_provider": "deepinfra",
@@ -202,15 +212,21 @@ class PuckyVoiceService:
                 telemetry["card_icon"] = envelope.card_icon
                 telemetry["has_html"] = bool(envelope.html_content)
 
-                stage = "tts_running"
-                telemetry["tts_start_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "tts_running", "running", telemetry)
-                start = time.perf_counter()
-                reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
-                telemetry["tts_ms"] = _elapsed_ms(start)
-                telemetry["tts_end_ms"] = _elapsed_ms(total_start)
-                telemetry["reply_audio_bytes"] = len(reply_audio)
-                telemetry["audio_mime_type"] = audio_mime_type
+                reply_audio = b""
+                audio_mime_type = ""
+                if reply_mode == REPLY_MODE_CARD_AND_SPOKEN:
+                    stage = "tts_running"
+                    telemetry["tts_start_ms"] = _elapsed_ms(total_start)
+                    self._update_turn_status(turn_id, "tts_running", "running", telemetry)
+                    start = time.perf_counter()
+                    reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
+                    telemetry["tts_ms"] = _elapsed_ms(start)
+                    telemetry["tts_end_ms"] = _elapsed_ms(total_start)
+                    telemetry["reply_audio_bytes"] = len(reply_audio)
+                    telemetry["audio_mime_type"] = audio_mime_type
+                else:
+                    telemetry["tts_status"] = "skipped_card_only"
+                    telemetry["reply_audio_bytes"] = 0
             except Exception as exc:
                 telemetry["event"] = "pucky.turn.failed"
                 telemetry["status"] = "failed"
@@ -232,10 +248,12 @@ class PuckyVoiceService:
             "session_id": session_id,
             "turn_id": turn_id,
             "text": envelope.reply_text,
-            "audio_mime_type": audio_mime_type,
-            "audio_base64": base64.b64encode(reply_audio).decode("ascii"),
+            "reply_mode": reply_mode,
             "card": card,
         }
+        if reply_audio:
+            result["audio_mime_type"] = audio_mime_type
+            result["audio_base64"] = base64.b64encode(reply_audio).decode("ascii")
         result["telemetry"] = _public_turn_telemetry(telemetry)
         telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
         result["telemetry"] = _public_turn_telemetry(telemetry)
@@ -326,6 +344,13 @@ def _normalize_turn_id(raw: str | None) -> str:
     return value
 
 
+def _normalize_reply_mode(raw: str | None) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {REPLY_MODE_CARD_AND_SPOKEN, "spoken", "voice", "card_voice"}:
+        return REPLY_MODE_CARD_AND_SPOKEN
+    return REPLY_MODE_CARD_ONLY
+
+
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
@@ -335,6 +360,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "session_id",
         "content_type",
         "request_audio_bytes",
+        "reply_mode",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -351,6 +377,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "tts_ms",
         "reply_audio_bytes",
         "audio_mime_type",
+        "tts_status",
         "response_bytes",
         "total_ms",
         "error_type",
@@ -365,6 +392,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "status",
         "content_type",
         "request_audio_bytes",
+        "reply_mode",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -381,6 +409,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "tts_ms",
         "reply_audio_bytes",
         "audio_mime_type",
+        "tts_status",
         "response_bytes",
         "total_ms",
     )
@@ -447,6 +476,7 @@ def make_handler(service: PuckyVoiceService):
                     self._read_body(service.config.max_audio_bytes),
                     content_type,
                     self.headers.get("X-Pucky-Turn-Id", ""),
+                    self.headers.get("X-Pucky-Reply-Mode", ""),
                 )
             except ValueError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

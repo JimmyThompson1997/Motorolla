@@ -83,7 +83,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "voiceState: initialVoiceState()" not in app
     assert "turn: initialTurnStatus()" in app
     assert "turnHearingUntil" not in app
-    assert "turnFailedUntil" in app
+    assert "turnFailedUntil" not in app
     assert "renderVoiceStatus()" in app
     assert "renderTurnIndicators()" not in app
     assert 'if (name === "voice.state")' in app
@@ -118,25 +118,24 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert ".voice-status-hearing" not in styles
     assert ".voice-status-armed::before" in styles
     assert ".voice-status-recording::before" in styles
-    assert "--voice-color: #76828f" in styles
+    assert "--voice-color: #586574" in styles
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
     assert ".voice-status-thinking::after" in styles
     assert ".voice-status-thinking {\n  --voice-color: #ffb000" in styles
+    assert ".voice-status-uploading {\n  --voice-color: #ffb000" in styles
     assert "turnThinkingSpin" not in styles
     assert "animation: turnThinkingSpin" not in styles
     assert ".voice-status-speaking" in styles
-    assert ".voice-status-failed" in styles
+    assert ".voice-status-failed" not in styles
     assert "@keyframes voicePulse" in styles
     assert "@keyframes voiceRing" in styles
-    assert "const failedVisual = indicator.failed || indicator.state === \"failed\"" in app
-    assert "return failureFallbackVisualState(indicator)" in app
-    assert "const activeWithoutFailure =" in app
-    assert "indicator.active && !failedVisual" in app
-    assert "window.setTimeout(() => renderVoiceStatus(), TURN_FAILED_FLASH_MS + 20)" in app
+    assert "TURN_FAILED_FLASH_MS" not in app
+    assert "failureFallbackVisualState" not in app
+    assert "indicator.visual_state = \"failed\"" not in app
     assert 'armed: "armed"' in app
     assert 'recording: "recording"' in app
-    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"]' in app
+    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking"]' in app
 
 
 def test_active_home_tab_opens_real_icon_filter_tray() -> None:
@@ -250,20 +249,34 @@ def test_settings_tab_renders_mock_html_settings_page() -> None:
     styles = read("styles.css")
 
     assert "const MOCK_SETTINGS" in app
+    assert "turnSettings: initialTurnSettings()" in app
     assert 'state.route === "settings"' in app
     assert "settingsPageView()" in app
     assert "function settingsPageView()" in app
     assert "function settingsRowView(setting)" in app
+    assert "function replyModeSettingsCard()" in app
+    assert "function replyModeButton(mode, label)" in app
+    assert "async function setTurnReplyMode(mode)" in app
+    assert "async function loadTurnSettings" in app
+    assert 'command === "pucky.turn.settings.get"' in app
+    assert 'command === "pucky.turn.settings.set"' in app
+    assert 'command: "pucky.turn.settings.get"' in app
+    assert 'command: "pucky.turn.settings.set"' in app
+    assert "Card only" in app
+    assert "Card + voice" in app
     assert '"settings-page"' in app
     assert '"settings-hero"' in app
     assert '"settings-card"' in app
     assert "Pucky's phone-side powers" in app
+    assert "Walkie reply mode" in app
     assert "Wake word" in app
     assert "Cover gestures" in app
     assert "Native bridge" in app
     assert ".settings-page" in styles
     assert ".settings-hero" in styles
     assert ".settings-card" in styles
+    assert ".settings-segment" in styles
+    assert ".settings-segment-button" in styles
     assert ".settings-card-value" in styles
 
 

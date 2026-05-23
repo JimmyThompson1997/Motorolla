@@ -57,6 +57,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.url", "artifact.delete",
             "pucky.clipboard.list", "pucky.clipboard.last", "pucky.clipboard.read",
             "pucky.clipboard.delete", "pucky.clipboard.clear",
+            "pucky.recipes.sync", "pucky.recipes.list", "pucky.recipes.test",
+            "pucky.recipes.clear", "pucky.recipes.schema", "device.primitives.list",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
@@ -69,6 +71,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
+            "pucky.turn.settings.get", "pucky.turn.settings.set",
+            "pucky.turn.history", "pucky.turn.read",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -296,6 +300,18 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyClipboardController.delete(command.args());
             case "pucky.clipboard.clear":
                 return puckyClipboardController.clear();
+            case "pucky.recipes.sync":
+                return speechEchoLabController.recipesSync(command.args());
+            case "pucky.recipes.list":
+                return speechEchoLabController.recipesList();
+            case "pucky.recipes.test":
+                return speechEchoLabController.recipesTest(command.args());
+            case "pucky.recipes.clear":
+                return speechEchoLabController.recipesClear();
+            case "pucky.recipes.schema":
+                return speechEchoLabController.recipesSchema();
+            case "device.primitives.list":
+                return speechEchoLabController.devicePrimitivesList();
             case "log.tail":
                 return logTail(command.args());
             case "notify.show":
@@ -384,6 +400,14 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.start(command.args());
             case "pucky.turn.stop":
                 return puckyTurnController.stop(command.args());
+            case "pucky.turn.settings.get":
+                return puckyTurnController.settingsGet();
+            case "pucky.turn.settings.set":
+                return puckyTurnController.settingsSet(command.args());
+            case "pucky.turn.history":
+                return puckyTurnController.history(command.args());
+            case "pucky.turn.read":
+                return puckyTurnController.read(command.args());
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":

@@ -23,6 +23,7 @@ public final class PuckyClipboardControllerTest {
                         .put("bytes", 1234));
         JSONObject session = new JSONObject()
                 .put("session_id", "lab_1")
+                .put("pucky_clipboard_entry_id", "clip_recipe_1")
                 .put("keyword_raw_transcript", "photo")
                 .put("keyword_normalized_transcript", "photo")
                 .put("keyword_match_id", "photo")
@@ -35,6 +36,7 @@ public final class PuckyClipboardControllerTest {
         JSONObject entry = PuckyClipboardController.entryFromLabSession(session);
 
         assertEquals("pucky.clipboard_entry.v1", entry.optString("schema"));
+        assertEquals("clip_recipe_1", entry.optString("entry_id"));
         assertEquals("volume_down_lab", entry.optString("source"));
         assertEquals("photo.capture", entry.optString("action_command"));
         assertEquals("succeeded", entry.optString("action_status"));

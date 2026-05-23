@@ -79,9 +79,17 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.status\""));
         assertTrue(source.contains("\"pucky.turn.start\""));
         assertTrue(source.contains("\"pucky.turn.stop\""));
+        assertTrue(source.contains("\"pucky.turn.settings.get\""));
+        assertTrue(source.contains("\"pucky.turn.settings.set\""));
+        assertTrue(source.contains("\"pucky.turn.history\""));
+        assertTrue(source.contains("\"pucky.turn.read\""));
         assertTrue(source.contains("return puckyTurnController.status()"));
         assertTrue(source.contains("return puckyTurnController.start(command.args())"));
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.settingsGet()"));
+        assertTrue(source.contains("return puckyTurnController.settingsSet(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.history(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.read(command.args())"));
         assertTrue(service.contains("PuckyTurnController.shared(this)"));
     }
 
@@ -156,7 +164,11 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("new ReplyCardStore(context).prepend(card)"));
         assertTrue(source.contains("Json.put(args, \"source\", \"pucky.turn\")"));
         assertTrue(source.contains("PlayerController.shared(context).play(args)"));
+        assertTrue(source.contains("if (settings.isPuckyTurnSpokenReplyEnabled())"));
         assertTrue(source.contains("markStatus(\"speaking\", status, null)"));
+        assertTrue(source.contains("markStatus(\"completed\", status, null)"));
+        assertTrue(source.contains("Json.put(status, \"reply_mode\", settings.getPuckyTurnReplyMode())"));
+        assertTrue(source.contains("Json.put(status, \"spoken_reply_enabled\", settings.isPuckyTurnSpokenReplyEnabled())"));
         assertTrue(source.contains("Json.put(status, \"server_telemetry\", parsed.telemetry())"));
         assertTrue(store.contains("public JSONObject prepend(JSONObject cardJson)"));
         assertTrue(store.contains("cards.add(card);"));
@@ -172,6 +184,12 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky_api_token\""));
         assertTrue(source.contains("https://pucky.fly.dev/api/turn"));
         assertTrue(source.contains("putString(editor, input, \"pucky_api_token\""));
+        assertTrue(source.contains("\"pucky_turn_reply_mode\""));
+        assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_ONLY"));
+        assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_AND_SPOKEN"));
+        assertTrue(source.contains("public String getPuckyTurnReplyMode()"));
+        assertTrue(source.contains("public boolean isPuckyTurnSpokenReplyEnabled()"));
+        assertTrue(source.contains("public void setPuckyTurnReplyMode(String mode)"));
         assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
         assertTrue(source.contains("String brokerToken = getToken();"));
         assertTrue(source.contains("return getPuckyTurnAuthToken();"));
@@ -203,6 +221,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(out, \"codex_running\", codexRunning)"));
         assertTrue(source.contains("Json.put(out, \"active\", micOn || uploading || codexRunning || speaking)"));
         assertFalse(source.contains("micOn || uploading || codexRunning || speaking || failed"));
+        assertTrue(source.contains("if (\"failed\".equals(state)) return \"idle\""));
+        assertFalse(source.contains("if (failed) {\n            state = \"failed\";"));
         assertTrue(source.contains("if (\"recording\".equals(state) && isPostReleaseState(lastStatus().optString(\"state\", \"\")))"));
         assertTrue(source.contains("private static boolean isPostReleaseState(String state)"));
         assertTrue(capture.contains("VOICE_CAPTURE_AMPLITUDE_THRESHOLD"));
@@ -237,6 +257,26 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("markStatus(\"codex_running\""));
         assertTrue(source.contains("isRemoteTerminalStage"));
         assertTrue(source.contains("remote_stage"));
+    }
+
+    @Test
+    public void turnSettingsAndHistoryAreDurableNativeContracts() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+
+        assertTrue(source.contains("private static final String HISTORY = \"history_json\""));
+        assertTrue(source.contains("private static final int MAX_HISTORY_ITEMS"));
+        assertTrue(source.contains("public JSONObject settingsGet()"));
+        assertTrue(source.contains("public JSONObject settingsSet(JSONObject args)"));
+        assertTrue(source.contains("public JSONObject history(JSONObject args)"));
+        assertTrue(source.contains("public JSONObject read(JSONObject args)"));
+        assertTrue(source.contains("upsertTurnHistory(state, out)"));
+        assertTrue(source.contains("\"pucky.turn_settings.v1\""));
+        assertTrue(source.contains("\"pucky.turn_history.v1\""));
+        assertTrue(source.contains("\"pucky.turn_history_read.v1\""));
+        assertTrue(source.contains("Json.put(record, \"speech_gate\""));
+        assertTrue(source.contains("Json.put(record, \"server_telemetry\""));
+        assertTrue(source.contains("Json.put(record, \"events\""));
+        assertFalse(source.contains("Json.put(record, \"transcript\""));
     }
 
     @Test

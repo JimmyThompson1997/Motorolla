@@ -33,6 +33,7 @@ public final class PuckyTurnResponseTest {
         assertEquals("pucky_session_1", response.sessionId());
         assertEquals("Sure, here you go.", response.text());
         assertEquals("audio/wav", response.audioMimeType());
+        assertTrue(response.hasAudio());
         assertArrayEquals(new byte[] {1, 2, 3, 4}, response.audioBytes());
         assertEquals("Helpful Thing", response.cardTitle());
         assertEquals("bolt", response.cardIcon());
@@ -51,6 +52,23 @@ public final class PuckyTurnResponseTest {
         assertEquals("This is a reply.", response.cardTitle());
         assertEquals("mail", response.cardIcon());
         assertFalse(response.hasHtml());
+    }
+
+    @Test
+    public void parsesCardOnlyTurnWithoutAudio() throws Exception {
+        PuckyTurnResponse response = PuckyTurnResponse.fromJson(new JSONObject()
+                .put("turn_id", "pucky_card_only")
+                .put("text", "Card only answer.")
+                .put("reply_mode", "card_only")
+                .put("card", new JSONObject().put("title", "Answer")));
+
+        assertEquals("pucky_card_only", response.turnId());
+        assertEquals("pucky_card_only", response.sessionId());
+        assertEquals("Card only answer.", response.text());
+        assertFalse(response.hasAudio());
+        assertEquals("", response.audioMimeType());
+        assertArrayEquals(new byte[0], response.audioBytes());
+        assertEquals("Answer", response.cardTitle());
     }
 
     @Test

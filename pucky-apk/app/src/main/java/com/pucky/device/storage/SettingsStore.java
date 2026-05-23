@@ -16,6 +16,9 @@ public final class SettingsStore {
     private static final String TOKEN = "token";
     private static final String PUCKY_TURN_URL = "pucky_turn_url";
     private static final String PUCKY_API_TOKEN = "pucky_api_token";
+    private static final String PUCKY_TURN_REPLY_MODE = "pucky_turn_reply_mode";
+    public static final String PUCKY_TURN_REPLY_CARD_ONLY = "card_only";
+    public static final String PUCKY_TURN_REPLY_CARD_AND_SPOKEN = "card_and_spoken";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
@@ -79,6 +82,18 @@ public final class SettingsStore {
 
     public String getPuckyApiToken() {
         return getPuckyTurnAuthToken();
+    }
+
+    public String getPuckyTurnReplyMode() {
+        return normalizePuckyTurnReplyMode(prefs.getString(PUCKY_TURN_REPLY_MODE, PUCKY_TURN_REPLY_CARD_ONLY));
+    }
+
+    public boolean isPuckyTurnSpokenReplyEnabled() {
+        return PUCKY_TURN_REPLY_CARD_AND_SPOKEN.equals(getPuckyTurnReplyMode());
+    }
+
+    public void setPuckyTurnReplyMode(String mode) {
+        prefs.edit().putString(PUCKY_TURN_REPLY_MODE, normalizePuckyTurnReplyMode(mode)).commit();
     }
 
     public String getUiShellMode() {
@@ -243,6 +258,7 @@ public final class SettingsStore {
         SharedPreferences.Editor editor = prefs.edit();
         putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
         putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
+        putString(editor, input, "pucky_turn_reply_mode", PUCKY_TURN_REPLY_MODE);
         putString(editor, input, "ui_shell_mode", UI_SHELL_MODE);
         editor.commit();
         JSONObject out = new JSONObject();
@@ -256,6 +272,17 @@ public final class SettingsStore {
 
     private static String nonEmpty(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private static String normalizePuckyTurnReplyMode(String mode) {
+        String value = mode == null ? "" : mode.trim().toLowerCase();
+        if (PUCKY_TURN_REPLY_CARD_AND_SPOKEN.equals(value)
+                || "spoken".equals(value)
+                || "voice".equals(value)
+                || "card_voice".equals(value)) {
+            return PUCKY_TURN_REPLY_CARD_AND_SPOKEN;
+        }
+        return PUCKY_TURN_REPLY_CARD_ONLY;
     }
 
     private static void putString(SharedPreferences.Editor editor, JSONObject input, String jsonKey, String prefKey) {

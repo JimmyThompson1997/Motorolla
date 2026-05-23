@@ -1,8 +1,11 @@
 import importlib.util
+import json
 import pathlib
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -153,6 +156,50 @@ class BrokerIntegrationTests(unittest.TestCase):
         body = puckyctl.api_artifacts(self.ctx, "pucky-test")
         self.assertEqual(body["artifacts"][0]["kind"], "photo")
         self.assertEqual(body["artifacts"][0]["device_path"], "/device/photo.jpg")
+
+    def test_device_event_endpoint_persists_keyword_trigger(self):
+        body = {
+            "schema": "pucky.keyword_triggered.v1",
+            "device_id": "pucky-test",
+            "type": "agent.recipe_triggered",
+            "recipe_id": "check_email",
+            "raw_transcript": "check email",
+        }
+        response = self.post_device_event("pucky-test", body, token="dev-token")
+
+        self.assertTrue(response["ok"])
+        history = broker.history(20, "pucky-test")
+        self.assertTrue(any(
+            item.get("event") == "agent.recipe_triggered"
+            and item.get("payload", {}).get("recipe_id") == "check_email"
+            for item in history
+        ))
+
+    def test_device_event_endpoint_rejects_bad_token_and_device_mismatch(self):
+        with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+            self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token="bad-token")
+        self.assertEqual(401, unauthorized.exception.code)
+
+        with self.assertRaises(urllib.error.HTTPError) as mismatch:
+            self.post_device_event("pucky-test", {
+                "device_id": "other-device",
+                "type": "agent.recipe_triggered",
+            }, token="dev-token")
+        self.assertEqual(400, mismatch.exception.code)
+
+    def post_device_event(self, device_id, body, token):
+        url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/devices/{device_id}/events"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
 
 
 if __name__ == "__main__":

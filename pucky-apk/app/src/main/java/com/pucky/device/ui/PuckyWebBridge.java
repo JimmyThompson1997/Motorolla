@@ -92,6 +92,14 @@ public final class PuckyWebBridge {
                 return player.queuePrevious(args);
             case "pucky.turn.status":
                 return PuckyTurnController.shared(context).status();
+            case "pucky.turn.settings.get":
+                return PuckyTurnController.shared(context).settingsGet();
+            case "pucky.turn.settings.set":
+                return PuckyTurnController.shared(context).settingsSet(args);
+            case "pucky.turn.history":
+                return PuckyTurnController.shared(context).history(args);
+            case "pucky.turn.read":
+                return PuckyTurnController.shared(context).read(args);
             case "file.download":
                 return new FileDownloadController(context).download(args);
             case "artifact.read_base64":

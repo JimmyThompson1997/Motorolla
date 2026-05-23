@@ -936,6 +936,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[0] == "v1" and parts[1] == "devices" and parts[3] == "events":
+            if not self.require_device():
+                return
+            body = self.read_json()
+            if body is None:
+                return self.send_json({"error": "INVALID_JSON"}, 400)
+            device_id = unquote(parts[2])
+            body_device_id = body.get("device_id")
+            if body_device_id and str(body_device_id) != device_id:
+                return self.send_json({"error": "DEVICE_ID_MISMATCH"}, 400)
+            body.setdefault("schema", "pucky.keyword_triggered.v1")
+            body["device_id"] = device_id
+            event_name = body.get("type") or body.get("event") or "device_event"
+            body["event"] = event_name
+            record({"event": event_name, "device_id": device_id, "payload": body})
+            return self.send_json({"ok": True, "event": body}, 201)
         if len(parts) == 4 and parts[0] == "v1" and parts[1] == "devices" and parts[3] == "replies":
             if not self.require_device():
                 return

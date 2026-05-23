@@ -120,7 +120,7 @@
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
 
-  const TURN_FAILED_FLASH_MS = 900;
+  const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
 
   const MOCK_SETTINGS = [
     {
@@ -256,8 +256,7 @@
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
     turn: initialTurnStatus(),
-    turnFailedUntil: 0,
-    turnFailureKey: "",
+    turnSettings: initialTurnSettings(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -346,6 +345,19 @@
     }
     if (command === "pucky.turn.status") {
       return state.turn;
+    }
+    if (command === "pucky.turn.settings.get") {
+      return state.turnSettings;
+    }
+    if (command === "pucky.turn.settings.set") {
+      const mode = normalizeReplyMode(args.reply_mode || args.mode);
+      state.turnSettings = {
+        schema: "pucky.turn_settings.v1",
+        reply_mode: mode,
+        spoken_reply_enabled: mode === "card_and_spoken",
+        modes: TURN_REPLY_MODES
+      };
+      return state.turnSettings;
     }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
@@ -494,6 +506,18 @@
     }
   }
 
+  async function loadTurnSettings(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "pucky.turn.settings.get", args: {} });
+      state.turnSettings = normalizeTurnSettings(snapshot);
+      if (options.render) {
+        render();
+      }
+    } catch (_) {
+      // Browser previews and early WebView startup keep the default card-only mode.
+    }
+  }
+
   function render() {
     renderTabs();
     renderVoiceStatus();
@@ -546,16 +570,35 @@
     };
   }
 
+  function initialTurnSettings() {
+    return {
+      schema: "pucky.turn_settings.v1",
+      reply_mode: "card_only",
+      spoken_reply_enabled: false,
+      modes: TURN_REPLY_MODES
+    };
+  }
+
+  function normalizeTurnSettings(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    const mode = normalizeReplyMode(raw.reply_mode || raw.mode);
+    return {
+      schema: "pucky.turn_settings.v1",
+      reply_mode: mode,
+      spoken_reply_enabled: mode === "card_and_spoken",
+      modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : TURN_REPLY_MODES
+    };
+  }
+
+  function normalizeReplyMode(mode) {
+    const value = String(mode || "").trim().toLowerCase();
+    return value === "card_and_spoken" || value === "spoken" || value === "voice"
+      ? "card_and_spoken"
+      : "card_only";
+  }
+
   function applyTurnStatus(input) {
     state.turn = normalizeTurnStatus(input);
-    if (state.turn.indicator.failed || state.turn.indicator.state === "failed") {
-      const failureKey = turnFailureKey(input);
-      if (failureKey !== state.turnFailureKey) {
-        state.turnFailureKey = failureKey;
-        state.turnFailedUntil = Date.now() + TURN_FAILED_FLASH_MS;
-        window.setTimeout(() => renderVoiceStatus(), TURN_FAILED_FLASH_MS + 20);
-      }
-    }
   }
 
   function applyVoiceState(input) {
@@ -603,9 +646,6 @@
     } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
       indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
       indicator.visual_state = "uploading";
-    } else if (indicator.failed) {
-      indicator.state = "failed";
-      indicator.visual_state = "failed";
     } else if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
       indicator.state = "recording";
       indicator.visual_state = "recording";
@@ -638,7 +678,7 @@
 
   function normalizeVisualState(input) {
     const value = String(input || "").trim().toLowerCase();
-    if (["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"].includes(value)) {
+    if (["idle", "armed", "recording", "uploading", "thinking", "speaking"].includes(value)) {
       return value;
     }
     if (["stt_running", "tts_running", "upload_received"].includes(value)) return "uploading";
@@ -649,31 +689,7 @@
 
   function turnVisualState(status) {
     const indicator = turnIndicatorFromStatus(status);
-    const now = Date.now();
-    const failedVisual = indicator.failed || indicator.state === "failed" || indicator.visual_state === "failed";
-    if (failedVisual && now < state.turnFailedUntil) {
-      return "failed";
-    }
-    if (failedVisual) {
-      return failureFallbackVisualState(indicator);
-    }
     return normalizeVisualState(indicator.visual_state || indicator.state);
-  }
-
-  function failureFallbackVisualState(indicator) {
-    if (indicator.codex_running) {
-      return "thinking";
-    }
-    if (indicator.speaking) {
-      return "speaking";
-    }
-    if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
-      return "recording";
-    }
-    if (indicator.mic_on || indicator.state === "armed") {
-      return "armed";
-    }
-    return "idle";
   }
 
   function turnStateLabel(visualState) {
@@ -683,26 +699,16 @@
       recording: "recording",
       uploading: "uploading",
       thinking: "thinking",
-      speaking: "speaking",
-      failed: "failed"
+      speaking: "speaking"
     };
     return labels[visualState] || "idle";
   }
 
-  function turnFailureKey(input) {
-    const raw = input && typeof input === "object" ? input : {};
-    const last = raw.last_status && typeof raw.last_status === "object" ? raw.last_status : {};
-    const indicator = raw.indicator && typeof raw.indicator === "object" ? raw.indicator : {};
-    return String(raw.updated_at || last.updated_at || indicator.updated_at || last.error || raw.error || "failed");
-  }
-
   function isTurnActive(status) {
     const indicator = turnIndicatorFromStatus(status);
-    const failedVisual = indicator.failed || indicator.state === "failed" || indicator.visual_state === "failed";
-    const activeWithoutFailure = indicator.mic_on || indicator.uploading || indicator.stt_running
-      || indicator.codex_running || indicator.tts_running || indicator.speaking;
-    return Boolean(activeWithoutFailure || (indicator.active && !failedVisual)
-      || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil);
+    return Boolean(indicator.mic_on || indicator.uploading || indicator.stt_running
+      || indicator.codex_running || indicator.tts_running || indicator.speaking
+      || indicator.active || turnVisualState(status) !== "idle");
   }
 
   function truthy(value) {
@@ -733,6 +739,8 @@
       render();
       if (state.route === "feed") {
         restoreFeedScroll();
+      } else if (state.route === "settings") {
+        loadTurnSettings({ render: true });
       }
     });
     return button;
@@ -782,6 +790,7 @@
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       if (state.route === "settings") {
+        loadTurnSettings({ render: false });
         feed.replaceChildren(settingsPageView());
         return;
       }
@@ -889,11 +898,57 @@
     const heroCopy = el("div", "settings-hero-copy");
     heroCopy.append(
       el("h1", "settings-title", "Settings"),
-      el("p", "settings-subtitle", "Mock HTML control surface for Pucky's phone-side powers.")
+      el("p", "settings-subtitle", "Pucky's phone-side powers.")
     );
     hero.append(heroIcon, heroCopy);
-    page.append(hero, ...MOCK_SETTINGS.map(settingsRowView));
+    page.append(hero, replyModeSettingsCard(), ...MOCK_SETTINGS.map(settingsRowView));
     return page;
+  }
+
+  function replyModeSettingsCard() {
+    const row = el("article", "settings-card settings-reply-mode");
+    row.style.setProperty("--accent", "#ffb000");
+    const icon = el("div", "settings-card-icon");
+    icon.innerHTML = iconSvg("mic", { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", "Walkie reply mode"),
+      el("p", "settings-card-detail", "Volume-up turns save a home card by default.")
+    );
+    const segment = el("div", "settings-segment");
+    segment.setAttribute("role", "group");
+    segment.setAttribute("aria-label", "Walkie reply mode");
+    segment.append(
+      replyModeButton("card_only", "Card only"),
+      replyModeButton("card_and_spoken", "Card + voice")
+    );
+    row.append(icon, copy, segment);
+    return row;
+  }
+
+  function replyModeButton(mode, label) {
+    const active = normalizeReplyMode(state.turnSettings.reply_mode) === mode;
+    const button = el("button", active ? "settings-segment-button is-active" : "settings-segment-button", label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.addEventListener("click", () => setTurnReplyMode(mode));
+    return button;
+  }
+
+  async function setTurnReplyMode(mode) {
+    const replyMode = normalizeReplyMode(mode);
+    state.turnSettings = normalizeTurnSettings({ reply_mode: replyMode });
+    render();
+    try {
+      const updated = await Pucky.request({
+        command: "pucky.turn.settings.set",
+        args: { reply_mode: replyMode }
+      });
+      state.turnSettings = normalizeTurnSettings(updated);
+      render();
+    } catch (_) {
+      // Browser preview keeps the optimistic local value.
+    }
   }
 
   function settingsRowView(setting) {
@@ -3795,5 +3850,6 @@
   installFeedRubberBand();
   installFeedScrollPersistence();
   loadTurnStatus({ render: false });
+  loadTurnSettings({ render: false });
   loadCards();
 })();

@@ -113,7 +113,7 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("ready_after_first_audio_frame"));
         assertTrue(source.contains("recognizer_leading_padding_ms"));
         assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
-        assertTrue(source.contains("SpeechKeywordRegistry.match(text, customKeywordEntries())"));
+        assertTrue(source.contains("recipeMatch(text)"));
         assertTrue(source.contains("SpeechKeywordActionExecutor"));
         assertTrue(source.contains("keyword_lab_enabled"));
         assertTrue(source.contains("keyword_match_strategy"));
@@ -144,6 +144,8 @@ public final class PuckyWakeLabSourceTest {
         String controller = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
         String registry = read("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java");
         String executor = read("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java");
+        String recipes = read("src/main/java/com/pucky/device/speech/SpeechRecipeRegistry.java");
+        String recipeSteps = read("src/main/java/com/pucky/device/speech/RecipeStepExecutor.java");
         String clipboard = read("src/main/java/com/pucky/device/clipboard/PuckyClipboardController.java");
 
         assertTrue(controller.contains("speech.echo.lab.keyword.test requires text"));
@@ -181,12 +183,39 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("TONE_PROP_NACK"));
         assertTrue(executor.contains("videoCaptureController"));
         assertTrue(executor.contains("new CameraController(context)"));
+        assertTrue(recipes.contains("pucky.recipe_bundle.v1"));
+        assertTrue(recipes.contains("PREF_RECIPE_BUNDLE"));
+        assertTrue(recipes.contains("pucky_recipes_fallback.json"));
+        assertTrue(recipes.contains("vm_event"));
+        assertTrue(recipeSteps.contains("pucky.keyword_triggered.v1"));
+        assertTrue(recipeSteps.contains("BrokerEventPoster"));
+        assertTrue(recipeSteps.contains("devicePrimitives"));
+        assertTrue(recipeSteps.contains("vm_event.post"));
         assertTrue(clipboard.contains("android_system_clipboard\", false"));
         assertTrue(clipboard.contains("MAX_ENTRIES = 250"));
         assertTrue(clipboard.contains("RETENTION_MS = 30L * 24L * 60L * 60L * 1000L"));
         assertFalse(executor.contains("LiveKit"));
         assertFalse(executor.contains("pucky.turn"));
         assertFalse(executor.contains("shell.exec"));
+        assertFalse(recipes.contains("shell.exec"));
+        assertFalse(recipeSteps.contains("LiveKit"));
+    }
+
+    @Test
+    public void recipeCommandsAreAllowlistedAndDocumented() throws Exception {
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String capability = read("src/main/java/com/pucky/device/capabilities/CapabilityReporter.java");
+        String broker = read("../fly-broker/pucky_fly_broker.py");
+
+        assertTrue(executor.contains("\"pucky.recipes.sync\""));
+        assertTrue(executor.contains("\"pucky.recipes.list\""));
+        assertTrue(executor.contains("\"pucky.recipes.test\""));
+        assertTrue(executor.contains("\"pucky.recipes.clear\""));
+        assertTrue(executor.contains("\"pucky.recipes.schema\""));
+        assertTrue(executor.contains("\"device.primitives.list\""));
+        assertTrue(capability.contains("VM-owned recipes"));
+        assertTrue(broker.contains("pucky.keyword_triggered.v1"));
+        assertTrue(broker.contains("DEVICE_ID_MISMATCH"));
     }
 
     @Test
@@ -217,7 +246,8 @@ public final class PuckyWakeLabSourceTest {
                 "08-openwakeword-lab.md",
                 "09-fixtures-quality-and-performance.md",
                 "10-test-plan-and-phase-gates.md",
-                "11-rollout-and-acceptance.md"
+                "11-rollout-and-acceptance.md",
+                "12-vm-owned-recipes.md"
         };
         for (String doc : docs) {
             assertTrue(doc + " exists", Files.exists(Path.of("../docs/pucky-wake-lab", doc))
