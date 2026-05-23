@@ -1124,13 +1124,57 @@
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content attachment-detail video-detail");
     const frame = el("section", "video-player-card");
+    const shell = el("div", "attachment-video-shell");
     const video = document.createElement("video");
     video.className = "attachment-video-player";
-    video.controls = true;
+    video.controls = false;
     video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
     video.preload = "metadata";
     video.setAttribute("aria-label", item.title || item.alt || "Video attachment");
-    frame.append(video, attachmentMeta(item, "Video"));
+    const play = el("button", "attachment-video-play");
+    play.type = "button";
+    play.innerHTML = iconSvg("play_arrow", { filled: true });
+    play.setAttribute("aria-label", "Play video");
+    const time = el("span", "attachment-video-time", "0:00");
+    const updateVideoUi = () => {
+      const duration = Number(video.duration || 0);
+      const position = Number(video.currentTime || 0);
+      shell.classList.toggle("is-playing", !video.paused && !video.ended);
+      play.innerHTML = iconSvg(!video.paused && !video.ended ? "pause" : "play_arrow", { filled: true });
+      play.setAttribute("aria-label", !video.paused && !video.ended ? "Pause video" : "Play video");
+      time.textContent = duration > 0
+        ? `${formatVideoTime(position)} / ${formatVideoTime(duration)}`
+        : formatVideoTime(position);
+    };
+    const toggle = async () => {
+      try {
+        if (!video.paused && !video.ended) {
+          video.pause();
+        } else {
+          await video.play();
+        }
+        updateVideoUi();
+      } catch (error) {
+        frame.append(el("p", "attachment-error", `Video playback unavailable: ${error.message}`));
+      }
+    };
+    play.addEventListener("click", event => {
+      event.stopPropagation();
+      toggle();
+    });
+    video.addEventListener("click", event => {
+      event.stopPropagation();
+      toggle();
+    });
+    video.addEventListener("loadedmetadata", updateVideoUi);
+    video.addEventListener("timeupdate", updateVideoUi);
+    video.addEventListener("play", updateVideoUi);
+    video.addEventListener("pause", updateVideoUi);
+    video.addEventListener("ended", updateVideoUi);
+    shell.append(video, play, time);
+    frame.append(shell, attachmentMeta(item, "Video"));
     content.append(frame);
     openSideDetail(panel, item.title || card.title || "Video", content, dismissDetail);
     rememberNavDetail("attachment", card, options);
@@ -1141,6 +1185,13 @@
     } catch (error) {
       frame.append(el("p", "attachment-error", `Video unavailable: ${error.message}`));
     }
+  }
+
+  function formatVideoTime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds || 0)));
+    const minutes = Math.floor(total / 60);
+    const remainder = total % 60;
+    return `${minutes}:${String(remainder).padStart(2, "0")}`;
   }
 
   async function showDocumentAttachment(card, item, options = {}) {

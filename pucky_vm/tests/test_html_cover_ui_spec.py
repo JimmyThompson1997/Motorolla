@@ -611,6 +611,13 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function chatMediaBubble(card, images)" in app
     assert "function showAttachmentViewer(card, attachmentSet = null, options = {})" in app
     assert "function showVideoAttachment(card, item, options = {})" in app
+    assert '"attachment-video-shell"' in app
+    assert "video.controls = false" in app
+    assert 'video.setAttribute("playsinline", "")' in app
+    assert 'video.setAttribute("webkit-playsinline", "")' in app
+    assert '"attachment-video-play"' in app
+    assert "function formatVideoTime(seconds)" in app
+    assert "await video.play()" in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
     assert "function documentViewer(item)" in app
     assert "function showImageReel(card, imageSet = null, options = {})" in app
@@ -690,6 +697,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".media-doc-label" in styles
     assert ".chat-media-video" in styles
     assert ".image-reel-video" in styles
+    assert ".attachment-video-shell" in styles
+    assert ".attachment-video-play" in styles
+    assert ".attachment-video-time" in styles
     assert ".attachment-video-player" in styles
     assert ".document-frame" in styles
     assert ".document-detail" in styles
