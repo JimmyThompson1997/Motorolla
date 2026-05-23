@@ -127,7 +127,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("keyword_action_status"));
         assertTrue(source.contains("keyword_action_result"));
         assertTrue(source.contains("keyword_action_failure_chime"));
+        assertTrue(source.contains("action_failure_chime"));
         assertTrue(source.contains("pucky.screenshot_capture_failure_chime.v1"));
+        assertTrue(source.contains("playScreenshotFailureChimeIfNeeded"));
         assertTrue(source.contains("keyword_action_error_message"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
