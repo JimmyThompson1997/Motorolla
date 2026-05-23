@@ -13,8 +13,10 @@ public final class SpeechKeywordMatcherTest {
         assertReply("Hey Puppy!", "hey_pucky", "Hey Pucky recognized.", "alias:hey puppy");
         assertReply("Hey lucky.", "hey_pucky", "Hey Pucky recognized.", "alias:hey lucky");
         assertReply("hay pucky", "hey_pucky", "Hey Pucky recognized.", "alias:hay pucky");
+        assertReply("Hey Pocky!", "hey_pucky", "Hey Pucky recognized.", "alias:hey pocky");
         assertReply("Pucky.", "hey_pucky", "Hey Pucky recognized.", "alias:pucky");
         assertReply("Puppy.", "hey_pucky", "Hey Pucky recognized.", "alias:puppy");
+        assertReply("Pocky.", "hey_pucky", "Hey Pucky recognized.", "alias:pocky");
     }
 
     @Test
