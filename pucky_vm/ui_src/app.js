@@ -1254,6 +1254,7 @@
   async function showVideoAttachment(card, item, options = {}) {
     state.audioCard = null;
     const panel = document.getElementById("detail");
+    const dismissAttachment = detailDismissHandler(options);
     const content = el("div", "detail-content attachment-detail video-detail");
     const frame = el("section", "video-player-card");
     const shell = el("div", "attachment-video-shell");
@@ -1304,7 +1305,7 @@
     shell.append(video, play, time);
     frame.append(shell, attachmentMeta(item, "Video"));
     content.append(frame);
-    openSideDetail(panel, item.title || card.title || "Video", content, dismissDetail);
+    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     restoreScrollPosition(content, options.scrollTop);
@@ -1328,11 +1329,12 @@
   async function showDocumentAttachment(card, item, options = {}) {
     state.audioCard = null;
     const panel = document.getElementById("detail");
+    const dismissAttachment = detailDismissHandler(options);
     const kind = attachmentKind(item);
     const content = el("div", `detail-content attachment-detail document-detail document-${kind}`);
     const viewer = await documentViewer(item);
     content.append(viewer);
-    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissDetail);
+    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     restoreScrollPosition(content, options.scrollTop);
@@ -1412,6 +1414,10 @@
       meta.append(el("span", "attachment-subtitle", item.alt));
     }
     return meta;
+  }
+
+  function detailDismissHandler(options = {}, fallback = dismissDetail) {
+    return typeof options.onDismiss === "function" ? options.onDismiss : fallback;
   }
 
   async function resolveImageSrc(image) {
@@ -1661,7 +1667,7 @@
     const back = el("button", "detail-back");
     back.type = "button";
     back.innerHTML = iconSvg("chevron_left", { filled: false });
-    back.setAttribute("aria-label", "Back to feed");
+    back.setAttribute("aria-label", "Back");
     back.addEventListener("click", onDismiss);
     header.append(back, el("h1", "detail-title", title));
     shell.append(header, content);

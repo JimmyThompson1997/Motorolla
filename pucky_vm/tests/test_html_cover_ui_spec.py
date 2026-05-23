@@ -638,6 +638,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "await video.play()" in app
     assert "preferDataUrl: true" in app
     assert "!options.preferDataUrl && window.PuckyAndroid" in app
+    assert "function detailDismissHandler(options = {}, fallback = dismissDetail)" in app
+    assert "const dismissAttachment = detailDismissHandler(options);" in app
+    assert 'back.setAttribute("aria-label", "Back")' in app
+    assert 'back.setAttribute("aria-label", "Back to feed")' not in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
     assert "function documentViewer(item)" in app
     assert "function showImageReel(card, imageSet = null, options = {})" in app
@@ -684,6 +688,8 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "showAttachmentViewer(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) })" in app
     assert "return showVideoAttachment(card, item" in app
     assert "return showDocumentAttachment(card, item" in app
+    assert 'openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment)' in app
+    assert 'openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment)' in app
     assert "const dismissGallery = () =>" in app
     assert "if (onDismiss)" in app
     assert '"chat-media-rail"' in app
