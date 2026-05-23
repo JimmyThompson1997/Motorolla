@@ -795,6 +795,21 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"' in fixture
 
 
+def test_android_system_back_closes_html_detail_first() -> None:
+    app = read("app.js")
+
+    assert "function handleAndroidBack()" in app
+    assert "window.PuckyHandleAndroidBack = handleAndroidBack" in app
+    assert 'detail.classList.contains("is-open")' in app
+    assert 'detail.querySelector(".detail-back")' in app
+    assert "back.click()" in app
+    assert "dismissDetail()" in app
+    assert 'traceSheet.classList.contains("is-open")' in app
+    assert "dismissTraceSheet()" in app
+    assert 'overlay.classList.contains("is-open")' in app
+    assert "closeSpeedPicker()" in app
+
+
 def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     app = read("app.js")
     styles = read("styles.css")

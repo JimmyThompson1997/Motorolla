@@ -174,6 +174,26 @@ public final class MainActivityWebViewShellTest {
     }
 
     @Test
+    public void androidBackDelegatesToHtmlShellBeforeLeavingActivity() throws Exception {
+        String source = read("src/main/java/com/pucky/device/MainActivity.java");
+        String app = read("../../pucky_vm/ui_src/app.js");
+
+        assertTrue("System back should ask the HTML shell to close active panels first",
+                source.contains("window.PuckyHandleAndroidBack&&window.PuckyHandleAndroidBack()")
+                        && source.contains("continueUnhandledBack()"));
+        assertTrue("Unhandled back should keep the old WebView-history fallback",
+                source.contains("private void continueUnhandledBack()")
+                        && source.contains("webShell.canGoBack()")
+                        && source.contains("webShell.goBack()")
+                        && source.contains("super.onBackPressed()"));
+        assertTrue("HTML shell should expose an Android back handler",
+                app.contains("function handleAndroidBack()")
+                        && app.contains("window.PuckyHandleAndroidBack = handleAndroidBack")
+                        && app.contains("detail.querySelector(\".detail-back\")")
+                        && app.contains("back.click()"));
+    }
+
+    @Test
     public void retiredJavaUiAssetsAreDeleted() {
         String[] retired = {
                 "src/main/java/com/pucky/device/ui/WaveformView.java",

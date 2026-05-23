@@ -175,6 +175,21 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (webShell != null) {
+            webShell.evaluateJavascript(
+                    "(function(){try{return !!(window.PuckyHandleAndroidBack&&window.PuckyHandleAndroidBack());}catch(e){return false;}})();",
+                    handled -> {
+                        if ("true".equals(handled)) {
+                            return;
+                        }
+                        continueUnhandledBack();
+                    });
+            return;
+        }
+        continueUnhandledBack();
+    }
+
+    private void continueUnhandledBack() {
         if (webShell != null && webShell.canGoBack()) {
             webShell.goBack();
             return;

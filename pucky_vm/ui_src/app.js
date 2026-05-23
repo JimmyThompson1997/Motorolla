@@ -1688,6 +1688,30 @@
     panel.replaceChildren();
   }
 
+  function handleAndroidBack() {
+    const detail = document.getElementById("detail");
+    if (detail && detail.classList.contains("is-open")) {
+      const back = detail.querySelector(".detail-back");
+      if (back) {
+        back.click();
+      } else {
+        dismissDetail();
+      }
+      return true;
+    }
+    const traceSheet = document.getElementById("traceSheet");
+    if (traceSheet && traceSheet.classList.contains("is-open")) {
+      dismissTraceSheet();
+      return true;
+    }
+    const overlay = document.getElementById("speedOverlay");
+    if (overlay && overlay.classList.contains("is-open")) {
+      closeSpeedPicker();
+      return true;
+    }
+    return false;
+  }
+
   function showAudioDetail(card, options = {}) {
     state.audioCard = card;
     const panel = document.getElementById("detail");
@@ -3583,6 +3607,7 @@
     }
   });
 
+  window.PuckyHandleAndroidBack = handleAndroidBack;
   installFeedRubberBand();
   installFeedScrollPersistence();
   loadTurnStatus({ render: false });
