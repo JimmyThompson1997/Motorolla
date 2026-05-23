@@ -133,6 +133,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "return failureFallbackVisualState(indicator)" in app
     assert "const activeWithoutFailure =" in app
     assert "indicator.active && !failedVisual" in app
+    assert "window.setTimeout(() => renderVoiceStatus(), TURN_FAILED_FLASH_MS + 20)" in app
     assert 'armed: "armed"' in app
     assert 'recording: "recording"' in app
     assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"]' in app

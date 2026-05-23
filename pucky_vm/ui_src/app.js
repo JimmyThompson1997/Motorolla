@@ -553,6 +553,7 @@
       if (failureKey !== state.turnFailureKey) {
         state.turnFailureKey = failureKey;
         state.turnFailedUntil = Date.now() + TURN_FAILED_FLASH_MS;
+        window.setTimeout(() => renderVoiceStatus(), TURN_FAILED_FLASH_MS + 20);
       }
     }
   }
