@@ -327,6 +327,11 @@ def test_sheet_drag_waits_for_release_before_dismissal() -> None:
     assert "scrollTarget: target" in app
     assert "function canScrollUp(target)" in app
     assert "target.scrollTop > 0" in app
+    assert "activePointerId = event.pointerId" in app
+    confirm_body = app.split("if (!confirmed) {", 1)[1].split("scheduleApply(primary)", 1)[0]
+    assert "target.setPointerCapture(activePointerId)" in confirm_body
+    pointerdown_body = app.split('add("pointerdown", event => {', 1)[1].split('add("pointermove"', 1)[0]
+    assert "target.setPointerCapture" not in pointerdown_body
 
 
 def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
@@ -688,6 +693,14 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".attachment-video-player" in styles
     assert ".document-frame" in styles
     assert ".document-detail" in styles
+    document_detail = css_block(styles, ".document-detail")
+    assert "overflow-x: hidden;" in document_detail
+    assert "overflow-y: auto;" in document_detail
+    assert "-webkit-overflow-scrolling: touch;" in document_detail
+    assert "touch-action: pan-y;" in document_detail
+    document_rendered = css_block(styles, ".document-rendered")
+    assert "flex: 0 0 auto;" in document_rendered
+    assert "width: 100%;" in document_rendered
     assert ".media-doc-preview.has-render .media-doc-render" in styles
     assert ".media-doc-preview.is-gallery.has-render .media-doc-label" in styles
     assert ".chat-media-video {\n  object-fit: contain;" in styles

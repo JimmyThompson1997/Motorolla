@@ -2103,6 +2103,8 @@
     let confirmed = false;
     let raf = 0;
     let pendingValue = 0;
+    let activePointerId = null;
+    let pointerCaptured = false;
     const cleanup = [];
     const threshold = () => (config.axis === "x" ? window.innerWidth : window.innerHeight) * 0.22;
     const applyFrame = () => {
@@ -2146,6 +2148,18 @@
           if (config.confirm) {
             config.confirm();
           }
+          if (
+            activePointerId !== null &&
+            target.setPointerCapture &&
+            !pointerCaptured
+          ) {
+            try {
+              target.setPointerCapture(activePointerId);
+              pointerCaptured = true;
+            } catch (_) {
+              pointerCaptured = false;
+            }
+          }
         }
         scheduleApply(primary);
       }
@@ -2157,6 +2171,19 @@
         cancelAnimationFrame(raf);
         raf = 0;
       }
+      if (
+        activePointerId !== null &&
+        pointerCaptured &&
+        target.releasePointerCapture
+      ) {
+        try {
+          target.releasePointerCapture(activePointerId);
+        } catch (_) {
+          // Pointer capture can already be released by the browser on cancel.
+        }
+      }
+      activePointerId = null;
+      pointerCaptured = false;
       const delta = config.axis === "x" ? x - startX : y - startY;
       if (confirmed && delta > threshold()) {
         config.done();
@@ -2172,10 +2199,9 @@
       if (isDragIgnoredTarget(event.target)) {
         return;
       }
+      activePointerId = event.pointerId;
+      pointerCaptured = false;
       begin(event.clientX, event.clientY);
-      if (target.setPointerCapture) {
-        target.setPointerCapture(event.pointerId);
-      }
     });
     add("pointermove", event => {
       move(event.clientX, event.clientY, event);
