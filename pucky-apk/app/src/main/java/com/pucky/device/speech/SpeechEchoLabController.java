@@ -751,6 +751,7 @@ public final class SpeechEchoLabController {
         String actionErrorCode = "";
         String actionErrorMessage = "";
         boolean actionFailed = false;
+        JSONObject actionFailureChime = null;
         if (keyword.matched && keyword.hasAction()) {
             try {
                 actionResult = keywordActionExecutor.execute(keyword.action);
@@ -763,6 +764,11 @@ public final class SpeechEchoLabController {
                 ttsText = CommandErrorCodes.NO_DISPLAY_ON.equals(actionErrorCode)
                         ? "Failed. Phone screen is off."
                         : failureReply(keyword);
+                if (SpeechKeywordActionExecutor.COMMAND_SCREENSHOT_CAPTURE.equals(
+                        keyword.action.optString("command", ""))) {
+                    actionFailureChime = keywordActionExecutor.playFailureChime(
+                            "pucky.screenshot_capture_failure_chime.v1");
+                }
             }
         }
         String replyOverride = actionResultReplyOverride(actionResult);
@@ -793,6 +799,8 @@ public final class SpeechEchoLabController {
                 keyword.hasAction() ? keyword.action.optString("command", "") : JSONObject.NULL);
         Json.put(active, "keyword_action_status", actionStatus);
         Json.put(active, "keyword_action_result", actionResult == null ? JSONObject.NULL : actionResult);
+        Json.put(active, "keyword_action_failure_chime",
+                actionFailureChime == null ? JSONObject.NULL : actionFailureChime);
         Json.put(active, "keyword_action_error_code", actionErrorCode.isEmpty() ? JSONObject.NULL : actionErrorCode);
         Json.put(active, "keyword_action_error_message", actionErrorMessage.isEmpty() ? JSONObject.NULL : actionErrorMessage);
         if (keyword.matched && keyword.hasAction()) {

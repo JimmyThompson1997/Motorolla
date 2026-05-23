@@ -126,6 +126,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("pucky_clipboard_saved"));
         assertTrue(source.contains("keyword_action_status"));
         assertTrue(source.contains("keyword_action_result"));
+        assertTrue(source.contains("keyword_action_failure_chime"));
+        assertTrue(source.contains("pucky.screenshot_capture_failure_chime.v1"));
         assertTrue(source.contains("keyword_action_error_message"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
@@ -165,6 +167,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("cameraController.capture"));
         assertTrue(executor.contains("locationController"));
         assertTrue(executor.contains("screenshotController"));
+        assertTrue(executor.contains("playFailureChime"));
+        assertTrue(executor.contains("TONE_PROP_NACK"));
         assertTrue(executor.contains("videoCaptureController"));
         assertTrue(executor.contains("new CameraController(context)"));
         assertTrue(clipboard.contains("android_system_clipboard\", false"));

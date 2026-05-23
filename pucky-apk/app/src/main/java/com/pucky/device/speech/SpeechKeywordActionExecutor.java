@@ -287,25 +287,33 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private JSONObject playActionChime(String schema) {
+        return playToneChime(schema, ToneGenerator.TONE_PROP_ACK, 140, "pucky-keyword-action-chime");
+    }
+
+    public JSONObject playFailureChime(String schema) {
+        return playToneChime(schema, ToneGenerator.TONE_PROP_NACK, 220, "pucky-keyword-action-failure-chime");
+    }
+
+    private JSONObject playToneChime(String schema, int tone, int durationMs, String threadName) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", schema);
         Json.put(out, "stream", "music");
         Json.put(out, "volume", 85);
-        Json.put(out, "duration_ms", 140);
+        Json.put(out, "duration_ms", durationMs);
         Json.put(out, "played", false);
         try {
             ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, 85);
-            generator.startTone(ToneGenerator.TONE_PROP_ACK, 140);
+            generator.startTone(tone, durationMs);
             new Thread(() -> {
                 try {
-                    Thread.sleep(240L);
+                    Thread.sleep(durationMs + 100L);
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                 }
                 generator.release();
-            }, "pucky-keyword-action-chime").start();
+            }, threadName).start();
             Json.put(out, "played", true);
-            Json.put(out, "tone", ToneGenerator.TONE_PROP_ACK);
+            Json.put(out, "tone", tone);
         } catch (RuntimeException exc) {
             Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
