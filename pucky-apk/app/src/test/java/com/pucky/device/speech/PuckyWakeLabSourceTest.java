@@ -128,7 +128,7 @@ public final class PuckyWakeLabSourceTest {
     }
 
     @Test
-    public void programmableKeywordActionsAreLabScopedAndTorchOnly() throws Exception {
+    public void programmableKeywordActionsAreLabScopedAndCameraOnly() throws Exception {
         String controller = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
         String registry = read("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java");
         String executor = read("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java");
@@ -142,6 +142,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("DEFAULT_TORCH_AUTO_OFF_MS = 600"));
         assertTrue(executor.contains("MIN_TORCH_AUTO_OFF_MS = 100"));
         assertTrue(executor.contains("MAX_TORCH_AUTO_OFF_MS = 1500"));
+        assertTrue(executor.contains("COMMAND_PHOTO_CAPTURE = \"photo.capture\""));
+        assertTrue(executor.contains("DEFAULT_PHOTO_MAX_WIDTH = 1280"));
+        assertTrue(executor.contains("cameraController.capture"));
         assertTrue(executor.contains("new CameraController(context)"));
         assertFalse(executor.contains("LiveKit"));
         assertFalse(executor.contains("pucky.turn"));

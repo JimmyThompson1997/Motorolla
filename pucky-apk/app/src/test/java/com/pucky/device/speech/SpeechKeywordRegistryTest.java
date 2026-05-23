@@ -115,6 +115,51 @@ public final class SpeechKeywordRegistryTest {
     }
 
     @Test
+    public void photoCaptureActionDefaultsAndBoundsAreEnforced() throws Exception {
+        JSONObject noArgs = new JSONObject().put("command", "photo.capture");
+        JSONObject sanitized = SpeechKeywordActionExecutor.sanitize(noArgs);
+
+        assertEquals("photo.capture", sanitized.optString("command"));
+        assertEquals(1280, sanitized.optJSONObject("args").optInt("max_width"));
+        assertEquals(8000, sanitized.optJSONObject("args").optLong("timeout_ms"));
+
+        JSONObject custom = SpeechKeywordActionExecutor.sanitize(new JSONObject()
+                .put("command", "photo.capture")
+                .put("args", new JSONObject()
+                        .put("max_width", 1920)
+                        .put("timeout_ms", 15000)
+                        .put("camera_id", "0")
+                        .put("ignored", "not forwarded")));
+
+        assertEquals(1920, custom.optJSONObject("args").optInt("max_width"));
+        assertEquals(15000, custom.optJSONObject("args").optLong("timeout_ms"));
+        assertEquals("0", custom.optJSONObject("args").optString("camera_id"));
+        assertFalse(custom.optJSONObject("args").has("ignored"));
+
+        CommandException tooWide = expectCommandException(() ->
+                SpeechKeywordActionExecutor.sanitize(photoAction(4096, 8000)));
+        CommandException tooSlow = expectCommandException(() ->
+                SpeechKeywordActionExecutor.sanitize(photoAction(1280, 20000)));
+
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, tooWide.code());
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, tooSlow.code());
+    }
+
+    @Test
+    public void dynamicPhotoKeywordMatchesExactUtteranceOnly() throws Exception {
+        SpeechKeywordRegistry.SetResult result = SpeechKeywordRegistry.set(new JSONArray(),
+                keyword("photo", phrases("photo"), "Photo captured.", photoAction(1280, 8000)));
+
+        SpeechKeywordMatcher.Match exact = SpeechKeywordRegistry.match("Photo!", result.entries);
+        SpeechKeywordMatcher.Match longer = SpeechKeywordRegistry.match("take a photo", result.entries);
+
+        assertTrue(exact.matched);
+        assertEquals("photo", exact.id);
+        assertEquals("photo.capture", exact.action.optString("command"));
+        assertFalse(longer.matched);
+    }
+
+    @Test
     public void emptyPhrasesAreRejected() throws Exception {
         CommandException exc = expectCommandException(() ->
                 SpeechKeywordRegistry.set(new JSONArray(),
@@ -149,6 +194,14 @@ public final class SpeechKeywordRegistryTest {
         return new JSONObject()
                 .put("command", "torch.set")
                 .put("args", new JSONObject().put("auto_off_ms", autoOffMs));
+    }
+
+    private static JSONObject photoAction(int maxWidth, long timeoutMs) throws Exception {
+        return new JSONObject()
+                .put("command", "photo.capture")
+                .put("args", new JSONObject()
+                        .put("max_width", maxWidth)
+                        .put("timeout_ms", timeoutMs));
     }
 
     private static CommandException expectCommandException(ThrowingRunnable runnable) throws Exception {
