@@ -273,6 +273,7 @@
     traceCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
+    feedRefreshCloseTimer: 0,
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -2561,6 +2562,10 @@
     if (!indicator) {
       return;
     }
+    if (state.feedRefreshCloseTimer) {
+      window.clearTimeout(state.feedRefreshCloseTimer);
+      state.feedRefreshCloseTimer = 0;
+    }
     const offset = Math.max(0, Number(options.offset) || 0);
     const progress = Math.max(0, Math.min(1, offset / FEED_REFRESH_THRESHOLD));
     const visible = offset > 0 || options.armed || options.refreshing;
@@ -2569,6 +2574,7 @@
     indicator.classList.toggle("is-visible", Boolean(visible));
     indicator.classList.toggle("is-armed", Boolean(options.armed));
     indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
+    indicator.classList.toggle("is-closing", Boolean(options.closing));
     indicator.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
@@ -2587,7 +2593,11 @@
       feed.classList.remove("is-feed-refreshing");
       releaseFeedPull(feed);
     }
-    updateFeedRefreshIndicator({ offset: 0 });
+    updateFeedRefreshIndicator({ offset: FEED_REFRESH_HOLD_OFFSET, closing: true });
+    state.feedRefreshCloseTimer = window.setTimeout(() => {
+      state.feedRefreshCloseTimer = 0;
+      updateFeedRefreshIndicator({ offset: 0 });
+    }, 170);
   }
 
   async function refreshFeedCards() {
