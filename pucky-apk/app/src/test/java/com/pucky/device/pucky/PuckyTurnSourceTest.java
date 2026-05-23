@@ -15,7 +15,10 @@ public final class PuckyTurnSourceTest {
     public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToLab() throws Exception {
         String source = read("src/main/java/com/pucky/device/buttons/ButtonController.java");
 
-        assertTrue(source.contains("\"android_volume_pucky_speech_echo_lab_v21\""));
+        assertTrue(source.contains("CONFIG_VERSION = 22"));
+        assertTrue(source.contains("DEFAULT_LONG_PRESS_MS = 200"));
+        assertTrue(source.contains("clamp(config.optInt(\"long_press_ms\", DEFAULT_LONG_PRESS_MS), 200, 1200)"));
+        assertTrue(source.contains("\"android_volume_pucky_speech_echo_lab_v22\""));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold\", \"pucky.turn.start\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold_release\", \"pucky.turn.stop\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.lab.start\")"));
@@ -27,6 +30,30 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("SpeechEchoController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("SpeechEchoController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertFalse(source.contains("Json.put(mappings, \"volume_up_hold\", \"livekit.ptt.start\")"));
+        assertFalse(source.contains("LiveKitController"));
+        assertFalse(source.contains("livekit."));
+    }
+
+    @Test
+    public void apkBuildAndRuntimeCommandPathDoNotExposeLiveKit() throws Exception {
+        String build = read("build.gradle");
+        assertFalse(build.contains("org.jetbrains.kotlin.android"));
+        assertFalse(build.contains("io.livekit"));
+        assertFalse(build.contains("kotlinx-coroutines"));
+        assertFalse(Files.exists(Path.of("src/main/java/com/pucky/device/livekit/LiveKitController.kt")));
+
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
+        String status = read("src/main/java/com/pucky/device/status/StatusProvider.java");
+        String assistant = read("src/main/java/com/pucky/device/assistant/PuckyAssistantController.java");
+        String speech = read("src/main/java/com/pucky/device/speech/NativeSpeechController.java");
+        assertFalse(executor.contains("com.pucky.device.livekit"));
+        assertFalse(executor.contains("LiveKitController"));
+        assertFalse(executor.contains("livekit."));
+        assertFalse(service.contains("LiveKitController"));
+        assertFalse(status.contains("LiveKitController"));
+        assertFalse(assistant.contains("LiveKitController"));
+        assertFalse(speech.contains("LiveKitController"));
     }
 
     @Test

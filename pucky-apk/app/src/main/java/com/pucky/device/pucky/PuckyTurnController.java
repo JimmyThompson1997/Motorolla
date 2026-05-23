@@ -99,32 +99,70 @@ public final class PuckyTurnController {
 
     public JSONObject stop(JSONObject args) throws CommandException {
         requireConfigured();
-        JSONObject stopArgs = reasonArgs(args.optString("reason", "button_release"));
-        Json.put(stopArgs, "feedback", args.optBoolean("feedback", true));
-        JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
-        JSONObject capture = stopped.optJSONObject("capture");
-        if (capture == null) {
-            markStatus("idle", stopped, "no_capture");
-            return stopped;
+        JSONObject voice = VoiceCaptureController.shared(context).status();
+        JSONObject active = voice.optJSONObject("active_session");
+        if (active == null) {
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.turn_stop.v1");
+            Json.put(out, "state", "idle");
+            Json.put(out, "result", "no_active_capture");
+            markStatus("idle", out, "no_capture");
+            return out;
         }
-        File audio = new File(capture.optString("path", ""));
-        if (!audio.exists() || !audio.isFile() || audio.length() <= 0) {
-            JSONObject failed = baseStatus(capture.optString("session_id", ""), System.currentTimeMillis(), 0);
-            markStatus("failed", failed, "empty_capture");
-            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Pucky turn capture is empty");
-        }
-        byte[] audioBytes = readAll(audio);
-        String localSessionId = capture.optString("session_id", "pucky_" + Long.toHexString(System.currentTimeMillis()));
+        String localSessionId = active.optString("session_id", "pucky_" + Long.toHexString(System.currentTimeMillis()));
         String clientTurnId = generateClientTurnId();
-        submitAsync(localSessionId, clientTurnId, audioBytes);
+        String reason = args.optString("reason", "button_release");
+        boolean feedback = args.optBoolean("feedback", true);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_stop.v1");
         Json.put(out, "state", "uploading");
+        Json.put(out, "phase", "capture_finalizing");
         Json.put(out, "local_session_id", localSessionId);
         Json.put(out, "turn_id", clientTurnId);
-        Json.put(out, "request_audio_bytes", audioBytes.length);
         markStatus("uploading", out, null);
+        Thread worker = new Thread(() -> finishStopAndUpload(localSessionId, clientTurnId, reason, feedback),
+                "PuckyTurnStopUpload");
+        worker.setDaemon(true);
+        worker.start();
         return out;
+    }
+
+    private void finishStopAndUpload(String fallbackLocalSessionId, String clientTurnId, String reason, boolean feedback) {
+        long finalizeStartedMs = System.currentTimeMillis();
+        try {
+            JSONObject stopArgs = reasonArgs(reason);
+            Json.put(stopArgs, "feedback", feedback);
+            JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
+            JSONObject capture = stopped.optJSONObject("capture");
+            if (capture == null) {
+                markStatus("idle", stopped, "no_capture");
+                return;
+            }
+            File audio = new File(capture.optString("path", ""));
+            if (!audio.exists() || !audio.isFile() || audio.length() <= 0) {
+                JSONObject failed = baseStatus(capture.optString("session_id", fallbackLocalSessionId), finalizeStartedMs, 0);
+                Json.put(failed, "turn_id", clientTurnId);
+                markStatus("failed", failed, "empty_capture");
+                return;
+            }
+            byte[] audioBytes = readAll(audio);
+            String localSessionId = capture.optString("session_id", fallbackLocalSessionId);
+            JSONObject uploading = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
+            Json.put(uploading, "state", "uploading");
+            Json.put(uploading, "phase", "upload_started");
+            Json.put(uploading, "turn_id", clientTurnId);
+            Json.put(uploading, "capture_finalize_ms", Math.max(0L, System.currentTimeMillis() - finalizeStartedMs));
+            markStatus("uploading", uploading, null);
+            submitAsync(localSessionId, clientTurnId, audioBytes);
+        } catch (CommandException exc) {
+            JSONObject failed = baseStatus(fallbackLocalSessionId, finalizeStartedMs, 0);
+            Json.put(failed, "turn_id", clientTurnId);
+            markStatus("failed", failed, exc.getMessage());
+        } catch (Exception exc) {
+            JSONObject failed = baseStatus(fallbackLocalSessionId, finalizeStartedMs, 0);
+            Json.put(failed, "turn_id", clientTurnId);
+            markStatus("failed", failed, exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
     }
 
     private void submitAsync(String localSessionId, String clientTurnId, byte[] audioBytes) {
@@ -376,14 +414,15 @@ public final class PuckyTurnController {
         String lastState = last == null ? "" : last.optString("state", "");
         String remoteStage = last == null ? "" : last.optString("remote_stage", "");
         String source = player == null ? "" : player.optString("source", "");
-        boolean micOn = voice != null && voice.optBoolean("mic_on", "recording".equals(voice.optString("state", "")));
-        boolean hearing = voice != null && voice.optBoolean("hearing", false);
         boolean sttRunning = "stt_running".equals(lastState) || "stt_running".equals(remoteStage);
         boolean codexRunning = "codex_running".equals(lastState) || "codex_running".equals(remoteStage) || (last != null && last.optBoolean("codex_running", false));
         boolean ttsRunning = "tts_running".equals(lastState) || "tts_running".equals(remoteStage);
         boolean uploading = "uploading".equals(lastState) || "upload_received".equals(lastState) || "upload_received".equals(remoteStage) || sttRunning || ttsRunning;
         boolean speaking = "pucky.turn".equals(source) && player != null && player.optBoolean("is_playing", false);
         boolean failed = "failed".equals(lastState);
+        boolean postRelease = uploading || sttRunning || codexRunning || ttsRunning || speaking || failed;
+        boolean micOn = !postRelease && voice != null && voice.optBoolean("mic_on", "recording".equals(voice.optString("state", "")));
+        boolean hearing = micOn && voice != null && voice.optBoolean("hearing", false);
         String state = "idle";
         if (failed) {
             state = "failed";

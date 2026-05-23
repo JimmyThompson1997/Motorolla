@@ -12,7 +12,7 @@ public final class PuckyRecognitionService extends RecognitionService {
             listener.beginningOfSpeech();
             listener.error(SpeechRecognizer.ERROR_CLIENT);
         } catch (Exception ignored) {
-            // The assistant path uses LiveKit, not Android's RecognitionService callback stream.
+            // Best-effort no-op service for assistant role qualification.
         }
     }
 

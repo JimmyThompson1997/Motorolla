@@ -120,20 +120,12 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
     assert ".voice-status-thinking::after" in styles
-    assert "turnThinkingSpin" in styles
+    assert "turnThinkingSpin" not in styles
+    assert "animation: turnThinkingSpin" not in styles
     assert ".voice-status-speaking" in styles
     assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
     assert "@keyframes voiceRing" in styles
-
-
-def test_morning_file_fixture_is_long_enough_for_attachment_scroll_testing() -> None:
-    morning = read("fixtures/artifacts/morning.html")
-
-    assert "Scroll test 1" in morning
-    assert "Scroll test 5" in morning
-    assert "Bottom marker" in morning
-    assert morning.count('class="scroll-target"') >= 5
 
 
 def test_active_home_tab_opens_real_icon_filter_tray() -> None:

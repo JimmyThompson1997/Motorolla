@@ -14,7 +14,6 @@ import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.media.MediaExportController;
 import com.pucky.device.network.NetworkProvider;
@@ -43,6 +42,8 @@ import com.pucky.device.wake.WakeWordController;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.time.Instant;
 
 public final class NativeCommandExecutor implements CommandExecutor {
     private static final String[] COMMANDS = new String[] {
@@ -80,10 +81,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.echo.lab.keyword.list", "speech.echo.lab.keyword.set",
             "speech.echo.lab.keyword.delete", "speech.echo.lab.keyword.clear",
             "speech.echo.lab.keyword.test",
-            "livekit.status", "livekit.session.request", "livekit.connect",
-            "livekit.disconnect", "livekit.mic.set", "livekit.ptt.start",
-            "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
-            "livekit.output.gain", "tunnel.status", "tunnel.config.set", "tunnel.start",
+            "tunnel.status", "tunnel.config.set", "tunnel.start",
             "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
             "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
             "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
@@ -131,7 +129,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final SpeechEchoLabController speechEchoLabController;
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
-    private final LiveKitController liveKitController;
     private final TunnelController tunnelController;
     private final RemoteAdbController remoteAdbController;
     private final AndroidSubstrateController androidSubstrateController;
@@ -171,7 +168,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             SpeechEchoLabController speechEchoLabController,
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
-            LiveKitController liveKitController,
             TunnelController tunnelController,
             RemoteAdbController remoteAdbController,
             AndroidSubstrateController androidSubstrateController,
@@ -209,7 +205,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.speechEchoLabController = speechEchoLabController;
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
-        this.liveKitController = liveKitController;
         this.tunnelController = tunnelController;
         this.remoteAdbController = remoteAdbController;
         this.androidSubstrateController = androidSubstrateController;
@@ -449,26 +444,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.keywordClear();
             case "speech.echo.lab.keyword.test":
                 return speechEchoLabController.keywordTest(command.args());
-            case "livekit.status":
-                return liveKitController.status();
-            case "livekit.session.request":
-                return liveKitController.requestSession(command.args());
-            case "livekit.connect":
-                return liveKitController.connect(command.args());
-            case "livekit.disconnect":
-                return liveKitController.disconnect(command.args());
-            case "livekit.mic.set":
-                return liveKitController.setMic(command.args());
-            case "livekit.ptt.start":
-                return liveKitController.pttStart(command.args());
-            case "livekit.ptt.stop":
-                return liveKitController.pttStop(command.args());
-            case "livekit.events.list":
-                return liveKitController.eventsList(command.args());
-            case "livekit.events.clear":
-                return liveKitController.eventsClear();
-            case "livekit.output.gain":
-                return liveKitController.outputGain(command.args());
             case "tunnel.status":
                 return tunnelController.status();
             case "tunnel.config.set":
@@ -497,7 +472,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "cover.display_gesture.trigger":
                 return systemController.coverDisplayGestureTrigger(command.args());
             case "cover.event":
-                return liveKitController.coverEvent(command.args());
+                return coverEvent(command.args());
             case "settings.open":
             case "settings.panel":
                 return intentController.settingsOpen(command.args());
@@ -573,6 +548,25 @@ public final class NativeCommandExecutor implements CommandExecutor {
         int limit = Math.max(1, Math.min(50, args.optInt("limit", 10)));
         JSONObject out = new JSONObject();
         Json.put(out, "entries", commandLogStore.tailJson(limit));
+        return out;
+    }
+
+    private JSONObject coverEvent(JSONObject args) {
+        JSONObject detail = args == null ? new JSONObject() : args;
+        String event = detail.optString("event", "").trim();
+        if (event.isEmpty()) {
+            event = detail.optString("type", "cover_event").trim();
+        }
+        if (event.isEmpty()) {
+            event = "cover_event";
+        }
+        Json.put(detail, "event", event);
+        Json.put(detail, "received_at", Instant.now().toString());
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.cover_event_result.v1");
+        Json.put(out, "event", event);
+        Json.put(out, "accepted", true);
+        Json.put(out, "detail", detail);
         return out;
     }
 

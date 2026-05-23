@@ -45,7 +45,6 @@ import com.pucky.device.command.NativeCommandExecutor;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.media.MediaExportController;
 import com.pucky.device.network.NetworkProvider;
@@ -274,7 +273,6 @@ public final class PuckyForegroundService extends Service {
                 SpeechEchoLabController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
-                LiveKitController.shared(this, settings),
                 TunnelController.shared(this, settings),
                 new RemoteAdbController(this, settings, TunnelController.shared(this, settings)),
                 new AndroidSubstrateController(this),

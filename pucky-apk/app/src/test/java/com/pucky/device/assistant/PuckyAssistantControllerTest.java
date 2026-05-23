@@ -3,33 +3,30 @@ package com.pucky.device.assistant;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import org.json.JSONObject;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public final class PuckyAssistantControllerTest {
     @Test
-    public void openLineActiveWhenMicEnabled() throws Exception {
-        JSONObject status = new JSONObject();
-        status.put("mic_enabled", true);
-        status.put("state", "connected_talking");
-        assertTrue(PuckyAssistantController.isOpenLineActive(status));
-    }
+    public void assistantInvocationDoesNotStartOpenLineBackend() throws Exception {
+        String source = new String(
+                Files.readAllBytes(Path.of("src/main/java/com/pucky/device/assistant/PuckyAssistantController.java")),
+                StandardCharsets.UTF_8);
 
-    @Test
-    public void openLineActiveWhenPttTurnIsPresent() throws Exception {
-        JSONObject status = new JSONObject();
-        status.put("mic_enabled", false);
-        status.put("state", "connected_muted");
-        status.put("active_ptt_turn_id", "assistant_123");
-        assertTrue(PuckyAssistantController.isOpenLineActive(status));
-    }
-
-    @Test
-    public void openLineInactiveWhenMutedWithoutActiveTurn() throws Exception {
-        JSONObject status = new JSONObject();
-        status.put("mic_enabled", false);
-        status.put("state", "connected_muted");
-        status.put("active_ptt_turn_id", JSONObject.NULL);
-        assertFalse(PuckyAssistantController.isOpenLineActive(status));
+        assertFalse(source.contains("LiveKitController"));
+        assertFalse(source.contains("isOpenLineActive"));
+        assertFalse(source.contains("pttStart"));
+        assertFalse(source.contains("pttStop"));
+        assertFalse(source.contains("active_ptt_turn_id"));
+        assertFalse(source.contains("mic_enabled"));
+        assertFalse(source.contains("connected_talking"));
+        assertFalse(source.contains("connected_muted"));
+        assertFalse(source.contains("toggleOpenLine"));
+        assertFalse(source.contains("pucky.device.livekit"));
+        assertFalse(source.contains("open_line_backend\", \"livekit\""));
+        assertTrue(source.contains("open_line_backend\", \"none\""));
     }
 }

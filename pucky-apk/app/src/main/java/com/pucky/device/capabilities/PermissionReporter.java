@@ -49,7 +49,7 @@ public final class PermissionReporter {
             Json.add(warnings, "CAMERA denied: torch.set and photo.capture are blocked");
         }
         if (!isGranted(Manifest.permission.RECORD_AUDIO)) {
-            Json.add(warnings, "RECORD_AUDIO denied: voice.capture, speech.native, and LiveKit microphone are blocked");
+            Json.add(warnings, "RECORD_AUDIO denied: voice.capture and speech.native are blocked");
         }
         if (Build.VERSION.SDK_INT >= 33 && !isGranted(Manifest.permission.POST_NOTIFICATIONS)) {
             Json.add(warnings, "POST_NOTIFICATIONS denied: notify.show and timer notifications are blocked");
@@ -87,11 +87,11 @@ public final class PermissionReporter {
         add(out, Manifest.permission.FOREGROUND_SERVICE_LOCATION, declared, false, Build.VERSION.SDK_INT >= 34, "normal",
                 array("location.watch"));
         add(out, Manifest.permission.FOREGROUND_SERVICE_MICROPHONE, declared, false, Build.VERSION.SDK_INT >= 34, "normal",
-                array("voice.capture", "future LiveKit microphone"));
+                array("voice.capture"));
         add(out, Manifest.permission.CAMERA, declared, true, true, "dangerous",
                 array("camera.info", "torch.set", "photo.capture"));
         add(out, Manifest.permission.RECORD_AUDIO, declared, true, true, "dangerous",
-                array("voice.capture", "speech.native", "future LiveKit microphone"));
+                array("voice.capture", "speech.native"));
         add(out, Manifest.permission.ACCESS_COARSE_LOCATION, declared, true, true, "dangerous",
                 array("location.get", "location.watch"));
         add(out, Manifest.permission.ACCESS_FINE_LOCATION, declared, true, true, "dangerous",

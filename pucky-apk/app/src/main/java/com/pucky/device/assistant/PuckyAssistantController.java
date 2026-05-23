@@ -10,9 +10,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
 
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.service.PuckyForegroundService;
-import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
@@ -77,45 +75,19 @@ public final class PuckyAssistantController {
 
     public static void handleAssistantInvocation(Context context, Bundle args, int showFlags) {
         Context appContext = context.getApplicationContext();
-        new Thread(() -> toggleOpenLine(appContext, args, showFlags), "pucky-assistant-toggle").start();
+        new Thread(() -> handleAssistantSession(appContext, args, showFlags), "pucky-assistant-session").start();
     }
 
-    public static boolean isOpenLineActive(JSONObject liveKitStatus) {
-        if (liveKitStatus == null) {
-            return false;
-        }
-        String activeTurnId = liveKitStatus.optString("active_ptt_turn_id", "").trim();
-        if ("null".equalsIgnoreCase(activeTurnId)) {
-            activeTurnId = "";
-        }
-        return liveKitStatus.optBoolean("mic_enabled", false)
-                || "connected_talking".equals(liveKitStatus.optString("state", ""))
-                || !activeTurnId.isEmpty();
-    }
-
-    private static void toggleOpenLine(Context context, Bundle args, int showFlags) {
+    private static void handleAssistantSession(Context context, Bundle args, int showFlags) {
         try {
             PuckyForegroundService.start(context, true);
-            SettingsStore settings = new SettingsStore(context);
-            LiveKitController liveKit = LiveKitController.shared(context, settings);
-            JSONObject before = liveKit.status();
-            JSONObject commandArgs = new JSONObject();
-            Json.put(commandArgs, "source", "assistant_power_hold");
-            Json.put(commandArgs, "show_flags", showFlags);
-            Json.put(commandArgs, "assistant_bundle_keys", args == null ? 0 : args.keySet().size());
-            if (isOpenLineActive(before)) {
-                Json.put(commandArgs, "reason", "assistant_power_hold_stop");
-                Json.put(commandArgs, "haptic_on_stop", true);
-                JSONObject result = liveKit.pttStop(commandArgs);
-                Log.i(TAG, "assistant power hold stopped open line result=" + result);
-            } else {
-                Json.put(commandArgs, "reason", "assistant_power_hold_start");
-                Json.put(commandArgs, "ptt_turn_id", "assistant_" + Long.toHexString(System.currentTimeMillis()));
-                Json.put(commandArgs, "force_new_session", true);
-                Json.put(commandArgs, "force_new_session_reason", "assistant_power_hold_start");
-                JSONObject result = liveKit.pttStart(commandArgs);
-                Log.i(TAG, "assistant power hold started open line result=" + result);
-            }
+            JSONObject event = new JSONObject();
+            Json.put(event, "schema", "pucky.assistant_invocation.v1");
+            Json.put(event, "source", "assistant_power_hold");
+            Json.put(event, "show_flags", showFlags);
+            Json.put(event, "assistant_bundle_keys", args == null ? 0 : args.keySet().size());
+            Json.put(event, "open_line_backend", "none");
+            Log.i(TAG, "assistant power hold received result=" + event);
         } catch (Exception exc) {
             Log.e(TAG, "assistant power hold failed", exc);
         }

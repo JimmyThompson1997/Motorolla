@@ -105,7 +105,8 @@ uses Android's normal user-mediated `ACTION_VIEW` handling for media/podcast URL
 Microphone file capture is implemented with Android `MediaRecorder` and app-owned `.m4a` artifacts.
 Android native speech recognition is implemented with `SpeechRecognizer` as an experimental live-text path;
 it keeps a local transcript history and posts successful transcripts to the broker reply inbox when connected.
-LiveKit/WebRTC realtime audio, boot persistence hardening, and Device Owner mode remain later milestones.
+Volume-up walkie turns use local `.m4a` capture, `/api/turn`, VM stage polling, and Pucky-native reply playback.
+Boot persistence hardening and Device Owner mode remain later milestones.
 
 ## Foreground button policy
 
@@ -113,13 +114,15 @@ Button capture currently works while the Pucky Activity is foregrounded and the 
 The default policy is deliberately narrow:
 
 - volume-up single press: normal Android media volume up
-- volume-up hold: `livekit.ptt.start`
-- volume-up hold release: `livekit.ptt.stop`
-- volume-down press/hold/double: `none`, so Android can keep normal volume behavior
+- volume-up hold: `pucky.turn.start`
+- volume-up hold release: `pucky.turn.stop`
+- volume-down hold: `speech.echo.lab.start`
+- volume-down hold release: `speech.echo.lab.stop`
 
-The hold/release actions are wired to LiveKit push-to-talk. They start and stop the realtime mic line, but the
-cover WebView no longer changes into listening/thinking/speaking visual modes. The older `voice.capture.*` and
-`speech.native.*` endpoints remain available for diagnostics.
+The volume-up hold/release actions are wired to a raw Pucky audio turn. Hold starts local microphone capture;
+release finalizes the capture, posts it to `/api/turn`, polls VM stage status, saves one reply card, and plays the
+returned audio through the native player. `voice.capture.*` and `speech.native.*` endpoints remain available for
+diagnostics.
 
 ## Cover UI boundary
 
@@ -131,7 +134,7 @@ lane with compact seek controls. Transcript actions pause audio and open a priva
 APK-owned back button; rich HTML replies do the same inside a private detail Activity.
 
 Rich reply HTML can run ordinary page JavaScript for local interactivity, but it does not receive a native Android
-JavaScript bridge. Sensors, buttons, LiveKit, wake/sleep, permissions, and command execution stay native.
+JavaScript bridge. Sensors, buttons, wake/sleep, permissions, and command execution stay native.
 
 ## Future assistant role note
 
@@ -141,10 +144,8 @@ system power, emergency, and assistant behavior. Pucky registers a `VoiceInterac
 selected instead of Gemini where Motorola exposes the standard assistant gesture.
 
 The first behavior is deliberately tiny: when Android invokes Pucky's `VoiceInteractionSession`, Pucky starts
-the foreground service and toggles the LiveKit PTT line. If no Pucky mic line is active, the gesture starts
-an open mic turn with a haptic tick. If a Pucky mic line is active, the same gesture stops it with a haptic
-tick. This also does not drive cover-screen voice visuals. Motorola owns the actual hold duration through
-Settings > Gestures > Power key / Press and hold.
+the foreground service and logs the assistant invocation. It does not start an open microphone line. Motorola owns
+the actual hold duration through Settings > Gestures > Power key / Press and hold.
 
 The user-facing setup surface is a yes/no flow launched with `--ez assistant_setup true`. Yes asks the user to set
 Pucky as the default assistant, requests microphone/notification permission only if missing, and posts a normal Android
@@ -219,7 +220,7 @@ python .\tools\phase12_acoustic_loop_runner.py --broker https://pucky-bridge-dev
 
 The Phase 12 runner loads `.env`, generates an ElevenLabs TTS fixture, pushes it to the phone through
 `file.put_base64`, plays it with the native player, records it with `voice.capture.*`, reads the capture back
-with `artifact.read_base64`, and transcribes it with ElevenLabs STT. This is the pre-LiveKit audio gate.
+with `artifact.read_base64`, and transcribes it with ElevenLabs STT. This is the local acoustic-loop audio gate.
 
 ## Local build
 

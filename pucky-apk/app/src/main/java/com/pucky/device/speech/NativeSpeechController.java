@@ -17,7 +17,6 @@ import android.speech.SpeechRecognizer;
 import com.pucky.device.PuckyApplication;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.storage.SettingsStore;
@@ -355,15 +354,6 @@ public final class NativeSpeechController {
         JSONObject extra = new JSONObject();
         Json.put(extra, "source", "android_speech_recognizer");
         Json.put(extra, "session", session);
-        JSONObject livekit = LiveKitController.shared(context, settings).status();
-        String livekitState = livekit.optString("state", "");
-        String livekitRoom = livekit.optString("room", "").trim();
-        Json.put(extra, "livekit_state", livekitState);
-        if (isLiveKitActiveState(livekitState) && !livekitRoom.isEmpty()) {
-            Json.put(body, "room", livekitRoom);
-            Json.put(body, "livekit_room", livekitRoom);
-            Json.put(extra, "livekit_room", livekitRoom);
-        }
         Json.put(body, "extra", extra);
         Request request = new Request.Builder()
                 .url(endpoint)
@@ -400,13 +390,6 @@ public final class NativeSpeechController {
                 }
             }
         });
-    }
-
-    private static boolean isLiveKitActiveState(String state) {
-        return "connected".equals(state)
-                || "connected_talking".equals(state)
-                || "connected_muted".equals(state)
-                || "reconnecting".equals(state);
     }
 
     private synchronized void markBrokerResponse(String sessionId, String responseText, String finalText) {

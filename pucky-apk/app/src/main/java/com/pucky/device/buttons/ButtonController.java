@@ -14,7 +14,6 @@ import com.pucky.device.broker.BrokerEventPoster;
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
-import com.pucky.device.livekit.LiveKitController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
@@ -41,8 +40,8 @@ public final class ButtonController {
     private static final int KEY_VOLUME_UP = KeyEvent.KEYCODE_VOLUME_UP;
     private static final int KEY_VOLUME_DOWN = KeyEvent.KEYCODE_VOLUME_DOWN;
     private static final int MAX_EVENTS = 100;
-    private static final int CONFIG_VERSION = 21;
-    private static final int DEFAULT_LONG_PRESS_MS = 250;
+    private static final int CONFIG_VERSION = 22;
+    private static final int DEFAULT_LONG_PRESS_MS = 200;
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -147,7 +146,7 @@ public final class ButtonController {
             return;
         }
         cancelHoldTimer(keyCode);
-        int delayMs = clamp(config.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 250, 1200);
+        int delayMs = clamp(config.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 200, 1200);
         final int sequence;
         if (keyCode == KEY_VOLUME_UP) {
             sequence = ++volumeUpSequence;
@@ -349,49 +348,9 @@ public final class ButtonController {
         Json.put(event, "mapped_action", action);
         Json.put(event, "action_result", actionResult);
         appendEvent(event);
-        postPttGestureToBroker(gesture, action, actionResult, source);
         PuckyState.get().setLifecycleEvent("button." + gesture + "." + actionResult.optString("status", "ok"));
         PuckyState.get().broadcast(context);
         return event;
-    }
-
-    private void postPttGestureToBroker(String gesture, String action, JSONObject actionResult, String source) {
-        if (!"volume_up_hold".equals(gesture) && !"volume_up_hold_release".equals(gesture)) {
-            return;
-        }
-        if (!"livekit.ptt.start".equals(action) && !"livekit.ptt.stop".equals(action)) {
-            return;
-        }
-        try {
-            SettingsStore settings = new SettingsStore(context);
-            JSONObject livekit = liveKitController().status();
-            JSONObject result = actionResult.optJSONObject("result");
-            JSONObject event = new JSONObject();
-            Json.put(event, "schema", "pucky.device_event.v1");
-            Json.put(event, "event_id", "evt_" + Long.toHexString(System.currentTimeMillis()));
-            Json.put(event, "device_id", settings.getDeviceId());
-            Json.put(event, "timestamp", Instant.now().toString());
-            Json.put(event, "type", "volume_up_hold".equals(gesture) ? "ptt.started" : "ptt.released");
-            Json.put(event, "gesture", gesture);
-            Json.put(event, "source", source);
-            Json.put(event, "foreground_only", true);
-            Json.put(event, "mapped_action", action);
-            if (result != null) {
-                String turnId = result.optString("ptt_turn_id", "").trim();
-                if (!turnId.isEmpty()) {
-                    Json.put(event, "ptt_turn_id", turnId);
-                }
-            }
-            Json.put(event, "livekit_state", livekit.optString("state", ""));
-            Json.put(event, "mic_enabled", livekit.optBoolean("mic_enabled", false));
-            String room = livekit.optString("room", "").trim();
-            if (!room.isEmpty()) {
-                Json.put(event, "livekit_room", room);
-            }
-            new BrokerEventPoster(context).postAsync(event);
-        } catch (Exception ignored) {
-            // Button handling must remain reliable even if the broker is unavailable.
-        }
     }
 
     private JSONObject executeAction(String action) {
@@ -512,26 +471,6 @@ public final class ButtonController {
                     Json.put(out, "result", SpeechEchoLabController.shared(context).stop(reasonArgs("button_release")));
                     Json.put(out, "status", "completed");
                     break;
-                case "livekit.connect":
-                    Json.put(out, "result", liveKitController().connect(new JSONObject()));
-                    Json.put(out, "status", "completed");
-                    break;
-                case "livekit.mic.on":
-                    Json.put(out, "result", liveKitController().setMic(liveKitMicArgs(true, "volume_up_hold")));
-                    Json.put(out, "status", "completed");
-                    break;
-                case "livekit.mic.off":
-                    Json.put(out, "result", liveKitController().setMic(liveKitMicArgs(false, "volume_up_hold_release")));
-                    Json.put(out, "status", "completed");
-                    break;
-                case "livekit.ptt.start":
-                    Json.put(out, "result", liveKitController().pttStart(new JSONObject()));
-                    Json.put(out, "status", "completed");
-                    break;
-                case "livekit.ptt.stop":
-                    Json.put(out, "result", liveKitController().pttStop(new JSONObject()));
-                    Json.put(out, "status", "completed");
-                    break;
                 case "voice.ptt.start":
                     Json.put(out, "result", voiceListenPlaceholder("start_requested"));
                     Json.put(out, "status", "placeholder");
@@ -542,7 +481,7 @@ public final class ButtonController {
                     break;
                 case "emergency.stop":
                     Json.put(out, "status", "placeholder");
-                    Json.put(out, "note", "Action name reserved for future LiveKit/emergency wiring.");
+                    Json.put(out, "note", "Action name reserved for future emergency wiring.");
                     break;
                 default:
                     Json.put(out, "status", "unsupported");
@@ -583,7 +522,7 @@ public final class ButtonController {
         Json.put(out, "double_press_ms", 450);
         Json.put(out, "long_press_ms", DEFAULT_LONG_PRESS_MS);
         Json.put(out, "long_press_repeat_count", 1);
-        Json.put(out, "policy", "android_volume_pucky_speech_echo_lab_v21");
+        Json.put(out, "policy", "android_volume_pucky_speech_echo_lab_v22");
         Json.put(out, "mappings", defaultMappings());
         return out;
     }
@@ -627,8 +566,8 @@ public final class ButtonController {
             }
         }
         Json.put(raw, "config_version", CONFIG_VERSION);
-        Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 250, 1200));
-        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_speech_echo_lab_v21"));
+        Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 200, 1200));
+        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_speech_echo_lab_v22"));
         Json.put(raw, "mappings", mappings);
         return raw;
     }
@@ -736,11 +675,6 @@ public final class ButtonController {
             case "speech.echo.stop":
             case "speech.echo.lab.start":
             case "speech.echo.lab.stop":
-            case "livekit.connect":
-            case "livekit.mic.on":
-            case "livekit.mic.off":
-            case "livekit.ptt.start":
-            case "livekit.ptt.stop":
             case "voice.ptt.start":
             case "voice.ptt.stop":
             case "emergency.stop":
@@ -760,7 +694,7 @@ public final class ButtonController {
         Json.put(out, "schema", "pucky.voice_listen_button.v1");
         Json.put(out, "event", event);
         Json.put(out, "implemented", false);
-        Json.put(out, "note", "Reserved for LiveKit/native microphone turn wiring.");
+        Json.put(out, "note", "Reserved for native microphone turn wiring.");
         return out;
     }
 
@@ -785,20 +719,8 @@ public final class ButtonController {
         return out;
     }
 
-    private LiveKitController liveKitController() {
-        return LiveKitController.shared(context, new SettingsStore(context));
-    }
-
-    private JSONObject liveKitMicArgs(boolean enabled, String reason) {
-        JSONObject out = new JSONObject();
-        Json.put(out, "enabled", enabled);
-        Json.put(out, "reason", reason);
-        return out;
-    }
-
     private JSONObject postVoxReplyPauseToggle() {
         SettingsStore settings = new SettingsStore(context);
-        JSONObject livekit = liveKitController().status();
         JSONObject event = new JSONObject();
         Json.put(event, "schema", "pucky.device_event.v1");
         Json.put(event, "event_id", "evt_" + Long.toHexString(System.currentTimeMillis()));
@@ -808,13 +730,6 @@ public final class ButtonController {
         Json.put(event, "gesture", "volume_down_hold");
         Json.put(event, "source", "foreground_activity");
         Json.put(event, "foreground_only", true);
-        String livekitState = livekit.optString("state", "");
-        String livekitRoom = livekit.optString("room", "");
-        Json.put(event, "livekit_state", livekitState);
-        if (isLiveKitActiveState(livekitState) && !livekitRoom.trim().isEmpty()) {
-            Json.put(event, "livekit_room", livekitRoom);
-        }
-        Json.put(event, "mic_enabled", livekit.optBoolean("mic_enabled", false));
         new BrokerEventPoster(context).postAsync(event);
 
         JSONObject out = new JSONObject();
@@ -822,13 +737,6 @@ public final class ButtonController {
         Json.put(out, "event", event);
         Json.put(out, "delivery", "queued_async_http");
         return out;
-    }
-
-    private static boolean isLiveKitActiveState(String state) {
-        return "connected".equals(state)
-                || "connected_talking".equals(state)
-                || "connected_muted".equals(state)
-                || "reconnecting".equals(state);
     }
 
     private JSONObject pauseReply() throws CommandException {
@@ -902,11 +810,8 @@ public final class ButtonController {
         if (manager == null) {
             return out;
         }
-        JSONObject livekit = liveKitController().status();
-        boolean liveKitActive = isLiveKitActiveState(livekit.optString("state", ""));
-        int stream = liveKitActive ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
-        Json.put(out, "stream", liveKitActive ? "voice_call" : "music");
-        Json.put(out, "livekit_state", livekit.optString("state", "unknown"));
+        int stream = AudioManager.STREAM_MUSIC;
+        Json.put(out, "stream", "music");
         int before = manager.getStreamVolume(stream);
         manager.adjustStreamVolume(
                 stream,
@@ -917,21 +822,6 @@ public final class ButtonController {
         int max = manager.getStreamMaxVolume(stream);
         Json.put(out, "after", after);
         Json.put(out, "max", max);
-        if (liveKitActive) {
-            try {
-                JSONObject currentGain = liveKitController().outputGain(new JSONObject());
-                double beforeGain = currentGain.optDouble("gain", 0.75);
-                double gainStep = 0.08;
-                double nextGain = beforeGain + (direction == AudioManager.ADJUST_RAISE ? gainStep : -gainStep);
-                JSONObject gainArgs = new JSONObject();
-                Json.put(gainArgs, "gain", Math.max(0.0, Math.min(1.0, nextGain)));
-                Json.put(out, "livekit_output_before", currentGain);
-                Json.put(out, "livekit_output", liveKitController().outputGain(gainArgs));
-            } catch (Exception exc) {
-                Json.put(out, "livekit_output_error",
-                        exc.getClass().getSimpleName() + ": " + exc.getMessage());
-            }
-        }
         return out;
     }
 }
