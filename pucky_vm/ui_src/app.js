@@ -649,10 +649,30 @@
   function turnVisualState(status) {
     const indicator = turnIndicatorFromStatus(status);
     const now = Date.now();
-    if (now < state.turnFailedUntil) {
+    const failedVisual = indicator.failed || indicator.state === "failed" || indicator.visual_state === "failed";
+    if (failedVisual && now < state.turnFailedUntil) {
       return "failed";
     }
+    if (failedVisual) {
+      return failureFallbackVisualState(indicator);
+    }
     return normalizeVisualState(indicator.visual_state || indicator.state);
+  }
+
+  function failureFallbackVisualState(indicator) {
+    if (indicator.codex_running) {
+      return "thinking";
+    }
+    if (indicator.speaking) {
+      return "speaking";
+    }
+    if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
+      return "recording";
+    }
+    if (indicator.mic_on || indicator.state === "armed") {
+      return "armed";
+    }
+    return "idle";
   }
 
   function turnStateLabel(visualState) {
@@ -677,7 +697,11 @@
 
   function isTurnActive(status) {
     const indicator = turnIndicatorFromStatus(status);
-    return Boolean(indicator.active || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil);
+    const failedVisual = indicator.failed || indicator.state === "failed" || indicator.visual_state === "failed";
+    const activeWithoutFailure = indicator.mic_on || indicator.uploading || indicator.stt_running
+      || indicator.codex_running || indicator.tts_running || indicator.speaking;
+    return Boolean(activeWithoutFailure || (indicator.active && !failedVisual)
+      || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil);
   }
 
   function truthy(value) {

@@ -503,6 +503,9 @@ public final class PuckyTurnController {
     }
 
     private void markStatus(String state, JSONObject detail, String error) {
+        if ("recording".equals(state) && isPostReleaseState(lastStatus().optString("state", ""))) {
+            return;
+        }
         JSONObject out = detail == null ? new JSONObject() : detail;
         Json.put(out, "state", state);
         Json.put(out, "visual_state", visualStateFor(state));
@@ -514,6 +517,18 @@ public final class PuckyTurnController {
         prefs.edit().putString(LAST_STATUS, out.toString()).apply();
         PuckyState.get().setLifecycleEvent("pucky.turn." + state);
         PuckyState.get().broadcast(context);
+    }
+
+    private static boolean isPostReleaseState(String state) {
+        return "discarded_silence".equals(state)
+                || "uploading".equals(state)
+                || "upload_received".equals(state)
+                || "stt_running".equals(state)
+                || "codex_running".equals(state)
+                || "tts_running".equals(state)
+                || "speaking".equals(state)
+                || "completed".equals(state)
+                || "failed".equals(state);
     }
 
     private JSONObject lastStatus() {
@@ -576,7 +591,7 @@ public final class PuckyTurnController {
         Json.put(out, "tts_running", ttsRunning);
         Json.put(out, "speaking", speaking);
         Json.put(out, "failed", failed);
-        Json.put(out, "active", micOn || uploading || codexRunning || speaking || failed);
+        Json.put(out, "active", micOn || uploading || codexRunning || speaking);
         Json.put(out, "remote_stage", remoteStage);
         Json.put(out, "amplitude", voice == null ? 0 : voice.optInt("amplitude", 0));
         Json.put(out, "elapsed_ms", voice == null ? 0 : voice.optLong("elapsed_ms", 0L));

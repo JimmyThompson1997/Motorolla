@@ -201,7 +201,10 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("visualStateFor(state"));
         assertTrue(source.contains("boolean codexRunning"));
         assertTrue(source.contains("Json.put(out, \"codex_running\", codexRunning)"));
-        assertTrue(source.contains("micOn || uploading || codexRunning || speaking || failed"));
+        assertTrue(source.contains("Json.put(out, \"active\", micOn || uploading || codexRunning || speaking)"));
+        assertFalse(source.contains("micOn || uploading || codexRunning || speaking || failed"));
+        assertTrue(source.contains("if (\"recording\".equals(state) && isPostReleaseState(lastStatus().optString(\"state\", \"\")))"));
+        assertTrue(source.contains("private static boolean isPostReleaseState(String state)"));
         assertTrue(capture.contains("VOICE_CAPTURE_AMPLITUDE_THRESHOLD"));
         assertTrue(capture.contains("recorder.getMaxAmplitude()"));
         assertTrue(capture.contains("public synchronized int sampleAmplitude()"));

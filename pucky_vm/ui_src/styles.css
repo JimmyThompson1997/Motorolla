@@ -210,7 +210,7 @@ button {
 }
 
 .voice-status-uploading {
-  --voice-color: #ffb000;
+  --voice-color: #76828f;
 }
 
 .voice-status-uploading::before {

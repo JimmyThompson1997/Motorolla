@@ -118,15 +118,21 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert ".voice-status-hearing" not in styles
     assert ".voice-status-armed::before" in styles
     assert ".voice-status-recording::before" in styles
+    assert "--voice-color: #76828f" in styles
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
     assert ".voice-status-thinking::after" in styles
+    assert ".voice-status-thinking {\n  --voice-color: #ffb000" in styles
     assert "turnThinkingSpin" not in styles
     assert "animation: turnThinkingSpin" not in styles
     assert ".voice-status-speaking" in styles
     assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
     assert "@keyframes voiceRing" in styles
+    assert "const failedVisual = indicator.failed || indicator.state === \"failed\"" in app
+    assert "return failureFallbackVisualState(indicator)" in app
+    assert "const activeWithoutFailure =" in app
+    assert "indicator.active && !failedVisual" in app
     assert 'armed: "armed"' in app
     assert 'recording: "recording"' in app
     assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"]' in app
