@@ -409,9 +409,7 @@ button {
   opacity: 0;
   pointer-events: none;
   transform: translateY(calc(var(--feed-refresh-pull) - 34px));
-  transition:
-    opacity 140ms ease,
-    transform 180ms ease;
+  transition: transform 180ms ease;
 }
 
 .feed-refresh.is-visible,
@@ -419,19 +417,8 @@ button {
   opacity: 1;
 }
 
-.feed-refresh.is-closing {
-  opacity: 0;
-  transition:
-    opacity 160ms ease,
-    transform 180ms ease;
-}
-
 .feed-refresh.is-resetting {
   transition: none;
-}
-
-.feed-refresh.is-armed .feed-refresh-spinner {
-  border-color: rgba(245, 249, 255, 0.2);
 }
 
 .feed-refresh.is-refreshing {
@@ -443,9 +430,9 @@ button {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  border: 2px solid rgba(245, 249, 255, 0.16);
-  background: rgba(2, 6, 10, 0.72);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   transform: rotate(calc(var(--feed-refresh-progress) * 240deg));
   animation: feedRefreshSpin 0.21s linear infinite;
   animation-play-state: paused;
@@ -454,27 +441,15 @@ button {
 .feed-refresh-spinner::after {
   content: "";
   position: absolute;
-  inset: -2px;
+  inset: 0;
   border-radius: inherit;
-  background: conic-gradient(from 8deg, rgba(245, 249, 255, 0.82) 0deg 44deg, transparent 44deg 360deg);
+  background: conic-gradient(from 8deg, #f5f9ff 0deg 44deg, transparent 44deg 360deg);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
 }
 
 .feed-refresh.is-refreshing .feed-refresh-spinner {
-  border-color: rgba(245, 249, 255, 0.18);
-  box-shadow:
-    0 8px 20px rgba(0, 0, 0, 0.28),
-    0 0 16px rgba(245, 249, 255, 0.12);
   animation-play-state: running;
-}
-
-.feed-refresh.is-armed .feed-refresh-spinner::after {
-  background: conic-gradient(from 8deg, #f5f9ff 0deg 44deg, transparent 44deg 360deg);
-}
-
-.feed-refresh.is-refreshing .feed-refresh-spinner::after {
-  background: conic-gradient(from 8deg, #f5f9ff 0deg 44deg, transparent 44deg 360deg);
 }
 
 .feed.is-rubber-banding {

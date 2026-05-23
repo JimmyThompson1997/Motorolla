@@ -273,7 +273,6 @@
     traceCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
-    feedRefreshCloseTimer: 0,
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -2562,10 +2561,6 @@
     if (!indicator) {
       return;
     }
-    if (state.feedRefreshCloseTimer) {
-      window.clearTimeout(state.feedRefreshCloseTimer);
-      state.feedRefreshCloseTimer = 0;
-    }
     const offset = Math.max(0, Number(options.offset) || 0);
     const progress = Math.max(0, Math.min(1, offset / FEED_REFRESH_THRESHOLD));
     const visible = offset > 0 || options.armed || options.refreshing;
@@ -2574,7 +2569,6 @@
     indicator.classList.toggle("is-visible", Boolean(visible));
     indicator.classList.toggle("is-armed", Boolean(options.armed));
     indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
-    indicator.classList.toggle("is-closing", Boolean(options.closing));
     indicator.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
@@ -2586,7 +2580,7 @@
     indicator.classList.add("is-resetting");
     indicator.style.setProperty("--feed-refresh-pull", "0px");
     indicator.style.setProperty("--feed-refresh-progress", "0");
-    indicator.classList.remove("is-visible", "is-armed", "is-refreshing", "is-closing");
+    indicator.classList.remove("is-visible", "is-armed", "is-refreshing");
     indicator.setAttribute("aria-hidden", "true");
     requestAnimationFrame(() => {
       indicator.classList.remove("is-resetting");
@@ -2604,15 +2598,11 @@
 
   function finishFeedRefresh() {
     const feed = document.getElementById("feed");
+    resetFeedRefreshIndicator();
     if (feed) {
       feed.classList.remove("is-feed-refreshing");
       releaseFeedPull(feed);
     }
-    updateFeedRefreshIndicator({ offset: FEED_REFRESH_HOLD_OFFSET, closing: true });
-    state.feedRefreshCloseTimer = window.setTimeout(() => {
-      state.feedRefreshCloseTimer = 0;
-      resetFeedRefreshIndicator();
-    }, 170);
   }
 
   async function refreshFeedCards() {
