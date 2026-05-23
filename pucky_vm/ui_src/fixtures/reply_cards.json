@@ -43,6 +43,7 @@
             {
               "path": "/mock/real-master-through-chapter-8.pdf",
               "preview_artifact": "real-master-through-chapter-8-pdf-page-1.png",
+              "viewer_artifact": "real-master-through-chapter-8-pdf.html",
               "mime_type": "application/pdf",
               "title": "Chapter 8 PDF",
               "alt": "Actual local PDF rendered from from_pocket_computers_to_planetary_platforms_master_through_chapter_8.pdf"
@@ -50,6 +51,7 @@
             {
               "path": "/mock/real-manuscript-chapters-0-7.docx",
               "preview_artifact": "real-manuscript-chapters-0-7-docx-preview.png",
+              "viewer_artifact": "real-manuscript-chapters-0-7-docx.html",
               "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "title": "Chapters 0-7 DOCX",
               "alt": "Actual local DOCX from from_pocket_computers_to_planetary_platforms_manuscript_to_date_chapters_0_7.docx"

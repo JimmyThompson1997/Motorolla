@@ -395,6 +395,14 @@
     if (command === "artifact.read_base64") {
       return mockArtifactResult(args.path);
     }
+    if (command === "artifact.url") {
+      return {
+        schema: "pucky.artifact_url.v1",
+        url: String(args.path || ""),
+        mime_type: guessMediaMime(args.path || ""),
+        bytes: 0
+      };
+    }
     throw new Error(`Unsupported browser mock command: ${command}`);
   }
 
@@ -901,7 +909,7 @@
       tile.setAttribute("aria-label", `Open generated media ${index + 1} of ${images.length}`);
       tile.addEventListener("click", (event) => {
         event.stopPropagation();
-        showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
+        showAttachmentViewer(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) });
       });
       if (isVideoMedia(image)) {
         const video = document.createElement("video");
@@ -1091,23 +1099,134 @@
     restoreScrollPosition(content, restoreOptions.scrollTop);
   }
 
+  async function showAttachmentViewer(card, attachmentSet = null, options = {}) {
+    const restoreOptions = typeof options === "number" ? { initialIndex: options } : options;
+    const attachments = normalizedAttachments(attachmentSet || restorableImagesForCard(card));
+    const startIndex = Math.max(0, Math.min(attachments.length - 1, Number(restoreOptions.initialIndex ?? restoreOptions.imageIndex ?? 0)));
+    const item = attachments[startIndex];
+    if (!item) {
+      return showImageReel(card, [], restoreOptions);
+    }
+    const kind = attachmentKind(item);
+    if (kind === "image") {
+      const images = attachments.filter(attachment => attachmentKind(attachment) === "image");
+      const imageIndex = Math.max(0, images.indexOf(item));
+      return showImageReel(card, images, { ...restoreOptions, initialIndex: imageIndex });
+    }
+    if (kind === "video") {
+      return showVideoAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+    }
+    return showDocumentAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+  }
+
+  async function showVideoAttachment(card, item, options = {}) {
+    state.audioCard = null;
+    const panel = document.getElementById("detail");
+    const content = el("div", "detail-content attachment-detail video-detail");
+    const frame = el("section", "video-player-card");
+    const video = document.createElement("video");
+    video.className = "attachment-video-player";
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.setAttribute("aria-label", item.title || item.alt || "Video attachment");
+    frame.append(video, attachmentMeta(item, "Video"));
+    content.append(frame);
+    openSideDetail(panel, item.title || card.title || "Video", content, dismissDetail);
+    rememberNavDetail("attachment", card, options);
+    installDetailScrollPersistence(content, "attachment");
+    restoreScrollPosition(content, options.scrollTop);
+    try {
+      video.src = await resolveArtifactUrl(item, { maxBytes: 64 * 1024 * 1024 });
+    } catch (error) {
+      frame.append(el("p", "attachment-error", `Video unavailable: ${error.message}`));
+    }
+  }
+
+  async function showDocumentAttachment(card, item, options = {}) {
+    state.audioCard = null;
+    const panel = document.getElementById("detail");
+    const kind = attachmentKind(item);
+    const content = el("div", `detail-content attachment-detail document-detail document-${kind}`);
+    const viewer = await documentViewer(item);
+    content.append(viewer);
+    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissDetail);
+    rememberNavDetail("attachment", card, options);
+    installDetailScrollPersistence(content, "attachment");
+    restoreScrollPosition(content, options.scrollTop);
+  }
+
+  async function documentViewer(item) {
+    const htmlSrc = documentHtmlSrc(item);
+    if (htmlSrc) {
+      const frame = el("iframe", "document-frame");
+      frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
+      frame.src = htmlSrc;
+      return frame;
+    }
+    const kind = attachmentKind(item);
+    const wrap = el("section", "document-fallback");
+    wrap.append(mediaDocumentPreview(item, "gallery"));
+    try {
+      const src = await resolveArtifactUrl(item, { maxBytes: 10 * 1024 * 1024 });
+      wrap.append(attachmentMeta(item, `${kind.toUpperCase()} cached artifact`));
+      const link = el("a", "document-open-link", "Open cached file");
+      link.href = src;
+      link.target = "_blank";
+      wrap.append(link);
+    } catch (error) {
+      wrap.append(el("p", "attachment-error", `Attachment unavailable: ${error.message}`));
+    }
+    return wrap;
+  }
+
+  function attachmentMeta(item, fallback) {
+    const meta = el("div", "attachment-meta");
+    meta.append(el("strong", "attachment-title", item.title || fallback || "Attachment"));
+    if (item.alt) {
+      meta.append(el("span", "attachment-subtitle", item.alt));
+    }
+    return meta;
+  }
+
   async function resolveImageSrc(image) {
-    return resolveMediaSrc(image);
+    return resolveArtifactUrl(image);
   }
 
   async function resolveMediaSrc(image) {
-    if (image.src || image.data_url) {
-      return String(image.src || image.data_url);
+    return resolveArtifactUrl(image);
+  }
+
+  async function resolveArtifactUrl(item, options = {}) {
+    if (item.src || item.data_url) {
+      return String(item.src || item.data_url);
     }
-    const path = image.path || image.local_path || image.image_path;
+    const bundled = bundledArtifactPath(item);
+    if (bundled) {
+      return bundled;
+    }
+    const path = mediaPath(item);
     if (!path) {
-      throw new Error("image path is missing");
+      throw new Error("attachment path is missing");
+    }
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      try {
+        const result = await Pucky.request({
+          command: "artifact.url",
+          args: { path }
+        });
+        if (result && result.url) {
+          return String(result.url);
+        }
+      } catch (_) {
+        // Older APKs only expose base64; keep a bounded fallback for small diagnostics.
+      }
     }
     const result = await Pucky.request({
       command: "artifact.read_base64",
-      args: { path, max_bytes: 5 * 1024 * 1024 }
+      args: { path, max_bytes: options.maxBytes || 5 * 1024 * 1024 }
     });
-    const mime = resolvedMediaMime(result, image, path);
+    const mime = resolvedMediaMime(result, item, path);
     return `data:${mime};base64,${result.content_base64 || ""}`;
   }
 
@@ -1140,7 +1259,59 @@
     if (value.endsWith(".webp")) return "image/webp";
     if (value.endsWith(".gif")) return "image/gif";
     if (value.endsWith(".svg")) return "image/svg+xml";
+    if (value.endsWith(".pdf")) return "application/pdf";
+    if (value.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (value.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (value.endsWith(".csv")) return "text/csv";
+    if (value.endsWith(".html") || value.endsWith(".htm")) return "text/html";
     return "image/png";
+  }
+
+  function mediaPath(item) {
+    return item && (item.path || item.local_path || item.image_path || item.artifact_path || "");
+  }
+
+  function bundledArtifactPath(item, field = "artifact") {
+    const artifact = item && item[field];
+    return artifact ? `fixtures/artifacts/${encodeURI(String(artifact))}` : "";
+  }
+
+  function documentHtmlSrc(item) {
+    const direct = item && (item.viewer_src || item.viewer_url || item.html_src || item.html_url);
+    if (direct) {
+      return String(direct);
+    }
+    return bundledArtifactPath(item, "viewer_artifact")
+      || bundledArtifactPath(item, "html_artifact")
+      || bundledArtifactPath(item, "document_html_artifact");
+  }
+
+  function attachmentKind(item) {
+    if (isVideoMedia(item)) {
+      return "video";
+    }
+    if (isPdfMedia(item)) {
+      return "pdf";
+    }
+    const meta = mediaDocumentMeta(item);
+    if (meta.kind) {
+      return meta.kind;
+    }
+    const mime = String((item && item.mime_type) || "").toLowerCase();
+    const path = String(mediaPath(item) || bundledArtifactPath(item) || item?.src || item?.data_url || "").toLowerCase();
+    if (mime.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus)(?:$|[?#])/i.test(path)) {
+      return "audio";
+    }
+    if (mime.startsWith("image/") || /\.(avif|gif|jpe?g|png|svg|webp)(?:$|[?#])/i.test(path)) {
+      return "image";
+    }
+    if (mime === "text/csv" || /\.csv(?:$|[?#])/i.test(path)) {
+      return "csv";
+    }
+    if (mime === "text/html" || /\.html?(?:$|[?#])/i.test(path)) {
+      return "html";
+    }
+    return "file";
   }
 
   function isPdfMedia(item) {
@@ -1153,13 +1324,13 @@
 
   function isVideoMedia(item) {
     const mime = String((item && item.mime_type) || "").toLowerCase();
-    const path = String((item && (item.path || item.local_path || item.image_path || item.src || item.data_url)) || "").toLowerCase();
+    const path = String((item && (mediaPath(item) || item.artifact || item.src || item.data_url)) || "").toLowerCase();
     return mime.startsWith("video/") || /\.(mp4|webm|mov)(?:$|[?#])/i.test(path);
   }
 
   function mediaDocumentMeta(item) {
     const mime = String((item && item.mime_type) || "").toLowerCase();
-    const path = String((item && (item.path || item.local_path || item.image_path || item.src || item.data_url)) || "");
+    const path = String((item && (mediaPath(item) || item.artifact || item.src || item.data_url)) || "");
     const lowerPath = path.toLowerCase();
     if (mime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(lowerPath)) {
       return { kind: "pdf", label: "PDF", title: "PDF document" };
@@ -2171,12 +2342,26 @@
   }
 
   function cardImages(card) {
-    return normalizedImages(card?.images);
+    return normalizedAttachments(card?.images);
   }
 
   function normalizedImages(images) {
+    return normalizedAttachments(images);
+  }
+
+  function normalizedAttachments(images) {
     return Array.isArray(images)
-      ? images.filter(image => image && (image.path || image.local_path || image.image_path || image.src || image.data_url))
+      ? images.filter(image => image && (
+        image.path
+        || image.local_path
+        || image.image_path
+        || image.artifact
+        || image.artifact_path
+        || image.viewer_artifact
+        || image.html_artifact
+        || image.src
+        || image.data_url
+      ))
       : [];
   }
 
@@ -2627,7 +2812,7 @@
       return null;
     }
     const type = String(detail.type || "");
-    if (!["audio", "transcript", "page", "images"].includes(type)) {
+    if (!["audio", "transcript", "page", "images", "attachment"].includes(type)) {
       return null;
     }
     const sessionId = String(detail.session_id || "");
@@ -2642,7 +2827,7 @@
     if (type === "audio") {
       normalized.timestamp_scroll_top = scrollNumber(detail.timestamp_scroll_top ?? detail.timestampScrollTop);
     }
-    if (type === "images") {
+    if (type === "images" || type === "attachment") {
       normalized.image_index = scrollNumber(detail.image_index ?? detail.imageIndex);
     }
     return normalized;
@@ -2691,7 +2876,7 @@
       state.navDetail.timestamp_scroll_top = scrollNumber(timestamps.scrollTop);
     }
     const imageTrack = content.querySelector(".image-gallery-track");
-    if (state.navDetail.type === "images" && imageTrack) {
+    if ((state.navDetail.type === "images" || state.navDetail.type === "attachment") && imageTrack) {
       state.navDetail.image_index = currentImageGalleryIndex(imageTrack);
     }
   }
@@ -2966,6 +3151,10 @@
     }
     if (detail.type === "images") {
       showImageReel(card, null, { restoring: true, scrollTop: detail.scroll_top, initialIndex: detail.image_index });
+      return;
+    }
+    if (detail.type === "attachment") {
+      showAttachmentViewer(card, null, { restoring: true, scrollTop: detail.scroll_top, initialIndex: detail.image_index });
       return;
     }
     state.navDetail = null;

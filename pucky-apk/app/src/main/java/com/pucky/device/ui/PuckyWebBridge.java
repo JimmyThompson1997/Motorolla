@@ -93,6 +93,8 @@ public final class PuckyWebBridge {
                 return new FileDownloadController(context).download(args);
             case "artifact.read_base64":
                 return new ArtifactController(context).readBase64(args);
+            case "artifact.url":
+                return new ArtifactController(context).url(args);
             case "ui.bundle.status":
                 return uiBundles.status();
             case "ui.bundle.install_downloaded":

@@ -265,14 +265,16 @@ def artifact_names(spec: dict[str, Any]) -> list[str]:
             if value:
                 names.append(value)
         for image in card.get("images") or []:
-            value = str(image.get("artifact") or "").strip()
-            if value:
-                names.append(value)
-        for message in card.get("transcript_messages") or []:
-            for image in message.get("images") or []:
-                value = str(image.get("artifact") or "").strip()
+            for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
+                value = str(image.get(field) or "").strip()
                 if value:
                     names.append(value)
+        for message in card.get("transcript_messages") or []:
+            for image in message.get("images") or []:
+                for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
+                    value = str(image.get(field) or "").strip()
+                    if value:
+                        names.append(value)
     return sorted(set(names))
 
 

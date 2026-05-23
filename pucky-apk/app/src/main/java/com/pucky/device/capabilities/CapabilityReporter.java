@@ -87,6 +87,8 @@ public final class CapabilityReporter {
                 "Hashes app-owned artifact paths only."));
         Json.add(out, cap("artifact.read_base64", "artifact.read_base64", "implemented_untested", "yes", "privacy_sensitive", null, "not_recorded",
                 "Reads a bounded app-owned artifact as base64 for VM-side validation and transcription tests."));
+        Json.add(out, cap("artifact.url", "artifact.url", "implemented_untested", "yes", "privacy_sensitive", null, "not_recorded",
+                "Returns a local WebView-safe URL for app-owned artifacts so HTML media and document viewers can stream cached files."));
         Json.add(out, cap("artifact.delete", "artifact.delete", "implemented", "yes", "privacy_sensitive", null, "not_recorded",
                 "Deletes app-owned artifact paths only."));
         Json.add(out, cap("command_log.tail", "log.tail", "implemented", "yes", "quiet", null, "not_recorded",

@@ -1,8 +1,10 @@
 package com.pucky.device.artifacts;
 
 import android.content.Context;
+import android.net.Uri;
 import android.os.Environment;
 import android.util.Base64;
+import android.webkit.WebResourceResponse;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -13,7 +15,13 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
 public final class ArtifactController {
     private static final long DEFAULT_READ_MAX_BYTES = 1024L * 1024L;
@@ -63,6 +71,42 @@ public final class ArtifactController {
             return out;
         } catch (CommandException exc) {
             throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+    }
+
+    public JSONObject url(JSONObject args) throws CommandException {
+        File file = resolveAppOwnedPath(args.optString("path", ""));
+        JSONObject out = describe(file, "artifact");
+        Json.put(out, "schema", "pucky.artifact_url.v1");
+        Json.put(out, "path", file.getAbsolutePath());
+        Json.put(out, "url", webUrl(file));
+        return out;
+    }
+
+    public WebResourceResponse webResponse(String path, Map<String, String> requestHeaders)
+            throws CommandException {
+        File file = resolveAppOwnedPath(path);
+        try {
+            long length = file.length();
+            String range = headerValue(requestHeaders, "Range");
+            Range byteRange = parseRange(range, length);
+            FileInputStream input = new FileInputStream(file);
+            if (byteRange.start > 0) {
+                skipFully(input, byteRange.start);
+            }
+            InputStream body = new LimitedInputStream(input, byteRange.length);
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Accept-Ranges", "bytes");
+            headers.put("Cache-Control", "no-store");
+            headers.put("Content-Length", Long.toString(byteRange.length));
+            if (byteRange.partial) {
+                headers.put("Content-Range", "bytes " + byteRange.start + "-" + byteRange.end + "/" + length);
+                return new WebResourceResponse(guessMime(file), null, 206, "Partial Content", headers, body);
+            }
+            return new WebResourceResponse(guessMime(file), null, 200, "OK", headers, body);
         } catch (Exception exc) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                     exc.getClass().getSimpleName() + ": " + exc.getMessage());
@@ -133,6 +177,16 @@ public final class ArtifactController {
         } catch (Exception e) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, e.getMessage());
         }
+    }
+
+    private String webUrl(File file) {
+        return new Uri.Builder()
+                .scheme("https")
+                .authority("pucky.local")
+                .path("/artifact")
+                .appendQueryParameter("path", file.getAbsolutePath())
+                .build()
+                .toString();
     }
 
     private boolean isWithin(File file, File root) throws Exception {
@@ -206,12 +260,138 @@ public final class ArtifactController {
         if (name.endsWith(".txt") || name.endsWith(".log")) {
             return "text/plain";
         }
-        if (name.endsWith(".m4a") || name.endsWith(".mp4")) {
+        if (name.endsWith(".mp4")) {
+            return "video/mp4";
+        }
+        if (name.endsWith(".m4a")) {
             return "audio/mp4";
+        }
+        if (name.endsWith(".pdf")) {
+            return "application/pdf";
+        }
+        if (name.endsWith(".html") || name.endsWith(".htm")) {
+            return "text/html";
+        }
+        if (name.endsWith(".docx")) {
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        }
+        if (name.endsWith(".xlsx")) {
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        }
+        if (name.endsWith(".csv")) {
+            return "text/csv";
         }
         if (name.endsWith(".mp3")) {
             return "audio/mpeg";
         }
         return "application/octet-stream";
+    }
+
+    private String headerValue(Map<String, String> headers, String name) {
+        if (headers == null || name == null) {
+            return "";
+        }
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (name.equalsIgnoreCase(entry.getKey())) {
+                return entry.getValue() == null ? "" : entry.getValue();
+            }
+        }
+        return "";
+    }
+
+    private Range parseRange(String header, long fileLength) {
+        if (header == null || !header.toLowerCase(Locale.US).startsWith("bytes=") || fileLength <= 0) {
+            return Range.full(fileLength);
+        }
+        String spec = header.substring("bytes=".length()).trim();
+        int dash = spec.indexOf('-');
+        if (dash < 0) {
+            return Range.full(fileLength);
+        }
+        try {
+            String startText = spec.substring(0, dash).trim();
+            String endText = spec.substring(dash + 1).trim();
+            long start;
+            long end;
+            if (startText.isEmpty()) {
+                long suffixLength = Long.parseLong(endText);
+                start = Math.max(0, fileLength - suffixLength);
+                end = fileLength - 1;
+            } else {
+                start = Math.max(0, Long.parseLong(startText));
+                end = endText.isEmpty() ? fileLength - 1 : Math.min(fileLength - 1, Long.parseLong(endText));
+            }
+            if (start > end || start >= fileLength) {
+                return Range.full(fileLength);
+            }
+            return new Range(start, end, true);
+        } catch (Exception ignored) {
+            return Range.full(fileLength);
+        }
+    }
+
+    private void skipFully(InputStream input, long bytes) throws IOException {
+        long remaining = bytes;
+        while (remaining > 0) {
+            long skipped = input.skip(remaining);
+            if (skipped <= 0) {
+                if (input.read() == -1) {
+                    break;
+                }
+                skipped = 1;
+            }
+            remaining -= skipped;
+        }
+    }
+
+    private static final class Range {
+        final long start;
+        final long end;
+        final long length;
+        final boolean partial;
+
+        Range(long start, long end, boolean partial) {
+            this.start = start;
+            this.end = end;
+            this.length = end >= start ? this.end - this.start + 1 : 0;
+            this.partial = partial;
+        }
+
+        static Range full(long fileLength) {
+            return new Range(0, fileLength - 1, false);
+        }
+    }
+
+    private static final class LimitedInputStream extends FilterInputStream {
+        private long remaining;
+
+        LimitedInputStream(InputStream in, long remaining) {
+            super(in);
+            this.remaining = remaining;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int value = super.read();
+            if (value != -1) {
+                remaining -= 1;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int count) throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int read = super.read(buffer, offset, (int) Math.min(count, remaining));
+            if (read > 0) {
+                remaining -= read;
+            }
+            return read;
+        }
     }
 }

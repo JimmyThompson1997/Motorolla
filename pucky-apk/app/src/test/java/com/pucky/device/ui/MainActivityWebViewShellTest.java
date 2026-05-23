@@ -19,6 +19,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue("MainActivity should build exactly one WebView shell",
                 source.contains("private View buildWebShellView()")
                         && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")")
+                        && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this))")
                         && count(source, "new WebView") == 1);
         assertTrue("MainActivity should always load the cached or bundled HTML entrypoint",
                 source.contains("String url = uiBundleController.entrypointUrl();")
@@ -66,6 +67,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"player.pause\"")
                         && bridge.contains("case \"player.seek\"")
                         && bridge.contains("case \"player.queue.set\"")
+                        && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
         assertFalse("HTML bridge should not expose raw shell execution",
@@ -88,6 +90,34 @@ public final class MainActivityWebViewShellTest {
                         && player.contains("queueItemsFromPlaylist")
                         && player.contains("#EXTINF:")
                         && player.contains("Playlist must be an .m3u file"));
+    }
+
+    @Test
+    public void webViewServesAppOwnedArtifactsAsLocalUrls() throws Exception {
+        String client = read("src/main/java/com/pucky/device/ui/PuckyWebResourceClient.java");
+        String artifacts = read("src/main/java/com/pucky/device/artifacts/ArtifactController.java");
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+
+        assertTrue("WebView client should intercept only the trusted local artifact host",
+                client.contains("TRUSTED_HOST = \"pucky.local\"")
+                        && client.contains("shouldInterceptRequest")
+                        && client.contains("\"/artifact\"")
+                        && client.contains("request.getRequestHeaders()")
+                        && client.contains("new ArtifactController(context).webResponse"));
+        assertTrue("Artifact URLs should stream app-owned files with range support for media playback",
+                artifacts.contains("pucky.artifact_url.v1")
+                        && artifacts.contains("https")
+                        && artifacts.contains("pucky.local")
+                        && artifacts.contains("appendQueryParameter(\"path\"")
+                        && artifacts.contains("Accept-Ranges")
+                        && artifacts.contains("Content-Range")
+                        && artifacts.contains("206, \"Partial Content\"")
+                        && artifacts.contains("return \"video/mp4\";")
+                        && artifacts.contains("return \"application/pdf\";")
+                        && artifacts.contains("return \"application/vnd.openxmlformats-officedocument.wordprocessingml.document\";"));
+        assertTrue("Native command executor should expose artifact.url for device testing too",
+                executor.contains("\"artifact.url\"")
+                        && executor.contains("return artifactController.url(command.args())"));
     }
 
     @Test

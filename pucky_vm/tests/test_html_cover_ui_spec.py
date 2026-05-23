@@ -604,6 +604,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function messageImages(card, message, index, messages)" in app
     assert "function restorableImagesForCard(card)" in app
     assert "function chatMediaBubble(card, images)" in app
+    assert "function showAttachmentViewer(card, attachmentSet = null, options = {})" in app
+    assert "function showVideoAttachment(card, item, options = {})" in app
+    assert "function showDocumentAttachment(card, item, options = {})" in app
+    assert "function documentViewer(item)" in app
     assert "function showImageReel(card, imageSet = null, options = {})" in app
     assert "const restoreOptions = typeof options === \"number\"" in app
     assert "function currentImageGalleryIndex(track)" in app
@@ -617,11 +621,17 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "track.scrollLeft = startLeft - dx" in app
     assert "behavior: \"smooth\"" not in app
     assert "function resolveImageSrc(image)" in app
+    assert "function resolveArtifactUrl(item, options = {})" in app
+    assert 'command: "artifact.url"' in app
+    resolve_artifact = app.split("async function resolveArtifactUrl", 1)[1].split("function resolvedImageMime", 1)[0]
+    assert resolve_artifact.index('command: "artifact.url"') < resolve_artifact.index('command: "artifact.read_base64"')
     assert "function resolvedImageMime(result, image, path)" in app
     assert "function isPdfMedia(item)" in app
+    assert "function attachmentKind(item)" in app
     assert "function isDocumentMedia(item)" in app
     assert "function mediaDocumentMeta(item)" in app
     assert "function mediaDocumentPreview(item, variant)" in app
+    assert "function documentHtmlSrc(item)" in app
     assert "function documentPreviewSrc(item)" in app
     assert "function isVideoMedia(item)" in app
     assert '"chat-media-video"' in app
@@ -636,7 +646,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "data:application/pdf;base64" in app
     assert 'declared !== "application/octet-stream"' in app
     assert 'returned !== "application/octet-stream"' in app
-    assert "showImageReel(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) })" in app
+    assert "showAttachmentViewer(card, images, { initialIndex: index, onDismiss: () => showTranscript(card) })" in app
+    assert "return showVideoAttachment(card, item" in app
+    assert "return showDocumentAttachment(card, item" in app
     assert "const dismissGallery = () =>" in app
     assert "if (onDismiss)" in app
     assert '"chat-media-rail"' in app
@@ -670,6 +682,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".media-doc-label" in styles
     assert ".chat-media-video" in styles
     assert ".image-reel-video" in styles
+    assert ".attachment-video-player" in styles
+    assert ".document-frame" in styles
+    assert ".document-detail" in styles
     assert ".media-doc-preview.has-render .media-doc-render" in styles
     assert ".media-doc-preview.is-gallery.has-render .media-doc-label" in styles
     assert ".chat-media-video {\n  object-fit: contain;" in styles
@@ -704,6 +719,10 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert fixture.count('"artifact": "real-video-4.mp4"') == 1
     assert fixture.count('"preview_artifact": "real-master-through-chapter-8-pdf-page-1.png"') == 1
     assert fixture.count('"preview_artifact": "real-manuscript-chapters-0-7-docx-preview.png"') == 1
+    assert fixture.count('"viewer_artifact": "real-master-through-chapter-8-pdf.html"') == 1
+    assert fixture.count('"viewer_artifact": "real-manuscript-chapters-0-7-docx.html"') == 1
+    assert (UI / "fixtures/artifacts/real-master-through-chapter-8-pdf.html").exists()
+    assert (UI / "fixtures/artifacts/real-manuscript-chapters-0-7-docx.html").exists()
     assert '"mime_type": "video/mp4"' in fixture
     assert fixture.count('"artifact": "commute-dashboard.png"') == 1
     assert fixture.count('"artifact": "meeting-room.jpg"') == 1

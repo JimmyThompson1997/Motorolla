@@ -52,7 +52,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
             "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
             "screen.lock.status", "screen.lock.request", "screen.lock.open_accessibility_settings",
-            "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.delete",
+            "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.url", "artifact.delete",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
@@ -280,6 +280,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return artifactController.hash(command.args());
             case "artifact.read_base64":
                 return artifactController.readBase64(command.args());
+            case "artifact.url":
+                return artifactController.url(command.args());
             case "artifact.delete":
                 return artifactController.delete(command.args());
             case "log.tail":
