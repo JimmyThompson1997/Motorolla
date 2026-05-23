@@ -119,7 +119,8 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert ".voice-status-hearing::after" in styles
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
-    assert "turnThinkingSpin" in styles
+    assert ".voice-status-thinking::after" in styles
+    assert "turnThinkingSpin" not in styles
     assert ".voice-status-speaking" in styles
     assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
@@ -488,6 +489,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert '"detail-content audio-detail"' in app
     assert ".audio-detail" in styles
     assert ".audio-controls" in styles
+    assert "card.summary && audioTimestamps(card).length === 0" in app
     assert "grid-template-columns: minmax(66px, 1fr) auto minmax(66px, 1fr)" in styles
     assert ".transport-cluster" in styles
     assert ".control-spacer" in styles

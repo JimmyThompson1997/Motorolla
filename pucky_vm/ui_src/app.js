@@ -1799,7 +1799,7 @@
     content.dataset.audioKey = audioStateKey(card);
     content.style.setProperty("--accent", card.accent || "#72c2ff");
     const player = el("section", "audio-player");
-    if (card.summary) {
+    if (card.summary && audioTimestamps(card).length === 0) {
       player.append(el("p", "audio-summary", card.summary));
     }
     player.append(audioScrubber(card));
