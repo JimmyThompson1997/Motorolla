@@ -1308,7 +1308,6 @@
       el("span", "scrub-chapter-range"),
       el("span", "scrub-fill"),
       el("span", "scrub-chapter-marker"),
-      scrubChapterBubble(),
       el("span", "scrub-knob")
     );
     updateScrubSlider(slider, position, duration);
@@ -1527,17 +1526,6 @@
     });
   }
 
-  function scrubChapterBubble() {
-    const bubble = el("span", "scrub-chapter-bubble");
-    bubble.setAttribute("aria-hidden", "true");
-    bubble.append(
-      el("strong", "scrub-chapter-time"),
-      el("span", "scrub-chapter-title"),
-      el("span", "scrub-chapter-hint")
-    );
-    return bubble;
-  }
-
   function updateScrubChapterPreview(card, slider, positionMs, durationMs) {
     const duration = Math.max(0, Number(durationMs || 0));
     const scrubbing = state.scrubbingAudioKey === audioStateKey(card);
@@ -1557,23 +1545,6 @@
     slider.style.setProperty("--chapter-preview", String(previewRatio));
     slider.style.setProperty("--chapter-range-start", String(rangeStart));
     slider.style.setProperty("--chapter-range-width", String(Math.max(0, rangeEnd - rangeStart)));
-    const time = slider.querySelector(".scrub-chapter-time");
-    if (time) {
-      time.textContent = `${formatTime(previewPosition)} · ${chapterLabel(marker)}`;
-    }
-    const title = slider.querySelector(".scrub-chapter-title");
-    if (title) {
-      title.textContent = marker.title;
-    }
-    const hint = slider.querySelector(".scrub-chapter-hint");
-    if (hint) {
-      hint.textContent = scrubbing ? "Release to seek" : "Double-tap chapter to play";
-    }
-  }
-
-  function chapterLabel(marker) {
-    const match = String(marker?.title || "").match(/^(Prologue|Postscript|Chapter\s+\d+)/i);
-    return match ? match[1] : "Chapter";
   }
 
   function updateTimestampPreview(card, positionMs) {

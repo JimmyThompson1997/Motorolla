@@ -503,7 +503,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "function updateTimestampPreview(card, positionMs)" in app
     assert "function updateScrubChapterPreview(card, slider, positionMs, durationMs)" in app
     assert "function appendScrubChapterTicks(slider, card, durationMs)" in app
-    assert "function scrubChapterBubble()" in app
+    assert "scrubChapterBubble" not in app
     assert "scrubbingAudioKey" in app
     assert "function startAudioScrub(card, positionMs)" in app
     assert "state.scrubbingAudioKey === audioStateKey(card)" in app
@@ -511,12 +511,12 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert ".scrub-chapter-tick" in styles
     assert ".scrub-chapter-marker" in styles
     assert ".scrub-chapter-range" in styles
-    assert ".scrub-chapter-bubble" in styles
+    assert ".scrub-chapter-bubble" not in styles
     assert ".timestamp-play" in styles
     assert ".audio-scrub" in styles
     assert ".scrub-slider" in styles
     assert ".scrub-knob" in styles
-    assert "padding: 0 clamp(44px, 5vw, 64px)" in styles
+    assert "padding: 0 clamp(22px, 2.5vw, 32px)" in styles
     assert "touch-action: none" in styles
     assert "pointer-events: none" in styles
     assert "overscroll-behavior: contain" in styles
