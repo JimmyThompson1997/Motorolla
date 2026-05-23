@@ -1181,11 +1181,7 @@
     const wrap = el("article", "document-rendered");
     wrap.dataset.kind = attachmentKind(item);
     try {
-      const response = await fetch(src, { cache: "force-cache" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const text = await response.text();
+      const text = await loadLocalText(src);
       const parsed = new DOMParser().parseFromString(text, "text/html");
       const children = Array.from(parsed.body ? parsed.body.children : []);
       if (!children.length) {
@@ -1197,6 +1193,22 @@
       wrap.append(el("p", "attachment-error", `Document preview unavailable: ${error.message}`));
     }
     return wrap;
+  }
+
+  function loadLocalText(src) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", src, true);
+      xhr.onload = () => {
+        if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 0) {
+          resolve(xhr.responseText || "");
+        } else {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Unable to load cached document"));
+      xhr.send();
+    });
   }
 
   function attachmentMeta(item, fallback) {
