@@ -2538,16 +2538,11 @@
       return;
     }
     const offset = Math.max(0, Number(options.offset) || 0);
-    const visible = offset > 0 || options.armed || options.refreshing;
+    const visible = Boolean(options.refreshing);
     const label = indicator.querySelector(".feed-refresh-pill");
-    const text = options.refreshing
-      ? "Refreshing..."
-      : options.armed
-        ? "Release to refresh"
-        : "Pull to refresh";
+    const text = "Refreshing...";
     indicator.style.setProperty("--feed-refresh-pull", `${offset}px`);
     indicator.classList.toggle("is-visible", Boolean(visible));
-    indicator.classList.toggle("is-armed", Boolean(options.armed));
     indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
     if (label) {
       label.textContent = text;
@@ -2564,10 +2559,10 @@
     indicator.style.setProperty("--feed-refresh-pull", "0px");
     const label = indicator.querySelector(".feed-refresh-pill");
     if (label) {
-      label.textContent = "Pull to refresh";
+      label.textContent = "Refreshing...";
     }
-    indicator.classList.remove("is-visible", "is-armed", "is-refreshing");
-    indicator.setAttribute("aria-label", "Pull to refresh");
+    indicator.classList.remove("is-visible", "is-refreshing");
+    indicator.setAttribute("aria-label", "Refreshing Home feed");
     indicator.setAttribute("aria-hidden", "true");
   }
 
@@ -2702,7 +2697,7 @@
       if (pullDirection === "bottom") {
         refreshArmed = false;
       }
-      updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0, armed: refreshArmed });
+      updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0 });
       apply(Math.sign(dy) * eased);
     }, { passive: false });
 

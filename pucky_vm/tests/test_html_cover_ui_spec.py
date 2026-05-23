@@ -198,8 +198,10 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert "function resetFeedRefreshIndicator()" in app
     assert 'label.textContent = text' in app
     assert '"Refreshing..."' in app
-    assert '"Release to refresh"' in app
-    assert '"Pull to refresh"' in app
+    assert '"Release to refresh"' not in app
+    assert '"Pull to refresh"' not in app
+    assert "const visible = Boolean(options.refreshing);" in app
+    assert 'indicator.classList.toggle("is-armed"' not in app
     assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
     assert 'pullDirection === "top" && refreshArmed' in app
     assert 'pullDirection === "bottom"' in app
@@ -210,6 +212,9 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert "installFeedRubberBand();" in app
     assert 'id="feedRefresh"' in html
     assert 'class="feed-refresh-pill"' in html
+    assert ">Refreshing...<" in html
+    assert "Pull to refresh" not in html
+    assert "Release to refresh" not in html
     assert "feed-refresh-spinner" not in html
     assert 'aria-live="polite"' in html
     assert "overscroll-behavior-y: contain;" in styles
