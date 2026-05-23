@@ -353,11 +353,13 @@ public final class SpeechEchoLabController {
                 JSONObject actionResult = keywordActionExecutor.execute(keyword.action);
                 Json.put(out, "action_result", actionResult);
                 Json.put(out, "action_status", "succeeded");
+                Json.put(out, "action_success_chime", keywordActionExecutor.playSuccessChime(
+                        "pucky.keyword_action_success_chime.v1"));
             } catch (CommandException exc) {
                 Json.put(out, "action_status", "failed");
                 Json.put(out, "action_error_code", exc.code());
                 Json.put(out, "action_error_message", exc.getMessage());
-                JSONObject failureChime = playScreenshotFailureChimeIfNeeded(keyword);
+                JSONObject failureChime = playKeywordFailureChimeIfNeeded(keyword);
                 if (failureChime != null) {
                     Json.put(out, "action_failure_chime", failureChime);
                 }
@@ -755,6 +757,7 @@ public final class SpeechEchoLabController {
         String actionErrorCode = "";
         String actionErrorMessage = "";
         boolean actionFailed = false;
+        JSONObject keywordSuccessChime = null;
         JSONObject actionFailureChime = null;
         if (keyword.matched && keyword.hasAction()) {
             try {
@@ -768,7 +771,7 @@ public final class SpeechEchoLabController {
                 ttsText = CommandErrorCodes.NO_DISPLAY_ON.equals(actionErrorCode)
                         ? "Failed. Phone screen is off."
                         : failureReply(keyword);
-                actionFailureChime = playScreenshotFailureChimeIfNeeded(keyword);
+                actionFailureChime = playKeywordFailureChimeIfNeeded(keyword);
             }
         }
         String replyOverride = actionResultReplyOverride(actionResult);
@@ -778,6 +781,9 @@ public final class SpeechEchoLabController {
         boolean skipSuccessTts = keyword.matched && !actionFailed && shouldSkipSuccessTts(keyword, actionResult);
         if (skipSuccessTts) {
             ttsText = "";
+        }
+        if (keyword.matched && !actionFailed) {
+            keywordSuccessChime = keywordActionExecutor.playSuccessChime("pucky.keyword_success_chime.v1");
         }
         Json.put(active, "keyword_lab_enabled", true);
         Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
@@ -799,6 +805,8 @@ public final class SpeechEchoLabController {
                 keyword.hasAction() ? keyword.action.optString("command", "") : JSONObject.NULL);
         Json.put(active, "keyword_action_status", actionStatus);
         Json.put(active, "keyword_action_result", actionResult == null ? JSONObject.NULL : actionResult);
+        Json.put(active, "keyword_success_chime",
+                keywordSuccessChime == null ? JSONObject.NULL : keywordSuccessChime);
         Json.put(active, "keyword_action_failure_chime",
                 actionFailureChime == null ? JSONObject.NULL : actionFailureChime);
         Json.put(active, "keyword_action_error_code", actionErrorCode.isEmpty() ? JSONObject.NULL : actionErrorCode);
@@ -821,7 +829,7 @@ public final class SpeechEchoLabController {
         cleanupCapturedRecognizer();
         if (actionFailed) {
             buzzError();
-        } else if (!skipSuccessTts) {
+        } else if (!keyword.matched && !skipSuccessTts) {
             playAcceptedChime(sessionId);
         }
         if (!skipSuccessTts) {
@@ -842,15 +850,11 @@ public final class SpeechEchoLabController {
                 && isChimeOnlySuccessAction(keyword.action.optString("command", ""));
     }
 
-    private JSONObject playScreenshotFailureChimeIfNeeded(SpeechKeywordMatcher.Match keyword) {
+    private JSONObject playKeywordFailureChimeIfNeeded(SpeechKeywordMatcher.Match keyword) {
         if (keyword == null || !keyword.hasAction()) {
             return null;
         }
-        if (!SpeechKeywordActionExecutor.COMMAND_SCREENSHOT_CAPTURE.equals(
-                keyword.action.optString("command", ""))) {
-            return null;
-        }
-        return keywordActionExecutor.playFailureChime("pucky.screenshot_capture_failure_chime.v1");
+        return keywordActionExecutor.playFailureChime("pucky.keyword_action_failure_chime.v1");
     }
 
     private static boolean isChimeOnlySuccessAction(String command) {

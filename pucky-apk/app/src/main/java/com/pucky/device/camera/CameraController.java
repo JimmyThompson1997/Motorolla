@@ -149,6 +149,7 @@ public final class CameraController {
         String cameraId = args.optString("camera_id", "");
         int maxWidth = Math.max(320, Math.min(4096, args.optInt("max_width", 1280)));
         long timeoutMs = Math.max(1000, Math.min(15000, args.optLong("timeout_ms", 8000)));
+        boolean suppressChime = args.optBoolean("suppress_chime", false);
         try {
             if (cameraId.trim().isEmpty()) {
                 cameraId = selectCameraId(manager, false);
@@ -161,13 +162,13 @@ public final class CameraController {
             if (size == null) {
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "No JPEG output size available");
             }
-            return captureInternal(manager, cameraId, size, timeoutMs);
+            return captureInternal(manager, cameraId, size, timeoutMs, suppressChime);
         } catch (CameraAccessException e) {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, e.getMessage());
         }
     }
 
-    private JSONObject captureInternal(CameraManager manager, String cameraId, Size size, long timeoutMs)
+    private JSONObject captureInternal(CameraManager manager, String cameraId, Size size, long timeoutMs, boolean suppressChime)
             throws CommandException {
         HandlerThread thread = new HandlerThread("PuckyCameraCapture");
         thread.start();
@@ -189,7 +190,7 @@ public final class CameraController {
                 String displayName = "pucky-" + System.currentTimeMillis() + ".jpg";
                 File file = writePrivatePhoto(bytes, displayName);
                 JSONObject publicPhoto = publishPhoto(bytes, displayName);
-                JSONObject captureChime = playCaptureChime();
+                JSONObject captureChime = suppressChime ? skippedCaptureChime() : playCaptureChime();
                 JSONObject out = new JSONObject();
                 Json.put(out, "captured", true);
                 Json.put(out, "camera_id", cameraId);
@@ -407,6 +408,15 @@ public final class CameraController {
         } catch (RuntimeException exc) {
             Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
+        return out;
+    }
+
+    private JSONObject skippedCaptureChime() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.photo_capture_chime.v1");
+        Json.put(out, "played", false);
+        Json.put(out, "skipped", true);
+        Json.put(out, "reason", "suppressed_by_keyword_lab");
         return out;
     }
 

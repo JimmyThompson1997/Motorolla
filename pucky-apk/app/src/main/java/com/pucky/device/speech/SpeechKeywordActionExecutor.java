@@ -91,12 +91,10 @@ public final class SpeechKeywordActionExecutor {
             }
             Json.put(location, "stale", !location.optBoolean("fresh", false));
             Json.put(out, "result", location);
-            Json.put(out, "action_chime", playActionChime("pucky.location_pin_chime.v1"));
             return out;
         }
         if (COMMAND_SCREENSHOT_CAPTURE.equals(command)) {
             Json.put(out, "result", requireScreenshotController().capture(args == null ? new JSONObject() : args));
-            Json.put(out, "action_chime", playActionChime("pucky.screenshot_capture_chime.v1"));
             return out;
         }
         if (COMMAND_VIDEO_CAPTURE_START.equals(command)) {
@@ -173,6 +171,7 @@ public final class SpeechKeywordActionExecutor {
         JSONObject args = new JSONObject();
         Json.put(args, "max_width", maxWidth);
         Json.put(args, "timeout_ms", timeoutMs);
+        Json.put(args, "suppress_chime", true);
         String cameraId = rawArgs.optString("camera_id", "").trim();
         if (!cameraId.isEmpty()) {
             Json.put(args, "camera_id", cameraId);
@@ -241,6 +240,7 @@ public final class SpeechKeywordActionExecutor {
         Json.put(args, "max_width", maxWidth);
         Json.put(args, "timeout_ms", timeoutMs);
         Json.put(args, "max_duration_ms", maxDurationMs);
+        Json.put(args, "suppress_chime", true);
         String cameraId = rawArgs.optString("camera_id", "").trim();
         if (!cameraId.isEmpty()) {
             Json.put(args, "camera_id", cameraId);
@@ -292,7 +292,7 @@ public final class SpeechKeywordActionExecutor {
         return videoCaptureController;
     }
 
-    private JSONObject playActionChime(String schema) {
+    public JSONObject playSuccessChime(String schema) {
         return playFileChime(schema, SUCCESS_SOUND_PATH, "Soft.ogg",
                 ToneGenerator.TONE_PROP_ACK, 140, "pucky-keyword-action-chime");
     }

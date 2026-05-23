@@ -92,6 +92,7 @@ public final class VideoCaptureController {
         long maxDurationMs = boundedLong(args == null ? DEFAULT_MAX_DURATION_MS : args.optLong("max_duration_ms", DEFAULT_MAX_DURATION_MS),
                 5000L, 300000L);
         String cameraId = args == null ? "" : args.optString("camera_id", "");
+        boolean suppressChime = args != null && args.optBoolean("suppress_chime", false);
         try {
             if (cameraId.trim().isEmpty()) {
                 cameraId = selectCameraId(manager);
@@ -104,7 +105,7 @@ public final class VideoCaptureController {
             if (size == null) {
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "No video output size available");
             }
-            return startInternal(manager, cameraId, size, timeoutMs, maxDurationMs);
+            return startInternal(manager, cameraId, size, timeoutMs, maxDurationMs, suppressChime);
         } catch (CameraAccessException exc) {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, exc.getMessage());
         }
@@ -134,7 +135,8 @@ public final class VideoCaptureController {
         return out;
     }
 
-    private JSONObject startInternal(CameraManager manager, String cameraId, Size size, long timeoutMs, long maxDurationMs)
+    private JSONObject startInternal(
+            CameraManager manager, String cameraId, Size size, long timeoutMs, long maxDurationMs, boolean suppressChime)
             throws CommandException {
         String sessionId = "video_" + System.currentTimeMillis();
         String displayName = "pucky-video-" + System.currentTimeMillis() + ".mp4";
@@ -220,7 +222,9 @@ public final class VideoCaptureController {
             Json.put(out, "width", size.getWidth());
             Json.put(out, "height", size.getHeight());
             Json.put(out, "max_duration_ms", maxDurationMs);
-            Json.put(out, "capture_chime", playCaptureChime("pucky.video_capture_start_chime.v1"));
+            Json.put(out, "capture_chime", suppressChime
+                    ? skippedCaptureChime("pucky.video_capture_start_chime.v1")
+                    : playCaptureChime("pucky.video_capture_start_chime.v1"));
             return out;
         } catch (CommandException exc) {
             safeRelease(recorder);
@@ -421,6 +425,15 @@ public final class VideoCaptureController {
         } catch (RuntimeException exc) {
             Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
+        return out;
+    }
+
+    private JSONObject skippedCaptureChime(String schema) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", schema);
+        Json.put(out, "played", false);
+        Json.put(out, "skipped", true);
+        Json.put(out, "reason", "suppressed_by_keyword_lab");
         return out;
     }
 
