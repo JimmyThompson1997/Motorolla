@@ -670,7 +670,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".media-doc-label" in styles
     assert ".chat-media-video" in styles
     assert ".image-reel-video" in styles
+    assert ".media-doc-preview.has-render .media-doc-render" in styles
     assert ".media-doc-preview.is-gallery.has-render .media-doc-label" in styles
+    assert ".chat-media-video {\n  object-fit: contain;" in styles
     assert ".media-doc-preview.is-gallery" in styles
     assert ".media-doc-badge" in styles
     assert '.media-doc-preview[data-kind="docx"]' in styles

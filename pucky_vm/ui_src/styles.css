@@ -901,6 +901,7 @@ button {
 }
 
 .chat-media-video {
+  object-fit: contain;
   pointer-events: none;
   background: #02060a;
 }
@@ -953,6 +954,10 @@ button {
   display: block;
   object-fit: cover;
   background: #f7f3ea;
+}
+
+.media-doc-preview.has-render .media-doc-render {
+  object-fit: contain;
 }
 
 .media-doc-preview.is-gallery .media-doc-render {
