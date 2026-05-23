@@ -6,7 +6,7 @@ public final class SpeechKeywordMatcher {
     private static final KeywordSpec[] KEYWORDS = new KeywordSpec[] {
             new KeywordSpec("hey_pucky", "hey pucky", "Hey Pucky recognized.",
                     3, new String[] {"hey pucky", "hey puppy", "hey lucky", "hay pucky",
-                            "hey pocky", "pucky", "puppy", "pocky"}),
+                            "hey pocky", "hey packy", "pucky", "puppy", "pocky", "packy"}),
             new KeywordSpec("mic_on", "mic on", "Mic on recognized.",
                     2, new String[] {"mic on", "mike on", "microphone on"}),
             new KeywordSpec("mic_off", "mic off", "Mic off recognized.",

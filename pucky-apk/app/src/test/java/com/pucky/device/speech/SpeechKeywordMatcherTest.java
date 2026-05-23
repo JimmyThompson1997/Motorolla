@@ -14,9 +14,11 @@ public final class SpeechKeywordMatcherTest {
         assertReply("Hey lucky.", "hey_pucky", "Hey Pucky recognized.", "alias:hey lucky");
         assertReply("hay pucky", "hey_pucky", "Hey Pucky recognized.", "alias:hay pucky");
         assertReply("Hey Pocky!", "hey_pucky", "Hey Pucky recognized.", "alias:hey pocky");
+        assertReply("Hey Packy!", "hey_pucky", "Hey Pucky recognized.", "alias:hey packy");
         assertReply("Pucky.", "hey_pucky", "Hey Pucky recognized.", "alias:pucky");
         assertReply("Puppy.", "hey_pucky", "Hey Pucky recognized.", "alias:puppy");
         assertReply("Pocky.", "hey_pucky", "Hey Pucky recognized.", "alias:pocky");
+        assertReply("Packy.", "hey_pucky", "Hey Pucky recognized.", "alias:packy");
     }
 
     @Test
@@ -47,6 +49,7 @@ public final class SpeechKeywordMatcherTest {
         assertNoMatch("please turn microphone on now", "please turn microphone on now");
         assertNoMatch("Microphone off hand?", "microphone off hand");
         assertNoMatch("You gotta skate to where the Pocky's going.", "you gotta skate to where the pocky s going");
+        assertNoMatch("You gotta skate to where the Packy's going.", "you gotta skate to where the packy s going");
         assertNoMatch("camera on please", "camera on please");
     }
 
