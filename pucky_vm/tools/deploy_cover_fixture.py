@@ -156,6 +156,21 @@ def download_images(
         )
         downloads.append({"field": "images", "artifact": image_artifact, "download": downloaded})
         image_copy["path"] = app_owned_path(downloaded, image_artifact)
+        viewer_artifact = str(
+            image_copy.get("viewer_artifact")
+            or image_copy.get("html_artifact")
+            or image_copy.get("document_html_artifact")
+            or ""
+        ).strip()
+        if viewer_artifact:
+            viewer_download = download_artifact(
+                args,
+                artifact_name=viewer_artifact,
+                artifact_base=artifact_base,
+                filename_prefix=f"{filename_prefix}_image_{index + 1}_viewer",
+            )
+            downloads.append({"field": "viewer_path", "artifact": viewer_artifact, "download": viewer_download})
+            image_copy["viewer_path"] = app_owned_path(viewer_download, viewer_artifact)
         downloaded_images.append(image_copy)
     return downloaded_images
 

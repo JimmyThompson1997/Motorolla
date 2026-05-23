@@ -1181,7 +1181,7 @@
     const wrap = el("article", "document-rendered");
     wrap.dataset.kind = attachmentKind(item);
     try {
-      const text = await loadLocalText(src);
+      const text = await loadDocumentHtml(src, item);
       const parsed = new DOMParser().parseFromString(text, "text/html");
       const children = Array.from(parsed.body ? parsed.body.children : []);
       if (!children.length) {
@@ -1193,6 +1193,18 @@
       wrap.append(el("p", "attachment-error", `Document preview unavailable: ${error.message}`));
     }
     return wrap;
+  }
+
+  async function loadDocumentHtml(src, item) {
+    const path = item && (item.viewer_path || item.html_viewer_path || item.document_html_path);
+    if (path) {
+      const result = await Pucky.request({
+        command: "artifact.read_base64",
+        args: { path, max_bytes: 2 * 1024 * 1024 }
+      });
+      return atob(String(result.content_base64 || ""));
+    }
+    return loadLocalText(src);
   }
 
   function loadLocalText(src) {

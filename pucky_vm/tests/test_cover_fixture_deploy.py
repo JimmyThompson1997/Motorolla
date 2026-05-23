@@ -130,7 +130,7 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
                     {
                         "role": "assistant",
                         "text": "Here is the route sketch.",
-                        "images": [{"artifact": "morning-map.svg", "title": "Map"}],
+                        "images": [{"artifact": "morning-map.svg", "viewer_artifact": "morning.html", "title": "Map"}],
                     }
                 ],
                 "trace": {"schema": "pucky.turn_trace.v1", "sections": []},
@@ -140,12 +140,14 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
 
     cards, downloads = deploy_cover_fixture.build_cards(args, spec)
 
-    assert len(calls) == 3
-    assert len(downloads) == 3
+    assert len(calls) == 4
+    assert len(downloads) == 4
     assert cards[0]["audio_path"].startswith("/data/user/0/")
     assert cards[0]["html_path"].startswith("/data/user/0/")
     assert "images" not in cards[0]
     assert cards[0]["transcript_messages"][0]["images"][0]["path"].startswith("/data/user/0/")
+    assert cards[0]["transcript_messages"][0]["images"][0]["viewer_path"].startswith("/data/user/0/")
+    assert cards[0]["transcript_messages"][0]["images"][0]["viewer_artifact"] == "morning.html"
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 

@@ -632,6 +632,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function mediaDocumentMeta(item)" in app
     assert "function mediaDocumentPreview(item, variant)" in app
     assert "function documentHtmlSrc(item)" in app
+    assert "async function loadDocumentHtml(src, item)" in app
+    assert "item.viewer_path || item.html_viewer_path || item.document_html_path" in app
+    assert "max_bytes: 2 * 1024 * 1024" in app
     assert "function documentPreviewSrc(item)" in app
     assert "function isVideoMedia(item)" in app
     assert '"chat-media-video"' in app
