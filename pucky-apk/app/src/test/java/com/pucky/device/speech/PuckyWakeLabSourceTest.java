@@ -170,6 +170,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("locationController"));
         assertTrue(executor.contains("screenshotController"));
         assertTrue(executor.contains("playFailureChime"));
+        assertTrue(executor.contains("Soft.ogg"));
+        assertTrue(executor.contains("LowBattery.ogg"));
+        assertTrue(executor.contains("MediaPlayer"));
         assertTrue(executor.contains("TONE_PROP_NACK"));
         assertTrue(executor.contains("videoCaptureController"));
         assertTrue(executor.contains("new CameraController(context)"));

@@ -1,7 +1,9 @@
 package com.pucky.device.speech;
 
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.media.ToneGenerator;
 
 import com.pucky.device.camera.CameraController;
@@ -13,6 +15,8 @@ import com.pucky.device.screenshot.ScreenshotController;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
+
+import java.io.File;
 
 public final class SpeechKeywordActionExecutor {
     public static final String COMMAND_TORCH_SET = "torch.set";
@@ -33,6 +37,8 @@ public final class SpeechKeywordActionExecutor {
     public static final long DEFAULT_LOCATION_TIMEOUT_MS = 4000L;
     public static final long DEFAULT_SCREENSHOT_TIMEOUT_MS = 4000L;
     public static final long DEFAULT_VIDEO_MAX_DURATION_MS = 60000L;
+    private static final String SUCCESS_SOUND_PATH = "/product/media/audio/notifications/Soft.ogg";
+    private static final String FAILURE_SOUND_PATH = "/product/media/audio/ui/LowBattery.ogg";
 
     private final CameraController cameraController;
     private final LocationController locationController;
@@ -287,11 +293,50 @@ public final class SpeechKeywordActionExecutor {
     }
 
     private JSONObject playActionChime(String schema) {
-        return playToneChime(schema, ToneGenerator.TONE_PROP_ACK, 140, "pucky-keyword-action-chime");
+        return playFileChime(schema, SUCCESS_SOUND_PATH, "Soft.ogg",
+                ToneGenerator.TONE_PROP_ACK, 140, "pucky-keyword-action-chime");
     }
 
     public JSONObject playFailureChime(String schema) {
-        return playToneChime(schema, ToneGenerator.TONE_PROP_NACK, 220, "pucky-keyword-action-failure-chime");
+        return playFileChime(schema, FAILURE_SOUND_PATH, "LowBattery.ogg",
+                ToneGenerator.TONE_PROP_NACK, 220, "pucky-keyword-action-failure-chime");
+    }
+
+    private JSONObject playFileChime(
+            String schema, String assetPath, String assetName, int fallbackTone, int fallbackDurationMs, String threadName) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", schema);
+        Json.put(out, "stream", "music");
+        Json.put(out, "asset_name", assetName);
+        Json.put(out, "asset_path", assetPath);
+        Json.put(out, "player", "MediaPlayer");
+        Json.put(out, "played", false);
+        Json.put(out, "fallback_used", false);
+        Json.put(out, "asset_exists", new File(assetPath).exists());
+        try {
+            MediaPlayer player = new MediaPlayer();
+            player.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            player.setDataSource(assetPath);
+            player.setOnCompletionListener(MediaPlayer::release);
+            player.setOnErrorListener((mp, what, extra) -> {
+                mp.release();
+                return true;
+            });
+            player.prepare();
+            player.start();
+            Json.put(out, "played", true);
+            return out;
+        } catch (Exception exc) {
+            Json.put(out, "asset_error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+            JSONObject fallback = playToneChime(schema + ".fallback", fallbackTone, fallbackDurationMs, threadName);
+            Json.put(out, "played", fallback.optBoolean("played", false));
+            Json.put(out, "fallback_used", true);
+            Json.put(out, "fallback", fallback);
+            return out;
+        }
     }
 
     private JSONObject playToneChime(String schema, int tone, int durationMs, String threadName) {
