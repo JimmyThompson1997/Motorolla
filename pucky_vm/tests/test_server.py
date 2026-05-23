@@ -137,6 +137,7 @@ class ServerTests(unittest.TestCase):
         body = self.post_audio(b"audio", "audio/mp4")
 
         self.assertTrue(body["session_id"].startswith("pucky_"))
+        self.assertEqual(body["turn_id"], body["session_id"])
         self.assertEqual(body["text"], "Sure, I can help.")
         self.assertEqual(body["audio_mime_type"], "audio/wav")
         self.assertEqual(base64.b64decode(body["audio_base64"]), b"RIFFaudio")
@@ -148,6 +149,15 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
         self.assertEqual(self.tts.text, "Sure, I can help.")
+        telemetry = body["telemetry"]
+        self.assertEqual(telemetry["turn_id"], body["turn_id"])
+        self.assertEqual(telemetry["request_audio_bytes"], 5)
+        self.assertIn("stt_ms", telemetry)
+        self.assertIn("codex_ms", telemetry)
+        self.assertIn("tts_ms", telemetry)
+        self.assertIn("response_bytes", telemetry)
+        self.assertNotIn("transcript", telemetry)
+        self.assertNotIn("Pucky test turn", json.dumps(telemetry))
 
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

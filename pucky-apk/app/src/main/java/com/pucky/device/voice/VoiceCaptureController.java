@@ -34,6 +34,7 @@ public final class VoiceCaptureController {
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int SAVED_CHIME_VOLUME = 85;
+    private static final int HEARING_AMPLITUDE_THRESHOLD = 1200;
 
     private static VoiceCaptureController shared;
 
@@ -67,12 +68,19 @@ public final class VoiceCaptureController {
     }
 
     public synchronized JSONObject status() {
+        int amplitude = active == null ? 0 : currentAmplitude();
+        long elapsedMs = active == null ? 0 : Math.max(0L,
+                android.os.SystemClock.elapsedRealtime() - active.startedElapsedMs);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.voice_capture_status.v1");
         Json.put(out, "state", active == null ? "idle" : "recording");
         Json.put(out, "active_session", active == null ? JSONObject.NULL : activeJson(active));
         Json.put(out, "last_completed", latestCompletedValue());
         Json.put(out, "permission", permissionJson());
+        Json.put(out, "mic_on", active != null);
+        Json.put(out, "amplitude", amplitude);
+        Json.put(out, "hearing", active != null && amplitude >= HEARING_AMPLITUDE_THRESHOLD);
+        Json.put(out, "elapsed_ms", elapsedMs);
         return out;
     }
 
@@ -417,6 +425,14 @@ public final class VoiceCaptureController {
                 generator.release();
             }, "pucky-voice-capture-saved-chime").start();
         } catch (RuntimeException ignored) {
+        }
+    }
+
+    private int currentAmplitude() {
+        try {
+            return recorder == null ? 0 : Math.max(0, recorder.getMaxAmplitude());
+        } catch (RuntimeException ignored) {
+            return 0;
         }
     }
 

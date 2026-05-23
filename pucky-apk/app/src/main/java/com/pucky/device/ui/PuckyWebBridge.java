@@ -11,6 +11,7 @@ import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 
@@ -89,6 +90,8 @@ public final class PuckyWebBridge {
                 return player.queueNext(args);
             case "player.queue.previous":
                 return player.queuePrevious(args);
+            case "pucky.turn.status":
+                return PuckyTurnController.shared(context).status();
             case "file.download":
                 return new FileDownloadController(context).download(args);
             case "artifact.read_base64":

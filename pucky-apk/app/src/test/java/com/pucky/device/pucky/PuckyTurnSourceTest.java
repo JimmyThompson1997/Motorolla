@@ -85,15 +85,20 @@ public final class PuckyTurnSourceTest {
 
         assertTrue(source.contains("VoiceCaptureController.shared(context).start(startArgs)"));
         assertTrue(source.contains("Json.put(startArgs, \"format\", \"m4a\")"));
+        assertTrue(source.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
         assertTrue(source.contains("MediaType.get(\"audio/mp4\")"));
-        assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyApiToken())"));
+        assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains("new File(context.getFilesDir(), \"pucky_replies\""));
         assertTrue(source.contains("Json.put(card, \"session_id\", sessionId)"));
         assertTrue(source.contains("new ReplyCardStore(context).prepend(card)"));
+        assertTrue(source.contains("Json.put(args, \"source\", \"pucky.turn\")"));
+        assertTrue(source.contains("PlayerController.shared(context).play(args)"));
+        assertTrue(source.contains("markStatus(\"speaking\", status, null)"));
+        assertTrue(source.contains("Json.put(status, \"server_telemetry\", parsed.telemetry())"));
         assertTrue(store.contains("public JSONObject prepend(JSONObject cardJson)"));
         assertTrue(store.contains("cards.add(card);"));
         assertTrue(store.contains("cards.addAll(cards());"));
-        assertFalse(Pattern.compile("Log\\.[^;]*getPuckyApiToken", Pattern.DOTALL).matcher(source).find());
+        assertFalse(Pattern.compile("Log\\.[^;]*getPuckyTurnAuthToken", Pattern.DOTALL).matcher(source).find());
     }
 
     @Test
@@ -104,6 +109,29 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky_api_token\""));
         assertTrue(source.contains("https://pucky.fly.dev/api/turn"));
         assertTrue(source.contains("putString(editor, input, \"pucky_api_token\""));
+        assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
+        assertTrue(source.contains("String brokerToken = getToken();"));
+        assertTrue(source.contains("return getPuckyTurnAuthToken();"));
+    }
+
+    @Test
+    public void statusExposesWalkieIndicatorsWithoutTokenValues() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String capture = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
+
+        assertTrue(source.contains("Json.put(out, \"player_state\", player)"));
+        assertTrue(source.contains("Json.put(out, \"indicator\", indicator)"));
+        assertTrue(source.contains("Json.put(out, \"mic_on\", indicator.optBoolean(\"mic_on\", false))"));
+        assertTrue(source.contains("Json.put(out, \"hearing\", indicator.optBoolean(\"hearing\", false))"));
+        assertTrue(source.contains("Json.put(out, \"uploading\", indicator.optBoolean(\"uploading\", false))"));
+        assertTrue(source.contains("Json.put(out, \"speaking\", indicator.optBoolean(\"speaking\", false))"));
+        assertTrue(source.contains("Json.put(out, \"failed\", indicator.optBoolean(\"failed\", false))"));
+        assertTrue(source.contains("\"pucky.turn_indicator.v1\""));
+        assertTrue(capture.contains("HEARING_AMPLITUDE_THRESHOLD"));
+        assertTrue(capture.contains("recorder.getMaxAmplitude()"));
+        assertTrue(capture.contains("Json.put(out, \"amplitude\", amplitude)"));
+        assertTrue(capture.contains("Json.put(out, \"hearing\", active != null && amplitude >= HEARING_AMPLITUDE_THRESHOLD)"));
+        assertFalse(source.contains("Json.put(out, \"token\""));
     }
 
     private static String read(String path) throws Exception {

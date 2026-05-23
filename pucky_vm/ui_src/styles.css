@@ -66,6 +66,7 @@ button {
   gap: 10px;
   height: 45px;
   padding: 0 8px;
+  padding-right: 118px;
   flex: 0 0 45px;
 }
 
@@ -133,6 +134,41 @@ button {
   stroke-width: 2.05;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.turn-indicators {
+  position: fixed;
+  top: 0;
+  right: 62px;
+  z-index: 101;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.turn-dot {
+  --turn-color: #586574;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(245, 249, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(245, 249, 255, 0.08);
+  opacity: 0.42;
+}
+
+.turn-dot.is-active {
+  background: var(--turn-color);
+  opacity: 1;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--turn-color) 18%, transparent),
+    0 0 14px color-mix(in srgb, var(--turn-color) 72%, transparent);
+}
+
+.turn-dot-speaking.is-active,
+.turn-dot-hearing.is-active {
+  animation: voicePulse 1.15s ease-in-out infinite;
 }
 
 .voice-status {

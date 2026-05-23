@@ -7,6 +7,7 @@ import android.util.Log;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.net.Ipv4FirstDns;
+import com.pucky.device.player.PlayerController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.ui.ReplyCardStore;
@@ -55,12 +56,23 @@ public final class PuckyTurnController {
     }
 
     public JSONObject status() {
+        JSONObject voice = VoiceCaptureController.shared(context).status();
+        JSONObject last = lastStatus();
+        JSONObject player = PlayerController.shared(context).state();
+        JSONObject indicator = indicatorJson(last, voice, player);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_status.v1");
-        Json.put(out, "voice_capture", VoiceCaptureController.shared(context).status());
-        Json.put(out, "last_status", lastStatus());
-        Json.put(out, "configured", !settings.getPuckyApiToken().isEmpty());
+        Json.put(out, "voice_capture", voice);
+        Json.put(out, "last_status", last);
+        Json.put(out, "player_state", player);
+        Json.put(out, "indicator", indicator);
+        Json.put(out, "configured", isConfigured());
         Json.put(out, "url", settings.getPuckyTurnUrl());
+        Json.put(out, "mic_on", indicator.optBoolean("mic_on", false));
+        Json.put(out, "hearing", indicator.optBoolean("hearing", false));
+        Json.put(out, "uploading", indicator.optBoolean("uploading", false));
+        Json.put(out, "speaking", indicator.optBoolean("speaking", false));
+        Json.put(out, "failed", indicator.optBoolean("failed", false));
         return out;
     }
 
@@ -71,6 +83,7 @@ public final class PuckyTurnController {
         Json.put(startArgs, "audio_source", args.optString("audio_source", "mic"));
         Json.put(startArgs, "max_duration_ms", args.optInt("max_duration_ms", 60000));
         Json.put(startArgs, "sample_tag", "pucky_turn");
+        Json.put(startArgs, "feedback", args.optBoolean("feedback", true));
         JSONObject out = VoiceCaptureController.shared(context).start(startArgs);
         markStatus("recording", out, null);
         return out;
@@ -78,7 +91,9 @@ public final class PuckyTurnController {
 
     public JSONObject stop(JSONObject args) throws CommandException {
         requireConfigured();
-        JSONObject stopped = VoiceCaptureController.shared(context).stop(reasonArgs(args.optString("reason", "button_release")));
+        JSONObject stopArgs = reasonArgs(args.optString("reason", "button_release"));
+        Json.put(stopArgs, "feedback", args.optBoolean("feedback", true));
+        JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
         JSONObject capture = stopped.optJSONObject("capture");
         if (capture == null) {
             markStatus("idle", stopped, "no_capture");
@@ -86,6 +101,8 @@ public final class PuckyTurnController {
         }
         File audio = new File(capture.optString("path", ""));
         if (!audio.exists() || !audio.isFile() || audio.length() <= 0) {
+            JSONObject failed = baseStatus(capture.optString("session_id", ""), System.currentTimeMillis(), 0);
+            markStatus("failed", failed, "empty_capture");
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Pucky turn capture is empty");
         }
         byte[] audioBytes = readAll(audio);
@@ -104,7 +121,7 @@ public final class PuckyTurnController {
         long startedMs = System.currentTimeMillis();
         Request request = new Request.Builder()
                 .url(settings.getPuckyTurnUrl())
-                .header("Authorization", "Bearer " + settings.getPuckyApiToken())
+                .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
                 .post(RequestBody.create(AUDIO_MP4, audioBytes))
                 .build();
         http.newCall(request).enqueue(new Callback() {
@@ -127,12 +144,19 @@ public final class PuckyTurnController {
                     try {
                         PuckyTurnResponse parsed = PuckyTurnResponse.fromJson(responseText);
                         JSONObject card = persistReplyCard(localSessionId, parsed);
-                        Json.put(status, "state", "completed");
-                        Json.put(status, "session_id", card.optString("session_id", ""));
+                        String sessionId = card.optString("session_id", "");
+                        String turnId = parsed.turnId().isEmpty() ? sessionId : parsed.turnId();
+                        Json.put(status, "session_id", sessionId);
+                        Json.put(status, "turn_id", turnId);
+                        Json.put(status, "reply_audio_path", card.optString("audio_path", ""));
                         Json.put(status, "reply_text_chars", parsed.text().length());
                         Json.put(status, "reply_audio_bytes", parsed.audioBytes().length);
                         Json.put(status, "has_html", parsed.hasHtml());
-                        markStatus("completed", status, null);
+                        Json.put(status, "server_telemetry", parsed.telemetry());
+                        Json.put(status, "latency_server_total_ms", parsed.telemetry().optInt("total_ms", -1));
+                        JSONObject playerState = playReply(card);
+                        Json.put(status, "player_state", playerState);
+                        markStatus("speaking", status, null);
                     } catch (Exception exc) {
                         markStatus("failed", status, exc.getClass().getSimpleName() + ": " + exc.getMessage());
                     }
@@ -172,9 +196,26 @@ public final class PuckyTurnController {
     }
 
     private void requireConfigured() throws CommandException {
-        if (settings.getPuckyTurnUrl().isEmpty() || settings.getPuckyApiToken().isEmpty()) {
+        if (!isConfigured()) {
+            JSONObject detail = new JSONObject();
+            Json.put(detail, "schema", "pucky.turn_status_item.v1");
+            Json.put(detail, "configured", false);
+            Json.put(detail, "url", settings.getPuckyTurnUrl());
+            markStatus("failed", detail, "not_configured");
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Pucky turn endpoint is not configured");
         }
+    }
+
+    private JSONObject playReply(JSONObject card) throws CommandException {
+        JSONObject args = new JSONObject();
+        Json.put(args, "path", card.optString("audio_path", ""));
+        Json.put(args, "title", card.optString("title", "Pucky reply"));
+        Json.put(args, "source", "pucky.turn");
+        return PlayerController.shared(context).play(args);
+    }
+
+    private boolean isConfigured() {
+        return !settings.getPuckyTurnUrl().isEmpty() && !settings.getPuckyTurnAuthToken().isEmpty();
     }
 
     private JSONObject baseStatus(String localSessionId, long startedMs, int audioBytes) {
@@ -205,6 +246,40 @@ public final class PuckyTurnController {
         } catch (Exception ignored) {
             return new JSONObject();
         }
+    }
+
+    private static JSONObject indicatorJson(JSONObject last, JSONObject voice, JSONObject player) {
+        String lastState = last == null ? "" : last.optString("state", "");
+        String source = player == null ? "" : player.optString("source", "");
+        boolean micOn = voice != null && voice.optBoolean("mic_on", "recording".equals(voice.optString("state", "")));
+        boolean hearing = voice != null && voice.optBoolean("hearing", false);
+        boolean uploading = "uploading".equals(lastState);
+        boolean speaking = "pucky.turn".equals(source) && player != null && player.optBoolean("is_playing", false);
+        boolean failed = "failed".equals(lastState);
+        String state = "idle";
+        if (failed) {
+            state = "failed";
+        } else if (speaking) {
+            state = "speaking";
+        } else if (uploading) {
+            state = "uploading";
+        } else if (hearing) {
+            state = "hearing";
+        } else if (micOn) {
+            state = "recording";
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_indicator.v1");
+        Json.put(out, "state", state);
+        Json.put(out, "mic_on", micOn);
+        Json.put(out, "hearing", hearing);
+        Json.put(out, "uploading", uploading);
+        Json.put(out, "speaking", speaking);
+        Json.put(out, "failed", failed);
+        Json.put(out, "active", micOn || uploading || speaking);
+        Json.put(out, "amplitude", voice == null ? 0 : voice.optInt("amplitude", 0));
+        Json.put(out, "elapsed_ms", voice == null ? 0 : voice.optLong("elapsed_ms", 0L));
+        return out;
     }
 
     private static JSONObject reasonArgs(String reason) {

@@ -136,11 +136,14 @@ class PuckyVoiceService:
     def handle_audio_turn(self, audio: bytes, content_type: str) -> dict[str, object]:
         if not audio:
             raise ValueError("audio body is empty")
-        session_id = "pucky_" + uuid.uuid4().hex
+        turn_id = "pucky_" + uuid.uuid4().hex
+        session_id = turn_id
         total_start = time.perf_counter()
         telemetry: dict[str, object] = {
             "event": "pucky.turn.completed",
             "session_id": session_id,
+            "turn_id": turn_id,
+            "upload_received_ms": 0,
             "content_type": content_type,
             "request_audio_bytes": len(audio),
             "stt_provider": "deepgram",
@@ -154,15 +157,19 @@ class PuckyVoiceService:
         stage = "stt"
         with self._turn_lock:
             try:
+                telemetry["stt_start_ms"] = _elapsed_ms(total_start)
                 start = time.perf_counter()
                 transcript = self.stt.transcribe(audio, content_type)
                 telemetry["stt_ms"] = _elapsed_ms(start)
+                telemetry["stt_end_ms"] = _elapsed_ms(total_start)
                 telemetry["transcript_chars"] = len(transcript)
 
                 stage = "codex"
+                telemetry["codex_start_ms"] = _elapsed_ms(total_start)
                 start = time.perf_counter()
                 raw_reply = self.codex.send_turn(transcript)
                 telemetry["codex_ms"] = _elapsed_ms(start)
+                telemetry["codex_end_ms"] = _elapsed_ms(total_start)
                 telemetry["codex_thread_id"] = self.codex.thread_id or ""
                 telemetry["raw_reply_chars"] = len(raw_reply)
 
@@ -170,14 +177,15 @@ class PuckyVoiceService:
                 envelope = parse_reply_envelope(raw_reply)
                 telemetry["envelope_parse"] = "ok"
                 telemetry["reply_chars"] = len(envelope.reply_text)
-                telemetry["card_title"] = envelope.card_title
                 telemetry["card_icon"] = envelope.card_icon
                 telemetry["has_html"] = bool(envelope.html_content)
 
                 stage = "tts"
+                telemetry["tts_start_ms"] = _elapsed_ms(total_start)
                 start = time.perf_counter()
                 reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
                 telemetry["tts_ms"] = _elapsed_ms(start)
+                telemetry["tts_end_ms"] = _elapsed_ms(total_start)
                 telemetry["reply_audio_bytes"] = len(reply_audio)
                 telemetry["audio_mime_type"] = audio_mime_type
             except Exception as exc:
@@ -196,14 +204,19 @@ class PuckyVoiceService:
                 card["html_base64"] = base64.b64encode(html_bytes).decode("ascii")
         telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["status"] = "ok"
-        _log_json(telemetry)
-        return {
+        result = {
             "session_id": session_id,
+            "turn_id": turn_id,
             "text": envelope.reply_text,
             "audio_mime_type": audio_mime_type,
             "audio_base64": base64.b64encode(reply_audio).decode("ascii"),
             "card": card,
         }
+        result["telemetry"] = _public_turn_telemetry(telemetry)
+        telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
+        result["telemetry"] = _public_turn_telemetry(telemetry)
+        _log_json(telemetry)
+        return result
 
 
 def parse_reply_envelope(raw: str) -> ReplyEnvelope:
@@ -243,6 +256,35 @@ def _elapsed_ms(start: float) -> int:
 
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
+
+
+def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
+    allowed = (
+        "turn_id",
+        "session_id",
+        "status",
+        "content_type",
+        "request_audio_bytes",
+        "upload_received_ms",
+        "stt_start_ms",
+        "stt_end_ms",
+        "stt_ms",
+        "transcript_chars",
+        "codex_start_ms",
+        "codex_end_ms",
+        "codex_ms",
+        "codex_thread_id",
+        "raw_reply_chars",
+        "reply_chars",
+        "tts_start_ms",
+        "tts_end_ms",
+        "tts_ms",
+        "reply_audio_bytes",
+        "audio_mime_type",
+        "response_bytes",
+        "total_ms",
+    )
+    return {key: telemetry[key] for key in allowed if key in telemetry}
 
 
 def make_handler(service: PuckyVoiceService):

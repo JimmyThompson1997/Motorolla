@@ -67,6 +67,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"player.pause\"")
                         && bridge.contains("case \"player.seek\"")
                         && bridge.contains("case \"player.queue.set\"")
+                        && bridge.contains("case \"pucky.turn.status\"")
                         && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
@@ -90,6 +91,22 @@ public final class MainActivityWebViewShellTest {
                         && player.contains("queueItemsFromPlaylist")
                         && player.contains("#EXTINF:")
                         && player.contains("Playlist must be an .m3u file"));
+    }
+
+    @Test
+    public void webViewBridgeEmitsPuckyTurnStatusForCoverIndicators() throws Exception {
+        String bridge = read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java");
+        String activity = read("src/main/java/com/pucky/device/MainActivity.java");
+
+        assertTrue(bridge.contains("import com.pucky.device.pucky.PuckyTurnController;"));
+        assertTrue(bridge.contains("case \"pucky.turn.status\":"));
+        assertTrue(bridge.contains("return PuckyTurnController.shared(context).status();"));
+        assertTrue(activity.contains("private void emitWebTurnStatus()"));
+        assertTrue(activity.contains("webBridge.emit(\"pucky.turn.status\", PuckyTurnController.shared(this).status())"));
+        assertTrue(activity.contains("emitWebPlayerState();\n            emitWebTurnStatus();")
+                || activity.contains("emitWebPlayerState();\r\n            emitWebTurnStatus();"));
+        assertTrue(activity.contains("emitWebPlayerState();\n        emitWebTurnStatus();")
+                || activity.contains("emitWebPlayerState();\r\n        emitWebTurnStatus();"));
     }
 
     @Test

@@ -35,6 +35,7 @@ import android.widget.FrameLayout;
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.buttons.ButtonController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
@@ -80,6 +81,7 @@ public class MainActivity extends Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             emitWebPlayerState();
+            emitWebTurnStatus();
         }
     };
 
@@ -89,6 +91,7 @@ public class MainActivity extends Activity {
             String action = intent == null ? "" : intent.getAction();
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.post(MainActivity.this::emitWebPlayerState);
+                mainHandler.post(MainActivity.this::emitWebTurnStatus);
             }
         }
     };
@@ -129,6 +132,7 @@ public class MainActivity extends Activity {
         ensureAutoConnectService();
         WakeWordController.shared(this).start(new JSONObject());
         emitWebPlayerState();
+        emitWebTurnStatus();
     }
 
     @Override
@@ -162,6 +166,7 @@ public class MainActivity extends Activity {
             }
             if (handled) {
                 emitWebPlayerState();
+                emitWebTurnStatus();
                 return true;
             }
         }
@@ -386,11 +391,18 @@ public class MainActivity extends Activity {
         }
         loadWebShell(resetNavigation);
         emitWebPlayerState();
+        emitWebTurnStatus();
     }
 
     private void emitWebPlayerState() {
         if (webBridge != null) {
             webBridge.emit("player.state", PlayerController.shared(this).state());
+        }
+    }
+
+    private void emitWebTurnStatus() {
+        if (webBridge != null) {
+            webBridge.emit("pucky.turn.status", PuckyTurnController.shared(this).status());
         }
     }
 
@@ -513,6 +525,7 @@ public class MainActivity extends Activity {
         PuckyState.get().setDeviceId(settingsStore.getDeviceId());
         PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
         emitWebPlayerState();
+        emitWebTurnStatus();
     }
 
     private boolean shouldStartAssistantSetup(Intent intent) {

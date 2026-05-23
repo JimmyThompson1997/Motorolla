@@ -116,6 +116,13 @@
   ];
 
   const VOICE_STATES = ["listening", "hearing", "speaking", "off"];
+  const TURN_DOTS = [
+    { key: "mic", label: "Mic", color: "#3a84ff" },
+    { key: "hearing", label: "Hearing", color: "#ff3b30" },
+    { key: "uploading", label: "Uploading", color: "#ffb000" },
+    { key: "speaking", label: "Speaking", color: "#72c2ff" },
+    { key: "failed", label: "Error", color: "#ff3b30" }
+  ];
 
   const MOCK_SETTINGS = [
     {
@@ -251,6 +258,7 @@
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
     voiceState: initialVoiceState(),
+    turn: initialTurnStatus(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -313,6 +321,11 @@
         state.voiceState = normalizeVoiceState(payload);
         renderVoiceStatus();
       }
+      if (name === "pucky.turn.status") {
+        applyTurnStatus(payload);
+        renderTurnIndicators();
+        renderVoiceStatus();
+      }
     }
   };
 
@@ -330,6 +343,9 @@
     }
     if (command === "player.state") {
       return state.player;
+    }
+    if (command === "pucky.turn.status") {
+      return state.turn;
     }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
@@ -462,8 +478,21 @@
     restoreNavStateAfterCards();
   }
 
+  async function loadTurnStatus(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
+      applyTurnStatus(snapshot);
+      if (options.render) {
+        render();
+      }
+    } catch (_) {
+      // The bridge can be briefly unavailable during WebView startup.
+    }
+  }
+
   function render() {
     renderTabs();
+    renderTurnIndicators();
     renderVoiceStatus();
     renderRouteTray();
     renderFeed();
@@ -498,6 +527,26 @@
     });
   }
 
+  function renderTurnIndicators() {
+    const container = document.getElementById("turnIndicators");
+    if (!container) {
+      return;
+    }
+    const indicator = turnIndicatorFromStatus(state.turn);
+    container.dataset.turnState = indicator.state;
+    container.replaceChildren(...TURN_DOTS.map(dot => turnDot(dot, indicator)));
+  }
+
+  function turnDot(dot, indicator) {
+    const active = Boolean(indicator[dot.key]);
+    const node = el("span", `turn-dot turn-dot-${dot.key}${active ? " is-active" : ""}`);
+    node.style.setProperty("--turn-color", dot.color);
+    node.setAttribute("role", "status");
+    node.setAttribute("aria-label", `${dot.label}: ${active ? "on" : "off"}`);
+    node.title = `${dot.label}: ${active ? "on" : "off"}`;
+    return node;
+  }
+
   function nextVoiceState(current) {
     const normalized = normalizeVoiceState(current);
     const index = VOICE_STATES.indexOf(normalized);
@@ -528,6 +577,89 @@
       return "off";
     }
     return "listening";
+  }
+
+  function initialTurnStatus() {
+    return {
+      schema: "pucky.turn_status.v1",
+      configured: false,
+      indicator: {
+        schema: "pucky.turn_indicator.v1",
+        state: "idle",
+        mic_on: false,
+        hearing: false,
+        uploading: false,
+        speaking: false,
+        failed: false,
+        active: false
+      }
+    };
+  }
+
+  function applyTurnStatus(input) {
+    state.turn = normalizeTurnStatus(input);
+    const nextVoice = voiceStateFromTurnStatus(state.turn);
+    if (nextVoice) {
+      state.voiceState = nextVoice;
+    }
+  }
+
+  function normalizeTurnStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    const rawIndicator = raw.indicator && typeof raw.indicator === "object" ? raw.indicator : {};
+    const indicator = {
+      schema: "pucky.turn_indicator.v1",
+      state: String(rawIndicator.state || raw.state || "idle"),
+      mic_on: truthy(rawIndicator.mic_on ?? raw.mic_on),
+      hearing: truthy(rawIndicator.hearing ?? raw.hearing),
+      uploading: truthy(rawIndicator.uploading ?? raw.uploading),
+      speaking: truthy(rawIndicator.speaking ?? raw.speaking),
+      failed: truthy(rawIndicator.failed ?? raw.failed),
+      active: truthy(rawIndicator.active ?? raw.active),
+      amplitude: safeNumber(rawIndicator.amplitude ?? raw.amplitude),
+      elapsed_ms: safeNumber(rawIndicator.elapsed_ms ?? raw.elapsed_ms)
+    };
+    indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.speaking;
+    return {
+      ...raw,
+      schema: raw.schema || "pucky.turn_status.v1",
+      configured: truthy(raw.configured),
+      indicator
+    };
+  }
+
+  function turnIndicatorFromStatus(status) {
+    return normalizeTurnStatus(status).indicator;
+  }
+
+  function voiceStateFromTurnStatus(status) {
+    const indicator = turnIndicatorFromStatus(status);
+    if (indicator.speaking) {
+      return "speaking";
+    }
+    if (indicator.hearing) {
+      return "hearing";
+    }
+    if (indicator.mic_on || indicator.uploading) {
+      return "listening";
+    }
+    if (indicator.failed) {
+      return "off";
+    }
+    return null;
+  }
+
+  function isTurnActive(status) {
+    return Boolean(turnIndicatorFromStatus(status).active);
+  }
+
+  function truthy(value) {
+    return value === true || value === 1 || value === "1" || value === "true";
+  }
+
+  function safeNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
   }
 
   function tabView(tab) {
@@ -3409,14 +3541,24 @@
   }
 
   setInterval(async () => {
-    if (state.activePath) {
+    if (state.activePath || isTurnActive(state.turn)) {
+      let changed = false;
       try {
-        state.player = await Pucky.request({ command: "player.state", args: {} });
-        syncActivePathFromPlayer(state.player);
-        if (state.player.path) {
-          rememberPlayerProgress(state.player);
+        if (state.activePath) {
+          state.player = await Pucky.request({ command: "player.state", args: {} });
+          syncActivePathFromPlayer(state.player);
+          if (state.player.path) {
+            rememberPlayerProgress(state.player);
+          }
+          changed = true;
         }
-        render();
+        if (isTurnActive(state.turn)) {
+          await loadTurnStatus({ render: false });
+          changed = true;
+        }
+        if (changed) {
+          render();
+        }
       } catch (_) {
         // Keep cached state visible if the bridge temporarily fails.
       }
@@ -3438,5 +3580,6 @@
 
   installFeedRubberBand();
   installFeedScrollPersistence();
+  loadTurnStatus({ render: false });
   loadCards();
 })();

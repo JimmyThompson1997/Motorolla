@@ -10,6 +10,7 @@ import java.util.Locale;
 
 public final class PuckyTurnResponse {
     private final String sessionId;
+    private final String turnId;
     private final String text;
     private final String audioMimeType;
     private final String audioBase64;
@@ -17,10 +18,13 @@ public final class PuckyTurnResponse {
     private final String cardIcon;
     private final String htmlMimeType;
     private final String htmlBase64;
+    private final JSONObject telemetry;
 
-    private PuckyTurnResponse(String sessionId, String text, String audioMimeType, String audioBase64,
-                              String cardTitle, String cardIcon, String htmlMimeType, String htmlBase64) {
+    private PuckyTurnResponse(String sessionId, String turnId, String text, String audioMimeType, String audioBase64,
+                              String cardTitle, String cardIcon, String htmlMimeType, String htmlBase64,
+                              JSONObject telemetry) {
         this.sessionId = sessionId;
+        this.turnId = turnId;
         this.text = text;
         this.audioMimeType = audioMimeType;
         this.audioBase64 = audioBase64;
@@ -28,6 +32,7 @@ public final class PuckyTurnResponse {
         this.cardIcon = cardIcon;
         this.htmlMimeType = htmlMimeType;
         this.htmlBase64 = htmlBase64;
+        this.telemetry = telemetry == null ? new JSONObject() : telemetry;
     }
 
     public static PuckyTurnResponse fromJson(String raw) throws CommandException {
@@ -59,23 +64,35 @@ public final class PuckyTurnResponse {
                 htmlMimeType = "text/html";
             }
         }
+        String turnId = optional(input.optString("turn_id", ""));
+        String sessionId = optional(input.optString("session_id", ""));
+        if (sessionId.isEmpty()) {
+            sessionId = turnId;
+        }
+        if (turnId.isEmpty()) {
+            turnId = sessionId;
+        }
         return new PuckyTurnResponse(
-                optional(input.optString("session_id", "")),
+                sessionId,
+                turnId,
                 text,
                 audioMimeType,
                 audioBase64,
                 title.trim(),
                 normalizeIcon(card == null ? "" : card.optString("icon", "")),
                 htmlMimeType.trim(),
-                htmlBase64.trim());
+                htmlBase64.trim(),
+                input.optJSONObject("telemetry"));
     }
 
     public String sessionId() { return sessionId; }
+    public String turnId() { return turnId; }
     public String text() { return text; }
     public String audioMimeType() { return audioMimeType; }
     public String cardTitle() { return cardTitle; }
     public String cardIcon() { return cardIcon; }
     public boolean hasHtml() { return !htmlBase64.isEmpty(); }
+    public JSONObject telemetry() { return telemetry; }
     public byte[] audioBytes() { return Base64.getDecoder().decode(audioBase64); }
     public byte[] htmlBytes() { return htmlBase64.isEmpty() ? new byte[0] : Base64.getDecoder().decode(htmlBase64); }
 

@@ -67,13 +67,18 @@ public final class SettingsStore {
         return prefs.getString(PUCKY_TURN_URL, "https://pucky.fly.dev/api/turn").trim();
     }
 
-    public String getPuckyApiToken() {
+    public String getPuckyTurnAuthToken() {
         String explicit = prefs.getString(PUCKY_API_TOKEN, "").trim();
         if (!explicit.isEmpty()) {
             return explicit;
         }
         String brokerToken = getToken();
-        return "dev-token".equals(brokerToken) ? "" : brokerToken.trim();
+        String clean = brokerToken == null ? "" : brokerToken.trim();
+        return "dev-token".equals(clean) ? "" : clean;
+    }
+
+    public String getPuckyApiToken() {
+        return getPuckyTurnAuthToken();
     }
 
     public String getUiShellMode() {

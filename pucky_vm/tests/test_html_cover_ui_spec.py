@@ -76,13 +76,24 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     styles = read("styles.css")
 
     assert 'id="voiceStatus"' in html
+    assert 'id="turnIndicators"' in html
     assert "data-voice-status" in html
     assert 'aria-label="Voice state: listening"' in html
     assert 'const VOICE_STATES = ["listening", "hearing", "speaking", "off"]' in app
+    assert "const TURN_DOTS = [" in app
     assert "voiceState: initialVoiceState()" in app
+    assert "turn: initialTurnStatus()" in app
     assert "renderVoiceStatus()" in app
+    assert "renderTurnIndicators()" in app
     assert 'if (name === "voice.state")' in app
+    assert 'if (name === "pucky.turn.status")' in app
+    assert 'command === "pucky.turn.status"' in app
+    assert 'command: "pucky.turn.status"' in app
     assert "function renderVoiceStatus()" in app
+    assert "function renderTurnIndicators()" in app
+    assert "function applyTurnStatus(input)" in app
+    assert "function normalizeTurnStatus(input)" in app
+    assert "function isTurnActive(status)" in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
     assert "function voiceStatusButton()" not in app
     assert "shell.append(header, content)" in app
@@ -91,6 +102,10 @@ def test_voice_status_dot_renders_and_can_preview_states() -> None:
     assert "function normalizeVoiceState(input)" in app
     assert "state.voiceState = nextVoiceState(state.voiceState)" in app
     assert ".voice-status" in styles
+    assert ".turn-indicators" in styles
+    assert ".turn-dot" in styles
+    assert ".turn-dot.is-active" in styles
+    assert ".turn-dot-speaking.is-active" in styles
     voice_status_block = styles.split(".voice-status {", 1)[1].split("}", 1)[0]
     assert "position: fixed" in styles
     assert "--voice-status-size: 38px" in styles
