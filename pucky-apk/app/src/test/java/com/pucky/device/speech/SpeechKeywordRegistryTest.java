@@ -146,6 +146,49 @@ public final class SpeechKeywordRegistryTest {
     }
 
     @Test
+    public void locationPinActionDefaultsToFourSecondFreshRequest() throws Exception {
+        JSONObject sanitized = SpeechKeywordActionExecutor.sanitize(
+                new JSONObject().put("command", "location.pin"));
+
+        assertEquals("location.pin", sanitized.optString("command"));
+        assertEquals(4000L, sanitized.optJSONObject("args").optLong("timeout_ms"));
+        assertTrue(sanitized.optJSONObject("args").optBoolean("fresh"));
+        assertFalse(sanitized.optJSONObject("args").optBoolean("publish"));
+
+        CommandException tooSlow = expectCommandException(() ->
+                SpeechKeywordActionExecutor.sanitize(new JSONObject()
+                        .put("command", "location.pin")
+                        .put("args", new JSONObject().put("timeout_ms", 45000))));
+
+        assertEquals(CommandErrorCodes.MALFORMED_COMMAND, tooSlow.code());
+    }
+
+    @Test
+    public void screenshotCaptureActionDefaultsToPublishing() throws Exception {
+        JSONObject sanitized = SpeechKeywordActionExecutor.sanitize(
+                new JSONObject().put("command", "screenshot.capture"));
+
+        assertEquals("screenshot.capture", sanitized.optString("command"));
+        assertEquals(4000L, sanitized.optJSONObject("args").optLong("timeout_ms"));
+        assertTrue(sanitized.optJSONObject("args").optBoolean("publish"));
+    }
+
+    @Test
+    public void videoCaptureStartStopActionsAreAllowlisted() throws Exception {
+        JSONObject start = SpeechKeywordActionExecutor.sanitize(
+                new JSONObject().put("command", "video.capture.start"));
+        JSONObject stop = SpeechKeywordActionExecutor.sanitize(
+                new JSONObject().put("command", "video.capture.stop")
+                        .put("args", new JSONObject().put("ignored", true)));
+
+        assertEquals("video.capture.start", start.optString("command"));
+        assertEquals(1280, start.optJSONObject("args").optInt("max_width"));
+        assertEquals(60000L, start.optJSONObject("args").optLong("max_duration_ms"));
+        assertEquals("video.capture.stop", stop.optString("command"));
+        assertFalse(stop.optJSONObject("args").has("ignored"));
+    }
+
+    @Test
     public void dynamicPhotoKeywordMatchesExactUtteranceOnly() throws Exception {
         SpeechKeywordRegistry.SetResult result = SpeechKeywordRegistry.set(new JSONArray(),
                 keyword("photo", phrases("photo"), "Photo captured.", photoAction(1280, 8000)));

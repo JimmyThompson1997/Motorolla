@@ -1,10 +1,15 @@
 package com.pucky.device.speech;
 
 import android.content.Context;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 
 import com.pucky.device.camera.CameraController;
+import com.pucky.device.camera.VideoCaptureController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.location.LocationController;
+import com.pucky.device.screenshot.ScreenshotController;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
@@ -12,6 +17,10 @@ import org.json.JSONObject;
 public final class SpeechKeywordActionExecutor {
     public static final String COMMAND_TORCH_SET = "torch.set";
     public static final String COMMAND_PHOTO_CAPTURE = "photo.capture";
+    public static final String COMMAND_LOCATION_PIN = "location.pin";
+    public static final String COMMAND_SCREENSHOT_CAPTURE = "screenshot.capture";
+    public static final String COMMAND_VIDEO_CAPTURE_START = "video.capture.start";
+    public static final String COMMAND_VIDEO_CAPTURE_STOP = "video.capture.stop";
     public static final int DEFAULT_TORCH_AUTO_OFF_MS = 600;
     public static final int MIN_TORCH_AUTO_OFF_MS = 100;
     public static final int MAX_TORCH_AUTO_OFF_MS = 1500;
@@ -21,15 +30,35 @@ public final class SpeechKeywordActionExecutor {
     public static final int MAX_PHOTO_MAX_WIDTH = 1920;
     public static final long MIN_PHOTO_TIMEOUT_MS = 1000L;
     public static final long MAX_PHOTO_TIMEOUT_MS = 15000L;
+    public static final long DEFAULT_LOCATION_TIMEOUT_MS = 4000L;
+    public static final long DEFAULT_SCREENSHOT_TIMEOUT_MS = 4000L;
+    public static final long DEFAULT_VIDEO_MAX_DURATION_MS = 60000L;
 
     private final CameraController cameraController;
+    private final LocationController locationController;
+    private final ScreenshotController screenshotController;
+    private final VideoCaptureController videoCaptureController;
 
     public SpeechKeywordActionExecutor(Context context) {
-        this(new CameraController(context));
+        this(new CameraController(context),
+                new LocationController(context),
+                new ScreenshotController(context),
+                VideoCaptureController.shared(context));
     }
 
     SpeechKeywordActionExecutor(CameraController cameraController) {
+        this(cameraController, null, null, null);
+    }
+
+    SpeechKeywordActionExecutor(
+            CameraController cameraController,
+            LocationController locationController,
+            ScreenshotController screenshotController,
+            VideoCaptureController videoCaptureController) {
         this.cameraController = cameraController;
+        this.locationController = locationController;
+        this.screenshotController = screenshotController;
+        this.videoCaptureController = videoCaptureController;
     }
 
     public JSONObject execute(JSONObject action) throws CommandException {
@@ -48,6 +77,30 @@ public final class SpeechKeywordActionExecutor {
             Json.put(out, "result", cameraController.capture(args == null ? new JSONObject() : args));
             return out;
         }
+        if (COMMAND_LOCATION_PIN.equals(command)) {
+            JSONObject location = requireLocationController().get(args == null ? new JSONObject() : args);
+            if (!location.optBoolean("available", false)) {
+                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                        "Location unavailable: " + location.optString("reason", "NO_LOCATION_SAMPLE"));
+            }
+            Json.put(location, "stale", !location.optBoolean("fresh", false));
+            Json.put(out, "result", location);
+            Json.put(out, "action_chime", playActionChime("pucky.location_pin_chime.v1"));
+            return out;
+        }
+        if (COMMAND_SCREENSHOT_CAPTURE.equals(command)) {
+            Json.put(out, "result", requireScreenshotController().capture(args == null ? new JSONObject() : args));
+            Json.put(out, "action_chime", playActionChime("pucky.screenshot_capture_chime.v1"));
+            return out;
+        }
+        if (COMMAND_VIDEO_CAPTURE_START.equals(command)) {
+            Json.put(out, "result", requireVideoCaptureController().start(args == null ? new JSONObject() : args));
+            return out;
+        }
+        if (COMMAND_VIDEO_CAPTURE_STOP.equals(command)) {
+            Json.put(out, "result", requireVideoCaptureController().stop(args == null ? new JSONObject() : args));
+            return out;
+        }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
                 "Unsupported keyword action command: " + command);
     }
@@ -64,8 +117,20 @@ public final class SpeechKeywordActionExecutor {
         if (COMMAND_PHOTO_CAPTURE.equals(command)) {
             return sanitizePhoto(action);
         }
+        if (COMMAND_LOCATION_PIN.equals(command)) {
+            return sanitizeLocation(action);
+        }
+        if (COMMAND_SCREENSHOT_CAPTURE.equals(command)) {
+            return sanitizeScreenshot(action);
+        }
+        if (COMMAND_VIDEO_CAPTURE_START.equals(command)) {
+            return sanitizeVideoStart(action);
+        }
+        if (COMMAND_VIDEO_CAPTURE_STOP.equals(command)) {
+            return sanitizeVideoStop(action);
+        }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
-                "Only torch.set and photo.capture keyword actions are supported");
+                "Only torch.set, photo.capture, location.pin, screenshot.capture, video.capture.start, and video.capture.stop keyword actions are supported");
     }
 
     private static JSONObject sanitizeTorch(JSONObject action) throws CommandException {
@@ -116,5 +181,136 @@ public final class SpeechKeywordActionExecutor {
         Json.put(safe, "command", COMMAND_PHOTO_CAPTURE);
         Json.put(safe, "args", args);
         return safe;
+    }
+
+    private static JSONObject sanitizeLocation(JSONObject action) throws CommandException {
+        JSONObject rawArgs = action.optJSONObject("args");
+        if (rawArgs == null) {
+            rawArgs = new JSONObject();
+        }
+        long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_LOCATION_TIMEOUT_MS);
+        if (timeoutMs < 500L || timeoutMs > 30000L) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "location.pin keyword action timeout_ms must be 500..30000");
+        }
+        JSONObject args = new JSONObject();
+        Json.put(args, "timeout_ms", timeoutMs);
+        Json.put(args, "fresh", true);
+        Json.put(args, "publish", false);
+        String provider = rawArgs.optString("provider", "").trim();
+        if (!provider.isEmpty()) {
+            Json.put(args, "provider", provider);
+        }
+        JSONObject safe = new JSONObject();
+        Json.put(safe, "command", COMMAND_LOCATION_PIN);
+        Json.put(safe, "args", args);
+        return safe;
+    }
+
+    private static JSONObject sanitizeScreenshot(JSONObject action) throws CommandException {
+        JSONObject rawArgs = action.optJSONObject("args");
+        if (rawArgs == null) {
+            rawArgs = new JSONObject();
+        }
+        long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_SCREENSHOT_TIMEOUT_MS);
+        if (timeoutMs < 500L || timeoutMs > 10000L) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "screenshot.capture keyword action timeout_ms must be 500..10000");
+        }
+        JSONObject args = new JSONObject();
+        Json.put(args, "timeout_ms", timeoutMs);
+        Json.put(args, "publish", rawArgs.optBoolean("publish", true));
+        JSONObject safe = new JSONObject();
+        Json.put(safe, "command", COMMAND_SCREENSHOT_CAPTURE);
+        Json.put(safe, "args", args);
+        return safe;
+    }
+
+    private static JSONObject sanitizeVideoStart(JSONObject action) throws CommandException {
+        JSONObject rawArgs = action.optJSONObject("args");
+        if (rawArgs == null) {
+            rawArgs = new JSONObject();
+        }
+        int maxWidth = rawArgs.optInt("max_width", DEFAULT_PHOTO_MAX_WIDTH);
+        long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_PHOTO_TIMEOUT_MS);
+        long maxDurationMs = rawArgs.optLong("max_duration_ms", DEFAULT_VIDEO_MAX_DURATION_MS);
+        if (maxWidth < MIN_PHOTO_MAX_WIDTH || maxWidth > MAX_PHOTO_MAX_WIDTH) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "video.capture.start keyword action max_width must be 320..1920");
+        }
+        if (timeoutMs < MIN_PHOTO_TIMEOUT_MS || timeoutMs > MAX_PHOTO_TIMEOUT_MS) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "video.capture.start keyword action timeout_ms must be 1000..15000");
+        }
+        if (maxDurationMs < 5000L || maxDurationMs > 300000L) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "video.capture.start keyword action max_duration_ms must be 5000..300000");
+        }
+        JSONObject args = new JSONObject();
+        Json.put(args, "max_width", maxWidth);
+        Json.put(args, "timeout_ms", timeoutMs);
+        Json.put(args, "max_duration_ms", maxDurationMs);
+        String cameraId = rawArgs.optString("camera_id", "").trim();
+        if (!cameraId.isEmpty()) {
+            Json.put(args, "camera_id", cameraId);
+        }
+        JSONObject safe = new JSONObject();
+        Json.put(safe, "command", COMMAND_VIDEO_CAPTURE_START);
+        Json.put(safe, "args", args);
+        return safe;
+    }
+
+    private static JSONObject sanitizeVideoStop(JSONObject action) {
+        JSONObject safe = new JSONObject();
+        Json.put(safe, "command", COMMAND_VIDEO_CAPTURE_STOP);
+        Json.put(safe, "args", new JSONObject());
+        return safe;
+    }
+
+    private LocationController requireLocationController() throws CommandException {
+        if (locationController == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "location.pin controller unavailable");
+        }
+        return locationController;
+    }
+
+    private ScreenshotController requireScreenshotController() throws CommandException {
+        if (screenshotController == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "screenshot.capture controller unavailable");
+        }
+        return screenshotController;
+    }
+
+    private VideoCaptureController requireVideoCaptureController() throws CommandException {
+        if (videoCaptureController == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "video.capture controller unavailable");
+        }
+        return videoCaptureController;
+    }
+
+    private JSONObject playActionChime(String schema) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", schema);
+        Json.put(out, "stream", "music");
+        Json.put(out, "volume", 85);
+        Json.put(out, "duration_ms", 140);
+        Json.put(out, "played", false);
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, 85);
+            generator.startTone(ToneGenerator.TONE_PROP_ACK, 140);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(240L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-keyword-action-chime").start();
+            Json.put(out, "played", true);
+            Json.put(out, "tone", ToneGenerator.TONE_PROP_ACK);
+        } catch (RuntimeException exc) {
+            Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+        return out;
     }
 }

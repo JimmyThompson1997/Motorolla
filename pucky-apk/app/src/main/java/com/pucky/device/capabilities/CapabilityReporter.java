@@ -91,6 +91,9 @@ public final class CapabilityReporter {
                 "Returns a local WebView-safe URL for app-owned artifacts so HTML media and document viewers can stream cached files."));
         Json.add(out, cap("artifact.delete", "artifact.delete", "implemented", "yes", "privacy_sensitive", null, "not_recorded",
                 "Deletes app-owned artifact paths only."));
+        Json.add(out, cap("pucky.clipboard", "pucky.clipboard.list/pucky.clipboard.last/pucky.clipboard.read/pucky.clipboard.delete/pucky.clipboard.clear",
+                "implemented", "yes", "privacy_sensitive", null, "local_app_private",
+                "Structured app-private ledger for volume-down keyword action calls and artifact references. This is not Android's system clipboard."));
         Json.add(out, cap("command_log.tail", "log.tail", "implemented", "yes", "quiet", null, "not_recorded",
                 "App-local command log tail."));
         Json.add(out, cap("sensor.inventory", "sensor.list", sensorManagerAvailable() ? "implemented" : "blocked_by_hardware",
@@ -111,8 +114,15 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
                 Manifest.permission.CAMERA, "not_recorded", "Bounded still capture into app external files."));
+        Json.add(out, cap("camera.video_capture_lab", "speech.echo.lab.keyword.* action video.capture.start/video.capture.stop", cameraStatus(), "foreground_activity", "visible",
+                Manifest.permission.CAMERA, "local_artifact",
+                "Volume-down keyword lab can start/stop silent local camera video, save app-private MP4, and publish to MediaStore Movies/Pucky."));
         Json.add(out, cap("camera.torch", "torch.set", torchStatus(), "yes", "visible",
                 Manifest.permission.CAMERA, "not_recorded", "Flash torch with bounded auto-off."));
+        Json.add(out, cap("screen.screenshot_lab", "speech.echo.lab.keyword.* action screenshot.capture",
+                Build.VERSION.SDK_INT >= 30 ? "implemented_untested" : "blocked_by_platform",
+                "user_enabled_accessibility", "visible", "BIND_ACCESSIBILITY_SERVICE", "local_artifact",
+                "Volume-down keyword lab screenshot action uses Pucky AccessibilityService takeScreenshot on API 30+ and publishes image artifacts."));
         Json.add(out, cap("notification.show", "notify.show", notificationStatus(), "yes", "visible",
                 Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "Quiet local notification."));
         Json.add(out, cap("notification.ask_reply", "notify.ask", notificationStatus(), "yes", "visible",
@@ -157,7 +167,7 @@ public final class CapabilityReporter {
                 "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
         Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/speech.echo.lab.keyword.list/speech.echo.lab.keyword.set/speech.echo.lab.keyword.delete/speech.echo.lab.keyword.clear/speech.echo.lab.keyword.test",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Volume-down-only audio lab with exact-utterance keyword actions. Default engine uses button-bounded Android STT/TTS echo; frame-bus, VAD, and openWakeWord metrics stay isolated from volume-up, power-hold, broker, and LiveKit paths."));
+                "Volume-down-only audio lab with exact-utterance keyword actions. Matched actions are recorded to Pucky Clipboard; frame-bus, VAD, and openWakeWord metrics stay isolated from volume-up, power-hold, and broker paths."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",
@@ -197,9 +207,9 @@ public final class CapabilityReporter {
                 "not_recorded", "Maintains an in-memory queue of app-owned audio artifacts or prepared audiobook files."));
         Json.add(out, cap("player.bookmark", "player.bookmark.save/player.bookmark.list", "implemented_untested", "yes", "quiet", null,
                 "not_recorded", "Stores app-local playback bookmarks for audio/podcast-style resume points."));
-        Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/livekit.ptt.start/livekit.ptt.stop", "implemented_untested",
+        Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/pucky.turn.start/pucky.turn.stop", "implemented_untested",
                 "foreground_only", "quiet", null, "not_recorded",
-                "Captures configurable volume-button gestures while Pucky Activity is foreground. Default v8 policy keeps single volume presses as normal media volume, maps volume-up hold/release to LiveKit PTT, and maps volume-down hold to Vox reply pause/resume. Global/screen-off capture remains future Device Owner/root research."));
+                "Captures configurable volume-button gestures while Pucky Activity is foreground. Current policy keeps single volume presses as normal media volume, maps volume-up hold/release to pucky.turn.start/stop, and maps volume-down hold/release to speech.echo.lab.start/stop. Global/screen-off capture remains future Device Owner/root research."));
         Json.add(out, cap("timer.local", "timer.set", notificationStatusForTimer(), "yes", "visible",
                 Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "AlarmManager elapsed timer; notification requires notification permission."));
         Json.add(out, cap("timer.cancel", "timer.cancel", "implemented_untested", "yes", "quiet", null, "not_recorded",

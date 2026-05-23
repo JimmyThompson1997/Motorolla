@@ -24,6 +24,7 @@ import android.speech.tts.Voice;
 import android.util.Log;
 
 import com.pucky.device.audio.AudioRouteDetector;
+import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.speech.lab.AudioFrameBus;
@@ -77,6 +78,7 @@ public final class SpeechEchoLabController {
     private final SpeechEchoController directEcho;
     private final AudioRouteDetector routeDetector;
     private final SpeechKeywordActionExecutor keywordActionExecutor;
+    private final PuckyClipboardController clipboardController;
     private final Handler main;
 
     private JSONObject active;
@@ -109,6 +111,7 @@ public final class SpeechEchoLabController {
         this.directEcho = SpeechEchoController.shared(this.context);
         this.routeDetector = new AudioRouteDetector(this.context);
         this.keywordActionExecutor = new SpeechKeywordActionExecutor(this.context);
+        this.clipboardController = PuckyClipboardController.shared(this.context);
         this.main = new Handler(Looper.getMainLooper());
         ensureDefaults();
     }
@@ -337,13 +340,16 @@ public final class SpeechEchoLabController {
         Json.put(out, "action", keyword.action);
         if (execute) {
             try {
-                Json.put(out, "action_result", keywordActionExecutor.execute(keyword.action));
+                JSONObject actionResult = keywordActionExecutor.execute(keyword.action);
+                Json.put(out, "action_result", actionResult);
                 Json.put(out, "action_status", "succeeded");
             } catch (CommandException exc) {
                 Json.put(out, "action_status", "failed");
                 Json.put(out, "action_error_code", exc.code());
                 Json.put(out, "action_error_message", exc.getMessage());
             }
+            Json.put(out, "pucky_clipboard",
+                    clipboardController.append(keywordTestClipboardEntry(args.optString("text", ""), keyword, out)));
         }
         return out;
     }
@@ -747,7 +753,11 @@ public final class SpeechEchoLabController {
                 ttsText = failureReply(keyword);
             }
         }
-        boolean skipSuccessTts = keyword.matched && !actionFailed && isPhotoCaptureAction(keyword);
+        String replyOverride = actionResultReplyOverride(actionResult);
+        if (replyOverride != null) {
+            ttsText = replyOverride;
+        }
+        boolean skipSuccessTts = keyword.matched && !actionFailed && shouldSkipSuccessTts(keyword, actionResult);
         if (skipSuccessTts) {
             ttsText = "";
         }
@@ -764,7 +774,7 @@ public final class SpeechEchoLabController {
         Json.put(active, "keyword_reply_text", keyword.matched ? keyword.replyText : JSONObject.NULL);
         Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched && !skipSuccessTts);
         Json.put(active, "keyword_reply_tts_skipped_reason",
-                skipSuccessTts ? "photo_capture_confirms_with_local_chime" : JSONObject.NULL);
+                skipSuccessTts ? "keyword_action_confirms_with_local_chime" : JSONObject.NULL);
         Json.put(active, "keyword_builtin", keyword.matched ? keyword.builtin : JSONObject.NULL);
         Json.put(active, "keyword_action", keyword.hasAction() ? keyword.action : JSONObject.NULL);
         Json.put(active, "keyword_action_command",
@@ -773,11 +783,18 @@ public final class SpeechEchoLabController {
         Json.put(active, "keyword_action_result", actionResult == null ? JSONObject.NULL : actionResult);
         Json.put(active, "keyword_action_error_code", actionErrorCode.isEmpty() ? JSONObject.NULL : actionErrorCode);
         Json.put(active, "keyword_action_error_message", actionErrorMessage.isEmpty() ? JSONObject.NULL : actionErrorMessage);
+        if (keyword.matched && keyword.hasAction()) {
+            JSONObject clipboard = clipboardController.append(PuckyClipboardController.entryFromLabSession(active));
+            Json.put(active, "pucky_clipboard_entry", clipboard.optJSONObject("entry"));
+            Json.put(active, "pucky_clipboard_saved", clipboard.optBoolean("saved", false));
+        } else {
+            Json.put(active, "pucky_clipboard_saved", false);
+        }
         Json.put(active, "state", "Speaking");
         Json.put(active, "accepted_at", Instant.now().toString());
         Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
         Json.put(active, "tts_text", ttsText);
-        Json.put(active, "tts_status", skipSuccessTts ? "skipped_photo_capture_chime" : "scheduled");
+        Json.put(active, "tts_status", skipSuccessTts ? "skipped_keyword_action_chime" : "scheduled");
         JSONObject finished = active;
         appendSession(finished);
         active = null;
@@ -791,17 +808,36 @@ public final class SpeechEchoLabController {
             String finalTtsText = ttsText;
             main.postDelayed(() -> speakEcho(sessionId, finalTtsText), TTS_AFTER_ACCEPTED_CHIME_MS);
         } else {
-            markTts(sessionId, "skipped_photo_capture_chime", "", null);
+            markTts(sessionId, "skipped_keyword_action_chime", "", null);
         }
         Log.i(TAG, "captured audio echo recognized session=" + sessionId
                 + " text_len=" + text.length()
                 + " keyword=" + (keyword.matched ? keyword.id : "none"));
     }
 
-    private static boolean isPhotoCaptureAction(SpeechKeywordMatcher.Match keyword) {
+    private static boolean shouldSkipSuccessTts(SpeechKeywordMatcher.Match keyword, JSONObject actionResult) {
         return keyword != null
                 && keyword.hasAction()
-                && SpeechKeywordActionExecutor.COMMAND_PHOTO_CAPTURE.equals(keyword.action.optString("command", ""));
+                && actionResultReplyOverride(actionResult) == null
+                && isChimeOnlySuccessAction(keyword.action.optString("command", ""));
+    }
+
+    private static boolean isChimeOnlySuccessAction(String command) {
+        return SpeechKeywordActionExecutor.COMMAND_PHOTO_CAPTURE.equals(command)
+                || SpeechKeywordActionExecutor.COMMAND_LOCATION_PIN.equals(command)
+                || SpeechKeywordActionExecutor.COMMAND_SCREENSHOT_CAPTURE.equals(command)
+                || SpeechKeywordActionExecutor.COMMAND_VIDEO_CAPTURE_START.equals(command);
+    }
+
+    private static String actionResultReplyOverride(JSONObject actionResult) {
+        if (actionResult == null) {
+            return null;
+        }
+        JSONObject result = actionResult.optJSONObject("result");
+        if (result == null || !result.has("reply_text_override")) {
+            return null;
+        }
+        return result.optString("reply_text_override", "");
     }
 
     private synchronized void failActiveCapturedSessionById(String sessionId, String code, String message) {
@@ -941,6 +977,27 @@ public final class SpeechEchoLabController {
                 .putString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS,
                         entries == null ? "[]" : entries.toString())
                 .commit();
+    }
+
+    private static JSONObject keywordTestClipboardEntry(
+            String text,
+            SpeechKeywordMatcher.Match keyword,
+            JSONObject testResult) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.clipboard_entry.v1");
+        Json.put(out, "source", "keyword_test");
+        Json.put(out, "raw_transcript", text);
+        Json.put(out, "normalized_transcript", keyword.normalizedTranscript);
+        Json.put(out, "keyword_id", keyword.id);
+        Json.put(out, "keyword_phrase", keyword.phrase);
+        Json.put(out, "keyword_source", keyword.source);
+        Json.put(out, "match_strategy", "exact_utterance");
+        Json.put(out, "action_command", keyword.action == null ? JSONObject.NULL : keyword.action.optString("command", ""));
+        Json.put(out, "action_status", testResult.optString("action_status", "unknown"));
+        Json.put(out, "action_result", testResult.opt("action_result"));
+        Json.put(out, "action_error_code", testResult.opt("action_error_code"));
+        Json.put(out, "action_error_message", testResult.opt("action_error_message"));
+        return out;
     }
 
     private static String failureReply(SpeechKeywordMatcher.Match keyword) {

@@ -89,6 +89,24 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
+    public void nativeCommandExecutorAllowlistsPuckyClipboardCommands() throws Exception {
+        String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
+
+        assertTrue(source.contains("\"pucky.clipboard.list\""));
+        assertTrue(source.contains("\"pucky.clipboard.last\""));
+        assertTrue(source.contains("\"pucky.clipboard.read\""));
+        assertTrue(source.contains("\"pucky.clipboard.delete\""));
+        assertTrue(source.contains("\"pucky.clipboard.clear\""));
+        assertTrue(source.contains("return puckyClipboardController.list(command.args())"));
+        assertTrue(source.contains("return puckyClipboardController.last()"));
+        assertTrue(source.contains("return puckyClipboardController.read(command.args())"));
+        assertTrue(source.contains("return puckyClipboardController.delete(command.args())"));
+        assertTrue(source.contains("return puckyClipboardController.clear()"));
+        assertTrue(service.contains("PuckyClipboardController.shared(this)"));
+    }
+
+    @Test
     public void controllerPostsRawAudioAndCreatesOneFeedCard() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
         String store = read("src/main/java/com/pucky/device/ui/ReplyCardStore.java");

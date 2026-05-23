@@ -17,6 +17,10 @@ public final class PuckyAccessibilityService extends AccessibilityService {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && activeService != null;
     }
 
+    public static PuckyAccessibilityService activeService() {
+        return activeService;
+    }
+
     public static boolean lockScreen() {
         PuckyAccessibilityService service = activeService;
         if (service == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {

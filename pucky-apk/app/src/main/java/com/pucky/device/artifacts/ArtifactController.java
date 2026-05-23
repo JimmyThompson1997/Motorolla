@@ -36,7 +36,9 @@ public final class ArtifactController {
     public JSONObject list(JSONObject args) {
         JSONArray artifacts = new JSONArray();
         addFiles(artifacts, context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "photo");
+        addFiles(artifacts, context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "video");
         addFiles(artifacts, new File(context.getFilesDir(), "pictures"), "photo");
+        addFiles(artifacts, new File(context.getFilesDir(), "videos"), "video");
         addFiles(artifacts, new File(context.getFilesDir(), "downloads"), "download");
         addFiles(artifacts, new File(context.getFilesDir(), "voice"), "voice_capture");
         addFiles(artifacts, context.getFilesDir(), "app_file");

@@ -39,6 +39,7 @@ import com.pucky.device.broker.BrokerControlClient;
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.capabilities.CapabilityReporter;
 import com.pucky.device.capabilities.PermissionReporter;
+import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandRouter;
 import com.pucky.device.command.NativeCommandExecutor;
 import com.pucky.device.files.FileDownloadController;
@@ -260,6 +261,7 @@ public final class PuckyForegroundService extends Service {
                 new IntentController(this),
                 new NoteController(this),
                 new ArtifactController(this),
+                PuckyClipboardController.shared(this),
                 new LocationController(this),
                 new FileDownloadController(this),
                 new MediaControlController(this),

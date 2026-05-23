@@ -41,8 +41,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 53
-        versionName "0.2.52-turn-indicator"
+        versionCode 54
+        versionName "0.2.53-keyword-media-actions"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

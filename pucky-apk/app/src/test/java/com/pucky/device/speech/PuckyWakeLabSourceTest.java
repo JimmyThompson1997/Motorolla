@@ -119,9 +119,11 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("keyword_match_strategy"));
         assertTrue(source.contains("exact_utterance"));
         assertTrue(source.contains("keyword_reply_tts_replaces_echo"));
-        assertTrue(source.contains("photo_capture_confirms_with_local_chime"));
-        assertTrue(source.contains("skipped_photo_capture_chime"));
-        assertTrue(source.contains("isPhotoCaptureAction"));
+        assertTrue(source.contains("keyword_action_confirms_with_local_chime"));
+        assertTrue(source.contains("skipped_keyword_action_chime"));
+        assertTrue(source.contains("shouldSkipSuccessTts"));
+        assertTrue(source.contains("PuckyClipboardController.entryFromLabSession(active)"));
+        assertTrue(source.contains("pucky_clipboard_saved"));
         assertTrue(source.contains("keyword_action_status"));
         assertTrue(source.contains("keyword_action_result"));
         assertTrue(source.contains("keyword_action_error_message"));
@@ -131,13 +133,15 @@ public final class PuckyWakeLabSourceTest {
     }
 
     @Test
-    public void programmableKeywordActionsAreLabScopedAndCameraOnly() throws Exception {
+    public void programmableKeywordActionsAreLabScopedAndAllowlisted() throws Exception {
         String controller = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
         String registry = read("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java");
         String executor = read("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java");
+        String clipboard = read("src/main/java/com/pucky/device/clipboard/PuckyClipboardController.java");
 
         assertTrue(controller.contains("speech.echo.lab.keyword.test requires text"));
         assertTrue(controller.contains("SpeechKeywordRegistry.list(customKeywordEntries())"));
+        assertTrue(controller.contains("clipboardController.append"));
         assertTrue(registry.contains("PREF_CUSTOM_KEYWORDS"));
         assertTrue(registry.contains("Built-in speech keywords cannot be overwritten"));
         assertTrue(registry.contains("speech keyword phrase duplicates existing phrase"));
@@ -147,8 +151,19 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("MAX_TORCH_AUTO_OFF_MS = 1500"));
         assertTrue(executor.contains("COMMAND_PHOTO_CAPTURE = \"photo.capture\""));
         assertTrue(executor.contains("DEFAULT_PHOTO_MAX_WIDTH = 1280"));
+        assertTrue(executor.contains("COMMAND_LOCATION_PIN = \"location.pin\""));
+        assertTrue(executor.contains("DEFAULT_LOCATION_TIMEOUT_MS = 4000L"));
+        assertTrue(executor.contains("COMMAND_SCREENSHOT_CAPTURE = \"screenshot.capture\""));
+        assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_START = \"video.capture.start\""));
+        assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_STOP = \"video.capture.stop\""));
         assertTrue(executor.contains("cameraController.capture"));
+        assertTrue(executor.contains("locationController"));
+        assertTrue(executor.contains("screenshotController"));
+        assertTrue(executor.contains("videoCaptureController"));
         assertTrue(executor.contains("new CameraController(context)"));
+        assertTrue(clipboard.contains("android_system_clipboard\", false"));
+        assertTrue(clipboard.contains("MAX_ENTRIES = 250"));
+        assertTrue(clipboard.contains("RETENTION_MS = 30L * 24L * 60L * 60L * 1000L"));
         assertFalse(executor.contains("LiveKit"));
         assertFalse(executor.contains("pucky.turn"));
         assertFalse(executor.contains("shell.exec"));

@@ -10,6 +10,7 @@ import com.pucky.device.buttons.ButtonController;
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.capabilities.CapabilityReporter;
 import com.pucky.device.capabilities.PermissionReporter;
+import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
@@ -53,6 +54,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
             "screen.lock.status", "screen.lock.request", "screen.lock.open_accessibility_settings",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.url", "artifact.delete",
+            "pucky.clipboard.list", "pucky.clipboard.last", "pucky.clipboard.read",
+            "pucky.clipboard.delete", "pucky.clipboard.clear",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
@@ -115,6 +118,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final IntentController intentController;
     private final NoteController noteController;
     private final ArtifactController artifactController;
+    private final PuckyClipboardController puckyClipboardController;
     private final LocationController locationController;
     private final FileDownloadController fileDownloadController;
     private final MediaControlController mediaControlController;
@@ -154,6 +158,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             IntentController intentController,
             NoteController noteController,
             ArtifactController artifactController,
+            PuckyClipboardController puckyClipboardController,
             LocationController locationController,
             FileDownloadController fileDownloadController,
             MediaControlController mediaControlController,
@@ -191,6 +196,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.intentController = intentController;
         this.noteController = noteController;
         this.artifactController = artifactController;
+        this.puckyClipboardController = puckyClipboardController;
         this.locationController = locationController;
         this.fileDownloadController = fileDownloadController;
         this.mediaControlController = mediaControlController;
@@ -285,6 +291,16 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return artifactController.url(command.args());
             case "artifact.delete":
                 return artifactController.delete(command.args());
+            case "pucky.clipboard.list":
+                return puckyClipboardController.list(command.args());
+            case "pucky.clipboard.last":
+                return puckyClipboardController.last();
+            case "pucky.clipboard.read":
+                return puckyClipboardController.read(command.args());
+            case "pucky.clipboard.delete":
+                return puckyClipboardController.delete(command.args());
+            case "pucky.clipboard.clear":
+                return puckyClipboardController.clear();
             case "log.tail":
                 return logTail(command.args());
             case "notify.show":
