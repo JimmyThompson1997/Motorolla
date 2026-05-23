@@ -1159,10 +1159,7 @@
   async function documentViewer(item) {
     const htmlSrc = documentHtmlSrc(item);
     if (htmlSrc) {
-      const frame = el("iframe", "document-frame");
-      frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-      frame.src = htmlSrc;
-      return frame;
+      return documentHtmlViewer(htmlSrc, item);
     }
     const kind = attachmentKind(item);
     const wrap = el("section", "document-fallback");
@@ -1176,6 +1173,28 @@
       wrap.append(link);
     } catch (error) {
       wrap.append(el("p", "attachment-error", `Attachment unavailable: ${error.message}`));
+    }
+    return wrap;
+  }
+
+  async function documentHtmlViewer(src, item) {
+    const wrap = el("article", "document-rendered");
+    wrap.dataset.kind = attachmentKind(item);
+    try {
+      const response = await fetch(src, { cache: "force-cache" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const text = await response.text();
+      const parsed = new DOMParser().parseFromString(text, "text/html");
+      const children = Array.from(parsed.body ? parsed.body.children : []);
+      if (!children.length) {
+        throw new Error("Document HTML was empty");
+      }
+      children.forEach(child => wrap.append(document.importNode(child, true)));
+    } catch (error) {
+      wrap.append(attachmentMeta(item, "Document"));
+      wrap.append(el("p", "attachment-error", `Document preview unavailable: ${error.message}`));
     }
     return wrap;
   }
