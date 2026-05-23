@@ -426,8 +426,12 @@ button {
     transform 180ms ease;
 }
 
+.feed-refresh.is-resetting {
+  transition: none;
+}
+
 .feed-refresh.is-armed .feed-refresh-spinner {
-  border-color: rgba(58, 132, 255, 0.24);
+  border-color: rgba(245, 249, 255, 0.2);
 }
 
 .feed-refresh.is-refreshing {
@@ -458,15 +462,15 @@ button {
 }
 
 .feed-refresh.is-refreshing .feed-refresh-spinner {
-  border-color: rgba(58, 132, 255, 0.2);
+  border-color: rgba(245, 249, 255, 0.18);
   box-shadow:
     0 8px 20px rgba(0, 0, 0, 0.28),
-    0 0 16px rgba(58, 132, 255, 0.24);
+    0 0 16px rgba(245, 249, 255, 0.12);
   animation-play-state: running;
 }
 
 .feed-refresh.is-armed .feed-refresh-spinner::after {
-  background: conic-gradient(from 8deg, var(--blue) 0deg 44deg, transparent 44deg 360deg);
+  background: conic-gradient(from 8deg, #f5f9ff 0deg 44deg, transparent 44deg 360deg);
 }
 
 .feed-refresh.is-refreshing .feed-refresh-spinner::after {

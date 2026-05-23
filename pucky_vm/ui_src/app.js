@@ -2578,6 +2578,21 @@
     indicator.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
+  function resetFeedRefreshIndicator() {
+    const indicator = document.getElementById("feedRefresh");
+    if (!indicator) {
+      return;
+    }
+    indicator.classList.add("is-resetting");
+    indicator.style.setProperty("--feed-refresh-pull", "0px");
+    indicator.style.setProperty("--feed-refresh-progress", "0");
+    indicator.classList.remove("is-visible", "is-armed", "is-refreshing", "is-closing");
+    indicator.setAttribute("aria-hidden", "true");
+    requestAnimationFrame(() => {
+      indicator.classList.remove("is-resetting");
+    });
+  }
+
   function releaseFeedPull(feed) {
     feed.classList.remove("is-rubber-banding");
     feed.classList.add("is-rubber-band-release");
@@ -2596,7 +2611,7 @@
     updateFeedRefreshIndicator({ offset: FEED_REFRESH_HOLD_OFFSET, closing: true });
     state.feedRefreshCloseTimer = window.setTimeout(() => {
       state.feedRefreshCloseTimer = 0;
-      updateFeedRefreshIndicator({ offset: 0 });
+      resetFeedRefreshIndicator();
     }, 170);
   }
 

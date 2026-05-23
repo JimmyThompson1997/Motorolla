@@ -192,6 +192,7 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert "function refreshFeedCards()" in app
     assert "state.feedRefreshPromise" in app
     assert "state.feedRefreshCloseTimer" in app
+    assert "function resetFeedRefreshIndicator()" in app
     assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
     assert 'pullDirection === "top" && refreshArmed' in app
     assert 'pullDirection === "bottom"' in app
@@ -206,8 +207,10 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert ".feed-refresh" in styles
     assert ".feed-refresh.is-refreshing" in styles
     assert ".feed-refresh.is-closing" in styles
+    assert ".feed-refresh.is-resetting" in styles
     assert "animation: feedRefreshSpin 0.21s linear infinite;" in styles
     assert "conic-gradient(from 8deg, #f5f9ff 0deg 44deg" in styles
+    assert "var(--blue) 0deg 44deg" not in styles
     assert "@keyframes feedRefreshSpin" in styles
     assert ".feed.is-rubber-banding" in styles
     assert ".feed.is-rubber-band-release" in styles
