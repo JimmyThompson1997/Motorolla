@@ -196,16 +196,16 @@ button {
 }
 
 .voice-status-idle::after,
-.voice-status-recording::after,
+.voice-status-armed::after,
 .voice-status-uploading::after {
   display: none;
 }
 
-.voice-status-recording {
+.voice-status-armed {
   --voice-color: #3a84ff;
 }
 
-.voice-status-recording::before {
+.voice-status-armed::before {
   box-shadow: none;
 }
 
@@ -219,15 +219,15 @@ button {
     0 0 14px color-mix(in srgb, var(--voice-color) 48%, transparent);
 }
 
-.voice-status-hearing {
+.voice-status-recording {
   --voice-color: #ff3b30;
 }
 
-.voice-status-hearing::before {
+.voice-status-recording::before {
   animation: voicePulse 1.15s ease-in-out infinite;
 }
 
-.voice-status-hearing::after {
+.voice-status-recording::after {
   animation: voiceRing 1.15s ease-in-out infinite;
 }
 

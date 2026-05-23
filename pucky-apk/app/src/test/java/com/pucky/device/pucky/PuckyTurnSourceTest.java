@@ -141,12 +141,14 @@ public final class PuckyTurnSourceTest {
         String store = read("src/main/java/com/pucky/device/ui/ReplyCardStore.java");
 
         assertTrue(source.contains("VoiceCaptureController.shared(context).start(startArgs)"));
+        assertTrue(source.contains("String clientTurnId = generateClientTurnId()"));
+        assertTrue(source.contains("SpeechGate gate = new SpeechGate"));
+        assertTrue(source.contains("startSpeechGatePoll(localSessionId, clientTurnId, gate)"));
         assertTrue(source.contains("Json.put(startArgs, \"format\", \"m4a\")"));
         assertTrue(source.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
         assertTrue(source.contains("MediaType.get(\"audio/mp4\")"));
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
-        assertTrue(source.contains("String clientTurnId = generateClientTurnId()"));
         assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("new File(context.getFilesDir(), \"pucky_replies\""));
@@ -182,6 +184,11 @@ public final class PuckyTurnSourceTest {
 
         assertTrue(source.contains("Json.put(out, \"player_state\", player)"));
         assertTrue(source.contains("Json.put(out, \"indicator\", indicator)"));
+        assertTrue(source.contains("Json.put(out, \"visual_state\", indicator.optString(\"visual_state\", \"idle\"))"));
+        assertTrue(source.contains("Json.put(out, \"speech_gate\", gate == null ? JSONObject.NULL : gate)"));
+        assertTrue(source.contains("Json.put(out, \"speech_detected\", indicator.optBoolean(\"speech_detected\", false))"));
+        assertTrue(source.contains("Json.put(out, \"peak_amplitude\", indicator.optInt(\"peak_amplitude\", 0))"));
+        assertTrue(source.contains("Json.put(out, \"samples_over_threshold\", indicator.optInt(\"samples_over_threshold\", 0))"));
         assertTrue(source.contains("Json.put(out, \"mic_on\", indicator.optBoolean(\"mic_on\", false))"));
         assertTrue(source.contains("Json.put(out, \"hearing\", indicator.optBoolean(\"hearing\", false))"));
         assertTrue(source.contains("Json.put(out, \"uploading\", indicator.optBoolean(\"uploading\", false))"));
@@ -189,14 +196,29 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(out, \"speaking\", indicator.optBoolean(\"speaking\", false))"));
         assertTrue(source.contains("Json.put(out, \"failed\", indicator.optBoolean(\"failed\", false))"));
         assertTrue(source.contains("\"pucky.turn_indicator.v1\""));
+        assertTrue(source.contains("\"armed\""));
+        assertTrue(source.contains("\"discarded_silence\""));
+        assertTrue(source.contains("visualStateFor(state"));
         assertTrue(source.contains("boolean codexRunning"));
         assertTrue(source.contains("Json.put(out, \"codex_running\", codexRunning)"));
-        assertTrue(source.contains("micOn || uploading || codexRunning || speaking"));
-        assertTrue(capture.contains("HEARING_AMPLITUDE_THRESHOLD"));
+        assertTrue(source.contains("micOn || uploading || codexRunning || speaking || failed"));
+        assertTrue(capture.contains("VOICE_CAPTURE_AMPLITUDE_THRESHOLD"));
         assertTrue(capture.contains("recorder.getMaxAmplitude()"));
+        assertTrue(capture.contains("public synchronized int sampleAmplitude()"));
+        assertTrue(capture.contains("public synchronized JSONObject discard(JSONObject args)"));
         assertTrue(capture.contains("Json.put(out, \"amplitude\", amplitude)"));
-        assertTrue(capture.contains("Json.put(out, \"hearing\", active != null && amplitude >= HEARING_AMPLITUDE_THRESHOLD)"));
+        assertTrue(capture.contains("Json.put(out, \"hearing\", active != null && amplitude >= VOICE_CAPTURE_AMPLITUDE_THRESHOLD)"));
         assertFalse(source.contains("Json.put(out, \"token\""));
+    }
+
+    @Test
+    public void silentWalkieReleaseDiscardsCaptureWithoutUpload() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+
+        assertTrue(source.contains("if (!speechDetected)"));
+        assertTrue(source.contains("VoiceCaptureController.shared(context).discard(stopArgs)"));
+        assertTrue(source.contains("markStatus(\"discarded_silence\", out, null)"));
+        assertFalse(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes);") && !source.contains("if (!speechDetected)"));
     }
 
     @Test

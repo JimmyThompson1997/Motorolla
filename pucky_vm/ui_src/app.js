@@ -120,7 +120,6 @@
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
 
-  const TURN_HEARING_HOLD_MS = 480;
   const TURN_FAILED_FLASH_MS = 900;
 
   const MOCK_SETTINGS = [
@@ -257,7 +256,6 @@
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
     turn: initialTurnStatus(),
-    turnHearingUntil: 0,
     turnFailedUntil: 0,
     turnFailureKey: "",
     activePath: "",
@@ -526,23 +524,6 @@
     });
   }
 
-  function normalizeVoiceState(input) {
-    const raw = typeof input === "object" && input
-      ? String(input.state || input.mode || input.voice_state || "")
-      : String(input || "");
-    const value = raw.trim().toLowerCase();
-    if (["hearing", "speech"].includes(value)) {
-      return "hearing";
-    }
-    if (["recording", "capturing", "sending", "listening"].includes(value)) {
-      return "recording";
-    }
-    if (["speaking", "talking", "tts", "playing"].includes(value)) {
-      return "speaking";
-    }
-    return "idle";
-  }
-
   function initialTurnStatus() {
     return {
       schema: "pucky.turn_status.v1",
@@ -550,8 +531,9 @@
       indicator: {
         schema: "pucky.turn_indicator.v1",
         state: "idle",
+        visual_state: "idle",
         mic_on: false,
-        hearing: false,
+        speech_detected: false,
         uploading: false,
         stt_running: false,
         codex_running: false,
@@ -566,7 +548,6 @@
 
   function applyTurnStatus(input) {
     state.turn = normalizeTurnStatus(input);
-    noteHearingSample(state.turn.indicator);
     if (state.turn.indicator.failed || state.turn.indicator.state === "failed") {
       const failureKey = turnFailureKey(input);
       if (failureKey !== state.turnFailureKey) {
@@ -577,20 +558,11 @@
   }
 
   function applyVoiceState(input) {
-    const voiceState = normalizeVoiceState(input);
-    const micOn = voiceState === "recording" || voiceState === "hearing";
-    const merged = {
-      ...state.turn,
-      voice_capture: input || {},
-      indicator: {
-        ...(state.turn.indicator || {}),
-        state: voiceState,
-        mic_on: micOn,
-        hearing: voiceState === "hearing",
-        speaking: voiceState === "speaking"
-      }
-    };
-    applyTurnStatus(merged);
+    if (input && typeof input === "object" && input.schema === "pucky.turn_status.v1") {
+      applyTurnStatus(input);
+      return;
+    }
+    loadTurnStatus({ render: false });
   }
 
   function normalizeTurnStatus(input) {
@@ -599,11 +571,14 @@
     const rawLast = raw.last_status && typeof raw.last_status === "object" ? raw.last_status : {};
     const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || rawLast.remote_stage || "").trim();
     const rawState = String(rawIndicator.state || raw.state || rawLast.state || "idle").trim();
+    const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || rawLast.visual_state || rawState).trim();
     const indicator = {
       schema: "pucky.turn_indicator.v1",
       state: normalizeTurnState(rawState),
+      visual_state: normalizeVisualState(rawVisualState),
       mic_on: truthy(rawIndicator.mic_on ?? raw.mic_on),
       hearing: truthy(rawIndicator.hearing ?? raw.hearing),
+      speech_detected: truthy(rawIndicator.speech_detected ?? raw.speech_detected),
       uploading: truthy(rawIndicator.uploading ?? raw.uploading),
       stt_running: truthy(rawIndicator.stt_running ?? raw.stt_running) || remoteStage === "stt_running",
       codex_running: truthy(rawIndicator.codex_running ?? raw.codex_running) || remoteStage === "codex_running",
@@ -613,20 +588,31 @@
       active: truthy(rawIndicator.active ?? raw.active),
       remote_stage: remoteStage,
       amplitude: safeNumber(rawIndicator.amplitude ?? raw.amplitude),
-      elapsed_ms: safeNumber(rawIndicator.elapsed_ms ?? raw.elapsed_ms)
+      elapsed_ms: safeNumber(rawIndicator.elapsed_ms ?? raw.elapsed_ms),
+      peak_amplitude: safeNumber(rawIndicator.peak_amplitude ?? raw.peak_amplitude),
+      samples_over_threshold: safeNumber(rawIndicator.samples_over_threshold ?? raw.samples_over_threshold),
+      gate_latency_ms: safeNumber(rawIndicator.gate_latency_ms ?? raw.gate_latency_ms)
     };
     if (indicator.codex_running) {
       indicator.state = "codex_running";
+      indicator.visual_state = "thinking";
     } else if (indicator.speaking) {
       indicator.state = "speaking";
-    } else if (indicator.hearing) {
-      indicator.state = "hearing";
-    } else if (indicator.mic_on) {
-      indicator.state = "recording";
+      indicator.visual_state = "speaking";
     } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
       indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
+      indicator.visual_state = "uploading";
     } else if (indicator.failed) {
       indicator.state = "failed";
+      indicator.visual_state = "failed";
+    } else if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
+      indicator.state = "recording";
+      indicator.visual_state = "recording";
+    } else if (indicator.mic_on || indicator.state === "armed") {
+      indicator.state = "armed";
+      indicator.visual_state = "armed";
+    } else if (indicator.state === "discarded_silence") {
+      indicator.visual_state = "idle";
     }
     indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.stt_running || indicator.codex_running || indicator.tts_running || indicator.speaking;
     return {
@@ -643,16 +629,21 @@
 
   function normalizeTurnState(input) {
     const value = String(input || "").trim().toLowerCase();
-    if (["recording", "hearing", "uploading", "stt_running", "codex_running", "tts_running", "speaking", "failed"].includes(value)) {
+    if (["armed", "recording", "discarded_silence", "uploading", "stt_running", "codex_running", "tts_running", "speaking", "failed"].includes(value)) {
       return value;
     }
     return "idle";
   }
 
-  function noteHearingSample(indicator) {
-    if (indicator && indicator.hearing) {
-      state.turnHearingUntil = Date.now() + TURN_HEARING_HOLD_MS;
+  function normalizeVisualState(input) {
+    const value = String(input || "").trim().toLowerCase();
+    if (["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"].includes(value)) {
+      return value;
     }
+    if (["stt_running", "tts_running", "upload_received"].includes(value)) return "uploading";
+    if (value === "codex_running") return "thinking";
+    if (value === "discarded_silence") return "idle";
+    return "idle";
   }
 
   function turnVisualState(status) {
@@ -661,29 +652,14 @@
     if (now < state.turnFailedUntil) {
       return "failed";
     }
-    if (indicator.speaking) {
-      return "speaking";
-    }
-    if (indicator.codex_running || indicator.state === "codex_running") {
-      return "thinking";
-    }
-    if (indicator.hearing || (indicator.mic_on && now < state.turnHearingUntil)) {
-      return "hearing";
-    }
-    if (indicator.mic_on || indicator.state === "recording") {
-      return "recording";
-    }
-    if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
-      return "uploading";
-    }
-    return "idle";
+    return normalizeVisualState(indicator.visual_state || indicator.state);
   }
 
   function turnStateLabel(visualState) {
     const labels = {
       idle: "idle",
+      armed: "armed",
       recording: "recording",
-      hearing: "hearing speech",
       uploading: "uploading",
       thinking: "thinking",
       speaking: "speaking",
@@ -701,7 +677,7 @@
 
   function isTurnActive(status) {
     const indicator = turnIndicatorFromStatus(status);
-    return Boolean(indicator.active || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil || Date.now() < state.turnHearingUntil);
+    return Boolean(indicator.active || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil);
   }
 
   function truthy(value) {

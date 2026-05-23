@@ -28,13 +28,13 @@ public final class VoiceCaptureController {
     private static final int MAX_CAPTURES = 100;
     private static final int DEFAULT_MAX_DURATION_MS = 10 * 60 * 1000;
     private static final int HARD_MAX_DURATION_MS = 30 * 60 * 1000;
-    private static final int MIN_FINALIZE_DURATION_MS = 1200;
+    private static final int MIN_FINALIZE_DURATION_MS = 250;
     private static final int READY_HAPTIC_MS = 55;
     private static final int RELEASE_HAPTIC_MS = 40;
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int SAVED_CHIME_VOLUME = 85;
-    private static final int HEARING_AMPLITUDE_THRESHOLD = 1200;
+    public static final int VOICE_CAPTURE_AMPLITUDE_THRESHOLD = 1200;
 
     private static VoiceCaptureController shared;
 
@@ -79,9 +79,13 @@ public final class VoiceCaptureController {
         Json.put(out, "permission", permissionJson());
         Json.put(out, "mic_on", active != null);
         Json.put(out, "amplitude", amplitude);
-        Json.put(out, "hearing", active != null && amplitude >= HEARING_AMPLITUDE_THRESHOLD);
+        Json.put(out, "hearing", active != null && amplitude >= VOICE_CAPTURE_AMPLITUDE_THRESHOLD);
         Json.put(out, "elapsed_ms", elapsedMs);
         return out;
+    }
+
+    public synchronized int sampleAmplitude() {
+        return active == null ? 0 : currentAmplitude();
     }
 
     public synchronized JSONObject start(JSONObject args) throws CommandException {
@@ -175,6 +179,32 @@ public final class VoiceCaptureController {
             buzzOneShot(RELEASE_HAPTIC_MS, HAPTIC_AMPLITUDE);
         }
         return finishActive(args.optString("reason", "command_stop"));
+    }
+
+    public synchronized JSONObject discard(JSONObject args) {
+        if (active == null) {
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.voice_capture_discard.v1");
+            Json.put(out, "state", "idle");
+            Json.put(out, "result", "no_active_capture");
+            Json.put(out, "last_completed", latestCompletedValue());
+            return out;
+        }
+        ActiveCapture capture = active;
+        MediaRecorder current = recorder;
+        active = null;
+        recorder = null;
+        safeRelease(current);
+        boolean deleted = capture.file.exists() && capture.file.delete();
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.voice_capture_discard.v1");
+        Json.put(out, "state", "discarded");
+        Json.put(out, "result", "discarded");
+        Json.put(out, "reason", args.optString("reason", "silence"));
+        Json.put(out, "session_id", capture.sessionId);
+        Json.put(out, "deleted_file", deleted);
+        Json.put(out, "capture", activeJson(capture));
+        return out;
     }
 
     public synchronized JSONObject last(JSONObject args) {

@@ -82,7 +82,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "const TURN_DOTS = [" not in app
     assert "voiceState: initialVoiceState()" not in app
     assert "turn: initialTurnStatus()" in app
-    assert "turnHearingUntil" in app
+    assert "turnHearingUntil" not in app
     assert "turnFailedUntil" in app
     assert "renderVoiceStatus()" in app
     assert "renderTurnIndicators()" not in app
@@ -95,12 +95,12 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function normalizeTurnStatus(input)" in app
     assert "function isTurnActive(status)" in app
     assert "function turnVisualState(status)" in app
-    assert "function noteHearingSample(indicator)" in app
+    assert "function noteHearingSample(indicator)" not in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
     assert "shell.append(header, content)" in app
     assert "function nextVoiceState(current)" not in app
     assert "function initialVoiceState()" not in app
-    assert "function normalizeVoiceState(input)" in app
+    assert "function normalizeVoiceState(input)" not in app
     assert "state.voiceState = nextVoiceState(state.voiceState)" not in app
     assert ".voice-status" in styles
     assert ".turn-indicators" not in styles
@@ -112,11 +112,12 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "top: 14px" not in voice_status_block
     assert "z-index: 100" in styles
     assert ".voice-status-idle" in styles
+    assert ".voice-status-armed" in styles
     assert ".voice-status-recording" in styles
     assert ".voice-status-uploading" in styles
-    assert ".voice-status-hearing" in styles
-    assert ".voice-status-hearing::before" in styles
-    assert ".voice-status-hearing::after" in styles
+    assert ".voice-status-hearing" not in styles
+    assert ".voice-status-armed::before" in styles
+    assert ".voice-status-recording::before" in styles
     assert "color-mix(in srgb, var(--voice-color)" in styles
     assert ".voice-status-thinking" in styles
     assert ".voice-status-thinking::after" in styles
@@ -126,6 +127,9 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
     assert "@keyframes voiceRing" in styles
+    assert 'armed: "armed"' in app
+    assert 'recording: "recording"' in app
+    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "failed"]' in app
 
 
 def test_active_home_tab_opens_real_icon_filter_tray() -> None:
