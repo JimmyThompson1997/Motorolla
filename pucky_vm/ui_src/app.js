@@ -115,14 +115,8 @@
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
 
-  const VOICE_STATES = ["listening", "hearing", "speaking", "off"];
-  const TURN_DOTS = [
-    { key: "mic", label: "Mic", color: "#3a84ff" },
-    { key: "hearing", label: "Hearing", color: "#ff3b30" },
-    { key: "uploading", label: "Uploading", color: "#ffb000" },
-    { key: "speaking", label: "Speaking", color: "#72c2ff" },
-    { key: "failed", label: "Error", color: "#ff3b30" }
-  ];
+  const TURN_HEARING_HOLD_MS = 480;
+  const TURN_FAILED_FLASH_MS = 900;
 
   const MOCK_SETTINGS = [
     {
@@ -257,8 +251,10 @@
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
-    voiceState: initialVoiceState(),
     turn: initialTurnStatus(),
+    turnHearingUntil: 0,
+    turnFailedUntil: 0,
+    turnFailureKey: "",
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -318,12 +314,11 @@
         render();
       }
       if (name === "voice.state") {
-        state.voiceState = normalizeVoiceState(payload);
+        applyVoiceState(payload);
         renderVoiceStatus();
       }
       if (name === "pucky.turn.status") {
         applyTurnStatus(payload);
-        renderTurnIndicators();
         renderVoiceStatus();
       }
     }
@@ -492,7 +487,6 @@
 
   function render() {
     renderTabs();
-    renderTurnIndicators();
     renderVoiceStatus();
     renderRouteTray();
     renderFeed();
@@ -512,54 +506,13 @@
     if (!indicators.length) {
       return;
     }
-    const voiceState = normalizeVoiceState(state.voiceState);
+    const visualState = turnVisualState(state.turn);
+    const label = turnStateLabel(visualState);
     indicators.forEach(indicator => {
-      indicator.className = `voice-status voice-status-${voiceState}`;
-      indicator.setAttribute("aria-label", `Voice state: ${voiceState}. Tap to preview the next state.`);
-      indicator.title = `Voice: ${voiceState}`;
-      if (!indicator.dataset.bound) {
-        indicator.dataset.bound = "true";
-        indicator.addEventListener("click", () => {
-          state.voiceState = nextVoiceState(state.voiceState);
-          renderVoiceStatus();
-        });
-      }
+      indicator.className = `voice-status voice-status-${visualState}`;
+      indicator.setAttribute("aria-label", `Turn state: ${label}`);
+      indicator.title = `Turn: ${label}`;
     });
-  }
-
-  function renderTurnIndicators() {
-    const container = document.getElementById("turnIndicators");
-    if (!container) {
-      return;
-    }
-    const indicator = turnIndicatorFromStatus(state.turn);
-    container.dataset.turnState = indicator.state;
-    container.replaceChildren(...TURN_DOTS.map(dot => turnDot(dot, indicator)));
-  }
-
-  function turnDot(dot, indicator) {
-    const active = Boolean(indicator[dot.key]);
-    const node = el("span", `turn-dot turn-dot-${dot.key}${active ? " is-active" : ""}`);
-    node.style.setProperty("--turn-color", dot.color);
-    node.setAttribute("role", "status");
-    node.setAttribute("aria-label", `${dot.label}: ${active ? "on" : "off"}`);
-    node.title = `${dot.label}: ${active ? "on" : "off"}`;
-    return node;
-  }
-
-  function nextVoiceState(current) {
-    const normalized = normalizeVoiceState(current);
-    const index = VOICE_STATES.indexOf(normalized);
-    return VOICE_STATES[(index + 1) % VOICE_STATES.length];
-  }
-
-  function initialVoiceState() {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      return normalizeVoiceState(params.get("voice") || "listening");
-    } catch (_) {
-      return "listening";
-    }
   }
 
   function normalizeVoiceState(input) {
@@ -567,16 +520,16 @@
       ? String(input.state || input.mode || input.voice_state || "")
       : String(input || "");
     const value = raw.trim().toLowerCase();
-    if (["hearing", "recording", "capturing", "sending", "speech"].includes(value)) {
+    if (["hearing", "speech"].includes(value)) {
       return "hearing";
+    }
+    if (["recording", "capturing", "sending", "listening"].includes(value)) {
+      return "recording";
     }
     if (["speaking", "talking", "tts", "playing"].includes(value)) {
       return "speaking";
     }
-    if (["off", "disabled", "unavailable", "muted"].includes(value)) {
-      return "off";
-    }
-    return "listening";
+    return "idle";
   }
 
   function initialTurnStatus() {
@@ -589,8 +542,12 @@
         mic_on: false,
         hearing: false,
         uploading: false,
+        stt_running: false,
+        codex_running: false,
+        tts_running: false,
         speaking: false,
         failed: false,
+        remote_stage: "",
         active: false
       }
     };
@@ -598,28 +555,69 @@
 
   function applyTurnStatus(input) {
     state.turn = normalizeTurnStatus(input);
-    const nextVoice = voiceStateFromTurnStatus(state.turn);
-    if (nextVoice) {
-      state.voiceState = nextVoice;
+    noteHearingSample(state.turn.indicator);
+    if (state.turn.indicator.failed || state.turn.indicator.state === "failed") {
+      const failureKey = turnFailureKey(input);
+      if (failureKey !== state.turnFailureKey) {
+        state.turnFailureKey = failureKey;
+        state.turnFailedUntil = Date.now() + TURN_FAILED_FLASH_MS;
+      }
     }
+  }
+
+  function applyVoiceState(input) {
+    const voiceState = normalizeVoiceState(input);
+    const micOn = voiceState === "recording" || voiceState === "hearing";
+    const merged = {
+      ...state.turn,
+      voice_capture: input || {},
+      indicator: {
+        ...(state.turn.indicator || {}),
+        state: voiceState,
+        mic_on: micOn,
+        hearing: voiceState === "hearing",
+        speaking: voiceState === "speaking"
+      }
+    };
+    applyTurnStatus(merged);
   }
 
   function normalizeTurnStatus(input) {
     const raw = input && typeof input === "object" ? input : {};
     const rawIndicator = raw.indicator && typeof raw.indicator === "object" ? raw.indicator : {};
+    const rawLast = raw.last_status && typeof raw.last_status === "object" ? raw.last_status : {};
+    const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || rawLast.remote_stage || "").trim();
+    const rawState = String(rawIndicator.state || raw.state || rawLast.state || "idle").trim();
     const indicator = {
       schema: "pucky.turn_indicator.v1",
-      state: String(rawIndicator.state || raw.state || "idle"),
+      state: normalizeTurnState(rawState),
       mic_on: truthy(rawIndicator.mic_on ?? raw.mic_on),
       hearing: truthy(rawIndicator.hearing ?? raw.hearing),
       uploading: truthy(rawIndicator.uploading ?? raw.uploading),
+      stt_running: truthy(rawIndicator.stt_running ?? raw.stt_running) || remoteStage === "stt_running",
+      codex_running: truthy(rawIndicator.codex_running ?? raw.codex_running) || remoteStage === "codex_running",
+      tts_running: truthy(rawIndicator.tts_running ?? raw.tts_running) || remoteStage === "tts_running",
       speaking: truthy(rawIndicator.speaking ?? raw.speaking),
       failed: truthy(rawIndicator.failed ?? raw.failed),
       active: truthy(rawIndicator.active ?? raw.active),
+      remote_stage: remoteStage,
       amplitude: safeNumber(rawIndicator.amplitude ?? raw.amplitude),
       elapsed_ms: safeNumber(rawIndicator.elapsed_ms ?? raw.elapsed_ms)
     };
-    indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.speaking;
+    if (indicator.codex_running) {
+      indicator.state = "codex_running";
+    } else if (indicator.speaking) {
+      indicator.state = "speaking";
+    } else if (indicator.hearing) {
+      indicator.state = "hearing";
+    } else if (indicator.mic_on) {
+      indicator.state = "recording";
+    } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
+      indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
+    } else if (indicator.failed) {
+      indicator.state = "failed";
+    }
+    indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.stt_running || indicator.codex_running || indicator.tts_running || indicator.speaking;
     return {
       ...raw,
       schema: raw.schema || "pucky.turn_status.v1",
@@ -632,25 +630,67 @@
     return normalizeTurnStatus(status).indicator;
   }
 
-  function voiceStateFromTurnStatus(status) {
+  function normalizeTurnState(input) {
+    const value = String(input || "").trim().toLowerCase();
+    if (["recording", "hearing", "uploading", "stt_running", "codex_running", "tts_running", "speaking", "failed"].includes(value)) {
+      return value;
+    }
+    return "idle";
+  }
+
+  function noteHearingSample(indicator) {
+    if (indicator && indicator.hearing) {
+      state.turnHearingUntil = Date.now() + TURN_HEARING_HOLD_MS;
+    }
+  }
+
+  function turnVisualState(status) {
     const indicator = turnIndicatorFromStatus(status);
+    const now = Date.now();
+    if (now < state.turnFailedUntil) {
+      return "failed";
+    }
     if (indicator.speaking) {
       return "speaking";
     }
-    if (indicator.hearing) {
+    if (indicator.codex_running || indicator.state === "codex_running") {
+      return "thinking";
+    }
+    if (indicator.hearing || (indicator.mic_on && now < state.turnHearingUntil)) {
       return "hearing";
     }
-    if (indicator.mic_on || indicator.uploading) {
-      return "listening";
+    if (indicator.mic_on || indicator.state === "recording") {
+      return "recording";
     }
-    if (indicator.failed) {
-      return "off";
+    if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
+      return "uploading";
     }
-    return null;
+    return "idle";
+  }
+
+  function turnStateLabel(visualState) {
+    const labels = {
+      idle: "idle",
+      recording: "recording",
+      hearing: "hearing speech",
+      uploading: "uploading",
+      thinking: "thinking",
+      speaking: "speaking",
+      failed: "failed"
+    };
+    return labels[visualState] || "idle";
+  }
+
+  function turnFailureKey(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    const last = raw.last_status && typeof raw.last_status === "object" ? raw.last_status : {};
+    const indicator = raw.indicator && typeof raw.indicator === "object" ? raw.indicator : {};
+    return String(raw.updated_at || last.updated_at || indicator.updated_at || last.error || raw.error || "failed");
   }
 
   function isTurnActive(status) {
-    return Boolean(turnIndicatorFromStatus(status).active);
+    const indicator = turnIndicatorFromStatus(status);
+    return Boolean(indicator.active || turnVisualState(status) !== "idle" || Date.now() < state.turnFailedUntil || Date.now() < state.turnHearingUntil);
   }
 
   function truthy(value) {

@@ -70,55 +70,58 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert ".tab:not(.is-active) .material-icon" in styles
 
 
-def test_voice_status_dot_renders_and_can_preview_states() -> None:
+def test_voice_status_dot_is_single_turn_indicator() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
 
     assert 'id="voiceStatus"' in html
-    assert 'id="turnIndicators"' in html
+    assert 'id="turnIndicators"' not in html
     assert "data-voice-status" in html
-    assert 'aria-label="Voice state: listening"' in html
-    assert 'const VOICE_STATES = ["listening", "hearing", "speaking", "off"]' in app
-    assert "const TURN_DOTS = [" in app
-    assert "voiceState: initialVoiceState()" in app
+    assert 'aria-label="Turn state: idle"' in html
+    assert "const TURN_DOTS = [" not in app
+    assert "voiceState: initialVoiceState()" not in app
     assert "turn: initialTurnStatus()" in app
+    assert "turnHearingUntil" in app
+    assert "turnFailedUntil" in app
     assert "renderVoiceStatus()" in app
-    assert "renderTurnIndicators()" in app
+    assert "renderTurnIndicators()" not in app
     assert 'if (name === "voice.state")' in app
     assert 'if (name === "pucky.turn.status")' in app
     assert 'command === "pucky.turn.status"' in app
     assert 'command: "pucky.turn.status"' in app
     assert "function renderVoiceStatus()" in app
-    assert "function renderTurnIndicators()" in app
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
     assert "function isTurnActive(status)" in app
+    assert "function turnVisualState(status)" in app
+    assert "function noteHearingSample(indicator)" in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
-    assert "function voiceStatusButton()" not in app
     assert "shell.append(header, content)" in app
-    assert "function nextVoiceState(current)" in app
-    assert "function initialVoiceState()" in app
+    assert "function nextVoiceState(current)" not in app
+    assert "function initialVoiceState()" not in app
     assert "function normalizeVoiceState(input)" in app
-    assert "state.voiceState = nextVoiceState(state.voiceState)" in app
+    assert "state.voiceState = nextVoiceState(state.voiceState)" not in app
     assert ".voice-status" in styles
-    assert ".turn-indicators" in styles
-    assert ".turn-dot" in styles
-    assert ".turn-dot.is-active" in styles
-    assert ".turn-dot-speaking.is-active" in styles
+    assert ".turn-indicators" not in styles
+    assert ".turn-dot" not in styles
     voice_status_block = styles.split(".voice-status {", 1)[1].split("}", 1)[0]
     assert "position: fixed" in styles
     assert "--voice-status-size: 38px" in styles
     assert "top: calc((45px - var(--voice-status-size)) / 2)" in styles
     assert "top: 14px" not in voice_status_block
     assert "z-index: 100" in styles
-    assert ".voice-status-listening" in styles
+    assert ".voice-status-idle" in styles
+    assert ".voice-status-recording" in styles
+    assert ".voice-status-uploading" in styles
     assert ".voice-status-hearing" in styles
     assert ".voice-status-hearing::before" in styles
     assert ".voice-status-hearing::after" in styles
     assert "color-mix(in srgb, var(--voice-color)" in styles
+    assert ".voice-status-thinking" in styles
+    assert "turnThinkingSpin" in styles
     assert ".voice-status-speaking" in styles
-    assert ".voice-status-off" in styles
+    assert ".voice-status-failed" in styles
     assert "@keyframes voicePulse" in styles
     assert "@keyframes voiceRing" in styles
 

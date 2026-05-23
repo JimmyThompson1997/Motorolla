@@ -49,6 +49,27 @@ class FakeCodex:
         )
 
 
+class BlockingCodex(FakeCodex):
+    def __init__(self) -> None:
+        super().__init__()
+        self.codex_started = threading.Event()
+        self.release_codex = threading.Event()
+
+    def send_turn(self, text: str) -> str:
+        self.turns.append(text)
+        self.codex_started.set()
+        if not self.release_codex.wait(timeout=5):
+            raise TimeoutError("test did not release codex")
+        return json.dumps(
+            {
+                "reply_text": "Codex status observed.",
+                "card_title": "Status",
+                "card_icon": "bolt",
+                "html": None,
+            }
+        )
+
+
 def test_config(max_html_bytes: int = 512 * 1024) -> Config:
     return Config(
         host="127.0.0.1",
@@ -159,6 +180,65 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("transcript", telemetry)
         self.assertNotIn("Pucky test turn", json.dumps(telemetry))
 
+    def test_turn_status_requires_auth(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/turn/status?turn_id=missing")
+
+        self.assertEqual(caught.exception.code, 401)
+
+    def test_turn_status_missing_turn_id_is_rejected(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/turn/status", headers={"Authorization": "Bearer secret"})
+
+        self.assertEqual(caught.exception.code, 400)
+
+    def test_turn_status_tracks_client_turn_id_and_codex_stage_without_transcripts(self) -> None:
+        blocking = BlockingCodex()
+        self.service.codex = blocking
+        client_turn_id = "client_turn_status_1"
+        result: dict[str, object] = {}
+        error: dict[str, BaseException] = {}
+
+        def post_turn() -> None:
+            try:
+                result["body"] = self.post_audio(b"audio", "audio/mp4", turn_id=client_turn_id)
+            except BaseException as exc:
+                error["exc"] = exc
+
+        post_thread = threading.Thread(target=post_turn, daemon=True)
+        post_thread.start()
+        self.assertTrue(blocking.codex_started.wait(timeout=5))
+
+        status = self.get_json(
+            f"/api/turn/status?turn_id={client_turn_id}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(status["schema"], "pucky.turn_remote_status.v1")
+        self.assertEqual(status["turn_id"], client_turn_id)
+        self.assertEqual(status["stage"], "codex_running")
+        self.assertEqual(status["status"], "running")
+        self.assertTrue(status["codex_running"])
+        self.assertEqual(status["transcript_chars"], len("Pucky test turn"))
+        self.assertNotIn("Pucky test turn", json.dumps(status))
+
+        blocking.release_codex.set()
+        post_thread.join(timeout=5)
+        self.assertNotIn("exc", error)
+        body = result["body"]
+        self.assertIsInstance(body, dict)
+        self.assertEqual(body["turn_id"], client_turn_id)
+        self.assertEqual(body["session_id"], client_turn_id)
+
+        completed = self.get_json(
+            f"/api/turn/status?turn_id={client_turn_id}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(completed["stage"], "completed")
+        self.assertEqual(completed["status"], "ok")
+        self.assertTrue(completed["completed"])
+        self.assertIn("total_ms", completed)
+        self.assertIn("response_bytes", completed)
+
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post_audio(b"", "audio/mp4")
@@ -195,19 +275,23 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("html_base64", body["card"])
         self.assertNotIn("html_mime_type", body["card"])
 
-    def get_json(self, path: str) -> dict:
-        with urllib.request.urlopen(self.base_url + path, timeout=10) as response:
+    def get_json(self, path: str, headers: dict[str, str] | None = None) -> dict:
+        request = urllib.request.Request(self.base_url + path, headers=headers or {})
+        with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def post_audio(self, audio: bytes, content_type: str) -> dict:
+    def post_audio(self, audio: bytes, content_type: str, turn_id: str = "") -> dict:
+        headers = {
+            "Authorization": "Bearer secret",
+            "Content-Type": content_type,
+        }
+        if turn_id:
+            headers["X-Pucky-Turn-Id"] = turn_id
         request = urllib.request.Request(
             self.base_url + "/api/turn",
             data=audio,
             method="POST",
-            headers={
-                "Authorization": "Bearer secret",
-                "Content-Type": content_type,
-            },
+            headers=headers,
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))

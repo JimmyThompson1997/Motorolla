@@ -21,6 +21,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.UUID;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -41,6 +42,9 @@ public final class PuckyTurnController {
     private final SettingsStore settings;
     private final SharedPreferences prefs;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
+    private final Object pollLock = new Object();
+    private volatile String activePollTurnId = "";
+    private volatile boolean pollActive = false;
 
     public static synchronized PuckyTurnController shared(Context context) {
         if (shared == null) {
@@ -71,8 +75,12 @@ public final class PuckyTurnController {
         Json.put(out, "mic_on", indicator.optBoolean("mic_on", false));
         Json.put(out, "hearing", indicator.optBoolean("hearing", false));
         Json.put(out, "uploading", indicator.optBoolean("uploading", false));
+        Json.put(out, "stt_running", indicator.optBoolean("stt_running", false));
+        Json.put(out, "codex_running", indicator.optBoolean("codex_running", false));
+        Json.put(out, "tts_running", indicator.optBoolean("tts_running", false));
         Json.put(out, "speaking", indicator.optBoolean("speaking", false));
         Json.put(out, "failed", indicator.optBoolean("failed", false));
+        Json.put(out, "remote_stage", indicator.optString("remote_stage", ""));
         return out;
     }
 
@@ -107,27 +115,34 @@ public final class PuckyTurnController {
         }
         byte[] audioBytes = readAll(audio);
         String localSessionId = capture.optString("session_id", "pucky_" + Long.toHexString(System.currentTimeMillis()));
-        submitAsync(localSessionId, audioBytes);
+        String clientTurnId = generateClientTurnId();
+        submitAsync(localSessionId, clientTurnId, audioBytes);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_stop.v1");
         Json.put(out, "state", "uploading");
         Json.put(out, "local_session_id", localSessionId);
+        Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "request_audio_bytes", audioBytes.length);
         markStatus("uploading", out, null);
         return out;
     }
 
-    private void submitAsync(String localSessionId, byte[] audioBytes) {
+    private void submitAsync(String localSessionId, String clientTurnId, byte[] audioBytes) {
         long startedMs = System.currentTimeMillis();
         Request request = new Request.Builder()
                 .url(settings.getPuckyTurnUrl())
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
+                .header("X-Pucky-Turn-Id", clientTurnId)
                 .post(RequestBody.create(AUDIO_MP4, audioBytes))
                 .build();
+        startTurnStatusPoll(clientTurnId);
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                markStatus("failed", baseStatus(localSessionId, startedMs, audioBytes.length),
+                stopTurnStatusPoll(clientTurnId);
+                JSONObject failed = baseStatus(localSessionId, startedMs, audioBytes.length);
+                Json.put(failed, "turn_id", clientTurnId);
+                markStatus("failed", failed,
                         e.getClass().getSimpleName() + ": " + e.getMessage());
             }
 
@@ -136,8 +151,10 @@ public final class PuckyTurnController {
                 try (Response ignored = response) {
                     String responseText = response.body() == null ? "" : response.body().string();
                     JSONObject status = baseStatus(localSessionId, startedMs, audioBytes.length);
+                    Json.put(status, "turn_id", clientTurnId);
                     Json.put(status, "http_status", response.code());
                     if (!response.isSuccessful()) {
+                        stopTurnStatusPoll(clientTurnId);
                         markStatus("failed", status, "http_" + response.code());
                         return;
                     }
@@ -156,16 +173,123 @@ public final class PuckyTurnController {
                         Json.put(status, "latency_server_total_ms", parsed.telemetry().optInt("total_ms", -1));
                         JSONObject playerState = playReply(card);
                         Json.put(status, "player_state", playerState);
+                        stopTurnStatusPoll(clientTurnId);
                         markStatus("speaking", status, null);
                     } catch (Exception exc) {
+                        stopTurnStatusPoll(clientTurnId);
                         markStatus("failed", status, exc.getClass().getSimpleName() + ": " + exc.getMessage());
                     }
                 } catch (IOException exc) {
-                    markStatus("failed", baseStatus(localSessionId, startedMs, audioBytes.length),
+                    stopTurnStatusPoll(clientTurnId);
+                    JSONObject failed = baseStatus(localSessionId, startedMs, audioBytes.length);
+                    Json.put(failed, "turn_id", clientTurnId);
+                    markStatus("failed", failed,
                             "response_read_failed: " + exc.getMessage());
                 }
             }
         });
+    }
+
+    private void startTurnStatusPoll(String clientTurnId) {
+        synchronized (pollLock) {
+            activePollTurnId = clientTurnId;
+            pollActive = true;
+        }
+        Thread worker = new Thread(() -> {
+            long deadlineMs = System.currentTimeMillis() + 120000L;
+            while (isPollingTurn(clientTurnId) && System.currentTimeMillis() < deadlineMs) {
+                pollTurnStatus(clientTurnId);
+                if (isRemoteTerminalStage(lastStatus().optString("remote_stage", ""))) {
+                    stopTurnStatusPoll(clientTurnId);
+                    return;
+                }
+                try {
+                    Thread.sleep(350L);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            stopTurnStatusPoll(clientTurnId);
+        }, "PuckyTurnStatusPoll");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void stopTurnStatusPoll(String clientTurnId) {
+        synchronized (pollLock) {
+            if (clientTurnId == null || clientTurnId.isEmpty() || clientTurnId.equals(activePollTurnId)) {
+                pollActive = false;
+                activePollTurnId = "";
+            }
+        }
+    }
+
+    private boolean isPollingTurn(String clientTurnId) {
+        synchronized (pollLock) {
+            return pollActive && clientTurnId.equals(activePollTurnId);
+        }
+    }
+
+    private void pollTurnStatus(String clientTurnId) {
+        Request request = new Request.Builder()
+                .url(turnStatusUrl(clientTurnId))
+                .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful() || response.body() == null) {
+                return;
+            }
+            JSONObject remote = new JSONObject(response.body().string());
+            applyRemoteTurnStatus(clientTurnId, remote);
+        } catch (Exception exc) {
+            Log.d(TAG, "turn status poll skipped: " + exc.getMessage());
+        }
+    }
+
+    private void applyRemoteTurnStatus(String clientTurnId, JSONObject remote) {
+        String remoteStage = remote.optString("stage", "");
+        if (remoteStage.isEmpty() || "completed".equals(remoteStage)) {
+            return;
+        }
+        JSONObject status = lastStatus();
+        if (remoteStage.equals(status.optString("remote_stage", ""))) {
+            return;
+        }
+        Json.put(status, "turn_id", clientTurnId);
+        Json.put(status, "remote_stage", remoteStage);
+        Json.put(status, "server_turn_status", remote);
+        Json.put(status, "codex_running", "codex_running".equals(remoteStage));
+        if ("failed".equals(remoteStage)) {
+            markStatus("failed", status, remote.optString("error_type", "remote_failed"));
+            return;
+        }
+        if ("codex_running".equals(remoteStage)) {
+            markStatus("codex_running", status, null);
+            return;
+        }
+        if ("stt_running".equals(remoteStage) || "tts_running".equals(remoteStage) || "upload_received".equals(remoteStage)) {
+            markStatus(remoteStage, status, null);
+        }
+    }
+
+    private String turnStatusUrl(String clientTurnId) {
+        String raw = settings.getPuckyTurnUrl();
+        int queryIndex = raw.indexOf('?');
+        String base = queryIndex >= 0 ? raw.substring(0, queryIndex) : raw;
+        if (base.endsWith("/api/turn")) {
+            base = base.substring(0, base.length() - "/api/turn".length()) + "/api/turn/status";
+        } else if (base.endsWith("/turn")) {
+            base = base.substring(0, base.length() - "/turn".length()) + "/turn/status";
+        } else {
+            base = base.replaceAll("/+$", "") + "/status";
+        }
+        return base + "?turn_id=" + clientTurnId;
+    }
+
+    private static boolean isRemoteTerminalStage(String stage) {
+        return "completed".equals(stage) || "failed".equals(stage);
     }
 
     private JSONObject persistReplyCard(String localSessionId, PuckyTurnResponse response) throws Exception {
@@ -250,10 +374,14 @@ public final class PuckyTurnController {
 
     private static JSONObject indicatorJson(JSONObject last, JSONObject voice, JSONObject player) {
         String lastState = last == null ? "" : last.optString("state", "");
+        String remoteStage = last == null ? "" : last.optString("remote_stage", "");
         String source = player == null ? "" : player.optString("source", "");
         boolean micOn = voice != null && voice.optBoolean("mic_on", "recording".equals(voice.optString("state", "")));
         boolean hearing = voice != null && voice.optBoolean("hearing", false);
-        boolean uploading = "uploading".equals(lastState);
+        boolean sttRunning = "stt_running".equals(lastState) || "stt_running".equals(remoteStage);
+        boolean codexRunning = "codex_running".equals(lastState) || "codex_running".equals(remoteStage) || (last != null && last.optBoolean("codex_running", false));
+        boolean ttsRunning = "tts_running".equals(lastState) || "tts_running".equals(remoteStage);
+        boolean uploading = "uploading".equals(lastState) || "upload_received".equals(lastState) || "upload_received".equals(remoteStage) || sttRunning || ttsRunning;
         boolean speaking = "pucky.turn".equals(source) && player != null && player.optBoolean("is_playing", false);
         boolean failed = "failed".equals(lastState);
         String state = "idle";
@@ -261,8 +389,10 @@ public final class PuckyTurnController {
             state = "failed";
         } else if (speaking) {
             state = "speaking";
+        } else if (codexRunning) {
+            state = "codex_running";
         } else if (uploading) {
-            state = "uploading";
+            state = sttRunning ? "stt_running" : (ttsRunning ? "tts_running" : "uploading");
         } else if (hearing) {
             state = "hearing";
         } else if (micOn) {
@@ -274,12 +404,20 @@ public final class PuckyTurnController {
         Json.put(out, "mic_on", micOn);
         Json.put(out, "hearing", hearing);
         Json.put(out, "uploading", uploading);
+        Json.put(out, "stt_running", sttRunning);
+        Json.put(out, "codex_running", codexRunning);
+        Json.put(out, "tts_running", ttsRunning);
         Json.put(out, "speaking", speaking);
         Json.put(out, "failed", failed);
-        Json.put(out, "active", micOn || uploading || speaking);
+        Json.put(out, "active", micOn || uploading || codexRunning || speaking);
+        Json.put(out, "remote_stage", remoteStage);
         Json.put(out, "amplitude", voice == null ? 0 : voice.optInt("amplitude", 0));
         Json.put(out, "elapsed_ms", voice == null ? 0 : voice.optLong("elapsed_ms", 0L));
         return out;
+    }
+
+    private static String generateClientTurnId() {
+        return "pucky_" + UUID.randomUUID().toString().replace("-", "");
     }
 
     private static JSONObject reasonArgs(String reason) {

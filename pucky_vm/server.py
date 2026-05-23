@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .codex_app_server import CodexAppServerClient, command_from_env
 from .providers import DeepgramSTT, KokoroTTS
@@ -79,6 +79,7 @@ class Config:
     codex_startup_timeout: float
     codex_turn_timeout: float
     developer_instructions: str
+    turn_status_ttl_seconds: float = 900.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -98,6 +99,7 @@ class Config:
             codex_startup_timeout=float(os.environ.get("PUCKY_CODEX_STARTUP_TIMEOUT", "60")),
             codex_turn_timeout=float(os.environ.get("PUCKY_CODEX_TURN_TIMEOUT", "300")),
             developer_instructions=os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS,
+            turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
         )
 
 
@@ -119,6 +121,8 @@ class PuckyVoiceService:
             developer_instructions=config.developer_instructions,
         )
         self._turn_lock = threading.Lock()
+        self._turn_status_lock = threading.Lock()
+        self._turn_statuses: dict[str, dict[str, object]] = {}
 
     def start(self) -> None:
         self.codex.start()
@@ -133,10 +137,24 @@ class PuckyVoiceService:
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
         }
 
-    def handle_audio_turn(self, audio: bytes, content_type: str) -> dict[str, object]:
+    def turn_status(self, turn_id: str) -> dict[str, object] | None:
+        clean_turn_id = str(turn_id or "").strip()
+        if not clean_turn_id:
+            return None
+        now = time.time()
+        with self._turn_status_lock:
+            self._prune_turn_statuses_locked(now)
+            status = self._turn_statuses.get(clean_turn_id)
+            if status is None:
+                return None
+            public = dict(status)
+            public.pop("_updated_epoch", None)
+            return public
+
+    def handle_audio_turn(self, audio: bytes, content_type: str, turn_id: str | None = None) -> dict[str, object]:
         if not audio:
             raise ValueError("audio body is empty")
-        turn_id = "pucky_" + uuid.uuid4().hex
+        turn_id = _normalize_turn_id(turn_id)
         session_id = turn_id
         total_start = time.perf_counter()
         telemetry: dict[str, object] = {
@@ -154,18 +172,22 @@ class PuckyVoiceService:
             "tts_format": getattr(self.tts, "response_format", ""),
             "tts_speed": getattr(self.tts, "speed", ""),
         }
-        stage = "stt"
+        stage = "upload_received"
+        self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         with self._turn_lock:
             try:
+                stage = "stt_running"
                 telemetry["stt_start_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "stt_running", "running", telemetry)
                 start = time.perf_counter()
                 transcript = self.stt.transcribe(audio, content_type)
                 telemetry["stt_ms"] = _elapsed_ms(start)
                 telemetry["stt_end_ms"] = _elapsed_ms(total_start)
                 telemetry["transcript_chars"] = len(transcript)
 
-                stage = "codex"
+                stage = "codex_running"
                 telemetry["codex_start_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "codex_running", "running", telemetry)
                 start = time.perf_counter()
                 raw_reply = self.codex.send_turn(transcript)
                 telemetry["codex_ms"] = _elapsed_ms(start)
@@ -180,8 +202,9 @@ class PuckyVoiceService:
                 telemetry["card_icon"] = envelope.card_icon
                 telemetry["has_html"] = bool(envelope.html_content)
 
-                stage = "tts"
+                stage = "tts_running"
                 telemetry["tts_start_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "tts_running", "running", telemetry)
                 start = time.perf_counter()
                 reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
                 telemetry["tts_ms"] = _elapsed_ms(start)
@@ -194,6 +217,7 @@ class PuckyVoiceService:
                 telemetry["stage"] = stage
                 telemetry["error_type"] = exc.__class__.__name__
                 telemetry["total_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "failed", "failed", telemetry)
                 _log_json(telemetry)
                 raise
         card: dict[str, str] = {"title": envelope.card_title, "icon": envelope.card_icon}
@@ -215,8 +239,43 @@ class PuckyVoiceService:
         result["telemetry"] = _public_turn_telemetry(telemetry)
         telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
         result["telemetry"] = _public_turn_telemetry(telemetry)
+        self._update_turn_status(turn_id, "completed", "ok", telemetry)
         _log_json(telemetry)
         return result
+
+    def _update_turn_status(self, turn_id: str, stage: str, status: str, telemetry: dict[str, object]) -> None:
+        now = time.time()
+        public = _public_turn_status(telemetry)
+        public.update(
+            {
+                "schema": "pucky.turn_remote_status.v1",
+                "turn_id": turn_id,
+                "stage": stage,
+                "status": status,
+                "updated_at": _iso_time(now),
+                "expires_at": _iso_time(now + max(1.0, float(self.config.turn_status_ttl_seconds))),
+                "_updated_epoch": now,
+                "upload_received": stage == "upload_received",
+                "stt_running": stage == "stt_running",
+                "codex_running": stage == "codex_running",
+                "tts_running": stage == "tts_running",
+                "completed": stage == "completed",
+                "failed": stage == "failed" or status == "failed",
+            }
+        )
+        with self._turn_status_lock:
+            self._prune_turn_statuses_locked(now)
+            self._turn_statuses[turn_id] = public
+
+    def _prune_turn_statuses_locked(self, now: float) -> None:
+        ttl = max(1.0, float(self.config.turn_status_ttl_seconds))
+        expired = [
+            turn_id
+            for turn_id, status in self._turn_statuses.items()
+            if now - float(status.get("_updated_epoch", now)) > ttl
+        ]
+        for turn_id in expired:
+            self._turn_statuses.pop(turn_id, None)
 
 
 def parse_reply_envelope(raw: str) -> ReplyEnvelope:
@@ -254,8 +313,49 @@ def _elapsed_ms(start: float) -> int:
     return round((time.perf_counter() - start) * 1000)
 
 
+def _iso_time(epoch_seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
+
+
+def _normalize_turn_id(raw: str | None) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return "pucky_" + uuid.uuid4().hex
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", value):
+        raise ValueError("turn_id is invalid")
+    return value
+
+
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
+
+
+def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
+    allowed = (
+        "session_id",
+        "content_type",
+        "request_audio_bytes",
+        "upload_received_ms",
+        "stt_start_ms",
+        "stt_end_ms",
+        "stt_ms",
+        "transcript_chars",
+        "codex_start_ms",
+        "codex_end_ms",
+        "codex_ms",
+        "codex_thread_id",
+        "raw_reply_chars",
+        "reply_chars",
+        "tts_start_ms",
+        "tts_end_ms",
+        "tts_ms",
+        "reply_audio_bytes",
+        "audio_mime_type",
+        "response_bytes",
+        "total_ms",
+        "error_type",
+    )
+    return {key: telemetry[key] for key in allowed if key in telemetry}
 
 
 def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
@@ -292,9 +392,24 @@ def make_handler(service: PuckyVoiceService):
         server_version = "PuckyVoice/0.1"
 
         def do_GET(self) -> None:
-            path = self.path.split("?", 1)[0]
+            parsed = urlsplit(self.path)
+            path = parsed.path
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
+                return
+            if path == "/api/turn/status":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                turn_id = parse_qs(parsed.query).get("turn_id", [""])[0].strip()
+                if not turn_id:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "missing_turn_id"})
+                    return
+                status = service.turn_status(turn_id)
+                if status is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "turn_not_found"})
+                    return
+                self._json(HTTPStatus.OK, status)
                 return
             if path == "/ui/pucky/latest/manifest.json":
                 result = build_ui_bundle()
@@ -320,7 +435,7 @@ def make_handler(service: PuckyVoiceService):
             if self.path.split("?", 1)[0] != "/api/turn":
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
-            if not service.config.pucky_api_token or self.headers.get("Authorization", "") != f"Bearer {service.config.pucky_api_token}":
+            if not self._is_authorized():
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             content_type = self.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].strip()
@@ -328,7 +443,11 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "unsupported_content_type"})
                 return
             try:
-                result = service.handle_audio_turn(self._read_body(service.config.max_audio_bytes), content_type)
+                result = service.handle_audio_turn(
+                    self._read_body(service.config.max_audio_bytes),
+                    content_type,
+                    self.headers.get("X-Pucky-Turn-Id", ""),
+                )
             except ValueError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
@@ -352,6 +471,9 @@ def make_handler(service: PuckyVoiceService):
             if len(data) > limit:
                 raise ValueError("audio body is too large")
             return data
+
+        def _is_authorized(self) -> bool:
+            return bool(service.config.pucky_api_token) and self.headers.get("Authorization", "") == f"Bearer {service.config.pucky_api_token}"
 
         def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")

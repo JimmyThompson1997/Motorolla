@@ -98,6 +98,10 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
         assertTrue(source.contains("MediaType.get(\"audio/mp4\")"));
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
+        assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
+        assertTrue(source.contains("String clientTurnId = generateClientTurnId()"));
+        assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
+        assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("new File(context.getFilesDir(), \"pucky_replies\""));
         assertTrue(source.contains("Json.put(card, \"session_id\", sessionId)"));
         assertTrue(source.contains("new ReplyCardStore(context).prepend(card)"));
@@ -134,14 +138,43 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(out, \"mic_on\", indicator.optBoolean(\"mic_on\", false))"));
         assertTrue(source.contains("Json.put(out, \"hearing\", indicator.optBoolean(\"hearing\", false))"));
         assertTrue(source.contains("Json.put(out, \"uploading\", indicator.optBoolean(\"uploading\", false))"));
+        assertTrue(source.contains("Json.put(out, \"codex_running\", indicator.optBoolean(\"codex_running\", false))"));
         assertTrue(source.contains("Json.put(out, \"speaking\", indicator.optBoolean(\"speaking\", false))"));
         assertTrue(source.contains("Json.put(out, \"failed\", indicator.optBoolean(\"failed\", false))"));
         assertTrue(source.contains("\"pucky.turn_indicator.v1\""));
+        assertTrue(source.contains("boolean codexRunning"));
+        assertTrue(source.contains("Json.put(out, \"codex_running\", codexRunning)"));
+        assertTrue(source.contains("micOn || uploading || codexRunning || speaking"));
         assertTrue(capture.contains("HEARING_AMPLITUDE_THRESHOLD"));
         assertTrue(capture.contains("recorder.getMaxAmplitude()"));
         assertTrue(capture.contains("Json.put(out, \"amplitude\", amplitude)"));
         assertTrue(capture.contains("Json.put(out, \"hearing\", active != null && amplitude >= HEARING_AMPLITUDE_THRESHOLD)"));
         assertFalse(source.contains("Json.put(out, \"token\""));
+    }
+
+    @Test
+    public void controllerPollsRemoteTurnStatusWhileUploadIsInFlight() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+
+        assertTrue(source.contains("startTurnStatusPoll(clientTurnId)"));
+        assertTrue(source.contains("stopTurnStatusPoll(clientTurnId)"));
+        assertTrue(source.contains("pollTurnStatus(clientTurnId)"));
+        assertTrue(source.contains("turnStatusUrl(clientTurnId)"));
+        assertTrue(source.contains("\"/api/turn/status\""));
+        assertTrue(source.contains("\"?turn_id=\""));
+        assertTrue(source.contains("markStatus(\"codex_running\""));
+        assertTrue(source.contains("isRemoteTerminalStage"));
+        assertTrue(source.contains("remote_stage"));
+    }
+
+    @Test
+    public void playerCompletionBroadcastsStateForTurnIndicatorRefresh() throws Exception {
+        String source = read("src/main/java/com/pucky/device/player/PlayerController.java");
+
+        assertTrue(source.contains("import com.pucky.device.state.PuckyState;"));
+        assertTrue(source.contains("broadcastPlayerCompletion()"));
+        assertTrue(source.contains("PuckyState.get().setLifecycleEvent(\"player.completed\")"));
+        assertTrue(source.contains("PuckyState.get().broadcast(context)"));
     }
 
     private static String read(String path) throws Exception {

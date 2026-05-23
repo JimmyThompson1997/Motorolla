@@ -136,41 +136,6 @@ button {
   stroke-linejoin: round;
 }
 
-.turn-indicators {
-  position: fixed;
-  top: 0;
-  right: 62px;
-  z-index: 101;
-  height: 45px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  pointer-events: none;
-}
-
-.turn-dot {
-  --turn-color: #586574;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(245, 249, 255, 0.18);
-  box-shadow: 0 0 0 1px rgba(245, 249, 255, 0.08);
-  opacity: 0.42;
-}
-
-.turn-dot.is-active {
-  background: var(--turn-color);
-  opacity: 1;
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--turn-color) 18%, transparent),
-    0 0 14px color-mix(in srgb, var(--turn-color) 72%, transparent);
-}
-
-.turn-dot-speaking.is-active,
-.turn-dot-hearing.is-active {
-  animation: voicePulse 1.15s ease-in-out infinite;
-}
-
 .voice-status {
   --voice-color: #3a84ff;
   --voice-status-size: 38px;
@@ -209,16 +174,38 @@ button {
   transform: translate(-50%, -50%);
 }
 
-.voice-status-listening {
+.voice-status-idle {
+  --voice-color: #586574;
+  opacity: 0.58;
+}
+
+.voice-status-idle::before {
+  box-shadow: 0 0 0 4px rgba(245, 249, 255, 0.025);
+}
+
+.voice-status-idle::after,
+.voice-status-recording::after,
+.voice-status-uploading::after,
+.voice-status-thinking::after {
+  display: none;
+}
+
+.voice-status-recording {
   --voice-color: #3a84ff;
 }
 
-.voice-status-listening::before {
+.voice-status-recording::before {
   box-shadow: none;
 }
 
-.voice-status-listening::after {
-  display: none;
+.voice-status-uploading {
+  --voice-color: #ffb000;
+}
+
+.voice-status-uploading::before {
+  box-shadow:
+    0 0 0 4px rgba(245, 249, 255, 0.025),
+    0 0 14px color-mix(in srgb, var(--voice-color) 48%, transparent);
 }
 
 .voice-status-hearing {
@@ -233,6 +220,21 @@ button {
   animation: voiceRing 1.15s ease-in-out infinite;
 }
 
+.voice-status-thinking {
+  --voice-color: #ffb000;
+}
+
+.voice-status-thinking::before {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 3px solid color-mix(in srgb, var(--voice-color) 28%, transparent);
+  border-top-color: var(--voice-color);
+  border-right-color: var(--voice-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--voice-color) 42%, transparent);
+  animation: turnThinkingSpin 0.8s linear infinite;
+}
+
 .voice-status-speaking {
   --voice-color: #3a84ff;
 }
@@ -245,13 +247,16 @@ button {
   animation: voiceRing 1.15s ease-in-out infinite;
 }
 
-.voice-status-off {
-  --voice-color: #586574;
-  opacity: 0.42;
+.voice-status-failed {
+  --voice-color: #ff3b30;
 }
 
-.voice-status-off::before {
-  box-shadow: 0 0 0 4px rgba(245, 249, 255, 0.025);
+.voice-status-failed::before {
+  animation: turnFailFlash 0.9s ease-out both;
+}
+
+.voice-status-failed::after {
+  display: none;
 }
 
 @keyframes voicePulse {
@@ -280,6 +285,29 @@ button {
   100% {
     transform: translate(-50%, -50%) scale(1.28);
     opacity: 0;
+  }
+}
+
+@keyframes turnThinkingSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes turnFailFlash {
+  0%,
+  100% {
+    transform: scale(0.92);
+    opacity: 0.72;
+  }
+
+  45% {
+    transform: scale(1.12);
+    opacity: 1;
   }
 }
 

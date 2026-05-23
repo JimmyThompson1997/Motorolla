@@ -9,6 +9,7 @@ import android.media.PlaybackParams;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.state.PuckyState;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
@@ -324,6 +325,7 @@ public final class PlayerController {
     }
 
     private void handleCompletion() {
+        boolean completed = false;
         synchronized (this) {
             if (queue.length() > 0 && queueIndex >= 0 && queueIndex < queue.length() - 1) {
                 try {
@@ -339,7 +341,16 @@ public final class PlayerController {
                 }
             }
             playbackState = "completed";
+            completed = true;
         }
+        if (completed) {
+            broadcastPlayerCompletion();
+        }
+    }
+
+    private void broadcastPlayerCompletion() {
+        PuckyState.get().setLifecycleEvent("player.completed");
+        PuckyState.get().broadcast(context);
     }
 
     private JSONObject normalizeQueueItem(Object raw) throws CommandException {
