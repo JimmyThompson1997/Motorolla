@@ -70,11 +70,21 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"speech.echo.lab.list\""));
         assertTrue(source.contains("\"speech.echo.lab.config.get\""));
         assertTrue(source.contains("\"speech.echo.lab.config.set\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.list\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.set\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.delete\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.clear\""));
+        assertTrue(source.contains("\"speech.echo.lab.keyword.test\""));
         assertTrue(source.contains("return speechEchoLabController.status()"));
         assertTrue(source.contains("return speechEchoLabController.start(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.stop(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.configGet()"));
         assertTrue(source.contains("return speechEchoLabController.configSet(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.keywordList()"));
+        assertTrue(source.contains("return speechEchoLabController.keywordSet(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.keywordDelete(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.keywordClear()"));
+        assertTrue(source.contains("return speechEchoLabController.keywordTest(command.args())"));
         assertTrue(service.contains("SpeechEchoLabController.shared(this)"));
     }
 

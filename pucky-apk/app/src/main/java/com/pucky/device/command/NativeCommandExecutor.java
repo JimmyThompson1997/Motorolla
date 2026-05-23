@@ -74,6 +74,9 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.echo.lab.status", "speech.echo.lab.start", "speech.echo.lab.stop",
             "speech.echo.lab.last", "speech.echo.lab.list",
             "speech.echo.lab.config.get", "speech.echo.lab.config.set",
+            "speech.echo.lab.keyword.list", "speech.echo.lab.keyword.set",
+            "speech.echo.lab.keyword.delete", "speech.echo.lab.keyword.clear",
+            "speech.echo.lab.keyword.test",
             "livekit.status", "livekit.session.request", "livekit.connect",
             "livekit.disconnect", "livekit.mic.set", "livekit.ptt.start",
             "livekit.ptt.stop", "livekit.events.list", "livekit.events.clear",
@@ -420,6 +423,16 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.configGet();
             case "speech.echo.lab.config.set":
                 return speechEchoLabController.configSet(command.args());
+            case "speech.echo.lab.keyword.list":
+                return speechEchoLabController.keywordList();
+            case "speech.echo.lab.keyword.set":
+                return speechEchoLabController.keywordSet(command.args());
+            case "speech.echo.lab.keyword.delete":
+                return speechEchoLabController.keywordDelete(command.args());
+            case "speech.echo.lab.keyword.clear":
+                return speechEchoLabController.keywordClear();
+            case "speech.echo.lab.keyword.test":
+                return speechEchoLabController.keywordTest(command.args());
             case "livekit.status":
                 return liveKitController.status();
             case "livekit.session.request":

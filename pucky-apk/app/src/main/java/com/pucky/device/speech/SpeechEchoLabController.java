@@ -24,6 +24,8 @@ import android.speech.tts.Voice;
 import android.util.Log;
 
 import com.pucky.device.audio.AudioRouteDetector;
+import com.pucky.device.command.CommandErrorCodes;
+import com.pucky.device.command.CommandException;
 import com.pucky.device.speech.lab.AudioFrameBus;
 import com.pucky.device.speech.lab.OpenWakeWordConsumer;
 import com.pucky.device.speech.lab.PcmCaptureConsumer;
@@ -74,6 +76,7 @@ public final class SpeechEchoLabController {
     private final SharedPreferences prefs;
     private final SpeechEchoController directEcho;
     private final AudioRouteDetector routeDetector;
+    private final SpeechKeywordActionExecutor keywordActionExecutor;
     private final Handler main;
 
     private JSONObject active;
@@ -105,6 +108,7 @@ public final class SpeechEchoLabController {
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.directEcho = SpeechEchoController.shared(this.context);
         this.routeDetector = new AudioRouteDetector(this.context);
+        this.keywordActionExecutor = new SpeechKeywordActionExecutor(this.context);
         this.main = new Handler(Looper.getMainLooper());
         ensureDefaults();
     }
@@ -120,6 +124,7 @@ public final class SpeechEchoLabController {
         Json.put(out, "last_completed", lastSession());
         Json.put(out, "direct_echo_status", directEcho.status());
         Json.put(out, "captured_audio_echo_available", capturedAudioEchoAvailable());
+        Json.put(out, "keyword_registry", SpeechKeywordRegistry.list(customKeywordEntries()));
         Json.put(out, "tts_ready", ttsReady);
         Json.put(out, "tts_initializing", ttsInitializing);
         Json.put(out, "tts_voice", ttsVoiceName.isEmpty() ? JSONObject.NULL : ttsVoiceName);
@@ -267,6 +272,79 @@ public final class SpeechEchoLabController {
                 .commit();
         JSONObject out = configGet();
         Json.put(out, "saved", true);
+        return out;
+    }
+
+    public synchronized JSONObject keywordList() {
+        return SpeechKeywordRegistry.list(customKeywordEntries());
+    }
+
+    public synchronized JSONObject keywordSet(JSONObject args) throws CommandException {
+        JSONObject input = args == null ? null : args.optJSONObject("keyword");
+        if (input == null) {
+            input = args;
+        }
+        SpeechKeywordRegistry.SetResult result = SpeechKeywordRegistry.set(customKeywordEntries(), input);
+        saveCustomKeywordEntries(result.entries);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_keyword_set.v1");
+        Json.put(out, "saved", true);
+        Json.put(out, "replaced", result.replaced);
+        Json.put(out, "keyword", result.entry);
+        Json.put(out, "custom_count", result.entries.length());
+        return out;
+    }
+
+    public synchronized JSONObject keywordDelete(JSONObject args) throws CommandException {
+        String id = args == null ? "" : args.optString("id", "");
+        SpeechKeywordRegistry.DeleteResult result = SpeechKeywordRegistry.delete(customKeywordEntries(), id);
+        saveCustomKeywordEntries(result.entries);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_keyword_delete.v1");
+        Json.put(out, "id", id);
+        Json.put(out, "deleted", result.removed != null);
+        Json.put(out, "keyword", result.removed == null ? JSONObject.NULL : result.removed);
+        Json.put(out, "custom_count", result.entries.length());
+        return out;
+    }
+
+    public synchronized JSONObject keywordClear() {
+        JSONArray previous = customKeywordEntries();
+        saveCustomKeywordEntries(new JSONArray());
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_keyword_clear.v1");
+        Json.put(out, "cleared", previous.length());
+        Json.put(out, "custom_count", 0);
+        return out;
+    }
+
+    public synchronized JSONObject keywordTest(JSONObject args) throws CommandException {
+        if (args == null || !args.has("text")) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "speech.echo.lab.keyword.test requires text");
+        }
+        boolean execute = args.optBoolean("execute", false);
+        SpeechKeywordMatcher.Match keyword = SpeechKeywordRegistry.match(args.optString("text", ""), customKeywordEntries());
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_keyword_test.v1");
+        Json.put(out, "execute", execute);
+        Json.put(out, "match", SpeechKeywordRegistry.matchJson(keyword));
+        if (!keyword.matched || !keyword.hasAction()) {
+            Json.put(out, "action_status", keyword.matched ? "not_applicable" : "skipped_no_match");
+            return out;
+        }
+        Json.put(out, "action_status", execute ? "pending" : "planned");
+        Json.put(out, "action", keyword.action);
+        if (execute) {
+            try {
+                Json.put(out, "action_result", keywordActionExecutor.execute(keyword.action));
+                Json.put(out, "action_status", "succeeded");
+            } catch (CommandException exc) {
+                Json.put(out, "action_status", "failed");
+                Json.put(out, "action_error_code", exc.code());
+                Json.put(out, "action_error_message", exc.getMessage());
+            }
+        }
         return out;
     }
 
@@ -650,8 +728,25 @@ public final class SpeechEchoLabController {
             failActiveCapturedSession(active, "empty_transcript", "Injected-audio SpeechRecognizer returned no transcript");
             return;
         }
-        SpeechKeywordMatcher.Match keyword = SpeechKeywordMatcher.match(text);
+        SpeechKeywordMatcher.Match keyword = SpeechKeywordRegistry.match(text, customKeywordEntries());
         String ttsText = keyword.matched ? keyword.replyText : text;
+        String actionStatus = keyword.matched && keyword.hasAction() ? "planned" : "not_applicable";
+        JSONObject actionResult = null;
+        String actionErrorCode = "";
+        String actionErrorMessage = "";
+        boolean actionFailed = false;
+        if (keyword.matched && keyword.hasAction()) {
+            try {
+                actionResult = keywordActionExecutor.execute(keyword.action);
+                actionStatus = "succeeded";
+            } catch (CommandException exc) {
+                actionFailed = true;
+                actionStatus = "failed";
+                actionErrorCode = exc.code();
+                actionErrorMessage = exc.getMessage();
+                ttsText = failureReply(keyword);
+            }
+        }
         Json.put(active, "keyword_lab_enabled", true);
         Json.put(active, "keyword_raw_transcript", keyword.rawTranscript);
         Json.put(active, "keyword_normalized_transcript", keyword.normalizedTranscript);
@@ -664,6 +759,14 @@ public final class SpeechEchoLabController {
         Json.put(active, "keyword_match_start_index", keyword.startIndex);
         Json.put(active, "keyword_reply_text", keyword.matched ? keyword.replyText : JSONObject.NULL);
         Json.put(active, "keyword_reply_tts_replaces_echo", keyword.matched);
+        Json.put(active, "keyword_builtin", keyword.matched ? keyword.builtin : JSONObject.NULL);
+        Json.put(active, "keyword_action", keyword.hasAction() ? keyword.action : JSONObject.NULL);
+        Json.put(active, "keyword_action_command",
+                keyword.hasAction() ? keyword.action.optString("command", "") : JSONObject.NULL);
+        Json.put(active, "keyword_action_status", actionStatus);
+        Json.put(active, "keyword_action_result", actionResult == null ? JSONObject.NULL : actionResult);
+        Json.put(active, "keyword_action_error_code", actionErrorCode.isEmpty() ? JSONObject.NULL : actionErrorCode);
+        Json.put(active, "keyword_action_error_message", actionErrorMessage.isEmpty() ? JSONObject.NULL : actionErrorMessage);
         Json.put(active, "state", "Speaking");
         Json.put(active, "accepted_at", Instant.now().toString());
         Json.put(active, "accepted_elapsed_ms", elapsedMs(active));
@@ -673,8 +776,13 @@ public final class SpeechEchoLabController {
         appendSession(finished);
         active = null;
         cleanupCapturedRecognizer();
-        playAcceptedChime(sessionId);
-        main.postDelayed(() -> speakEcho(sessionId, ttsText), TTS_AFTER_ACCEPTED_CHIME_MS);
+        if (actionFailed) {
+            buzzError();
+        } else {
+            playAcceptedChime(sessionId);
+        }
+        String finalTtsText = ttsText;
+        main.postDelayed(() -> speakEcho(sessionId, finalTtsText), TTS_AFTER_ACCEPTED_CHIME_MS);
         Log.i(TAG, "captured audio echo recognized session=" + sessionId
                 + " text_len=" + text.length()
                 + " keyword=" + (keyword.matched ? keyword.id : "none"));
@@ -805,6 +913,31 @@ public final class SpeechEchoLabController {
         Json.put(out, "wake_enabled", ENGINE_FRAME_BUS_WAKE.equals(out.optString(ENGINE)));
         Json.put(out, "raw_audio_default", "not_stored");
         return out;
+    }
+
+    private JSONArray customKeywordEntries() {
+        return SpeechKeywordRegistry.loadCustom(
+                prefs.getString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS, "[]"));
+    }
+
+    private void saveCustomKeywordEntries(JSONArray entries) {
+        prefs.edit()
+                .putString(SpeechKeywordRegistry.PREF_CUSTOM_KEYWORDS,
+                        entries == null ? "[]" : entries.toString())
+                .commit();
+    }
+
+    private static String failureReply(SpeechKeywordMatcher.Match keyword) {
+        if (keyword != null && keyword.errorReplyText != null && !keyword.errorReplyText.trim().isEmpty()) {
+            return keyword.errorReplyText.trim();
+        }
+        String label = keyword == null ? "" : keyword.id.replace('_', ' ').replace('-', ' ').trim();
+        if (label.isEmpty()) {
+            label = "Keyword";
+        } else {
+            label = label.substring(0, 1).toUpperCase(Locale.US) + label.substring(1);
+        }
+        return label + " failed.";
     }
 
     private void ensureDefaults() {

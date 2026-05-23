@@ -41,8 +41,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 47
-        versionName "0.2.46-pucky-turn"
+        versionCode 48
+        versionName "0.2.47-keyword-actions"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

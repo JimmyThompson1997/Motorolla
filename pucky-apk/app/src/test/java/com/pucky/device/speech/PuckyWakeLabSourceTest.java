@@ -113,14 +113,39 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("ready_after_first_audio_frame"));
         assertTrue(source.contains("recognizer_leading_padding_ms"));
         assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
-        assertTrue(source.contains("SpeechKeywordMatcher.match(text)"));
+        assertTrue(source.contains("SpeechKeywordRegistry.match(text, customKeywordEntries())"));
+        assertTrue(source.contains("SpeechKeywordActionExecutor"));
         assertTrue(source.contains("keyword_lab_enabled"));
         assertTrue(source.contains("keyword_match_strategy"));
         assertTrue(source.contains("exact_utterance"));
         assertTrue(source.contains("keyword_reply_tts_replaces_echo"));
+        assertTrue(source.contains("keyword_action_status"));
+        assertTrue(source.contains("keyword_action_result"));
+        assertTrue(source.contains("keyword_action_error_message"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
         assertTrue(bus.contains("addSynchronousConsumer"));
+    }
+
+    @Test
+    public void programmableKeywordActionsAreLabScopedAndTorchOnly() throws Exception {
+        String controller = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
+        String registry = read("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java");
+        String executor = read("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java");
+
+        assertTrue(controller.contains("speech.echo.lab.keyword.test requires text"));
+        assertTrue(controller.contains("SpeechKeywordRegistry.list(customKeywordEntries())"));
+        assertTrue(registry.contains("PREF_CUSTOM_KEYWORDS"));
+        assertTrue(registry.contains("Built-in speech keywords cannot be overwritten"));
+        assertTrue(registry.contains("speech keyword phrase duplicates existing phrase"));
+        assertTrue(executor.contains("COMMAND_TORCH_SET = \"torch.set\""));
+        assertTrue(executor.contains("DEFAULT_TORCH_AUTO_OFF_MS = 600"));
+        assertTrue(executor.contains("MIN_TORCH_AUTO_OFF_MS = 100"));
+        assertTrue(executor.contains("MAX_TORCH_AUTO_OFF_MS = 1500"));
+        assertTrue(executor.contains("new CameraController(context)"));
+        assertFalse(executor.contains("LiveKit"));
+        assertFalse(executor.contains("pucky.turn"));
+        assertFalse(executor.contains("shell.exec"));
     }
 
     @Test
