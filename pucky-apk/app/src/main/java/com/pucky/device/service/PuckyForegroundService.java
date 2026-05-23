@@ -57,6 +57,7 @@ import com.pucky.device.sensors.PhysicalGestureFeedbackController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
 import com.pucky.device.speech.SpeechEchoController;
+import com.pucky.device.speech.SpeechEchoLabController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.status.StatusProvider;
 import com.pucky.device.storage.CommandLogStore;
@@ -276,6 +277,7 @@ public final class PuckyForegroundService extends Service {
                 VoiceCaptureController.shared(this),
                 NativeSpeechController.shared(this),
                 SpeechEchoController.shared(this),
+                SpeechEchoLabController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
                 LiveKitController.shared(this, settings),

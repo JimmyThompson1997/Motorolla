@@ -38,19 +38,14 @@ public final class AudioController {
     }
 
     public JSONObject route() {
+        JSONObject out = new AudioRouteDetector(context).snapshot();
         AudioManager manager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        JSONObject out = new JSONObject();
-        Json.put(out, "available", manager != null);
         if (manager == null) {
             return out;
         }
         Json.put(out, "mode", manager.getMode());
         Json.put(out, "music_volume", manager.getStreamVolume(AudioManager.STREAM_MUSIC));
         Json.put(out, "music_max_volume", manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
-        Json.put(out, "speakerphone_on", manager.isSpeakerphoneOn());
-        Json.put(out, "bluetooth_sco_on", manager.isBluetoothScoOn());
-        Json.put(out, "wired_headset_on_legacy", manager.isWiredHeadsetOn());
-        Json.put(out, "microphone_mute", manager.isMicrophoneMute());
         return out;
     }
 

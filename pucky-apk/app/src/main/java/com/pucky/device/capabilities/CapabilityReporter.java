@@ -128,7 +128,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("audio.tone", "audio.tone", "implemented_untested", "yes", "audible", null, "not_recorded",
                 "Short bounded ToneGenerator beep."));
         Json.add(out, cap("audio.route", "audio.route.get", "implemented", "yes", "quiet", null, "not_recorded",
-                "AudioManager route and volume snapshot."));
+                "Modern AudioDeviceInfo input-route snapshot plus legacy debug booleans and media volume."));
         Json.add(out, cap("audio.volume", "audio.volume.set", "implemented_untested", "yes", "audible", null, "not_recorded",
                 "Sets Android STREAM_MUSIC volume to a bounded level or percent for deterministic audio tests."));
         Json.add(out, cap("voice.capture", "voice.capture.start/voice.capture.stop/voice.capture.status/voice.capture.last/voice.capture.list/voice.capture.delete",
@@ -136,9 +136,9 @@ public final class CapabilityReporter {
                 "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
                 "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Raw voice capture is save-only and does not replay recordings."));
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
-                permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_config_required" : "blocked_by_permission",
-                "foreground_service", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Picovoice Porcupine wake-word plumbing for 'Pucky'. Live detection requires a Picovoice AccessKey and Android .ppn keyword model."));
+                "disabled_removed_license_risk",
+                "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
+                "Commercial Porcupine wake-word path has been removed. Commands remain compatible and report engine=none; openWakeWord is lab-only behind volume-down experiments."));
         Json.add(out, cap("ssh.reverse_tunnel", "tunnel.status/tunnel.config.set/tunnel.start/tunnel.stop",
                 "implemented_untested", "foreground_service", "raw_device_bridge", Manifest.permission.INTERNET,
                 "not_recorded",
@@ -156,7 +156,10 @@ public final class CapabilityReporter {
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));
         Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete/speech.echo.voices",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Strict on-device SpeechRecognizer hold-to-talk echo test with injected AudioRecord PCM, saved WAV artifacts, formatted final transcripts, language-detection logging, and Android TTS playback. No broker or agent call."));
+                "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
+        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set",
+                speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
+                "Volume-down-only audio lab. Default engine delegates to direct Android STT/TTS echo; frame-bus, VAD, and openWakeWord metrics stay isolated from volume-up, power-hold, broker, and LiveKit paths."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",

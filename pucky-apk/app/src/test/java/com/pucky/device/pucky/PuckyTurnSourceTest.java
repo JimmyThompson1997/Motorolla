@@ -12,31 +12,34 @@ import java.util.regex.Pattern;
 
 public final class PuckyTurnSourceTest {
     @Test
-    public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToCapture() throws Exception {
+    public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToLab() throws Exception {
         String source = read("src/main/java/com/pucky/device/buttons/ButtonController.java");
 
-        assertTrue(source.contains("\"android_volume_pucky_speech_echo_wav_v20\""));
+        assertTrue(source.contains("\"android_volume_pucky_speech_echo_lab_v21\""));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold\", \"pucky.turn.start\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold_release\", \"pucky.turn.stop\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.start\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.stop\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.lab.start\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.lab.stop\")"));
         assertTrue(source.contains("PuckyTurnController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("PuckyTurnController.shared(context).stop(reasonArgs(\"button_release\"))"));
+        assertTrue(source.contains("SpeechEchoLabController.shared(context).start(new JSONObject())"));
+        assertTrue(source.contains("SpeechEchoLabController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertTrue(source.contains("SpeechEchoController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("SpeechEchoController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertFalse(source.contains("Json.put(mappings, \"volume_up_hold\", \"livekit.ptt.start\")"));
     }
 
     @Test
-    public void volumeDownEchoInjectsSavedRawAudioIntoOnDeviceSpeech() throws Exception {
+    public void volumeDownEchoUsesDirectOnDeviceSpeechRecognizer() throws Exception {
         String echo = read("src/main/java/com/pucky/device/speech/SpeechEchoController.java");
         String capture = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
 
-        assertTrue(echo.contains("import android.media.AudioRecord;"));
-        assertTrue(echo.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE"));
-        assertTrue(echo.contains("RecognizerIntent.EXTRA_SEGMENTED_SESSION"));
         assertTrue(echo.contains("SpeechRecognizer.createOnDeviceSpeechRecognizer(context)"));
-        assertTrue(echo.contains("raw_audio_container\", \"wav\""));
+        assertTrue(echo.contains("recognizer.stopListening()"));
+        assertFalse(echo.contains("import android.media.AudioRecord;"));
+        assertFalse(echo.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE"));
+        assertFalse(echo.contains("RecognizerIntent.EXTRA_SEGMENTED_SESSION"));
+        assertFalse(echo.contains("raw_audio_container\", \"wav\""));
         assertFalse(capture.contains("import android.media.MediaPlayer;"));
         assertFalse(capture.contains("playCapturePlayback"));
     }
@@ -53,6 +56,26 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.start(command.args())"));
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
         assertTrue(service.contains("PuckyTurnController.shared(this)"));
+    }
+
+    @Test
+    public void nativeCommandExecutorAllowlistsSpeechEchoLabCommands() throws Exception {
+        String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
+
+        assertTrue(source.contains("\"speech.echo.lab.status\""));
+        assertTrue(source.contains("\"speech.echo.lab.start\""));
+        assertTrue(source.contains("\"speech.echo.lab.stop\""));
+        assertTrue(source.contains("\"speech.echo.lab.last\""));
+        assertTrue(source.contains("\"speech.echo.lab.list\""));
+        assertTrue(source.contains("\"speech.echo.lab.config.get\""));
+        assertTrue(source.contains("\"speech.echo.lab.config.set\""));
+        assertTrue(source.contains("return speechEchoLabController.status()"));
+        assertTrue(source.contains("return speechEchoLabController.start(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.stop(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.configGet()"));
+        assertTrue(source.contains("return speechEchoLabController.configSet(command.args())"));
+        assertTrue(service.contains("SpeechEchoLabController.shared(this)"));
     }
 
     @Test

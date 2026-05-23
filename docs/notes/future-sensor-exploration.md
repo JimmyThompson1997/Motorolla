@@ -96,16 +96,17 @@ Important split:
 
 Goal: dead-simple first proof that "Pucky" can wake the agent.
 
-Recommended staged path:
+Current staged path:
 
-- Stage 1: Porcupine or similar on-device keyword spotter listens for "Pucky"
-  in a properly declared foreground microphone service.
-- Stage 2: on wake, capture a short command window and route to a trivial
-  command handler first.
-- Stage 3: add speech-to-intent or transcription only after wake detection is
-  stable.
-- Stage 4: add speaker verification for "only Jimmy's voice" if false accepts
-  or privacy make it worth the complexity.
+- Stage 1: keep wake-word work inside the volume-down lab. The production
+  wake command surface is now a disabled compatibility stub because Porcupine
+  introduced licensing and AccessKey risk.
+- Stage 2: use the lab frame bus to measure route, pre-roll, VAD, and
+  openWakeWord scores during held sessions or fixture runs.
+- Stage 3: promote any always-on wake-word behavior only after corpus-backed
+  false-accept/false-reject results exist and a separate PRD approves it.
+- Stage 4: add speaker verification for "only Jimmy's voice" only if false
+  accepts or privacy make it worth the complexity.
 
 Safety and Android reality:
 
@@ -115,31 +116,30 @@ Safety and Android reality:
 - Do not combine wake word, speaker ID, command parsing, and cloud action
   routing in one first implementation. Prove one layer at a time.
 
-### Pucky Wake-Word Test Setup
+### Pucky Wake-Word Lab Setup
 
 First test target:
 
-- Say "Pucky".
-- APK detects the wake word.
-- APK buzzes and posts a "Pucky heard" notification.
-- No command parsing and no LiveKit voice session yet.
+- Hold volume down with the lab engine set to a wake metric mode.
+- Say "Pucky" or "Hey Pucky" during the held lab session.
+- APK records report-only wake metrics.
+- No command parsing, notification, LiveKit voice session, or global wake
+  behavior is triggered.
 
 Current APK support:
 
-- `ai.picovoice:porcupine-android` is already a Gradle dependency.
-- `WakeWordController` already exposes `wake.status`, `wake.config.set`,
-  `wake.start`, `wake.stop`, and `wake.simulate`.
-- Detection defaults to `action=notify`, which vibrates and posts a wake
-  notification. `action=livekit` is reserved for later.
+- `WakeWordController` exposes compatible `wake.status`, `wake.config.set`,
+  `wake.start`, `wake.stop`, and `wake.simulate` commands, but reports
+  `engine=none`, `enabled=false`, and
+  `reason=porcupine_removed_license_risk`.
+- The volume-down lab is documented in `docs/pucky-wake-lab/`.
+- openWakeWord is lab-only until promotion criteria are met.
 
-Required external Picovoice pieces:
+Removed Picovoice pieces:
 
-- Picovoice `AccessKey` from the user's Picovoice account. Keep this secret and
-  do not commit it to git.
-- Android custom keyword model for the text `Pucky`, downloaded from Picovoice
-  Console as a `.ppn` file.
-- Store the model as `app/src/main/assets/pucky_android.ppn` before building the
-  APK.
+- No Picovoice AccessKey is required.
+- No Porcupine `.ppn` model is required.
+- `ai.picovoice:porcupine-android` is not part of the production APK build.
 
-If "Pucky" alone is unreliable, generate a second Android keyword model for
-"Hey Pucky" and compare miss/false-positive rates.
+If "Pucky" alone is unreliable, compare "Hey Pucky" in the openWakeWord lab
+fixture reports before considering any production wake-word promotion.

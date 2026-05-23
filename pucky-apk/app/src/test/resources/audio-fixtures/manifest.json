@@ -1,0 +1,9 @@
+{
+  "schema": "pucky.audio_lab_fixtures.v1",
+  "status": "placeholder",
+  "fixtures": [],
+  "warnings": [
+    "No labeled corpus is checked in yet.",
+    "Metrics generated from this placeholder manifest are report-only."
+  ]
+}
