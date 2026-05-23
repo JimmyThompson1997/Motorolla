@@ -636,6 +636,8 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert 'shell.addEventListener("click"' not in app
     assert "function formatVideoTime(seconds)" in app
     assert "await video.play()" in app
+    assert "preferDataUrl: true" in app
+    assert "!options.preferDataUrl && window.PuckyAndroid" in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
     assert "function documentViewer(item)" in app
     assert "function showImageReel(card, imageSet = null, options = {})" in app

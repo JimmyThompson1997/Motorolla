@@ -1309,7 +1309,10 @@
     installDetailScrollPersistence(content, "attachment");
     restoreScrollPosition(content, options.scrollTop);
     try {
-      video.src = await resolveArtifactUrl(item, { maxBytes: 64 * 1024 * 1024 });
+      video.src = await resolveArtifactUrl(item, {
+        maxBytes: 64 * 1024 * 1024,
+        preferDataUrl: true
+      });
     } catch (error) {
       frame.append(el("p", "attachment-error", `Video unavailable: ${error.message}`));
     }
@@ -1431,7 +1434,7 @@
     if (!path) {
       throw new Error("attachment path is missing");
     }
-    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+    if (!options.preferDataUrl && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       try {
         const result = await Pucky.request({
           command: "artifact.url",
