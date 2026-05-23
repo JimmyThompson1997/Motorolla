@@ -67,4 +67,14 @@ public final class AudioLabPureUnitTest {
         assertEquals(1, report.getLong("samples_dropped"));
         assertTrue(report.getBoolean("truncated"));
     }
+
+    @Test
+    public void pcmCaptureCanWaitForFirstAudioFrame() throws Exception {
+        PcmCaptureConsumer capture = new PcmCaptureConsumer(5);
+
+        assertEquals(false, capture.waitForFirstFrame(1L));
+        capture.onFrame(new short[] {1}, 10L);
+
+        assertTrue(capture.waitForFirstFrame(1L));
+    }
 }

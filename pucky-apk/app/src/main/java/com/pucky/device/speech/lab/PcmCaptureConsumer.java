@@ -41,6 +41,7 @@ public final class PcmCaptureConsumer implements AudioFrameConsumer {
         samplesSeen += frame.length;
         if (firstTimestampNanos == 0L) {
             firstTimestampNanos = timestampNanos;
+            notifyAll();
         }
         lastTimestampNanos = timestampNanos;
 
@@ -65,6 +66,26 @@ public final class PcmCaptureConsumer implements AudioFrameConsumer {
         short[] out = new short[sampleCount];
         System.arraycopy(samples, 0, out, 0, sampleCount);
         return out;
+    }
+
+    public synchronized boolean waitForFirstFrame(long timeoutMs) {
+        if (framesSeen > 0) {
+            return true;
+        }
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (framesSeen == 0) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0L) {
+                return false;
+            }
+            try {
+                wait(remaining);
+            } catch (InterruptedException exc) {
+                Thread.currentThread().interrupt();
+                return framesSeen > 0;
+            }
+        }
+        return true;
     }
 
     @Override

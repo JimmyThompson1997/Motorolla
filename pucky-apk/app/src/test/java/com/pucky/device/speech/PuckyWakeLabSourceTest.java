@@ -107,6 +107,12 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("RecognizerIntent.EXTRA_SEGMENTED_SESSION"));
         assertTrue(source.contains("RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE"));
         assertTrue(source.contains("TextToSpeech.QUEUE_FLUSH"));
+        assertTrue(source.contains("USAGE_MEDIA"));
+        assertFalse(source.contains("USAGE_ASSISTANCE_ACCESSIBILITY"));
+        assertTrue(source.contains("waiting_for_tts"));
+        assertTrue(source.contains("ready_after_first_audio_frame"));
+        assertTrue(source.contains("recognizer_leading_padding_ms"));
+        assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
         assertTrue(bus.contains("addSynchronousConsumer"));

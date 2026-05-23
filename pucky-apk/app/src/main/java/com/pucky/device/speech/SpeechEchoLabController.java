@@ -57,6 +57,10 @@ public final class SpeechEchoLabController {
     private static final int ERROR_HAPTIC_AMPLITUDE = 255;
     private static final int ACCEPTED_CHIME_VOLUME = 85;
     private static final long TTS_AFTER_ACCEPTED_CHIME_MS = 250L;
+    private static final int STT_EDGE_PADDING_MS = 200;
+    private static final long FIRST_AUDIO_FRAME_READY_TIMEOUT_MS = 250L;
+    private static final long TTS_READY_RETRY_MS = 150L;
+    private static final int TTS_READY_RETRY_LIMIT = 12;
 
     public static final String ENGINE_ANDROID_DIRECT_ECHO = "android_direct_echo";
     public static final String ENGINE_ANDROID_CAPTURED_AUDIO_ECHO = "android_captured_audio_echo";
@@ -312,8 +316,7 @@ public final class SpeechEchoLabController {
         frameBus = new AudioFrameBus(context);
         pcmCapture = new PcmCaptureConsumer();
         frameBus.addSynchronousConsumer(pcmCapture);
-        frameBus.addConsumer(new PreRollBuffer());
-        frameBus.addConsumer(new TelemetryConsumer());
+        ensureTtsReady();
         JSONObject busStart = frameBus.start();
         Json.put(session, "frame_bus_start", busStart);
         if (!"started".equals(busStart.optString("result", ""))) {
@@ -324,9 +327,15 @@ public final class SpeechEchoLabController {
             return startResult(session, "failed");
         }
 
+        boolean firstFrameReady = pcmCapture.waitForFirstFrame(FIRST_AUDIO_FRAME_READY_TIMEOUT_MS);
         Json.put(session, "state", "Recording");
         Json.put(session, "ready_at", Instant.now().toString());
         Json.put(session, "ready_elapsed_ms", elapsedMs(session));
+        Json.put(session, "ready_after_first_audio_frame", firstFrameReady);
+        if (!firstFrameReady) {
+            Json.put(session, "ready_warning", "first_audio_frame_timeout");
+            Log.w(TAG, "captured audio echo ready before first frame session=" + session.optString("session_id"));
+        }
         Json.put(session, "audio_capture", pcmCapture.snapshot());
         Log.i(TAG, "captured audio echo recording started session=" + session.optString("session_id"));
         buzzOneShot(READY_HAPTIC_MS, HAPTIC_AMPLITUDE);
@@ -357,12 +366,20 @@ public final class SpeechEchoLabController {
             return out;
         }
 
+        short[] recognizerSamples = padSamplesForRecognition(samples);
         Json.put(session, "captured_audio_samples_for_stt", samples.length);
         Json.put(session, "captured_audio_bytes_for_stt", samples.length * 2L);
         Json.put(session, "captured_audio_duration_ms_for_stt", samples.length * 1_000L / AudioFrameBus.SAMPLE_RATE);
+        Json.put(session, "recognizer_leading_padding_ms", STT_EDGE_PADDING_MS);
+        Json.put(session, "recognizer_trailing_padding_ms", STT_EDGE_PADDING_MS);
+        Json.put(session, "recognizer_samples_for_stt", recognizerSamples.length);
+        Json.put(session, "recognizer_audio_duration_ms_for_stt",
+                recognizerSamples.length * 1_000L / AudioFrameBus.SAMPLE_RATE);
         Log.i(TAG, "captured audio echo release session=" + session.optString("session_id")
-                + " samples=" + samples.length);
-        main.post(() -> startCapturedRecognizerOnMain(session.optString("session_id"), samples));
+                + " samples=" + samples.length
+                + " durationMs=" + captureReport.optLong("duration_ms_captured", 0L)
+                + " maxAbs=" + captureReport.optInt("max_abs_pcm16", 0));
+        main.post(() -> startCapturedRecognizerOnMain(session.optString("session_id"), recognizerSamples));
         Json.put(out, "result", "stopped_captured_audio_started_recognition");
         Json.put(out, "session", session);
         return out;
@@ -443,6 +460,7 @@ public final class SpeechEchoLabController {
             Json.put(active, "recognizer_sample_rate", AudioFrameBus.SAMPLE_RATE);
             Json.put(active, "recognizer_channel_count", 1);
             Json.put(active, "recognizer_encoding", "PCM_16BIT");
+            Json.put(active, "recognizer_language_detection", "disabled_for_button_bounded_echo");
         }
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
@@ -469,15 +487,22 @@ public final class SpeechEchoLabController {
                 intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY);
                 intent.putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true);
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true);
-            }
             capturedRecognizer.startListening(intent);
             writeCapturedPcmAsync(sessionId, write, samples);
         } catch (RuntimeException | IOException exc) {
             failActiveCapturedSessionById(sessionId, "captured_recognizer_start_failed",
                     exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
+    }
+
+    private static short[] padSamplesForRecognition(short[] samples) {
+        if (samples == null || samples.length == 0 || STT_EDGE_PADDING_MS <= 0) {
+            return samples == null ? new short[0] : samples;
+        }
+        int paddingSamples = AudioFrameBus.SAMPLE_RATE * STT_EDGE_PADDING_MS / 1_000;
+        short[] out = new short[samples.length + paddingSamples * 2];
+        System.arraycopy(samples, 0, out, paddingSamples, samples.length);
+        return out;
     }
 
     private void writeCapturedPcmAsync(String sessionId, ParcelFileDescriptor write, short[] samples) {
@@ -810,6 +835,10 @@ public final class SpeechEchoLabController {
     }
 
     private void speakEcho(String sessionId, String text) {
+        speakEcho(sessionId, text, 0);
+    }
+
+    private void speakEcho(String sessionId, String text, int attempt) {
         try {
             ensureTtsReady();
             TextToSpeech localSpeaker;
@@ -817,15 +846,24 @@ public final class SpeechEchoLabController {
                 localSpeaker = ttsReady ? speaker : null;
             }
             if (localSpeaker == null) {
-                markTts(sessionId, "failed_not_ready", text, "TTS engine was not ready");
+                if (attempt < TTS_READY_RETRY_LIMIT) {
+                    markTts(sessionId, "waiting_for_tts", text,
+                            "TTS engine not ready; retry " + (attempt + 1) + "/" + TTS_READY_RETRY_LIMIT);
+                    main.postDelayed(() -> speakEcho(sessionId, text, attempt + 1), TTS_READY_RETRY_MS);
+                    return;
+                }
+                markTts(sessionId, "failed_not_ready", text, "TTS engine was not ready after retries");
                 buzzError();
                 return;
             }
             Bundle params = new Bundle();
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
             int result = localSpeaker.speak(text, TextToSpeech.QUEUE_FLUSH, params, "pucky_lab_echo_" + sessionId);
             if (result == TextToSpeech.SUCCESS) {
                 markTts(sessionId, "started", text, null);
+                Log.i(TAG, "captured audio echo TTS started session=" + sessionId
+                        + " usage=media stream=music voice=" + ttsVoiceName);
             } else {
                 markTts(sessionId, "failed_speak_" + result, text, "TextToSpeech.speak returned " + result);
                 buzzError();
@@ -884,7 +922,7 @@ public final class SpeechEchoLabController {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             created.setAudioAttributes(new android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build());
         }
@@ -936,6 +974,8 @@ public final class SpeechEchoLabController {
             Json.put(item, "tts_status", status);
             Json.put(item, "tts_at", Instant.now().toString());
             Json.put(item, "tts_elapsed_ms", elapsedMs(item));
+            Json.put(item, "tts_audio_usage", "media");
+            Json.put(item, "tts_stream", "music");
             if (text != null && !text.isEmpty()) {
                 Json.put(item, "tts_text", text);
             }
