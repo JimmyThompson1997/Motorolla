@@ -206,6 +206,10 @@ public final class RecipeDevicePrimitiveExecutor {
         Json.put(args, "fresh", true);
         Json.put(args, "allow_pending", true);
         Json.put(args, "publish", false);
+        String clipboardEntryId = rawArgs.optString("pucky_clipboard_entry_id", "").trim();
+        if (!clipboardEntryId.isEmpty()) {
+            Json.put(args, "pucky_clipboard_entry_id", clipboardEntryId);
+        }
         String provider = rawArgs.optString("provider", "").trim();
         if (!provider.isEmpty()) {
             Json.put(args, "provider", provider);

@@ -75,6 +75,18 @@ public final class SpeechRecipeRegistryTest {
     }
 
     @Test
+    public void locationPrimitivePreservesClipboardEntryForPendingResolution() throws Exception {
+        JSONObject safe = RecipeDevicePrimitiveExecutor.sanitize(new JSONObject()
+                .put("command", "location.pin")
+                .put("args", new JSONObject()
+                        .put("pucky_clipboard_entry_id", "clip_location_pending")));
+        JSONObject args = safe.optJSONObject("args");
+
+        assertEquals("location.pin", safe.optString("command"));
+        assertEquals("clip_location_pending", args.optString("pucky_clipboard_entry_id"));
+    }
+
+    @Test
     public void duplicatePhrasesInsideBundleAreRejected() throws Exception {
         CommandException exc = expectCommandException(() ->
                 SpeechRecipeRegistry.normalizeBundle(bundle(
