@@ -12,6 +12,8 @@ from typing import Any
 from urllib.parse import quote, urljoin
 from urllib.request import urlopen
 
+from pucky_vm.attachment_manifest import normalize_attachments
+
 
 DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
@@ -245,10 +247,22 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
             filename_prefix=prefix,
             downloads=downloads,
         )
+        raw_attachments = download_images(
+            args,
+            images=card.get("attachments") or [],
+            artifact_base=artifact_base,
+            filename_prefix=f"{prefix}_attachment",
+            downloads=downloads,
+        )
         if images:
             card["images"] = images
         else:
             card.pop("images", None)
+        normalized_card_attachments = normalize_attachments(raw_attachments or images)
+        if normalized_card_attachments:
+            card["attachments"] = normalized_card_attachments
+        else:
+            card.pop("attachments", None)
         messages = []
         for message_index, message in enumerate(card.get("transcript_messages") or []):
             message_copy = dict(message)
@@ -259,10 +273,22 @@ def build_cards(args: argparse.Namespace, spec: dict[str, Any]) -> tuple[list[di
                 filename_prefix=f"{prefix}_message_{message_index + 1}",
                 downloads=downloads,
             )
+            message_raw_attachments = download_images(
+                args,
+                images=message_copy.get("attachments") or [],
+                artifact_base=artifact_base,
+                filename_prefix=f"{prefix}_message_{message_index + 1}_attachment",
+                downloads=downloads,
+            )
             if message_images:
                 message_copy["images"] = message_images
             else:
                 message_copy.pop("images", None)
+            normalized_message_attachments = normalize_attachments(message_raw_attachments or message_images)
+            if normalized_message_attachments:
+                message_copy["attachments"] = normalized_message_attachments
+            else:
+                message_copy.pop("attachments", None)
             messages.append(message_copy)
         if messages:
             card["transcript_messages"] = messages
@@ -284,10 +310,20 @@ def artifact_names(spec: dict[str, Any]) -> list[str]:
                 value = str(image.get(field) or "").strip()
                 if value:
                     names.append(value)
+        for attachment in card.get("attachments") or []:
+            for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
+                value = str(attachment.get(field) or "").strip()
+                if value:
+                    names.append(value)
         for message in card.get("transcript_messages") or []:
             for image in message.get("images") or []:
                 for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
                     value = str(image.get(field) or "").strip()
+                    if value:
+                        names.append(value)
+            for attachment in message.get("attachments") or []:
+                for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
+                    value = str(attachment.get(field) or "").strip()
                     if value:
                         names.append(value)
     return sorted(set(names))

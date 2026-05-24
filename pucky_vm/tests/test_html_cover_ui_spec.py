@@ -1014,3 +1014,31 @@ def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     assert fixtures.count('"trace": {') == 5
     assert fixtures.count('"kind": "thinking"') == 5
     assert fixtures.count('"kind": "reasoning"') == 5
+
+
+def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    fixture = read("fixtures/reply_cards_deploy.json")
+
+    assert "function normalizeAttachment(attachment, index = 0)" in app
+    assert "function normalizedAttachmentKind(item, mime)" in app
+    assert "function normalizeAttachmentPreview(item, kind)" in app
+    assert "function normalizeAttachmentViewer(item, kind, mime)" in app
+    assert "function attachmentViewerType(item)" in app
+    assert "const viewerType = attachmentViewerType(item)" in app
+    assert 'if (viewerType === "image_gallery")' in app
+    assert 'if (viewerType === "video_player")' in app
+    assert 'if (viewerType === "audio_player")' in app
+    assert 'if (viewerType === "html_iframe")' in app
+    assert 'if (viewerType === "table")' in app
+    assert 'if (viewerType === "text")' in app
+    assert "message?.attachments" in app
+    assert "card?.attachments" in app
+    assert '"attachments": [' in fixture
+    assert '"artifact": "morning-checklist.csv"' in fixture
+    assert '"artifact": "morning-notes.txt"' in fixture
+    assert '"artifact": "morning-unknown.bin"' in fixture
+    assert ".table-viewer" in styles
+    assert ".text-viewer" in styles
+    assert ".attachment-audio-card" in styles

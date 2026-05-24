@@ -1,0 +1,3 @@
+PUCKY-UNKNOWN-FILE-FIXTURE
+
+This deliberately boring binary-labeled fixture stands in for future files that Pucky does not yet know how to richly preview. The correct behavior is not to crash, not to guess wildly, and not to force a fake document view. It should render a metadata tile plus a download/open-original style fallback.

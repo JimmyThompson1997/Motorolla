@@ -50,6 +50,10 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
                 for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
                     if image.get(field):
                         artifacts.add(image[field])
+            for attachment in message.get("attachments", []):
+                for field in ("artifact", "preview_artifact", "viewer_artifact", "html_artifact", "document_html_artifact"):
+                    if attachment.get(field):
+                        artifacts.add(attachment[field])
         assert card.get("trace", {}).get("schema") == "pucky.turn_trace.v1"
 
     for name in artifacts:
@@ -77,6 +81,9 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/real-video-4-webview.mp4" in files
     assert "fixtures/artifacts/real-clipchamp-demo-webview.mp4" in files
     assert "fixtures/artifacts/real-pucky-proof-webview.mp4" in files
+    assert "fixtures/artifacts/morning-checklist.csv" in files
+    assert "fixtures/artifacts/morning-notes.txt" in files
+    assert "fixtures/artifacts/morning-unknown.bin" in files
     assert (ARTIFACTS / "real-master-through-chapter-8.pdf").read_bytes().startswith(b"%PDF")
     assert (ARTIFACTS / "real-manuscript-chapters-0-7.docx").read_bytes().startswith(b"PK")
     assert (ARTIFACTS / "real-video-4-webview.mp4").read_bytes()[4:12].startswith(b"ftyp")
@@ -85,6 +92,31 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/commute-dashboard.png" in files
     assert "fixtures/artifacts/meeting-room.jpg" in files
     assert "fixtures/artifacts/meeting-decision.pdf" in files
+
+
+def test_vm_attachment_normalizer_produces_generic_preview_contract() -> None:
+    from pucky_vm.attachment_manifest import normalize_attachment, normalize_attachments
+
+    pdf = normalize_attachment(
+        {
+            "artifact": "sample.pdf",
+            "preview_artifact": "sample-page-1.png",
+            "viewer_artifact": "sample.html",
+            "mime_type": "application/pdf",
+            "title": "Sample PDF",
+        }
+    )
+    csv = normalize_attachment({"artifact": "table.csv", "mime_type": "text/csv", "title": "Table CSV"})
+    unknown = normalize_attachment({"artifact": "blob.bin", "mime_type": "application/octet-stream"})
+
+    assert pdf["kind"] == "document"
+    assert pdf["preview"]["type"] == "image"
+    assert pdf["viewer"]["type"] == "document_html"
+    assert csv["kind"] == "table"
+    assert csv["viewer"]["type"] == "table"
+    assert unknown["kind"] == "unknown"
+    assert unknown["viewer"]["type"] == "download_only"
+    assert [item["id"] for item in normalize_attachments([{"artifact": "one.png", "mime_type": "image/png"}])] == ["one.png"]
 
 
 def test_deploy_helper_uses_command_path_and_no_adb_shortcuts() -> None:
@@ -152,6 +184,8 @@ def test_build_cards_converts_artifacts_to_app_owned_paths(monkeypatch: pytest.M
     assert cards[0]["transcript_messages"][0]["images"][0]["path"].startswith("/data/user/0/")
     assert cards[0]["transcript_messages"][0]["images"][0]["viewer_path"].startswith("/data/user/0/")
     assert cards[0]["transcript_messages"][0]["images"][0]["viewer_artifact"] == "morning.html"
+    assert cards[0]["transcript_messages"][0]["attachments"][0]["viewer"]["type"] == "image_gallery"
+    assert cards[0]["transcript_messages"][0]["attachments"][0]["original"]["path"].startswith("/data/user/0/")
     assert not deploy_cover_fixture.nested_contains(cards, deploy_cover_fixture.BAD_DEVICE_STRINGS)
 
 

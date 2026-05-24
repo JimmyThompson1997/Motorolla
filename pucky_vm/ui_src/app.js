@@ -1575,7 +1575,7 @@
           .catch(() => { tile.append(el("span", "chat-media-error", "Video unavailable")); });
       } else if (isDocumentMedia(image)) {
         tile.append(mediaDocumentPreview(image, "chat"));
-      } else {
+      } else if (isImageMedia(image)) {
         const imageEl = document.createElement("img");
         imageEl.alt = image.title || image.alt || `Generated image ${index + 1}`;
         imageEl.decoding = "async";
@@ -1583,6 +1583,8 @@
         resolveImageSrc(image)
           .then(src => { imageEl.src = src; })
           .catch(() => { tile.append(el("span", "chat-media-error", "Image unavailable")); });
+      } else {
+        tile.append(mediaDocumentPreview(image, "chat"));
       }
       rail.append(tile);
     });
@@ -1758,14 +1760,17 @@
     if (!item) {
       return showImageReel(card, [], restoreOptions);
     }
-    const kind = attachmentKind(item);
-    if (kind === "image") {
-      const images = attachments.filter(attachment => attachmentKind(attachment) === "image");
+    const viewerType = attachmentViewerType(item);
+    if (viewerType === "image_gallery") {
+      const images = attachments.filter(attachment => attachmentViewerType(attachment) === "image_gallery");
       const imageIndex = Math.max(0, images.indexOf(item));
       return showImageReel(card, images, { ...restoreOptions, initialIndex: imageIndex });
     }
-    if (kind === "video") {
+    if (viewerType === "video_player") {
       return showVideoAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+    }
+    if (viewerType === "audio_player") {
+      return showAudioAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
     }
     return showDocumentAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
   }
@@ -1904,6 +1909,28 @@
     return `${minutes}:${String(remainder).padStart(2, "0")}`;
   }
 
+  async function showAudioAttachment(card, item, options = {}) {
+    state.audioCard = null;
+    const panel = document.getElementById("detail");
+    const dismissAttachment = detailDismissHandler(options);
+    const content = el("div", "detail-content attachment-detail document-detail audio-attachment-detail");
+    const wrap = el("section", "attachment-audio-card");
+    wrap.append(attachmentMeta(item, "Audio"));
+    const audio = document.createElement("audio");
+    audio.className = "attachment-audio-player";
+    audio.controls = true;
+    audio.preload = "metadata";
+    wrap.append(audio);
+    content.append(wrap);
+    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
+    rememberNavDetail("attachment", card, options);
+    try {
+      audio.src = await resolveArtifactUrl(item, { maxBytes: 32 * 1024 * 1024 });
+    } catch (error) {
+      wrap.append(el("p", "attachment-error", `Audio unavailable: ${error.message}`));
+    }
+  }
+
   async function showDocumentAttachment(card, item, options = {}) {
     state.audioCard = null;
     const panel = document.getElementById("detail");
@@ -1919,6 +1946,16 @@
   }
 
   async function documentViewer(item) {
+    const viewerType = attachmentViewerType(item);
+    if (viewerType === "html_iframe") {
+      return htmlIframeViewer(item);
+    }
+    if (viewerType === "table") {
+      return tableViewer(item);
+    }
+    if (viewerType === "text") {
+      return textViewer(item);
+    }
     const htmlSrc = documentHtmlSrc(item);
     if (htmlSrc) {
       return documentHtmlViewer(htmlSrc, item);
@@ -1937,6 +1974,114 @@
       wrap.append(el("p", "attachment-error", `Attachment unavailable: ${error.message}`));
     }
     return wrap;
+  }
+
+  async function htmlIframeViewer(item) {
+    const iframe = el("iframe", "document-frame");
+    iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
+    const path = item.viewer_path || item.html_viewer_path || item.document_html_path;
+    const src = documentHtmlSrc(item);
+    try {
+      if (path) {
+        const result = await Pucky.request({
+          command: "artifact.read_base64",
+          args: { path, max_bytes: 2 * 1024 * 1024 }
+        });
+        iframe.srcdoc = atob(String(result.content_base64 || ""));
+      } else if (src) {
+        iframe.src = src;
+      } else {
+        throw new Error("HTML attachment source is missing");
+      }
+    } catch (error) {
+      const fallback = el("section", "document-fallback");
+      fallback.append(attachmentMeta(item, "HTML"));
+      fallback.append(el("p", "attachment-error", `HTML preview unavailable: ${error.message}`));
+      return fallback;
+    }
+    return iframe;
+  }
+
+  async function tableViewer(item) {
+    const wrap = el("section", "table-viewer");
+    wrap.append(attachmentMeta(item, "Table"));
+    const rows = Array.isArray(item?.viewer?.rows) ? item.viewer.rows : Array.isArray(item?.rows) ? item.rows : [];
+    const columns = Array.isArray(item?.viewer?.columns) ? item.viewer.columns : Array.isArray(item?.columns) ? item.columns : [];
+    if (rows.length) {
+      wrap.append(tableElement(columns, rows));
+      return wrap;
+    }
+    try {
+      const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024 });
+      const text = src.startsWith("data:") ? atob(src.split(",", 2)[1] || "") : await loadLocalText(src);
+      wrap.append(tableElement([], parseCsvPreview(text)));
+    } catch (error) {
+      wrap.append(el("p", "attachment-error", `Table preview unavailable: ${error.message}`));
+      wrap.append(await downloadFallbackViewer(item));
+    }
+    return wrap;
+  }
+
+  async function textViewer(item) {
+    const wrap = el("section", "text-viewer");
+    wrap.append(attachmentMeta(item, "Text"));
+    const inline = String(item?.viewer?.text || item?.preview?.text || item?.text || "");
+    try {
+      const text = inline || await textFromAttachment(item);
+      wrap.append(el("pre", "text-preview", text || "No text preview is available."));
+    } catch (error) {
+      wrap.append(el("p", "attachment-error", `Text preview unavailable: ${error.message}`));
+      wrap.append(await downloadFallbackViewer(item));
+    }
+    return wrap;
+  }
+
+  async function textFromAttachment(item) {
+    const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024 });
+    if (src.startsWith("data:")) {
+      return atob(src.split(",", 2)[1] || "");
+    }
+    return loadLocalText(src);
+  }
+
+  async function downloadFallbackViewer(item) {
+    const wrap = el("div", "document-open-wrap");
+    try {
+      const src = await resolveArtifactUrl(item, { maxBytes: 10 * 1024 * 1024 });
+      const link = el("a", "document-open-link", "Open cached file");
+      link.href = src;
+      link.target = "_blank";
+      wrap.append(link);
+    } catch (error) {
+      wrap.append(el("p", "attachment-error", `Original unavailable: ${error.message}`));
+    }
+    return wrap;
+  }
+
+  function tableElement(columns, rows) {
+    const table = el("table", "attachment-table");
+    const normalizedRows = rows.slice(0, 80).map(row => Array.isArray(row) ? row : Object.values(row || {}));
+    const headerValues = columns.length ? columns : normalizedRows.shift() || [];
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    headerValues.forEach(value => headRow.append(el("th", "", String(value))));
+    thead.append(headRow);
+    const tbody = document.createElement("tbody");
+    normalizedRows.forEach(row => {
+      const tr = document.createElement("tr");
+      row.forEach(value => tr.append(el("td", "", String(value))));
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    return table;
+  }
+
+  function parseCsvPreview(text) {
+    return String(text || "")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(0, 81)
+      .map(row => row.split(",").map(cell => cell.trim()));
   }
 
   async function documentHtmlViewer(src, item) {
@@ -2076,7 +2221,7 @@
     if (value.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     if (value.endsWith(".csv")) return "text/csv";
     if (value.endsWith(".html") || value.endsWith(".htm")) return "text/html";
-    return "image/png";
+    return "application/octet-stream";
   }
 
   function mediaPath(item) {
@@ -2089,28 +2234,36 @@
   }
 
   function documentHtmlSrc(item) {
+    const viewer = item && item.viewer && typeof item.viewer === "object" ? item.viewer : {};
+    if (viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url) {
+      return String(viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url);
+    }
     const direct = item && (item.viewer_src || item.viewer_url || item.html_src || item.html_url);
     if (direct) {
       return String(direct);
     }
-    return bundledArtifactPath(item, "viewer_artifact")
+    return bundledArtifactPath(viewer, "viewer_artifact")
+      || bundledArtifactPath(viewer, "html_artifact")
+      || bundledArtifactPath(viewer, "document_html_artifact")
+      || bundledArtifactPath(item, "viewer_artifact")
       || bundledArtifactPath(item, "html_artifact")
       || bundledArtifactPath(item, "document_html_artifact");
   }
 
   function attachmentKind(item) {
-    if (isVideoMedia(item)) {
-      return "video";
-    }
-    if (isPdfMedia(item)) {
-      return "pdf";
+    const explicit = String((item && item.kind) || "").toLowerCase();
+    if (["image", "video", "audio", "document", "table", "html", "text", "archive", "unknown"].includes(explicit)) {
+      return explicit;
     }
     const meta = mediaDocumentMeta(item);
     if (meta.kind) {
-      return meta.kind;
+      return meta.kind === "pdf" || meta.kind === "docx" || meta.kind === "pptx" ? "document" : meta.kind;
     }
     const mime = String((item && item.mime_type) || "").toLowerCase();
     const path = String(mediaPath(item) || bundledArtifactPath(item) || item?.src || item?.data_url || "").toLowerCase();
+    if (mime.startsWith("video/") || /\.(mp4|webm|mov)(?:$|[?#])/i.test(path)) {
+      return "video";
+    }
     if (mime.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus)(?:$|[?#])/i.test(path)) {
       return "audio";
     }
@@ -2118,12 +2271,15 @@
       return "image";
     }
     if (mime === "text/csv" || /\.csv(?:$|[?#])/i.test(path)) {
-      return "csv";
+      return "table";
     }
     if (mime === "text/html" || /\.html?(?:$|[?#])/i.test(path)) {
       return "html";
     }
-    return "file";
+    if (mime === "text/plain" || /\.txt(?:$|[?#])/i.test(path)) {
+      return "text";
+    }
+    return "unknown";
   }
 
   function isPdfMedia(item) {
@@ -2131,16 +2287,43 @@
   }
 
   function isDocumentMedia(item) {
-    return mediaDocumentMeta(item).kind !== "";
+    const kind = attachmentKind(item);
+    return !["image", "video"].includes(kind);
   }
 
   function isVideoMedia(item) {
+    if (String((item && item.kind) || "").toLowerCase() === "video") {
+      return true;
+    }
     const mime = String((item && item.mime_type) || "").toLowerCase();
     const path = String((item && (mediaPath(item) || item.artifact || item.src || item.data_url)) || "").toLowerCase();
     return mime.startsWith("video/") || /\.(mp4|webm|mov)(?:$|[?#])/i.test(path);
   }
 
+  function isImageMedia(item) {
+    return attachmentKind(item) === "image";
+  }
+
   function mediaDocumentMeta(item) {
+    const kind = String((item && item.kind) || "").toLowerCase();
+    if (kind === "document") {
+      return { kind: documentSubkind(item), label: attachmentLabel(item, kind), title: "Document" };
+    }
+    if (kind === "table") {
+      return { kind: "table", label: attachmentLabel(item, kind), title: "Table" };
+    }
+    if (kind === "html") {
+      return { kind: "html", label: "HTML", title: "HTML page" };
+    }
+    if (kind === "text") {
+      return { kind: "text", label: "TXT", title: "Text" };
+    }
+    if (kind === "archive") {
+      return { kind: "archive", label: "ZIP", title: "Archive" };
+    }
+    if (kind === "unknown") {
+      return { kind: "unknown", label: "FILE", title: "File" };
+    }
     const mime = String((item && item.mime_type) || "").toLowerCase();
     const path = String((item && (mediaPath(item) || item.artifact || item.src || item.data_url)) || "");
     const lowerPath = path.toLowerCase();
@@ -2155,9 +2338,11 @@
     }
     if (
       mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-      /\.xlsx(?:$|[?#])/i.test(lowerPath)
+      /\.xlsx(?:$|[?#])/i.test(lowerPath) ||
+      mime === "text/csv" ||
+      /\.csv(?:$|[?#])/i.test(lowerPath)
     ) {
-      return { kind: "xlsx", label: "XLSX", title: "Spreadsheet" };
+      return { kind: mime === "text/csv" || /\.csv(?:$|[?#])/i.test(lowerPath) ? "table" : "xlsx", label: mime === "text/csv" || /\.csv(?:$|[?#])/i.test(lowerPath) ? "CSV" : "XLSX", title: "Spreadsheet" };
     }
     if (
       mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
@@ -2166,6 +2351,31 @@
       return { kind: "pptx", label: "PPTX", title: "Presentation" };
     }
     return { kind: "", label: "FILE", title: "Document" };
+  }
+
+  function documentSubkind(item) {
+    const mime = String((item && item.mime_type) || "").toLowerCase();
+    const path = String((item && (mediaPath(item) || item.artifact || item.src || item.data_url)) || "").toLowerCase();
+    if (mime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(path)) return "pdf";
+    if (mime.includes("wordprocessingml") || /\.docx(?:$|[?#])/i.test(path)) return "docx";
+    if (mime.includes("presentationml") || /\.pptx(?:$|[?#])/i.test(path)) return "pptx";
+    return "document";
+  }
+
+  function attachmentLabel(item, kind = attachmentKind(item)) {
+    const mime = String((item && item.mime_type) || "").toLowerCase();
+    if (kind === "image") return "IMG";
+    if (kind === "video") return "MP4";
+    if (kind === "audio") return "AUD";
+    if (kind === "table") return mime.includes("spreadsheetml") ? "XLSX" : "CSV";
+    if (kind === "html") return "HTML";
+    if (kind === "text") return "TXT";
+    if (kind === "archive") return "ZIP";
+    const subkind = documentSubkind(item);
+    if (subkind === "pdf") return "PDF";
+    if (subkind === "docx") return "DOCX";
+    if (subkind === "pptx") return "PPTX";
+    return "FILE";
   }
 
   function mediaDocumentPreview(item, variant) {
@@ -2183,20 +2393,37 @@
       wrap.append(image);
     }
     const label = el("div", "media-doc-label");
-    label.append(el("span", "media-doc-badge", meta.label));
+    label.append(el("span", "media-doc-badge", meta.label || attachmentLabel(item)));
     label.append(el("strong", "media-doc-title", item.title || meta.title));
-    label.append(el("span", "media-doc-subtitle", variant === "gallery" ? "Rendered from real local file" : "Tap to view"));
+    label.append(el("span", "media-doc-subtitle", previewSubtitle(item, variant)));
     wrap.append(label);
     return wrap;
   }
 
   function documentPreviewSrc(item) {
+    const preview = item && item.preview && typeof item.preview === "object" ? item.preview : {};
+    if (preview.src || preview.url || preview.path) {
+      return String(preview.src || preview.url || preview.path);
+    }
+    if (preview.artifact) {
+      return `fixtures/artifacts/${encodeURI(String(preview.artifact))}`;
+    }
     const direct = item && (item.preview_path || item.preview_src || item.preview_url);
     if (direct) {
       return String(direct);
     }
     const artifact = item && item.preview_artifact;
     return artifact ? `fixtures/artifacts/${encodeURI(String(artifact))}` : "";
+  }
+
+  function previewSubtitle(item, variant) {
+    if (item.status && item.status !== "ready") {
+      return item.status === "failed" ? "Preview failed" : "Processing";
+    }
+    if (variant === "gallery") {
+      return item.size_bytes ? `${Math.round(Number(item.size_bytes) / 1024)} KB` : "Rendered from real local file";
+    }
+    return "Tap to view";
   }
 
   function showTurnTrace(card, message = null, index = 0) {
@@ -3528,33 +3755,172 @@
   }
 
   function cardImages(card) {
-    return normalizedAttachments(card?.images);
+    return cardAttachments(card);
+  }
+
+  function cardAttachments(card) {
+    const direct = normalizedAttachments(card?.attachments);
+    return direct.length ? direct : normalizedAttachments(card?.images);
   }
 
   function normalizedImages(images) {
     return normalizedAttachments(images);
   }
 
-  function normalizedAttachments(images) {
-    return Array.isArray(images)
-      ? images.filter(image => image && (
-        image.path
-        || image.local_path
-        || image.image_path
-        || image.artifact
-        || image.artifact_path
-        || image.viewer_artifact
-        || image.html_artifact
-        || image.src
-        || image.data_url
-      ))
+  function normalizedAttachments(attachments) {
+    return Array.isArray(attachments)
+      ? attachments
+        .filter(attachment => attachment && hasAttachmentSource(attachment))
+        .map((attachment, index) => normalizeAttachment(attachment, index))
       : [];
   }
 
+  function hasAttachmentSource(attachment) {
+    return Boolean(
+      attachment.path
+      || attachment.local_path
+      || attachment.image_path
+      || attachment.artifact
+      || attachment.artifact_path
+      || attachment.viewer_artifact
+      || attachment.html_artifact
+      || attachment.document_html_artifact
+      || attachment.viewer_path
+      || attachment.html_viewer_path
+      || attachment.document_html_path
+      || attachment.src
+      || attachment.data_url
+      || attachment.text
+      || attachment.preview
+      || attachment.viewer
+    );
+  }
+
+  function normalizeAttachment(attachment, index = 0) {
+    const raw = { ...attachment };
+    const mime = resolvedMediaMime(null, raw, mediaPath(raw) || bundledArtifactPath(raw) || raw.src || raw.data_url || "");
+    const kind = normalizedAttachmentKind(raw, mime);
+    const id = String(raw.id || raw.sha256 || raw.path || raw.artifact || raw.src || `${kind}-${index}`);
+    const title = String(raw.title || raw.name || raw.filename || id.replace(/^.*\//, "") || "Attachment");
+    const original = raw.original && typeof raw.original === "object" ? { ...raw.original } : {};
+    original.name = original.name || title;
+    original.mime_type = original.mime_type || mime;
+    if (raw.path && !original.path) original.path = raw.path;
+    if (raw.artifact && !original.artifact) original.artifact = raw.artifact;
+    if (raw.sha256 && !original.sha256) original.sha256 = raw.sha256;
+    const preview = normalizeAttachmentPreview(raw, kind);
+    const viewer = normalizeAttachmentViewer(raw, kind, mime);
+    return {
+      ...raw,
+      id,
+      kind,
+      title,
+      mime_type: mime,
+      status: raw.status || "ready",
+      original,
+      preview,
+      viewer
+    };
+  }
+
+  function normalizedAttachmentKind(item, mime) {
+    const explicit = String(item.kind || "").toLowerCase();
+    if (["image", "video", "audio", "document", "table", "html", "text", "archive", "unknown"].includes(explicit)) {
+      return explicit;
+    }
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime === "text/csv" || mime === "text/tab-separated-values" || mime.includes("spreadsheetml")) return "table";
+    if (mime === "text/html" || mime === "application/xhtml+xml") return "html";
+    if (mime === "text/plain") return "text";
+    if (mime === "application/pdf" || mime.includes("wordprocessingml") || mime.includes("presentationml")) return "document";
+    const path = String(mediaPath(item) || bundledArtifactPath(item) || item.src || "").toLowerCase();
+    if (/\.(zip|rar|7z|tar|gz)(?:$|[?#])/i.test(path)) return "archive";
+    return "unknown";
+  }
+
+  function normalizeAttachmentPreview(item, kind) {
+    if (item.preview && typeof item.preview === "object") {
+      return { ...item.preview };
+    }
+    if (item.preview_artifact || item.preview_path || item.preview_src || item.preview_url) {
+      return {
+        type: "image",
+        artifact: item.preview_artifact || "",
+        path: item.preview_path || "",
+        src: item.preview_src || item.preview_url || ""
+      };
+    }
+    if (kind === "image") return { type: "image", ...attachmentSource(item) };
+    if (kind === "video") return { type: "video", ...attachmentSource(item) };
+    if (kind === "text") return { type: "text", text: String(item.text || item.summary || item.alt || "") };
+    return { type: "icon", label: attachmentLabel(item, kind), icon: kind };
+  }
+
+  function normalizeAttachmentViewer(item, kind, mime) {
+    if (item.viewer && typeof item.viewer === "object") {
+      return { ...item.viewer };
+    }
+    if (kind === "image") return { type: "image_gallery", images: [{ ...attachmentSource(item), type: "image" }] };
+    if (kind === "video") return { type: "video_player", sources: [{ ...attachmentSource(item), type: mime || "video/mp4" }] };
+    if (kind === "audio") return { type: "audio_player", sources: [{ ...attachmentSource(item), type: mime || "audio/mpeg" }] };
+    if (kind === "html") return { type: "html_iframe", ...attachmentViewerSource(item) };
+    if (kind === "table") return { type: "table", ...attachmentViewerSource(item) };
+    if (kind === "text") return { type: "text", ...attachmentViewerSource(item) };
+    if (documentHtmlSrc(item)) return { type: "document_html", ...attachmentViewerSource(item) };
+    if (kind === "document" && (item.preview_artifact || item.preview_path || item.preview_src)) {
+      return { type: "document_pages", page_count: item.page_count || 1, first_page_image: normalizeAttachmentPreview(item, kind) };
+    }
+    return { type: "download_only", reason: "No browser-safe preview derivative is available." };
+  }
+
+  function attachmentSource(item) {
+    const source = {};
+    ["path", "artifact", "src", "data_url", "url"].forEach(key => {
+      if (item[key]) source[key] = item[key];
+    });
+    return source;
+  }
+
+  function attachmentViewerSource(item) {
+    const source = {};
+    [
+      "viewer_path",
+      "html_viewer_path",
+      "document_html_path",
+      "viewer_src",
+      "viewer_url",
+      "viewer_artifact",
+      "html_artifact",
+      "document_html_artifact",
+      "path",
+      "artifact",
+      "src",
+      "data_url",
+      "url"
+    ].forEach(key => {
+      if (item[key]) source[key] = item[key];
+    });
+    return source;
+  }
+
+  function attachmentViewerType(item) {
+    const viewerType = String(item?.viewer?.type || "").toLowerCase();
+    if (viewerType) {
+      return viewerType;
+    }
+    return normalizeAttachmentViewer(item || {}, attachmentKind(item || {}), String(item?.mime_type || "")).type;
+  }
+
   function messageImages(card, message, index, messages) {
-    const direct = normalizedImages(message?.images);
+    const direct = normalizedAttachments(message?.attachments);
     if (direct.length) {
       return direct;
+    }
+    const legacy = normalizedImages(message?.images);
+    if (legacy.length) {
+      return legacy;
     }
     return index === lastAssistantMessageIndex(messages) ? cardImages(card) : [];
   }

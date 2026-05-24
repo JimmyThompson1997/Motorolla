@@ -39,7 +39,7 @@
           "role": "assistant",
           "text": "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.",
           "created_at": "2026-05-20T06:33:00-07:00",
-          "images": [
+          "attachments": [
             {
               "artifact": "real-master-through-chapter-8.pdf",
               "preview_artifact": "real-master-through-chapter-8-pdf-page-1.png",
@@ -73,6 +73,24 @@
               "mime_type": "video/mp4",
               "title": "Pucky proof MP4",
               "alt": "Actual local MP4 from a Pucky keyword manual proof session"
+            },
+            {
+              "artifact": "morning-checklist.csv",
+              "mime_type": "text/csv",
+              "title": "Morning checklist CSV",
+              "alt": "Real CSV table preview fixture"
+            },
+            {
+              "artifact": "morning-notes.txt",
+              "mime_type": "text/plain",
+              "title": "Morning notes TXT",
+              "alt": "Plain text attachment fixture"
+            },
+            {
+              "artifact": "morning-unknown.bin",
+              "mime_type": "application/octet-stream",
+              "title": "Unknown binary file",
+              "alt": "Unknown file fallback fixture"
             }
           ]
         }

@@ -1382,6 +1382,29 @@ button {
     #2a1d12;
 }
 
+.media-doc-preview[data-kind="table"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(80, 216, 106, 0.38), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(80, 216, 106, 0.18)),
+    #14251c;
+}
+
+.media-doc-preview[data-kind="html"],
+.media-doc-preview[data-kind="text"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(114, 194, 255, 0.34), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(114, 194, 255, 0.18)),
+    #122133;
+}
+
+.media-doc-preview[data-kind="archive"],
+.media-doc-preview[data-kind="unknown"] {
+  background:
+    radial-gradient(circle at 82% 12%, rgba(180, 194, 210, 0.30), transparent 27%),
+    linear-gradient(135deg, rgba(245, 249, 255, 0.12), rgba(180, 194, 210, 0.16)),
+    #171d25;
+}
+
 .media-doc-preview.is-gallery {
   text-align: center;
 }
@@ -1457,6 +1480,20 @@ button {
 
 .media-doc-preview[data-kind="pptx"] .media-doc-badge {
   background: #e87b22;
+}
+
+.media-doc-preview[data-kind="table"] .media-doc-badge {
+  background: #25a85a;
+}
+
+.media-doc-preview[data-kind="html"] .media-doc-badge,
+.media-doc-preview[data-kind="text"] .media-doc-badge {
+  background: #3a84ff;
+}
+
+.media-doc-preview[data-kind="archive"] .media-doc-badge,
+.media-doc-preview[data-kind="unknown"] .media-doc-badge {
+  background: #64748b;
 }
 
 .media-doc-preview.is-gallery .media-doc-badge {
@@ -1676,6 +1713,59 @@ button {
   text-decoration: none;
   font-size: 13px;
   font-weight: 850;
+}
+
+.attachment-audio-card,
+.table-viewer,
+.text-viewer {
+  flex: 1 1 auto;
+  min-height: 100%;
+  padding: 18px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  background: #02060a;
+  color: #f5f9ff;
+}
+
+.attachment-audio-player {
+  width: 100%;
+}
+
+.attachment-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #f8fbff;
+  color: #16202c;
+  font-size: 13px;
+}
+
+.attachment-table th,
+.attachment-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(22, 32, 44, 0.12);
+  text-align: left;
+  vertical-align: top;
+}
+
+.attachment-table th {
+  background: #e9eff7;
+  font-weight: 900;
+}
+
+.text-preview {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 18px;
+  background: #f8fbff;
+  color: #17202a;
+  white-space: pre-wrap;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 .video-detail {

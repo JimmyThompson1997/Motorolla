@@ -1,0 +1,7 @@
+Morning launch text artifact
+
+This is a plain text attachment used to prove that Pucky's universal attachment viewer does not need a bespoke code path for every extension.
+
+The VM can normalize arbitrary content into a small preview contract. The cached HTML shell then renders the contract, and if no rich preview exists the original file still has a safe fallback.
+
+End marker: text attachment scroll and fallback test.
