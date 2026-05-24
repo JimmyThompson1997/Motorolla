@@ -860,13 +860,17 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert fixture.count('"artifact": "real-master-through-chapter-8.pdf"') == 1
     assert fixture.count('"artifact": "real-manuscript-chapters-0-7.docx"') == 1
     assert fixture.count('"artifact": "real-video-4.mp4"') == 1
+    assert fixture.count('"artifact": "real-clipchamp-demo.mp4"') == 1
+    assert fixture.count('"artifact": "real-pucky-proof.mp4"') == 1
+    assert fixture.count('"mime_type": "video/mp4"') >= 3
     assert fixture.count('"preview_artifact": "real-master-through-chapter-8-pdf-page-1.png"') == 1
     assert fixture.count('"preview_artifact": "real-manuscript-chapters-0-7-docx-preview.png"') == 1
     assert fixture.count('"viewer_artifact": "real-master-through-chapter-8-pdf.html"') == 1
     assert fixture.count('"viewer_artifact": "real-manuscript-chapters-0-7-docx.html"') == 1
     assert (UI / "fixtures/artifacts/real-master-through-chapter-8-pdf.html").exists()
     assert (UI / "fixtures/artifacts/real-manuscript-chapters-0-7-docx.html").exists()
-    assert '"mime_type": "video/mp4"' in fixture
+    assert '"title": "Clipchamp sample MP4"' in fixture
+    assert '"title": "Pucky proof MP4"' in fixture
     assert fixture.count('"artifact": "commute-dashboard.png"') == 1
     assert fixture.count('"artifact": "meeting-room.jpg"') == 1
     assert fixture.count('"artifact": "night-wrap.png"') == 1

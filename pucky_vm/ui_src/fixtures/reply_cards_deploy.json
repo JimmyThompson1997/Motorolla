@@ -61,6 +61,18 @@
               "mime_type": "video/mp4",
               "title": "video_4.mp4",
               "alt": "Actual local MP4 from Downloads"
+            },
+            {
+              "artifact": "real-clipchamp-demo.mp4",
+              "mime_type": "video/mp4",
+              "title": "Clipchamp sample MP4",
+              "alt": "Actual local MP4 from Downloads, exported by Clipchamp"
+            },
+            {
+              "artifact": "real-pucky-proof.mp4",
+              "mime_type": "video/mp4",
+              "title": "Pucky proof MP4",
+              "alt": "Actual local MP4 from a Pucky keyword manual proof session"
             }
           ]
         }
