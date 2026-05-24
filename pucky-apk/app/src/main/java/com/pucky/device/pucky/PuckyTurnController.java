@@ -83,7 +83,9 @@ public final class PuckyTurnController {
         Json.put(out, "visual_state", indicator.optString("visual_state", "idle"));
         JSONObject gate = indicator.optJSONObject("speech_gate");
         Json.put(out, "speech_gate", gate == null ? JSONObject.NULL : gate);
-        Json.put(out, "configured", isConfigured());
+        Json.put(out, "configured", isUploadConfigured());
+        Json.put(out, "upload_configured", isUploadConfigured());
+        Json.put(out, "local_capture_ready", true);
         Json.put(out, "url", settings.getPuckyTurnUrl());
         Json.put(out, "reply_mode", settings.getPuckyTurnReplyMode());
         Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
@@ -153,7 +155,6 @@ public final class PuckyTurnController {
     }
 
     public JSONObject start(JSONObject args) throws CommandException {
-        requireConfigured();
         String clientTurnId = generateClientTurnId();
         String localSessionId = clientTurnId;
         JSONObject startArgs = new JSONObject();
@@ -181,12 +182,13 @@ public final class PuckyTurnController {
         Json.put(out, "speech_detected", false);
         Json.put(out, "vad_engine", gate == null ? "" : gate.optString("vad_engine", ""));
         Json.put(out, "vad_available", gate != null && gate.optBoolean("vad_available", false));
+        Json.put(out, "upload_configured", isUploadConfigured());
+        Json.put(out, "local_capture_ready", true);
         markStatus("armed", out, null);
         return out;
     }
 
     public JSONObject stop(JSONObject args) throws CommandException {
-        requireConfigured();
         JSONObject voice = WalkieAudioCaptureController.shared(context).status();
         JSONObject active = voice.optJSONObject("active_session");
         if (active == null) {
@@ -220,6 +222,8 @@ public final class PuckyTurnController {
             Json.put(out, "turn_id", clientTurnId);
             Json.put(out, "speech_gate", speechGate);
             Json.put(out, "speech_detected", false);
+            Json.put(out, "upload_configured", isUploadConfigured());
+            Json.put(out, "local_capture_ready", true);
             Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
             Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
             Json.put(out, "voice_capture", discarded);
@@ -234,6 +238,8 @@ public final class PuckyTurnController {
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "speech_gate", speechGate);
         Json.put(out, "speech_detected", true);
+        Json.put(out, "upload_configured", isUploadConfigured());
+        Json.put(out, "local_capture_ready", true);
         Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
         Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
         markStatus("uploading", out, null);
@@ -274,6 +280,26 @@ public final class PuckyTurnController {
             Json.put(uploading, "speech_gate", speechGate);
             Json.put(uploading, "speech_detected", true);
             Json.put(uploading, "capture_finalize_ms", Math.max(0L, System.currentTimeMillis() - finalizeStartedMs));
+            if (!isUploadConfigured()) {
+                boolean deleted = deleteQuietly(audio);
+                JSONObject blocked = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
+                Json.put(blocked, "state", "upload_blocked");
+                Json.put(blocked, "phase", "upload_not_configured");
+                Json.put(blocked, "result", "upload_not_configured");
+                Json.put(blocked, "turn_id", clientTurnId);
+                Json.put(blocked, "speech_gate", speechGate);
+                Json.put(blocked, "speech_detected", true);
+                Json.put(blocked, "capture_finalize_ms", Math.max(0L, System.currentTimeMillis() - finalizeStartedMs));
+                Json.put(blocked, "upload_configured", false);
+                Json.put(blocked, "local_capture_ready", true);
+                Json.put(blocked, "url", settings.getPuckyTurnUrl());
+                Json.put(blocked, "deleted_file", deleted);
+                Json.put(blocked, "error", "not_configured");
+                markStatus("upload_blocked", blocked, null);
+                return;
+            }
+            Json.put(uploading, "upload_configured", true);
+            Json.put(uploading, "local_capture_ready", true);
             markStatus("uploading", uploading, null);
             submitAsync(localSessionId, clientTurnId, audioBytes);
         } catch (CommandException exc) {
@@ -499,17 +525,6 @@ public final class PuckyTurnController {
         return card;
     }
 
-    private void requireConfigured() throws CommandException {
-        if (!isConfigured()) {
-            JSONObject detail = new JSONObject();
-            Json.put(detail, "schema", "pucky.turn_status_item.v1");
-            Json.put(detail, "configured", false);
-            Json.put(detail, "url", settings.getPuckyTurnUrl());
-            markStatus("failed", detail, "not_configured");
-            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Pucky turn endpoint is not configured");
-        }
-    }
-
     private JSONObject playReply(JSONObject card) throws CommandException {
         JSONObject args = new JSONObject();
         Json.put(args, "path", card.optString("audio_path", ""));
@@ -518,7 +533,7 @@ public final class PuckyTurnController {
         return PlayerController.shared(context).play(args);
     }
 
-    private boolean isConfigured() {
+    private boolean isUploadConfigured() {
         return !settings.getPuckyTurnUrl().isEmpty() && !settings.getPuckyTurnAuthToken().isEmpty();
     }
 
@@ -558,6 +573,7 @@ public final class PuckyTurnController {
                 || "tts_running".equals(state)
                 || "speaking".equals(state)
                 || "completed".equals(state)
+                || "upload_blocked".equals(state)
                 || "failed".equals(state);
     }
 
@@ -814,7 +830,15 @@ public final class PuckyTurnController {
             return data;
         } catch (Exception exc) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
-                    "Unable to read captured audio: " + exc.getMessage());
+                "Unable to read captured audio: " + exc.getMessage());
+        }
+    }
+
+    private static boolean deleteQuietly(File file) {
+        try {
+            return file != null && file.exists() && file.delete();
+        } catch (RuntimeException ignored) {
+            return false;
         }
     }
 

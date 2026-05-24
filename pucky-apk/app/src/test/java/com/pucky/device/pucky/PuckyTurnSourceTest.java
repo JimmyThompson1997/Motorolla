@@ -255,6 +255,40 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
+    public void localWalkieStartAndStopDoNotRequireUploadConfiguration() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+
+        String startBody = between(source, "public JSONObject start(JSONObject args)", "public JSONObject stop(JSONObject args)");
+        String stopBody = between(source, "public JSONObject stop(JSONObject args)", "private void finishStopAndUpload");
+
+        assertFalse(startBody.contains("requireConfigured("));
+        assertFalse(stopBody.contains("requireConfigured("));
+        assertFalse(startBody.contains("requireUploadConfigured("));
+        assertFalse(stopBody.contains("requireUploadConfigured("));
+        assertTrue(startBody.contains("WalkieAudioCaptureController.shared(context).start(startArgs"));
+        assertTrue(stopBody.contains("WalkieAudioCaptureController.shared(context).discard(stopArgs)"));
+        assertTrue(stopBody.contains("finishStopAndUpload(localSessionId, clientTurnId, reason, feedback, finalSpeechGate)"));
+    }
+
+    @Test
+    public void speechPositiveReleaseCleansUpBeforeBlockingUnconfiguredUpload() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String finishBody = between(source, "private void finishStopAndUpload", "private void submitAsync");
+
+        assertTrue(source.contains("Json.put(out, \"upload_configured\", isUploadConfigured())"));
+        assertTrue(source.contains("private boolean isUploadConfigured()"));
+        assertTrue(finishBody.contains("WalkieAudioCaptureController.shared(context).stop(stopArgs)"));
+        assertTrue(finishBody.contains("if (!isUploadConfigured())"));
+        assertTrue(finishBody.contains("Json.put(blocked, \"state\", \"upload_blocked\")"));
+        assertTrue(finishBody.contains("Json.put(blocked, \"phase\", \"upload_not_configured\")"));
+        assertTrue(finishBody.contains("Json.put(blocked, \"upload_configured\", false)"));
+        assertTrue(finishBody.contains("deleteQuietly(audio)"));
+        assertTrue(finishBody.contains("markStatus(\"upload_blocked\", blocked, null)"));
+        assertTrue(source.contains("|| \"upload_blocked\".equals(state)"));
+        assertFalse(finishBody.contains("markStatus(\"failed\", detail, \"not_configured\")"));
+    }
+
+    @Test
     public void controllerPollsRemoteTurnStatusWhileUploadIsInFlight() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
 
@@ -301,5 +335,13 @@ public final class PuckyTurnSourceTest {
 
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8);
+    }
+
+    private static String between(String source, String start, String end) {
+        int startIndex = source.indexOf(start);
+        int endIndex = source.indexOf(end, startIndex + Math.max(0, start.length()));
+        assertTrue("missing start marker: " + start, startIndex >= 0);
+        assertTrue("missing end marker: " + end, endIndex > startIndex);
+        return source.substring(startIndex, endIndex);
     }
 }
