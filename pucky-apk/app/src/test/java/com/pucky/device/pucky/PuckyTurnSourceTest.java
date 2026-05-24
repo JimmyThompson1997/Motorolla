@@ -300,17 +300,17 @@ public final class PuckyTurnSourceTest {
         String remoteStatusBody = between(source, "private void applyRemoteTurnStatus", "private String turnStatusUrl");
         String responseBody = between(source, "public void onResponse(Call call, Response response)", "private void startTurnStatusPoll");
 
-        assertTrue(source.contains("import android.media.AudioManager;"));
-        assertTrue(source.contains("import android.media.ToneGenerator;"));
         assertTrue(source.contains("import android.os.VibrationEffect;"));
         assertTrue(source.contains("import android.os.Vibrator;"));
+        assertTrue(source.contains("import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;"));
         assertTrue(source.contains("RECORDING_START_HAPTIC_MS"));
         assertTrue(source.contains("RECORDING_STOP_HAPTIC_MS"));
-        assertTrue(source.contains("ACCEPTED_CHIME_DURATION_MS"));
         assertTrue(source.contains("private volatile String acceptedChimedTurnId"));
         assertTrue(source.contains("playRecordingStartHaptic()"));
         assertTrue(source.contains("playRecordingStopHaptic()"));
         assertTrue(source.contains("playAcceptedChimeOnce(clientTurnId, remoteStage)"));
+        assertTrue(source.contains(".playSuccessChime(\"pucky.turn_accepted_chime_playback.v1\")"));
+        assertFalse(source.contains("ToneGenerator.TONE_PROP_PROMPT"));
         assertTrue(responseBody.contains("playAcceptedChimeOnce(clientTurnId, \"http_response_success\")"));
         assertTrue(source.contains("Json.put(status, \"accepted_chime\""));
         assertTrue(source.contains("copyIfPresent(record, detail, \"accepted_chime\")"));

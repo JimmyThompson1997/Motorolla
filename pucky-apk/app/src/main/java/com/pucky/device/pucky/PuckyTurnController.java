@@ -2,8 +2,6 @@ package com.pucky.device.pucky;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -15,6 +13,7 @@ import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
+import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
 import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
 
@@ -46,8 +45,6 @@ public final class PuckyTurnController {
     private static final int RECORDING_START_HAPTIC_MS = 45;
     private static final int RECORDING_STOP_HAPTIC_MS = 40;
     private static final int HAPTIC_AMPLITUDE = 220;
-    private static final int ACCEPTED_CHIME_DURATION_MS = 150;
-    private static final int ACCEPTED_CHIME_VOLUME = 45;
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -854,34 +851,19 @@ public final class PuckyTurnController {
         JSONObject chime = playAcceptedChime(trigger);
         Json.put(out, "played", chime.optBoolean("played", false));
         Json.put(out, "reason", chime.optString("reason", ""));
-        Json.put(out, "tone", chime.optInt("tone", -1));
-        Json.put(out, "duration_ms", chime.optInt("duration_ms", ACCEPTED_CHIME_DURATION_MS));
+        copyIfPresent(out, chime, "asset_name");
+        copyIfPresent(out, chime, "asset_path");
+        copyIfPresent(out, chime, "fallback_used");
+        copyIfPresent(out, chime, "player");
+        copyIfPresent(out, chime, "tone");
+        copyIfPresent(out, chime, "duration_ms");
         return out;
     }
 
     private JSONObject playAcceptedChime(String trigger) {
-        JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.turn_accepted_chime_playback.v1");
+        JSONObject out = new RecipeDevicePrimitiveExecutor(context)
+                .playSuccessChime("pucky.turn_accepted_chime_playback.v1");
         Json.put(out, "trigger", trigger);
-        Json.put(out, "tone", ToneGenerator.TONE_PROP_PROMPT);
-        Json.put(out, "duration_ms", ACCEPTED_CHIME_DURATION_MS);
-        Json.put(out, "volume", ACCEPTED_CHIME_VOLUME);
-        try {
-            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, ACCEPTED_CHIME_VOLUME);
-            generator.startTone(ToneGenerator.TONE_PROP_PROMPT, ACCEPTED_CHIME_DURATION_MS);
-            new Thread(() -> {
-                try {
-                    Thread.sleep(ACCEPTED_CHIME_DURATION_MS + 100L);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-                generator.release();
-            }, "pucky-turn-accepted-chime").start();
-            Json.put(out, "played", true);
-        } catch (RuntimeException exc) {
-            Json.put(out, "played", false);
-            Json.put(out, "reason", exc.getClass().getSimpleName() + ": " + exc.getMessage());
-        }
         return out;
     }
 
