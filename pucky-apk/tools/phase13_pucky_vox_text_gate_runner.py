@@ -14,7 +14,7 @@ DEVICE_ID = "pucky-6ee8e85c12910b5c"
 EVIDENCE_DIR = pathlib.Path("pucky-apk-evidence")
 PUCKYCTL = pathlib.Path("pucky-apk") / "puckyctl" / "puckyctl.py"
 DEFAULT_VOX_URL = "https://jt-project-vox-codex.fly.dev"
-DEFAULT_BROKER_URL = "https://pucky-bridge-dev-jt323.fly.dev"
+DEFAULT_BROKER_URL = "https://pucky.fly.dev"
 DEFAULT_OPERATOR_TOKEN = "operator-dev-token"
 
 

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from pucky_vm.server import Config, PuckyVoiceService, make_handler, parse_reply_envelope
+from pucky_vm.server import Config, PuckyVoiceService, make_handler, parse_reply_envelope, reset_broker_for_tests
 
 
 class FakeSTT:
@@ -92,6 +93,8 @@ def test_config(max_html_bytes: int = 512 * 1024) -> Config:
 
 class ServerTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.broker = reset_broker_for_tests(self.tmp.name + "/broker.sqlite3")
         self.stt = FakeSTT()
         self.tts = FakeTTS()
         self.codex = FakeCodex()
@@ -105,6 +108,11 @@ class ServerTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        if getattr(self.broker, "DB", None) is not None:
+            self.broker.DB.close()
+            self.broker.DB = None
+        self.broker.DEVICES.clear()
+        self.tmp.cleanup()
 
     def test_healthz_reports_ready_without_secrets(self) -> None:
         payload = self.get_json("/healthz")
@@ -211,6 +219,30 @@ class ServerTests(unittest.TestCase):
             self.get_json("/api/turn/status?turn_id=missing")
 
         self.assertEqual(caught.exception.code, 401)
+
+    def test_broker_routes_share_the_same_server(self) -> None:
+        health = self.get_json("/health")
+        self.assertTrue(health["ok"])
+        self.assertEqual(health["devices_online"], 0)
+
+        devices = self.get_json("/v1/devices", headers={"Authorization": "Bearer operator-dev-token"})
+        self.assertEqual(devices["devices"], [])
+
+        request = urllib.request.Request(
+            self.base_url + "/v1/devices/pucky-test/commands",
+            data=json.dumps({"type": "status.get", "args": {}}).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer operator-dev-token",
+                "Content-Type": "application/json",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 409)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "DEVICE_OFFLINE")
+        self.assertEqual(payload["command"]["status"], "device_offline")
 
     def test_turn_status_missing_turn_id_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

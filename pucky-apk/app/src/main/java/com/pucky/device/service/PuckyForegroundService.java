@@ -30,7 +30,6 @@ import java.util.List;
 import com.pucky.device.CoverHomeActivity;
 import com.pucky.device.PuckyApplication;
 import com.pucky.device.MainActivity;
-import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.battery.BatteryProvider;
@@ -66,7 +65,6 @@ import com.pucky.device.substrate.AndroidSubstrateController;
 import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
-import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.updates.AppUpdateController;
@@ -94,7 +92,6 @@ public final class PuckyForegroundService extends Service {
     private static final int RAZR_COVER_DISPLAY_ID = 1;
 
     private BrokerControlClient brokerClient;
-    private TunnelController tunnelController;
     private ConnectivityManager.NetworkCallback networkCallback;
     private DisplayManager.DisplayListener coverDisplayListener;
     private Handler coverRestoreHandler;
@@ -131,7 +128,6 @@ public final class PuckyForegroundService extends Service {
     public void onCreate() {
         super.onCreate();
         SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
-        tunnelController = TunnelController.shared(this, settings);
         PuckyState.get().setServiceRunning(true);
         PuckyState.get().setPolicy(settings.isAutoConnectEnabled(), settings.isAutostartEnabled());
         PuckyState.get().setLifecycleEvent("service.started");
@@ -146,7 +142,6 @@ public final class PuckyForegroundService extends Service {
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
         WakeWordController.shared(this).start(new org.json.JSONObject());
-        ensureTunnelStarted("service_started");
     }
 
     @Override
@@ -161,7 +156,6 @@ public final class PuckyForegroundService extends Service {
             PuckyState.get().setPolicy(settings.isAutoConnectEnabled(), settings.isAutostartEnabled());
             PuckyState.get().setLifecycleEvent("service.stop_requested");
             cancelServiceRestart();
-            stopTunnel("service_stop");
             disconnectBroker();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
@@ -179,11 +173,9 @@ public final class PuckyForegroundService extends Service {
             settings.setAutostartEnabled(true);
             PuckyState.get().setPolicy(settings.isAutoConnectEnabled(), settings.isAutostartEnabled());
             PuckyState.get().setLifecycleEvent("broker.manual_connect");
-            ensureTunnelStarted("connect_action");
             ensureBrokerConnected();
         } else if (settings.isAutoConnectEnabled()) {
             PuckyState.get().setLifecycleEvent("broker.auto_connect");
-            ensureTunnelStarted("autoconnect_action");
             ensureBrokerConnected();
         }
         return START_STICKY;
@@ -198,7 +190,6 @@ public final class PuckyForegroundService extends Service {
         }
         unregisterCoverDisplayListener();
         WakeWordController.shared(this).stop(new org.json.JSONObject());
-        stopTunnel("service_destroy");
         disconnectBroker();
         unregisterNetworkCallback();
         PuckyState.get().setServiceRunning(false);
@@ -273,8 +264,6 @@ public final class PuckyForegroundService extends Service {
                 SpeechEchoLabController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
-                TunnelController.shared(this, settings),
-                new RemoteAdbController(this, settings, TunnelController.shared(this, settings)),
                 new AndroidSubstrateController(this),
                 PuckyTurnController.shared(this));
         CommandRouter router = new CommandRouter(executor);
@@ -308,7 +297,6 @@ public final class PuckyForegroundService extends Service {
             public void onAvailable(Network network) {
                 PuckyState.get().setLifecycleEvent("network.available");
                 PuckyState.get().broadcast(PuckyForegroundService.this);
-                ensureTunnelStarted("network_available");
                 maybeAutoConnect("network_available");
             }
 
@@ -414,26 +402,7 @@ public final class PuckyForegroundService extends Service {
             return;
         }
         Log.i(TAG, "auto-connect after " + reason);
-        ensureTunnelStarted("broker_" + reason);
         ensureBrokerConnected();
-    }
-
-    private void ensureTunnelStarted(String reason) {
-        if (tunnelController == null) {
-            SettingsStore settings = ((PuckyApplication) getApplication()).settingsStore();
-            tunnelController = TunnelController.shared(this, settings);
-        }
-        Log.i(TAG, "ensureTunnelStarted reason=" + reason);
-        tunnelController.ensureStartedIfEnabled(reason);
-    }
-
-    private void stopTunnel(String reason) {
-        if (tunnelController == null) {
-            return;
-        }
-        org.json.JSONObject args = new org.json.JSONObject();
-        com.pucky.device.util.Json.put(args, "reason", reason);
-        tunnelController.stop(args);
     }
 
     private void handleCoverDisplayChanged(int displayId, String reason) {
@@ -739,8 +708,7 @@ public final class PuckyForegroundService extends Service {
     }
 
     private static boolean shouldKeepServiceRunning(SettingsStore settings) {
-        return settings.isAutostartEnabled()
-                && (settings.isAutoConnectEnabled() || settings.isTunnelEnabled());
+        return settings.isAutostartEnabled() && settings.isAutoConnectEnabled();
     }
 
     private void createChannel() {

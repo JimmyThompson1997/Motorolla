@@ -22,20 +22,22 @@ public final class SettingsStore {
     private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
-    private static final String TUNNEL_ENABLED = "tunnel_enabled";
-    private static final String TUNNEL_HOST = "tunnel_host";
-    private static final String TUNNEL_USER = "tunnel_user";
-    private static final String TUNNEL_PORT = "tunnel_port";
-    private static final String TUNNEL_REMOTE_BIND = "tunnel_remote_bind";
-    private static final String TUNNEL_REMOTE_ADB_PORT = "tunnel_remote_adb_port";
-    private static final String TUNNEL_PHONE_ADB_HOST = "tunnel_phone_adb_host";
-    private static final String TUNNEL_PHONE_ADB_PORT = "tunnel_phone_adb_port";
-    private static final String TUNNEL_TLS_ENABLED = "tunnel_tls_enabled";
-    private static final String TUNNEL_TLS_SERVER_NAME = "tunnel_tls_server_name";
-    private static final String TUNNEL_STRICT_HOST_KEY = "tunnel_strict_host_key";
-    private static final String TUNNEL_CONNECT_TIMEOUT_MS = "tunnel_connect_timeout_ms";
-    private static final String TUNNEL_RECONNECT_DELAY_MS = "tunnel_reconnect_delay_ms";
-    private static final String ADB_TRANSPORT = "adb_transport";
+    private static final String[] LEGACY_REMOTE_ADB_KEYS = new String[] {
+            "tunnel_enabled",
+            "tunnel_host",
+            "tunnel_user",
+            "tunnel_port",
+            "tunnel_remote_bind",
+            "tunnel_remote_adb_port",
+            "tunnel_phone_adb_host",
+            "tunnel_phone_adb_port",
+            "tunnel_tls_enabled",
+            "tunnel_tls_server_name",
+            "tunnel_strict_host_key",
+            "tunnel_connect_timeout_ms",
+            "tunnel_reconnect_delay_ms",
+            "adb_transport"
+    };
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -43,6 +45,7 @@ public final class SettingsStore {
     public SettingsStore(Context context) {
         this.context = context.getApplicationContext();
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        clearLegacyRemoteAdbState();
     }
 
     public String getDeviceId() {
@@ -59,7 +62,7 @@ public final class SettingsStore {
         if (value != null && !value.trim().isEmpty()) {
             return value;
         }
-        return "ws://127.0.0.1:8787/v1/devices/" + getDeviceId() + "/connect";
+        return "wss://pucky.fly.dev/v1/devices/" + getDeviceId() + "/connect";
     }
 
     public String getToken() {
@@ -116,120 +119,12 @@ public final class SettingsStore {
         return prefs.getBoolean(AUTOSTART, true);
     }
 
-    public boolean isTunnelEnabled() {
-        return prefs.getBoolean(TUNNEL_ENABLED, false);
-    }
-
-    public boolean hasTunnelConfig() {
-        return !getTunnelHost().isEmpty() && !getTunnelUser().isEmpty();
-    }
-
-    public String getTunnelHost() {
-        return prefs.getString(TUNNEL_HOST, "").trim();
-    }
-
-    public String getTunnelUser() {
-        return prefs.getString(TUNNEL_USER, "pucky-adb").trim();
-    }
-
-    public int getTunnelPort() {
-        return prefs.getInt(TUNNEL_PORT, 22);
-    }
-
-    public String getTunnelRemoteBindAddress() {
-        return prefs.getString(TUNNEL_REMOTE_BIND, "127.0.0.1").trim();
-    }
-
-    public int getTunnelRemoteAdbPort() {
-        return prefs.getInt(TUNNEL_REMOTE_ADB_PORT, 15555);
-    }
-
-    public int getTunnelVmAdbPort() {
-        return getTunnelRemoteAdbPort();
-    }
-
-    public String getTunnelPhoneAdbHost() {
-        return prefs.getString(TUNNEL_PHONE_ADB_HOST, "127.0.0.1").trim();
-    }
-
-    public int getTunnelPhoneAdbPort() {
-        return prefs.getInt(TUNNEL_PHONE_ADB_PORT, 5555);
-    }
-
-    public String getAdbTransport() {
-        String value = prefs.getString(ADB_TRANSPORT, "classic_tcp").trim();
-        return value.isEmpty() ? "classic_tcp" : value;
-    }
-
-    public boolean isTunnelTlsEnabled() {
-        return prefs.getBoolean(TUNNEL_TLS_ENABLED, false);
-    }
-
-    public String getTunnelTlsServerName() {
-        String value = prefs.getString(TUNNEL_TLS_SERVER_NAME, "").trim();
-        return value.isEmpty() ? getTunnelHost() : value;
-    }
-
-    public boolean isTunnelStrictHostKeyChecking() {
-        return prefs.getBoolean(TUNNEL_STRICT_HOST_KEY, true);
-    }
-
-    public int getTunnelConnectTimeoutMs() {
-        return prefs.getInt(TUNNEL_CONNECT_TIMEOUT_MS, 15000);
-    }
-
-    public int getTunnelReconnectDelayMs() {
-        return prefs.getInt(TUNNEL_RECONNECT_DELAY_MS, 10000);
-    }
-
-    public JSONObject tunnelSettingsJson() {
-        JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.tunnel_settings.v1");
-        Json.put(out, "enabled", isTunnelEnabled());
-        Json.put(out, "configured", hasTunnelConfig());
-        Json.put(out, "host", getTunnelHost());
-        Json.put(out, "user", getTunnelUser());
-        Json.put(out, "port", getTunnelPort());
-        Json.put(out, "remote_bind_address", getTunnelRemoteBindAddress());
-        Json.put(out, "adb_transport", getAdbTransport());
-        Json.put(out, "vm_adb_port", getTunnelVmAdbPort());
-        Json.put(out, "remote_adb_port", getTunnelRemoteAdbPort());
-        Json.put(out, "phone_adb_host", getTunnelPhoneAdbHost());
-        Json.put(out, "phone_adb_port", getTunnelPhoneAdbPort());
-        Json.put(out, "tls_enabled", isTunnelTlsEnabled());
-        Json.put(out, "tls_server_name", getTunnelTlsServerName());
-        Json.put(out, "strict_host_key_checking", isTunnelStrictHostKeyChecking());
-        Json.put(out, "connect_timeout_ms", getTunnelConnectTimeoutMs());
-        Json.put(out, "reconnect_delay_ms", getTunnelReconnectDelayMs());
-        return out;
-    }
-
     public void setAutoConnectEnabled(boolean enabled) {
         prefs.edit().putBoolean(AUTO_CONNECT, enabled).commit();
     }
 
     public void setAutostartEnabled(boolean enabled) {
         prefs.edit().putBoolean(AUTOSTART, enabled).commit();
-    }
-
-    public void saveTunnelSettings(JSONObject input) {
-        SharedPreferences.Editor editor = prefs.edit();
-        putBoolean(editor, input, "enabled", TUNNEL_ENABLED);
-        putString(editor, input, "host", TUNNEL_HOST);
-        putString(editor, input, "user", TUNNEL_USER);
-        putInt(editor, input, "port", TUNNEL_PORT, 1, 65535);
-        putString(editor, input, "remote_bind_address", TUNNEL_REMOTE_BIND);
-        putInt(editor, input, "vm_adb_port", TUNNEL_REMOTE_ADB_PORT, 1, 65535);
-        putInt(editor, input, "remote_adb_port", TUNNEL_REMOTE_ADB_PORT, 1, 65535);
-        putString(editor, input, "phone_adb_host", TUNNEL_PHONE_ADB_HOST);
-        putInt(editor, input, "phone_adb_port", TUNNEL_PHONE_ADB_PORT, 1, 65535);
-        putString(editor, input, "adb_transport", ADB_TRANSPORT);
-        putBoolean(editor, input, "tls_enabled", TUNNEL_TLS_ENABLED);
-        putString(editor, input, "tls_server_name", TUNNEL_TLS_SERVER_NAME);
-        putBoolean(editor, input, "strict_host_key_checking", TUNNEL_STRICT_HOST_KEY);
-        putInt(editor, input, "connect_timeout_ms", TUNNEL_CONNECT_TIMEOUT_MS, 1000, 120000);
-        putInt(editor, input, "reconnect_delay_ms", TUNNEL_RECONNECT_DELAY_MS, 1000, 300000);
-        editor.commit();
     }
 
     public void save(String deviceId, String brokerUrl, String token) {
@@ -251,10 +146,6 @@ public final class SettingsStore {
                 input.optString("device_id", getDeviceId()),
                 input.optString("broker_url", getBrokerUrl()),
                 token);
-        JSONObject tunnel = input.optJSONObject("tunnel");
-        if (tunnel != null) {
-            saveTunnelSettings(tunnel);
-        }
         SharedPreferences.Editor editor = prefs.edit();
         putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
         putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
@@ -266,8 +157,21 @@ public final class SettingsStore {
         Json.put(out, "device_id", getDeviceId());
         Json.put(out, "broker_url", getBrokerUrl());
         Json.put(out, "has_token", getToken() != null && !getToken().trim().isEmpty());
-        Json.put(out, "tunnel", tunnelSettingsJson());
         return out;
+    }
+
+    private void clearLegacyRemoteAdbState() {
+        SharedPreferences.Editor editor = prefs.edit();
+        boolean changed = false;
+        for (String key : LEGACY_REMOTE_ADB_KEYS) {
+            if (prefs.contains(key)) {
+                editor.remove(key);
+                changed = true;
+            }
+        }
+        if (changed) {
+            editor.commit();
+        }
     }
 
     private static String nonEmpty(String value, String fallback) {

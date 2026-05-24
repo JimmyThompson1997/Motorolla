@@ -8,7 +8,7 @@ import time
 import uuid
 
 
-APP = "pucky-bridge-dev-jt323"
+APP = "pucky"
 DEVICE_ID = "pucky-6ee8e85c12910b5c"
 EVIDENCE_DIR = pathlib.Path("pucky-apk-evidence")
 

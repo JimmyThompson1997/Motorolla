@@ -216,7 +216,7 @@ def write_json(path, value):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--broker", default="https://pucky-bridge-dev-jt323.fly.dev")
+    parser.add_argument("--broker", default="https://pucky.fly.dev")
     parser.add_argument("--token", default="")
     parser.add_argument("--env", default=".env")
     parser.add_argument("--phrase", default=DEFAULT_PHRASE)

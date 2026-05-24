@@ -197,7 +197,7 @@ then runs `location.get` and a short `location.watch` trace through the Fly-host
 Phase 6 platform expansion validation:
 
 ```powershell
-python .\tools\phase6_platform_expansion_runner.py --broker https://pucky-bridge-dev-jt323.fly.dev
+python .\tools\phase6_platform_expansion_runner.py --broker https://pucky.fly.dev
 ```
 
 The Phase 6 runner proves app-owned URL download, artifact lifecycle, media state, best-effort media-key
@@ -206,7 +206,7 @@ dispatch, and user-mediated media URI launch.
 Voice capture validation:
 
 ```powershell
-python .\tools\phase11_voice_capture_runner.py --broker https://pucky-bridge-dev-jt323.fly.dev --allow-audio
+python .\tools\phase11_voice_capture_runner.py --broker https://pucky.fly.dev --allow-audio
 ```
 
 The Phase 11 runner proves `voice.capture.*`, the foreground Volume Up hold/release mapping, artifact metadata,
@@ -215,7 +215,7 @@ and a repeatable command/button capture path. `--allow-audio` permits short tone
 Acoustic loop validation:
 
 ```powershell
-python .\tools\phase12_acoustic_loop_runner.py --broker https://pucky-bridge-dev-jt323.fly.dev
+python .\tools\phase12_acoustic_loop_runner.py --broker https://pucky.fly.dev
 ```
 
 The Phase 12 runner loads `.env`, generates an ElevenLabs TTS fixture, pushes it to the phone through
@@ -256,7 +256,7 @@ This path does not require Docker Desktop, a Dockerfile, or a local image build.
 Current tested Fly resources:
 
 ```text
-app: pucky-bridge-dev-jt323
+app: pucky
 machine: d8d2264ae93558
 volume: vol_vp2z7g6q6qwoqjj4
 mount: /data
@@ -268,7 +268,7 @@ The old no-volume machine `2872e70b6d6e98` was destroyed because Fly would not a
 Test URL:
 
 ```text
-wss://pucky-bridge-dev-jt323.fly.dev/v1/devices/pucky-6ee8e85c12910b5c/connect
+wss://pucky.fly.dev/v1/devices/pucky-6ee8e85c12910b5c/connect
 ```
 
 After any test, remove the public service mapping and stop the machine unless the device is intentionally being kept online.
@@ -276,7 +276,7 @@ After any test, remove the public service mapping and stop the machine unless th
 The deploy helper currently targets the reusable small development machine:
 
 ```text
-app: pucky-bridge-dev-jt323
+app: pucky
 machine: d8d2264ae93558
 volume: vol_vp2z7g6q6qwoqjj4
 size: shared-cpu-1x:256MB

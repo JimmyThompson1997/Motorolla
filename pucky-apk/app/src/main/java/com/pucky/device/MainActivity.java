@@ -39,7 +39,6 @@ import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
-import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.PuckyWebBridge;
 import com.pucky.device.ui.PuckyWebResourceClient;
 import com.pucky.device.ui.ReplyCardStore;
@@ -450,13 +449,6 @@ public class MainActivity extends Activity {
             try {
                 JSONObject input = new JSONObject(provisioningJson);
                 settingsStore.importProvisioningJson(input.toString());
-                JSONObject tunnel = input.optJSONObject("tunnel");
-                if (tunnel != null) {
-                    TunnelController.shared(this, settingsStore).configure(tunnel);
-                    if (tunnel.optBoolean("enabled", false) || tunnel.optBoolean("start", false)) {
-                        PuckyForegroundService.start(this, false);
-                    }
-                }
                 Log.i(TAG, "Imported provisioning_json");
                 PuckyState.get().setLifecycleEvent("provisioning.imported");
                 syncProvisioningState();

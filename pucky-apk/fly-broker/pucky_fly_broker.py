@@ -15,7 +15,6 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 DEFAULT_DB_PATH = "/data/pucky/broker.sqlite3"
-DEFAULT_ADB_WATCHDOG_STATUS_PATH = "/data/pucky/adb-watchdog-status.json"
 
 LOCK = threading.RLock()
 DEVICES = {}
@@ -878,14 +877,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": True, "devices_online": len(DEVICES)})
         if not self.require_operator():
             return
-        if path == "/v1/adb/status":
-            status_path = os.environ.get("PUCKY_ADB_WATCHDOG_STATUS", DEFAULT_ADB_WATCHDOG_STATUS_PATH)
-            status = read_json_file(status_path, {
-                "state": "missing",
-                "status_path": status_path,
-                "error": "watchdog status file not found",
-            })
-            return self.send_json(status)
         if path == "/devices":
             return self.send_json({"devices": list_devices()})
         if path == "/v1/devices":

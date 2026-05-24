@@ -19,10 +19,8 @@ public final class PuckyBootReceiver extends BroadcastReceiver {
         Log.i(TAG, "onReceive action=" + action
                 + " reason=" + reason
                 + " autostart=" + settings.isAutostartEnabled()
-                + " auto_connect=" + settings.isAutoConnectEnabled()
-                + " tunnel_enabled=" + settings.isTunnelEnabled());
-        if (!settings.isAutostartEnabled()
-                || (!settings.isAutoConnectEnabled() && !settings.isTunnelEnabled())) {
+                + " auto_connect=" + settings.isAutoConnectEnabled());
+        if (!settings.isAutostartEnabled() || !settings.isAutoConnectEnabled()) {
             return;
         }
         try {

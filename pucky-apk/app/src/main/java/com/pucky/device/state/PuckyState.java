@@ -25,8 +25,6 @@ public final class PuckyState {
     private boolean autostartEnabled;
     private String lastLifecycleEvent = "none";
     private String serviceStartedAt = "never";
-    private String tunnelState = "idle";
-    private String tunnelLastError = "none";
 
     private PuckyState() {
     }
@@ -76,11 +74,6 @@ public final class PuckyState {
         this.lastError = nonEmpty(lastError, "none");
     }
 
-    public synchronized void setTunnelState(String tunnelState, String tunnelLastError) {
-        this.tunnelState = nonEmpty(tunnelState, "unknown");
-        this.tunnelLastError = nonEmpty(tunnelLastError, "none");
-    }
-
     public synchronized String dashboardText() {
         return "Service: " + (serviceRunning ? "running" : "stopped")
                 + "\nConnection: " + connectionState
@@ -92,8 +85,6 @@ public final class PuckyState {
                 + "\nLast error: " + lastError
                 + "\nAuto-connect: " + autoConnectEnabled
                 + "\nAutostart: " + autostartEnabled
-                + "\nTunnel: " + tunnelState
-                + "\nTunnel error: " + tunnelLastError
                 + "\nLast lifecycle: " + lastLifecycleEvent;
     }
 
@@ -110,8 +101,6 @@ public final class PuckyState {
         Json.put(out, "last_error", lastError);
         Json.put(out, "auto_connect_enabled", autoConnectEnabled);
         Json.put(out, "autostart_enabled", autostartEnabled);
-        Json.put(out, "tunnel_state", tunnelState);
-        Json.put(out, "tunnel_last_error", tunnelLastError);
         Json.put(out, "last_lifecycle_event", lastLifecycleEvent);
         Json.put(out, "service_started_at", serviceStartedAt);
         Json.put(out, "dashboard_text", dashboardText());

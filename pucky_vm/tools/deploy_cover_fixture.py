@@ -397,7 +397,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bundle-url", default="")
     parser.add_argument("--manifest-url", default="")
     parser.add_argument("--artifact-base-path", default=DEFAULT_ARTIFACT_BASE_PATH)
-    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky-bridge-dev-jt323.fly.dev"))
+    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky.fly.dev"))
     parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
     parser.add_argument("--max-bundle-bytes", type=int, default=10 * 1024 * 1024)

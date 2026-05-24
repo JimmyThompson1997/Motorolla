@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import mimetypes
 import os
@@ -10,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -33,6 +34,10 @@ DEFAULT_CARD_ICON = "mail"
 REPLY_MODE_CARD_ONLY = "card_only"
 REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
 MAX_CARD_TITLE_CHARS = 64
+BROKER_MODULE_PATH = Path(__file__).resolve().parents[1] / "pucky-apk" / "fly-broker" / "pucky_fly_broker.py"
+
+_BROKER_MODULE = None
+_BROKER_DB_PATH: str | None = None
 
 
 class STTProvider(Protocol):
@@ -103,6 +108,43 @@ class Config:
             developer_instructions=os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS,
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
         )
+
+
+def _load_broker_module():
+    global _BROKER_MODULE
+    if _BROKER_MODULE is None:
+        spec = importlib.util.spec_from_file_location("pucky_embedded_broker", BROKER_MODULE_PATH)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Unable to load broker module from {BROKER_MODULE_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BROKER_MODULE = module
+    return _BROKER_MODULE
+
+
+def ensure_broker_initialized(db_path: str | None = None):
+    global _BROKER_DB_PATH
+    broker = _load_broker_module()
+    resolved = str(db_path or os.environ.get("PUCKY_DB_PATH") or broker.DEFAULT_DB_PATH)
+    if getattr(broker, "DB", None) is not None and _BROKER_DB_PATH == resolved:
+        return broker
+    existing = getattr(broker, "DB", None)
+    if existing is not None:
+        try:
+            existing.close()
+        except Exception:
+            pass
+        broker.DB = None
+    broker.DEVICES.clear()
+    broker.init_db(resolved)
+    _BROKER_DB_PATH = resolved
+    return broker
+
+
+def reset_broker_for_tests(db_path: str):
+    broker = ensure_broker_initialized(db_path)
+    broker.DEVICES.clear()
+    return broker
 
 
 class PuckyVoiceService:
@@ -417,7 +459,9 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
 
 
 def make_handler(service: PuckyVoiceService):
-    class Handler(BaseHTTPRequestHandler):
+    broker = _load_broker_module()
+
+    class Handler(broker.Handler):
         server_version = "PuckyVoice/0.1"
 
         def do_GET(self) -> None:
@@ -458,11 +502,11 @@ def make_handler(service: PuckyVoiceService):
                 relative = unquote(path.removeprefix("/ui/pucky/latest/")).lstrip("/")
                 self._safe_ui_file(relative)
                 return
-            self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            super().do_GET()
 
         def do_POST(self) -> None:
             if self.path.split("?", 1)[0] != "/api/turn":
-                self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                super().do_POST()
                 return
             if not self._is_authorized():
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -544,6 +588,7 @@ def make_handler(service: PuckyVoiceService):
 
 def serve(service: PuckyVoiceService) -> None:
     service.start()
+    ensure_broker_initialized()
     server = ThreadingHTTPServer((service.config.host, service.config.port), make_handler(service))
     print(f"Pucky voice service listening on {service.config.host}:{service.config.port}", flush=True)
     server.serve_forever()

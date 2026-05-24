@@ -2,7 +2,6 @@ package com.pucky.device.command;
 
 import com.pucky.device.util.Json;
 
-import com.pucky.device.adb.RemoteAdbController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.battery.BatteryProvider;
@@ -33,7 +32,6 @@ import com.pucky.device.substrate.AndroidSubstrateController;
 import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
-import com.pucky.device.tunnel.TunnelController;
 import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.updates.AppUpdateController;
@@ -85,9 +83,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.echo.lab.status", "speech.echo.lab.start", "speech.echo.lab.stop",
             "speech.echo.lab.last", "speech.echo.lab.list",
             "speech.echo.lab.config.get", "speech.echo.lab.config.set",
-            "tunnel.status", "tunnel.config.set", "tunnel.start",
-            "tunnel.stop", "adb.remote.status", "adb.remote.reconnect",
-            "adb.wifi.status", "adb.wifi.enable", "adb.wifi.disable",
             "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
             "cover.display_gesture.status", "cover.display_gesture.set",
             "cover.display_gesture.trigger",
@@ -133,8 +128,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final SpeechEchoLabController speechEchoLabController;
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
-    private final TunnelController tunnelController;
-    private final RemoteAdbController remoteAdbController;
     private final AndroidSubstrateController androidSubstrateController;
     private final PuckyTurnController puckyTurnController;
 
@@ -172,8 +165,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             SpeechEchoLabController speechEchoLabController,
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
-            TunnelController tunnelController,
-            RemoteAdbController remoteAdbController,
             AndroidSubstrateController androidSubstrateController,
             PuckyTurnController puckyTurnController) {
         this.statusProvider = statusProvider;
@@ -209,8 +200,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.speechEchoLabController = speechEchoLabController;
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
-        this.tunnelController = tunnelController;
-        this.remoteAdbController = remoteAdbController;
         this.androidSubstrateController = androidSubstrateController;
         this.puckyTurnController = puckyTurnController;
     }
@@ -470,24 +459,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.configGet();
             case "speech.echo.lab.config.set":
                 return speechEchoLabController.configSet(command.args());
-            case "tunnel.status":
-                return tunnelController.status();
-            case "tunnel.config.set":
-                return tunnelController.configure(command.args());
-            case "tunnel.start":
-                return tunnelController.start(command.args());
-            case "tunnel.stop":
-                return tunnelController.stop(command.args());
-            case "adb.remote.status":
-                return remoteAdbController.status(command.args());
-            case "adb.remote.reconnect":
-                return remoteAdbController.reconnect(command.args());
-            case "adb.wifi.status":
-                return remoteAdbController.wifiStatus(command.args());
-            case "adb.wifi.enable":
-                return remoteAdbController.wifiEnable(command.args());
-            case "adb.wifi.disable":
-                return remoteAdbController.wifiDisable(command.args());
             case "cover.wave.status":
             case "cover.display_gesture.status":
                 return systemController.coverDisplayGestureStatus();

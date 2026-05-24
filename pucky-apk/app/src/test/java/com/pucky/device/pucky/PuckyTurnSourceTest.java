@@ -380,7 +380,7 @@ public final class PuckyTurnSourceTest {
     }
 
     private static String read(String path) throws Exception {
-        return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8);
+        return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static String between(String source, String start, String end) {

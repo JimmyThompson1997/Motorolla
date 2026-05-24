@@ -285,7 +285,7 @@ def write_summary(path, run):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--broker", default="https://pucky-bridge-dev-jt323.fly.dev")
+    parser.add_argument("--broker", default="https://pucky.fly.dev")
     parser.add_argument("--token", default="")
     parser.add_argument("--label", default="phase11-voice-capture")
     parser.add_argument("--allow-audio", action="store_true")

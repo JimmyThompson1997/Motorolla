@@ -259,6 +259,49 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("settingsStore.setUiShellMode"));
     }
 
+    @Test
+    public void remoteAdbTunnelSurfaceIsRemovedAndBrokerDefaultsToPucky() throws Exception {
+        String settings = read("src/main/java/com/pucky/device/storage/SettingsStore.java");
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
+        String status = read("src/main/java/com/pucky/device/status/StatusProvider.java");
+        String capabilities = read("src/main/java/com/pucky/device/capabilities/CapabilityReporter.java");
+        String manifest = read("src/main/AndroidManifest.xml");
+
+        assertTrue("Broker default should point at the consolidated pucky service",
+                settings.contains("wss://pucky.fly.dev/v1/devices/"));
+        assertTrue("SettingsStore should only keep legacy remote ADB keys for cleanup",
+                settings.contains("LEGACY_REMOTE_ADB_KEYS"));
+        assertFalse("SettingsStore should not keep tunnel provisioning fields alive",
+                settings.contains("\"tunnel\""));
+        assertFalse("Executor should not expose retired tunnel or remote ADB commands",
+                executor.contains("\"tunnel.status\"")
+                        || executor.contains("\"tunnel.config.set\"")
+                        || executor.contains("\"tunnel.start\"")
+                        || executor.contains("\"tunnel.stop\"")
+                        || executor.contains("\"adb.remote.status\"")
+                        || executor.contains("\"adb.remote.reconnect\"")
+                        || executor.contains("\"adb.wifi.enable\""));
+        assertFalse("Foreground service should not instantiate tunnel or remote ADB controllers",
+                service.contains("TunnelController")
+                        || service.contains("RemoteAdbController")
+                        || service.contains("ensureTunnelStarted")
+                        || service.contains("stopTunnel()"));
+        assertFalse("Status and capability reports should not mention tunnel state",
+                status.contains("\"tunnel\"")
+                        || capabilities.contains("ssh.reverse_tunnel")
+                        || capabilities.contains("adb.remote")
+                        || capabilities.contains("adb.wifi_lifeline"));
+        assertFalse("Manifest should not request WRITE_SECURE_SETTINGS for the removed tunnel lane",
+                manifest.contains("WRITE_SECURE_SETTINGS"));
+        assertFalse("RemoteAdbController source should be deleted",
+                Files.exists(Path.of("src/main/java/com/pucky/device/adb/RemoteAdbController.java")));
+        assertFalse("TunnelController source should be deleted",
+                Files.exists(Path.of("src/main/java/com/pucky/device/tunnel/TunnelController.java")));
+        assertFalse("TlsSniProxy source should be deleted",
+                Files.exists(Path.of("src/main/java/com/pucky/device/tunnel/TlsSniProxy.java")));
+    }
+
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8);
     }

@@ -7,7 +7,7 @@ import subprocess
 import time
 
 
-APP = "pucky-bridge-dev-jt323"
+APP = "pucky"
 DEVICE_ID = "pucky-6ee8e85c12910b5c"
 EVIDENCE_DIR = pathlib.Path("pucky-apk-evidence")
 
@@ -234,9 +234,9 @@ def write_summary(path, run):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prefix", default="phase6-platform")
-    parser.add_argument("--broker", default="")
+    parser.add_argument("--broker", default="https://pucky.fly.dev")
     parser.add_argument("--token", default="operator-dev-token")
-    parser.add_argument("--download-url", default="https://pucky-bridge-dev-jt323.fly.dev/health")
+    parser.add_argument("--download-url", default="https://pucky.fly.dev/health")
     parser.add_argument("--download-filename", default="phase6-health.json")
     parser.add_argument("--media-uri", default="https://www.example.com/")
     parser.add_argument("--skip-media-open", action="store_true")

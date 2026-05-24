@@ -151,18 +151,6 @@ public final class CapabilityReporter {
                 "disabled_removed_license_risk",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Commercial Porcupine wake-word path has been removed. Commands remain compatible and report engine=none; openWakeWord is lab-only behind volume-down experiments."));
-        Json.add(out, cap("ssh.reverse_tunnel", "tunnel.status/tunnel.config.set/tunnel.start/tunnel.stop",
-                "implemented_untested", "foreground_service", "raw_device_bridge", Manifest.permission.INTERNET,
-                "not_recorded",
-                "APK-managed reverse SSH tunnel from phone to VM using an app-private key. ADB over the tunnel uses classic ADB TCP after USB enables adb tcpip 5555."));
-        Json.add(out, cap("adb.remote", "adb.remote.status/adb.remote.reconnect",
-                "implemented_untested", "foreground_service", "raw_device_bridge", Manifest.permission.INTERNET,
-                "not_recorded",
-                "Two-command status/reconnect surface for the classic ADB TCP reverse-tunnel path on VM port 15555."));
-        Json.add(out, cap("adb.wifi_lifeline", "adb.wifi.status/adb.wifi.enable/adb.wifi.disable",
-                "experimental", "foreground_service", "raw_device_bridge",
-                "android.permission.WRITE_SECURE_SETTINGS", "not_recorded",
-                "Experimental official Wireless Debugging lifeline. Requires one-time ADB grant of WRITE_SECURE_SETTINGS and may still require Android pairing trust."));
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));

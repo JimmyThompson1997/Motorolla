@@ -9,8 +9,6 @@ import com.pucky.device.battery.BatteryProvider;
 import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.storage.SettingsStore;
-import com.pucky.device.tunnel.TunnelController;
-
 import org.json.JSONObject;
 
 public final class StatusProvider {
@@ -31,7 +29,6 @@ public final class StatusProvider {
         Json.put(out, "battery", new BatteryProvider(context).read());
         Json.put(out, "network", new NetworkProvider(context).read());
         Json.put(out, "sensors", new SensorController(context).list());
-        Json.put(out, "tunnel", TunnelController.shared(context, settingsStore).status());
         return out;
     }
 

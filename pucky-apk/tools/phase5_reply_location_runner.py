@@ -9,7 +9,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 
-APP = "pucky-bridge-dev-jt323"
+APP = "pucky"
 DEVICE_ID = "pucky-6ee8e85c12910b5c"
 EVIDENCE_DIR = pathlib.Path("pucky-apk-evidence")
 ADB = pathlib.Path("tools") / "android-sdk" / "platform-tools" / "adb.exe"
@@ -292,7 +292,7 @@ def main():
     parser.add_argument("--skip-manual-reply", action="store_true")
     parser.add_argument("--adb-auto-reply", action="store_true")
     parser.add_argument("--adb-reply-text", default="phase5_adb_auto_reply")
-    parser.add_argument("--broker", default="", help="Direct broker URL. When set, avoid flyctl ssh console.")
+    parser.add_argument("--broker", default="https://pucky.fly.dev", help="Direct broker URL. When set, avoid flyctl ssh console.")
     parser.add_argument("--token", default="operator-dev-token")
     args = parser.parse_args()
     BROKER_BASE_URL = args.broker.rstrip("/")
