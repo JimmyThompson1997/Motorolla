@@ -60,10 +60,8 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'icon: "coffee"' in app
     assert 'route: "calls"' in app
     assert 'icon: "phone"' in app
-    assert 'route: "messages"' in app
-    assert 'icon: "text"' in app
-    assert 'route: "sensors"' in app
-    assert 'icon: "sensors"' in app
+    assert 'route: "messages"' not in app
+    assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
