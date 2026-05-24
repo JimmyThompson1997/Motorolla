@@ -105,23 +105,24 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"speech.echo.lab.list\""));
         assertTrue(source.contains("\"speech.echo.lab.config.get\""));
         assertTrue(source.contains("\"speech.echo.lab.config.set\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.list\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.set\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.delete\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.clear\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.test\""));
-        assertTrue(source.contains("\"speech.echo.lab.keyword.schema\""));
+        assertTrue(source.contains("\"pucky.recipes.sync\""));
+        assertTrue(source.contains("\"pucky.recipes.list\""));
+        assertTrue(source.contains("\"pucky.recipes.test\""));
+        assertTrue(source.contains("\"pucky.recipes.clear\""));
+        assertTrue(source.contains("\"pucky.recipes.schema\""));
+        assertTrue(source.contains("\"device.primitives.list\""));
+        assertFalse(source.contains("\"speech.echo.lab.keyword."));
         assertTrue(source.contains("return speechEchoLabController.status()"));
         assertTrue(source.contains("return speechEchoLabController.start(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.stop(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.configGet()"));
         assertTrue(source.contains("return speechEchoLabController.configSet(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.keywordList()"));
-        assertTrue(source.contains("return speechEchoLabController.keywordSet(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.keywordDelete(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.keywordClear()"));
-        assertTrue(source.contains("return speechEchoLabController.keywordTest(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.keywordSchema()"));
+        assertTrue(source.contains("return speechEchoLabController.recipesSync(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.recipesList()"));
+        assertTrue(source.contains("return speechEchoLabController.recipesTest(command.args())"));
+        assertTrue(source.contains("return speechEchoLabController.recipesClear()"));
+        assertTrue(source.contains("return speechEchoLabController.recipesSchema()"));
+        assertTrue(source.contains("return speechEchoLabController.devicePrimitivesList()"));
         assertTrue(service.contains("SpeechEchoLabController.shared(this)"));
     }
 

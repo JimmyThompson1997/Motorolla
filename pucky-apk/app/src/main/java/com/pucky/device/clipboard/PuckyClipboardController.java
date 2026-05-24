@@ -149,6 +149,32 @@ public final class PuckyClipboardController {
         return out;
     }
 
+    public synchronized JSONObject patchActionResolution(String entryId, String actionStatus, JSONObject resolution) {
+        JSONArray current = pruned(entriesJson(), Instant.now());
+        boolean patched = false;
+        for (int i = 0; i < current.length(); i++) {
+            JSONObject entry = current.optJSONObject(i);
+            if (entry == null || !entryId.equals(entry.optString("entry_id", ""))) {
+                continue;
+            }
+            Json.put(entry, "action_status", actionStatus == null || actionStatus.trim().isEmpty()
+                    ? "unknown"
+                    : actionStatus.trim());
+            Json.put(entry, "action_resolved_at", Instant.now().toString());
+            Json.put(entry, "action_resolution", resolution == null ? JSONObject.NULL : resolution);
+            patched = true;
+            break;
+        }
+        save(current);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.clipboard_patch_action_resolution.v1");
+        Json.put(out, "entry_id", entryId);
+        Json.put(out, "patched", patched);
+        Json.put(out, "action_status", actionStatus);
+        Json.put(out, "resolution", resolution == null ? JSONObject.NULL : resolution);
+        return out;
+    }
+
     public static JSONObject entryFromLabSession(JSONObject session) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.clipboard_entry.v1");

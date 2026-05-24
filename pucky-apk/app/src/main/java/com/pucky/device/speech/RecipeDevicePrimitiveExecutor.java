@@ -8,6 +8,7 @@ import android.media.ToneGenerator;
 
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.camera.VideoCaptureController;
+import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.location.LocationController;
@@ -18,7 +19,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 
-public final class SpeechKeywordActionExecutor {
+public final class RecipeDevicePrimitiveExecutor {
     public static final String COMMAND_TORCH_SET = "torch.set";
     public static final String COMMAND_PHOTO_CAPTURE = "photo.capture";
     public static final String COMMAND_LOCATION_PIN = "location.pin";
@@ -34,33 +35,37 @@ public final class SpeechKeywordActionExecutor {
     public static final int MAX_PHOTO_MAX_WIDTH = 1920;
     public static final long MIN_PHOTO_TIMEOUT_MS = 1000L;
     public static final long MAX_PHOTO_TIMEOUT_MS = 15000L;
-    public static final long DEFAULT_LOCATION_TIMEOUT_MS = 4000L;
+    public static final long DEFAULT_LOCATION_TIMEOUT_MS = 60000L;
+    public static final long DEFAULT_LOCATION_MAX_CACHE_AGE_MS = 30000L;
     public static final long DEFAULT_SCREENSHOT_TIMEOUT_MS = 4000L;
     public static final long DEFAULT_VIDEO_MAX_DURATION_MS = 60000L;
     private static final String SUCCESS_SOUND_PATH = "/product/media/audio/notifications/Soft.ogg";
     private static final String FAILURE_SOUND_PATH = "/product/media/audio/ui/LowBattery.ogg";
 
+    private final Context context;
     private final CameraController cameraController;
     private final LocationController locationController;
     private final ScreenshotController screenshotController;
     private final VideoCaptureController videoCaptureController;
 
-    public SpeechKeywordActionExecutor(Context context) {
-        this(new CameraController(context),
-                new LocationController(context),
-                new ScreenshotController(context),
-                VideoCaptureController.shared(context));
+    public RecipeDevicePrimitiveExecutor(Context context) {
+        this.context = context.getApplicationContext();
+        this.cameraController = new CameraController(this.context);
+        this.locationController = new LocationController(this.context);
+        this.screenshotController = new ScreenshotController(this.context);
+        this.videoCaptureController = VideoCaptureController.shared(this.context);
     }
 
-    SpeechKeywordActionExecutor(CameraController cameraController) {
+    RecipeDevicePrimitiveExecutor(CameraController cameraController) {
         this(cameraController, null, null, null);
     }
 
-    SpeechKeywordActionExecutor(
+    RecipeDevicePrimitiveExecutor(
             CameraController cameraController,
             LocationController locationController,
             ScreenshotController screenshotController,
             VideoCaptureController videoCaptureController) {
+        this.context = null;
         this.cameraController = cameraController;
         this.locationController = locationController;
         this.screenshotController = screenshotController;
@@ -72,7 +77,7 @@ public final class SpeechKeywordActionExecutor {
         String command = safe.optString("command", "");
         JSONObject args = safe.optJSONObject("args");
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.speech_echo_lab_keyword_action_result.v1");
+        Json.put(out, "schema", "pucky.recipe_device_primitive_result.v1");
         Json.put(out, "command", command);
         Json.put(out, "args", args == null ? new JSONObject() : args);
         if (COMMAND_TORCH_SET.equals(command)) {
@@ -84,12 +89,13 @@ public final class SpeechKeywordActionExecutor {
             return out;
         }
         if (COMMAND_LOCATION_PIN.equals(command)) {
-            JSONObject location = requireLocationController().get(args == null ? new JSONObject() : args);
-            if (!location.optBoolean("available", false)) {
+            JSONObject locationArgs = args == null ? new JSONObject() : args;
+            JSONObject location = requireLocationController().pin(locationArgs,
+                    result -> handlePendingLocationResolution(locationArgs, result));
+            if ("failed".equals(location.optString("state", ""))) {
                 throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                         "Location unavailable: " + location.optString("reason", "NO_LOCATION_SAMPLE"));
             }
-            Json.put(location, "stale", !location.optBoolean("fresh", false));
             Json.put(out, "result", location);
             return out;
         }
@@ -106,13 +112,13 @@ public final class SpeechKeywordActionExecutor {
             return out;
         }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
-                "Unsupported keyword action command: " + command);
+                "Unsupported recipe device primitive command: " + command);
     }
 
     public static JSONObject sanitize(JSONObject action) throws CommandException {
         if (action == null) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "keyword action requires action object");
+                    "recipe device primitive requires action object");
         }
         String command = action.optString("command", "").trim();
         if (COMMAND_TORCH_SET.equals(command)) {
@@ -134,7 +140,7 @@ public final class SpeechKeywordActionExecutor {
             return sanitizeVideoStop(action);
         }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
-                "Only torch.set, photo.capture, location.pin, screenshot.capture, video.capture.start, and video.capture.stop keyword actions are supported");
+                "Only torch.set, photo.capture, location.pin, screenshot.capture, video.capture.start, and video.capture.stop recipe device primitives are supported");
     }
 
     private static JSONObject sanitizeTorch(JSONObject action) throws CommandException {
@@ -145,7 +151,7 @@ public final class SpeechKeywordActionExecutor {
         }
         if (autoOffMs < MIN_TORCH_AUTO_OFF_MS || autoOffMs > MAX_TORCH_AUTO_OFF_MS) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "torch.set keyword action auto_off_ms must be 100..1500");
+                    "torch.set recipe device primitive auto_off_ms must be 100..1500");
         }
         JSONObject args = new JSONObject();
         Json.put(args, "enabled", true);
@@ -162,11 +168,11 @@ public final class SpeechKeywordActionExecutor {
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_PHOTO_TIMEOUT_MS);
         if (maxWidth < MIN_PHOTO_MAX_WIDTH || maxWidth > MAX_PHOTO_MAX_WIDTH) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "photo.capture keyword action max_width must be 320..1920");
+                    "photo.capture recipe device primitive max_width must be 320..1920");
         }
         if (timeoutMs < MIN_PHOTO_TIMEOUT_MS || timeoutMs > MAX_PHOTO_TIMEOUT_MS) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "photo.capture keyword action timeout_ms must be 1000..15000");
+                    "photo.capture recipe device primitive timeout_ms must be 1000..15000");
         }
         JSONObject args = new JSONObject();
         Json.put(args, "max_width", maxWidth);
@@ -185,13 +191,20 @@ public final class SpeechKeywordActionExecutor {
     private static JSONObject sanitizeLocation(JSONObject action) throws CommandException {
         JSONObject rawArgs = actionArgsObject(action, COMMAND_LOCATION_PIN);
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_LOCATION_TIMEOUT_MS);
-        if (timeoutMs < 500L || timeoutMs > 30000L) {
+        if (timeoutMs < 500L || timeoutMs > 60000L) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "location.pin keyword action timeout_ms must be 500..30000");
+                    "location.pin recipe device primitive timeout_ms must be 500..60000");
+        }
+        long maxCacheAgeMs = rawArgs.optLong("max_cache_age_ms", DEFAULT_LOCATION_MAX_CACHE_AGE_MS);
+        if (maxCacheAgeMs < 0L || maxCacheAgeMs > 300000L) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "location.pin recipe device primitive max_cache_age_ms must be 0..300000");
         }
         JSONObject args = new JSONObject();
         Json.put(args, "timeout_ms", timeoutMs);
+        Json.put(args, "max_cache_age_ms", maxCacheAgeMs);
         Json.put(args, "fresh", true);
+        Json.put(args, "allow_pending", true);
         Json.put(args, "publish", false);
         String provider = rawArgs.optString("provider", "").trim();
         if (!provider.isEmpty()) {
@@ -208,7 +221,7 @@ public final class SpeechKeywordActionExecutor {
         long timeoutMs = rawArgs.optLong("timeout_ms", DEFAULT_SCREENSHOT_TIMEOUT_MS);
         if (timeoutMs < 500L || timeoutMs > 10000L) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "screenshot.capture keyword action timeout_ms must be 500..10000");
+                    "screenshot.capture recipe device primitive timeout_ms must be 500..10000");
         }
         JSONObject args = new JSONObject();
         Json.put(args, "timeout_ms", timeoutMs);
@@ -226,15 +239,15 @@ public final class SpeechKeywordActionExecutor {
         long maxDurationMs = rawArgs.optLong("max_duration_ms", DEFAULT_VIDEO_MAX_DURATION_MS);
         if (maxWidth < MIN_PHOTO_MAX_WIDTH || maxWidth > MAX_PHOTO_MAX_WIDTH) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "video.capture.start keyword action max_width must be 320..1920");
+                    "video.capture.start recipe device primitive max_width must be 320..1920");
         }
         if (timeoutMs < MIN_PHOTO_TIMEOUT_MS || timeoutMs > MAX_PHOTO_TIMEOUT_MS) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "video.capture.start keyword action timeout_ms must be 1000..15000");
+                    "video.capture.start recipe device primitive timeout_ms must be 1000..15000");
         }
         if (maxDurationMs < 5000L || maxDurationMs > 300000L) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "video.capture.start keyword action max_duration_ms must be 5000..300000");
+                    "video.capture.start recipe device primitive max_duration_ms must be 5000..300000");
         }
         JSONObject args = new JSONObject();
         Json.put(args, "max_width", maxWidth);
@@ -266,7 +279,7 @@ public final class SpeechKeywordActionExecutor {
         JSONObject args = action.optJSONObject("args");
         if (args == null) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    command + " keyword action args must be a JSON object");
+                    command + " recipe device primitive args must be a JSON object");
         }
         return args;
     }
@@ -363,5 +376,30 @@ public final class SpeechKeywordActionExecutor {
             Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
         return out;
+    }
+
+    private void handlePendingLocationResolution(JSONObject args, JSONObject result) {
+        String entryId = args == null ? "" : args.optString("pucky_clipboard_entry_id", "").trim();
+        String status = "succeeded".equals(result.optString("state", "")) ? "succeeded" : "failed";
+        if ("succeeded".equals(status)) {
+            playSuccessChime("pucky.location_pending_success_chime.v1");
+        } else {
+            playFailureChime("pucky.location_pending_failure_chime.v1");
+        }
+        if (context == null || entryId.isEmpty()) {
+            return;
+        }
+        for (int attempt = 0; attempt < 6; attempt++) {
+            JSONObject patched = PuckyClipboardController.shared(context).patchActionResolution(entryId, status, result);
+            if (patched.optBoolean("patched", false)) {
+                return;
+            }
+            try {
+                Thread.sleep(250L);
+            } catch (InterruptedException exc) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 }

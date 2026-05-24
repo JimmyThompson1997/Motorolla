@@ -18,19 +18,19 @@ import java.util.UUID;
 public final class RecipeStepExecutor {
     private final Context context;
     private final SettingsStore settings;
-    private final SpeechKeywordActionExecutor deviceExecutor;
+    private final RecipeDevicePrimitiveExecutor deviceExecutor;
     private final BrokerEventPoster brokerEventPoster;
 
     public RecipeStepExecutor(Context context) {
         this.context = context.getApplicationContext();
         this.settings = new SettingsStore(this.context);
-        this.deviceExecutor = new SpeechKeywordActionExecutor(this.context);
+        this.deviceExecutor = new RecipeDevicePrimitiveExecutor(this.context);
         this.brokerEventPoster = new BrokerEventPoster(this.context);
     }
 
     RecipeStepExecutor(
             Context context,
-            SpeechKeywordActionExecutor deviceExecutor,
+            RecipeDevicePrimitiveExecutor deviceExecutor,
             BrokerEventPoster brokerEventPoster) {
         this.context = context.getApplicationContext();
         this.settings = new SettingsStore(this.context);
@@ -52,6 +52,10 @@ public final class RecipeStepExecutor {
             }
             JSONObject stepResult = executeStep(match, step, session, i);
             Json.add(stepResults, stepResult);
+            if ("pending".equals(stepResult.optString("status", ""))) {
+                Json.put(out, "status", "pending");
+                break;
+            }
             if (!"succeeded".equals(stepResult.optString("status", ""))) {
                 Json.put(out, "status", "failed");
                 Json.put(out, "error_code", stepResult.optString("error_code", CommandErrorCodes.EXECUTION_FAILED));
@@ -89,7 +93,7 @@ public final class RecipeStepExecutor {
             int index) throws CommandException {
         String type = step.optString("type", "");
         if ("device".equals(type)) {
-            return executeDeviceStep(step, index);
+            return executeDeviceStep(step, index, session);
         }
         if ("vm_event".equals(type)) {
             return executeVmEventStep(match, step, session, index);
@@ -104,15 +108,21 @@ public final class RecipeStepExecutor {
         return out;
     }
 
-    private JSONObject executeDeviceStep(JSONObject step, int index) throws CommandException {
+    private JSONObject executeDeviceStep(JSONObject step, int index, JSONObject session) throws CommandException {
         JSONObject out = baseStepResult(index, "device");
         String command = step.optString("command", "");
         JSONObject action = new JSONObject();
         Json.put(action, "command", command);
-        Json.put(action, "args", step.optJSONObject("args") == null ? new JSONObject() : step.optJSONObject("args"));
+        JSONObject args = step.optJSONObject("args") == null ? new JSONObject() : copy(step.optJSONObject("args"));
+        if (session != null && !session.optString("pucky_clipboard_entry_id", "").trim().isEmpty()) {
+            Json.put(args, "pucky_clipboard_entry_id", session.optString("pucky_clipboard_entry_id", ""));
+        }
+        Json.put(action, "args", args);
         try {
             JSONObject result = deviceExecutor.execute(action);
-            Json.put(out, "status", "succeeded");
+            JSONObject primitiveResult = result.optJSONObject("result");
+            String state = primitiveResult == null ? "" : primitiveResult.optString("state", "");
+            Json.put(out, "status", "pending".equals(state) ? "pending" : "succeeded");
             Json.put(out, "command", command);
             Json.put(out, "result", result);
             return out;
@@ -252,17 +262,17 @@ public final class RecipeStepExecutor {
 
     private static JSONArray primitivesArray() {
         JSONArray out = new JSONArray();
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_TORCH_SET,
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_TORCH_SET,
                 "Flashlight burst; auto_off_ms 100..1500."));
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_PHOTO_CAPTURE,
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_PHOTO_CAPTURE,
                 "Capture JPEG and publish to MediaStore/DCIM/Pucky."));
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_LOCATION_PIN,
-                "Capture fresh or last-known device location."));
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_SCREENSHOT_CAPTURE,
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_LOCATION_PIN,
+                "Capture current or recent device location; starts async pending acquisition when needed."));
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_SCREENSHOT_CAPTURE,
                 "Capture active screen through Pucky AccessibilityService."));
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_VIDEO_CAPTURE_START,
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_VIDEO_CAPTURE_START,
                 "Start silent local video recording."));
-        Json.add(out, primitive(SpeechKeywordActionExecutor.COMMAND_VIDEO_CAPTURE_STOP,
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_VIDEO_CAPTURE_STOP,
                 "Stop active local video recording."));
         Json.add(out, primitive("vm_event.post",
                 "Post pucky.keyword_triggered.v1 to the configured VM broker."));
@@ -274,5 +284,13 @@ public final class RecipeStepExecutor {
         Json.put(out, "command", command);
         Json.put(out, "note", note);
         return out;
+    }
+
+    private static JSONObject copy(JSONObject object) {
+        try {
+            return new JSONObject(object == null ? "{}" : object.toString());
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
     }
 }

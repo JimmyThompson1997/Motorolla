@@ -114,7 +114,7 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("recognizer_leading_padding_ms"));
         assertFalse(source.contains("RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION"));
         assertTrue(source.contains("recipeMatch(text)"));
-        assertTrue(source.contains("SpeechKeywordActionExecutor"));
+        assertTrue(source.contains("RecipeDevicePrimitiveExecutor"));
         assertTrue(source.contains("keyword_lab_enabled"));
         assertTrue(source.contains("keyword_match_strategy"));
         assertTrue(source.contains("exact_utterance"));
@@ -124,15 +124,15 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("shouldSkipSuccessTts"));
         assertTrue(source.contains("keyword_success_chime"));
         assertTrue(source.contains("pucky.keyword_success_chime.v1"));
-        assertTrue(source.contains("pucky.keyword_action_success_chime.v1"));
         assertTrue(source.contains("pucky.keyword_action_failure_chime.v1"));
+        assertTrue(source.contains("skipped_keyword_action_pending"));
         assertTrue(source.contains("PuckyClipboardController.entryFromLabSession(active)"));
         assertTrue(source.contains("pucky_clipboard_saved"));
         assertTrue(source.contains("keyword_action_status"));
         assertTrue(source.contains("keyword_action_result"));
         assertTrue(source.contains("keyword_action_failure_chime"));
         assertTrue(source.contains("action_failure_chime"));
-        assertTrue(source.contains("playKeywordFailureChimeIfNeeded"));
+        assertTrue(source.contains("keyword_action_pending"));
         assertTrue(source.contains("keyword_action_error_message"));
         assertTrue(source.contains("buzzOneShot(RELEASE_HAPTIC_MS"));
         assertTrue(source.contains("final_transcript"));
@@ -142,23 +142,18 @@ public final class PuckyWakeLabSourceTest {
     @Test
     public void programmableKeywordActionsAreLabScopedAndAllowlisted() throws Exception {
         String controller = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
-        String registry = read("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java");
-        String executor = read("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java");
+        String executor = read("src/main/java/com/pucky/device/speech/RecipeDevicePrimitiveExecutor.java");
         String recipes = read("src/main/java/com/pucky/device/speech/SpeechRecipeRegistry.java");
         String recipeSteps = read("src/main/java/com/pucky/device/speech/RecipeStepExecutor.java");
         String clipboard = read("src/main/java/com/pucky/device/clipboard/PuckyClipboardController.java");
 
-        assertTrue(controller.contains("speech.echo.lab.keyword.test requires text"));
-        assertTrue(controller.contains("SpeechKeywordRegistry.list(customKeywordLoadResult())"));
-        assertTrue(controller.contains("SpeechKeywordRegistry.schemaGuide()"));
-        assertTrue(controller.contains("SpeechKeywordRegistry.validationError(\"speech.echo.lab.keyword.set\""));
+        assertTrue(controller.contains("recipesList()"));
+        assertTrue(controller.contains("recipesSync(JSONObject args)"));
+        assertTrue(controller.contains("recipesTest(JSONObject args)"));
         assertTrue(controller.contains("clipboardController.append"));
-        assertTrue(registry.contains("PREF_CUSTOM_KEYWORDS"));
-        assertTrue(registry.contains("pucky.speech_echo_lab_keyword_schema.v1"));
-        assertTrue(registry.contains("invalid_custom_entries_count"));
-        assertTrue(registry.contains("action.args must be a JSON object"));
-        assertTrue(registry.contains("Built-in speech keywords cannot be overwritten"));
-        assertTrue(registry.contains("speech keyword phrase duplicates existing phrase"));
+        assertFalse(controller.contains("speech.echo.lab.keyword."));
+        assertFalse(Files.exists(Path.of("src/main/java/com/pucky/device/speech/SpeechKeywordRegistry.java")));
+        assertFalse(Files.exists(Path.of("src/main/java/com/pucky/device/speech/SpeechKeywordActionExecutor.java")));
         assertTrue(executor.contains("COMMAND_TORCH_SET = \"torch.set\""));
         assertTrue(executor.contains("actionArgsObject"));
         assertTrue(executor.contains("DEFAULT_TORCH_AUTO_OFF_MS = 600"));
@@ -167,7 +162,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("COMMAND_PHOTO_CAPTURE = \"photo.capture\""));
         assertTrue(executor.contains("DEFAULT_PHOTO_MAX_WIDTH = 1280"));
         assertTrue(executor.contains("COMMAND_LOCATION_PIN = \"location.pin\""));
-        assertTrue(executor.contains("DEFAULT_LOCATION_TIMEOUT_MS = 4000L"));
+        assertTrue(executor.contains("DEFAULT_LOCATION_TIMEOUT_MS = 60000L"));
+        assertTrue(executor.contains("DEFAULT_LOCATION_MAX_CACHE_AGE_MS = 30000L"));
         assertTrue(executor.contains("COMMAND_SCREENSHOT_CAPTURE = \"screenshot.capture\""));
         assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_START = \"video.capture.start\""));
         assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_STOP = \"video.capture.stop\""));
@@ -182,15 +178,18 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("\"suppress_chime\", true"));
         assertTrue(executor.contains("TONE_PROP_NACK"));
         assertTrue(executor.contains("videoCaptureController"));
-        assertTrue(executor.contains("new CameraController(context)"));
+        assertTrue(executor.contains("new CameraController(this.context)"));
         assertTrue(recipes.contains("pucky.recipe_bundle.v1"));
         assertTrue(recipes.contains("PREF_RECIPE_BUNDLE"));
         assertTrue(recipes.contains("pucky_recipes_fallback.json"));
         assertTrue(recipes.contains("vm_event"));
+        assertFalse(recipes.contains("legacy_keyword"));
+        assertFalse(recipes.contains("keyword_actions_json"));
         assertTrue(recipeSteps.contains("pucky.keyword_triggered.v1"));
         assertTrue(recipeSteps.contains("BrokerEventPoster"));
         assertTrue(recipeSteps.contains("devicePrimitives"));
         assertTrue(recipeSteps.contains("vm_event.post"));
+        assertTrue(recipeSteps.contains("RecipeDevicePrimitiveExecutor"));
         assertTrue(clipboard.contains("android_system_clipboard\", false"));
         assertTrue(clipboard.contains("MAX_ENTRIES = 250"));
         assertTrue(clipboard.contains("RETENTION_MS = 30L * 24L * 60L * 60L * 1000L"));
@@ -213,6 +212,7 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("\"pucky.recipes.clear\""));
         assertTrue(executor.contains("\"pucky.recipes.schema\""));
         assertTrue(executor.contains("\"device.primitives.list\""));
+        assertFalse(executor.contains("\"speech.echo.lab.keyword."));
         assertTrue(capability.contains("VM-owned recipes"));
         assertTrue(broker.contains("pucky.keyword_triggered.v1"));
         assertTrue(broker.contains("DEVICE_ID_MISMATCH"));
@@ -247,7 +247,8 @@ public final class PuckyWakeLabSourceTest {
                 "09-fixtures-quality-and-performance.md",
                 "10-test-plan-and-phase-gates.md",
                 "11-rollout-and-acceptance.md",
-                "12-vm-owned-recipes.md"
+                "12-vm-owned-recipes.md",
+                "13-keyword-manual-test-spec.md"
         };
         for (String doc : docs) {
             assertTrue(doc + " exists", Files.exists(Path.of("../docs/pucky-wake-lab", doc))

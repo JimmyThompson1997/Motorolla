@@ -59,6 +59,22 @@ public final class SpeechRecipeRegistryTest {
     }
 
     @Test
+    public void locationRecipeDefaultsToRecentOrPendingPolicy() throws Exception {
+        JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle(recipe("location_pin", phrases("pin location"),
+                deviceStep("location.pin", new JSONObject()))), "vm_sync");
+        JSONObject step = normalized.optJSONArray("recipes")
+                .optJSONObject(0)
+                .optJSONArray("steps")
+                .optJSONObject(0);
+        JSONObject args = step.optJSONObject("args");
+
+        assertEquals("location.pin", step.optString("command"));
+        assertEquals(60000L, args.optLong("timeout_ms"));
+        assertEquals(30000L, args.optLong("max_cache_age_ms"));
+        assertTrue(args.optBoolean("allow_pending"));
+    }
+
+    @Test
     public void duplicatePhrasesInsideBundleAreRejected() throws Exception {
         CommandException exc = expectCommandException(() ->
                 SpeechRecipeRegistry.normalizeBundle(bundle(
@@ -80,26 +96,24 @@ public final class SpeechRecipeRegistryTest {
 
         CommandException exc = expectCommandException(() ->
                 SpeechRecipeRegistry.requireNoActivePhraseConflicts(
-                        SpeechRecipeRegistry.activeRecipes(fallback, vm, new JSONArray())));
+                        SpeechRecipeRegistry.activeRecipes(fallback, vm)));
 
         assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
     }
 
     @Test
-    public void legacyKeywordCanBecomeRecipeForCompatibility() throws Exception {
-        JSONObject keyword = new JSONObject()
-                .put("id", "flashlight")
-                .put("phrases", phrases("flashlight"))
-                .put("reply_text", "Flashlight recognized.")
-                .put("action", new JSONObject()
-                        .put("command", "torch.set")
-                        .put("args", new JSONObject().put("auto_off_ms", 600)));
-
-        JSONObject recipe = SpeechRecipeRegistry.legacyKeywordToRecipe(keyword);
+    public void activeRecipesUseVmSyncSourceForStoredBundle() throws Exception {
+        JSONObject fallback = SpeechRecipeRegistry.normalizeBundle(bundle(
+                recipe("hey_pucky", phrases("hey pucky"), new JSONObject()
+                        .put("type", "chime")
+                        .put("sound", "soft"))), "fallback");
+        JSONObject vm = SpeechRecipeRegistry.normalizeBundle(bundle(
+                recipe("flashlight", phrases("flashlight"), deviceStep("torch.set", new JSONObject()))), "vm_sync");
+        JSONArray active = SpeechRecipeRegistry.activeRecipes(fallback, vm);
+        JSONObject recipe = active.optJSONObject(1);
 
         assertEquals("flashlight", recipe.optString("id"));
-        assertEquals("device", recipe.optJSONArray("steps").optJSONObject(0).optString("type"));
-        assertEquals("torch.set", recipe.optJSONArray("steps").optJSONObject(0).optString("command"));
+        assertEquals("vm_sync", recipe.optString("active_source"));
     }
 
     @Test

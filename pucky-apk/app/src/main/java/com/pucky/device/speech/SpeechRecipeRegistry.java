@@ -128,10 +128,10 @@ public final class SpeechRecipeRegistry {
         return out;
     }
 
-    public static JSONObject list(Context context, String storedRaw, JSONArray legacyCustomEntries) {
+    public static JSONObject list(Context context, String storedRaw) {
         BundleResult stored = loadStoredDetailed(storedRaw);
         JSONObject fallback = loadFallbackBundle(context);
-        JSONArray active = activeRecipes(fallback, stored.bundle, legacyCustomEntries);
+        JSONArray active = activeRecipes(fallback, stored.bundle);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.recipes_list.v1");
         Json.put(out, "match_strategy", "exact_utterance");
@@ -148,10 +148,10 @@ public final class SpeechRecipeRegistry {
         return out;
     }
 
-    public static RecipeMatch match(Context context, String transcript, String storedRaw, JSONArray legacyCustomEntries) {
+    public static RecipeMatch match(Context context, String transcript, String storedRaw) {
         JSONObject fallback = loadFallbackBundle(context);
         JSONObject stored = loadStoredDetailed(storedRaw).bundle;
-        return match(transcript, activeRecipes(fallback, stored, legacyCustomEntries));
+        return match(transcript, activeRecipes(fallback, stored));
     }
 
     public static RecipeMatch match(String transcript, JSONArray recipes) {
@@ -199,11 +199,10 @@ public final class SpeechRecipeRegistry {
         return out;
     }
 
-    public static JSONArray activeRecipes(JSONObject fallbackBundle, JSONObject storedBundle, JSONArray legacyCustomEntries) {
+    public static JSONArray activeRecipes(JSONObject fallbackBundle, JSONObject storedBundle) {
         LinkedHashMap<String, JSONObject> byId = new LinkedHashMap<>();
         putRecipes(byId, fallbackBundle, "fallback", false);
-        putRecipes(byId, storedBundle, "vm", true);
-        putLegacyRecipes(byId, legacyCustomEntries);
+        putRecipes(byId, storedBundle, "vm_sync", true);
         JSONArray out = new JSONArray();
         for (JSONObject recipe : byId.values()) {
             Json.add(out, recipe);
@@ -234,33 +233,6 @@ public final class SpeechRecipeRegistry {
                 owners.put(phrase, id);
             }
         }
-    }
-
-    public static JSONObject legacyKeywordToRecipe(JSONObject keyword) throws CommandException {
-        if (keyword == null) {
-            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
-                    "legacy keyword must be object");
-        }
-        JSONObject recipe = new JSONObject();
-        Json.put(recipe, "id", keyword.optString("id", ""));
-        Json.put(recipe, "phrases", keyword.optJSONArray("phrases"));
-        Json.put(recipe, "match", "exact_utterance");
-        Json.put(recipe, "reply_text", keyword.optString("reply_text", ""));
-        if (keyword.has("error_reply_text")) {
-            Json.put(recipe, "error_reply_text", keyword.optString("error_reply_text", ""));
-        }
-        JSONArray steps = new JSONArray();
-        JSONObject action = keyword.optJSONObject("action");
-        if (action != null) {
-            JSONObject step = new JSONObject();
-            Json.put(step, "type", "device");
-            Json.put(step, "command", action.optString("command", ""));
-            Json.put(step, "args", action.optJSONObject("args") == null ? new JSONObject() : action.optJSONObject("args"));
-            Json.add(steps, step);
-        }
-        Json.put(recipe, "steps", steps);
-        Json.put(recipe, "source", "legacy_keyword");
-        return normalizeRecipe(recipe, 0);
     }
 
     private static JSONObject normalizeRecipe(JSONObject raw, int index) throws CommandException {
@@ -329,7 +301,7 @@ public final class SpeechRecipeRegistry {
         JSONObject action = new JSONObject();
         Json.put(action, "command", step.optString("command", ""));
         Json.put(action, "args", step.optJSONObject("args") == null ? new JSONObject() : step.optJSONObject("args"));
-        JSONObject safe = SpeechKeywordActionExecutor.sanitize(action);
+        JSONObject safe = RecipeDevicePrimitiveExecutor.sanitize(action);
         JSONObject out = new JSONObject();
         Json.put(out, "type", "device");
         Json.put(out, "command", safe.optString("command", ""));
@@ -442,24 +414,6 @@ public final class SpeechRecipeRegistry {
             String id = copy.optString("id", "");
             if (override || !out.containsKey(id)) {
                 out.put(id, copy);
-            }
-        }
-    }
-
-    private static void putLegacyRecipes(Map<String, JSONObject> out, JSONArray entries) {
-        if (entries == null) {
-            return;
-        }
-        for (int i = 0; i < entries.length(); i++) {
-            try {
-                JSONObject recipe = legacyKeywordToRecipe(entries.optJSONObject(i));
-                String id = recipe.optString("id", "");
-                if (!out.containsKey(id)) {
-                    Json.put(recipe, "active_source", "legacy_keyword");
-                    out.put(id, recipe);
-                }
-            } catch (CommandException ignored) {
-                // Legacy malformed entries are already reported by SpeechKeywordRegistry.
             }
         }
     }
@@ -578,7 +532,7 @@ public final class SpeechRecipeRegistry {
         Json.put(args, "auto_off_ms", 600);
         JSONObject step = new JSONObject();
         Json.put(step, "type", "device");
-        Json.put(step, "command", SpeechKeywordActionExecutor.COMMAND_TORCH_SET);
+        Json.put(step, "command", RecipeDevicePrimitiveExecutor.COMMAND_TORCH_SET);
         Json.put(step, "args", args);
         JSONObject out = new JSONObject();
         Json.put(out, "id", "flashlight");

@@ -114,12 +114,12 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
                 Manifest.permission.CAMERA, "not_recorded", "Bounded still capture into app external files."));
-        Json.add(out, cap("camera.video_capture_lab", "speech.echo.lab.keyword.* action video.capture.start/video.capture.stop", cameraStatus(), "foreground_activity", "visible",
+        Json.add(out, cap("camera.video_capture_lab", "VM recipe device primitive video.capture.start/video.capture.stop", cameraStatus(), "foreground_activity", "visible",
                 Manifest.permission.CAMERA, "local_artifact",
                 "Volume-down keyword lab can start/stop silent local camera video, save app-private MP4, and publish to MediaStore Movies/Pucky."));
         Json.add(out, cap("camera.torch", "torch.set", torchStatus(), "yes", "visible",
                 Manifest.permission.CAMERA, "not_recorded", "Flash torch with bounded auto-off."));
-        Json.add(out, cap("screen.screenshot_lab", "speech.echo.lab.keyword.* action screenshot.capture",
+        Json.add(out, cap("screen.screenshot_lab", "VM recipe device primitive screenshot.capture",
                 Build.VERSION.SDK_INT >= 30 ? "implemented_untested" : "blocked_by_platform",
                 "user_enabled_accessibility", "visible", "BIND_ACCESSIBILITY_SERVICE", "local_artifact",
                 "Volume-down keyword lab screenshot action uses Pucky AccessibilityService takeScreenshot on API 30+ and publishes image artifacts."));
@@ -165,7 +165,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete/speech.echo.voices",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
-        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/speech.echo.lab.keyword.list/speech.echo.lab.keyword.set/speech.echo.lab.keyword.delete/speech.echo.lab.keyword.clear/speech.echo.lab.keyword.test/speech.echo.lab.keyword.schema/pucky.recipes.sync/pucky.recipes.list/pucky.recipes.test/pucky.recipes.clear/pucky.recipes.schema/device.primitives.list",
+        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/pucky.recipes.sync/pucky.recipes.list/pucky.recipes.test/pucky.recipes.clear/pucky.recipes.schema/device.primitives.list",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Volume-down-only audio lab with exact-utterance VM-owned recipes. The APK caches recipe bundles, executes allowlisted device primitives locally, relays vm_event steps to the broker, and records matches to Pucky Clipboard."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",

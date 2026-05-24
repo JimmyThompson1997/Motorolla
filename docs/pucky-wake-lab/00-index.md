@@ -45,6 +45,8 @@ Production wake word remains a future promotion decision. Nothing in this work s
 - [09 Fixtures, Quality, And Performance](09-fixtures-quality-and-performance.md)
 - [10 Test Plan And Phase Gates](10-test-plan-and-phase-gates.md)
 - [11 Rollout And Acceptance](11-rollout-and-acceptance.md)
+- [12 VM-Owned Recipes](12-vm-owned-recipes.md)
+- [13 Keyword Manual Test Spec](13-keyword-manual-test-spec.md)
 
 ## Glossary
 

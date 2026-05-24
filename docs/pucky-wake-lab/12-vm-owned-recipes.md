@@ -33,7 +33,13 @@ The APK owns:
 - `pucky.recipes.schema`: return the authoring contract.
 - `device.primitives.list`: return APK-supported primitive commands.
 
-Legacy `speech.echo.lab.keyword.*` commands remain as compatibility wrappers for one migration window. Future agents should prefer `pucky.recipes.*`.
+The old lab keyword command family has been removed. Future agents should use `pucky.recipes.*` and `device.primitives.list`.
+
+The canonical dev bundle lives at [volume_down_lab_dev_bundle.json](../../pucky_vm/recipes/volume_down_lab_dev_bundle.json). Sync it with:
+
+```powershell
+python tools/sync_pucky_recipe_bundle.py --broker http://127.0.0.1:8787 --token operator-dev-token --clear-first --smoke
+```
 
 ## Recipe Shape
 
@@ -77,6 +83,8 @@ Matching is intentionally strict. `flashlight` can match; `turn flashlight on` a
 - `screenshot.capture`
 - `video.capture.start`
 - `video.capture.stop`
+
+`location.pin` uses recent-or-pending semantics. A cached fused/network/sample under 30 seconds old is success. If no recent sample exists, the APK records `state=pending`, keeps acquiring for up to 60 seconds, and patches the matching Pucky Clipboard entry when it resolves or fails.
 
 `vm_event` posts `pucky.keyword_triggered.v1` to `/v1/devices/{device_id}/events`. The VM then continues the relay race however it wants: endpoint call, script, agent session, email check, file update, or future workflow.
 
