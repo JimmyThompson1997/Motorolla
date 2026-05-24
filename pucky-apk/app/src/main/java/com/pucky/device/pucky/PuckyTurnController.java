@@ -2,6 +2,11 @@ package com.pucky.device.pucky;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
+import android.os.Build;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 
 import com.pucky.device.command.CommandErrorCodes;
@@ -38,6 +43,11 @@ public final class PuckyTurnController {
     private static final String HISTORY = "history_json";
     private static final int MAX_HISTORY_ITEMS = 40;
     private static final int MAX_HISTORY_EVENTS = 40;
+    private static final int RECORDING_START_HAPTIC_MS = 45;
+    private static final int RECORDING_STOP_HAPTIC_MS = 40;
+    private static final int HAPTIC_AMPLITUDE = 220;
+    private static final int ACCEPTED_CHIME_DURATION_MS = 150;
+    private static final int ACCEPTED_CHIME_VOLUME = 45;
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -48,6 +58,7 @@ public final class PuckyTurnController {
     private final Object pollLock = new Object();
     private volatile String activePollTurnId = "";
     private volatile boolean pollActive = false;
+    private volatile String acceptedChimedTurnId = "";
 
     public static synchronized PuckyTurnController shared(Context context) {
         if (shared == null) {
@@ -157,14 +168,18 @@ public final class PuckyTurnController {
     public JSONObject start(JSONObject args) throws CommandException {
         String clientTurnId = generateClientTurnId();
         String localSessionId = clientTurnId;
+        final boolean feedback = args.optBoolean("feedback", true);
         JSONObject startArgs = new JSONObject();
         Json.put(startArgs, "format", "wav");
         Json.put(startArgs, "session_id", localSessionId);
         Json.put(startArgs, "turn_id", clientTurnId);
         Json.put(startArgs, "max_duration_ms", args.optInt("max_duration_ms", 60000));
         Json.put(startArgs, "sample_tag", "pucky_turn");
-        Json.put(startArgs, "feedback", args.optBoolean("feedback", true));
+        Json.put(startArgs, "feedback", false);
         JSONObject out = WalkieAudioCaptureController.shared(context).start(startArgs, speechGateStatus -> {
+            if (feedback) {
+                playRecordingStartHaptic();
+            }
             JSONObject status = new JSONObject();
             Json.put(status, "schema", "pucky.turn_status_item.v1");
             Json.put(status, "state", "recording");
@@ -255,8 +270,11 @@ public final class PuckyTurnController {
         long finalizeStartedMs = System.currentTimeMillis();
         try {
             JSONObject stopArgs = reasonArgs(reason);
-            Json.put(stopArgs, "feedback", feedback);
+            Json.put(stopArgs, "feedback", false);
             JSONObject stopped = WalkieAudioCaptureController.shared(context).stop(stopArgs);
+            if (feedback) {
+                playRecordingStopHaptic();
+            }
             JSONObject capture = stopped.optJSONObject("capture");
             if (capture == null) {
                 markStatus("idle", stopped, "no_capture");
@@ -349,6 +367,7 @@ public final class PuckyTurnController {
                         markStatus("failed", status, "http_" + response.code());
                         return;
                     }
+                    Json.put(status, "accepted_chime", playAcceptedChimeOnce(clientTurnId, "http_response_success"));
                     try {
                         PuckyTurnResponse parsed = PuckyTurnResponse.fromJson(responseText);
                         JSONObject card = persistReplyCard(localSessionId, parsed);
@@ -463,6 +482,9 @@ public final class PuckyTurnController {
         Json.put(status, "remote_stage", remoteStage);
         Json.put(status, "server_turn_status", remote);
         Json.put(status, "codex_running", "codex_running".equals(remoteStage));
+        if (isAcceptedRemoteStage(remoteStage)) {
+            Json.put(status, "accepted_chime", playAcceptedChimeOnce(clientTurnId, remoteStage));
+        }
         if ("failed".equals(remoteStage)) {
             markStatus("failed", status, remote.optString("error_type", "remote_failed"));
             return;
@@ -492,6 +514,13 @@ public final class PuckyTurnController {
 
     private static boolean isRemoteTerminalStage(String stage) {
         return "completed".equals(stage) || "failed".equals(stage);
+    }
+
+    private static boolean isAcceptedRemoteStage(String stage) {
+        return "upload_received".equals(stage)
+                || "stt_running".equals(stage)
+                || "codex_running".equals(stage)
+                || "tts_running".equals(stage);
     }
 
     private JSONObject persistReplyCard(String localSessionId, PuckyTurnResponse response) throws Exception {
@@ -624,6 +653,7 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "reply_audio_path");
         copyIfPresent(record, detail, "latency_total_ms");
         copyIfPresent(record, detail, "latency_server_total_ms");
+        copyIfPresent(record, detail, "accepted_chime");
         if (detail.has("server_telemetry")) {
             Json.put(record, "server_telemetry", detail.opt("server_telemetry"));
         }
@@ -643,6 +673,7 @@ public final class PuckyTurnController {
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "error");
         copyIfPresent(event, detail, "http_status");
+        copyIfPresent(event, detail, "accepted_chime");
         JSONObject eventGate = detail.optJSONObject("speech_gate");
         if (eventGate != null) {
             Json.put(event, "vad_probability", eventGate.optDouble("vad_probability", 0.0));
@@ -792,6 +823,81 @@ public final class PuckyTurnController {
         if ("speaking".equals(state)) return "speaking";
         if ("failed".equals(state)) return "idle";
         return "idle";
+    }
+
+    private void playRecordingStartHaptic() {
+        buzzOneShot(RECORDING_START_HAPTIC_MS, HAPTIC_AMPLITUDE);
+    }
+
+    private void playRecordingStopHaptic() {
+        buzzOneShot(RECORDING_STOP_HAPTIC_MS, HAPTIC_AMPLITUDE);
+    }
+
+    private JSONObject playAcceptedChimeOnce(String turnId, String trigger) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_accepted_chime.v1");
+        Json.put(out, "turn_id", turnId);
+        Json.put(out, "trigger", trigger);
+        if (turnId == null || turnId.trim().isEmpty()) {
+            Json.put(out, "played", false);
+            Json.put(out, "reason", "missing_turn_id");
+            return out;
+        }
+        synchronized (pollLock) {
+            if (turnId.equals(acceptedChimedTurnId)) {
+                Json.put(out, "played", false);
+                Json.put(out, "reason", "already_played");
+                return out;
+            }
+            acceptedChimedTurnId = turnId;
+        }
+        JSONObject chime = playAcceptedChime(trigger);
+        Json.put(out, "played", chime.optBoolean("played", false));
+        Json.put(out, "reason", chime.optString("reason", ""));
+        Json.put(out, "tone", chime.optInt("tone", -1));
+        Json.put(out, "duration_ms", chime.optInt("duration_ms", ACCEPTED_CHIME_DURATION_MS));
+        return out;
+    }
+
+    private JSONObject playAcceptedChime(String trigger) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_accepted_chime_playback.v1");
+        Json.put(out, "trigger", trigger);
+        Json.put(out, "tone", ToneGenerator.TONE_PROP_PROMPT);
+        Json.put(out, "duration_ms", ACCEPTED_CHIME_DURATION_MS);
+        Json.put(out, "volume", ACCEPTED_CHIME_VOLUME);
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, ACCEPTED_CHIME_VOLUME);
+            generator.startTone(ToneGenerator.TONE_PROP_PROMPT, ACCEPTED_CHIME_DURATION_MS);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(ACCEPTED_CHIME_DURATION_MS + 100L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-turn-accepted-chime").start();
+            Json.put(out, "played", true);
+        } catch (RuntimeException exc) {
+            Json.put(out, "played", false);
+            Json.put(out, "reason", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+        return out;
+    }
+
+    private void buzzOneShot(long millis, int amplitude) {
+        try {
+            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(Math.max(1L, millis), Math.max(1, Math.min(255, amplitude))));
+            } else {
+                vibrator.vibrate(Math.max(1L, millis));
+            }
+        } catch (RuntimeException ignored) {
+        }
     }
 
     private static String generateClientTurnId() {

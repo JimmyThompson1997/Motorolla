@@ -154,7 +154,7 @@ public final class PuckyTurnSourceTest {
         assertFalse(source.contains("SpeechGate gate = new SpeechGate"));
         assertFalse(source.contains("startSpeechGatePoll(localSessionId, clientTurnId, gate)"));
         assertTrue(source.contains("Json.put(startArgs, \"format\", \"wav\")"));
-        assertTrue(source.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
+        assertTrue(source.contains("Json.put(startArgs, \"feedback\", false)"));
         assertTrue(source.contains("MediaType.get(\"audio/wav\")"));
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
@@ -286,6 +286,45 @@ public final class PuckyTurnSourceTest {
         assertTrue(finishBody.contains("markStatus(\"upload_blocked\", blocked, null)"));
         assertTrue(source.contains("|| \"upload_blocked\".equals(state)"));
         assertFalse(finishBody.contains("markStatus(\"failed\", detail, \"not_configured\")"));
+    }
+
+    @Test
+    public void walkieFeedbackIsTiedToRecordingStopAndRemoteAcceptedStates() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String capture = read("src/main/java/com/pucky/device/pucky/WalkieAudioCaptureController.java");
+        String startBody = between(source, "public JSONObject start(JSONObject args)", "public JSONObject stop(JSONObject args)");
+        String finishBody = between(source, "private void finishStopAndUpload", "private void submitAsync");
+        String remoteStatusBody = between(source, "private void applyRemoteTurnStatus", "private String turnStatusUrl");
+        String responseBody = between(source, "public void onResponse(Call call, Response response)", "private void startTurnStatusPoll");
+
+        assertTrue(source.contains("import android.media.AudioManager;"));
+        assertTrue(source.contains("import android.media.ToneGenerator;"));
+        assertTrue(source.contains("import android.os.VibrationEffect;"));
+        assertTrue(source.contains("import android.os.Vibrator;"));
+        assertTrue(source.contains("RECORDING_START_HAPTIC_MS"));
+        assertTrue(source.contains("RECORDING_STOP_HAPTIC_MS"));
+        assertTrue(source.contains("ACCEPTED_CHIME_DURATION_MS"));
+        assertTrue(source.contains("private volatile String acceptedChimedTurnId"));
+        assertTrue(source.contains("playRecordingStartHaptic()"));
+        assertTrue(source.contains("playRecordingStopHaptic()"));
+        assertTrue(source.contains("playAcceptedChimeOnce(clientTurnId, remoteStage)"));
+        assertTrue(responseBody.contains("playAcceptedChimeOnce(clientTurnId, \"http_response_success\")"));
+        assertTrue(source.contains("Json.put(status, \"accepted_chime\""));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"accepted_chime\")"));
+        assertTrue(source.contains("copyIfPresent(event, detail, \"accepted_chime\")"));
+
+        assertTrue(startBody.contains("final boolean feedback = args.optBoolean(\"feedback\", true)"));
+        assertTrue(startBody.contains("Json.put(startArgs, \"feedback\", false)"));
+        assertFalse(startBody.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
+        assertTrue(startBody.contains("if (feedback) {\n                playRecordingStartHaptic();\n            }"));
+        assertTrue(finishBody.contains("if (feedback) {\n                playRecordingStopHaptic();\n            }"));
+        assertTrue(finishBody.indexOf("playRecordingStopHaptic()") < finishBody.indexOf("if (!isUploadConfigured())"));
+        assertFalse(finishBody.substring(finishBody.indexOf("if (!isUploadConfigured())")).contains("playAcceptedChimeOnce"));
+        assertTrue(remoteStatusBody.contains("if (isAcceptedRemoteStage(remoteStage))"));
+        assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", playAcceptedChimeOnce(clientTurnId, remoteStage))"));
+        assertTrue(source.contains("private static boolean isAcceptedRemoteStage(String stage)"));
+        assertTrue(source.contains("private JSONObject playAcceptedChimeOnce(String turnId, String trigger)"));
+        assertTrue(capture.contains("if (capture.feedback)"));
     }
 
     @Test

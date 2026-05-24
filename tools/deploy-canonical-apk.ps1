@@ -6,10 +6,16 @@ param(
     [string]$AndroidHome = "C:\Users\jimmy\Desktop\Android\tools\android-sdk",
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
+    [string]$ActivityName = "com.pucky.device.MainActivity",
     [string]$CanonicalRepoRoot = "C:\Users\jimmy\Desktop\Motorolla-master-ui",
     [string]$ExpectedBranch = "master",
     [int]$ExpectedVersionCode = -1,
     [string]$ExpectedVersionName = "",
+    [string]$ProvisionToken = "",
+    [string]$ProvisionTurnUrl = "",
+    [string]$ProvisionReplyMode = "",
+    [string]$ProvisionBrokerUrl = "",
+    [string]$ProvisionDeviceId = "",
     [switch]$AllowDirty,
     [switch]$AllowUnpushed,
     [switch]$SkipBuild,
@@ -125,6 +131,7 @@ Write-Host "ADB:            $adb"
 Write-Host "Gradle:         $gradle"
 Write-Host "Device serial:  $Serial"
 Write-Host "Expected:       versionCode=$ExpectedVersionCode versionName=$ExpectedVersionName"
+Write-Host "Provisioning:   token=$(-not [string]::IsNullOrWhiteSpace($ProvisionToken)) turn_url=$(-not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl)) reply_mode=$ProvisionReplyMode"
 
 if ($DryRun) {
     Write-Host "Dry run complete. No build or install performed."
@@ -156,6 +163,46 @@ if ($packageText -notmatch "versionCode=$ExpectedVersionCode\b") {
 }
 if ($packageText -notmatch [Regex]::Escape("versionName=$ExpectedVersionName")) {
     throw "Installed package did not report expected versionName=$ExpectedVersionName"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ProvisionToken) `
+        -or -not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl) `
+        -or -not [string]::IsNullOrWhiteSpace($ProvisionReplyMode) `
+        -or -not [string]::IsNullOrWhiteSpace($ProvisionBrokerUrl) `
+        -or -not [string]::IsNullOrWhiteSpace($ProvisionDeviceId)) {
+    $provisioning = [ordered]@{
+        schema = "pucky.provisioning.v1"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionToken)) {
+        $provisioning["token"] = $ProvisionToken
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl)) {
+        $provisioning["pucky_turn_url"] = $ProvisionTurnUrl
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionReplyMode)) {
+        if ($ProvisionReplyMode -ne "card_only" -and $ProvisionReplyMode -ne "card_and_spoken") {
+            throw "ProvisionReplyMode must be card_only or card_and_spoken."
+        }
+        $provisioning["pucky_turn_reply_mode"] = $ProvisionReplyMode
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionBrokerUrl)) {
+        $provisioning["broker_url"] = $ProvisionBrokerUrl
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionDeviceId)) {
+        $provisioning["device_id"] = $ProvisionDeviceId
+    }
+
+    $json = $provisioning | ConvertTo-Json -Depth 6 -Compress
+    $localProvisioningFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pucky_turn_provisioning.json")
+    $deviceProvisioningFile = "/data/local/tmp/pucky_turn_provisioning.json"
+    $appProvisioningFile = "pucky_turn_provisioning.json"
+    [System.IO.File]::WriteAllText($localProvisioningFile, $json, [Text.Encoding]::UTF8)
+
+    Write-Host "Importing app provisioning without printing token values"
+    & $adb -s $Serial push $localProvisioningFile $deviceProvisioningFile | Out-Null
+    & $adb -s $Serial shell "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile"
+    & $adb -s $Serial shell "rm -f $deviceProvisioningFile"
+    & $adb -s $Serial shell "am start -n $PackageName/$ActivityName --es provisioning_file $appProvisioningFile --ez connect false" | Out-Null
 }
 
 Write-Host "Canonical APK installed and verified."

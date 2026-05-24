@@ -715,7 +715,6 @@
     const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || rawLast.remote_stage || "").trim();
     const rawState = String(rawIndicator.state || raw.state || rawLast.state || "idle").trim();
     const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || rawLast.visual_state || rawState).trim();
-    const hasNativeVisualState = rawVisualState.length > 0;
     const indicator = {
       schema: "pucky.turn_indicator.v1",
       state: normalizeTurnState(rawState),
@@ -741,27 +740,7 @@
       samples_over_threshold: safeNumber(rawIndicator.samples_over_threshold ?? raw.samples_over_threshold),
       gate_latency_ms: safeNumber(rawIndicator.gate_latency_ms ?? raw.gate_latency_ms)
     };
-    if (!hasNativeVisualState) {
-      if (indicator.codex_running) {
-        indicator.state = "codex_running";
-        indicator.visual_state = "thinking";
-      } else if (indicator.speaking) {
-        indicator.state = "speaking";
-        indicator.visual_state = "speaking";
-      } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
-        indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
-        indicator.visual_state = "uploading";
-      } else if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
-        indicator.state = "recording";
-        indicator.visual_state = "recording";
-      } else if (indicator.mic_on || indicator.state === "armed") {
-        indicator.state = "armed";
-        indicator.visual_state = "armed";
-      } else if (indicator.state === "discarded_silence") {
-        indicator.visual_state = "idle";
-      }
-    }
-    indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.stt_running || indicator.codex_running || indicator.tts_running || indicator.speaking;
+    indicator.active = indicator.active || indicator.visual_state !== "idle";
     return {
       ...raw,
       schema: raw.schema || "pucky.turn_status.v1",

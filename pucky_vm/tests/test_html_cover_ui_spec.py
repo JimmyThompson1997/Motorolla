@@ -95,6 +95,13 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function normalizeTurnStatus(input)" in app
     assert "function isTurnActive(status)" in app
     assert "function turnVisualState(status)" in app
+    assert "hasNativeVisualState" not in app
+    assert "indicator.visual_state = \"thinking\"" not in app
+    assert "indicator.visual_state = \"speaking\"" not in app
+    assert "indicator.visual_state = \"uploading\"" not in app
+    assert "indicator.visual_state = \"recording\"" not in app
+    assert "indicator.visual_state = \"armed\"" not in app
+    assert "indicator.active = indicator.active || indicator.visual_state !== \"idle\"" in app
     assert "function noteHearingSample(indicator)" not in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
     assert "shell.append(header, content)" in app
