@@ -10,6 +10,7 @@ import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.location.LocationController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
@@ -100,6 +101,18 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).history(args);
             case "pucky.turn.read":
                 return PuckyTurnController.shared(context).read(args);
+            case "location.tracker.status":
+                return new LocationController(context).trackerStatus();
+            case "location.tracker.start":
+                return new LocationController(context).trackerStart(args);
+            case "location.tracker.stop":
+                return new LocationController(context).trackerStop(args);
+            case "location.tracker.query":
+                return new LocationController(context).trackerQuery(args);
+            case "location.tracker.clear":
+                return new LocationController(context).trackerClear(args);
+            case "location.tracker.export":
+                return new LocationController(context).trackerExport(args);
             case "file.download":
                 return new FileDownloadController(context).download(args);
             case "artifact.read_base64":

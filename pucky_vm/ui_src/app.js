@@ -57,6 +57,10 @@
       filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
       outline: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 10.8c0 3.5 2.7 6.2 6.5 6.2s6.5-2.7 6.5-6.2"/><path d="M12 17v4"/>'
     },
+    map: {
+      filled: '<path d="m9 4 6 2.1 4.8-1.9c.6-.2 1.2.2 1.2.9v13.2c0 .4-.2.8-.6.9L15 21l-6-2.1-4.8 1.9c-.6.2-1.2-.2-1.2-.9V6.7c0-.4.2-.8.6-.9L9 4Zm3 6.2c0 2 3 5.2 3 5.2s3-3.2 3-5.2a3 3 0 1 0-6 0Zm3 1.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/>',
+      outline: '<path d="m9 4 6 2.1 5-2v15l-5 1.9-6-2.1-5 2V6l5-2Z"/><path d="M9 4v14.9M15 6.1V21"/><path d="M12.6 10.2c0 1.7 2.4 4.3 2.4 4.3s2.4-2.6 2.4-4.3a2.4 2.4 0 1 0-4.8 0Z"/><circle cx="15" cy="10.2" r=".75"/>'
+    },
     play_arrow: {
       filled: '<path d="M8 5v14l11-7L8 5Z"/>',
       outline: '<path d="M8 5v14l11-7-11-7Z"/>'
@@ -117,6 +121,7 @@
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "messages", icon: "chat", label: "Messages" },
+    { route: "map", icon: "map", label: "Map" },
     { route: "sensors", icon: "sensors", label: "Sensors" }
   ];
 
@@ -244,6 +249,11 @@
       html_path: "/mock/pocket-computers.html"
     }
   ];
+  const MOCK_MAP_POINTS = [
+    { schema: "pucky.location_point.v1", point_id: "mock_map_1", track_id: "mock_today", captured_at: "2026-05-24T08:15:00-07:00", captured_at_ms: 1779635700000, lat: 37.5885901, lon: -122.3902849, accuracy_m: 18, source: "mock" },
+    { schema: "pucky.location_point.v1", point_id: "mock_map_2", track_id: "mock_today", captured_at: "2026-05-24T08:35:00-07:00", captured_at_ms: 1779636900000, lat: 37.5891, lon: -122.3896, accuracy_m: 12, source: "mock" },
+    { schema: "pucky.location_point.v1", point_id: "mock_map_3", track_id: "mock_today", captured_at: "2026-05-24T09:05:00-07:00", captured_at_ms: 1779638700000, lat: 37.5902, lon: -122.3884, accuracy_m: 31, source: "mock" }
+  ];
 
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
@@ -257,6 +267,11 @@
     excludedFeedIcons: loadFeedIconExcludes(),
     turn: initialTurnStatus(),
     turnSettings: initialTurnSettings(),
+    mapTracker: initialMapTrackerStatus(),
+    mapPoints: [],
+    mapLoading: false,
+    mapFilter: "today",
+    mapError: "",
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -358,6 +373,43 @@
         modes: TURN_REPLY_MODES
       };
       return state.turnSettings;
+    }
+    if (command === "location.tracker.status") {
+      return state.mapTracker;
+    }
+    if (command === "location.tracker.start") {
+      state.mapTracker = {
+        ...state.mapTracker,
+        schema: "pucky.location_tracker_status.v1",
+        running: true,
+        track_id: state.mapTracker.track_id || "mock_today",
+        interval_ms: Number(args.interval_ms || 30000),
+        started_at: new Date().toISOString(),
+        sample_count: state.mapPoints.length,
+        start_status: "started"
+      };
+      if (!state.mapPoints.length) {
+        state.mapPoints = MOCK_MAP_POINTS.slice();
+      }
+      return state.mapTracker;
+    }
+    if (command === "location.tracker.stop") {
+      state.mapTracker = { ...state.mapTracker, running: false, stop_status: "stopped" };
+      return state.mapTracker;
+    }
+    if (command === "location.tracker.clear") {
+      state.mapPoints = [];
+      state.mapTracker = { ...initialMapTrackerStatus(), cleared: true };
+      return state.mapTracker;
+    }
+    if (command === "location.tracker.query") {
+      return {
+        schema: "pucky.location_tracker_query.v1",
+        running: state.mapTracker.running,
+        track_id: state.mapTracker.track_id || "mock_today",
+        count: state.mapPoints.length,
+        points: state.mapPoints
+      };
     }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
@@ -518,6 +570,30 @@
     }
   }
 
+  async function loadMapTracker(options = {}) {
+    if (state.mapLoading) {
+      return;
+    }
+    state.mapLoading = true;
+    state.mapError = "";
+    try {
+      const status = await Pucky.request({ command: "location.tracker.status", args: {} });
+      const query = await Pucky.request({
+        command: "location.tracker.query",
+        args: { today: state.mapFilter === "today", limit: 1000 }
+      });
+      state.mapTracker = normalizeMapTrackerStatus(status);
+      state.mapPoints = normalizeMapPoints(query.points || []);
+    } catch (exc) {
+      state.mapError = exc && exc.message ? exc.message : "Map tracker unavailable";
+    } finally {
+      state.mapLoading = false;
+      if (options.render) {
+        render();
+      }
+    }
+  }
+
   function render() {
     renderTabs();
     renderVoiceStatus();
@@ -576,6 +652,18 @@
       reply_mode: "card_only",
       spoken_reply_enabled: false,
       modes: TURN_REPLY_MODES
+    };
+  }
+
+  function initialMapTrackerStatus() {
+    return {
+      schema: "pucky.location_tracker_status.v1",
+      running: false,
+      track_id: "",
+      interval_ms: 30000,
+      sample_count: 0,
+      last_point: null,
+      bytes: 0
     };
   }
 
@@ -748,6 +836,8 @@
         restoreFeedScroll();
       } else if (state.route === "settings") {
         loadTurnSettings({ render: true });
+      } else if (state.route === "map") {
+        loadMapTracker({ render: true });
       }
     });
     return button;
@@ -799,6 +889,10 @@
       if (state.route === "settings") {
         loadTurnSettings({ render: false });
         feed.replaceChildren(settingsPageView());
+        return;
+      }
+      if (state.route === "map") {
+        feed.replaceChildren(mapPageView());
         return;
       }
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
@@ -971,6 +1065,209 @@
     const value = el("div", "settings-card-value", setting.value);
     row.append(icon, copy, value);
     return row;
+  }
+
+  function mapPageView() {
+    const page = el("section", "map-page");
+    const hero = el("article", "map-hero");
+    const heroIcon = el("div", "map-hero-icon");
+    heroIcon.innerHTML = iconSvg("map", { filled: true });
+    const copy = el("div", "map-hero-copy");
+    const running = Boolean(state.mapTracker.running);
+    copy.append(
+      el("h1", "map-title", "Map"),
+      el("p", "map-subtitle", running ? "Recording a point about every 30 seconds." : "Location trail is paused.")
+    );
+    const toggle = el("button", running ? "map-toggle is-running" : "map-toggle", running ? "Stop" : "Start");
+    toggle.type = "button";
+    toggle.addEventListener("click", () => toggleMapTracker());
+    hero.append(heroIcon, copy, toggle);
+    page.append(hero, mapStatsView(), mapFiltersView(), mapCanvasView(), mapTimelineView());
+    return page;
+  }
+
+  function mapStatsView() {
+    const stats = el("section", "map-stats");
+    const points = visibleMapPoints();
+    const last = points.slice(-1)[0] || null;
+    const distance = totalMapDistanceMeters(points);
+    stats.append(
+      mapStat("Points", String(points.length)),
+      mapStat("Distance", distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`),
+      mapStat("Last", last ? shortTime(last.captured_at || last.captured_at_ms) : "-"),
+      mapStat("Accuracy", last && Number.isFinite(Number(last.accuracy_m)) ? `${Math.round(Number(last.accuracy_m))} m` : "-")
+    );
+    if (state.mapError) {
+      stats.append(el("div", "map-error", state.mapError));
+    }
+    return stats;
+  }
+
+  function mapStat(label, value) {
+    const stat = el("div", "map-stat");
+    stat.append(el("span", "map-stat-label", label), el("strong", "map-stat-value", value));
+    return stat;
+  }
+
+  function mapFiltersView() {
+    const filters = el("div", "map-filters");
+    [
+      ["today", "Today"],
+      ["hour", "Last hour"],
+      ["accurate", "High accuracy"],
+      ["moving", "Moving"]
+    ].forEach(([key, label]) => {
+      const button = el("button", state.mapFilter === key ? "map-filter is-selected" : "map-filter", label);
+      button.type = "button";
+      button.setAttribute("aria-pressed", state.mapFilter === key ? "true" : "false");
+      button.addEventListener("click", () => {
+        state.mapFilter = key;
+        loadMapTracker({ render: true });
+      });
+      filters.append(button);
+    });
+    return filters;
+  }
+
+  function mapCanvasView() {
+    const points = visibleMapPoints();
+    const canvas = el("section", "map-canvas");
+    if (!points.length) {
+      canvas.append(el("div", "map-empty", state.mapLoading ? "Loading trail..." : "No location points yet."));
+      return canvas;
+    }
+    const bounds = mapBounds(points);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("class", "map-path");
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", points.map(point => {
+      const xy = mapPointPosition(point, bounds);
+      return `${xy.x.toFixed(2)},${xy.y.toFixed(2)}`;
+    }).join(" "));
+    svg.append(polyline);
+    canvas.append(svg);
+    points.forEach((point, index) => {
+      const xy = mapPointPosition(point, bounds);
+      const pin = el("span", index === points.length - 1 ? "map-pin is-latest" : "map-pin");
+      pin.style.left = `${xy.x}%`;
+      pin.style.top = `${xy.y}%`;
+      pin.title = `${shortTime(point.captured_at || point.captured_at_ms)} · ${point.accuracy_m || "?"}m`;
+      canvas.append(pin);
+    });
+    return canvas;
+  }
+
+  function mapTimelineView() {
+    const list = el("section", "map-timeline");
+    visibleMapPoints().slice(-12).reverse().forEach(point => {
+      const row = el("article", "map-timeline-row");
+      row.append(
+        el("strong", "", shortTime(point.captured_at || point.captured_at_ms)),
+        el("span", "", `${Number(point.lat).toFixed(5)}, ${Number(point.lon).toFixed(5)}`),
+        el("small", "", `${point.provider || point.source || "location"} · ${Number.isFinite(Number(point.accuracy_m)) ? Math.round(Number(point.accuracy_m)) + "m" : "unknown accuracy"}`)
+      );
+      list.append(row);
+    });
+    return list;
+  }
+
+  async function toggleMapTracker() {
+    const running = Boolean(state.mapTracker.running);
+    state.mapError = "";
+    render();
+    try {
+      state.mapTracker = normalizeMapTrackerStatus(await Pucky.request({
+        command: running ? "location.tracker.stop" : "location.tracker.start",
+        args: running ? {} : { interval_ms: 30000 }
+      }));
+      await loadMapTracker({ render: false });
+    } catch (exc) {
+      state.mapError = exc && exc.message ? exc.message : "Could not change tracker state";
+    }
+    render();
+  }
+
+  function normalizeMapTrackerStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+      schema: "pucky.location_tracker_status.v1",
+      running: truthy(raw.running),
+      track_id: String(raw.track_id || ""),
+      interval_ms: Number(raw.interval_ms || 30000),
+      sample_count: Number(raw.sample_count || 0),
+      last_point: raw.last_point || null,
+      bytes: Number(raw.bytes || 0)
+    };
+  }
+
+  function normalizeMapPoints(points) {
+    return Array.isArray(points)
+      ? points.filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
+      : [];
+  }
+
+  function visibleMapPoints() {
+    const now = Date.now();
+    return state.mapPoints.filter(point => {
+      const captured = Number(point.captured_at_ms || Date.parse(point.captured_at || ""));
+      if (state.mapFilter === "hour" && Number.isFinite(captured) && now - captured > 3600000) {
+        return false;
+      }
+      if (state.mapFilter === "accurate" && Number(point.accuracy_m || 9999) > 50) {
+        return false;
+      }
+      if (state.mapFilter === "moving" && Number(point.speed_mps || 0) <= 0.4) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function mapBounds(points) {
+    const lats = points.map(point => Number(point.lat));
+    const lons = points.map(point => Number(point.lon));
+    return {
+      minLat: Math.min(...lats),
+      maxLat: Math.max(...lats),
+      minLon: Math.min(...lons),
+      maxLon: Math.max(...lons)
+    };
+  }
+
+  function mapPointPosition(point, bounds) {
+    const lonSpan = Math.max(0.00001, bounds.maxLon - bounds.minLon);
+    const latSpan = Math.max(0.00001, bounds.maxLat - bounds.minLat);
+    return {
+      x: 8 + ((Number(point.lon) - bounds.minLon) / lonSpan) * 84,
+      y: 92 - ((Number(point.lat) - bounds.minLat) / latSpan) * 84
+    };
+  }
+
+  function totalMapDistanceMeters(points) {
+    let total = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      total += haversineMeters(points[index - 1], points[index]);
+    }
+    return total;
+  }
+
+  function haversineMeters(a, b) {
+    const radius = 6371000;
+    const lat1 = Number(a.lat) * Math.PI / 180;
+    const lat2 = Number(b.lat) * Math.PI / 180;
+    const dLat = lat2 - lat1;
+    const dLon = (Number(b.lon) - Number(a.lon)) * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  function shortTime(value) {
+    const date = typeof value === "number" ? new Date(value) : new Date(value || Date.now());
+    return Number.isNaN(date.getTime())
+      ? "-"
+      : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
   function cardView(card) {

@@ -70,6 +70,10 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"pucky.turn.status\"")
                         && bridge.contains("case \"pucky.turn.settings.get\"")
                         && bridge.contains("case \"pucky.turn.settings.set\"")
+                        && bridge.contains("case \"location.tracker.status\"")
+                        && bridge.contains("case \"location.tracker.start\"")
+                        && bridge.contains("case \"location.tracker.stop\"")
+                        && bridge.contains("case \"location.tracker.query\"")
                         && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("Command is not exposed to HTML UI"));

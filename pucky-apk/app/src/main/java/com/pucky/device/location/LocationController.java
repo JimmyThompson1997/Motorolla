@@ -157,6 +157,30 @@ public final class LocationController {
         return out;
     }
 
+    public JSONObject trackerStart(JSONObject args) throws CommandException {
+        return LocationTrackerController.shared(context).start(args);
+    }
+
+    public JSONObject trackerStop(JSONObject args) {
+        return LocationTrackerController.shared(context).stop(args);
+    }
+
+    public JSONObject trackerStatus() {
+        return LocationTrackerController.shared(context).status();
+    }
+
+    public JSONObject trackerQuery(JSONObject args) throws CommandException {
+        return LocationTrackerController.shared(context).query(args);
+    }
+
+    public JSONObject trackerClear(JSONObject args) {
+        return LocationTrackerController.shared(context).clear(args);
+    }
+
+    public JSONObject trackerExport(JSONObject args) {
+        return LocationTrackerController.shared(context).export(args);
+    }
+
     private void requireLocationPermission() throws CommandException {
         boolean fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean coarse = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;

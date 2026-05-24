@@ -48,7 +48,10 @@ import java.time.Instant;
 public final class NativeCommandExecutor implements CommandExecutor {
     private static final String[] COMMANDS = new String[] {
             "ping", "command.catalog", "status.get", "capabilities.get", "permissions.get",
-            "battery.get", "network.get", "location.get", "location.watch", "file.download",
+            "battery.get", "network.get", "location.get", "location.watch",
+            "location.tracker.status", "location.tracker.start", "location.tracker.stop",
+            "location.tracker.query", "location.tracker.clear", "location.tracker.export",
+            "file.download",
             "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample", "sensor.watch",
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
@@ -233,6 +236,18 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return locationController.get(command.args());
             case "location.watch":
                 return locationController.watch(command.args());
+            case "location.tracker.status":
+                return locationController.trackerStatus();
+            case "location.tracker.start":
+                return locationController.trackerStart(command.args());
+            case "location.tracker.stop":
+                return locationController.trackerStop(command.args());
+            case "location.tracker.query":
+                return locationController.trackerQuery(command.args());
+            case "location.tracker.clear":
+                return locationController.trackerClear(command.args());
+            case "location.tracker.export":
+                return locationController.trackerExport(command.args());
             case "file.download":
                 return fileDownloadController.download(command.args());
             case "file.put_base64":

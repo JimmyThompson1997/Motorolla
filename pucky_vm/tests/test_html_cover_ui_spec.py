@@ -188,6 +188,27 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert '.filter-icon[data-filter-icon="all"].is-selected' not in styles
     assert ".feed-filter-empty" in styles
 
+
+def test_map_tab_renders_location_tracker_surface() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert '{ route: "map", icon: "map", label: "Map" }' in app
+    assert "map:" in app
+    assert "function mapPageView()" in app
+    assert "function mapCanvasView()" in app
+    assert "function loadMapTracker" in app
+    assert 'command: "location.tracker.status"' in app
+    assert 'command: "location.tracker.query"' in app
+    assert 'command: running ? "location.tracker.stop" : "location.tracker.start"' in app
+    assert "interval_ms: 30000" in app
+    assert "pucky.location_point.v1" in app
+    assert "totalMapDistanceMeters" in app
+    assert ".map-page" in styles
+    assert ".map-canvas" in styles
+    assert ".map-pin.is-latest" in styles
+
+
 def test_feed_has_subtle_edge_rubber_band() -> None:
     app = read("app.js")
     html = read("index.html")

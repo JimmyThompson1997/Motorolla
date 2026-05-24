@@ -63,6 +63,10 @@ public final class CapabilityReporter {
         Json.add(out, cap("location.watch", "location.watch", locationStatus(), "yes", "privacy_sensitive",
                 locationPermissionLabel(), locationPermissionGranted(), "not_recorded",
                 "Bounded LocationManager trace saved in app-owned storage and returned to the broker."));
+        Json.add(out, cap("location.tracker", "location.tracker.status/location.tracker.start/location.tracker.stop/location.tracker.query/location.tracker.clear/location.tracker.export",
+                locationStatus(), "foreground_service", "privacy_sensitive",
+                locationPermissionLabel(), locationPermissionGranted(), "not_recorded",
+                "Pucky Map 30-second local location trail, stored app-private and rendered in the WebView map screen."));
         Json.add(out, cap("storage.app_summary", "storage.get", "implemented", "yes", "quiet", null, "not_recorded",
                 "App files/cache storage stats only."));
         Json.add(out, cap("runtime.stats", "runtime.stats", "implemented", "yes", "quiet", null, "not_recorded",
