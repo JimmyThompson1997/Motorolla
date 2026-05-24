@@ -158,13 +158,13 @@ public final class SpeechRecipeRegistry {
         BundleResult stored = loadStoredDetailed(storedRaw);
         JSONArray recipes = stored.bundle.optJSONArray("recipes");
         if (recipes == null || recipes.length() == 0) {
-            return RecipeMatch.none(transcript, SpeechKeywordMatcher.normalize(transcript));
+            return RecipeMatch.none(transcript, SpeechTextNormalizer.normalize(transcript));
         }
         return match(transcript, recipes);
     }
 
     public static RecipeMatch match(String transcript, JSONArray recipes) {
-        String normalized = SpeechKeywordMatcher.normalize(transcript);
+        String normalized = SpeechTextNormalizer.normalize(transcript);
         if (normalized.isEmpty()) {
             return RecipeMatch.none(transcript, normalized);
         }
@@ -180,7 +180,7 @@ public final class SpeechRecipeRegistry {
                 continue;
             }
             for (int phraseIndex = 0; phraseIndex < phrases.length(); phraseIndex++) {
-                String phrase = SpeechKeywordMatcher.normalize(phrases.optString(phraseIndex, ""));
+                String phrase = SpeechTextNormalizer.normalize(phrases.optString(phraseIndex, ""));
                 if (!normalized.equals(phrase)) {
                     continue;
                 }
@@ -233,7 +233,7 @@ public final class SpeechRecipeRegistry {
                 continue;
             }
             for (int j = 0; j < phrases.length(); j++) {
-                String phrase = SpeechKeywordMatcher.normalize(phrases.optString(j, ""));
+                String phrase = SpeechTextNormalizer.normalize(phrases.optString(j, ""));
                 String existing = owners.get(phrase);
                 if (existing != null && !existing.equals(id)) {
                     throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
@@ -380,7 +380,7 @@ public final class SpeechRecipeRegistry {
         }
         LinkedHashSet<String> phrases = new LinkedHashSet<>();
         for (int i = 0; i < raw.length(); i++) {
-            String normalized = SpeechKeywordMatcher.normalize(raw.optString(i, ""));
+            String normalized = SpeechTextNormalizer.normalize(raw.optString(i, ""));
             if (normalized.isEmpty()) {
                 throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
                         "recipe phrases cannot be empty");
@@ -399,7 +399,7 @@ public final class SpeechRecipeRegistry {
 
     private static void reservePhrases(Set<String> reserved, String id, JSONArray phrases) throws CommandException {
         for (int i = 0; i < phrases.length(); i++) {
-            String phrase = SpeechKeywordMatcher.normalize(phrases.optString(i, ""));
+            String phrase = SpeechTextNormalizer.normalize(phrases.optString(i, ""));
             String key = phrase;
             if (!reserved.add(key)) {
                 throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,

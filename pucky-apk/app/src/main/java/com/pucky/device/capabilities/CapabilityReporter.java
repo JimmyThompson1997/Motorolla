@@ -157,9 +157,12 @@ public final class CapabilityReporter {
         Json.add(out, cap("speech.echo", "speech.echo.start/speech.echo.stop/speech.echo.status/speech.echo.last/speech.echo.list/speech.echo.delete/speech.echo.voices",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
-        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/pucky.recipes.sync/pucky.recipes.list/pucky.recipes.test/pucky.recipes.clear/pucky.recipes.schema/device.primitives.list",
+        Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Reserved volume-down lab surface plus VM-owned recipes and registry. Product keyword interception now happens on volume-up walkie release; this surface remains for recipe sync, inspection, and future remapping."));
+                "Reserved volume-down lab shell only. Product keyword interception now happens on volume-up walkie release; this surface remains as an inert future remap point."));
+        Json.add(out, cap("pucky.recipes", "pucky.recipes.sync/pucky.recipes.list/pucky.recipes.test/pucky.recipes.clear/pucky.recipes.schema/device.primitives.list",
+                "implemented", "yes", "privacy_sensitive", null, "local_app_private",
+                "VM-owned recipe bundle cache and allowlisted device or VM-event execution surface. Cached recipes live in app-private pucky_recipes storage, separate from the reserved speech.echo.lab shell."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",
