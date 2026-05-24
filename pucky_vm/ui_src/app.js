@@ -130,6 +130,9 @@
     { route: "feed", icon: "mail", label: "Home" },
     { route: "links", icon: "link", label: "Links" },
     { route: "morning", icon: "coffee", label: "Morning" },
+    { route: "calls", icon: "phone", label: "Calls" },
+    { route: "messages", icon: "text", label: "Messages" },
+    { route: "sensors", icon: "sensors", label: "Sensors" },
     { route: "settings", icon: "settings", label: "Settings" }
   ];
 
