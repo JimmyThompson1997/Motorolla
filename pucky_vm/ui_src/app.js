@@ -616,6 +616,7 @@
     const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || rawLast.remote_stage || "").trim();
     const rawState = String(rawIndicator.state || raw.state || rawLast.state || "idle").trim();
     const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || rawLast.visual_state || rawState).trim();
+    const hasNativeVisualState = rawVisualState.length > 0;
     const indicator = {
       schema: "pucky.turn_indicator.v1",
       state: normalizeTurnState(rawState),
@@ -623,6 +624,10 @@
       mic_on: truthy(rawIndicator.mic_on ?? raw.mic_on),
       hearing: truthy(rawIndicator.hearing ?? raw.hearing),
       speech_detected: truthy(rawIndicator.speech_detected ?? raw.speech_detected),
+      vad_engine: String(rawIndicator.vad_engine || raw.vad_engine || "").trim(),
+      vad_available: truthy(rawIndicator.vad_available ?? raw.vad_available),
+      vad_probability: safeNumber(rawIndicator.vad_probability ?? raw.vad_probability),
+      speech_frames: safeNumber(rawIndicator.speech_frames ?? raw.speech_frames),
       uploading: truthy(rawIndicator.uploading ?? raw.uploading),
       stt_running: truthy(rawIndicator.stt_running ?? raw.stt_running) || remoteStage === "stt_running",
       codex_running: truthy(rawIndicator.codex_running ?? raw.codex_running) || remoteStage === "codex_running",
@@ -637,23 +642,25 @@
       samples_over_threshold: safeNumber(rawIndicator.samples_over_threshold ?? raw.samples_over_threshold),
       gate_latency_ms: safeNumber(rawIndicator.gate_latency_ms ?? raw.gate_latency_ms)
     };
-    if (indicator.codex_running) {
-      indicator.state = "codex_running";
-      indicator.visual_state = "thinking";
-    } else if (indicator.speaking) {
-      indicator.state = "speaking";
-      indicator.visual_state = "speaking";
-    } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
-      indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
-      indicator.visual_state = "uploading";
-    } else if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
-      indicator.state = "recording";
-      indicator.visual_state = "recording";
-    } else if (indicator.mic_on || indicator.state === "armed") {
-      indicator.state = "armed";
-      indicator.visual_state = "armed";
-    } else if (indicator.state === "discarded_silence") {
-      indicator.visual_state = "idle";
+    if (!hasNativeVisualState) {
+      if (indicator.codex_running) {
+        indicator.state = "codex_running";
+        indicator.visual_state = "thinking";
+      } else if (indicator.speaking) {
+        indicator.state = "speaking";
+        indicator.visual_state = "speaking";
+      } else if (indicator.uploading || indicator.stt_running || indicator.tts_running) {
+        indicator.state = indicator.stt_running ? "stt_running" : (indicator.tts_running ? "tts_running" : "uploading");
+        indicator.visual_state = "uploading";
+      } else if (indicator.mic_on && (indicator.speech_detected || indicator.state === "recording")) {
+        indicator.state = "recording";
+        indicator.visual_state = "recording";
+      } else if (indicator.mic_on || indicator.state === "armed") {
+        indicator.state = "armed";
+        indicator.visual_state = "armed";
+      } else if (indicator.state === "discarded_silence") {
+        indicator.visual_state = "idle";
+      }
     }
     indicator.active = indicator.active || indicator.mic_on || indicator.uploading || indicator.stt_running || indicator.codex_running || indicator.tts_running || indicator.speaking;
     return {

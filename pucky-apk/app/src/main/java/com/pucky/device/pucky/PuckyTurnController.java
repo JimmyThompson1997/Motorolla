@@ -12,7 +12,6 @@ import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
-import com.pucky.device.voice.VoiceCaptureController;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -39,10 +38,7 @@ public final class PuckyTurnController {
     private static final String HISTORY = "history_json";
     private static final int MAX_HISTORY_ITEMS = 40;
     private static final int MAX_HISTORY_EVENTS = 40;
-    private static final MediaType AUDIO_MP4 = MediaType.get("audio/mp4");
-    private static final int SPEECH_GATE_THRESHOLD = VoiceCaptureController.VOICE_CAPTURE_AMPLITUDE_THRESHOLD;
-    private static final long SPEECH_GATE_POLL_MS = 30L;
-    private static final long SPEECH_GATE_STARTUP_GUARD_MS = 25L;
+    private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
     private final Context context;
@@ -50,12 +46,8 @@ public final class PuckyTurnController {
     private final SharedPreferences prefs;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
     private final Object pollLock = new Object();
-    private final Object gateLock = new Object();
     private volatile String activePollTurnId = "";
     private volatile boolean pollActive = false;
-    private volatile String activeGateTurnId = "";
-    private volatile SpeechGate activeSpeechGate;
-    private volatile boolean gatePollActive = false;
 
     public static synchronized PuckyTurnController shared(Context context) {
         if (shared == null) {
@@ -71,11 +63,12 @@ public final class PuckyTurnController {
     }
 
     public JSONObject status() {
-        JSONObject voice = VoiceCaptureController.shared(context).status();
+        JSONObject voice = WalkieAudioCaptureController.shared(context).status();
         JSONObject last = lastStatus();
-        SpeechGate activeGate = activeSpeechGate;
-        if (activeGate != null && last.optString("turn_id", "").equals(activeGateTurnId)) {
-            JSONObject liveGate = activeGate.statusJson(android.os.SystemClock.elapsedRealtime());
+        JSONObject liveGate = voice.optJSONObject("speech_gate");
+        JSONObject activeSession = voice.optJSONObject("active_session");
+        if (liveGate != null && activeSession != null
+                && last.optString("turn_id", "").equals(activeSession.optString("turn_id", ""))) {
             Json.put(last, "speech_gate", liveGate);
             Json.put(last, "speech_detected", liveGate.optBoolean("speech_detected", false));
         }
@@ -94,9 +87,12 @@ public final class PuckyTurnController {
         Json.put(out, "url", settings.getPuckyTurnUrl());
         Json.put(out, "reply_mode", settings.getPuckyTurnReplyMode());
         Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
+        Json.put(out, "vad_engine", indicator.optString("vad_engine", ""));
+        Json.put(out, "vad_available", indicator.optBoolean("vad_available", false));
+        Json.put(out, "vad_probability", indicator.optDouble("vad_probability", 0.0));
         Json.put(out, "speech_detected", indicator.optBoolean("speech_detected", false));
         Json.put(out, "peak_amplitude", indicator.optInt("peak_amplitude", 0));
-        Json.put(out, "samples_over_threshold", indicator.optInt("samples_over_threshold", 0));
+        Json.put(out, "speech_frames", indicator.optInt("speech_frames", 0));
         Json.put(out, "mic_on", indicator.optBoolean("mic_on", false));
         Json.put(out, "hearing", indicator.optBoolean("hearing", false));
         Json.put(out, "uploading", indicator.optBoolean("uploading", false));
@@ -159,32 +155,41 @@ public final class PuckyTurnController {
     public JSONObject start(JSONObject args) throws CommandException {
         requireConfigured();
         String clientTurnId = generateClientTurnId();
+        String localSessionId = clientTurnId;
         JSONObject startArgs = new JSONObject();
-        Json.put(startArgs, "format", "m4a");
-        Json.put(startArgs, "session_id", clientTurnId);
-        Json.put(startArgs, "audio_source", args.optString("audio_source", "mic"));
+        Json.put(startArgs, "format", "wav");
+        Json.put(startArgs, "session_id", localSessionId);
+        Json.put(startArgs, "turn_id", clientTurnId);
         Json.put(startArgs, "max_duration_ms", args.optInt("max_duration_ms", 60000));
         Json.put(startArgs, "sample_tag", "pucky_turn");
         Json.put(startArgs, "feedback", args.optBoolean("feedback", true));
-        JSONObject out = VoiceCaptureController.shared(context).start(startArgs);
-        String localSessionId = out.optString("session_id", "vc_" + clientTurnId);
-        SpeechGate gate = new SpeechGate(android.os.SystemClock.elapsedRealtime(),
-                SPEECH_GATE_THRESHOLD, SPEECH_GATE_STARTUP_GUARD_MS);
+        JSONObject out = WalkieAudioCaptureController.shared(context).start(startArgs, speechGateStatus -> {
+            JSONObject status = new JSONObject();
+            Json.put(status, "schema", "pucky.turn_status_item.v1");
+            Json.put(status, "state", "recording");
+            Json.put(status, "phase", "speech_detected");
+            Json.put(status, "local_session_id", localSessionId);
+            Json.put(status, "turn_id", clientTurnId);
+            Json.put(status, "speech_gate", speechGateStatus);
+            Json.put(status, "speech_detected", true);
+            markStatus("recording", status, null);
+        });
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "local_session_id", localSessionId);
-        Json.put(out, "speech_gate", gate.statusJson(android.os.SystemClock.elapsedRealtime()));
+        JSONObject gate = out.optJSONObject("speech_gate");
+        Json.put(out, "speech_gate", gate == null ? JSONObject.NULL : gate);
         Json.put(out, "speech_detected", false);
+        Json.put(out, "vad_engine", gate == null ? "" : gate.optString("vad_engine", ""));
+        Json.put(out, "vad_available", gate != null && gate.optBoolean("vad_available", false));
         markStatus("armed", out, null);
-        startSpeechGatePoll(localSessionId, clientTurnId, gate);
         return out;
     }
 
     public JSONObject stop(JSONObject args) throws CommandException {
         requireConfigured();
-        JSONObject voice = VoiceCaptureController.shared(context).status();
+        JSONObject voice = WalkieAudioCaptureController.shared(context).status();
         JSONObject active = voice.optJSONObject("active_session");
         if (active == null) {
-            stopSpeechGatePoll("");
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.turn_stop.v1");
             Json.put(out, "state", "idle");
@@ -194,16 +199,18 @@ public final class PuckyTurnController {
         }
         String localSessionId = active.optString("session_id", "pucky_" + Long.toHexString(System.currentTimeMillis()));
         JSONObject last = lastStatus();
-        String clientTurnId = activeGateTurnId.isEmpty() ? last.optString("turn_id", generateClientTurnId()) : activeGateTurnId;
-        SpeechGate gate = stopSpeechGatePoll(clientTurnId);
-        JSONObject speechGate = gate == null ? new JSONObject() : gate.statusJson(android.os.SystemClock.elapsedRealtime());
-        boolean speechDetected = gate != null && gate.speechDetected();
+        String clientTurnId = active.optString("turn_id", last.optString("turn_id", generateClientTurnId()));
+        JSONObject speechGate = voice.optJSONObject("speech_gate");
+        if (speechGate == null) {
+            speechGate = new JSONObject();
+        }
+        boolean speechDetected = speechGate.optBoolean("speech_detected", false);
         String reason = args.optString("reason", "button_release");
         boolean feedback = args.optBoolean("feedback", true);
         if (!speechDetected) {
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", false);
-            JSONObject discarded = VoiceCaptureController.shared(context).discard(stopArgs);
+            JSONObject discarded = WalkieAudioCaptureController.shared(context).discard(stopArgs);
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.turn_stop.v1");
             Json.put(out, "state", "discarded_silence");
@@ -213,6 +220,8 @@ public final class PuckyTurnController {
             Json.put(out, "turn_id", clientTurnId);
             Json.put(out, "speech_gate", speechGate);
             Json.put(out, "speech_detected", false);
+            Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
+            Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
             Json.put(out, "voice_capture", discarded);
             markStatus("discarded_silence", out, null);
             return out;
@@ -225,8 +234,11 @@ public final class PuckyTurnController {
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "speech_gate", speechGate);
         Json.put(out, "speech_detected", true);
+        Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
+        Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
         markStatus("uploading", out, null);
-        Thread worker = new Thread(() -> finishStopAndUpload(localSessionId, clientTurnId, reason, feedback, speechGate),
+        final JSONObject finalSpeechGate = speechGate;
+        Thread worker = new Thread(() -> finishStopAndUpload(localSessionId, clientTurnId, reason, feedback, finalSpeechGate),
                 "PuckyTurnStopUpload");
         worker.setDaemon(true);
         worker.start();
@@ -238,7 +250,7 @@ public final class PuckyTurnController {
         try {
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", feedback);
-            JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
+            JSONObject stopped = WalkieAudioCaptureController.shared(context).stop(stopArgs);
             JSONObject capture = stopped.optJSONObject("capture");
             if (capture == null) {
                 markStatus("idle", stopped, "no_capture");
@@ -286,7 +298,7 @@ public final class PuckyTurnController {
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
                 .header("X-Pucky-Turn-Id", clientTurnId)
                 .header("X-Pucky-Reply-Mode", settings.getPuckyTurnReplyMode())
-                .post(RequestBody.create(AUDIO_MP4, audioBytes))
+                .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
         http.newCall(request).enqueue(new Callback() {
@@ -352,58 +364,6 @@ public final class PuckyTurnController {
                 }
             }
         });
-    }
-
-    private void startSpeechGatePoll(String localSessionId, String clientTurnId, SpeechGate gate) {
-        synchronized (gateLock) {
-            activeGateTurnId = clientTurnId;
-            activeSpeechGate = gate;
-            gatePollActive = true;
-        }
-        Thread worker = new Thread(() -> {
-            while (isSpeechGatePolling(clientTurnId)) {
-                int amplitude = VoiceCaptureController.shared(context).sampleAmplitude();
-                long now = android.os.SystemClock.elapsedRealtime();
-                if (gate.sample(amplitude, now) && isSpeechGatePolling(clientTurnId)) {
-                    JSONObject status = new JSONObject();
-                    Json.put(status, "schema", "pucky.turn_status_item.v1");
-                    Json.put(status, "state", "recording");
-                    Json.put(status, "phase", "speech_detected");
-                    Json.put(status, "local_session_id", localSessionId);
-                    Json.put(status, "turn_id", clientTurnId);
-                    Json.put(status, "speech_gate", gate.statusJson(now));
-                    Json.put(status, "speech_detected", true);
-                    markStatus("recording", status, null);
-                }
-                try {
-                    Thread.sleep(SPEECH_GATE_POLL_MS);
-                } catch (InterruptedException exc) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-        }, "PuckySpeechGatePoll");
-        worker.setDaemon(true);
-        worker.start();
-    }
-
-    private SpeechGate stopSpeechGatePoll(String clientTurnId) {
-        synchronized (gateLock) {
-            if (clientTurnId == null || clientTurnId.isEmpty() || clientTurnId.equals(activeGateTurnId)) {
-                gatePollActive = false;
-                activeGateTurnId = "";
-                SpeechGate gate = activeSpeechGate;
-                activeSpeechGate = null;
-                return gate;
-            }
-            return activeSpeechGate;
-        }
-    }
-
-    private boolean isSpeechGatePolling(String clientTurnId) {
-        synchronized (gateLock) {
-            return gatePollActive && clientTurnId.equals(activeGateTurnId);
-        }
     }
 
     private void startTurnStatusPoll(String clientTurnId) {
@@ -633,8 +593,12 @@ public final class PuckyTurnController {
         JSONObject gate = detail.optJSONObject("speech_gate");
         if (gate != null) {
             Json.put(record, "speech_gate", gate);
+            Json.put(record, "vad_engine", gate.optString("vad_engine", record.optString("vad_engine", "")));
+            Json.put(record, "vad_available", gate.optBoolean("vad_available", record.optBoolean("vad_available", false)));
+            Json.put(record, "vad_probability", gate.optDouble("vad_probability", record.optDouble("vad_probability", 0.0)));
+            Json.put(record, "max_vad_probability", gate.optDouble("max_vad_probability", record.optDouble("max_vad_probability", 0.0)));
             Json.put(record, "peak_amplitude", gate.optInt("peak_amplitude", record.optInt("peak_amplitude", 0)));
-            Json.put(record, "samples_over_threshold", gate.optInt("samples_over_threshold", record.optInt("samples_over_threshold", 0)));
+            Json.put(record, "speech_frames", gate.optInt("speech_frames", record.optInt("speech_frames", 0)));
             Json.put(record, "gate_latency_ms", gate.optLong("gate_latency_ms", record.optLong("gate_latency_ms", -1L)));
         }
         copyIfPresent(record, detail, "request_audio_bytes");
@@ -663,6 +627,12 @@ public final class PuckyTurnController {
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "error");
         copyIfPresent(event, detail, "http_status");
+        JSONObject eventGate = detail.optJSONObject("speech_gate");
+        if (eventGate != null) {
+            Json.put(event, "vad_probability", eventGate.optDouble("vad_probability", 0.0));
+            Json.put(event, "speech_frames", eventGate.optInt("speech_frames", 0));
+            Json.put(event, "gate_latency_ms", eventGate.optLong("gate_latency_ms", -1L));
+        }
         Json.add(events, event);
         Json.put(record, "events", trimEvents(events));
 
@@ -777,8 +747,12 @@ public final class PuckyTurnController {
         Json.put(out, "hearing", hearing);
         Json.put(out, "speech_detected", speechDetected);
         Json.put(out, "speech_gate", gate == null ? JSONObject.NULL : gate);
+        Json.put(out, "vad_engine", gate == null ? "" : gate.optString("vad_engine", ""));
+        Json.put(out, "vad_available", gate != null && gate.optBoolean("vad_available", false));
+        Json.put(out, "vad_probability", gate == null ? 0.0 : gate.optDouble("vad_probability", 0.0));
+        Json.put(out, "max_vad_probability", gate == null ? 0.0 : gate.optDouble("max_vad_probability", 0.0));
+        Json.put(out, "speech_frames", gate == null ? 0 : gate.optInt("speech_frames", 0));
         Json.put(out, "peak_amplitude", gate == null ? 0 : gate.optInt("peak_amplitude", 0));
-        Json.put(out, "samples_over_threshold", gate == null ? 0 : gate.optInt("samples_over_threshold", 0));
         Json.put(out, "gate_latency_ms", gate == null ? -1L : gate.optLong("gate_latency_ms", -1L));
         Json.put(out, "uploading", uploading);
         Json.put(out, "stt_running", sttRunning);

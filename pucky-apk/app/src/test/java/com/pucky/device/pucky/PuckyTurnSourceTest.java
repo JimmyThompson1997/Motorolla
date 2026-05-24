@@ -149,17 +149,20 @@ public final class PuckyTurnSourceTest {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
         String store = read("src/main/java/com/pucky/device/ui/ReplyCardStore.java");
 
-        assertTrue(source.contains("VoiceCaptureController.shared(context).start(startArgs)"));
+        assertTrue(source.contains("WalkieAudioCaptureController.shared(context).start(startArgs"));
         assertTrue(source.contains("String clientTurnId = generateClientTurnId()"));
-        assertTrue(source.contains("SpeechGate gate = new SpeechGate"));
-        assertTrue(source.contains("startSpeechGatePoll(localSessionId, clientTurnId, gate)"));
-        assertTrue(source.contains("Json.put(startArgs, \"format\", \"m4a\")"));
+        assertFalse(source.contains("SpeechGate gate = new SpeechGate"));
+        assertFalse(source.contains("startSpeechGatePoll(localSessionId, clientTurnId, gate)"));
+        assertTrue(source.contains("Json.put(startArgs, \"format\", \"wav\")"));
         assertTrue(source.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
-        assertTrue(source.contains("MediaType.get(\"audio/mp4\")"));
+        assertTrue(source.contains("MediaType.get(\"audio/wav\")"));
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
+        assertTrue(source.contains(".header(\"X-Pucky-Reply-Mode\", settings.getPuckyTurnReplyMode())"));
         assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
+        assertTrue(source.contains("Json.put(out, \"vad_engine\""));
+        assertTrue(source.contains("Json.put(out, \"vad_available\""));
         assertTrue(source.contains("new File(context.getFilesDir(), \"pucky_replies\""));
         assertTrue(source.contains("Json.put(card, \"session_id\", sessionId)"));
         assertTrue(source.contains("new ReplyCardStore(context).prepend(card)"));
@@ -199,15 +202,18 @@ public final class PuckyTurnSourceTest {
     @Test
     public void statusExposesWalkieIndicatorsWithoutTokenValues() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
-        String capture = read("src/main/java/com/pucky/device/voice/VoiceCaptureController.java");
+        String capture = read("src/main/java/com/pucky/device/pucky/WalkieAudioCaptureController.java");
 
         assertTrue(source.contains("Json.put(out, \"player_state\", player)"));
         assertTrue(source.contains("Json.put(out, \"indicator\", indicator)"));
         assertTrue(source.contains("Json.put(out, \"visual_state\", indicator.optString(\"visual_state\", \"idle\"))"));
         assertTrue(source.contains("Json.put(out, \"speech_gate\", gate == null ? JSONObject.NULL : gate)"));
+        assertTrue(source.contains("Json.put(out, \"vad_engine\", indicator.optString(\"vad_engine\", \"\"))"));
+        assertTrue(source.contains("Json.put(out, \"vad_available\", indicator.optBoolean(\"vad_available\", false))"));
+        assertTrue(source.contains("Json.put(out, \"vad_probability\", indicator.optDouble(\"vad_probability\", 0.0))"));
+        assertTrue(source.contains("Json.put(out, \"speech_frames\", indicator.optInt(\"speech_frames\", 0))"));
         assertTrue(source.contains("Json.put(out, \"speech_detected\", indicator.optBoolean(\"speech_detected\", false))"));
         assertTrue(source.contains("Json.put(out, \"peak_amplitude\", indicator.optInt(\"peak_amplitude\", 0))"));
-        assertTrue(source.contains("Json.put(out, \"samples_over_threshold\", indicator.optInt(\"samples_over_threshold\", 0))"));
         assertTrue(source.contains("Json.put(out, \"mic_on\", indicator.optBoolean(\"mic_on\", false))"));
         assertTrue(source.contains("Json.put(out, \"hearing\", indicator.optBoolean(\"hearing\", false))"));
         assertTrue(source.contains("Json.put(out, \"uploading\", indicator.optBoolean(\"uploading\", false))"));
@@ -226,12 +232,15 @@ public final class PuckyTurnSourceTest {
         assertFalse(source.contains("if (failed) {\n            state = \"failed\";"));
         assertTrue(source.contains("if (\"recording\".equals(state) && isPostReleaseState(lastStatus().optString(\"state\", \"\")))"));
         assertTrue(source.contains("private static boolean isPostReleaseState(String state)"));
-        assertTrue(capture.contains("VOICE_CAPTURE_AMPLITUDE_THRESHOLD"));
-        assertTrue(capture.contains("recorder.getMaxAmplitude()"));
-        assertTrue(capture.contains("public synchronized int sampleAmplitude()"));
+        assertTrue(capture.contains("new AudioFrameBus(context)"));
+        assertTrue(capture.contains("new PcmCaptureConsumer"));
+        assertTrue(capture.contains("new WalkieSpeechGate"));
+        assertTrue(capture.contains("\"audio/wav\""));
+        assertFalse(capture.contains("MediaRecorder"));
+        assertFalse(source.contains("getMaxAmplitude()"));
         assertTrue(capture.contains("public synchronized JSONObject discard(JSONObject args)"));
-        assertTrue(capture.contains("Json.put(out, \"amplitude\", amplitude)"));
-        assertTrue(capture.contains("Json.put(out, \"hearing\", active != null && amplitude >= VOICE_CAPTURE_AMPLITUDE_THRESHOLD)"));
+        assertTrue(capture.contains("Json.put(out, \"speech_gate\", active == null ? JSONObject.NULL : active.gate.statusJson())"));
+        assertTrue(capture.contains("Json.put(out, \"mic_on\", active != null)"));
         assertFalse(source.contains("Json.put(out, \"token\""));
     }
 
@@ -240,7 +249,7 @@ public final class PuckyTurnSourceTest {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
 
         assertTrue(source.contains("if (!speechDetected)"));
-        assertTrue(source.contains("VoiceCaptureController.shared(context).discard(stopArgs)"));
+        assertTrue(source.contains("WalkieAudioCaptureController.shared(context).discard(stopArgs)"));
         assertTrue(source.contains("markStatus(\"discarded_silence\", out, null)"));
         assertFalse(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes);") && !source.contains("if (!speechDetected)"));
     }

@@ -1,23 +1,22 @@
 package com.pucky.device.speech.lab;
 
 import android.content.Context;
+import android.os.SystemClock;
 
+import com.pucky.device.pucky.SileroVadEngine;
+import com.pucky.device.pucky.WalkieSpeechGate;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
 
 public final class SileroVadConsumer implements AudioFrameConsumer {
-    private static final String MODEL_ASSET = "silero_vad.onnx";
-
-    private final boolean modelAvailable;
-    private long frames;
-    private long firstSpeechCandidateFrame = -1L;
-    private long lastSpeechCandidateFrame = -1L;
-    private double maxSpeechProbability;
-    private double sumSpeechProbability;
+    private final WalkieSpeechGate gate;
 
     public SileroVadConsumer(Context context) {
-        this.modelAvailable = assetExists(context, MODEL_ASSET);
+        long started = SystemClock.elapsedRealtime();
+        this.gate = new WalkieSpeechGate(started, new SileroVadEngine(context),
+                SystemClock::elapsedRealtime, status -> {
+        });
     }
 
     @Override
@@ -26,58 +25,30 @@ public final class SileroVadConsumer implements AudioFrameConsumer {
     }
 
     @Override
-    public synchronized void onFrame(short[] frame, long timestampNanos) {
-        frames += 1;
-        if (!modelAvailable || frame == null || frame.length == 0) {
-            return;
-        }
-        double probability = rmsProbability(frame);
-        maxSpeechProbability = Math.max(maxSpeechProbability, probability);
-        sumSpeechProbability += probability;
-        if (probability >= 0.7) {
-            if (firstSpeechCandidateFrame < 0L) {
-                firstSpeechCandidateFrame = frames;
-            }
-            lastSpeechCandidateFrame = frames;
-        }
+    public void onFrame(short[] frame, long timestampNanos) {
+        gate.onFrame(frame, timestampNanos);
     }
 
     @Override
-    public synchronized JSONObject snapshot() {
+    public JSONObject snapshot() {
+        JSONObject gateStatus = gate.statusJson();
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.audio_lab_vad_report.v1");
         Json.put(out, "engine", "silero_vad");
-        Json.put(out, "runtime", modelAvailable ? "placeholder_without_onnx_runtime" : "unavailable");
-        Json.put(out, "model_asset", MODEL_ASSET);
-        Json.put(out, "model_available", modelAvailable);
-        Json.put(out, "status", modelAvailable ? "placeholder_metrics_only" : "unavailable");
-        Json.put(out, "frames", frames);
-        Json.put(out, "max_speech_probability", maxSpeechProbability);
-        Json.put(out, "mean_speech_probability", frames == 0 ? 0.0 : sumSpeechProbability / frames);
-        Json.put(out, "first_speech_candidate_frame", firstSpeechCandidateFrame < 0L ? JSONObject.NULL : firstSpeechCandidateFrame);
-        Json.put(out, "last_speech_candidate_frame", lastSpeechCandidateFrame < 0L ? JSONObject.NULL : lastSpeechCandidateFrame);
+        Json.put(out, "runtime", gateStatus.optBoolean("vad_available", false) ? "onnx_runtime" : "unavailable");
+        Json.put(out, "model_asset", SileroVadEngine.MODEL_ASSET);
+        Json.put(out, "model_available", gateStatus.optBoolean("vad_available", false));
+        Json.put(out, "status", gateStatus.optBoolean("vad_available", false) ? "ok" : "unavailable");
+        Json.put(out, "frames", gateStatus.optLong("frames_seen", 0L));
+        Json.put(out, "vad_windows_seen", gateStatus.optLong("vad_windows_seen", 0L));
+        Json.put(out, "speech_frames", gateStatus.optLong("speech_frames", 0L));
+        Json.put(out, "max_speech_probability", gateStatus.optDouble("max_vad_probability", 0.0));
+        Json.put(out, "latest_speech_probability", gateStatus.optDouble("vad_probability", 0.0));
+        Json.put(out, "speech_detected", gateStatus.optBoolean("speech_detected", false));
         Json.put(out, "endpointing", "report_only");
-        Json.put(out, "warning", modelAvailable
-                ? "ONNX Runtime integration is not enabled in this build yet."
-                : "Silero model asset is missing; VAD is report-only unavailable.");
+        Json.put(out, "warning", gateStatus.optBoolean("vad_available", false)
+                ? JSONObject.NULL
+                : gateStatus.optString("unavailable_reason", "Silero VAD unavailable."));
         return out;
-    }
-
-    private static double rmsProbability(short[] frame) {
-        long sumSquares = 0L;
-        for (short sample : frame) {
-            sumSquares += (long) sample * sample;
-        }
-        double rms = Math.sqrt(sumSquares / (double) frame.length);
-        return Math.max(0.0, Math.min(1.0, rms / 4_000.0));
-    }
-
-    private static boolean assetExists(Context context, String asset) {
-        try {
-            context.getAssets().open(asset).close();
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 }

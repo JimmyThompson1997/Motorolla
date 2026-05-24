@@ -1,1 +1,5 @@
-# No release shrinking rules yet. Debug APK is the only supported artifact for v1 bridgehead.
+# Debug APK is the supported v1 bridgehead, but keep ONNX Runtime intact if a release build is produced.
+-keep class ai.onnxruntime.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

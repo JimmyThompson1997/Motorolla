@@ -184,6 +184,16 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("transcript", telemetry)
         self.assertNotIn("Pucky test turn", json.dumps(telemetry))
 
+    def test_wav_audio_turn_is_accepted_for_walkie_capture(self) -> None:
+        body = self.post_audio(b"RIFF....WAVEfmt ", "audio/wav", turn_id="client_wav_walkie")
+
+        self.assertEqual(body["turn_id"], "client_wav_walkie")
+        self.assertEqual(body["reply_mode"], "card_only")
+        self.assertEqual(self.stt.content_type, "audio/wav")
+        telemetry = body["telemetry"]
+        self.assertEqual(telemetry["content_type"], "audio/wav")
+        self.assertEqual(telemetry["request_audio_bytes"], len(b"RIFF....WAVEfmt "))
+
     def test_card_and_spoken_turn_returns_audio_and_tts_telemetry(self) -> None:
         body = self.post_audio(b"audio", "audio/mp4", reply_mode="card_and_spoken")
 
