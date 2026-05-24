@@ -177,9 +177,6 @@ public final class PuckyTurnController {
         Json.put(startArgs, "sample_tag", "pucky_turn");
         Json.put(startArgs, "feedback", false);
         JSONObject out = WalkieAudioCaptureController.shared(context).start(startArgs, speechGateStatus -> {
-            if (feedback) {
-                playRecordingStartHaptic();
-            }
             JSONObject status = new JSONObject();
             Json.put(status, "schema", "pucky.turn_status_item.v1");
             Json.put(status, "state", "recording");
@@ -190,6 +187,9 @@ public final class PuckyTurnController {
             Json.put(status, "speech_detected", true);
             markStatus("recording", status, null);
         });
+        if (feedback) {
+            playRecordingStartHaptic();
+        }
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "local_session_id", localSessionId);
         JSONObject gate = out.optJSONObject("speech_gate");
@@ -224,6 +224,9 @@ public final class PuckyTurnController {
         boolean speechDetected = speechGate.optBoolean("speech_detected", false);
         String reason = args.optString("reason", "button_release");
         boolean feedback = args.optBoolean("feedback", true);
+        if (feedback) {
+            playRecordingStopHaptic();
+        }
         if (!speechDetected) {
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", false);
@@ -259,22 +262,19 @@ public final class PuckyTurnController {
         Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
         markStatus("uploading", out, null);
         final JSONObject finalSpeechGate = speechGate;
-        Thread worker = new Thread(() -> finishStopAndUpload(localSessionId, clientTurnId, reason, feedback, finalSpeechGate),
+        Thread worker = new Thread(() -> finishStopAndUpload(localSessionId, clientTurnId, reason, finalSpeechGate),
                 "PuckyTurnStopUpload");
         worker.setDaemon(true);
         worker.start();
         return out;
     }
 
-    private void finishStopAndUpload(String fallbackLocalSessionId, String clientTurnId, String reason, boolean feedback, JSONObject speechGate) {
+    private void finishStopAndUpload(String fallbackLocalSessionId, String clientTurnId, String reason, JSONObject speechGate) {
         long finalizeStartedMs = System.currentTimeMillis();
         try {
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", false);
             JSONObject stopped = WalkieAudioCaptureController.shared(context).stop(stopArgs);
-            if (feedback) {
-                playRecordingStopHaptic();
-            }
             JSONObject capture = stopped.optJSONObject("capture");
             if (capture == null) {
                 markStatus("idle", stopped, "no_capture");

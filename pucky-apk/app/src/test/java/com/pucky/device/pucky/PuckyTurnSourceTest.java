@@ -247,10 +247,12 @@ public final class PuckyTurnSourceTest {
     @Test
     public void silentWalkieReleaseDiscardsCaptureWithoutUpload() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String stopBody = between(source, "public JSONObject stop(JSONObject args)", "private void finishStopAndUpload");
 
         assertTrue(source.contains("if (!speechDetected)"));
         assertTrue(source.contains("WalkieAudioCaptureController.shared(context).discard(stopArgs)"));
         assertTrue(source.contains("markStatus(\"discarded_silence\", out, null)"));
+        assertTrue(stopBody.contains("if (feedback) {\n            playRecordingStopHaptic();\n        }\n        if (!speechDetected)"));
         assertFalse(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes);") && !source.contains("if (!speechDetected)"));
     }
 
@@ -267,7 +269,7 @@ public final class PuckyTurnSourceTest {
         assertFalse(stopBody.contains("requireUploadConfigured("));
         assertTrue(startBody.contains("WalkieAudioCaptureController.shared(context).start(startArgs"));
         assertTrue(stopBody.contains("WalkieAudioCaptureController.shared(context).discard(stopArgs)"));
-        assertTrue(stopBody.contains("finishStopAndUpload(localSessionId, clientTurnId, reason, feedback, finalSpeechGate)"));
+        assertTrue(stopBody.contains("finishStopAndUpload(localSessionId, clientTurnId, reason, finalSpeechGate)"));
     }
 
     @Test
@@ -289,10 +291,11 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
-    public void walkieFeedbackIsTiedToRecordingStopAndRemoteAcceptedStates() throws Exception {
+    public void walkieFeedbackIsTiedToHoldReleaseAndRemoteAcceptedStates() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
         String capture = read("src/main/java/com/pucky/device/pucky/WalkieAudioCaptureController.java");
         String startBody = between(source, "public JSONObject start(JSONObject args)", "public JSONObject stop(JSONObject args)");
+        String stopBody = between(source, "public JSONObject stop(JSONObject args)", "private void finishStopAndUpload");
         String finishBody = between(source, "private void finishStopAndUpload", "private void submitAsync");
         String remoteStatusBody = between(source, "private void applyRemoteTurnStatus", "private String turnStatusUrl");
         String responseBody = between(source, "public void onResponse(Call call, Response response)", "private void startTurnStatusPoll");
@@ -316,9 +319,13 @@ public final class PuckyTurnSourceTest {
         assertTrue(startBody.contains("final boolean feedback = args.optBoolean(\"feedback\", true)"));
         assertTrue(startBody.contains("Json.put(startArgs, \"feedback\", false)"));
         assertFalse(startBody.contains("Json.put(startArgs, \"feedback\", args.optBoolean(\"feedback\", true))"));
-        assertTrue(startBody.contains("if (feedback) {\n                playRecordingStartHaptic();\n            }"));
-        assertTrue(finishBody.contains("if (feedback) {\n                playRecordingStopHaptic();\n            }"));
-        assertTrue(finishBody.indexOf("playRecordingStopHaptic()") < finishBody.indexOf("if (!isUploadConfigured())"));
+        assertTrue(startBody.contains("WalkieAudioCaptureController.shared(context).start(startArgs"));
+        assertTrue(startBody.contains("if (feedback) {\n            playRecordingStartHaptic();\n        }"));
+        assertTrue(startBody.indexOf("WalkieAudioCaptureController.shared(context).start(startArgs") < startBody.indexOf("playRecordingStartHaptic()"));
+        assertFalse(startBody.contains("speechGateStatus -> {\n            if (feedback)"));
+        assertTrue(stopBody.contains("if (feedback) {\n            playRecordingStopHaptic();\n        }\n        if (!speechDetected)"));
+        assertTrue(stopBody.indexOf("playRecordingStopHaptic()") < stopBody.indexOf("if (!speechDetected)"));
+        assertFalse(finishBody.contains("playRecordingStopHaptic()"));
         assertFalse(finishBody.substring(finishBody.indexOf("if (!isUploadConfigured())")).contains("playAcceptedChimeOnce"));
         assertTrue(remoteStatusBody.contains("if (isAcceptedRemoteStage(remoteStage))"));
         assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", playAcceptedChimeOnce(clientTurnId, remoteStage))"));
