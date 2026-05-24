@@ -35,6 +35,7 @@ import android.widget.FrameLayout;
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.buttons.ButtonController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
@@ -81,6 +82,7 @@ public class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             emitWebPlayerState();
             emitWebTurnStatus();
+            emitWebFeedUpdated();
         }
     };
 
@@ -91,6 +93,7 @@ public class MainActivity extends Activity {
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.post(MainActivity.this::emitWebPlayerState);
                 mainHandler.post(MainActivity.this::emitWebTurnStatus);
+                mainHandler.post(MainActivity.this::emitWebFeedUpdated);
             }
         }
     };
@@ -130,8 +133,10 @@ public class MainActivity extends Activity {
         applySystemUiForMode();
         ensureAutoConnectService();
         WakeWordController.shared(this).start(new JSONObject());
+        PuckyFeedController.shared(this).syncAsync("activity_resume");
         emitWebPlayerState();
         emitWebTurnStatus();
+        emitWebFeedUpdated();
     }
 
     @Override
@@ -166,6 +171,7 @@ public class MainActivity extends Activity {
             if (handled) {
                 emitWebPlayerState();
                 emitWebTurnStatus();
+                emitWebFeedUpdated();
                 return true;
             }
         }
@@ -406,6 +412,7 @@ public class MainActivity extends Activity {
         loadWebShell(resetNavigation);
         emitWebPlayerState();
         emitWebTurnStatus();
+        emitWebFeedUpdated();
     }
 
     private void emitWebPlayerState() {
@@ -417,6 +424,12 @@ public class MainActivity extends Activity {
     private void emitWebTurnStatus() {
         if (webBridge != null) {
             webBridge.emit("pucky.turn.status", PuckyTurnController.shared(this).status());
+        }
+    }
+
+    private void emitWebFeedUpdated() {
+        if (webBridge != null) {
+            webBridge.emit("pucky.feed.updated", PuckyFeedController.shared(this).snapshot());
         }
     }
 

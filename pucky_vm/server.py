@@ -17,6 +17,7 @@ from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .codex_app_server import CodexAppServerClient, command_from_env
+from .feed_store import FeedStore
 from .providers import DeepgramSTT, KokoroTTS
 from .ui_bundle import UI_SRC, build_ui_bundle
 
@@ -86,6 +87,7 @@ class Config:
     codex_startup_timeout: float
     codex_turn_timeout: float
     developer_instructions: str
+    feed_db_path: str
     turn_status_ttl_seconds: float = 900.0
 
     @classmethod
@@ -106,6 +108,7 @@ class Config:
             codex_startup_timeout=float(os.environ.get("PUCKY_CODEX_STARTUP_TIMEOUT", "60")),
             codex_turn_timeout=float(os.environ.get("PUCKY_CODEX_TURN_TIMEOUT", "300")),
             developer_instructions=os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS,
+            feed_db_path=os.environ.get("PUCKY_FEED_DB_PATH", str((Path.cwd() / "pucky_feed.sqlite3").resolve())),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
         )
 
@@ -164,6 +167,7 @@ class PuckyVoiceService:
             turn_timeout=config.codex_turn_timeout,
             developer_instructions=config.developer_instructions,
         )
+        self.feed = FeedStore(config.feed_db_path)
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
@@ -176,6 +180,7 @@ class PuckyVoiceService:
             "ok": self.codex.ready,
             "codex_app_server": "ready" if self.codex.ready else "not_ready",
             "thread": "per_turn",
+            "feed_store": "ready",
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
@@ -256,19 +261,16 @@ class PuckyVoiceService:
 
                 reply_audio = b""
                 audio_mime_type = ""
-                if reply_mode == REPLY_MODE_CARD_AND_SPOKEN:
-                    stage = "tts_running"
-                    telemetry["tts_start_ms"] = _elapsed_ms(total_start)
-                    self._update_turn_status(turn_id, "tts_running", "running", telemetry)
-                    start = time.perf_counter()
-                    reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
-                    telemetry["tts_ms"] = _elapsed_ms(start)
-                    telemetry["tts_end_ms"] = _elapsed_ms(total_start)
-                    telemetry["reply_audio_bytes"] = len(reply_audio)
-                    telemetry["audio_mime_type"] = audio_mime_type
-                else:
-                    telemetry["tts_status"] = "skipped_card_only"
-                    telemetry["reply_audio_bytes"] = 0
+                stage = "tts_running"
+                telemetry["tts_start_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "tts_running", "running", telemetry)
+                start = time.perf_counter()
+                reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
+                telemetry["tts_ms"] = _elapsed_ms(start)
+                telemetry["tts_end_ms"] = _elapsed_ms(total_start)
+                telemetry["tts_status"] = "ok"
+                telemetry["reply_audio_bytes"] = len(reply_audio)
+                telemetry["audio_mime_type"] = audio_mime_type
             except Exception as exc:
                 telemetry["event"] = "pucky.turn.failed"
                 telemetry["status"] = "failed"
@@ -278,30 +280,50 @@ class PuckyVoiceService:
                 self._update_turn_status(turn_id, "failed", "failed", telemetry)
                 _log_json(telemetry)
                 raise
-        card: dict[str, str] = {"title": envelope.card_title, "icon": envelope.card_icon}
+        card: dict[str, str] = {"title": envelope.card_title, "summary": envelope.reply_text, "icon": envelope.card_icon}
+        html_mime_type = ""
+        html_base64 = ""
         if envelope.html_content:
             html_bytes = envelope.html_content.encode("utf-8")
             if len(html_bytes) <= self.config.max_html_bytes:
-                card["html_mime_type"] = "text/html"
-                card["html_base64"] = base64.b64encode(html_bytes).decode("ascii")
+                html_mime_type = "text/html"
+                html_base64 = base64.b64encode(html_bytes).decode("ascii")
+                card["html_mime_type"] = html_mime_type
+                card["html_base64"] = html_base64
         telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["status"] = "ok"
-        result = {
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "text": envelope.reply_text,
-            "reply_mode": reply_mode,
-            "card": card,
-        }
-        if reply_audio:
-            result["audio_mime_type"] = audio_mime_type
-            result["audio_base64"] = base64.b64encode(reply_audio).decode("ascii")
+        audio_base64 = base64.b64encode(reply_audio).decode("ascii") if reply_audio else ""
+        result = self.feed.upsert_turn_result(
+            turn_id=turn_id,
+            session_id=session_id,
+            reply_mode=reply_mode,
+            reply_text=envelope.reply_text,
+            title=envelope.card_title,
+            summary=envelope.reply_text,
+            icon=envelope.card_icon,
+            telemetry=_public_turn_telemetry(telemetry),
+            audio_mime_type=audio_mime_type,
+            audio_base64=audio_base64,
+            html_mime_type=html_mime_type,
+            html_base64=html_base64,
+        )
+        result["card"] = card
         result["telemetry"] = _public_turn_telemetry(telemetry)
         telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._update_turn_status(turn_id, "completed", "ok", telemetry)
         _log_json(telemetry)
         return result
+
+    def feed_sync(self, cursor: str | None, limit: int) -> dict[str, object]:
+        return self.feed.list_feed(cursor, limit)
+
+    def feed_action(self, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
+        return self.feed.apply_action(
+            client_action_id=client_action_id,
+            card_id=card_id,
+            action=action,
+        )
 
     def _update_turn_status(self, turn_id: str, stage: str, status: str, telemetry: dict[str, object]) -> None:
         now = time.time()
@@ -470,6 +492,20 @@ def make_handler(service: PuckyVoiceService):
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
                 return
+            if path == "/api/feed":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                query = parse_qs(parsed.query)
+                cursor = query.get("cursor", [""])[0]
+                limit = query.get("limit", ["20"])[0]
+                try:
+                    payload = service.feed_sync(cursor, int(limit))
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_sync_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, payload)
+                return
             if path == "/api/turn/status":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -505,7 +541,30 @@ def make_handler(service: PuckyVoiceService):
             super().do_GET()
 
         def do_POST(self) -> None:
-            if self.path.split("?", 1)[0] != "/api/turn":
+            path = self.path.split("?", 1)[0]
+            if path == "/api/feed/actions":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    result = service.feed_action(
+                        str(payload.get("client_action_id") or ""),
+                        str(payload.get("card_id") or ""),
+                        str(payload.get("action") or ""),
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except KeyError:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "card_not_found"})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_action_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path != "/api/turn":
                 super().do_POST()
                 return
             if not self._is_authorized():

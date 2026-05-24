@@ -13,6 +13,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.List;
 
@@ -30,18 +31,13 @@ public final class ReplyCardStore {
     }
 
     public List<ReplyCard> cards() {
-        String raw = prefs().getString(KEY_CARDS, "[]");
-        try {
-            return ReplyCard.listFromJson(new JSONArray(raw));
-        } catch (Exception ignored) {
-            return Collections.emptyList();
-        }
+        return readCards();
     }
 
     public JSONObject replace(JSONArray cardsJson) throws CommandException {
         List<ReplyCard> cards = ReplyCard.listFromJson(cardsJson);
         validateCards(cards);
-        prefs().edit().putString(KEY_CARDS, ReplyCard.listToJson(cards).toString()).apply();
+        writeCards(cards);
         return snapshot(cards);
     }
 
@@ -50,9 +46,42 @@ public final class ReplyCardStore {
         validateCard(card);
         List<ReplyCard> cards = new ArrayList<>();
         cards.add(card);
-        cards.addAll(cards());
-        prefs().edit().putString(KEY_CARDS, ReplyCard.listToJson(cards).toString()).apply();
+        cards.addAll(readCards());
+        writeCards(cards);
         return snapshot(cards);
+    }
+
+    public JSONObject upsert(JSONObject cardJson) throws CommandException {
+        ReplyCard card = ReplyCard.fromJson(cardJson);
+        validateCard(card);
+        List<ReplyCard> existing = readCards();
+        List<ReplyCard> next = new ArrayList<>();
+        boolean removed = false;
+        for (ReplyCard current : existing) {
+            if (sameIdentity(current, card)) {
+                removed = true;
+                continue;
+            }
+            next.add(current);
+        }
+        if (!card.deleted()) {
+            next.add(card);
+        }
+        sortCards(next);
+        writeCards(next);
+        return snapshot(next);
+    }
+
+    public JSONObject merge(JSONArray cardsJson) throws CommandException {
+        List<ReplyCard> incoming = ReplyCard.listFromJson(cardsJson);
+        validateCards(incoming);
+        List<ReplyCard> merged = new ArrayList<>(readCards());
+        for (ReplyCard card : incoming) {
+            merged = mergeOne(merged, card);
+        }
+        sortCards(merged);
+        writeCards(merged);
+        return snapshot(merged);
     }
 
     public JSONObject clear() {
@@ -61,14 +90,38 @@ public final class ReplyCardStore {
     }
 
     public JSONObject snapshot() {
-        return snapshot(cards());
+        return snapshot(readCards());
     }
 
     private JSONObject snapshot(List<ReplyCard> cards) {
         JSONObject out = new JSONObject();
+        JSONArray visible = new JSONArray();
+        int count = 0;
+        for (ReplyCard card : cards) {
+            if (card.deleted()) {
+                continue;
+            }
+            Json.add(visible, card.toJson());
+            count++;
+        }
         Json.put(out, "schema", "pucky.reply_cards.v1");
-        Json.put(out, "count", cards.size());
-        Json.put(out, "cards", ReplyCard.listToJson(cards));
+        Json.put(out, "count", count);
+        Json.put(out, "cards", visible);
+        return out;
+    }
+
+    public JSONObject find(String cardId, String sessionId) {
+        ReplyCard found = null;
+        for (ReplyCard card : readCards()) {
+            if (sameIdentity(card, cardId, sessionId)) {
+                found = card;
+                break;
+            }
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.reply_card_lookup.v1");
+        Json.put(out, "found", found != null);
+        Json.put(out, "card", found == null ? JSONObject.NULL : found.toJson());
         return out;
     }
 
@@ -197,5 +250,73 @@ public final class ReplyCardStore {
 
     private SharedPreferences prefs() {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private List<ReplyCard> readCards() {
+        String raw = prefs().getString(KEY_CARDS, "[]");
+        try {
+            return new ArrayList<>(ReplyCard.listFromJson(new JSONArray(raw)));
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private void writeCards(List<ReplyCard> cards) {
+        prefs().edit().putString(KEY_CARDS, ReplyCard.listToJson(cards).toString()).apply();
+    }
+
+    private List<ReplyCard> mergeOne(List<ReplyCard> existing, ReplyCard incoming) {
+        List<ReplyCard> next = new ArrayList<>();
+        for (ReplyCard current : existing) {
+            if (!sameIdentity(current, incoming)) {
+                next.add(current);
+            }
+        }
+        if (!incoming.deleted()) {
+            next.add(incoming);
+        }
+        return next;
+    }
+
+    private static boolean sameIdentity(ReplyCard left, ReplyCard right) {
+        return sameIdentity(left, right.cardId(), right.sessionId());
+    }
+
+    private static boolean sameIdentity(ReplyCard card, String cardId, String sessionId) {
+        String leftCardId = safe(card.cardId());
+        String rightCardId = safe(cardId);
+        if (!leftCardId.isEmpty() && !rightCardId.isEmpty()) {
+            return leftCardId.equals(rightCardId);
+        }
+        String leftSessionId = safe(card.sessionId());
+        String rightSessionId = safe(sessionId);
+        return !leftSessionId.isEmpty() && leftSessionId.equals(rightSessionId);
+    }
+
+    private static void sortCards(List<ReplyCard> cards) {
+        cards.sort(Comparator
+                .comparingLong(ReplyCardStore::sortTimestamp)
+                .reversed()
+                .thenComparing(ReplyCard::title, String.CASE_INSENSITIVE_ORDER));
+    }
+
+    private static long sortTimestamp(ReplyCard card) {
+        return parseIso(card.updatedAt(), parseIso(card.createdAt(), 0L));
+    }
+
+    private static long parseIso(String value, long fallback) {
+        String clean = safe(value);
+        if (clean.isEmpty()) {
+            return fallback;
+        }
+        try {
+            return java.time.Instant.parse(clean).toEpochMilli();
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value.trim();
     }
 }
