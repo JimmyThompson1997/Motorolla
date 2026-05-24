@@ -11,11 +11,9 @@ import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.speech.PuckyTurnKeywordInterceptor;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
-import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
@@ -23,7 +21,6 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
@@ -291,7 +288,7 @@ public final class PuckyTurnController {
             String localSessionId = capture.optString("session_id", fallbackLocalSessionId);
             JSONObject uploading = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
             Json.put(uploading, "state", "uploading");
-            Json.put(uploading, "phase", "local_keyword_intercept");
+            Json.put(uploading, "phase", "capture_finalized");
             Json.put(uploading, "turn_id", clientTurnId);
             Json.put(uploading, "speech_gate", speechGate);
             Json.put(uploading, "speech_detected", true);
@@ -316,49 +313,6 @@ public final class PuckyTurnController {
             }
             Json.put(uploading, "upload_configured", true);
             Json.put(uploading, "local_capture_ready", true);
-            markStatus("uploading", uploading, null);
-            JSONObject keywordIntercept = PuckyTurnKeywordInterceptor.shared(context)
-                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate);
-            Json.put(uploading, "local_keyword_intercept", keywordIntercept);
-            Json.put(uploading, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
-            Json.put(uploading, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
-            Json.put(uploading, "local_recipe_matched", keywordIntercept.optBoolean("matched", false));
-            Json.put(uploading, "local_recipe_id",
-                    keywordIntercept.optJSONObject("match") == null
-                            ? JSONObject.NULL
-                            : keywordIntercept.optJSONObject("match").optString("id", ""));
-            if (keywordIntercept.optBoolean("handled", false)) {
-                boolean deleted = deleteQuietly(audio);
-                JSONObject handled = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
-                Json.put(handled, "turn_id", clientTurnId);
-                Json.put(handled, "speech_gate", speechGate);
-                Json.put(handled, "speech_detected", true);
-                Json.put(handled, "capture_finalize_ms", Math.max(0L, System.currentTimeMillis() - finalizeStartedMs));
-                Json.put(handled, "local_keyword_intercept", keywordIntercept);
-                Json.put(handled, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
-                Json.put(handled, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
-                Json.put(handled, "local_recipe_matched", keywordIntercept.optBoolean("matched", false));
-                Json.put(handled, "local_recipe_id",
-                        keywordIntercept.optJSONObject("match") == null
-                                ? JSONObject.NULL
-                                : keywordIntercept.optJSONObject("match").optString("id", ""));
-                Json.put(handled, "keyword_action_status", keywordIntercept.optString("execution_status", ""));
-                Json.put(handled, "keyword_action_result", keywordIntercept.opt("execution"));
-                copyIfPresent(handled, keywordIntercept, "pucky_clipboard_entry_id");
-                Json.put(handled, "deleted_file", deleted);
-                boolean failed = "failed".equals(keywordIntercept.optString("execution_status", ""))
-                        || !"".equals(keywordIntercept.optString("error_code", ""));
-                Json.put(handled, "state", failed ? "failed" : "completed");
-                Json.put(handled, "phase", failed ? "local_keyword_failed" : "local_keyword_handled");
-                if (failed) {
-                    String error = keywordIntercept.optString("error_message",
-                            keywordIntercept.optString("error_code", "keyword_action_failed"));
-                    markStatus("failed", handled, error);
-                } else {
-                    markStatus("completed", handled, null);
-                }
-                return;
-            }
             Json.put(uploading, "phase", "upload_started");
             markStatus("uploading", uploading, null);
             submitAsync(localSessionId, clientTurnId, audioBytes);
@@ -379,11 +333,14 @@ public final class PuckyTurnController {
 
     private void submitAsync(String localSessionId, String clientTurnId, byte[] audioBytes) {
         long startedMs = System.currentTimeMillis();
+        final String replyModeAtUpload = settings.getPuckyTurnReplyMode();
+        final boolean spokenReplyEnabledAtUpload =
+                SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN.equals(replyModeAtUpload);
         Request request = new Request.Builder()
                 .url(settings.getPuckyTurnUrl())
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
                 .header("X-Pucky-Turn-Id", clientTurnId)
-                .header("X-Pucky-Reply-Mode", settings.getPuckyTurnReplyMode())
+                .header("X-Pucky-Reply-Mode", replyModeAtUpload)
                 .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
@@ -412,22 +369,23 @@ public final class PuckyTurnController {
                     Json.put(status, "accepted_chime", playAcceptedChimeOnce(clientTurnId, "http_response_success"));
                     try {
                         PuckyTurnResponse parsed = PuckyTurnResponse.fromJson(responseText);
-                        JSONObject card = persistReplyCard(localSessionId, parsed);
+                        JSONObject card = PuckyFeedController.shared(context).upsertTurnResponse(localSessionId, parsed);
                         String sessionId = card.optString("session_id", "");
                         String turnId = parsed.turnId().isEmpty() ? sessionId : parsed.turnId();
                         Json.put(status, "session_id", sessionId);
                         Json.put(status, "turn_id", turnId);
+                        Json.put(status, "card_id", card.optString("card_id", parsed.cardId()));
                         Json.put(status, "reply_audio_path", card.optString("audio_path", ""));
                         Json.put(status, "reply_text_chars", parsed.text().length());
                         Json.put(status, "reply_audio_bytes", parsed.audioBytes().length);
                         Json.put(status, "reply_card_saved", true);
-                        Json.put(status, "reply_mode", settings.getPuckyTurnReplyMode());
-                        Json.put(status, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
+                        Json.put(status, "reply_mode", replyModeAtUpload);
+                        Json.put(status, "spoken_reply_enabled", spokenReplyEnabledAtUpload);
                         Json.put(status, "has_html", parsed.hasHtml());
                         Json.put(status, "server_telemetry", parsed.telemetry());
                         Json.put(status, "latency_server_total_ms", parsed.telemetry().optInt("total_ms", -1));
                         stopTurnStatusPoll(clientTurnId);
-                        if (settings.isPuckyTurnSpokenReplyEnabled()) {
+                        if (spokenReplyEnabledAtUpload) {
                             if (parsed.hasAudio()) {
                                 JSONObject playerState = playReply(card);
                                 Json.put(status, "player_state", playerState);
@@ -563,37 +521,6 @@ public final class PuckyTurnController {
                 || "stt_running".equals(stage)
                 || "codex_running".equals(stage)
                 || "tts_running".equals(stage);
-    }
-
-    private JSONObject persistReplyCard(String localSessionId, PuckyTurnResponse response) throws Exception {
-        String sessionId = safeName(response.sessionId().isEmpty() ? localSessionId : response.sessionId());
-        File dir = new File(context.getFilesDir(), "pucky_replies" + File.separator + sessionId);
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw new IOException("Unable to create reply directory");
-        }
-        File audio = response.hasAudio() ? new File(dir, "reply" + audioExtension(response.audioMimeType())) : null;
-        if (audio != null) {
-            write(audio, response.audioBytes());
-        }
-        String htmlPath = "";
-        if (response.hasHtml()) {
-            File html = new File(dir, "reply.html");
-            write(html, response.htmlBytes());
-            htmlPath = html.getAbsolutePath();
-        }
-        JSONObject card = new JSONObject();
-        Json.put(card, "session_id", sessionId);
-        Json.put(card, "title", response.cardTitle());
-        Json.put(card, "summary", response.text());
-        Json.put(card, "icon", response.cardIcon());
-        if (audio != null) {
-            Json.put(card, "audio_path", audio.getAbsolutePath());
-        }
-        if (!htmlPath.isEmpty()) {
-            Json.put(card, "html_path", htmlPath);
-        }
-        new ReplyCardStore(context).prepend(card);
-        return card;
     }
 
     private JSONObject playReply(JSONObject card) throws CommandException {
@@ -943,20 +870,6 @@ public final class PuckyTurnController {
         return out;
     }
 
-    private static String audioExtension(String mimeType) {
-        String mime = mimeType == null ? "" : mimeType.trim().toLowerCase();
-        if ("audio/mpeg".equals(mime)) return ".mp3";
-        if ("audio/mp4".equals(mime)) return ".m4a";
-        if ("audio/wav".equals(mime) || "audio/x-wav".equals(mime)) return ".wav";
-        return ".bin";
-    }
-
-    private static String safeName(String raw) {
-        String value = raw == null || raw.trim().isEmpty() ? "pucky_" + Long.toHexString(System.currentTimeMillis()) : raw.trim();
-        value = value.replaceAll("[^A-Za-z0-9._-]", "_");
-        return value.length() > 96 ? value.substring(0, 96) : value;
-    }
-
     private static byte[] readAll(File file) throws CommandException {
         try (FileInputStream input = new FileInputStream(file)) {
             byte[] data = new byte[(int) file.length()];
@@ -978,12 +891,6 @@ public final class PuckyTurnController {
             return file != null && file.exists() && file.delete();
         } catch (RuntimeException ignored) {
             return false;
-        }
-    }
-
-    private static void write(File file, byte[] data) throws IOException {
-        try (FileOutputStream output = new FileOutputStream(file)) {
-            output.write(data);
         }
     }
 }

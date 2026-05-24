@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+import uuid
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -71,7 +72,7 @@ class BlockingCodex(FakeCodex):
         )
 
 
-def test_config(max_html_bytes: int = 512 * 1024) -> Config:
+def make_config(max_html_bytes: int = 512 * 1024) -> Config:
     return Config(
         host="127.0.0.1",
         port=0,
@@ -88,6 +89,7 @@ def test_config(max_html_bytes: int = 512 * 1024) -> Config:
         codex_startup_timeout=1.0,
         codex_turn_timeout=1.0,
         developer_instructions="test",
+        feed_db_path=str(tempfile.gettempdir()) + f"/pucky-feed-tests-{uuid.uuid4().hex}.sqlite3",
     )
 
 
@@ -98,7 +100,7 @@ class ServerTests(unittest.TestCase):
         self.stt = FakeSTT()
         self.tts = FakeTTS()
         self.codex = FakeCodex()
-        self.service = PuckyVoiceService(test_config(), stt=self.stt, tts=self.tts, codex=self.codex)
+        self.service = PuckyVoiceService(make_config(), stt=self.stt, tts=self.tts, codex=self.codex)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -108,6 +110,7 @@ class ServerTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        self.service.feed.close()
         if getattr(self.broker, "DB", None) is not None:
             self.broker.DB.close()
             self.broker.DB = None
@@ -120,6 +123,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["codex_app_server"], "ready")
         self.assertEqual(payload["thread"], "per_turn")
+        self.assertEqual(payload["feed_store"], "ready")
         self.assertEqual(payload["deepgram_key"], "present")
         self.assertNotIn("secret", json.dumps(payload))
 
@@ -162,32 +166,41 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, 401)
 
-    def test_raw_audio_turn_defaults_to_card_only_without_tts(self) -> None:
+    def test_raw_audio_turn_defaults_to_card_only_with_canonical_feed_item_and_tts(self) -> None:
         body = self.post_audio(b"audio", "audio/mp4")
 
         self.assertTrue(body["session_id"].startswith("pucky_"))
         self.assertEqual(body["turn_id"], body["session_id"])
+        self.assertEqual(body["card_id"], "pucky_card_" + body["turn_id"])
         self.assertEqual(body["text"], "Sure, I can help.")
+        self.assertEqual(body["summary"], "Sure, I can help.")
+        self.assertEqual(body["title"], "Quick Help")
+        self.assertEqual(body["icon"], "bolt")
         self.assertEqual(body["reply_mode"], "card_only")
-        self.assertNotIn("audio_mime_type", body)
-        self.assertNotIn("audio_base64", body)
+        self.assertEqual(body["audio_mime_type"], "audio/wav")
+        self.assertEqual(base64.b64decode(body["audio_base64"]), b"RIFFaudio")
+        self.assertFalse(body["archived"])
+        self.assertFalse(body["read"])
+        self.assertFalse(body["deleted"])
         self.assertEqual(body["card"]["title"], "Quick Help")
+        self.assertEqual(body["card"]["summary"], "Sure, I can help.")
         self.assertEqual(body["card"]["icon"], "bolt")
         self.assertEqual(body["card"]["html_mime_type"], "text/html")
+        self.assertEqual(body["html_mime_type"], "text/html")
         self.assertIn("<!doctype html>", base64.b64decode(body["card"]["html_base64"]).decode("utf-8"))
         self.assertNotIn("transcript", body)
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
-        self.assertFalse(hasattr(self.tts, "text"))
+        self.assertEqual(self.tts.text, "Sure, I can help.")
         telemetry = body["telemetry"]
         self.assertEqual(telemetry["turn_id"], body["turn_id"])
         self.assertEqual(telemetry["request_audio_bytes"], 5)
         self.assertEqual(telemetry["reply_mode"], "card_only")
         self.assertIn("stt_ms", telemetry)
         self.assertIn("codex_ms", telemetry)
-        self.assertNotIn("tts_ms", telemetry)
-        self.assertEqual(telemetry["tts_status"], "skipped_card_only")
-        self.assertEqual(telemetry["reply_audio_bytes"], 0)
+        self.assertIn("tts_ms", telemetry)
+        self.assertEqual(telemetry["tts_status"], "ok")
+        self.assertEqual(telemetry["reply_audio_bytes"], len(b"RIFFaudio"))
         self.assertIn("response_bytes", telemetry)
         self.assertNotIn("transcript", telemetry)
         self.assertNotIn("Pucky test turn", json.dumps(telemetry))
@@ -213,6 +226,42 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(telemetry["reply_mode"], "card_and_spoken")
         self.assertIn("tts_ms", telemetry)
         self.assertEqual(telemetry["reply_audio_bytes"], len(b"RIFFaudio"))
+
+    def test_feed_sync_returns_canonical_item(self) -> None:
+        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_sync_turn")
+
+        payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+
+        self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
+        self.assertEqual(payload["has_more"], False)
+        self.assertTrue(payload["next_cursor"])
+        self.assertEqual(len(payload["items"]), 1)
+        item = payload["items"][0]
+        self.assertEqual(item["card_id"], turn["card_id"])
+        self.assertEqual(item["turn_id"], "feed_sync_turn")
+        self.assertEqual(item["audio_mime_type"], "audio/wav")
+        self.assertFalse(item["archived"])
+        self.assertFalse(item["read"])
+        self.assertFalse(item["deleted"])
+        self.assertNotIn("Pucky test turn", json.dumps(item))
+
+    def test_feed_actions_are_idempotent_and_ack_gated(self) -> None:
+        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_action_turn")
+        body = {
+            "client_action_id": "client_action_1",
+            "card_id": turn["card_id"],
+            "action": "archive",
+        }
+
+        first = self.post_json("/api/feed/actions", body)
+        second = self.post_json("/api/feed/actions", body)
+
+        self.assertTrue(first["ok"])
+        self.assertEqual(first, second)
+        self.assertEqual(first["item"]["card_id"], turn["card_id"])
+        self.assertTrue(first["item"]["archived"])
+        payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertTrue(payload["items"][0]["archived"])
 
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -326,12 +375,14 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.html_content, "")
 
     def test_large_html_is_omitted(self) -> None:
-        self.service.config = test_config(max_html_bytes=4)
+        self.service.config = make_config(max_html_bytes=4)
 
         body = self.post_audio(b"audio", "audio/mp4")
 
         self.assertNotIn("html_base64", body["card"])
         self.assertNotIn("html_mime_type", body["card"])
+        self.assertNotIn("html_base64", body)
+        self.assertNotIn("html_mime_type", body)
 
     def get_json(self, path: str, headers: dict[str, str] | None = None) -> dict:
         request = urllib.request.Request(self.base_url + path, headers=headers or {})
@@ -352,6 +403,22 @@ class ServerTests(unittest.TestCase):
             data=audio,
             method="POST",
             headers=headers,
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def post_json(self, path: str, body: dict, headers: dict[str, str] | None = None) -> dict:
+        merged = {
+            "Authorization": "Bearer secret",
+            "Content-Type": "application/json",
+        }
+        if headers:
+            merged.update(headers)
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers=merged,
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))

@@ -152,7 +152,7 @@ public final class PuckyTurnSourceTest {
     public void controllerPostsRawAudioAndCreatesOneFeedCard() throws Exception {
         String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
         String store = read("src/main/java/com/pucky/device/ui/ReplyCardStore.java");
-        String keyword = read("src/main/java/com/pucky/device/speech/PuckyTurnKeywordInterceptor.java");
+        String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
 
         assertTrue(source.contains("WalkieAudioCaptureController.shared(context).start(startArgs"));
         assertTrue(source.contains("String clientTurnId = generateClientTurnId()"));
@@ -163,32 +163,28 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("MediaType.get(\"audio/wav\")"));
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
-        assertTrue(source.contains(".header(\"X-Pucky-Reply-Mode\", settings.getPuckyTurnReplyMode())"));
-        assertTrue(source.contains("PuckyTurnKeywordInterceptor.shared(context)"));
-        assertTrue(source.contains("keywordIntercept.optBoolean(\"handled\", false)"));
-        assertTrue(source.contains("Json.put(uploading, \"phase\", \"local_keyword_intercept\")"));
+        assertTrue(source.contains(".header(\"X-Pucky-Reply-Mode\", replyModeAtUpload)"));
+        assertFalse(source.contains("PuckyTurnKeywordInterceptor.shared(context)"));
+        assertFalse(source.contains("keywordIntercept.optBoolean(\"handled\", false)"));
+        assertFalse(source.contains("Json.put(uploading, \"phase\", \"local_keyword_intercept\")"));
         assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
-        assertTrue(keyword.contains("SpeechRecipeRegistry.matchStoredOnly(recognition.transcript, storedRaw)"));
-        assertTrue(keyword.contains("Json.put(out, \"stored_recipe_bundle_present\", !storedRaw.trim().isEmpty())"));
-        assertTrue(keyword.contains("Json.put(out, \"handled\", false)"));
-        assertTrue(keyword.contains("Json.put(out, \"handled\", true)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("Json.put(out, \"vad_engine\""));
         assertTrue(source.contains("Json.put(out, \"vad_available\""));
-        assertTrue(source.contains("new File(context.getFilesDir(), \"pucky_replies\""));
-        assertTrue(source.contains("Json.put(card, \"session_id\", sessionId)"));
-        assertTrue(source.contains("new ReplyCardStore(context).prepend(card)"));
+        assertTrue(source.contains("PuckyFeedController.shared(context).upsertTurnResponse(localSessionId, parsed)"));
+        assertTrue(feed.contains("public JSONObject upsertTurnResponse(String fallbackSessionId, PuckyTurnResponse response)"));
+        assertTrue(feed.contains("Json.put(card, \"card_id\", response.cardId())"));
+        assertTrue(feed.contains("replyCards.upsert(card)"));
+        assertTrue(store.contains("public JSONObject upsert(JSONObject cardJson)"));
+        assertTrue(store.contains("public JSONObject merge(JSONArray cardsJson)"));
         assertTrue(source.contains("Json.put(args, \"source\", \"pucky.turn\")"));
         assertTrue(source.contains("PlayerController.shared(context).play(args)"));
-        assertTrue(source.contains("if (settings.isPuckyTurnSpokenReplyEnabled())"));
+        assertTrue(source.contains("if (spokenReplyEnabledAtUpload)"));
         assertTrue(source.contains("markStatus(\"speaking\", status, null)"));
         assertTrue(source.contains("markStatus(\"completed\", status, null)"));
-        assertTrue(source.contains("Json.put(status, \"reply_mode\", settings.getPuckyTurnReplyMode())"));
-        assertTrue(source.contains("Json.put(status, \"spoken_reply_enabled\", settings.isPuckyTurnSpokenReplyEnabled())"));
+        assertTrue(source.contains("Json.put(status, \"reply_mode\", replyModeAtUpload)"));
+        assertTrue(source.contains("Json.put(status, \"spoken_reply_enabled\", spokenReplyEnabledAtUpload)"));
         assertTrue(source.contains("Json.put(status, \"server_telemetry\", parsed.telemetry())"));
-        assertTrue(store.contains("public JSONObject prepend(JSONObject cardJson)"));
-        assertTrue(store.contains("cards.add(card);"));
-        assertTrue(store.contains("cards.addAll(cards());"));
         assertFalse(Pattern.compile("Log\\.[^;]*getPuckyTurnAuthToken", Pattern.DOTALL).matcher(source).find());
     }
 
@@ -298,8 +294,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(finishBody.contains("Json.put(blocked, \"upload_configured\", false)"));
         assertTrue(finishBody.contains("deleteQuietly(audio)"));
         assertTrue(finishBody.contains("markStatus(\"upload_blocked\", blocked, null)"));
-        assertTrue(finishBody.contains("PuckyTurnKeywordInterceptor.shared(context)"));
-        assertTrue(finishBody.contains("if (keywordIntercept.optBoolean(\"handled\", false))"));
+        assertFalse(finishBody.contains("PuckyTurnKeywordInterceptor.shared(context)"));
+        assertFalse(finishBody.contains("if (keywordIntercept.optBoolean(\"handled\", false))"));
         assertTrue(source.contains("|| \"upload_blocked\".equals(state)"));
         assertFalse(finishBody.contains("markStatus(\"failed\", detail, \"not_configured\")"));
     }
