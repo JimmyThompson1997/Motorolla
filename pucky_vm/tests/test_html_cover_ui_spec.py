@@ -171,9 +171,14 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
     assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
     assert "const filters = uniqueFeedIconFilters();" in app
-    assert 'iconSvg("archive_folder", { filled: false })' in app
+    assert 'iconSvg("archive_folder", { filled: state.showArchivedFeed })' in app
     assert '"route-tray-archive-icon"' in app
     assert '"route-tray-divider"' in app
+    assert "state.showArchivedFeed = true;" in app
+    assert "state.showArchivedFeed = false;" in app
+    assert "state.excludedFeedIcons = new Set(uniqueFeedIcons().filter(icon => icon !== filter.key));" in app
+    assert "const selected = !state.showArchivedFeed && isFeedIconIncluded(filter.key);" in app
+    assert "? archived" in app
     assert 'label: "All replies"' not in app
     assert 'data-filter-icon="all"' not in app
     assert "button.style.setProperty(\"--filter-accent\"" in app
@@ -195,6 +200,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "pointer-events: auto;" in styles
     assert ".route-tray-label" not in styles
     assert ".route-tray-archive-icon" in styles
+    assert ".route-tray-archive-icon.is-selected" in styles
     assert ".route-tray-divider" in styles
     assert ".route-tray-icons" in styles
     assert ".filter-icon.is-selected" in styles
@@ -204,27 +210,31 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
-def test_home_cards_drop_archive_swipe_affordances() -> None:
+def test_home_cards_use_non_destructive_side_slot_and_archive_view() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' not in app
-    assert "archivedSessionIds: loadArchivedSessionIds()" not in app
-    assert "function loadArchivedSessionIds()" not in app
+    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
+    assert "showArchivedFeed: false" in app
+    assert "archivedSessionIds: loadArchivedSessionIds()" in app
+    assert "function loadArchivedSessionIds()" in app
     assert "function persistArchivedSessionIds()" not in app
     assert "function archiveHomeCard(card, wrapper, cardEl)" not in app
     assert "state.archivedSessionIds.add(sessionId)" not in app
     assert "persistArchivedSessionIds();" not in app
     assert "filteredFeedCards()" in app
-    assert "!state.archivedSessionIds.has(card.session_id)" not in app
+    assert "state.archivedSessionIds.has(sessionId)" in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
-    assert "installCardSwipe(card, wrapper, cardEl);" not in app
+    assert "installCardSideSlot(wrapper, cardEl);" in app
+    assert "function installCardSideSlot(wrapper, cardEl)" in app
     assert 'card-swipe-reveal card-swipe-archive' not in app
     assert 'card-swipe-reveal card-swipe-voice' not in app
     assert "CARD_SWIPE_ARCHIVE_THRESHOLD" not in app
     assert "CARD_SWIPE_REVEAL_MAX" not in app
     assert "CARD_SWIPE_INTENT_PX" not in app
+    assert "CARD_SLOT_REVEAL_MAX" in app
+    assert "CARD_SLOT_OPEN_THRESHOLD" in app
     assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
     assert ".card-wrap.is-swiping .card" not in styles
     assert ".card-wrap.is-archiving" not in styles
@@ -233,6 +243,9 @@ def test_home_cards_drop_archive_swipe_affordances() -> None:
     assert ".card-swipe-archive" not in styles
     assert ".card-swipe-voice" not in styles
     assert ".card-swipe-pill" not in styles
+    assert ".card-side-slot" in styles
+    assert ".card-side-divider" in styles
+    assert ".card-wrap.is-side-slot-open .card-side-slot" in styles
 
 
 def test_map_tab_renders_real_maplibre_location_surface() -> None:

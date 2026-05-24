@@ -1,6 +1,7 @@
 (() => {
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
+  const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const COMPLETE_EPSILON_MS = 500;
@@ -11,6 +12,9 @@
   const FEED_REFRESH_HOLD_OFFSET = 46;
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
+  const CARD_SLOT_INTENT_PX = 12;
+  const CARD_SLOT_REVEAL_MAX = 112;
+  const CARD_SLOT_OPEN_THRESHOLD = 64;
   const MAP_TILE_URLS = [
     "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
     "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
@@ -308,6 +312,8 @@
     traceCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
+    showArchivedFeed: false,
+    archivedSessionIds: loadArchivedSessionIds(),
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -866,10 +872,17 @@
 
   function homeIconFilterTrayView() {
     const shell = el("div", "route-tray-shell");
-    const archiveIcon = el("span", "route-tray-archive-icon");
+    const archiveIcon = el("button", state.showArchivedFeed ? "route-tray-archive-icon is-selected" : "route-tray-archive-icon");
+    archiveIcon.type = "button";
     archiveIcon.setAttribute("aria-label", "Archive");
     archiveIcon.setAttribute("title", "Archive");
-    archiveIcon.innerHTML = iconSvg("archive_folder", { filled: false });
+    archiveIcon.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
+    archiveIcon.innerHTML = iconSvg("archive_folder", { filled: state.showArchivedFeed });
+    archiveIcon.addEventListener("click", () => {
+      state.showArchivedFeed = true;
+      render();
+      persistNavState();
+    });
     const divider = el("span", "route-tray-divider");
     divider.setAttribute("aria-hidden", "true");
     const icons = el("div", "route-tray-icons");
@@ -880,7 +893,7 @@
   }
 
   function filterIconButton(filter) {
-    const selected = isFeedIconIncluded(filter.key);
+    const selected = !state.showArchivedFeed && isFeedIconIncluded(filter.key);
     const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
     button.type = "button";
     button.dataset.filterIcon = filter.key;
@@ -889,6 +902,14 @@
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = iconSvg(filter.icon, { filled: selected });
     button.addEventListener("click", () => {
+      if (state.showArchivedFeed) {
+        state.showArchivedFeed = false;
+        state.excludedFeedIcons = new Set(uniqueFeedIcons().filter(icon => icon !== filter.key));
+        persistFeedIconExcludes();
+        render();
+        persistNavState();
+        return;
+      }
       toggleFeedIcon(filter.key);
     });
     return button;
@@ -931,15 +952,21 @@
     const empty = el("div", "empty feed-filter-empty");
     empty.append(
       el("div", "feed-filter-empty-icon", ""),
-      el("div", "", "No selected replies."),
-      el("small", "", "Tap icons above to add card types back to the feed.")
+      el("div", "", state.showArchivedFeed ? "No archived replies." : "No selected replies."),
+      el("small", "", state.showArchivedFeed ? "Archived replies from this device will appear here." : "Tap icons above to add card types back to the feed.")
     );
-    empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg("mail", { filled: true });
+    empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg(state.showArchivedFeed ? "archive_folder" : "mail", { filled: true });
     return empty;
   }
 
   function filteredFeedCards() {
-    return state.cards.filter(card => isFeedIconIncluded(cardIconKey(card)));
+    return state.cards.filter(card => {
+      const sessionId = cardSessionId(card);
+      const archived = Boolean(sessionId && state.archivedSessionIds.has(sessionId));
+      return state.showArchivedFeed
+        ? archived
+        : !archived && isFeedIconIncluded(cardIconKey(card));
+    });
   }
 
   function uniqueFeedIcons() {
@@ -1638,6 +1665,14 @@
 
   function cardView(card) {
     const wrapper = el("div", "card-wrap");
+    const sideSlot = el("div", "card-side-slot");
+    sideSlot.setAttribute("aria-hidden", "true");
+    const speaking = el("span", "card-side-icon card-side-speaking");
+    speaking.innerHTML = iconSvg("record_voice_over", { filled: true });
+    const divider = el("span", "card-side-divider");
+    const archive = el("span", "card-side-icon card-side-archive");
+    archive.innerHTML = iconSvg("archive_folder", { filled: true });
+    sideSlot.append(speaking, divider, archive);
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
@@ -1702,7 +1737,8 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    wrapper.append(cardEl);
+    wrapper.append(sideSlot, cardEl);
+    installCardSideSlot(wrapper, cardEl);
     return wrapper;
   }
 
@@ -3331,6 +3367,173 @@
     return button;
   }
 
+  function installCardSideSlot(wrapper, cardEl) {
+    let startX = 0;
+    let startY = 0;
+    let active = false;
+    let confirmed = false;
+    let pointerId = null;
+    let pointerCaptured = false;
+    let raf = 0;
+    let pendingOffset = 0;
+    let openAtStart = false;
+
+    const clampOffset = value => Math.max(0, Math.min(CARD_SLOT_REVEAL_MAX, value));
+    const isOpen = () => wrapper.classList.contains("is-side-slot-open");
+    const applyOffset = value => {
+      const offset = clampOffset(value);
+      cardEl.style.transform = offset ? `translateX(${offset}px)` : "";
+      wrapper.classList.toggle("is-side-slot-active", offset > 0);
+      wrapper.classList.toggle("is-side-slot-open", offset >= CARD_SLOT_OPEN_THRESHOLD);
+    };
+    const scheduleApply = value => {
+      pendingOffset = value;
+      if (!raf) {
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          applyOffset(pendingOffset);
+        });
+      }
+    };
+    const suppressNextClick = () => {
+      wrapper.dataset.cardSlotSuppress = "true";
+      window.setTimeout(() => {
+        if (wrapper.dataset.cardSlotSuppress === "true") {
+          delete wrapper.dataset.cardSlotSuppress;
+        }
+      }, 350);
+    };
+    const releasePointer = () => {
+      if (pointerId !== null && pointerCaptured && wrapper.releasePointerCapture) {
+        try {
+          wrapper.releasePointerCapture(pointerId);
+        } catch (_) {
+          // Pointer capture can already be gone after pointer cancellation.
+        }
+      }
+      pointerId = null;
+      pointerCaptured = false;
+    };
+    const resetGesture = () => {
+      active = false;
+      confirmed = false;
+      releasePointer();
+      wrapper.classList.remove("is-side-slot-dragging");
+    };
+    const begin = (x, y, target, pointer = null) => {
+      if (state.route !== "feed" || state.feedRefreshing || isDragIgnoredTarget(target)) {
+        return;
+      }
+      startX = x;
+      startY = y;
+      active = true;
+      confirmed = false;
+      pointerId = pointer;
+      pointerCaptured = false;
+      openAtStart = isOpen();
+      pendingOffset = openAtStart ? CARD_SLOT_REVEAL_MAX : 0;
+    };
+    const maybeCapturePointer = () => {
+      if (pointerId !== null && wrapper.setPointerCapture && !pointerCaptured) {
+        try {
+          wrapper.setPointerCapture(pointerId);
+          pointerCaptured = true;
+        } catch (_) {
+          pointerCaptured = false;
+        }
+      }
+    };
+    const move = (x, y, event) => {
+      if (!active) {
+        return;
+      }
+      const dx = x - startX;
+      const dy = y - startY;
+      if (!confirmed) {
+        const absX = Math.abs(dx);
+        const absY = Math.abs(dy);
+        if (absX < CARD_SLOT_INTENT_PX && absY < CARD_SLOT_INTENT_PX) {
+          return;
+        }
+        if (absX <= absY * 1.2) {
+          resetGesture();
+          return;
+        }
+        confirmed = true;
+        suppressNextClick();
+        maybeCapturePointer();
+        wrapper.classList.add("is-side-slot-dragging");
+      }
+      if (event && event.cancelable) {
+        event.preventDefault();
+      }
+      const base = openAtStart ? CARD_SLOT_REVEAL_MAX : 0;
+      scheduleApply(base + dx);
+    };
+    const finish = (x) => {
+      if (!active) {
+        return;
+      }
+      const dx = x - startX;
+      const base = openAtStart ? CARD_SLOT_REVEAL_MAX : 0;
+      const offset = clampOffset(base + dx);
+      if (confirmed) {
+        suppressNextClick();
+      }
+      applyOffset(offset >= CARD_SLOT_OPEN_THRESHOLD ? CARD_SLOT_REVEAL_MAX : 0);
+      resetGesture();
+    };
+
+    wrapper.addEventListener("click", event => {
+      if (wrapper.dataset.cardSlotSuppress === "true") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        delete wrapper.dataset.cardSlotSuppress;
+      }
+    }, true);
+    wrapper.addEventListener("pointerdown", event => {
+      begin(event.clientX, event.clientY, event.target, event.pointerId);
+    });
+    wrapper.addEventListener("pointermove", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      move(event.clientX, event.clientY, event);
+    });
+    wrapper.addEventListener("pointerup", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      finish(event.clientX);
+    });
+    wrapper.addEventListener("pointercancel", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      applyOffset(isOpen() ? CARD_SLOT_REVEAL_MAX : 0);
+      resetGesture();
+    });
+    wrapper.addEventListener("touchstart", event => {
+      if (event.touches.length) {
+        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
+      }
+    }, { passive: true });
+    wrapper.addEventListener("touchmove", event => {
+      if (event.touches.length) {
+        move(event.touches[0].clientX, event.touches[0].clientY, event);
+      }
+    }, { passive: false });
+    wrapper.addEventListener("touchend", event => {
+      const touch = event.changedTouches[0];
+      finish(touch ? touch.clientX : startX);
+    });
+    wrapper.addEventListener("touchcancel", () => {
+      applyOffset(isOpen() ? CARD_SLOT_REVEAL_MAX : 0);
+      resetGesture();
+    });
+  }
+
   function installVerticalDismiss(target, panel, onDismiss = dismissTraceSheet) {
     installDrag(target, {
       axis: "y",
@@ -4510,6 +4713,20 @@
       }));
     } catch (_) {
       // Navigation restore is a convenience layer; the UI should keep working without storage.
+    }
+  }
+
+  function loadArchivedSessionIds() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CARD_HOME_STATE_KEY) || "{}");
+      const archived = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.archived_session_ids)
+          ? parsed.archived_session_ids
+          : [];
+      return new Set(archived.map(value => String(value)).filter(Boolean));
+    } catch (_) {
+      return new Set();
     }
   }
 
