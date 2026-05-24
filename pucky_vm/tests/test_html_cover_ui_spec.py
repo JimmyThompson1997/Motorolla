@@ -706,7 +706,9 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert 'shell.addEventListener("click"' not in app
     assert "function formatVideoTime(seconds)" in app
     assert "await video.play()" in app
-    assert "preferDataUrl: true" not in app
+    assert "async function resolveMediaSrc(image, options = {})" in app
+    assert "preferDataUrl: isVideoMedia(image) ? true : options.preferDataUrl" in app
+    assert "video.src = await resolveMediaSrc(item, {" in app
     assert "!options.preferDataUrl && window.PuckyAndroid" in app
     assert '"video-controls"' in app
     assert '"video-timeline"' in app

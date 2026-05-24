@@ -1484,7 +1484,7 @@
     installDetailScrollPersistence(content, "attachment");
     restoreScrollPosition(content, options.scrollTop);
     try {
-      video.src = await resolveArtifactUrl(item, {
+      video.src = await resolveMediaSrc(item, {
         maxBytes: 64 * 1024 * 1024
       });
     } catch (error) {
@@ -1597,8 +1597,11 @@
     return resolveArtifactUrl(image);
   }
 
-  async function resolveMediaSrc(image) {
-    return resolveArtifactUrl(image);
+  async function resolveMediaSrc(image, options = {}) {
+    return resolveArtifactUrl(image, {
+      ...options,
+      preferDataUrl: isVideoMedia(image) ? true : options.preferDataUrl
+    });
   }
 
   async function resolveArtifactUrl(item, options = {}) {
