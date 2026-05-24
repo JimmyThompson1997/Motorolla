@@ -186,7 +186,9 @@ public final class RecipeStepExecutor {
         Json.put(event, "device_id", settings.getDeviceId());
         Json.put(event, "timestamp", Instant.now().toString());
         Json.put(event, "type", step.optString("event_type", "agent.recipe_triggered"));
-        Json.put(event, "source", "volume_down_lab");
+        Json.put(event, "source", session == null
+                ? "volume_down_lab"
+                : session.optString("source", "volume_down_lab"));
         Json.put(event, "recipe_id", match.id);
         Json.put(event, "recipe_phrase", match.phrase);
         Json.put(event, "raw_transcript", match.rawTranscript);

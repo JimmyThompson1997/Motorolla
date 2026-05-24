@@ -122,6 +122,8 @@ public final class SpeechEchoLabController {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.speech_echo_lab_status.v1");
         Json.put(out, "state", active == null ? "Idle" : active.optString("state", "unknown"));
+        Json.put(out, "button_surface", "reserved");
+        Json.put(out, "product_path", "volume_up_walkie_release_keyword_intercept");
         Json.put(out, "config", configJson());
         Json.put(out, "route", routeDetector.snapshot());
         Json.put(out, "active_session", active == null ? JSONObject.NULL : active);
@@ -139,79 +141,24 @@ public final class SpeechEchoLabController {
     }
 
     public synchronized JSONObject start(JSONObject args) {
-        if (args == null) {
-            args = new JSONObject();
-        }
-        if (active != null) {
-            JSONObject out = new JSONObject();
-            Json.put(out, "schema", "pucky.speech_echo_lab_start.v1");
-            Json.put(out, "result", "already_active");
-            Json.put(out, "session", active);
-            return out;
-        }
-
-        JSONObject config = mergedConfig(args);
-        JSONObject route = routeDetector.snapshot();
-        String routeRequired = config.optString(ROUTE_REQUIRED, "none");
-        if (!routeAllowed(routeRequired, route.optString("route", "Unknown"))) {
-            JSONObject session = newSession(config, route);
-            failSession(session, "route_requirement_not_met",
-                    "route_required=" + routeRequired + " current_route=" + route.optString("route", "Unknown"));
-            return startResult(session, "failed");
-        }
-
-        JSONObject session = newSession(config, route);
-        active = session;
-        String engine = session.optString("engine", ENGINE_ANDROID_DIRECT_ECHO);
-        if (ENGINE_ANDROID_DIRECT_ECHO.equals(engine)) {
-            return startDirectEcho(session, args == null ? new JSONObject() : args);
-        }
-        if (ENGINE_ANDROID_CAPTURED_AUDIO_ECHO.equals(engine)) {
-            return startCapturedAudioEcho(session);
-        }
-        return startFrameBus(session);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.speech_echo_lab_start.v1");
+        Json.put(out, "result", "reserved_noop");
+        Json.put(out, "state", active == null ? "Idle" : active.optString("state", "unknown"));
+        Json.put(out, "reserved", true);
+        Json.put(out, "message", "Volume-down walkie lab is reserved. Product keyword intercept now runs on volume-up release.");
+        Json.put(out, "product_path", "pucky.turn.stop");
+        return out;
     }
 
     public synchronized JSONObject stop(JSONObject args) {
-        if (args == null) {
-            args = new JSONObject();
-        }
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.speech_echo_lab_stop.v1");
-        if (active == null) {
-            Json.put(out, "result", "no_active_session");
-            Json.put(out, "state", "Idle");
-            return out;
-        }
-        JSONObject session = active;
-        Json.put(session, "release_at", Instant.now().toString());
-        Json.put(session, "stop_reason", args.optString("reason", "button_release"));
-        String engine = session.optString("engine", ENGINE_ANDROID_DIRECT_ECHO);
-        if (ENGINE_ANDROID_DIRECT_ECHO.equals(engine)) {
-            JSONObject directStop = directEcho.stop(args);
-            Json.put(session, "state", "Recognizing");
-            Json.put(session, "direct_echo_stop", directStop);
-            appendSession(session);
-            active = null;
-            scheduleDirectEchoSync();
-            Json.put(out, "result", "stopped_direct_echo");
-            Json.put(out, "session", session);
-            return out;
-        }
-        if (ENGINE_ANDROID_CAPTURED_AUDIO_ECHO.equals(engine)) {
-            return stopCapturedAudioEcho(out, session);
-        }
-
-        JSONObject busStop = frameBus == null ? new JSONObject() : frameBus.stop();
-        Json.put(session, "state", "Completed");
-        Json.put(session, "completed_at", Instant.now().toString());
-        Json.put(session, "frame_bus_stop", busStop);
-        Json.put(session, "metrics", busStop.optJSONObject("snapshot"));
-        appendSession(session);
-        active = null;
-        frameBus = null;
-        Json.put(out, "result", "stopped_frame_bus");
-        Json.put(out, "session", session);
+        Json.put(out, "result", "reserved_noop");
+        Json.put(out, "state", active == null ? "Idle" : active.optString("state", "unknown"));
+        Json.put(out, "reserved", true);
+        Json.put(out, "message", "Volume-down walkie lab is reserved. Product keyword intercept now runs on volume-up release.");
+        Json.put(out, "product_path", "pucky.turn.stop");
         return out;
     }
 

@@ -154,6 +154,15 @@ public final class SpeechRecipeRegistry {
         return match(transcript, activeRecipes(fallback, stored));
     }
 
+    public static RecipeMatch matchStoredOnly(String transcript, String storedRaw) {
+        BundleResult stored = loadStoredDetailed(storedRaw);
+        JSONArray recipes = stored.bundle.optJSONArray("recipes");
+        if (recipes == null || recipes.length() == 0) {
+            return RecipeMatch.none(transcript, SpeechKeywordMatcher.normalize(transcript));
+        }
+        return match(transcript, recipes);
+    }
+
     public static RecipeMatch match(String transcript, JSONArray recipes) {
         String normalized = SpeechKeywordMatcher.normalize(transcript);
         if (normalized.isEmpty()) {

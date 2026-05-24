@@ -176,12 +176,16 @@ public final class PuckyClipboardController {
     }
 
     public static JSONObject entryFromLabSession(JSONObject session) {
+        return entryFromRecipeSession(session, "volume_down_lab");
+    }
+
+    public static JSONObject entryFromRecipeSession(JSONObject session, String defaultSource) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.clipboard_entry.v1");
         if (!session.optString("pucky_clipboard_entry_id", "").trim().isEmpty()) {
             Json.put(out, "entry_id", session.optString("pucky_clipboard_entry_id", ""));
         }
-        Json.put(out, "source", "volume_down_lab");
+        Json.put(out, "source", session.optString("source", defaultSource));
         Json.put(out, "session_id", session.optString("session_id", ""));
         Json.put(out, "raw_transcript", session.optString("keyword_raw_transcript",
                 session.optString("final_transcript", "")));

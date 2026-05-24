@@ -102,10 +102,13 @@ depend on Google Play services. Long-running location traces should remain expli
 that a third-party podcast or music app acted unless that app has an active media session. `media.open_uri`
 uses Android's normal user-mediated `ACTION_VIEW` handling for media/podcast URLs.
 
-Microphone file capture is implemented with Android `MediaRecorder` and app-owned `.m4a` artifacts.
-Android native speech recognition is implemented with `SpeechRecognizer` as an experimental live-text path;
-it keeps a local transcript history and posts successful transcripts to the broker reply inbox when connected.
-Volume-up walkie turns use local `.m4a` capture, `/api/turn`, VM stage polling, and Pucky-native reply playback.
+Microphone file capture is implemented with a native `AudioFrameBus` -> PCM -> app-owned `.wav` path.
+Android native speech recognition is implemented with `SpeechRecognizer` as both an experimental live-text path
+and a local walkie keyword classifier. The local classifier is intercept-only: if an exact VM-owned cached keyword
+recipe matches, the APK handles it locally; otherwise the classifier transcript is discarded and the raw walkie audio
+continues to `/api/turn`.
+Volume-up walkie turns use local `.wav` capture, local exact-keyword interception on release, `/api/turn`, VM stage
+polling, and Pucky-native reply playback.
 Boot persistence hardening and Device Owner mode remain later milestones.
 
 ## Foreground button policy
@@ -119,10 +122,12 @@ The default policy is deliberately narrow:
 - volume-down hold: `speech.echo.lab.start`
 - volume-down hold release: `speech.echo.lab.stop`
 
-The volume-up hold/release actions are wired to a raw Pucky audio turn. Hold starts local microphone capture;
-release finalizes the capture, posts it to `/api/turn`, polls VM stage status, saves one reply card, and plays the
-returned audio through the native player. `voice.capture.*` and `speech.native.*` endpoints remain available for
-diagnostics.
+The volume-up hold/release actions are the single live walkie product path. Hold starts local microphone capture;
+release finalizes the capture, runs one local Android exact-keyword classification pass, and either handles a matched
+recipe locally or posts the raw audio to `/api/turn`, polls VM stage status, saves one reply card, and plays the
+returned audio through the native player. The volume-down `speech.echo.lab.*` surface stays present as a reserved
+compatibility endpoint for future remapping; it is not a second live walkie product path. `voice.capture.*` and
+`speech.native.*` endpoints remain available for diagnostics.
 
 ## Cover UI boundary
 

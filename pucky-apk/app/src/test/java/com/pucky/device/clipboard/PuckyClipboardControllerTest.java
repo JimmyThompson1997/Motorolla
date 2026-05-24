@@ -71,4 +71,15 @@ public final class PuckyClipboardControllerTest {
         assertFalse(entry.has("android_system_clipboard"));
         assertTrue(PuckyClipboardController.pruned(new JSONArray().put(entry), Instant.now()).length() == 1);
     }
+
+    @Test
+    public void recipeSessionEntryCanUseVolumeUpWalkieSource() throws Exception {
+        JSONObject entry = PuckyClipboardController.entryFromRecipeSession(new JSONObject()
+                .put("source", "volume_up_walkie")
+                .put("session_id", "turn_1")
+                .put("keyword_action_status", "succeeded"), "volume_down_lab");
+
+        assertEquals("volume_up_walkie", entry.optString("source"));
+        assertEquals("turn_1", entry.optString("session_id"));
+    }
 }

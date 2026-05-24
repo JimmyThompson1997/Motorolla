@@ -139,6 +139,18 @@ public final class SpeechRecipeRegistryTest {
         assertTrue(schema.toString().contains("torch.set"));
     }
 
+    @Test
+    public void storedOnlyMatchDoesNotFallBackToApkBuiltins() throws Exception {
+        SpeechRecipeRegistry.RecipeMatch none = SpeechRecipeRegistry.matchStoredOnly("hey pucky", "");
+        JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle(
+                recipe("flashlight", phrases("flashlight"), deviceStep("torch.set", new JSONObject()))), "vm_sync");
+        SpeechRecipeRegistry.RecipeMatch yes = SpeechRecipeRegistry.matchStoredOnly("flashlight", normalized.toString());
+
+        assertFalse(none.matched);
+        assertTrue(yes.matched);
+        assertEquals("flashlight", yes.id);
+    }
+
     private static JSONObject bundle(JSONObject... recipes) throws Exception {
         JSONArray array = new JSONArray();
         for (JSONObject recipe : recipes) {

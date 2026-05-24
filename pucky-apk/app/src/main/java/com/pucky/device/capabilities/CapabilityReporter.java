@@ -159,7 +159,7 @@ public final class CapabilityReporter {
                 "Strict on-device SpeechRecognizer hold-to-talk echo test with formatted final transcripts, language-detection logging, and Android TTS playback. No raw audio capture, broker, or agent call."));
         Json.add(out, cap("speech.echo_lab", "speech.echo.lab.status/speech.echo.lab.start/speech.echo.lab.stop/speech.echo.lab.last/speech.echo.lab.list/speech.echo.lab.config.get/speech.echo.lab.config.set/pucky.recipes.sync/pucky.recipes.list/pucky.recipes.test/pucky.recipes.clear/pucky.recipes.schema/device.primitives.list",
                 speechEchoStatus(), "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Volume-down-only audio lab with exact-utterance VM-owned recipes. The APK caches recipe bundles, executes allowlisted device primitives locally, relays vm_event steps to the broker, and records matches to Pucky Clipboard."));
+                "Reserved volume-down lab surface plus VM-owned recipes and registry. Product keyword interception now happens on volume-up walkie release; this surface remains for recipe sync, inspection, and future remapping."));
         Json.add(out, cap("file.download", "file.download", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads HTTP/HTTPS URLs into Pucky app-owned storage."));
         Json.add(out, cap("file.put_base64", "file.put_base64", "implemented_untested", "yes", "privacy_sensitive",
@@ -201,7 +201,7 @@ public final class CapabilityReporter {
                 "not_recorded", "Stores app-local playback bookmarks for audio/podcast-style resume points."));
         Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/pucky.turn.start/pucky.turn.stop", "implemented_untested",
                 "foreground_only", "quiet", null, "not_recorded",
-                "Captures configurable volume-button gestures while Pucky Activity is foreground. Current policy keeps single volume presses as normal media volume, maps volume-up hold/release to pucky.turn.start/stop, and maps volume-down hold/release to speech.echo.lab.start/stop. Global/screen-off capture remains future Device Owner/root research."));
+                "Captures configurable volume-button gestures while Pucky Activity is foreground. Current policy keeps single volume presses as normal media volume, maps volume-up hold/release to the unified walkie path with local keyword intercept on release, and keeps volume-down hold/release on reserved speech.echo.lab endpoints. Global/screen-off capture remains future Device Owner/root research."));
         Json.add(out, cap("timer.local", "timer.set", notificationStatusForTimer(), "yes", "visible",
                 Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "AlarmManager elapsed timer; notification requires notification permission."));
         Json.add(out, cap("timer.cancel", "timer.cancel", "implemented_untested", "yes", "quiet", null, "not_recorded",

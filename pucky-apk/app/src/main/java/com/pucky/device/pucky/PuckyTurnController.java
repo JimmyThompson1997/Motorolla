@@ -11,6 +11,7 @@ import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.speech.PuckyTurnKeywordInterceptor;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
@@ -290,7 +291,7 @@ public final class PuckyTurnController {
             String localSessionId = capture.optString("session_id", fallbackLocalSessionId);
             JSONObject uploading = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
             Json.put(uploading, "state", "uploading");
-            Json.put(uploading, "phase", "upload_started");
+            Json.put(uploading, "phase", "local_keyword_intercept");
             Json.put(uploading, "turn_id", clientTurnId);
             Json.put(uploading, "speech_gate", speechGate);
             Json.put(uploading, "speech_detected", true);
@@ -315,6 +316,50 @@ public final class PuckyTurnController {
             }
             Json.put(uploading, "upload_configured", true);
             Json.put(uploading, "local_capture_ready", true);
+            markStatus("uploading", uploading, null);
+            JSONObject keywordIntercept = PuckyTurnKeywordInterceptor.shared(context)
+                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate);
+            Json.put(uploading, "local_keyword_intercept", keywordIntercept);
+            Json.put(uploading, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
+            Json.put(uploading, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
+            Json.put(uploading, "local_recipe_matched", keywordIntercept.optBoolean("matched", false));
+            Json.put(uploading, "local_recipe_id",
+                    keywordIntercept.optJSONObject("match") == null
+                            ? JSONObject.NULL
+                            : keywordIntercept.optJSONObject("match").optString("id", ""));
+            if (keywordIntercept.optBoolean("handled", false)) {
+                boolean deleted = deleteQuietly(audio);
+                JSONObject handled = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
+                Json.put(handled, "turn_id", clientTurnId);
+                Json.put(handled, "speech_gate", speechGate);
+                Json.put(handled, "speech_detected", true);
+                Json.put(handled, "capture_finalize_ms", Math.max(0L, System.currentTimeMillis() - finalizeStartedMs));
+                Json.put(handled, "local_keyword_intercept", keywordIntercept);
+                Json.put(handled, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
+                Json.put(handled, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
+                Json.put(handled, "local_recipe_matched", keywordIntercept.optBoolean("matched", false));
+                Json.put(handled, "local_recipe_id",
+                        keywordIntercept.optJSONObject("match") == null
+                                ? JSONObject.NULL
+                                : keywordIntercept.optJSONObject("match").optString("id", ""));
+                Json.put(handled, "keyword_action_status", keywordIntercept.optString("execution_status", ""));
+                Json.put(handled, "keyword_action_result", keywordIntercept.opt("execution"));
+                copyIfPresent(handled, keywordIntercept, "pucky_clipboard_entry_id");
+                Json.put(handled, "deleted_file", deleted);
+                boolean failed = "failed".equals(keywordIntercept.optString("execution_status", ""))
+                        || !"".equals(keywordIntercept.optString("error_code", ""));
+                Json.put(handled, "state", failed ? "failed" : "completed");
+                Json.put(handled, "phase", failed ? "local_keyword_failed" : "local_keyword_handled");
+                if (failed) {
+                    String error = keywordIntercept.optString("error_message",
+                            keywordIntercept.optString("error_code", "keyword_action_failed"));
+                    markStatus("failed", handled, error);
+                } else {
+                    markStatus("completed", handled, null);
+                }
+                return;
+            }
+            Json.put(uploading, "phase", "upload_started");
             markStatus("uploading", uploading, null);
             submitAsync(localSessionId, clientTurnId, audioBytes);
         } catch (CommandException exc) {
@@ -648,6 +693,12 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "reply_text_chars");
         copyIfPresent(record, detail, "reply_audio_bytes");
         copyIfPresent(record, detail, "reply_audio_path");
+        copyIfPresent(record, detail, "local_classifier_status");
+        copyIfPresent(record, detail, "local_classifier_transcript");
+        copyIfPresent(record, detail, "local_recipe_matched");
+        copyIfPresent(record, detail, "local_recipe_id");
+        copyIfPresent(record, detail, "keyword_action_status");
+        copyIfPresent(record, detail, "pucky_clipboard_entry_id");
         copyIfPresent(record, detail, "latency_total_ms");
         copyIfPresent(record, detail, "latency_server_total_ms");
         copyIfPresent(record, detail, "accepted_chime");
