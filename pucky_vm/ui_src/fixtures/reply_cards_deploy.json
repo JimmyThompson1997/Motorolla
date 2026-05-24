@@ -57,19 +57,19 @@
               "alt": "Actual local DOCX from from_pocket_computers_to_planetary_platforms_manuscript_to_date_chapters_0_7.docx"
             },
             {
-              "artifact": "real-video-4.mp4",
+              "artifact": "real-video-4-webview.mp4",
               "mime_type": "video/mp4",
               "title": "video_4.mp4",
               "alt": "Actual local MP4 from Downloads"
             },
             {
-              "artifact": "real-clipchamp-demo.mp4",
+              "artifact": "real-clipchamp-demo-webview.mp4",
               "mime_type": "video/mp4",
               "title": "Clipchamp sample MP4",
               "alt": "Actual local MP4 from Downloads, exported by Clipchamp"
             },
             {
-              "artifact": "real-pucky-proof.mp4",
+              "artifact": "real-pucky-proof-webview.mp4",
               "mime_type": "video/mp4",
               "title": "Pucky proof MP4",
               "alt": "Actual local MP4 from a Pucky keyword manual proof session"
