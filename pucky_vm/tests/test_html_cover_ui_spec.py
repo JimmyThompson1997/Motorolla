@@ -239,6 +239,7 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)" in app
     assert "Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX" in app
     assert "shouldSuppressCardActivation()" in app
+    assert "!window.PointerEvent" not in app
     assert 'card-swipe-reveal card-swipe-archive' not in app
     assert 'card-swipe-reveal card-swipe-voice' not in app
     assert "CARD_SWIPE_ARCHIVE_THRESHOLD" not in app

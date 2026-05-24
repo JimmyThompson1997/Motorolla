@@ -2817,24 +2817,20 @@
       finish();
     });
     wrapper.addEventListener("touchstart", event => {
-      if (!window.PointerEvent && event.touches.length) {
+      if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
       }
     }, { passive: true });
     wrapper.addEventListener("touchmove", event => {
-      if (!window.PointerEvent && event.touches.length) {
+      if (event.touches.length) {
         move(event.touches[0].clientX, event.touches[0].clientY);
       }
     }, { passive: true });
     wrapper.addEventListener("touchend", () => {
-      if (!window.PointerEvent) {
-        finish();
-      }
+      finish();
     });
     wrapper.addEventListener("touchcancel", () => {
-      if (!window.PointerEvent) {
-        finish();
-      }
+      finish();
     });
   }
 
