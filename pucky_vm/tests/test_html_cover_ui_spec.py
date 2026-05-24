@@ -189,6 +189,40 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
+def test_home_cards_support_local_archive_and_swipe_affordances() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
+    assert "archivedSessionIds: loadArchivedSessionIds()" in app
+    assert "function loadArchivedSessionIds()" in app
+    assert "function persistArchivedSessionIds()" in app
+    assert "function archiveHomeCard(card, wrapper, cardEl)" in app
+    assert "state.archivedSessionIds.add(sessionId)" in app
+    assert "persistArchivedSessionIds();" in app
+    assert "filteredFeedCards()" in app
+    assert "!state.archivedSessionIds.has(card.session_id)" in app
+    assert "state.cards = state.cards.filter" not in app
+    assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
+    assert "installCardSwipe(card, wrapper, cardEl);" in app
+    assert 'card-swipe-reveal card-swipe-archive' in app
+    assert 'card-swipe-reveal card-swipe-voice' in app
+    assert 'iconSvg("record_voice_over", { filled: true })' in app
+    assert "CARD_SWIPE_ARCHIVE_THRESHOLD" in app
+    assert "CARD_SWIPE_REVEAL_MAX" in app
+    assert "CARD_SWIPE_INTENT_PX" in app
+    assert 'wrapper.dataset.cardSwipeSuppress = "true"' in app
+    assert 'wrapper.addEventListener("click", event => {' in app
+    assert "event.stopImmediatePropagation();" in app
+    assert ".card-wrap.is-swiping .card" in styles
+    assert ".card-wrap.is-archiving" in styles
+    assert ".card-wrap.is-collapsing" in styles
+    assert ".card-swipe-reveal" in styles
+    assert ".card-swipe-archive" in styles
+    assert ".card-swipe-voice" in styles
+    assert ".card-swipe-pill" in styles
+
+
 def test_map_tab_renders_location_tracker_surface() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -444,6 +478,13 @@ def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
 
     assert 'waveform(card, "wave-row"' in app
     assert '"action action-audio is-playing"' in app
+    assert "if (isActiveCard(card)) {" in app
+    click_body = app.split('audio.addEventListener("click", async (event) => {', 1)[1].split(
+        "      });\n      actions.append(audio);", 1
+    )[0]
+    assert "await toggleAudio(card);" in click_body
+    assert "showAudioDetail(card)" not in click_body
+    assert '? "Pause" : isActiveCard(card) ? "Resume" : "Play"' in app
     assert ".wave-row" in styles
     assert "width: 50%" not in styles
     assert "width: 100%" in styles

@@ -1,6 +1,7 @@
 (() => {
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
+  const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const COMPLETE_EPSILON_MS = 500;
@@ -11,6 +12,11 @@
   const FEED_REFRESH_HOLD_OFFSET = 46;
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
+  const CARD_SWIPE_INTENT_PX = 12;
+  const CARD_SWIPE_REVEAL_MAX = 118;
+  const CARD_SWIPE_ARCHIVE_THRESHOLD = 82;
+  const CARD_SWIPE_EXIT_MS = 190;
+  const CARD_SWIPE_COLLAPSE_MS = 230;
 
   const MATERIAL_SYMBOLS = {
     mail: {
@@ -60,6 +66,10 @@
     map: {
       filled: '<path d="m9 4 6 2.1 4.8-1.9c.6-.2 1.2.2 1.2.9v13.2c0 .4-.2.8-.6.9L15 21l-6-2.1-4.8 1.9c-.6.2-1.2-.2-1.2-.9V6.7c0-.4.2-.8.6-.9L9 4Zm3 6.2c0 2 3 5.2 3 5.2s3-3.2 3-5.2a3 3 0 1 0-6 0Zm3 1.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/>',
       outline: '<path d="m9 4 6 2.1 5-2v15l-5 1.9-6-2.1-5 2V6l5-2Z"/><path d="M9 4v14.9M15 6.1V21"/><path d="M12.6 10.2c0 1.7 2.4 4.3 2.4 4.3s2.4-2.6 2.4-4.3a2.4 2.4 0 1 0-4.8 0Z"/><circle cx="15" cy="10.2" r=".75"/>'
+    },
+    record_voice_over: {
+      filled: '<path d="M9 11.5A3.5 3.5 0 1 0 9 4.5a3.5 3.5 0 0 0 0 7Zm0 2c-2.7 0-6 1.35-6 3.35V19h12v-2.15c0-2-3.3-3.35-6-3.35Zm8.3-8.1-1.4 1.4a5.35 5.35 0 0 1 0 7.6l1.4 1.4a7.35 7.35 0 0 0 0-10.4Zm2.8-2.8-1.4 1.4a9.3 9.3 0 0 1 0 13.2l1.4 1.4a11.3 11.3 0 0 0 0-16Z"/>',
+      outline: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 18.5c.4-2.8 3-4.3 5.5-4.3s5.1 1.5 5.5 4.3"/><path d="M15.7 6.7a5.8 5.8 0 0 1 0 8.2"/><path d="M18.4 4a9.6 9.6 0 0 1 0 13.6"/>'
     },
     play_arrow: {
       filled: '<path d="M8 5v14l11-7L8 5Z"/>',
@@ -285,6 +295,7 @@
     traceCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
+    archivedSessionIds: loadArchivedSessionIds(),
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -922,10 +933,10 @@
   }
 
   function filteredFeedCards() {
-    if (!state.excludedFeedIcons.size) {
-      return state.cards;
-    }
-    return state.cards.filter(card => isFeedIconIncluded(cardIconKey(card)));
+    return state.cards.filter(card => {
+      const notArchived = !card.session_id || !state.archivedSessionIds.has(card.session_id);
+      return notArchived && isFeedIconIncluded(cardIconKey(card));
+    });
   }
 
   function uniqueFeedIcons() {
@@ -1272,6 +1283,15 @@
 
   function cardView(card) {
     const wrapper = el("div", "card-wrap");
+    const voiceReveal = el("div", "card-swipe-reveal card-swipe-voice");
+    const voicePill = el("span", "card-swipe-pill");
+    voicePill.innerHTML = iconSvg("record_voice_over", { filled: true });
+    voicePill.setAttribute("aria-label", "Future speaking action");
+    voiceReveal.setAttribute("aria-hidden", "true");
+    voiceReveal.append(voicePill);
+    const archiveReveal = el("div", "card-swipe-reveal card-swipe-archive");
+    archiveReveal.setAttribute("aria-hidden", "true");
+    archiveReveal.append(el("span", "card-swipe-pill", "Archive"));
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
@@ -1298,7 +1318,7 @@
     });
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
-    if (isActiveCard(card) && state.player.is_playing) {
+    if (isActiveCard(card)) {
       body.append(waveform(card, "wave-row", 46));
     } else {
       body.append(el("p", "preview", card.summary || card.transcript || ""));
@@ -1311,13 +1331,10 @@
         : "action action-audio");
       audio.type = "button";
       audio.innerHTML = iconSvg("mic", { filled: true });
-      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Open player for" : "Play"} ${card.title}`);
+      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : isActiveCard(card) ? "Resume" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
-        if (!isActiveCard(card) || !state.player.is_playing) {
-          await toggleAudio(card);
-        }
-        showAudioDetail(card);
+        await toggleAudio(card);
       });
       actions.append(audio);
     }
@@ -1339,7 +1356,8 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    wrapper.append(cardEl);
+    wrapper.append(voiceReveal, archiveReveal, cardEl);
+    installCardSwipe(card, wrapper, cardEl);
     return wrapper;
   }
 
@@ -2741,6 +2759,198 @@
     return button;
   }
 
+  function installCardSwipe(card, wrapper, cardEl) {
+    let startX = 0;
+    let startY = 0;
+    let active = false;
+    let confirmed = false;
+    let raf = 0;
+    let pendingOffset = 0;
+    let pointerId = null;
+    let pointerCaptured = false;
+
+    const clampOffset = value => Math.max(-CARD_SWIPE_REVEAL_MAX, Math.min(CARD_SWIPE_REVEAL_MAX, value));
+    const applyFrame = () => {
+      raf = 0;
+      const offset = clampOffset(pendingOffset);
+      cardEl.style.transform = offset ? `translateX(${offset}px)` : "";
+      wrapper.classList.toggle("is-revealing-archive", offset < 0);
+      wrapper.classList.toggle("is-revealing-voice", offset > 0);
+    };
+    const scheduleApply = value => {
+      pendingOffset = value;
+      if (!raf) {
+        raf = requestAnimationFrame(applyFrame);
+      }
+    };
+    const suppressNextClick = () => {
+      wrapper.dataset.cardSwipeSuppress = "true";
+      window.setTimeout(() => {
+        if (wrapper.dataset.cardSwipeSuppress === "true") {
+          delete wrapper.dataset.cardSwipeSuppress;
+        }
+      }, 350);
+    };
+    const reset = () => {
+      active = false;
+      confirmed = false;
+      pendingOffset = 0;
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      wrapper.classList.remove("is-swiping", "is-revealing-archive", "is-revealing-voice");
+      cardEl.style.transform = "";
+    };
+    const begin = (x, y, target, pointer = null) => {
+      if (state.route !== "feed" || state.feedRefreshing || isDragIgnoredTarget(target)) {
+        return;
+      }
+      startX = x;
+      startY = y;
+      active = true;
+      confirmed = false;
+      pointerId = pointer;
+      pointerCaptured = false;
+    };
+    const maybeCapturePointer = () => {
+      if (pointerId !== null && wrapper.setPointerCapture && !pointerCaptured) {
+        try {
+          wrapper.setPointerCapture(pointerId);
+          pointerCaptured = true;
+        } catch (_) {
+          pointerCaptured = false;
+        }
+      }
+    };
+    const move = (x, y, event) => {
+      if (!active) {
+        return;
+      }
+      const dx = x - startX;
+      const dy = y - startY;
+      if (!confirmed) {
+        const absX = Math.abs(dx);
+        const absY = Math.abs(dy);
+        if (absX < CARD_SWIPE_INTENT_PX && absY < CARD_SWIPE_INTENT_PX) {
+          return;
+        }
+        if (absX <= absY * 1.2) {
+          reset();
+          return;
+        }
+        confirmed = true;
+        wrapper.classList.add("is-swiping");
+        suppressNextClick();
+        maybeCapturePointer();
+      }
+      if (event && event.cancelable) {
+        event.preventDefault();
+      }
+      scheduleApply(dx);
+    };
+    const releasePointer = () => {
+      if (pointerId !== null && pointerCaptured && wrapper.releasePointerCapture) {
+        try {
+          wrapper.releasePointerCapture(pointerId);
+        } catch (_) {
+          // Pointer capture can already be gone after pointer cancellation.
+        }
+      }
+      pointerId = null;
+      pointerCaptured = false;
+    };
+    const finish = (x, y) => {
+      if (!active) {
+        return;
+      }
+      releasePointer();
+      const dx = x - startX;
+      if (confirmed && dx <= -CARD_SWIPE_ARCHIVE_THRESHOLD) {
+        suppressNextClick();
+        archiveHomeCard(card, wrapper, cardEl);
+        return;
+      }
+      if (confirmed) {
+        suppressNextClick();
+      }
+      reset();
+    };
+
+    wrapper.addEventListener("click", event => {
+      if (wrapper.dataset.cardSwipeSuppress === "true") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        delete wrapper.dataset.cardSwipeSuppress;
+      }
+    }, true);
+    wrapper.addEventListener("pointerdown", event => {
+      begin(event.clientX, event.clientY, event.target, event.pointerId);
+    });
+    wrapper.addEventListener("pointermove", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      move(event.clientX, event.clientY, event);
+    });
+    wrapper.addEventListener("pointerup", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      finish(event.clientX, event.clientY);
+    });
+    wrapper.addEventListener("pointercancel", event => {
+      if (pointerId !== null && event.pointerId !== pointerId) {
+        return;
+      }
+      releasePointer();
+      reset();
+    });
+    wrapper.addEventListener("touchstart", event => {
+      if (event.touches.length) {
+        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
+      }
+    }, { passive: true });
+    wrapper.addEventListener("touchmove", event => {
+      if (event.touches.length) {
+        move(event.touches[0].clientX, event.touches[0].clientY, event);
+      }
+    }, { passive: false });
+    wrapper.addEventListener("touchend", event => {
+      const touch = event.changedTouches[0];
+      finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
+    });
+    wrapper.addEventListener("touchcancel", () => {
+      releasePointer();
+      reset();
+    });
+  }
+
+  function archiveHomeCard(card, wrapper, cardEl) {
+    const sessionId = card && card.session_id;
+    if (!sessionId) {
+      wrapper.classList.remove("is-swiping", "is-revealing-archive", "is-revealing-voice");
+      cardEl.style.transform = "";
+      return;
+    }
+    state.archivedSessionIds.add(sessionId);
+    persistArchivedSessionIds();
+    wrapper.classList.remove("is-swiping", "is-revealing-voice");
+    wrapper.classList.add("is-archiving");
+    wrapper.style.height = `${wrapper.offsetHeight}px`;
+    cardEl.style.transform = "translateX(calc(-100% - 28px))";
+    window.setTimeout(() => {
+      wrapper.classList.add("is-collapsing");
+      wrapper.style.height = "0px";
+      wrapper.style.marginBottom = "0px";
+      window.setTimeout(() => {
+        renderFeed();
+        persistNavState();
+      }, CARD_SWIPE_COLLAPSE_MS);
+    }, CARD_SWIPE_EXIT_MS);
+  }
+
   function installVerticalDismiss(target, panel, onDismiss = dismissTraceSheet) {
     installDrag(target, {
       axis: "y",
@@ -3780,6 +3990,30 @@
       }));
     } catch (_) {
       // Navigation restore is a convenience layer; the UI should keep working without storage.
+    }
+  }
+
+  function loadArchivedSessionIds() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CARD_HOME_STATE_KEY) || "{}");
+      const archived = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.archived_session_ids)
+          ? parsed.archived_session_ids
+          : [];
+      return new Set(archived.map(value => String(value)).filter(Boolean));
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function persistArchivedSessionIds() {
+    try {
+      localStorage.setItem(CARD_HOME_STATE_KEY, JSON.stringify({
+        archived_session_ids: Array.from(state.archivedSessionIds)
+      }));
+    } catch (_) {
+      // Archived cards are local Home presentation state; failure leaves cards visible.
     }
   }
 
