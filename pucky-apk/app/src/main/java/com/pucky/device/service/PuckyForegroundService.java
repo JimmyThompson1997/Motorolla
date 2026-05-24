@@ -54,6 +54,7 @@ import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.CoverDisplayGestureController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
+import com.pucky.device.speech.PuckyRecipeController;
 import com.pucky.device.speech.SpeechEchoController;
 import com.pucky.device.speech.SpeechEchoLabController;
 import com.pucky.device.state.PuckyState;
@@ -262,6 +263,7 @@ public final class PuckyForegroundService extends Service {
                 NativeSpeechController.shared(this),
                 SpeechEchoController.shared(this),
                 SpeechEchoLabController.shared(this),
+                PuckyRecipeController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
                 new AndroidSubstrateController(this),

@@ -33,7 +33,6 @@ import java.util.concurrent.TimeUnit;
 
 public final class PuckyTurnKeywordInterceptor {
     private static final String TAG = "PuckyTurnKeyword";
-    private static final String RECIPE_PREFS = "pucky_speech_echo_lab";
     private static final int WAV_HEADER_BYTES = 44;
     private static final int STT_EDGE_PADDING_MS = 200;
     private static final long CLASSIFIER_TIMEOUT_MS = 8000L;
@@ -225,8 +224,7 @@ public final class PuckyTurnKeywordInterceptor {
     }
 
     private String storedRecipeBundleRaw() {
-        return context.getSharedPreferences(RECIPE_PREFS, android.content.Context.MODE_PRIVATE)
-                .getString(SpeechRecipeRegistry.PREF_RECIPE_BUNDLE, "");
+        return PuckyRecipeController.shared(context).storedRecipeBundleRaw();
     }
 
     private RecognitionOutcome recognize(short[] samples) {

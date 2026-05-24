@@ -22,6 +22,7 @@ import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
+import com.pucky.device.speech.PuckyRecipeController;
 import com.pucky.device.speech.SpeechEchoController;
 import com.pucky.device.speech.SpeechEchoLabController;
 import com.pucky.device.status.StatusProvider;
@@ -82,7 +83,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "speech.echo.voices",
             "speech.echo.lab.status", "speech.echo.lab.start", "speech.echo.lab.stop",
             "speech.echo.lab.last", "speech.echo.lab.list",
-            "speech.echo.lab.config.get", "speech.echo.lab.config.set",
             "cover.wave.status", "cover.wave.config.set", "cover.wave.trigger",
             "cover.display_gesture.status", "cover.display_gesture.set",
             "cover.display_gesture.trigger",
@@ -126,6 +126,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final NativeSpeechController nativeSpeechController;
     private final SpeechEchoController speechEchoController;
     private final SpeechEchoLabController speechEchoLabController;
+    private final PuckyRecipeController puckyRecipeController;
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
     private final AndroidSubstrateController androidSubstrateController;
@@ -163,6 +164,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             NativeSpeechController nativeSpeechController,
             SpeechEchoController speechEchoController,
             SpeechEchoLabController speechEchoLabController,
+            PuckyRecipeController puckyRecipeController,
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
             AndroidSubstrateController androidSubstrateController,
@@ -198,6 +200,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.nativeSpeechController = nativeSpeechController;
         this.speechEchoController = speechEchoController;
         this.speechEchoLabController = speechEchoLabController;
+        this.puckyRecipeController = puckyRecipeController;
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
         this.androidSubstrateController = androidSubstrateController;
@@ -302,17 +305,17 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "pucky.clipboard.clear":
                 return puckyClipboardController.clear();
             case "pucky.recipes.sync":
-                return speechEchoLabController.recipesSync(command.args());
+                return puckyRecipeController.sync(command.args());
             case "pucky.recipes.list":
-                return speechEchoLabController.recipesList();
+                return puckyRecipeController.list();
             case "pucky.recipes.test":
-                return speechEchoLabController.recipesTest(command.args());
+                return puckyRecipeController.test(command.args());
             case "pucky.recipes.clear":
-                return speechEchoLabController.recipesClear();
+                return puckyRecipeController.clear();
             case "pucky.recipes.schema":
-                return speechEchoLabController.recipesSchema();
+                return puckyRecipeController.schema();
             case "device.primitives.list":
-                return speechEchoLabController.devicePrimitivesList();
+                return puckyRecipeController.devicePrimitivesList();
             case "log.tail":
                 return logTail(command.args());
             case "notify.show":
@@ -455,10 +458,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.last(command.args());
             case "speech.echo.lab.list":
                 return speechEchoLabController.list(command.args());
-            case "speech.echo.lab.config.get":
-                return speechEchoLabController.configGet();
-            case "speech.echo.lab.config.set":
-                return speechEchoLabController.configSet(command.args());
             case "cover.wave.status":
             case "cover.display_gesture.status":
                 return systemController.coverDisplayGestureStatus();

@@ -98,14 +98,15 @@ public final class PuckyTurnSourceTest {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
         String lab = read("src/main/java/com/pucky/device/speech/SpeechEchoLabController.java");
+        String recipes = read("src/main/java/com/pucky/device/speech/PuckyRecipeController.java");
 
         assertTrue(source.contains("\"speech.echo.lab.status\""));
         assertTrue(source.contains("\"speech.echo.lab.start\""));
         assertTrue(source.contains("\"speech.echo.lab.stop\""));
         assertTrue(source.contains("\"speech.echo.lab.last\""));
         assertTrue(source.contains("\"speech.echo.lab.list\""));
-        assertTrue(source.contains("\"speech.echo.lab.config.get\""));
-        assertTrue(source.contains("\"speech.echo.lab.config.set\""));
+        assertFalse(source.contains("\"speech.echo.lab.config.get\""));
+        assertFalse(source.contains("\"speech.echo.lab.config.set\""));
         assertTrue(source.contains("\"pucky.recipes.sync\""));
         assertTrue(source.contains("\"pucky.recipes.list\""));
         assertTrue(source.contains("\"pucky.recipes.test\""));
@@ -116,18 +117,19 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return speechEchoLabController.status()"));
         assertTrue(source.contains("return speechEchoLabController.start(command.args())"));
         assertTrue(source.contains("return speechEchoLabController.stop(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.configGet()"));
-        assertTrue(source.contains("return speechEchoLabController.configSet(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.recipesSync(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.recipesList()"));
-        assertTrue(source.contains("return speechEchoLabController.recipesTest(command.args())"));
-        assertTrue(source.contains("return speechEchoLabController.recipesClear()"));
-        assertTrue(source.contains("return speechEchoLabController.recipesSchema()"));
-        assertTrue(source.contains("return speechEchoLabController.devicePrimitivesList()"));
+        assertTrue(source.contains("return puckyRecipeController.sync(command.args())"));
+        assertTrue(source.contains("return puckyRecipeController.list()"));
+        assertTrue(source.contains("return puckyRecipeController.test(command.args())"));
+        assertTrue(source.contains("return puckyRecipeController.clear()"));
+        assertTrue(source.contains("return puckyRecipeController.schema()"));
+        assertTrue(source.contains("return puckyRecipeController.devicePrimitivesList()"));
         assertTrue(service.contains("SpeechEchoLabController.shared(this)"));
+        assertTrue(service.contains("PuckyRecipeController.shared(this)"));
         assertTrue(lab.contains("\"result\", \"reserved_noop\""));
         assertTrue(lab.contains("Volume-down walkie lab is reserved"));
-        assertTrue(lab.contains("\"product_path\", \"pucky.turn.stop\""));
+        assertTrue(lab.contains("\"product_path\", \"volume_up_walkie_release_keyword_intercept\""));
+        assertTrue(recipes.contains("PREFS = \"pucky_recipes\""));
+        assertTrue(recipes.contains("LEGACY_PREFS = \"pucky_speech_echo_lab\""));
     }
 
     @Test
@@ -170,6 +172,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
         assertTrue(keyword.contains("SpeechRecipeRegistry.matchStoredOnly(recognition.transcript, storedRaw)"));
         assertTrue(keyword.contains("Json.put(out, \"stored_recipe_bundle_present\", !storedRaw.trim().isEmpty())"));
+        assertTrue(keyword.contains("PuckyRecipeController.shared(context).storedRecipeBundleRaw()"));
+        assertFalse(keyword.contains("RECIPE_PREFS = \"pucky_speech_echo_lab\""));
         assertTrue(keyword.contains("Json.put(out, \"handled\", false)"));
         assertTrue(keyword.contains("Json.put(out, \"handled\", true)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
