@@ -171,6 +171,9 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
     assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
     assert "const filters = uniqueFeedIconFilters();" in app
+    assert 'iconSvg("archive_folder", { filled: false })' in app
+    assert '"route-tray-archive-icon"' in app
+    assert '"route-tray-divider"' in app
     assert 'label: "All replies"' not in app
     assert 'data-filter-icon="all"' not in app
     assert "button.style.setProperty(\"--filter-accent\"" in app
@@ -191,6 +194,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "pointer-events: none;" in styles
     assert "pointer-events: auto;" in styles
     assert ".route-tray-label" not in styles
+    assert ".route-tray-archive-icon" in styles
+    assert ".route-tray-divider" in styles
     assert ".route-tray-icons" in styles
     assert ".filter-icon.is-selected" in styles
     assert "var(--filter-accent" in styles
@@ -199,38 +204,35 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
-def test_home_cards_support_local_archive_and_swipe_affordances() -> None:
+def test_home_cards_drop_archive_swipe_affordances() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
-    assert "archivedSessionIds: loadArchivedSessionIds()" in app
-    assert "function loadArchivedSessionIds()" in app
-    assert "function persistArchivedSessionIds()" in app
-    assert "function archiveHomeCard(card, wrapper, cardEl)" in app
-    assert "state.archivedSessionIds.add(sessionId)" in app
-    assert "persistArchivedSessionIds();" in app
+    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' not in app
+    assert "archivedSessionIds: loadArchivedSessionIds()" not in app
+    assert "function loadArchivedSessionIds()" not in app
+    assert "function persistArchivedSessionIds()" not in app
+    assert "function archiveHomeCard(card, wrapper, cardEl)" not in app
+    assert "state.archivedSessionIds.add(sessionId)" not in app
+    assert "persistArchivedSessionIds();" not in app
     assert "filteredFeedCards()" in app
-    assert "!state.archivedSessionIds.has(card.session_id)" in app
+    assert "!state.archivedSessionIds.has(card.session_id)" not in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
-    assert "installCardSwipe(card, wrapper, cardEl);" in app
-    assert 'card-swipe-reveal card-swipe-archive' in app
-    assert 'card-swipe-reveal card-swipe-voice' in app
-    assert 'iconSvg("record_voice_over", { filled: true })' in app
-    assert "CARD_SWIPE_ARCHIVE_THRESHOLD" in app
-    assert "CARD_SWIPE_REVEAL_MAX" in app
-    assert "CARD_SWIPE_INTENT_PX" in app
-    assert 'wrapper.dataset.cardSwipeSuppress = "true"' in app
-    assert 'wrapper.addEventListener("click", event => {' in app
-    assert "event.stopImmediatePropagation();" in app
-    assert ".card-wrap.is-swiping .card" in styles
-    assert ".card-wrap.is-archiving" in styles
-    assert ".card-wrap.is-collapsing" in styles
-    assert ".card-swipe-reveal" in styles
-    assert ".card-swipe-archive" in styles
-    assert ".card-swipe-voice" in styles
-    assert ".card-swipe-pill" in styles
+    assert "installCardSwipe(card, wrapper, cardEl);" not in app
+    assert 'card-swipe-reveal card-swipe-archive' not in app
+    assert 'card-swipe-reveal card-swipe-voice' not in app
+    assert "CARD_SWIPE_ARCHIVE_THRESHOLD" not in app
+    assert "CARD_SWIPE_REVEAL_MAX" not in app
+    assert "CARD_SWIPE_INTENT_PX" not in app
+    assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
+    assert ".card-wrap.is-swiping .card" not in styles
+    assert ".card-wrap.is-archiving" not in styles
+    assert ".card-wrap.is-collapsing" not in styles
+    assert ".card-swipe-reveal" not in styles
+    assert ".card-swipe-archive" not in styles
+    assert ".card-swipe-voice" not in styles
+    assert ".card-swipe-pill" not in styles
 
 
 def test_map_tab_renders_real_maplibre_location_surface() -> None:

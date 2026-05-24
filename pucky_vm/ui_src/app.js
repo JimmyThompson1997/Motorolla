@@ -1,7 +1,6 @@
 (() => {
   const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
-  const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const COMPLETE_EPSILON_MS = 500;
@@ -12,11 +11,6 @@
   const FEED_REFRESH_HOLD_OFFSET = 46;
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
-  const CARD_SWIPE_INTENT_PX = 12;
-  const CARD_SWIPE_REVEAL_MAX = 118;
-  const CARD_SWIPE_ARCHIVE_THRESHOLD = 82;
-  const CARD_SWIPE_EXIT_MS = 190;
-  const CARD_SWIPE_COLLAPSE_MS = 230;
   const MAP_TILE_URLS = [
     "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
     "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
@@ -73,6 +67,10 @@
     attachment: {
       filled: '<path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5Z"/>',
       outline: '<path d="M16.5 6v11.5a4 4 0 0 1-8 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6"/>'
+    },
+    archive_folder: {
+      filled: '<path d="M4 5h6l2 2h8c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2Zm4 5v2h8v-2H8Zm2 4v2h4v-2h-4Z"/>',
+      outline: '<path d="M3 7.5c0-1.1.9-2 2-2h5l2 2h7c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-10Z"/><path d="M8 11h8"/><path d="M10 15h4"/>'
     },
     mic: {
       filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
@@ -310,7 +308,6 @@
     traceCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
-    archivedSessionIds: loadArchivedSessionIds(),
     waveHistory: new Map(),
     readActions: loadReadActions(),
     drag: null
@@ -869,10 +866,16 @@
 
   function homeIconFilterTrayView() {
     const shell = el("div", "route-tray-shell");
+    const archiveIcon = el("span", "route-tray-archive-icon");
+    archiveIcon.setAttribute("aria-label", "Archive");
+    archiveIcon.setAttribute("title", "Archive");
+    archiveIcon.innerHTML = iconSvg("archive_folder", { filled: false });
+    const divider = el("span", "route-tray-divider");
+    divider.setAttribute("aria-hidden", "true");
     const icons = el("div", "route-tray-icons");
     const filters = uniqueFeedIconFilters();
     icons.append(...filters.map(filter => filterIconButton(filter)));
-    shell.append(icons);
+    shell.append(archiveIcon, divider, icons);
     return shell;
   }
 
@@ -936,10 +939,7 @@
   }
 
   function filteredFeedCards() {
-    return state.cards.filter(card => {
-      const notArchived = !card.session_id || !state.archivedSessionIds.has(card.session_id);
-      return notArchived && isFeedIconIncluded(cardIconKey(card));
-    });
+    return state.cards.filter(card => isFeedIconIncluded(cardIconKey(card)));
   }
 
   function uniqueFeedIcons() {
@@ -1638,15 +1638,6 @@
 
   function cardView(card) {
     const wrapper = el("div", "card-wrap");
-    const voiceReveal = el("div", "card-swipe-reveal card-swipe-voice");
-    const voicePill = el("span", "card-swipe-pill");
-    voicePill.innerHTML = iconSvg("record_voice_over", { filled: true });
-    voicePill.setAttribute("aria-label", "Future speaking action");
-    voiceReveal.setAttribute("aria-hidden", "true");
-    voiceReveal.append(voicePill);
-    const archiveReveal = el("div", "card-swipe-reveal card-swipe-archive");
-    archiveReveal.setAttribute("aria-hidden", "true");
-    archiveReveal.append(el("span", "card-swipe-pill", "Archive"));
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardStamp = cardTimestamp(card);
@@ -1711,8 +1702,7 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    wrapper.append(voiceReveal, archiveReveal, cardEl);
-    installCardSwipe(card, wrapper, cardEl);
+    wrapper.append(cardEl);
     return wrapper;
   }
 
@@ -3341,198 +3331,6 @@
     return button;
   }
 
-  function installCardSwipe(card, wrapper, cardEl) {
-    let startX = 0;
-    let startY = 0;
-    let active = false;
-    let confirmed = false;
-    let raf = 0;
-    let pendingOffset = 0;
-    let pointerId = null;
-    let pointerCaptured = false;
-
-    const clampOffset = value => Math.max(-CARD_SWIPE_REVEAL_MAX, Math.min(CARD_SWIPE_REVEAL_MAX, value));
-    const applyFrame = () => {
-      raf = 0;
-      const offset = clampOffset(pendingOffset);
-      cardEl.style.transform = offset ? `translateX(${offset}px)` : "";
-      wrapper.classList.toggle("is-revealing-archive", offset < 0);
-      wrapper.classList.toggle("is-revealing-voice", offset > 0);
-    };
-    const scheduleApply = value => {
-      pendingOffset = value;
-      if (!raf) {
-        raf = requestAnimationFrame(applyFrame);
-      }
-    };
-    const suppressNextClick = () => {
-      wrapper.dataset.cardSwipeSuppress = "true";
-      window.setTimeout(() => {
-        if (wrapper.dataset.cardSwipeSuppress === "true") {
-          delete wrapper.dataset.cardSwipeSuppress;
-        }
-      }, 350);
-    };
-    const reset = () => {
-      active = false;
-      confirmed = false;
-      pendingOffset = 0;
-      if (raf) {
-        cancelAnimationFrame(raf);
-        raf = 0;
-      }
-      wrapper.classList.remove("is-swiping", "is-revealing-archive", "is-revealing-voice");
-      cardEl.style.transform = "";
-    };
-    const begin = (x, y, target, pointer = null) => {
-      if (state.route !== "feed" || state.feedRefreshing || isDragIgnoredTarget(target)) {
-        return;
-      }
-      startX = x;
-      startY = y;
-      active = true;
-      confirmed = false;
-      pointerId = pointer;
-      pointerCaptured = false;
-    };
-    const maybeCapturePointer = () => {
-      if (pointerId !== null && wrapper.setPointerCapture && !pointerCaptured) {
-        try {
-          wrapper.setPointerCapture(pointerId);
-          pointerCaptured = true;
-        } catch (_) {
-          pointerCaptured = false;
-        }
-      }
-    };
-    const move = (x, y, event) => {
-      if (!active) {
-        return;
-      }
-      const dx = x - startX;
-      const dy = y - startY;
-      if (!confirmed) {
-        const absX = Math.abs(dx);
-        const absY = Math.abs(dy);
-        if (absX < CARD_SWIPE_INTENT_PX && absY < CARD_SWIPE_INTENT_PX) {
-          return;
-        }
-        if (absX <= absY * 1.2) {
-          reset();
-          return;
-        }
-        confirmed = true;
-        wrapper.classList.add("is-swiping");
-        suppressNextClick();
-        maybeCapturePointer();
-      }
-      if (event && event.cancelable) {
-        event.preventDefault();
-      }
-      scheduleApply(dx);
-    };
-    const releasePointer = () => {
-      if (pointerId !== null && pointerCaptured && wrapper.releasePointerCapture) {
-        try {
-          wrapper.releasePointerCapture(pointerId);
-        } catch (_) {
-          // Pointer capture can already be gone after pointer cancellation.
-        }
-      }
-      pointerId = null;
-      pointerCaptured = false;
-    };
-    const finish = (x, y) => {
-      if (!active) {
-        return;
-      }
-      releasePointer();
-      const dx = x - startX;
-      if (confirmed && dx <= -CARD_SWIPE_ARCHIVE_THRESHOLD) {
-        suppressNextClick();
-        archiveHomeCard(card, wrapper, cardEl);
-        return;
-      }
-      if (confirmed) {
-        suppressNextClick();
-      }
-      reset();
-    };
-
-    wrapper.addEventListener("click", event => {
-      if (wrapper.dataset.cardSwipeSuppress === "true") {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        delete wrapper.dataset.cardSwipeSuppress;
-      }
-    }, true);
-    wrapper.addEventListener("pointerdown", event => {
-      begin(event.clientX, event.clientY, event.target, event.pointerId);
-    });
-    wrapper.addEventListener("pointermove", event => {
-      if (pointerId !== null && event.pointerId !== pointerId) {
-        return;
-      }
-      move(event.clientX, event.clientY, event);
-    });
-    wrapper.addEventListener("pointerup", event => {
-      if (pointerId !== null && event.pointerId !== pointerId) {
-        return;
-      }
-      finish(event.clientX, event.clientY);
-    });
-    wrapper.addEventListener("pointercancel", event => {
-      if (pointerId !== null && event.pointerId !== pointerId) {
-        return;
-      }
-      releasePointer();
-      reset();
-    });
-    wrapper.addEventListener("touchstart", event => {
-      if (event.touches.length) {
-        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
-      }
-    }, { passive: true });
-    wrapper.addEventListener("touchmove", event => {
-      if (event.touches.length) {
-        move(event.touches[0].clientX, event.touches[0].clientY, event);
-      }
-    }, { passive: false });
-    wrapper.addEventListener("touchend", event => {
-      const touch = event.changedTouches[0];
-      finish(touch ? touch.clientX : startX, touch ? touch.clientY : startY);
-    });
-    wrapper.addEventListener("touchcancel", () => {
-      releasePointer();
-      reset();
-    });
-  }
-
-  function archiveHomeCard(card, wrapper, cardEl) {
-    const sessionId = card && card.session_id;
-    if (!sessionId) {
-      wrapper.classList.remove("is-swiping", "is-revealing-archive", "is-revealing-voice");
-      cardEl.style.transform = "";
-      return;
-    }
-    state.archivedSessionIds.add(sessionId);
-    persistArchivedSessionIds();
-    wrapper.classList.remove("is-swiping", "is-revealing-voice");
-    wrapper.classList.add("is-archiving");
-    wrapper.style.height = `${wrapper.offsetHeight}px`;
-    cardEl.style.transform = "translateX(calc(-100% - 28px))";
-    window.setTimeout(() => {
-      wrapper.classList.add("is-collapsing");
-      wrapper.style.height = "0px";
-      wrapper.style.marginBottom = "0px";
-      window.setTimeout(() => {
-        renderFeed();
-        persistNavState();
-      }, CARD_SWIPE_COLLAPSE_MS);
-    }, CARD_SWIPE_EXIT_MS);
-  }
-
   function installVerticalDismiss(target, panel, onDismiss = dismissTraceSheet) {
     installDrag(target, {
       axis: "y",
@@ -4712,30 +4510,6 @@
       }));
     } catch (_) {
       // Navigation restore is a convenience layer; the UI should keep working without storage.
-    }
-  }
-
-  function loadArchivedSessionIds() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(CARD_HOME_STATE_KEY) || "{}");
-      const archived = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed.archived_session_ids)
-          ? parsed.archived_session_ids
-          : [];
-      return new Set(archived.map(value => String(value)).filter(Boolean));
-    } catch (_) {
-      return new Set();
-    }
-  }
-
-  function persistArchivedSessionIds() {
-    try {
-      localStorage.setItem(CARD_HOME_STATE_KEY, JSON.stringify({
-        archived_session_ids: Array.from(state.archivedSessionIds)
-      }));
-    } catch (_) {
-      // Archived cards are local Home presentation state; failure leaves cards visible.
     }
   }
 
