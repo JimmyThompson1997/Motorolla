@@ -233,37 +233,46 @@ def test_home_cards_support_local_archive_and_swipe_affordances() -> None:
     assert ".card-swipe-pill" in styles
 
 
-def test_map_tab_renders_location_tracker_surface() -> None:
+def test_map_tab_renders_real_maplibre_location_surface() -> None:
     app = read("app.js")
+    html = read("index.html")
     styles = read("styles.css")
 
     assert '{ route: "map", icon: "map", label: "Map" }' in app
     assert "map:" in app
     assert "function mapPageView()" in app
-    assert "function mapCanvasView()" in app
+    assert "function mapLibreView()" in app
+    assert "function syncMapLibre" in app
+    assert "function trackerPointsGeoJson(points)" in app
+    assert "function trackerStaysGeoJson(stays)" in app
+    assert "function mapLineGeoJson(points)" in app
+    assert "function latestMapPoint(points)" in app
+    assert "function mapFitBounds(points)" in app
+    assert "function mapOfflineOverlayView()" in app
     assert "function mapDisplayStays(points)" in app
-    assert "function mapStayListView()" in app
-    assert "function mapDebugSamplesView()" in app
     assert "function loadMapTracker" in app
     assert 'command: "location.tracker.status"' in app
     assert 'command: "location.tracker.query"' in app
     assert 'command: running ? "location.tracker.stop" : "location.tracker.start"' in app
     assert "interval_ms: 30000" in app
     assert "pucky.location_point.v1" in app
+    assert 'const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron"' in app
     assert "const MAP_STAY_MIN_RADIUS_M = 25" in app
     assert "haversineMeters(previous, point) <= stayRadiusMeters(previous, point)" in app
-    assert "totalMapDistanceMeters(stays)" in app
-    assert "totalMapDistanceMeters" in app
-    assert "mapTimelineView" not in app
-    assert "map-path" not in app
-    assert "map-timeline" not in app
+    assert 'href="./vendor/maplibre/maplibre-gl.css"' in html
+    assert 'src="./vendor/maplibre/maplibre-gl.js"' in html
+    assert "tile.openstreetmap.org" not in app
+    assert "tile.openstreetmap.org" not in html
     assert ".map-page" in styles
-    assert ".map-canvas" in styles
-    assert ".map-pin.is-latest" in styles
-    assert ".map-stay-card" in styles
-    assert ".map-debug-samples" in styles
+    assert ".maplibre-map" in styles
+    assert ".map-control-card" in styles
+    assert ".map-recenter" in styles
+    assert ".map-offline" in styles
+    assert 'id: "pucky-latest"' in app
+    assert ".map-canvas" not in styles
     assert ".map-path" not in styles
     assert ".map-timeline" not in styles
+    assert ".map-debug-samples" not in styles
 
 
 def test_feed_has_subtle_edge_rubber_band() -> None:

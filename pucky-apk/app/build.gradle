@@ -40,8 +40,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 77
-        versionName "0.2.76-walkie-haptics"
+        versionCode 78
+        versionName "0.2.77-real-map"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

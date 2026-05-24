@@ -17,8 +17,11 @@
   const CARD_SWIPE_ARCHIVE_THRESHOLD = 82;
   const CARD_SWIPE_EXIT_MS = 190;
   const CARD_SWIPE_COLLAPSE_MS = 230;
+  const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
   const MAP_STAY_MIN_RADIUS_M = 25;
   const MAP_STAY_MIN_POSITION_SPAN = 0.0006;
+  const MAP_DEFAULT_CENTER = [-122.3902849, 37.5885901];
+  const MAP_DEFAULT_ZOOM = 13;
 
   const MATERIAL_SYMBOLS = {
     mail: {
@@ -286,6 +289,8 @@
     mapLoading: false,
     mapFilter: "today",
     mapError: "",
+    mapStyleError: "",
+    mapUserMoved: false,
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -307,6 +312,11 @@
 
   const pending = new Map();
   let seq = 0;
+  let mapLibre = null;
+  let mapLibreContainer = null;
+  let mapLibreReady = false;
+  let mapInitialFitDone = false;
+  let mapPopup = null;
 
   window.Pucky = {
     request(payload) {
@@ -881,17 +891,21 @@
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       if (state.route === "settings") {
+        destroyMapLibre();
         loadTurnSettings({ render: false });
         feed.replaceChildren(settingsPageView());
         return;
       }
       if (state.route === "map") {
         feed.replaceChildren(mapPageView());
+        window.requestAnimationFrame(syncMapLibre);
         return;
       }
+      destroyMapLibre();
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
+    destroyMapLibre();
     if (!state.cards.length) {
       feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
       return;
@@ -1063,119 +1077,291 @@
 
   function mapPageView() {
     const page = el("section", "map-page");
-    const hero = el("article", "map-hero");
-    const heroIcon = el("div", "map-hero-icon");
-    heroIcon.innerHTML = iconSvg("map", { filled: true });
-    const copy = el("div", "map-hero-copy");
+    page.append(mapLibreView(), mapControlCardView());
+    return page;
+  }
+
+  function mapLibreView() {
+    const shell = el("section", "map-surface");
+    const map = el("div", "maplibre-map");
+    map.id = "mapLibreSurface";
+    map.setAttribute("aria-label", "Location map");
+    const recenter = el("button", state.mapUserMoved ? "map-recenter is-visible" : "map-recenter", "Recenter");
+    recenter.type = "button";
+    recenter.addEventListener("click", () => {
+      state.mapUserMoved = false;
+      mapInitialFitDone = false;
+      updateMapLibreData({ forceFit: true });
+      refreshMapChrome();
+    });
+    shell.append(map, mapOfflineOverlayView(), recenter);
+    return shell;
+  }
+
+  function mapOfflineOverlayView() {
+    const message = mapOverlayMessage();
+    const overlay = el("div", message ? "map-offline is-visible" : "map-offline");
+    overlay.setAttribute("aria-live", "polite");
+    if (!message) {
+      overlay.hidden = true;
+    }
+    overlay.append(
+      el("strong", "", message || ""),
+      el("span", "", mapOverlayDetail())
+    );
+    return overlay;
+  }
+
+  function mapOverlayMessage() {
+    if (state.mapStyleError) {
+      return "Map unavailable offline";
+    }
+    if (state.mapError) {
+      return "Location tracker unavailable";
+    }
+    if (state.mapLoading && !state.mapPoints.length) {
+      return "Loading location...";
+    }
+    if (!visibleMapPoints().length) {
+      return "No location points yet";
+    }
+    return "";
+  }
+
+  function mapOverlayDetail() {
+    if (state.mapStyleError) {
+      return "Tracking controls and saved points still work.";
+    }
+    if (state.mapError) {
+      return state.mapError;
+    }
+    if (!visibleMapPoints().length) {
+      return "Start tracking to place your first pin.";
+    }
+    return "";
+  }
+
+  function mapControlCardView() {
+    const points = visibleMapPoints();
+    const latest = latestMapPoint(points);
     const running = Boolean(state.mapTracker.running);
+    const card = el("article", "map-control-card");
+    const icon = el("div", running ? "map-control-icon is-running" : "map-control-icon");
+    icon.innerHTML = iconSvg("map", { filled: true });
+    const copy = el("div", "map-control-copy");
     copy.append(
-      el("h1", "map-title", "Map"),
-      el("p", "map-subtitle", running ? "Saving a location point about every 30 seconds." : "Location tracking is paused.")
+      el("h1", "map-title", running ? "Tracking on" : "Tracking paused"),
+      el("p", "map-subtitle", latest ? `${shortTime(latest.captured_at || latest.captured_at_ms)} - ${formatAccuracy(latest.accuracy_m)}` : "No saved location yet.")
     );
     const toggle = el("button", running ? "map-toggle is-running" : "map-toggle", running ? "Stop" : "Start");
     toggle.type = "button";
     toggle.addEventListener("click", () => toggleMapTracker());
-    hero.append(heroIcon, copy, toggle);
-    page.append(hero, mapStatsView(), mapFiltersView(), mapCanvasView(), mapStayListView(), mapDebugSamplesView());
-    return page;
+    card.append(icon, copy, toggle);
+    return card;
   }
 
-  function mapStatsView() {
-    const stats = el("section", "map-stats");
-    const points = visibleMapPoints();
-    const stays = mapDisplayStays(points);
-    const last = points.slice(-1)[0] || null;
-    const distance = totalMapDistanceMeters(stays);
-    stats.append(
-      mapStat("Pins", String(stays.length)),
-      mapStat("Samples", String(points.length)),
-      mapStat("Distance", distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`),
-      mapStat("Last", last ? shortTime(last.captured_at || last.captured_at_ms) : "-")
-    );
-    if (state.mapError) {
-      stats.append(el("div", "map-error", state.mapError));
+  function syncMapLibre() {
+    const container = document.getElementById("mapLibreSurface");
+    if (!container) {
+      destroyMapLibre();
+      return;
     }
-    return stats;
+    if (!window.maplibregl || typeof window.maplibregl.Map !== "function") {
+      state.mapStyleError = "Map renderer unavailable";
+      refreshMapChrome();
+      return;
+    }
+    if (mapLibre && mapLibreContainer !== container) {
+      destroyMapLibre();
+    }
+    if (!mapLibre) {
+      createMapLibre(container);
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      try {
+        mapLibre.resize();
+        updateMapLibreData();
+      } catch (_) {
+        state.mapStyleError = "Map unavailable offline";
+        refreshMapChrome();
+      }
+    });
   }
 
-  function mapStat(label, value) {
-    const stat = el("div", "map-stat");
-    stat.append(el("span", "map-stat-label", label), el("strong", "map-stat-value", value));
-    return stat;
-  }
-
-  function mapFiltersView() {
-    const filters = el("div", "map-filters");
-    [
-      ["today", "Today"],
-      ["hour", "Last hour"],
-      ["accurate", "High accuracy"],
-      ["moving", "Moving"]
-    ].forEach(([key, label]) => {
-      const button = el("button", state.mapFilter === key ? "map-filter is-selected" : "map-filter", label);
-      button.type = "button";
-      button.setAttribute("aria-pressed", state.mapFilter === key ? "true" : "false");
-      button.addEventListener("click", () => {
-        state.mapFilter = key;
-        loadMapTracker({ render: true });
+  function createMapLibre(container) {
+    mapLibreContainer = container;
+    mapLibreReady = false;
+    state.mapStyleError = "";
+    try {
+      const latest = latestMapPoint(visibleMapPoints());
+      mapLibre = new window.maplibregl.Map({
+        container,
+        style: MAP_STYLE_URL,
+        center: latest ? [Number(latest.lon), Number(latest.lat)] : MAP_DEFAULT_CENTER,
+        zoom: latest ? 15 : MAP_DEFAULT_ZOOM,
+        attributionControl: false,
+        cooperativeGestures: false
       });
-      filters.append(button);
-    });
-    return filters;
+      mapLibre.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
+      mapLibre.on("load", () => {
+        mapLibreReady = true;
+        ensureMapLibreLayers();
+        updateMapLibreData({ forceFit: true });
+      });
+      mapLibre.on("error", () => {
+        state.mapStyleError = "Map unavailable offline";
+        refreshMapChrome();
+      });
+      ["dragstart", "zoomstart", "rotatestart", "pitchstart"].forEach(eventName => {
+        mapLibre.on(eventName, () => {
+          state.mapUserMoved = true;
+          refreshMapChrome();
+        });
+      });
+      mapLibre.on("click", "pucky-stays", event => showMapPinPopup(event));
+      mapLibre.on("click", "pucky-latest", event => showMapPinPopup(event));
+    } catch (_) {
+      state.mapStyleError = "Map unavailable offline";
+      refreshMapChrome();
+    }
   }
 
-  function mapCanvasView() {
+  function destroyMapLibre() {
+    if (mapPopup) {
+      mapPopup.remove();
+      mapPopup = null;
+    }
+    if (mapLibre) {
+      try {
+        mapLibre.remove();
+      } catch (_) {
+        // MapLibre may already be detached during fast route changes.
+      }
+    }
+    mapLibre = null;
+    mapLibreContainer = null;
+    mapLibreReady = false;
+    mapInitialFitDone = false;
+  }
+
+  function ensureMapLibreLayers() {
+    if (!mapLibre || !mapLibreReady || mapLibre.getSource("pucky-stays")) {
+      return;
+    }
+    mapLibre.addSource("pucky-path", { type: "geojson", data: mapLineGeoJson([]) });
+    mapLibre.addSource("pucky-stays", { type: "geojson", data: trackerStaysGeoJson([]) });
+    mapLibre.addSource("pucky-latest", { type: "geojson", data: trackerPointsGeoJson([]) });
+    mapLibre.addLayer({
+      id: "pucky-path",
+      type: "line",
+      source: "pucky-path",
+      paint: {
+        "line-color": "#3a84ff",
+        "line-width": 3,
+        "line-opacity": 0.72
+      }
+    });
+    mapLibre.addLayer({
+      id: "pucky-accuracy",
+      type: "circle",
+      source: "pucky-latest",
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["coalesce", ["get", "accuracy_m"], 24], 0, 22, 120, 68],
+        "circle-color": "#50d86a",
+        "circle-opacity": 0.16,
+        "circle-stroke-color": "#b8efc2",
+        "circle-stroke-width": 1,
+        "circle-stroke-opacity": 0.55
+      }
+    });
+    mapLibre.addLayer({
+      id: "pucky-stays",
+      type: "circle",
+      source: "pucky-stays",
+      paint: {
+        "circle-radius": ["case", ["get", "is_latest"], 12, 9],
+        "circle-color": ["case", ["get", "is_latest"], "#ffb000", "#f5f9ff"],
+        "circle-stroke-color": "#06110b",
+        "circle-stroke-width": 2,
+        "circle-opacity": 0.95
+      }
+    });
+    mapLibre.addLayer({
+      id: "pucky-latest",
+      type: "circle",
+      source: "pucky-latest",
+      paint: {
+        "circle-radius": 9,
+        "circle-color": "#ffb000",
+        "circle-stroke-color": "#06110b",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+
+  function updateMapLibreData(options = {}) {
+    if (!mapLibre || !mapLibreReady) {
+      return;
+    }
+    ensureMapLibreLayers();
     const points = visibleMapPoints();
     const stays = mapDisplayStays(points);
-    const canvas = el("section", "map-canvas");
-    if (!stays.length) {
-      canvas.append(el("div", "map-empty", state.mapLoading ? "Loading pins..." : "No location pins yet."));
-      return canvas;
+    const latest = latestMapPoint(points);
+    mapLibre.getSource("pucky-path")?.setData(mapLineGeoJson(points));
+    mapLibre.getSource("pucky-stays")?.setData(trackerStaysGeoJson(stays));
+    mapLibre.getSource("pucky-latest")?.setData(trackerPointsGeoJson(latest ? [latest] : []));
+    const shouldFit = options.forceFit || (!mapInitialFitDone && points.length);
+    if (shouldFit) {
+      const bounds = mapFitBounds(stays.length ? stays : points);
+      if (bounds) {
+        mapLibre.fitBounds(bounds, { padding: 82, maxZoom: 16, duration: options.forceFit ? 420 : 0 });
+      }
+      mapInitialFitDone = true;
+    } else if (latest && state.mapTracker.running && !state.mapUserMoved) {
+      mapLibre.easeTo({ center: [Number(latest.lon), Number(latest.lat)], zoom: Math.max(mapLibre.getZoom(), 15), duration: 420 });
     }
-    const bounds = mapBounds(stays);
-    stays.forEach((stay, index) => {
-      const xy = mapPointPosition(stay, bounds);
-      const marker = el("button", index === stays.length - 1 ? "map-pin is-latest" : "map-pin");
-      marker.type = "button";
-      marker.style.left = `${xy.x}%`;
-      marker.style.top = `${xy.y}%`;
-      marker.style.setProperty("--accuracy-size", `${accuracyCircleSize(stay)}px`);
-      marker.title = `${stay.sample_count} samples, ${formatTimeSpan(stay.first_at_ms, stay.last_at_ms)}, ${formatAccuracy(stay.accuracy_m)}`;
-      marker.setAttribute("aria-label", marker.title);
-      marker.append(el("span", "map-accuracy-ring"), el("span", "map-pin-dot", String(stay.sample_count)));
-      canvas.append(marker);
-    });
-    return canvas;
+    refreshMapChrome();
   }
 
-  function mapStayListView() {
-    const list = el("section", "map-stay-list");
-    const stays = mapDisplayStays(visibleMapPoints()).slice(-4).reverse();
-    stays.forEach((stay, index) => {
-      const row = el("article", index === 0 ? "map-stay-card is-current" : "map-stay-card");
-      row.append(
-        el("strong", "", index === 0 ? "Current pin" : "Saved pin"),
-        el("span", "", `${formatTimeSpan(stay.first_at_ms, stay.last_at_ms)} - ${stay.sample_count} samples`),
-        el("small", "", `${formatAccuracy(stay.accuracy_m)} - ${stay.providers.join(", ") || "location"}`)
-      );
-      list.append(row);
-    });
-    return list;
+  function refreshMapChrome() {
+    const overlay = document.querySelector(".map-offline");
+    if (overlay) {
+      const message = mapOverlayMessage();
+      overlay.hidden = !message;
+      overlay.classList.toggle("is-visible", Boolean(message));
+      const title = overlay.querySelector("strong");
+      const detail = overlay.querySelector("span");
+      if (title) title.textContent = message || "";
+      if (detail) detail.textContent = mapOverlayDetail();
+    }
+    const recenter = document.querySelector(".map-recenter");
+    if (recenter) {
+      recenter.classList.toggle("is-visible", state.mapUserMoved && Boolean(visibleMapPoints().length));
+    }
   }
 
-  function mapDebugSamplesView() {
-    const details = el("details", "map-debug-samples");
-    details.append(el("summary", "", "Debug samples"));
-    visibleMapPoints().slice(-6).reverse().forEach(point => {
-      const row = el("div", "map-debug-sample");
-      row.append(
-        el("span", "", shortTime(point.captured_at || point.captured_at_ms)),
-        el("code", "", `${Number(point.lat).toFixed(5)}, ${Number(point.lon).toFixed(5)}`),
-        el("small", "", formatAccuracy(point.accuracy_m))
-      );
-      details.append(row);
-    });
-    return details;
+  function showMapPinPopup(event) {
+    if (!mapLibre || !event.features || !event.features.length) {
+      return;
+    }
+    const feature = event.features[0];
+    const coordinates = feature.geometry && Array.isArray(feature.geometry.coordinates)
+      ? feature.geometry.coordinates.slice()
+      : null;
+    if (!coordinates) {
+      return;
+    }
+    const props = feature.properties || {};
+    const title = props.is_latest ? "Current location" : "Saved place";
+    const html = `<strong>${title}</strong><span>${props.time || ""}</span><span>${props.detail || ""}</span>`;
+    if (mapPopup) {
+      mapPopup.remove();
+    }
+    mapPopup = new window.maplibregl.Popup({ closeButton: false, closeOnClick: true, offset: 18 })
+      .setLngLat(coordinates)
+      .setHTML(html)
+      .addTo(mapLibre);
   }
 
   async function toggleMapTracker() {
@@ -1228,6 +1414,80 @@
       }
       return true;
     });
+  }
+
+  function trackerPointsGeoJson(points) {
+    const latest = latestMapPoint(points);
+    return {
+      type: "FeatureCollection",
+      features: normalizeMapPoints(points).map(point => ({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [Number(point.lon), Number(point.lat)]
+        },
+        properties: {
+          id: String(point.point_id || point.captured_at_ms || point.captured_at || ""),
+          is_latest: point === latest,
+          time: shortTime(point.captured_at || point.captured_at_ms),
+          detail: formatAccuracy(point.accuracy_m),
+          accuracy_m: Number.isFinite(Number(point.accuracy_m)) ? Number(point.accuracy_m) : 24
+        }
+      }))
+    };
+  }
+
+  function trackerStaysGeoJson(stays) {
+    const lastIndex = stays.length - 1;
+    return {
+      type: "FeatureCollection",
+      features: stays.map((stay, index) => ({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [Number(stay.lon), Number(stay.lat)]
+        },
+        properties: {
+          id: `${stay.first_at_ms || index}-${stay.last_at_ms || index}`,
+          is_latest: index === lastIndex,
+          time: formatTimeSpan(stay.first_at_ms, stay.last_at_ms),
+          detail: `${stay.sample_count} ${stay.sample_count === 1 ? "sample" : "samples"} - ${formatAccuracy(stay.accuracy_m)}`,
+          sample_count: stay.sample_count,
+          accuracy_m: Number.isFinite(Number(stay.accuracy_m)) ? Number(stay.accuracy_m) : 24
+        }
+      }))
+    };
+  }
+
+  function mapLineGeoJson(points) {
+    const ordered = normalizeMapPoints(points).slice().sort((a, b) => captureMillis(a) - captureMillis(b));
+    if (ordered.length < 2) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    return {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: ordered.map(point => [Number(point.lon), Number(point.lat)])
+        },
+        properties: {}
+      }]
+    };
+  }
+
+  function latestMapPoint(points) {
+    return normalizeMapPoints(points).slice().sort((a, b) => captureMillis(a) - captureMillis(b)).pop() || null;
+  }
+
+  function mapFitBounds(points) {
+    const usable = normalizeMapPoints(points);
+    if (!usable.length) {
+      return null;
+    }
+    const bounds = mapBounds(usable);
+    return [[bounds.minLon, bounds.minLat], [bounds.maxLon, bounds.maxLat]];
   }
 
   function mapDisplayStays(points) {
@@ -1287,7 +1547,7 @@
   }
 
   function captureMillis(point) {
-    const value = Number(point.captured_at_ms || Date.parse(point.captured_at || ""));
+    const value = Number(point.captured_at_ms || point.last_at_ms || point.first_at_ms || Date.parse(point.captured_at || ""));
     return Number.isFinite(value) ? value : 0;
   }
 
@@ -1308,14 +1568,6 @@
     return `${shortTime(firstMs)}-${shortTime(lastMs)}`;
   }
 
-  function accuracyCircleSize(stay) {
-    const accuracy = Number(stay && stay.max_accuracy_m);
-    if (!Number.isFinite(accuracy)) {
-      return 60;
-    }
-    return Math.max(46, Math.min(138, Math.round(accuracy * 2.2)));
-  }
-
   function mapBounds(points) {
     const lats = points.map(point => Number(point.lat));
     const lons = points.map(point => Number(point.lon));
@@ -1334,23 +1586,6 @@
       maxLon = center + (MAP_STAY_MIN_POSITION_SPAN / 2);
     }
     return { minLat, maxLat, minLon, maxLon };
-  }
-
-  function mapPointPosition(point, bounds) {
-    const lonSpan = Math.max(0.00001, bounds.maxLon - bounds.minLon);
-    const latSpan = Math.max(0.00001, bounds.maxLat - bounds.minLat);
-    return {
-      x: 8 + ((Number(point.lon) - bounds.minLon) / lonSpan) * 84,
-      y: 92 - ((Number(point.lat) - bounds.minLat) / latSpan) * 84
-    };
-  }
-
-  function totalMapDistanceMeters(points) {
-    let total = 0;
-    for (let index = 1; index < points.length; index += 1) {
-      total += haversineMeters(points[index - 1], points[index]);
-    }
-    return total;
   }
 
   function haversineMeters(a, b) {
