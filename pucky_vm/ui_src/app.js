@@ -17,7 +17,13 @@
   const CARD_SWIPE_ARCHIVE_THRESHOLD = 82;
   const CARD_SWIPE_EXIT_MS = 190;
   const CARD_SWIPE_COLLAPSE_MS = 230;
-  const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
+  const MAP_TILE_URLS = [
+    "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+  ];
+  const MAP_ATTRIBUTION = "&copy; OpenStreetMap contributors &copy; CARTO";
   const MAP_STAY_MIN_RADIUS_M = 25;
   const MAP_STAY_MIN_POSITION_SPAN = 0.0006;
   const MAP_DEFAULT_CENTER = [-122.3902849, 37.5885901];
@@ -1197,7 +1203,7 @@
       const latest = latestMapPoint(visibleMapPoints());
       mapLibre = new window.maplibregl.Map({
         container,
-        style: MAP_STYLE_URL,
+        style: mapStyleSpec(),
         center: latest ? [Number(latest.lon), Number(latest.lat)] : MAP_DEFAULT_CENTER,
         zoom: latest ? 15 : MAP_DEFAULT_ZOOM,
         attributionControl: false,
@@ -1206,12 +1212,15 @@
       mapLibre.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
       mapLibre.on("load", () => {
         mapLibreReady = true;
+        state.mapStyleError = "";
         ensureMapLibreLayers();
         updateMapLibreData({ forceFit: true });
       });
       mapLibre.on("error", () => {
-        state.mapStyleError = "Map unavailable offline";
-        refreshMapChrome();
+        if (!mapLibreReady) {
+          state.mapStyleError = "Map unavailable offline";
+          refreshMapChrome();
+        }
       });
       ["dragstart", "zoomstart", "rotatestart", "pitchstart"].forEach(eventName => {
         mapLibre.on(eventName, () => {
@@ -1243,6 +1252,27 @@
     mapLibreContainer = null;
     mapLibreReady = false;
     mapInitialFitDone = false;
+  }
+
+  function mapStyleSpec() {
+    return {
+      version: 8,
+      sources: {
+        "carto-positron": {
+          type: "raster",
+          tiles: MAP_TILE_URLS,
+          tileSize: 256,
+          attribution: MAP_ATTRIBUTION
+        }
+      },
+      layers: [
+        {
+          id: "carto-positron",
+          type: "raster",
+          source: "carto-positron"
+        }
+      ]
+    };
   }
 
   function ensureMapLibreLayers() {

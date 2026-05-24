@@ -733,7 +733,7 @@ def cmd_map_smoke(args: argparse.Namespace) -> dict[str, Any]:
     command_json(runner, puckyctl_command(args, config, "location.tracker.clear", {}), timeout=60)
 
     runner.run(launch_home_command(args, config), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "210", "28"]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "450", "52"]), timeout=30)
     if not args.dry_run:
         time.sleep(1.5)
     capture_screenshot(args, runner, config, Path(screenshots["empty"]))
@@ -750,7 +750,7 @@ def cmd_map_smoke(args: argparse.Namespace) -> dict[str, Any]:
     tracker = wait_for_tracker_points(args, runner, config, minimum=3)
 
     runner.run(launch_home_command(args, config), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "210", "28"]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "450", "52"]), timeout=30)
     if not args.dry_run:
         time.sleep(3)
     capture_screenshot(args, runner, config, Path(screenshots["map"]))

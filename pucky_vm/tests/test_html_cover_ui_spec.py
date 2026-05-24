@@ -256,7 +256,9 @@ def test_map_tab_renders_real_maplibre_location_surface() -> None:
     assert 'command: running ? "location.tracker.stop" : "location.tracker.start"' in app
     assert "interval_ms: 30000" in app
     assert "pucky.location_point.v1" in app
-    assert 'const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron"' in app
+    assert "const MAP_TILE_URLS = [" in app
+    assert "basemaps.cartocdn.com/light_all" in app
+    assert "function mapStyleSpec()" in app
     assert "const MAP_STAY_MIN_RADIUS_M = 25" in app
     assert "haversineMeters(previous, point) <= stayRadiusMeters(previous, point)" in app
     assert 'href="./vendor/maplibre/maplibre-gl.css"' in html
