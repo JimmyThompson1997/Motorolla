@@ -1036,6 +1036,7 @@ def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
     assert "function normalizeAttachmentViewer(item, kind, mime)" in app
     assert "function attachmentViewerType(item)" in app
     assert "const viewerType = attachmentViewerType(item)" in app
+    assert "attachments: normalizedAttachments(item.attachments)" in app
     assert 'if (viewerType === "image_gallery")' in app
     assert 'if (viewerType === "video_player")' in app
     assert 'if (viewerType === "audio_player")' in app

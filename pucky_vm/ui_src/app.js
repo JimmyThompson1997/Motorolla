@@ -3702,6 +3702,7 @@
         time: item.time || "",
         timestamp: item.timestamp || "",
         created_at: item.created_at || "",
+        attachments: normalizedAttachments(item.attachments),
         images: normalizedImages(item.images)
       }));
     }
@@ -4167,7 +4168,7 @@
     }
     const messages = messagesForCard(card);
     for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const images = normalizedImages(messages[index]?.images);
+      const images = normalizedAttachments(messages[index]?.attachments).concat(normalizedImages(messages[index]?.images));
       if (images.length) {
         return images;
       }
