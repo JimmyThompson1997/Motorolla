@@ -212,31 +212,40 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
-def test_home_cards_use_non_destructive_side_slot_and_archive_view() -> None:
+def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
     assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
+    assert "CARD_MENU_LONG_PRESS_MS = 450" in app
+    assert "CARD_MENU_MOVE_CANCEL_PX = 12" in app
     assert "showArchivedFeed: false" in app
     assert "archivedSessionIds: loadArchivedSessionIds()" in app
+    assert 'openCardMenuSessionId: ""' in app
     assert "function loadArchivedSessionIds()" in app
-    assert "function persistArchivedSessionIds()" not in app
-    assert "function archiveHomeCard(card, wrapper, cardEl)" not in app
-    assert "state.archivedSessionIds.add(sessionId)" not in app
-    assert "persistArchivedSessionIds();" not in app
+    assert "function persistArchivedSessionIds()" in app
+    assert "function archiveHomeCard(card)" in app
+    assert "state.archivedSessionIds.add(sessionId)" in app
+    assert "persistArchivedSessionIds();" in app
     assert "filteredFeedCards()" in app
     assert "state.archivedSessionIds.has(sessionId)" in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
-    assert "installCardSideSlot(wrapper, cardEl);" in app
-    assert "function installCardSideSlot(wrapper, cardEl)" in app
+    assert "installCardLongPressMenu(wrapper, card);" in app
+    assert "function installCardLongPressMenu(wrapper, card)" in app
+    assert "function cardLongPressMenu(card)" in app
+    assert "card-menu-action card-menu-archive" in app
+    assert "state.openCardMenuSessionId === sessionId ? \"\" : sessionId" in app
+    assert "state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)" in app
+    assert "Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX" in app
+    assert "shouldSuppressCardActivation()" in app
     assert 'card-swipe-reveal card-swipe-archive' not in app
     assert 'card-swipe-reveal card-swipe-voice' not in app
     assert "CARD_SWIPE_ARCHIVE_THRESHOLD" not in app
     assert "CARD_SWIPE_REVEAL_MAX" not in app
     assert "CARD_SWIPE_INTENT_PX" not in app
-    assert "CARD_SLOT_REVEAL_MAX" in app
-    assert "CARD_SLOT_OPEN_THRESHOLD" in app
+    assert "CARD_SLOT_REVEAL_MAX" not in app
+    assert "CARD_SLOT_OPEN_THRESHOLD" not in app
     assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
     assert ".card-wrap.is-swiping .card" not in styles
     assert ".card-wrap.is-archiving" not in styles
@@ -245,9 +254,12 @@ def test_home_cards_use_non_destructive_side_slot_and_archive_view() -> None:
     assert ".card-swipe-archive" not in styles
     assert ".card-swipe-voice" not in styles
     assert ".card-swipe-pill" not in styles
-    assert ".card-side-slot" in styles
-    assert ".card-side-divider" in styles
-    assert ".card-wrap.is-side-slot-open .card-side-slot" in styles
+    assert ".card-side-slot" not in styles
+    assert ".card-side-divider" not in styles
+    assert ".card-wrap.is-side-slot-open .card-side-slot" not in styles
+    assert ".card-longpress-menu" in styles
+    assert ".card-menu-action" in styles
+    assert ".card-wrap.is-card-menu-open .card" in styles
 
 
 
