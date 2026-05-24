@@ -270,8 +270,11 @@ public final class MainActivityWebViewShellTest {
 
         assertTrue("Broker default should point at the consolidated pucky service",
                 settings.contains("wss://pucky.fly.dev/v1/devices/"));
-        assertTrue("SettingsStore should only keep legacy remote ADB keys for cleanup",
-                settings.contains("LEGACY_REMOTE_ADB_KEYS"));
+        assertTrue("SettingsStore should only keep legacy remote ADB cleanup metadata",
+                settings.contains("LEGACY_REMOTE_ADB_KEYS")
+                        && settings.contains("LEGACY_REMOTE_ADB_PREFIXES")
+                        && settings.contains("\"remote_adb_\"")
+                        && settings.contains("\"tunnel_\""));
         assertFalse("SettingsStore should not keep tunnel provisioning fields alive",
                 settings.contains("\"tunnel\""));
         assertFalse("Executor should not expose retired tunnel or remote ADB commands",

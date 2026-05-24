@@ -23,20 +23,11 @@ public final class SettingsStore {
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
     private static final String[] LEGACY_REMOTE_ADB_KEYS = new String[] {
-            "tunnel_enabled",
-            "tunnel_host",
-            "tunnel_user",
-            "tunnel_port",
-            "tunnel_remote_bind",
-            "tunnel_remote_adb_port",
-            "tunnel_phone_adb_host",
-            "tunnel_phone_adb_port",
-            "tunnel_tls_enabled",
-            "tunnel_tls_server_name",
-            "tunnel_strict_host_key",
-            "tunnel_connect_timeout_ms",
-            "tunnel_reconnect_delay_ms",
             "adb_transport"
+    };
+    private static final String[] LEGACY_REMOTE_ADB_PREFIXES = new String[] {
+            "remote_adb_",
+            "tunnel_"
     };
 
     private final Context context;
@@ -167,6 +158,15 @@ public final class SettingsStore {
             if (prefs.contains(key)) {
                 editor.remove(key);
                 changed = true;
+            }
+        }
+        for (String key : prefs.getAll().keySet()) {
+            for (String prefix : LEGACY_REMOTE_ADB_PREFIXES) {
+                if (key.startsWith(prefix)) {
+                    editor.remove(key);
+                    changed = true;
+                    break;
+                }
             }
         }
         if (changed) {

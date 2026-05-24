@@ -1,167 +1,122 @@
 # Fresh User Install End State
 
-This note records the setup that works today and the clean install experience we want for a fresh user.
+This note records the setup that works today after the broker consolidation and remote ADB tunnel removal.
 
 ## Current Working Setup
 
-Current development proof on May 16, 2026:
+Current development proof on May 24, 2026:
 
 - Android device: Motorola Razr 2024.
 - Installed package: `com.pucky.device.debug`.
-- VM app: `pucky-bridge-dev-jt323`.
-- Phone ADB TCP is enabled on device port `5555` after one USB bootstrap.
-- The APK contains the reverse SSH tunnel client.
-- The APK opens an outbound TLS/SNI SSH connection to `pucky-bridge-dev-jt323.fly.dev:2222` as `pucky-adb`.
-- The VM receives a loopback-only reverse listener at `127.0.0.1:15555`.
-- The VM can run `adb connect 127.0.0.1:15555`.
-- The VM sees the device as `motorola_razr_2024` through `adb devices -l`.
-
-Important development shortcut:
-
-- The VM currently uses the laptop's already-trusted ADB client key. That is fine for this proof, but production should generate a VM/session ADB key and make the user approve that key intentionally.
+- VM app: `pucky`.
+- The APK connects outbound to `wss://pucky.fly.dev/v1/devices/<device_id>/connect`.
+- `pucky.fly.dev` serves both the broker routes and the cached HTML bundle under `/ui/pucky/latest/`.
+- The phone installs and runs the cached WebView bundle locally from app-private storage.
+- Agents use UBC, direct local ADB, or the emulator harness for device control and acceptance testing.
 
 ## Security Shape
 
-The safe shape is:
+The safe shape is now:
 
 ```text
 Android APK
-  -> outbound SSH/TLS tunnel
-  -> VM sshd
-  -> VM loopback listener only
-  -> VM adb client
-  -> phone-local adbd
+  -> outbound websocket to pucky.fly.dev
+  -> broker command bus
+  -> cached local HTML UI bundle
+  -> device-local capabilities
 ```
 
 Safety rules:
 
-- No public ADB port.
-- No inbound network requirement on the phone.
-- VM reverse listeners bind to `127.0.0.1`, not `0.0.0.0`.
-- SSHD uses a dedicated `pucky-adb` user with `ForceCommand /bin/false`.
-- `pucky-adb` can only create the expected remote forward, normally `127.0.0.1:15555`.
-- Device tunnel keys are per VM/device pairing and are rotated when pairing resets.
-- VM host keys are pinned into APK provisioning with a `known_hosts` entry.
-- ADB authorization is explicit: either the user approves the VM/session ADB key, or a trusted development key is deliberately reused during local testing.
+- No remote ADB service is exposed from the VM.
+- No phone-side SSH tunnel is required.
+- Broker tokens stay app-private.
+- Cached HTML bundles are hash-checked before install.
+- Direct device control for testing stays local to USB ADB, UBC, or emulator lanes.
 
 ## Ideal Fresh User Flow
 
-This is the product-grade path for a nontechnical user who wants full device power.
+This is the product-grade path for a nontechnical user who wants the Pucky app experience, not a remote-debugging tunnel.
 
-1. The user creates or opens their Pucky/Codex VM workspace.
+1. The user creates or opens their Pucky workspace.
 2. The VM creates a short-lived install session:
    - device id
    - broker URL
+   - turn endpoint URL
    - one-time pairing token
-   - per-device SSH tunnel keypair
-   - VM SSH host key pin
-   - VM/session ADB client identity
 3. The user opens a VM-specific install page on their laptop or phone.
 4. The page offers a session-specific APK download and an `Open Pucky and Pair` link.
 5. The user installs the APK.
-6. Android may ask the user to allow installing from that browser/source.
-7. The user opens Pucky from the post-install link or the launcher.
-8. The app consumes the one-time token and stores the broker/tunnel config in app-private storage.
-9. The app opens the outbound reverse SSH tunnel to the VM.
-10. For full ADB power, the user performs one trusted bootstrap step:
-    - plug the Android into their laptop with USB
-    - approve USB debugging on the phone
-    - run the bootstrap helper from the workspace, or click a desktop helper button
-    - helper enables phone ADB TCP and installs/provisions the VM/session ADB key
-11. The user unplugs the phone.
-12. The VM runs `adb connect 127.0.0.1:15555` and the coding agent can use the phone remotely.
+6. The user opens Pucky from the post-install link or the launcher.
+7. The app consumes the pairing token and stores the broker and turn config in app-private storage.
+8. The app connects to `pucky.fly.dev`, fetches the cached HTML bundle, and starts operating normally.
 
 The fresh user should experience this as:
 
 ```text
-Create VM
+Create workspace
 Download Pucky
 Install
 Open and pair
-Plug phone in once
-Approve Android prompt
 Done
 ```
 
-After that, the phone can be physically unplugged. The APK keeps the outbound tunnel alive whenever the phone has internet.
-
-## Why The APK Still Matters
-
-The tunnel is transport, not the whole product.
+## What The APK Still Matters For
 
 The APK is still needed for:
 
-- keeping the tunnel alive without Termux or a separate SSH app
-- app-level broker commands
+- keeping the broker connection alive
+- app-level command execution
 - foreground service lifecycle
-- cover-screen/home-screen UI
+- cached HTML bundle install and fallback shell
+- cover-screen and home-screen UI
 - Android permissions and device-local capabilities
-- future app-link/token pairing
+- future app-link or token pairing
 - user-visible status and repair flows
-
-ADB is the high-power control plane. The APK is the persistent, user-installable bridgehead.
 
 ## What The VM Install Package Must Include
 
 VM runtime:
 
-- OpenSSH server.
-- Android platform tools / `adb`.
-- broker service and `puckyctl`.
-- persistent data directory, currently `/data/pucky` on Fly.
-- SSH host keys persisted across VM restarts.
-- `pucky` user for old Termux bridge compatibility.
-- `pucky-adb` user for new APK-managed ADB tunnel.
-- SSHD policy that permits only loopback reverse forwards.
-- VM/session ADB key restore into `/root/.android/adbkey`.
+- `pucky_vm` service
+- broker database under persistent storage, currently `/data/pucky/broker.sqlite3`
+- cached bundle artifact serving under `/ui/pucky/latest/`
+- `puckyctl` or equivalent operator tooling
+- Fly volume or equivalent persistent data directory
 
 APK/session material generated by VM:
 
 - one-time pairing token
 - broker URL
+- turn endpoint URL
 - device id
-- `pucky-adb` public/private keypair
-- VM `known_hosts` line
-- remote ADB bind port, usually `15555`
-- phone ADB target, usually `127.0.0.1:5555`
 
 Development/bootstrap tooling:
 
-- JDK 17.
-- Android SDK and `adb`.
-- Gradle or checked-in Gradle wrapper.
-- one-command build/install/provision script.
-- one-command VM verification script:
+- JDK 17
+- Android SDK and `adb`
+- Gradle or checked-in Gradle wrapper
+- canonical build/install script
+- emulator harness for parallel UI testing
 
-```text
-adb connect 127.0.0.1:15555
-adb devices -l
-```
+## Direct Device Access Variants
 
-## Fresh User Variants
-
-Full power, recommended:
-
-- User installs APK.
-- User performs one USB debugging approval.
-- VM gets ADB over the APK reverse tunnel.
-
-App-only, lower power:
+App-only, default:
 
 - User installs APK and pairs it to the VM.
-- No USB debugging step.
-- VM can use app broker commands, but not full ADB screen/control/install power.
+- VM uses the broker command bus and cached bundle flow.
 
-Advanced wireless debugging:
+Local developer control:
 
-- User pairs Android Wireless Debugging manually.
-- Avoids USB, but it is more technical and less friendly than the one-time cable bootstrap.
+- USB ADB or UBC for install, logs, taps, screenshots, and acceptance testing.
+
+Parallel agent testing:
+
+- Android emulator harness for non-hardware-specific work.
 
 ## Open Product Work
 
-- Replace debug `run-as` provisioning with a production app-link/session provisioning path.
-- Generate VM/session ADB keys automatically.
-- Add a user-visible flow for approving the VM/session ADB key.
-- Package the laptop bootstrap as a one-click helper, not a pile of terminal commands.
-- Add a Pucky status screen that says whether broker, tunnel, and VM ADB are connected.
-- Add repair actions: re-pair, rotate keys, reconnect tunnel, show VM verification command.
+- Replace debug `run-as` provisioning with a production app-link or session provisioning path.
+- Add a user-visible Pucky status screen for broker, bundle, and playback health.
+- Add repair actions: reconnect, refresh bundle, and re-pair.
+- Keep the emulator lab strong enough that multiple agents can validate UI work in parallel before physical Razr acceptance.
