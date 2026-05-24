@@ -40,6 +40,10 @@ public final class LocationControllerSourceTest {
         assertTrue(tracker.contains("pucky.location_tracker_query.v1"));
         assertTrue(tracker.contains("pucky.location_point.v1"));
         assertTrue(tracker.contains("requestLocationUpdates"));
+        assertTrue(tracker.contains("LocationManager"));
+        assertTrue(tracker.contains("startLocationManagerFallbackLocked"));
+        assertTrue(tracker.contains("\"engine\""));
+        assertTrue(tracker.contains("\"fallback_reason\""));
         assertTrue(tracker.contains("location-tracker"));
         assertTrue(tracker.contains("points.jsonl"));
         assertTrue(tracker.contains("pucky_map_30s_tracker"));

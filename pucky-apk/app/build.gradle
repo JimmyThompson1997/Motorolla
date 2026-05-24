@@ -40,8 +40,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 73
-        versionName "0.2.72-map-tracker"
+        versionCode 74
+        versionName "0.2.73-map-tracker-fallback"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

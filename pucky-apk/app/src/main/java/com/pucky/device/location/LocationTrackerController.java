@@ -4,6 +4,9 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.os.Bundle;
 import android.os.HandlerThread;
 import android.os.SystemClock;
 
@@ -46,8 +49,13 @@ public final class LocationTrackerController {
     private HandlerThread thread;
     private FusedLocationProviderClient fusedClient;
     private LocationCallback callback;
+    private LocationManager locationManager;
+    private LocationListener locationListener;
     private boolean running;
     private String trackId = "";
+    private String engine = "none";
+    private String provider = "";
+    private String fallbackReason = "";
     private long startedAtMs;
     private long intervalMs = DEFAULT_INTERVAL_MS;
     private int sampleCount;
@@ -111,13 +119,22 @@ public final class LocationTrackerController {
             try {
                 Tasks.await(fusedClient.requestLocationUpdates(request, callback, thread.getLooper()),
                         2500L, TimeUnit.MILLISECONDS);
+                engine = "fused";
+                provider = "fused";
+                fallbackReason = "";
             } catch (SecurityException exc) {
                 cleanupLocked();
                 throw new CommandException(CommandErrorCodes.PERMISSION_MISSING, exc.getMessage());
             } catch (Exception exc) {
-                cleanupLocked();
-                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
-                        "Location tracker failed to start: " + exc.getMessage());
+                removeFusedUpdatesLocked();
+                try {
+                    startLocationManagerFallbackLocked(exc);
+                } catch (CommandException fallbackExc) {
+                    cleanupLocked();
+                    throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                            "Location tracker failed to start: fused=" + safeMessage(exc)
+                                    + "; fallback=" + fallbackExc.getMessage());
+                }
             }
             running = true;
             JSONObject out = statusLocked();
@@ -273,16 +290,15 @@ public final class LocationTrackerController {
         Json.put(out, "store_path", store.getAbsolutePath());
         Json.put(out, "bytes", store.exists() ? store.length() : 0L);
         Json.put(out, "default_interval_ms", DEFAULT_INTERVAL_MS);
+        Json.put(out, "engine", engine);
+        Json.put(out, "provider", provider);
+        Json.put(out, "fallback_reason", fallbackReason);
         return out;
     }
 
     private void cleanupLocked() {
-        if (fusedClient != null && callback != null) {
-            try {
-                fusedClient.removeLocationUpdates(callback);
-            } catch (Exception ignored) {
-            }
-        }
+        removeFusedUpdatesLocked();
+        removeLocationManagerUpdatesLocked();
         if (thread != null) {
             try {
                 thread.quitSafely();
@@ -291,8 +307,114 @@ public final class LocationTrackerController {
         }
         fusedClient = null;
         callback = null;
+        locationManager = null;
+        locationListener = null;
         thread = null;
+        engine = "none";
+        provider = "";
+        fallbackReason = "";
         running = false;
+    }
+
+    private void removeFusedUpdatesLocked() {
+        if (fusedClient != null && callback != null) {
+            try {
+                fusedClient.removeLocationUpdates(callback);
+            } catch (Exception ignored) {
+            }
+        }
+        fusedClient = null;
+        callback = null;
+    }
+
+    private void removeLocationManagerUpdatesLocked() {
+        if (locationManager != null && locationListener != null) {
+            try {
+                locationManager.removeUpdates(locationListener);
+            } catch (Exception ignored) {
+            }
+        }
+        locationManager = null;
+        locationListener = null;
+    }
+
+    private void startLocationManagerFallbackLocked(Exception fusedFailure) throws CommandException {
+        locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (locationManager == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "LocationManager unavailable");
+        }
+        provider = chooseProvider(locationManager);
+        fallbackReason = safeMessage(fusedFailure);
+        engine = "location_manager";
+        locationListener = new LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                appendPoint(location);
+            }
+
+            @Override
+            public void onProviderDisabled(String disabledProvider) {
+                // Keep the session visible; status/query expose lack of new points.
+            }
+
+            @Override
+            public void onStatusChanged(String provider, int status, Bundle extras) {
+                // Deprecated platform callback; retained for older devices.
+            }
+        };
+        try {
+            Location last = bestLastKnown(locationManager, provider);
+            if (last != null) {
+                appendPoint(last);
+            }
+            locationManager.requestLocationUpdates(provider, intervalMs, 0f, locationListener, thread.getLooper());
+        } catch (SecurityException exc) {
+            throw new CommandException(CommandErrorCodes.PERMISSION_MISSING, exc.getMessage());
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
+        }
+    }
+
+    private String chooseProvider(LocationManager manager) throws CommandException {
+        if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            return LocationManager.GPS_PROVIDER;
+        }
+        if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            return LocationManager.NETWORK_PROVIDER;
+        }
+        if (manager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
+            return LocationManager.PASSIVE_PROVIDER;
+        }
+        java.util.List<String> providers = manager.getProviders(true);
+        if (providers != null && !providers.isEmpty()) {
+            return providers.get(0);
+        }
+        throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "No enabled Android location provider");
+    }
+
+    private Location bestLastKnown(LocationManager manager, String preferred) {
+        Location best = null;
+        try {
+            best = manager.getLastKnownLocation(preferred);
+        } catch (Exception ignored) {
+        }
+        try {
+            for (String candidateProvider : manager.getProviders(true)) {
+                Location candidate = manager.getLastKnownLocation(candidateProvider);
+                if (candidate != null && isNewer(candidate, best)) {
+                    best = candidate;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return best;
+    }
+
+    private static boolean isNewer(Location candidate, Location currentBest) {
+        if (candidate == null) {
+            return false;
+        }
+        return currentBest == null || candidate.getTime() > currentBest.getTime();
     }
 
     private void requireLocationPermission() throws CommandException {
@@ -328,5 +450,15 @@ public final class LocationTrackerController {
 
     private static long boundedLong(long value, long min, long max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static String safeMessage(Exception exc) {
+        if (exc == null) {
+            return "";
+        }
+        String message = exc.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? exc.getClass().getSimpleName()
+                : message;
     }
 }
