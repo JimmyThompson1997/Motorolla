@@ -217,15 +217,19 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     styles = read("styles.css")
 
     assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
-    assert "CARD_MENU_LONG_PRESS_MS = 450" in app
+    assert "CARD_MENU_LONG_PRESS_MS = 250" in app
     assert "CARD_MENU_MOVE_CANCEL_PX = 12" in app
     assert "showArchivedFeed: false" in app
     assert "archivedSessionIds: loadArchivedSessionIds()" in app
+    assert "starredSessionIds: new Set()" in app
     assert 'openCardMenuSessionId: ""' in app
     assert "function loadArchivedSessionIds()" in app
     assert "function persistArchivedSessionIds()" in app
     assert "function archiveHomeCard(card)" in app
+    assert "function toggleCardStar(card)" in app
+    assert "function isCardStarred(card)" in app
     assert "state.archivedSessionIds.add(sessionId)" in app
+    assert "state.starredSessionIds.has(sessionId)" in app
     assert "persistArchivedSessionIds();" in app
     assert "filteredFeedCards()" in app
     assert "state.archivedSessionIds.has(sessionId)" in app
@@ -234,11 +238,20 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "installCardLongPressMenu(wrapper, card);" in app
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
+    assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
     assert "state.openCardMenuSessionId === sessionId ? \"\" : sessionId" in app
     assert "state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)" in app
     assert "Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX" in app
     assert "shouldSuppressCardActivation()" in app
+    assert "identity.disabled = menuOpen;" in app
+    assert "body.tabIndex = menuOpen ? -1 : 0;" in app
+    assert 'body.setAttribute("aria-disabled", menuOpen ? "true" : "false");' in app
+    assert "audio.disabled = menuOpen;" in app
+    assert "page.disabled = menuOpen;" in app
+    assert "toggleCardStar(card);" in app
+    assert "persistStarredSessionIds" not in app
+    assert "localStorage.setItem(\"pucky.cover.starred" not in app
     assert "!window.PointerEvent" not in app
     assert 'card-swipe-reveal card-swipe-archive' not in app
     assert 'card-swipe-reveal card-swipe-voice' not in app
@@ -260,7 +273,15 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert ".card-wrap.is-side-slot-open .card-side-slot" not in styles
     assert ".card-longpress-menu" in styles
     assert ".card-menu-action" in styles
+    assert ".card-menu-action.is-selected" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
+    assert ".card-wrap.is-card-menu-open .card::before" in styles
+    assert ".card-wrap.is-card-menu-open .card::after" in styles
+    assert ".card-wrap.is-card-menu-open .card-menu-action::after" in styles
+    assert ".card-wrap.is-card-menu-open .identity" in styles
+    assert ".card-wrap.is-card-menu-open .card-body" in styles
+    assert ".card-wrap.is-card-menu-open .card-actions" in styles
+    assert "@keyframes card-menu-tracer-spin" in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 
@@ -338,7 +359,6 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert "transition: transform 180ms ease;" in styles
     assert "opacity 140ms ease" not in styles
     assert "animation: feedRefreshSpin" not in styles
-    assert "conic-gradient" not in styles
     assert "--feed-refresh-progress" not in styles
     assert "feed-refresh-spinner" not in styles
     assert "var(--blue) 0deg 44deg" not in styles

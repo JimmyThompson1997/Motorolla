@@ -12,7 +12,7 @@
   const FEED_REFRESH_HOLD_OFFSET = 46;
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
-  const CARD_MENU_LONG_PRESS_MS = 450;
+  const CARD_MENU_LONG_PRESS_MS = 250;
   const CARD_MENU_MOVE_CANCEL_PX = 12;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const MATERIAL_SYMBOLS = {
@@ -63,6 +63,10 @@
     archive_folder: {
       filled: '<path d="M4 5h6l2 2h8c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2Zm4 5v2h8v-2H8Zm2 4v2h4v-2h-4Z"/>',
       outline: '<path d="M3 7.5c0-1.1.9-2 2-2h5l2 2h7c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-10Z"/><path d="M8 11h8"/><path d="M10 15h4"/>'
+    },
+    star: {
+      filled: '<path d="m12 17.27 5.18 3.13-1.37-5.89 4.57-3.96-6.02-.51L12 4.5l-2.36 5.54-6.02.51 4.57 3.96-1.37 5.89L12 17.27Z"/>',
+      outline: '<path d="m12 16.3 3.76 2.27-1-4.28 3.32-2.88-4.38-.37L12 7l-1.7 4.04-4.38.37 3.32 2.88-1 4.28L12 16.3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>'
     },
     mic: {
       filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
@@ -285,6 +289,7 @@
     feedRefreshing: false,
     showArchivedFeed: false,
     archivedSessionIds: loadArchivedSessionIds(),
+    starredSessionIds: new Set(),
     openCardMenuSessionId: "",
     cardMenuClickSuppressUntil: 0,
     waveHistory: new Map(),
@@ -1004,6 +1009,7 @@
   function cardView(card) {
     const wrapper = el("div", "card-wrap");
     const sessionId = cardSessionId(card);
+    const menuOpen = Boolean(sessionId && state.openCardMenuSessionId === sessionId);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
@@ -1011,23 +1017,31 @@
 
     const identity = el("button", `identity ${cardStateClass(card)}`);
     identity.type = "button";
+    identity.disabled = menuOpen;
     identity.innerHTML = iconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", isCardRead(card) ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (menuOpen) {
+        return;
+      }
       toggleCardRead(card);
       renderFeed();
     });
 
     const body = el("div", "card-body");
     body.setAttribute("role", "button");
-    body.tabIndex = 0;
+    body.tabIndex = menuOpen ? -1 : 0;
+    body.setAttribute("aria-disabled", menuOpen ? "true" : "false");
     body.addEventListener("click", () => {
-      if (!shouldSuppressCardActivation()) {
+      if (!menuOpen && !shouldSuppressCardActivation()) {
         showTranscript(card);
       }
     });
     body.addEventListener("keydown", (event) => {
+      if (menuOpen) {
+        return;
+      }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         showTranscript(card);
@@ -1047,10 +1061,14 @@
         ? "action action-audio is-playing"
         : "action action-audio");
       audio.type = "button";
+      audio.disabled = menuOpen;
       audio.innerHTML = iconSvg("mic", { filled: true });
       audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : isActiveCard(card) ? "Resume" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
+        if (menuOpen) {
+          return;
+        }
         await toggleAudio(card);
       });
       actions.append(audio);
@@ -1058,10 +1076,14 @@
     if (card.html_path) {
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
+      page.disabled = menuOpen;
       page.innerHTML = iconSvg("attachment", { filled: true });
       page.setAttribute("aria-label", `Open page for ${card.title}`);
       page.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (menuOpen) {
+          return;
+        }
         showRichPage(card);
       });
       actions.append(page);
@@ -1074,7 +1096,7 @@
       cardEl.append(stamp);
     }
     wrapper.append(cardEl);
-    if (sessionId && state.openCardMenuSessionId === sessionId) {
+    if (menuOpen) {
       wrapper.classList.add("is-card-menu-open");
       wrapper.append(cardLongPressMenu(card));
     }
@@ -2711,11 +2733,42 @@
     return Date.now() < Number(state.cardMenuClickSuppressUntil || 0);
   }
 
+  function isCardStarred(card) {
+    const sessionId = cardSessionId(card);
+    return Boolean(sessionId && state.starredSessionIds.has(sessionId));
+  }
+
+  function toggleCardStar(card) {
+    const sessionId = cardSessionId(card);
+    if (!sessionId) {
+      return;
+    }
+    if (state.starredSessionIds.has(sessionId)) {
+      state.starredSessionIds.delete(sessionId);
+    } else {
+      state.starredSessionIds.add(sessionId);
+    }
+    renderFeed();
+  }
+
   function cardLongPressMenu(card) {
     const menu = el("div", "card-longpress-menu");
     menu.setAttribute("role", "menu");
     menu.setAttribute("aria-label", `Actions for ${card.title || "reply"}`);
     menu.dataset.dragIgnore = "true";
+    const star = el("button", isCardStarred(card)
+      ? "card-menu-action card-menu-star is-selected"
+      : "card-menu-action card-menu-star");
+    star.type = "button";
+    star.setAttribute("role", "menuitemcheckbox");
+    star.setAttribute("aria-checked", isCardStarred(card) ? "true" : "false");
+    star.setAttribute("aria-pressed", isCardStarred(card) ? "true" : "false");
+    star.innerHTML = `${iconSvg("star", { filled: isCardStarred(card) })}<span>Star</span>`;
+    star.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCardStar(card);
+    });
     const archive = el("button", "card-menu-action card-menu-archive");
     archive.type = "button";
     archive.setAttribute("role", "menuitem");
@@ -2725,7 +2778,7 @@
       event.stopPropagation();
       archiveHomeCard(card);
     });
-    menu.append(archive);
+    menu.append(star, archive);
     return menu;
   }
 
