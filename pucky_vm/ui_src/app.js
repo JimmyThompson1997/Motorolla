@@ -23,6 +23,10 @@
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
       outline: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/><path d="m4.4 18 5.7-5.1"/><path d="m19.6 18-5.7-5.1"/>'
     },
+    link: {
+      filled: '<path d="M3.9 12a5 5 0 0 1 5-5H12v2H8.9a3 3 0 0 0 0 6H12v2H8.9a5 5 0 0 1-5-5Zm5.6 1v-2h5v2h-5Zm2.5 4h3.1a3 3 0 0 0 0-6H12V9h3.1a5 5 0 0 1 0 10H12v-2Z"/>',
+      outline: '<path d="M10 8H8.8a4 4 0 0 0 0 8H10"/><path d="M14 8h1.2a4 4 0 0 1 0 8H14"/><path d="M9.5 12h5"/>'
+    },
     bell: {
       filled: '<path d="M12 22a2.8 2.8 0 0 0 2.8-2.5H9.2A2.8 2.8 0 0 0 12 22Zm7-5-2-2v-5.2c0-3.1-1.7-5.6-4.5-6.3V2h-1v1.5C8.7 4.2 7 6.7 7 9.8V15l-2 2v1h14v-1Z"/>',
       outline: '<path d="M7 15V9.8c0-3 2-5.3 5-5.3s5 2.3 5 5.3V15l2 2H5l2-2Z"/><path d="M10 19.5h4"/><path d="M12 2v2.5"/>'
@@ -127,12 +131,10 @@
 
   const PAGE_TABS = [
     { route: "feed", icon: "mail", label: "Home" },
-    { route: "settings", icon: "settings", label: "Settings" },
+    { route: "links", icon: "link", label: "Links" },
     { route: "morning", icon: "coffee", label: "Morning" },
-    { route: "calls", icon: "phone", label: "Calls" },
-    { route: "messages", icon: "chat", label: "Messages" },
     { route: "map", icon: "map", label: "Map" },
-    { route: "sensors", icon: "sensors", label: "Sensors" }
+    { route: "settings", icon: "settings", label: "Settings" }
   ];
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];

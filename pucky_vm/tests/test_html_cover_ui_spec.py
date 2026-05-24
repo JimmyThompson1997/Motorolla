@@ -46,17 +46,20 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'icon: "bell"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
+    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Links" }' in app
+    assert "link:" in app
+    assert 'route: "links"' in app
+    assert 'icon: "link"' in app
+    assert 'label: "Links"' in app
     assert 'route: "settings"' in app
     assert 'icon: "settings"' in app
     assert 'label: "Settings"' in app
+    assert app.index('route: "settings"') > app.index('route: "map"')
     assert 'route: "morning"' in app
     assert 'icon: "coffee"' in app
-    assert 'route: "calls"' in app
-    assert 'icon: "phone"' in app
-    assert 'route: "messages"' in app
-    assert 'icon: "chat"' in app
-    assert 'route: "sensors"' in app
-    assert 'icon: "sensors"' in app
+    assert 'route: "calls"' not in app
+    assert 'route: "messages"' not in app
+    assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
