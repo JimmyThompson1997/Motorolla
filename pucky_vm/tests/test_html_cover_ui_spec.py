@@ -261,6 +261,8 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert ".card-longpress-menu" in styles
     assert ".card-menu-action" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
+    assert "-webkit-touch-callout: none;" in styles
+    assert "user-select: none;" in styles
 
 
 

@@ -670,6 +670,9 @@ button {
   position: relative;
   margin: 0 0 10px;
   overflow: visible;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition:
     height 230ms cubic-bezier(0.16, 0.84, 0.24, 1),
     margin-bottom 230ms cubic-bezier(0.16, 0.84, 0.24, 1);
