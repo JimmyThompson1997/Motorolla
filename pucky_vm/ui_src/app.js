@@ -17,6 +17,8 @@
   const CARD_SWIPE_ARCHIVE_THRESHOLD = 82;
   const CARD_SWIPE_EXIT_MS = 190;
   const CARD_SWIPE_COLLAPSE_MS = 230;
+  const MAP_STAY_MIN_RADIUS_M = 25;
+  const MAP_STAY_MIN_POSITION_SPAN = 0.0006;
 
   const MATERIAL_SYMBOLS = {
     mail: {
@@ -1068,26 +1070,27 @@
     const running = Boolean(state.mapTracker.running);
     copy.append(
       el("h1", "map-title", "Map"),
-      el("p", "map-subtitle", running ? "Recording a point about every 30 seconds." : "Location trail is paused.")
+      el("p", "map-subtitle", running ? "Saving a location point about every 30 seconds." : "Location tracking is paused.")
     );
     const toggle = el("button", running ? "map-toggle is-running" : "map-toggle", running ? "Stop" : "Start");
     toggle.type = "button";
     toggle.addEventListener("click", () => toggleMapTracker());
     hero.append(heroIcon, copy, toggle);
-    page.append(hero, mapStatsView(), mapFiltersView(), mapCanvasView(), mapTimelineView());
+    page.append(hero, mapStatsView(), mapFiltersView(), mapCanvasView(), mapStayListView(), mapDebugSamplesView());
     return page;
   }
 
   function mapStatsView() {
     const stats = el("section", "map-stats");
     const points = visibleMapPoints();
+    const stays = mapDisplayStays(points);
     const last = points.slice(-1)[0] || null;
-    const distance = totalMapDistanceMeters(points);
+    const distance = totalMapDistanceMeters(stays);
     stats.append(
-      mapStat("Points", String(points.length)),
+      mapStat("Pins", String(stays.length)),
+      mapStat("Samples", String(points.length)),
       mapStat("Distance", distance >= 1000 ? `${(distance / 1000).toFixed(2)} km` : `${Math.round(distance)} m`),
-      mapStat("Last", last ? shortTime(last.captured_at || last.captured_at_ms) : "-"),
-      mapStat("Accuracy", last && Number.isFinite(Number(last.accuracy_m)) ? `${Math.round(Number(last.accuracy_m))} m` : "-")
+      mapStat("Last", last ? shortTime(last.captured_at || last.captured_at_ms) : "-")
     );
     if (state.mapError) {
       stats.append(el("div", "map-error", state.mapError));
@@ -1123,45 +1126,56 @@
 
   function mapCanvasView() {
     const points = visibleMapPoints();
+    const stays = mapDisplayStays(points);
     const canvas = el("section", "map-canvas");
-    if (!points.length) {
-      canvas.append(el("div", "map-empty", state.mapLoading ? "Loading trail..." : "No location points yet."));
+    if (!stays.length) {
+      canvas.append(el("div", "map-empty", state.mapLoading ? "Loading pins..." : "No location pins yet."));
       return canvas;
     }
-    const bounds = mapBounds(points);
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 100 100");
-    svg.setAttribute("class", "map-path");
-    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    polyline.setAttribute("points", points.map(point => {
-      const xy = mapPointPosition(point, bounds);
-      return `${xy.x.toFixed(2)},${xy.y.toFixed(2)}`;
-    }).join(" "));
-    svg.append(polyline);
-    canvas.append(svg);
-    points.forEach((point, index) => {
-      const xy = mapPointPosition(point, bounds);
-      const pin = el("span", index === points.length - 1 ? "map-pin is-latest" : "map-pin");
-      pin.style.left = `${xy.x}%`;
-      pin.style.top = `${xy.y}%`;
-      pin.title = `${shortTime(point.captured_at || point.captured_at_ms)} · ${point.accuracy_m || "?"}m`;
-      canvas.append(pin);
+    const bounds = mapBounds(stays);
+    stays.forEach((stay, index) => {
+      const xy = mapPointPosition(stay, bounds);
+      const marker = el("button", index === stays.length - 1 ? "map-pin is-latest" : "map-pin");
+      marker.type = "button";
+      marker.style.left = `${xy.x}%`;
+      marker.style.top = `${xy.y}%`;
+      marker.style.setProperty("--accuracy-size", `${accuracyCircleSize(stay)}px`);
+      marker.title = `${stay.sample_count} samples, ${formatTimeSpan(stay.first_at_ms, stay.last_at_ms)}, ${formatAccuracy(stay.accuracy_m)}`;
+      marker.setAttribute("aria-label", marker.title);
+      marker.append(el("span", "map-accuracy-ring"), el("span", "map-pin-dot", String(stay.sample_count)));
+      canvas.append(marker);
     });
     return canvas;
   }
 
-  function mapTimelineView() {
-    const list = el("section", "map-timeline");
-    visibleMapPoints().slice(-12).reverse().forEach(point => {
-      const row = el("article", "map-timeline-row");
+  function mapStayListView() {
+    const list = el("section", "map-stay-list");
+    const stays = mapDisplayStays(visibleMapPoints()).slice(-4).reverse();
+    stays.forEach((stay, index) => {
+      const row = el("article", index === 0 ? "map-stay-card is-current" : "map-stay-card");
       row.append(
-        el("strong", "", shortTime(point.captured_at || point.captured_at_ms)),
-        el("span", "", `${Number(point.lat).toFixed(5)}, ${Number(point.lon).toFixed(5)}`),
-        el("small", "", `${point.provider || point.source || "location"} · ${Number.isFinite(Number(point.accuracy_m)) ? Math.round(Number(point.accuracy_m)) + "m" : "unknown accuracy"}`)
+        el("strong", "", index === 0 ? "Current pin" : "Saved pin"),
+        el("span", "", `${formatTimeSpan(stay.first_at_ms, stay.last_at_ms)} - ${stay.sample_count} samples`),
+        el("small", "", `${formatAccuracy(stay.accuracy_m)} - ${stay.providers.join(", ") || "location"}`)
       );
       list.append(row);
     });
     return list;
+  }
+
+  function mapDebugSamplesView() {
+    const details = el("details", "map-debug-samples");
+    details.append(el("summary", "", "Debug samples"));
+    visibleMapPoints().slice(-6).reverse().forEach(point => {
+      const row = el("div", "map-debug-sample");
+      row.append(
+        el("span", "", shortTime(point.captured_at || point.captured_at_ms)),
+        el("code", "", `${Number(point.lat).toFixed(5)}, ${Number(point.lon).toFixed(5)}`),
+        el("small", "", formatAccuracy(point.accuracy_m))
+      );
+      details.append(row);
+    });
+    return details;
   }
 
   async function toggleMapTracker() {
@@ -1216,15 +1230,110 @@
     });
   }
 
+  function mapDisplayStays(points) {
+    const ordered = points.slice().sort((a, b) => captureMillis(a) - captureMillis(b));
+    const stays = [];
+    ordered.forEach(point => {
+      const previous = stays[stays.length - 1];
+      if (previous && haversineMeters(previous, point) <= stayRadiusMeters(previous, point)) {
+        extendMapStay(previous, point);
+      } else {
+        stays.push(createMapStay(point));
+      }
+    });
+    return stays;
+  }
+
+  function createMapStay(point) {
+    const accuracy = numericAccuracy(point);
+    const provider = String(point.provider || point.source || "location");
+    const captured = captureMillis(point);
+    return {
+      lat: Number(point.lat),
+      lon: Number(point.lon),
+      first_at_ms: captured,
+      last_at_ms: captured,
+      sample_count: 1,
+      accuracy_m: accuracy,
+      max_accuracy_m: accuracy,
+      providers: provider ? [provider] : []
+    };
+  }
+
+  function extendMapStay(stay, point) {
+    const nextCount = stay.sample_count + 1;
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    const accuracy = numericAccuracy(point);
+    const provider = String(point.provider || point.source || "location");
+    stay.lat = ((stay.lat * stay.sample_count) + lat) / nextCount;
+    stay.lon = ((stay.lon * stay.sample_count) + lon) / nextCount;
+    stay.sample_count = nextCount;
+    stay.first_at_ms = Math.min(stay.first_at_ms, captureMillis(point));
+    stay.last_at_ms = Math.max(stay.last_at_ms, captureMillis(point));
+    if (Number.isFinite(accuracy)) {
+      stay.accuracy_m = Number.isFinite(stay.accuracy_m) ? Math.min(stay.accuracy_m, accuracy) : accuracy;
+      stay.max_accuracy_m = Number.isFinite(stay.max_accuracy_m) ? Math.max(stay.max_accuracy_m, accuracy) : accuracy;
+    }
+    if (provider && !stay.providers.includes(provider)) {
+      stay.providers.push(provider);
+    }
+  }
+
+  function stayRadiusMeters(stay, point) {
+    const values = [MAP_STAY_MIN_RADIUS_M, numericAccuracy(point), stay.max_accuracy_m, stay.accuracy_m]
+      .filter(value => Number.isFinite(value));
+    return Math.max(...values);
+  }
+
+  function captureMillis(point) {
+    const value = Number(point.captured_at_ms || Date.parse(point.captured_at || ""));
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function numericAccuracy(point) {
+    const value = Number(point && point.accuracy_m);
+    return Number.isFinite(value) ? value : NaN;
+  }
+
+  function formatAccuracy(value) {
+    const accuracy = Number(value);
+    return Number.isFinite(accuracy) ? `+/-${Math.round(accuracy)}m accuracy` : "unknown accuracy";
+  }
+
+  function formatTimeSpan(firstMs, lastMs) {
+    if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs) || Math.abs(lastMs - firstMs) < 60000) {
+      return shortTime(lastMs || firstMs);
+    }
+    return `${shortTime(firstMs)}-${shortTime(lastMs)}`;
+  }
+
+  function accuracyCircleSize(stay) {
+    const accuracy = Number(stay && stay.max_accuracy_m);
+    if (!Number.isFinite(accuracy)) {
+      return 60;
+    }
+    return Math.max(46, Math.min(138, Math.round(accuracy * 2.2)));
+  }
+
   function mapBounds(points) {
     const lats = points.map(point => Number(point.lat));
     const lons = points.map(point => Number(point.lon));
-    return {
-      minLat: Math.min(...lats),
-      maxLat: Math.max(...lats),
-      minLon: Math.min(...lons),
-      maxLon: Math.max(...lons)
-    };
+    let minLat = Math.min(...lats);
+    let maxLat = Math.max(...lats);
+    let minLon = Math.min(...lons);
+    let maxLon = Math.max(...lons);
+    if (maxLat - minLat < MAP_STAY_MIN_POSITION_SPAN) {
+      const center = (maxLat + minLat) / 2;
+      minLat = center - (MAP_STAY_MIN_POSITION_SPAN / 2);
+      maxLat = center + (MAP_STAY_MIN_POSITION_SPAN / 2);
+    }
+    if (maxLon - minLon < MAP_STAY_MIN_POSITION_SPAN) {
+      const center = (maxLon + minLon) / 2;
+      minLon = center - (MAP_STAY_MIN_POSITION_SPAN / 2);
+      maxLon = center + (MAP_STAY_MIN_POSITION_SPAN / 2);
+    }
+    return { minLat, maxLat, minLon, maxLon };
   }
 
   function mapPointPosition(point, bounds) {

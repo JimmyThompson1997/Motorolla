@@ -241,16 +241,29 @@ def test_map_tab_renders_location_tracker_surface() -> None:
     assert "map:" in app
     assert "function mapPageView()" in app
     assert "function mapCanvasView()" in app
+    assert "function mapDisplayStays(points)" in app
+    assert "function mapStayListView()" in app
+    assert "function mapDebugSamplesView()" in app
     assert "function loadMapTracker" in app
     assert 'command: "location.tracker.status"' in app
     assert 'command: "location.tracker.query"' in app
     assert 'command: running ? "location.tracker.stop" : "location.tracker.start"' in app
     assert "interval_ms: 30000" in app
     assert "pucky.location_point.v1" in app
+    assert "const MAP_STAY_MIN_RADIUS_M = 25" in app
+    assert "haversineMeters(previous, point) <= stayRadiusMeters(previous, point)" in app
+    assert "totalMapDistanceMeters(stays)" in app
     assert "totalMapDistanceMeters" in app
+    assert "mapTimelineView" not in app
+    assert "map-path" not in app
+    assert "map-timeline" not in app
     assert ".map-page" in styles
     assert ".map-canvas" in styles
     assert ".map-pin.is-latest" in styles
+    assert ".map-stay-card" in styles
+    assert ".map-debug-samples" in styles
+    assert ".map-path" not in styles
+    assert ".map-timeline" not in styles
 
 
 def test_feed_has_subtle_edge_rubber_band() -> None:
