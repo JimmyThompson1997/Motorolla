@@ -38,6 +38,13 @@ python tools\pucky_emulator_suite.py seed-ui --slot 1
 python tools\pucky_emulator_suite.py smoke --slot 1
 ```
 
+To seed the richer committed cover fixtures, including the Morning Launch
+PDF/DOCX/MP4 attachment rail, pass the fixture file directly:
+
+```powershell
+python tools\pucky_emulator_suite.py seed-ui --slot 1 --cards-file pucky_vm\ui_src\fixtures\reply_cards_deploy.json
+```
+
 Use dry-run mode to inspect plans without starting processes or installing anything:
 
 ```powershell
@@ -71,6 +78,8 @@ python tools\pucky_emulator_suite.py clean --slot 1
 - `ui.reply_cards.set`
 
 It does not use `adb push`, `run-as`, shared preferences, or app-private storage writes.
+Use `--cards-file` when a visual smoke needs the full fixture corpus instead of
+the one-card probe.
 
 ## Evidence
 

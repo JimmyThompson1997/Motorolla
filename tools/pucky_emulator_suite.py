@@ -588,6 +588,14 @@ def default_cards(config: SlotConfig) -> dict[str, Any]:
     }
 
 
+def cards_payload_from_args(args: argparse.Namespace, config: SlotConfig) -> dict[str, Any]:
+    if getattr(args, "cards_file", None):
+        return json.loads(Path(args.cards_file).read_text(encoding="utf-8"))
+    if args.cards_json:
+        return json.loads(args.cards_json)
+    return default_cards(config)
+
+
 def cmd_seed_ui(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -618,7 +626,7 @@ def cmd_seed_ui(args: argparse.Namespace) -> dict[str, Any]:
         ),
         timeout=120,
     )
-    cards_payload = json.loads(args.cards_json) if args.cards_json else default_cards(config)
+    cards_payload = cards_payload_from_args(args, config)
     cards_status = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.set", cards_payload), timeout=120)
     if not args.dry_run:
         state = load_state(ROOT, args.slot)
@@ -742,6 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--skip-build", action="store_true")
         if name == "seed-ui":
             item.add_argument("--cards-json", default="")
+            item.add_argument("--cards-file", type=Path)
             item.add_argument("--max-bundle-bytes", type=int, default=20 * 1024 * 1024)
     return parser
 

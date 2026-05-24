@@ -221,6 +221,17 @@ def test_seed_ui_dry_run_plans_command_bus_not_adb_push(monkeypatch: pytest.Monk
     assert config.device_id in planned
 
 
+def test_seed_ui_can_load_cards_from_file(tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, cards_json="", cards_file=tmp_path / "cards.json", max_bundle_bytes=1024 * 1024)
+    args.cards_file.write_text('{"cards":[{"session_id":"from_file","title":"From file"}]}', encoding="utf-8")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    payload = suite.cards_payload_from_args(args, config)
+
+    assert payload["cards"][0]["session_id"] == "from_file"
+    assert payload["cards"][0]["title"] == "From file"
+
+
 def test_provision_refuses_when_configured_serial_is_not_emulator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = ns(tmp_path, slot=1, skip_build=True)
     bad = suite.slot_config(suite.ROOT, 1, run_id="dry-run-slot01")

@@ -1377,17 +1377,72 @@
     play.type = "button";
     play.innerHTML = iconSvg("play_arrow", { filled: true });
     play.setAttribute("aria-label", "Play video");
-    const time = el("span", "attachment-video-time", "0:00");
+    const controls = el("div", "video-controls");
+    const elapsed = el("span", "video-time video-elapsed", "0:00");
+    const timeline = el("div", "video-timeline");
+    timeline.setAttribute("role", "slider");
+    timeline.setAttribute("aria-label", "Video position");
+    timeline.setAttribute("aria-valuemin", "0");
+    timeline.setAttribute("aria-valuemax", "0");
+    timeline.setAttribute("aria-valuenow", "0");
+    const progress = el("div", "video-progress");
+    const scrubber = el("div", "video-scrubber");
+    timeline.append(progress, scrubber);
+    const durationLabel = el("span", "video-time video-duration", "0:00");
+    controls.append(elapsed, timeline, durationLabel);
     const updateVideoUi = () => {
       const duration = Number(video.duration || 0);
       const position = Number(video.currentTime || 0);
+      const ratio = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
       shell.classList.toggle("is-playing", !video.paused && !video.ended);
       play.innerHTML = iconSvg(!video.paused && !video.ended ? "pause" : "play_arrow", { filled: true });
       play.setAttribute("aria-label", !video.paused && !video.ended ? "Pause video" : "Play video");
-      time.textContent = duration > 0
-        ? `${formatVideoTime(position)} / ${formatVideoTime(duration)}`
-        : formatVideoTime(position);
+      elapsed.textContent = formatVideoTime(position);
+      durationLabel.textContent = duration > 0 ? formatVideoTime(duration) : "0:00";
+      progress.style.width = `${ratio * 100}%`;
+      scrubber.style.left = `${ratio * 100}%`;
+      timeline.setAttribute("aria-valuemax", String(Math.max(0, Math.floor(duration))));
+      timeline.setAttribute("aria-valuenow", String(Math.max(0, Math.floor(position))));
     };
+    const seekFromPointer = (event) => {
+      const duration = Number(video.duration || 0);
+      if (!(duration > 0)) {
+        return;
+      }
+      const rect = timeline.getBoundingClientRect();
+      const clientX = Number(event.clientX || 0);
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+      video.currentTime = ratio * duration;
+      updateVideoUi();
+    };
+    let scrubbing = false;
+    timeline.addEventListener("pointerdown", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      scrubbing = true;
+      timeline.setPointerCapture(event.pointerId);
+      seekFromPointer(event);
+    });
+    timeline.addEventListener("pointermove", event => {
+      if (!scrubbing) {
+        return;
+      }
+      event.preventDefault();
+      seekFromPointer(event);
+    });
+    const finishScrub = (event) => {
+      if (!scrubbing) {
+        return;
+      }
+      event.preventDefault();
+      seekFromPointer(event);
+      scrubbing = false;
+      if (timeline.hasPointerCapture(event.pointerId)) {
+        timeline.releasePointerCapture(event.pointerId);
+      }
+    };
+    timeline.addEventListener("pointerup", finishScrub);
+    timeline.addEventListener("pointercancel", finishScrub);
     const toggle = async () => {
       try {
         if (!video.paused && !video.ended) {
@@ -1404,13 +1459,18 @@
       event.stopPropagation();
       toggle();
     });
+    video.addEventListener("click", event => {
+      event.stopPropagation();
+      toggle();
+    });
     video.addEventListener("loadedmetadata", updateVideoUi);
     video.addEventListener("timeupdate", updateVideoUi);
+    video.addEventListener("seeked", updateVideoUi);
     video.addEventListener("play", updateVideoUi);
     video.addEventListener("pause", updateVideoUi);
     video.addEventListener("ended", updateVideoUi);
-    shell.append(video, play, time);
-    frame.append(shell, attachmentMeta(item, "Video"));
+    shell.append(video, play, controls);
+    frame.append(shell);
     content.append(frame);
     openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
@@ -1418,8 +1478,7 @@
     restoreScrollPosition(content, options.scrollTop);
     try {
       video.src = await resolveArtifactUrl(item, {
-        maxBytes: 64 * 1024 * 1024,
-        preferDataUrl: true
+        maxBytes: 64 * 1024 * 1024
       });
     } catch (error) {
       frame.append(el("p", "attachment-error", `Video unavailable: ${error.message}`));

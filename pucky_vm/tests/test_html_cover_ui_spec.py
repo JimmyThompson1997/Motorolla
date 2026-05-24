@@ -702,11 +702,21 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"attachment-video-play"' in app
     assert 'play.addEventListener("click"' in app
     assert 'event.stopPropagation();\n      toggle();' in app
+    assert 'video.addEventListener("click"' in app
     assert 'shell.addEventListener("click"' not in app
     assert "function formatVideoTime(seconds)" in app
     assert "await video.play()" in app
-    assert "preferDataUrl: true" in app
+    assert "preferDataUrl: true" not in app
     assert "!options.preferDataUrl && window.PuckyAndroid" in app
+    assert '"video-controls"' in app
+    assert '"video-timeline"' in app
+    assert '"video-progress"' in app
+    assert '"video-scrubber"' in app
+    assert "const seekFromPointer = (event) =>" in app
+    assert "video.currentTime = ratio * duration;" in app
+    assert 'video.addEventListener("seeked", updateVideoUi)' in app
+    assert "frame.append(shell, attachmentMeta(item, \"Video\"))" not in app
+    assert "frame.append(shell);" in app
     assert "function detailDismissHandler(options = {}, fallback = dismissDetail)" in app
     assert "const dismissAttachment = detailDismissHandler(options);" in app
     assert 'back.setAttribute("aria-label", "Back")' in app
@@ -794,8 +804,11 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-reel-video" in styles
     assert ".attachment-video-shell" in styles
     assert ".attachment-video-play" in styles
-    assert ".attachment-video-time" in styles
     assert ".attachment-video-player" in styles
+    assert ".video-controls" in styles
+    assert ".video-timeline" in styles
+    assert ".video-progress" in styles
+    assert ".video-scrubber" in styles
     video_play = css_block(styles, ".attachment-video-play")
     assert "width: 94px;" in video_play
     assert "height: 94px;" in video_play
