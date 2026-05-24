@@ -54,7 +54,8 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'route: "settings"' in app
     assert 'icon: "settings"' in app
     assert 'label: "Settings"' in app
-    assert app.index('route: "settings"') > app.index('route: "map"')
+    assert 'route: "map"' not in app
+    assert 'icon: "map"' not in app
     assert 'route: "morning"' in app
     assert 'icon: "coffee"' in app
     assert 'route: "calls"' not in app
@@ -248,49 +249,35 @@ def test_home_cards_use_non_destructive_side_slot_and_archive_view() -> None:
     assert ".card-wrap.is-side-slot-open .card-side-slot" in styles
 
 
-def test_map_tab_renders_real_maplibre_location_surface() -> None:
+
+def test_map_page_and_maplibre_experiment_are_removed() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
 
-    assert '{ route: "map", icon: "map", label: "Map" }' in app
-    assert "map:" in app
-    assert "function mapPageView()" in app
-    assert "function mapLibreView()" in app
-    assert "function syncMapLibre" in app
-    assert "function trackerPointsGeoJson(points)" in app
-    assert "function trackerStaysGeoJson(stays)" in app
-    assert "function mapLineGeoJson(points)" in app
-    assert "function latestMapPoint(points)" in app
-    assert "function mapFitBounds(points)" in app
-    assert "function mapOfflineOverlayView()" in app
-    assert "function mapDisplayStays(points)" in app
-    assert "function loadMapTracker" in app
-    assert 'command: "location.tracker.status"' in app
-    assert 'command: "location.tracker.query"' in app
-    assert 'command: running ? "location.tracker.stop" : "location.tracker.start"' in app
-    assert "interval_ms: 30000" in app
-    assert "pucky.location_point.v1" in app
-    assert "const MAP_TILE_URLS = [" in app
-    assert "basemaps.cartocdn.com/light_all" in app
-    assert "function mapStyleSpec()" in app
-    assert "const MAP_STAY_MIN_RADIUS_M = 25" in app
-    assert "haversineMeters(previous, point) <= stayRadiusMeters(previous, point)" in app
-    assert 'href="./vendor/maplibre/maplibre-gl.css"' in html
-    assert 'src="./vendor/maplibre/maplibre-gl.js"' in html
+    assert 'route: "map"' not in app
+    assert 'icon: "map"' not in app
+    assert "map:" not in app
+    assert "function mapPageView" not in app
+    assert "function mapLibreView" not in app
+    assert "function syncMapLibre" not in app
+    assert "function loadMapTracker" not in app
+    assert "location.tracker." not in app
+    assert "MAP_TILE_URLS" not in app
+    assert "maplibre" not in app.lower()
+    assert "openfreemap" not in app.lower()
+    assert "basemaps.cartocdn.com" not in app
     assert "tile.openstreetmap.org" not in app
+    assert "vendor/maplibre" not in html
+    assert "maplibre" not in html.lower()
     assert "tile.openstreetmap.org" not in html
-    assert ".map-page" in styles
-    assert ".maplibre-map" in styles
-    assert ".map-control-card" in styles
-    assert ".map-recenter" in styles
-    assert ".map-offline" in styles
-    assert 'id: "pucky-latest"' in app
+    assert ".map-page" not in styles
+    assert ".maplibre-map" not in styles
+    assert ".map-control-card" not in styles
+    assert ".map-recenter" not in styles
+    assert ".map-offline" not in styles
     assert ".map-canvas" not in styles
-    assert ".map-path" not in styles
-    assert ".map-timeline" not in styles
     assert ".map-debug-samples" not in styles
-
 
 def test_feed_has_subtle_edge_rubber_band() -> None:
     app = read("app.js")

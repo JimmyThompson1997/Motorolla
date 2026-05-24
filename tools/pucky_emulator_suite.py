@@ -695,93 +695,6 @@ def command_result(payload: dict[str, Any]) -> dict[str, Any]:
     return result if isinstance(result, dict) else payload
 
 
-def wait_for_tracker_points(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, minimum: int = 3, timeout: float = 35.0) -> dict[str, Any]:
-    if runner.dry_run:
-        command_json(runner, puckyctl_command(args, config, "location.tracker.query", {"limit": 1000}), timeout=60)
-        return {"dry_run": True, "points": [{"dry_run": True}] * minimum}
-    deadline = time.monotonic() + timeout
-    last: dict[str, Any] = {}
-    while time.monotonic() < deadline:
-        payload = command_result(command_json(runner, puckyctl_command(args, config, "location.tracker.query", {"limit": 1000}), timeout=60))
-        last = payload
-        if len(payload.get("points", [])) >= minimum:
-            return payload
-        time.sleep(1)
-    raise SuiteError(f"Timed out waiting for {minimum} tracker points: {last}")
-
-
-def cmd_map_smoke(args: argparse.Namespace) -> dict[str, Any]:
-    runner = Runner(dry_run=args.dry_run)
-    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
-    require_emulator_serial(config.serial)
-    if not serial_is_connected(args, runner, config.serial):
-        raise SuiteError(f"Emulator is not connected: {config.serial}")
-
-    evidence = Path(config.evidence_dir)
-    screenshots = {
-        "empty": str(evidence / "map-empty.png"),
-        "map": str(evidence / "map-tracking.png"),
-        "panned": str(evidence / "map-panned.png"),
-        "popup": str(evidence / "map-pin-popup.png"),
-    }
-
-    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_FINE_LOCATION"]), check=False, timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_COARSE_LOCATION"]), check=False, timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "settings", "put", "secure", "location_mode", "3"]), check=False, timeout=30)
-    health = wait_http(f"http://127.0.0.1:{config.broker_port}/health", timeout=10) if not args.dry_run else {"dry_run": True}
-    bundle = command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=60)
-    command_json(runner, puckyctl_command(args, config, "location.tracker.clear", {}), timeout=60)
-
-    runner.run(launch_home_command(args, config), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "450", "52"]), timeout=30)
-    if not args.dry_run:
-        time.sleep(1.5)
-    capture_screenshot(args, runner, config, Path(screenshots["empty"]))
-
-    command_json(runner, puckyctl_command(args, config, "location.tracker.start", {"interval_ms": 30000}), timeout=60)
-    for lon, lat in [
-        ("-122.3902849", "37.5885901"),
-        ("-122.3896000", "37.5891000"),
-        ("-122.3884000", "37.5902000"),
-    ]:
-        runner.run(adb_command(args, config.serial, ["emu", "geo", "fix", lon, lat]), check=False, timeout=30)
-        if not args.dry_run:
-            time.sleep(1.25)
-    tracker = wait_for_tracker_points(args, runner, config, minimum=3)
-
-    runner.run(launch_home_command(args, config), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "450", "52"]), timeout=30)
-    if not args.dry_run:
-        time.sleep(3)
-    capture_screenshot(args, runner, config, Path(screenshots["map"]))
-    runner.run(adb_command(args, config.serial, ["shell", "input", "swipe", "760", "530", "420", "530", "550"]), timeout=30)
-    if not args.dry_run:
-        time.sleep(0.8)
-    capture_screenshot(args, runner, config, Path(screenshots["panned"]))
-    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", "528", "450"]), timeout=30)
-    if not args.dry_run:
-        time.sleep(0.8)
-    capture_screenshot(args, runner, config, Path(screenshots["popup"]))
-
-    summary = {
-        "schema": "pucky.emulator_map_smoke.v1",
-        "ok": True,
-        "serial": config.serial,
-        "device_id": config.device_id,
-        "health": health,
-        "bundle": bundle,
-        "tracker": tracker,
-        "screenshots": screenshots,
-        "commands": runner.planned,
-        "dry_run": args.dry_run,
-    }
-    if not args.dry_run:
-        write_evidence(config, "map-smoke.json", summary)
-        write_evidence(config, "map-tracker-query.json", tracker)
-        write_evidence(config, "map-bundle-status.json", bundle)
-    return summary
-
-
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -835,7 +748,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "map-smoke", "stop", "clean"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -863,8 +776,6 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_seed_ui(args)
     if args.command == "smoke":
         return cmd_smoke(args)
-    if args.command == "map-smoke":
-        return cmd_map_smoke(args)
     if args.command == "stop":
         return cmd_stop(args)
     if args.command == "clean":

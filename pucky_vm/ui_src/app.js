@@ -15,18 +15,6 @@
   const CARD_SLOT_INTENT_PX = 12;
   const CARD_SLOT_REVEAL_MAX = 112;
   const CARD_SLOT_OPEN_THRESHOLD = 64;
-  const MAP_TILE_URLS = [
-    "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-    "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-    "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-    "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-  ];
-  const MAP_ATTRIBUTION = "&copy; OpenStreetMap contributors &copy; CARTO";
-  const MAP_STAY_MIN_RADIUS_M = 25;
-  const MAP_STAY_MIN_POSITION_SPAN = 0.0006;
-  const MAP_DEFAULT_CENTER = [-122.3902849, 37.5885901];
-  const MAP_DEFAULT_ZOOM = 13;
-
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -79,10 +67,6 @@
     mic: {
       filled: '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7Z"/>',
       outline: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 10.8c0 3.5 2.7 6.2 6.5 6.2s6.5-2.7 6.5-6.2"/><path d="M12 17v4"/>'
-    },
-    map: {
-      filled: '<path d="m9 4 6 2.1 4.8-1.9c.6-.2 1.2.2 1.2.9v13.2c0 .4-.2.8-.6.9L15 21l-6-2.1-4.8 1.9c-.6.2-1.2-.2-1.2-.9V6.7c0-.4.2-.8.6-.9L9 4Zm3 6.2c0 2 3 5.2 3 5.2s3-3.2 3-5.2a3 3 0 1 0-6 0Zm3 1.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/>',
-      outline: '<path d="m9 4 6 2.1 5-2v15l-5 1.9-6-2.1-5 2V6l5-2Z"/><path d="M9 4v14.9M15 6.1V21"/><path d="M12.6 10.2c0 1.7 2.4 4.3 2.4 4.3s2.4-2.6 2.4-4.3a2.4 2.4 0 1 0-4.8 0Z"/><circle cx="15" cy="10.2" r=".75"/>'
     },
     record_voice_over: {
       filled: '<path d="M9 11.5A3.5 3.5 0 1 0 9 4.5a3.5 3.5 0 0 0 0 7Zm0 2c-2.7 0-6 1.35-6 3.35V19h12v-2.15c0-2-3.3-3.35-6-3.35Zm8.3-8.1-1.4 1.4a5.35 5.35 0 0 1 0 7.6l1.4 1.4a7.35 7.35 0 0 0 0-10.4Zm2.8-2.8-1.4 1.4a9.3 9.3 0 0 1 0 13.2l1.4 1.4a11.3 11.3 0 0 0 0-16Z"/>',
@@ -146,7 +130,6 @@
     { route: "feed", icon: "mail", label: "Home" },
     { route: "links", icon: "link", label: "Links" },
     { route: "morning", icon: "coffee", label: "Morning" },
-    { route: "map", icon: "map", label: "Map" },
     { route: "settings", icon: "settings", label: "Settings" }
   ];
 
@@ -274,12 +257,6 @@
       html_path: "/mock/pocket-computers.html"
     }
   ];
-  const MOCK_MAP_POINTS = [
-    { schema: "pucky.location_point.v1", point_id: "mock_map_1", track_id: "mock_today", captured_at: "2026-05-24T08:15:00-07:00", captured_at_ms: 1779635700000, lat: 37.5885901, lon: -122.3902849, accuracy_m: 18, source: "mock" },
-    { schema: "pucky.location_point.v1", point_id: "mock_map_2", track_id: "mock_today", captured_at: "2026-05-24T08:35:00-07:00", captured_at_ms: 1779636900000, lat: 37.5891, lon: -122.3896, accuracy_m: 12, source: "mock" },
-    { schema: "pucky.location_point.v1", point_id: "mock_map_3", track_id: "mock_today", captured_at: "2026-05-24T09:05:00-07:00", captured_at_ms: 1779638700000, lat: 37.5902, lon: -122.3884, accuracy_m: 31, source: "mock" }
-  ];
-
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
   const state = {
@@ -292,13 +269,6 @@
     excludedFeedIcons: loadFeedIconExcludes(),
     turn: initialTurnStatus(),
     turnSettings: initialTurnSettings(),
-    mapTracker: initialMapTrackerStatus(),
-    mapPoints: [],
-    mapLoading: false,
-    mapFilter: "today",
-    mapError: "",
-    mapStyleError: "",
-    mapUserMoved: false,
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -321,12 +291,6 @@
 
   const pending = new Map();
   let seq = 0;
-  let mapLibre = null;
-  let mapLibreContainer = null;
-  let mapLibreReady = false;
-  let mapInitialFitDone = false;
-  let mapPopup = null;
-
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
@@ -407,43 +371,6 @@
         modes: TURN_REPLY_MODES
       };
       return state.turnSettings;
-    }
-    if (command === "location.tracker.status") {
-      return state.mapTracker;
-    }
-    if (command === "location.tracker.start") {
-      state.mapTracker = {
-        ...state.mapTracker,
-        schema: "pucky.location_tracker_status.v1",
-        running: true,
-        track_id: state.mapTracker.track_id || "mock_today",
-        interval_ms: Number(args.interval_ms || 30000),
-        started_at: new Date().toISOString(),
-        sample_count: state.mapPoints.length,
-        start_status: "started"
-      };
-      if (!state.mapPoints.length) {
-        state.mapPoints = MOCK_MAP_POINTS.slice();
-      }
-      return state.mapTracker;
-    }
-    if (command === "location.tracker.stop") {
-      state.mapTracker = { ...state.mapTracker, running: false, stop_status: "stopped" };
-      return state.mapTracker;
-    }
-    if (command === "location.tracker.clear") {
-      state.mapPoints = [];
-      state.mapTracker = { ...initialMapTrackerStatus(), cleared: true };
-      return state.mapTracker;
-    }
-    if (command === "location.tracker.query") {
-      return {
-        schema: "pucky.location_tracker_query.v1",
-        running: state.mapTracker.running,
-        track_id: state.mapTracker.track_id || "mock_today",
-        count: state.mapPoints.length,
-        points: state.mapPoints
-      };
     }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
@@ -604,29 +531,6 @@
     }
   }
 
-  async function loadMapTracker(options = {}) {
-    if (state.mapLoading) {
-      return;
-    }
-    state.mapLoading = true;
-    state.mapError = "";
-    try {
-      const status = await Pucky.request({ command: "location.tracker.status", args: {} });
-      const query = await Pucky.request({
-        command: "location.tracker.query",
-        args: { today: state.mapFilter === "today", limit: 1000 }
-      });
-      state.mapTracker = normalizeMapTrackerStatus(status);
-      state.mapPoints = normalizeMapPoints(query.points || []);
-    } catch (exc) {
-      state.mapError = exc && exc.message ? exc.message : "Map tracker unavailable";
-    } finally {
-      state.mapLoading = false;
-      if (options.render) {
-        render();
-      }
-    }
-  }
 
   function render() {
     renderTabs();
@@ -849,8 +753,6 @@
         restoreFeedScroll();
       } else if (state.route === "settings") {
         loadTurnSettings({ render: true });
-      } else if (state.route === "map") {
-        loadMapTracker({ render: true });
       }
     });
     return button;
@@ -920,22 +822,9 @@
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
-      if (state.route === "settings") {
-        destroyMapLibre();
-        loadTurnSettings({ render: false });
-        feed.replaceChildren(settingsPageView());
-        return;
-      }
-      if (state.route === "map") {
-        feed.replaceChildren(mapPageView());
-        window.requestAnimationFrame(syncMapLibre);
-        return;
-      }
-      destroyMapLibre();
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
-    destroyMapLibre();
     if (!state.cards.length) {
       feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
       return;
@@ -1108,560 +997,6 @@
     return row;
   }
 
-  function mapPageView() {
-    const page = el("section", "map-page");
-    page.append(mapLibreView(), mapControlCardView());
-    return page;
-  }
-
-  function mapLibreView() {
-    const shell = el("section", "map-surface");
-    const map = el("div", "maplibre-map");
-    map.id = "mapLibreSurface";
-    map.setAttribute("aria-label", "Location map");
-    const recenter = el("button", state.mapUserMoved ? "map-recenter is-visible" : "map-recenter", "Recenter");
-    recenter.type = "button";
-    recenter.addEventListener("click", () => {
-      state.mapUserMoved = false;
-      mapInitialFitDone = false;
-      updateMapLibreData({ forceFit: true });
-      refreshMapChrome();
-    });
-    shell.append(map, mapOfflineOverlayView(), recenter);
-    return shell;
-  }
-
-  function mapOfflineOverlayView() {
-    const message = mapOverlayMessage();
-    const overlay = el("div", message ? "map-offline is-visible" : "map-offline");
-    overlay.setAttribute("aria-live", "polite");
-    if (!message) {
-      overlay.hidden = true;
-    }
-    overlay.append(
-      el("strong", "", message || ""),
-      el("span", "", mapOverlayDetail())
-    );
-    return overlay;
-  }
-
-  function mapOverlayMessage() {
-    if (state.mapStyleError) {
-      return "Map unavailable offline";
-    }
-    if (state.mapError) {
-      return "Location tracker unavailable";
-    }
-    if (state.mapLoading && !state.mapPoints.length) {
-      return "Loading location...";
-    }
-    if (!visibleMapPoints().length) {
-      return "No location points yet";
-    }
-    return "";
-  }
-
-  function mapOverlayDetail() {
-    if (state.mapStyleError) {
-      return "Tracking controls and saved points still work.";
-    }
-    if (state.mapError) {
-      return state.mapError;
-    }
-    if (!visibleMapPoints().length) {
-      return "Start tracking to place your first pin.";
-    }
-    return "";
-  }
-
-  function mapControlCardView() {
-    const points = visibleMapPoints();
-    const latest = latestMapPoint(points);
-    const running = Boolean(state.mapTracker.running);
-    const card = el("article", "map-control-card");
-    const icon = el("div", running ? "map-control-icon is-running" : "map-control-icon");
-    icon.innerHTML = iconSvg("map", { filled: true });
-    const copy = el("div", "map-control-copy");
-    copy.append(
-      el("h1", "map-title", running ? "Tracking on" : "Tracking paused"),
-      el("p", "map-subtitle", latest ? `${shortTime(latest.captured_at || latest.captured_at_ms)} - ${formatAccuracy(latest.accuracy_m)}` : "No saved location yet.")
-    );
-    const toggle = el("button", running ? "map-toggle is-running" : "map-toggle", running ? "Stop" : "Start");
-    toggle.type = "button";
-    toggle.addEventListener("click", () => toggleMapTracker());
-    card.append(icon, copy, toggle);
-    return card;
-  }
-
-  function syncMapLibre() {
-    const container = document.getElementById("mapLibreSurface");
-    if (!container) {
-      destroyMapLibre();
-      return;
-    }
-    if (!window.maplibregl || typeof window.maplibregl.Map !== "function") {
-      state.mapStyleError = "Map renderer unavailable";
-      refreshMapChrome();
-      return;
-    }
-    if (mapLibre && mapLibreContainer !== container) {
-      destroyMapLibre();
-    }
-    if (!mapLibre) {
-      createMapLibre(container);
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      try {
-        mapLibre.resize();
-        updateMapLibreData();
-      } catch (_) {
-        state.mapStyleError = "Map unavailable offline";
-        refreshMapChrome();
-      }
-    });
-  }
-
-  function createMapLibre(container) {
-    mapLibreContainer = container;
-    mapLibreReady = false;
-    state.mapStyleError = "";
-    try {
-      const latest = latestMapPoint(visibleMapPoints());
-      mapLibre = new window.maplibregl.Map({
-        container,
-        style: mapStyleSpec(),
-        center: latest ? [Number(latest.lon), Number(latest.lat)] : MAP_DEFAULT_CENTER,
-        zoom: latest ? 15 : MAP_DEFAULT_ZOOM,
-        attributionControl: false,
-        cooperativeGestures: false
-      });
-      mapLibre.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
-      mapLibre.on("load", () => {
-        mapLibreReady = true;
-        state.mapStyleError = "";
-        ensureMapLibreLayers();
-        updateMapLibreData({ forceFit: true });
-      });
-      mapLibre.on("error", () => {
-        if (!mapLibreReady) {
-          state.mapStyleError = "Map unavailable offline";
-          refreshMapChrome();
-        }
-      });
-      ["dragstart", "zoomstart", "rotatestart", "pitchstart"].forEach(eventName => {
-        mapLibre.on(eventName, () => {
-          state.mapUserMoved = true;
-          refreshMapChrome();
-        });
-      });
-      mapLibre.on("click", "pucky-stays", event => showMapPinPopup(event));
-      mapLibre.on("click", "pucky-latest", event => showMapPinPopup(event));
-    } catch (_) {
-      state.mapStyleError = "Map unavailable offline";
-      refreshMapChrome();
-    }
-  }
-
-  function destroyMapLibre() {
-    if (mapPopup) {
-      mapPopup.remove();
-      mapPopup = null;
-    }
-    if (mapLibre) {
-      try {
-        mapLibre.remove();
-      } catch (_) {
-        // MapLibre may already be detached during fast route changes.
-      }
-    }
-    mapLibre = null;
-    mapLibreContainer = null;
-    mapLibreReady = false;
-    mapInitialFitDone = false;
-  }
-
-  function mapStyleSpec() {
-    return {
-      version: 8,
-      sources: {
-        "carto-positron": {
-          type: "raster",
-          tiles: MAP_TILE_URLS,
-          tileSize: 256,
-          attribution: MAP_ATTRIBUTION
-        }
-      },
-      layers: [
-        {
-          id: "carto-positron",
-          type: "raster",
-          source: "carto-positron"
-        }
-      ]
-    };
-  }
-
-  function ensureMapLibreLayers() {
-    if (!mapLibre || !mapLibreReady || mapLibre.getSource("pucky-stays")) {
-      return;
-    }
-    mapLibre.addSource("pucky-path", { type: "geojson", data: mapLineGeoJson([]) });
-    mapLibre.addSource("pucky-stays", { type: "geojson", data: trackerStaysGeoJson([]) });
-    mapLibre.addSource("pucky-latest", { type: "geojson", data: trackerPointsGeoJson([]) });
-    mapLibre.addLayer({
-      id: "pucky-path",
-      type: "line",
-      source: "pucky-path",
-      paint: {
-        "line-color": "#3a84ff",
-        "line-width": 3,
-        "line-opacity": 0.72
-      }
-    });
-    mapLibre.addLayer({
-      id: "pucky-accuracy",
-      type: "circle",
-      source: "pucky-latest",
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["coalesce", ["get", "accuracy_m"], 24], 0, 22, 120, 68],
-        "circle-color": "#50d86a",
-        "circle-opacity": 0.16,
-        "circle-stroke-color": "#b8efc2",
-        "circle-stroke-width": 1,
-        "circle-stroke-opacity": 0.55
-      }
-    });
-    mapLibre.addLayer({
-      id: "pucky-stays",
-      type: "circle",
-      source: "pucky-stays",
-      paint: {
-        "circle-radius": ["case", ["get", "is_latest"], 12, 9],
-        "circle-color": ["case", ["get", "is_latest"], "#ffb000", "#f5f9ff"],
-        "circle-stroke-color": "#06110b",
-        "circle-stroke-width": 2,
-        "circle-opacity": 0.95
-      }
-    });
-    mapLibre.addLayer({
-      id: "pucky-latest",
-      type: "circle",
-      source: "pucky-latest",
-      paint: {
-        "circle-radius": 9,
-        "circle-color": "#ffb000",
-        "circle-stroke-color": "#06110b",
-        "circle-stroke-width": 2
-      }
-    });
-  }
-
-  function updateMapLibreData(options = {}) {
-    if (!mapLibre || !mapLibreReady) {
-      return;
-    }
-    ensureMapLibreLayers();
-    const points = visibleMapPoints();
-    const stays = mapDisplayStays(points);
-    const latest = latestMapPoint(points);
-    mapLibre.getSource("pucky-path")?.setData(mapLineGeoJson(points));
-    mapLibre.getSource("pucky-stays")?.setData(trackerStaysGeoJson(stays));
-    mapLibre.getSource("pucky-latest")?.setData(trackerPointsGeoJson(latest ? [latest] : []));
-    const shouldFit = options.forceFit || (!mapInitialFitDone && points.length);
-    if (shouldFit) {
-      const bounds = mapFitBounds(stays.length ? stays : points);
-      if (bounds) {
-        mapLibre.fitBounds(bounds, { padding: 82, maxZoom: 16, duration: options.forceFit ? 420 : 0 });
-      }
-      mapInitialFitDone = true;
-    } else if (latest && state.mapTracker.running && !state.mapUserMoved) {
-      mapLibre.easeTo({ center: [Number(latest.lon), Number(latest.lat)], zoom: Math.max(mapLibre.getZoom(), 15), duration: 420 });
-    }
-    refreshMapChrome();
-  }
-
-  function refreshMapChrome() {
-    const overlay = document.querySelector(".map-offline");
-    if (overlay) {
-      const message = mapOverlayMessage();
-      overlay.hidden = !message;
-      overlay.classList.toggle("is-visible", Boolean(message));
-      const title = overlay.querySelector("strong");
-      const detail = overlay.querySelector("span");
-      if (title) title.textContent = message || "";
-      if (detail) detail.textContent = mapOverlayDetail();
-    }
-    const recenter = document.querySelector(".map-recenter");
-    if (recenter) {
-      recenter.classList.toggle("is-visible", state.mapUserMoved && Boolean(visibleMapPoints().length));
-    }
-  }
-
-  function showMapPinPopup(event) {
-    if (!mapLibre || !event.features || !event.features.length) {
-      return;
-    }
-    const feature = event.features[0];
-    const coordinates = feature.geometry && Array.isArray(feature.geometry.coordinates)
-      ? feature.geometry.coordinates.slice()
-      : null;
-    if (!coordinates) {
-      return;
-    }
-    const props = feature.properties || {};
-    const title = props.is_latest ? "Current location" : "Saved place";
-    const html = `<strong>${title}</strong><span>${props.time || ""}</span><span>${props.detail || ""}</span>`;
-    if (mapPopup) {
-      mapPopup.remove();
-    }
-    mapPopup = new window.maplibregl.Popup({ closeButton: false, closeOnClick: true, offset: 18 })
-      .setLngLat(coordinates)
-      .setHTML(html)
-      .addTo(mapLibre);
-  }
-
-  async function toggleMapTracker() {
-    const running = Boolean(state.mapTracker.running);
-    state.mapError = "";
-    render();
-    try {
-      state.mapTracker = normalizeMapTrackerStatus(await Pucky.request({
-        command: running ? "location.tracker.stop" : "location.tracker.start",
-        args: running ? {} : { interval_ms: 30000 }
-      }));
-      await loadMapTracker({ render: false });
-    } catch (exc) {
-      state.mapError = exc && exc.message ? exc.message : "Could not change tracker state";
-    }
-    render();
-  }
-
-  function normalizeMapTrackerStatus(input) {
-    const raw = input && typeof input === "object" ? input : {};
-    return {
-      schema: "pucky.location_tracker_status.v1",
-      running: truthy(raw.running),
-      track_id: String(raw.track_id || ""),
-      interval_ms: Number(raw.interval_ms || 30000),
-      sample_count: Number(raw.sample_count || 0),
-      last_point: raw.last_point || null,
-      bytes: Number(raw.bytes || 0)
-    };
-  }
-
-  function normalizeMapPoints(points) {
-    return Array.isArray(points)
-      ? points.filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
-      : [];
-  }
-
-  function visibleMapPoints() {
-    const now = Date.now();
-    return state.mapPoints.filter(point => {
-      const captured = Number(point.captured_at_ms || Date.parse(point.captured_at || ""));
-      if (state.mapFilter === "hour" && Number.isFinite(captured) && now - captured > 3600000) {
-        return false;
-      }
-      if (state.mapFilter === "accurate" && Number(point.accuracy_m || 9999) > 50) {
-        return false;
-      }
-      if (state.mapFilter === "moving" && Number(point.speed_mps || 0) <= 0.4) {
-        return false;
-      }
-      return true;
-    });
-  }
-
-  function trackerPointsGeoJson(points) {
-    const latest = latestMapPoint(points);
-    return {
-      type: "FeatureCollection",
-      features: normalizeMapPoints(points).map(point => ({
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [Number(point.lon), Number(point.lat)]
-        },
-        properties: {
-          id: String(point.point_id || point.captured_at_ms || point.captured_at || ""),
-          is_latest: point === latest,
-          time: shortTime(point.captured_at || point.captured_at_ms),
-          detail: formatAccuracy(point.accuracy_m),
-          accuracy_m: Number.isFinite(Number(point.accuracy_m)) ? Number(point.accuracy_m) : 24
-        }
-      }))
-    };
-  }
-
-  function trackerStaysGeoJson(stays) {
-    const lastIndex = stays.length - 1;
-    return {
-      type: "FeatureCollection",
-      features: stays.map((stay, index) => ({
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [Number(stay.lon), Number(stay.lat)]
-        },
-        properties: {
-          id: `${stay.first_at_ms || index}-${stay.last_at_ms || index}`,
-          is_latest: index === lastIndex,
-          time: formatTimeSpan(stay.first_at_ms, stay.last_at_ms),
-          detail: `${stay.sample_count} ${stay.sample_count === 1 ? "sample" : "samples"} - ${formatAccuracy(stay.accuracy_m)}`,
-          sample_count: stay.sample_count,
-          accuracy_m: Number.isFinite(Number(stay.accuracy_m)) ? Number(stay.accuracy_m) : 24
-        }
-      }))
-    };
-  }
-
-  function mapLineGeoJson(points) {
-    const ordered = normalizeMapPoints(points).slice().sort((a, b) => captureMillis(a) - captureMillis(b));
-    if (ordered.length < 2) {
-      return { type: "FeatureCollection", features: [] };
-    }
-    return {
-      type: "FeatureCollection",
-      features: [{
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: ordered.map(point => [Number(point.lon), Number(point.lat)])
-        },
-        properties: {}
-      }]
-    };
-  }
-
-  function latestMapPoint(points) {
-    return normalizeMapPoints(points).slice().sort((a, b) => captureMillis(a) - captureMillis(b)).pop() || null;
-  }
-
-  function mapFitBounds(points) {
-    const usable = normalizeMapPoints(points);
-    if (!usable.length) {
-      return null;
-    }
-    const bounds = mapBounds(usable);
-    return [[bounds.minLon, bounds.minLat], [bounds.maxLon, bounds.maxLat]];
-  }
-
-  function mapDisplayStays(points) {
-    const ordered = points.slice().sort((a, b) => captureMillis(a) - captureMillis(b));
-    const stays = [];
-    ordered.forEach(point => {
-      const previous = stays[stays.length - 1];
-      if (previous && haversineMeters(previous, point) <= stayRadiusMeters(previous, point)) {
-        extendMapStay(previous, point);
-      } else {
-        stays.push(createMapStay(point));
-      }
-    });
-    return stays;
-  }
-
-  function createMapStay(point) {
-    const accuracy = numericAccuracy(point);
-    const provider = String(point.provider || point.source || "location");
-    const captured = captureMillis(point);
-    return {
-      lat: Number(point.lat),
-      lon: Number(point.lon),
-      first_at_ms: captured,
-      last_at_ms: captured,
-      sample_count: 1,
-      accuracy_m: accuracy,
-      max_accuracy_m: accuracy,
-      providers: provider ? [provider] : []
-    };
-  }
-
-  function extendMapStay(stay, point) {
-    const nextCount = stay.sample_count + 1;
-    const lat = Number(point.lat);
-    const lon = Number(point.lon);
-    const accuracy = numericAccuracy(point);
-    const provider = String(point.provider || point.source || "location");
-    stay.lat = ((stay.lat * stay.sample_count) + lat) / nextCount;
-    stay.lon = ((stay.lon * stay.sample_count) + lon) / nextCount;
-    stay.sample_count = nextCount;
-    stay.first_at_ms = Math.min(stay.first_at_ms, captureMillis(point));
-    stay.last_at_ms = Math.max(stay.last_at_ms, captureMillis(point));
-    if (Number.isFinite(accuracy)) {
-      stay.accuracy_m = Number.isFinite(stay.accuracy_m) ? Math.min(stay.accuracy_m, accuracy) : accuracy;
-      stay.max_accuracy_m = Number.isFinite(stay.max_accuracy_m) ? Math.max(stay.max_accuracy_m, accuracy) : accuracy;
-    }
-    if (provider && !stay.providers.includes(provider)) {
-      stay.providers.push(provider);
-    }
-  }
-
-  function stayRadiusMeters(stay, point) {
-    const values = [MAP_STAY_MIN_RADIUS_M, numericAccuracy(point), stay.max_accuracy_m, stay.accuracy_m]
-      .filter(value => Number.isFinite(value));
-    return Math.max(...values);
-  }
-
-  function captureMillis(point) {
-    const value = Number(point.captured_at_ms || point.last_at_ms || point.first_at_ms || Date.parse(point.captured_at || ""));
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  function numericAccuracy(point) {
-    const value = Number(point && point.accuracy_m);
-    return Number.isFinite(value) ? value : NaN;
-  }
-
-  function formatAccuracy(value) {
-    const accuracy = Number(value);
-    return Number.isFinite(accuracy) ? `+/-${Math.round(accuracy)}m accuracy` : "unknown accuracy";
-  }
-
-  function formatTimeSpan(firstMs, lastMs) {
-    if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs) || Math.abs(lastMs - firstMs) < 60000) {
-      return shortTime(lastMs || firstMs);
-    }
-    return `${shortTime(firstMs)}-${shortTime(lastMs)}`;
-  }
-
-  function mapBounds(points) {
-    const lats = points.map(point => Number(point.lat));
-    const lons = points.map(point => Number(point.lon));
-    let minLat = Math.min(...lats);
-    let maxLat = Math.max(...lats);
-    let minLon = Math.min(...lons);
-    let maxLon = Math.max(...lons);
-    if (maxLat - minLat < MAP_STAY_MIN_POSITION_SPAN) {
-      const center = (maxLat + minLat) / 2;
-      minLat = center - (MAP_STAY_MIN_POSITION_SPAN / 2);
-      maxLat = center + (MAP_STAY_MIN_POSITION_SPAN / 2);
-    }
-    if (maxLon - minLon < MAP_STAY_MIN_POSITION_SPAN) {
-      const center = (maxLon + minLon) / 2;
-      minLon = center - (MAP_STAY_MIN_POSITION_SPAN / 2);
-      maxLon = center + (MAP_STAY_MIN_POSITION_SPAN / 2);
-    }
-    return { minLat, maxLat, minLon, maxLon };
-  }
-
-  function haversineMeters(a, b) {
-    const radius = 6371000;
-    const lat1 = Number(a.lat) * Math.PI / 180;
-    const lat2 = Number(b.lat) * Math.PI / 180;
-    const dLat = lat2 - lat1;
-    const dLon = (Number(b.lon) - Number(a.lon)) * Math.PI / 180;
-    const h = Math.sin(dLat / 2) ** 2
-      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-    return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
-  }
-
-  function shortTime(value) {
-    const date = typeof value === "number" ? new Date(value) : new Date(value || Date.now());
-    return Number.isNaN(date.getTime())
-      ? "-"
-      : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
 
   function cardView(card) {
     const wrapper = el("div", "card-wrap");

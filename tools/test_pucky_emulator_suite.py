@@ -257,32 +257,11 @@ def test_clean_dry_run_does_not_delete_slot_artifacts(tmp_path: Path, monkeypatc
     assert marker.exists()
 
 
-def test_map_smoke_dry_run_plans_safe_emulator_map_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
-    args = ns(suite.ROOT, slot=1)
-    config = suite.slot_config(suite.ROOT, 1, run_id="dry-run-slot01")
-    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
 
-    result = suite.cmd_map_smoke(args)
-    planned = " ".join(" ".join(item["command"]) for item in result["commands"])
+def test_map_smoke_command_is_removed() -> None:
+    parser = suite.build_parser()
 
-    assert result["schema"] == "pucky.emulator_map_smoke.v1"
-    assert result["dry_run"] is True
-    assert result["serial"] == "emulator-5554"
-    assert "location.tracker.clear" in planned
-    assert "location.tracker.start" in planned
-    assert "location.tracker.query" in planned
-    assert "emu geo fix" in planned
-    assert "screencap" in planned
-    assert "ZY22JZ26LK" not in planned
-    assert result["screenshots"]["map"].endswith("map-tracking.png")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["map-smoke", "--slot", "1", "--dry-run"])
 
-
-def test_map_smoke_refuses_non_emulator_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    args = ns(tmp_path, slot=1)
-    bad = suite.slot_config(suite.ROOT, 1, run_id="dry-run-slot01")
-    bad = suite.SlotConfig(**{**bad.__dict__, "serial": "ZY22JZ26LK"})
-    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: bad)
-
-    with pytest.raises(suite.SuiteError, match="Refusing non-emulator"):
-        suite.cmd_map_smoke(args)
+    assert not hasattr(suite, "cmd_map_smoke")
