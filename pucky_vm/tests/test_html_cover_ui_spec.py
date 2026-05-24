@@ -1047,6 +1047,7 @@ def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
     assert 'if (viewerType === "text")' in app
     assert "message?.attachments" in app
     assert "card?.attachments" in app
+    assert app.count("preferDataUrl: true") >= 2
     assert '"attachments": [' in fixture
     assert '"artifact": "morning-checklist.csv"' in fixture
     assert '"artifact": "morning-notes.txt"' in fixture

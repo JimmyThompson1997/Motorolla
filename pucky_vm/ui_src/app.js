@@ -2277,7 +2277,7 @@
       return wrap;
     }
     try {
-      const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024 });
+      const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true });
       const text = src.startsWith("data:") ? atob(src.split(",", 2)[1] || "") : await loadLocalText(src);
       wrap.append(tableElement([], parseCsvPreview(text)));
     } catch (error) {
@@ -2302,7 +2302,7 @@
   }
 
   async function textFromAttachment(item) {
-    const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024 });
+    const src = await resolveArtifactUrl(item, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true });
     if (src.startsWith("data:")) {
       return atob(src.split(",", 2)[1] || "");
     }
