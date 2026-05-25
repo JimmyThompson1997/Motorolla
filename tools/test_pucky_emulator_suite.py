@@ -128,6 +128,7 @@ def test_cmd_start_reapplies_userdata_tuning_for_existing_slot(monkeypatch: pyte
     monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(suite, "tune_avd_config", lambda cfg: calls.append(cfg.avd_name))
     monkeypatch.setattr(suite.Runner, "start_detached", lambda self, *args, **kwargs: 123)
 
@@ -229,12 +230,44 @@ def test_wait_for_broker_device_requires_online_slot_device(monkeypatch: pytest.
     assert suite.wait_for_broker_device(config, timeout=0.1)["device_id"] == config.device_id
 
 
+def test_emulator_boot_ready_accepts_bootanim_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    monkeypatch.setattr(
+        suite,
+        "boot_signal",
+        lambda _args, _runner, _config, prop: "stopped" if prop == "init.svc.bootanim" else "",
+    )
+
+    assert suite.emulator_boot_ready(args, suite.Runner(dry_run=False), config) is True
+
+
 def test_parse_display_ids_uses_first_surfaceflinger_display() -> None:
     output = """Display 4619827259835644672 (HWC display 0): port=0 pnpId=GGL displayName="EMU_display_0"
 Display 4619827551948147201 (HWC display 1): port=1 pnpId=GGL displayName="EMU_display_1"
 """
 
     assert suite.parse_display_ids(output) == ["4619827259835644672", "4619827551948147201"]
+
+
+def test_cmd_start_reuses_existing_connected_serial(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, no_wait=True, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    launched: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "tune_avd_config", lambda _cfg: None)
+    monkeypatch.setattr(suite.Runner, "start_detached", lambda self, *args, **kwargs: launched.append("launched") or 123)
+
+    result = suite.cmd_start(args)
+
+    assert result["ok"] is True
+    assert launched == []
 
 
 def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

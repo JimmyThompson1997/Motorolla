@@ -391,14 +391,28 @@ def wait_for_broker_device(config: SlotConfig, *, timeout: float = 45.0) -> dict
     raise SuiteError(f"Timed out waiting for broker device {config.device_id}: {last_payload}")
 
 
+def boot_signal(args: argparse.Namespace, runner: Runner, config: SlotConfig, prop: str) -> str:
+    result = runner.run(adb_command(args, config.serial, ["shell", "getprop", prop]), timeout=15, check=False)
+    return result.stdout.strip()
+
+
+def emulator_boot_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
+    if boot_signal(args, runner, config, "sys.boot_completed") == "1":
+        return True
+    if boot_signal(args, runner, config, "dev.bootcomplete") == "1":
+        return True
+    if boot_signal(args, runner, config, "service.bootanim.exit") == "1":
+        return True
+    return boot_signal(args, runner, config, "init.svc.bootanim") == "stopped"
+
+
 def wait_for_boot(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, timeout: float = 180.0) -> None:
     if runner.dry_run:
         return
     runner.run(adb_command(args, config.serial, ["wait-for-device"]), timeout=int(timeout))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        result = runner.run(adb_command(args, config.serial, ["shell", "getprop", "sys.boot_completed"]), timeout=15, check=False)
-        if result.stdout.strip() == "1":
+        if emulator_boot_ready(args, runner, config):
             return
         time.sleep(2)
     raise SuiteError(f"Timed out waiting for emulator boot: {config.serial}")
@@ -568,13 +582,15 @@ def cmd_start(args: argparse.Namespace) -> dict[str, Any]:
     if not args.dry_run:
         tune_avd_config(config)
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
-    pid = runner.start_detached(
-        emulator_start_command(args, config),
-        cwd=ROOT,
-        env=sdk_env(args, config),
-        stdout_path=Path(config.evidence_dir) / "emulator.log",
-        stderr_path=Path(config.evidence_dir) / "emulator.err.log",
-    )
+    pid = -1
+    if not serial_is_connected(args, runner, config.serial):
+        pid = runner.start_detached(
+            emulator_start_command(args, config),
+            cwd=ROOT,
+            env=sdk_env(args, config),
+            stdout_path=Path(config.evidence_dir) / "emulator.log",
+            stderr_path=Path(config.evidence_dir) / "emulator.err.log",
+        )
     if not args.no_wait:
         wait_for_boot(args, runner, config)
     if not args.dry_run:
