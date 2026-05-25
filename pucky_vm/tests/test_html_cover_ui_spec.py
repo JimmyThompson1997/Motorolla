@@ -311,8 +311,10 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-wrap.is-card-menu-open .card-actions" not in styles
     assert "filter: blur(1.8px) saturate(0.7);" not in styles
     assert "opacity: 0.36;" not in styles
-    assert "color-mix(in srgb, var(--accent, #72c2ff) 68%, black)" in styles
-    assert "@keyframes card-menu-tracer-spin" in styles
+    assert "background: color-mix(in srgb, var(--accent, #72c2ff) 64%, black);" in styles
+    assert "@keyframes card-menu-tracer-path" in styles
+    assert "card-menu-tracer-spin" not in styles
+    assert "mask-composite: exclude;" not in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 
