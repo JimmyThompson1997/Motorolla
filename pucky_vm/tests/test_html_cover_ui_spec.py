@@ -629,7 +629,7 @@ def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
 
     assert 'waveform(card, "wave-row"' in app
     assert '"action action-audio is-playing"' in app
-    assert "if (isActiveCard(card)) {" in app
+    assert "if (isActiveCard(card) && state.player.is_playing) {" in app
     click_body = app.split('audio.addEventListener("click", async (event) => {', 1)[1].split(
         "      });\n      actions.append(audio);", 1
     )[0]

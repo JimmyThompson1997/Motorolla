@@ -1423,7 +1423,7 @@
     });
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
-    if (isActiveCard(card)) {
+    if (isActiveCard(card) && state.player.is_playing) {
       body.append(waveform(card, "wave-row", 46));
     } else {
       body.append(el("p", "preview", card.summary || card.transcript || ""));
