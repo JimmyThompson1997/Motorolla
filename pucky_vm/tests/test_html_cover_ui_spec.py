@@ -234,6 +234,8 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "installCardLongPressMenu(wrapper, card);" in app
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
+    assert "function cardFocusBorder()" in app
+    assert 'wrapper.append(cardFocusBorder());' in app
     assert "function dismissOpenCardMenu(suppressClick = true)" in app
     assert "function installCardMenuOutsideDismiss()" in app
     assert 'document.addEventListener("pointerdown", event => {' in app
@@ -301,18 +303,23 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-menu-action" in styles
     assert ".card-menu-action.is-selected" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
-    assert ".card-wrap.is-card-menu-open .card::after" in styles
-    assert ".card-wrap.is-card-menu-open .card::before" in styles
+    assert ".card-focus-border" in styles
+    assert ".card-focus-border-segment" in styles
     assert ".card-wrap.is-card-menu-open .card-menu-action::after" not in styles
-    assert ".card-wrap.is-card-menu-open .identity" not in styles
-    assert ".card-wrap.is-card-menu-open .card-body" not in styles
-    assert ".card-wrap.is-card-menu-open .card-actions" not in styles
-    assert "filter: blur(1.8px) saturate(0.7);" not in styles
-    assert "opacity: 0.36;" not in styles
+    assert ".card-wrap.is-card-menu-open .identity" in styles
+    assert ".card-wrap.is-card-menu-open .card-body" in styles
+    assert ".card-wrap.is-card-menu-open .card-actions" in styles
+    assert "filter: blur(3.2px) saturate(0.82);" in styles
+    assert "opacity: 0.24;" in styles
     assert "animation: card-menu-tracer-path" not in styles
     assert "@keyframes card-menu-tracer-path" not in styles
-    assert "inset 0 1px 0 0 color-mix" in styles
-    assert "color-mix(in srgb, var(--accent, #72c2ff) 34%, rgba(245, 249, 255, 0.82))" in styles
+    assert "@keyframes card-focus-border-run" in styles
+    assert "stroke-dasharray: 11 89;" in styles
+    assert "stroke-dashoffset: -100;" in styles
+    assert "top: 50%;" in styles
+    assert "transform: translateY(-50%);" in styles
+    assert ".card-wrap.is-card-menu-open .card::before" not in styles
+    assert ".card-wrap.is-card-menu-open .card::after" not in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 

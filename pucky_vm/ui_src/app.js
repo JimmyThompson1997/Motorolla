@@ -1463,10 +1463,31 @@
     wrapper.append(cardEl);
     if (menuOpen) {
       wrapper.classList.add("is-card-menu-open");
+      wrapper.append(cardFocusBorder());
       wrapper.append(cardLongPressMenu(card));
     }
     installCardLongPressMenu(wrapper, card);
     return wrapper;
+  }
+
+  function cardFocusBorder() {
+    const svgNs = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNs, "svg");
+    svg.setAttribute("class", "card-focus-border");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const segment = document.createElementNS(svgNs, "rect");
+    segment.setAttribute("class", "card-focus-border-segment");
+    segment.setAttribute("x", "0.9");
+    segment.setAttribute("y", "0.9");
+    segment.setAttribute("width", "98.2");
+    segment.setAttribute("height", "98.2");
+    segment.setAttribute("rx", "18");
+    segment.setAttribute("ry", "18");
+    segment.setAttribute("pathLength", "100");
+    svg.append(segment);
+    return svg;
   }
 
   async function toggleAudio(card) {
