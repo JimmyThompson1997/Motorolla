@@ -4094,7 +4094,8 @@
   }
 
   function syncActivePathFromPlayer(player) {
-    if (!playerHasAudioIdentity(player)) {
+    if (!playerHasAudioIdentity(player) || !player.is_playing) {
+      state.activePath = "";
       return;
     }
     const matched = state.cards.find(card => isSameAudioCard(player, card));
