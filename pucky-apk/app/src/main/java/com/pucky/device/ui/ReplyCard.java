@@ -30,6 +30,7 @@ public final class ReplyCard {
     private final String htmlPath;
     private final String images;
     private final String trace;
+    private final String origin;
     private final boolean archived;
     private final boolean read;
     private final boolean deleted;
@@ -53,6 +54,7 @@ public final class ReplyCard {
             String htmlPath,
             String images,
             String trace,
+            String origin,
             boolean archived,
             boolean read,
             boolean deleted) throws CommandException {
@@ -74,6 +76,7 @@ public final class ReplyCard {
         this.htmlPath = optional(htmlPath);
         this.images = jsonArrayOrBlank(images, "images");
         this.trace = jsonObjectOrBlank(trace, "trace");
+        this.origin = jsonObjectOrBlank(origin, "origin");
         this.archived = archived;
         this.read = read;
         this.deleted = deleted;
@@ -102,6 +105,7 @@ public final class ReplyCard {
                 input.optString("html_path", ""),
                 jsonArrayString(input, "images"),
                 jsonObjectString(input, "trace"),
+                jsonObjectString(input, "origin"),
                 input.optBoolean("archived", false),
                 input.optBoolean("read", false),
                 input.optBoolean("deleted", false));
@@ -160,6 +164,7 @@ public final class ReplyCard {
         putOptional(out, "html_path", htmlPath);
         putOptionalJsonArray(out, "images", images);
         putOptionalJsonObject(out, "trace", trace);
+        putOptionalJsonObject(out, "origin", origin);
         Json.put(out, "archived", archived);
         Json.put(out, "read", read);
         Json.put(out, "deleted", deleted);
@@ -236,6 +241,10 @@ public final class ReplyCard {
 
     public String trace() {
         return trace;
+    }
+
+    public String origin() {
+        return origin;
     }
 
     public boolean archived() {

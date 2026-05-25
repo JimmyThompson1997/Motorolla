@@ -2,7 +2,6 @@ package com.pucky.device.pucky;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
-
 import org.json.JSONObject;
 
 import java.util.Base64;
@@ -26,11 +25,12 @@ public final class PuckyTurnResponse {
     private final boolean read;
     private final boolean deleted;
     private final JSONObject telemetry;
+    private final JSONObject origin;
 
     private PuckyTurnResponse(String cardId, String sessionId, String turnId, String text, String summary,
                               String audioMimeType, String audioBase64, String cardTitle, String cardIcon,
                               String htmlMimeType, String htmlBase64, String createdAt, String updatedAt,
-                              boolean archived, boolean read, boolean deleted, JSONObject telemetry) {
+                              boolean archived, boolean read, boolean deleted, JSONObject telemetry, JSONObject origin) {
         this.cardId = cardId;
         this.sessionId = sessionId;
         this.turnId = turnId;
@@ -48,6 +48,7 @@ public final class PuckyTurnResponse {
         this.read = read;
         this.deleted = deleted;
         this.telemetry = telemetry == null ? new JSONObject() : telemetry;
+        this.origin = origin == null ? new JSONObject() : origin;
     }
 
     public static PuckyTurnResponse fromJson(String raw) throws CommandException {
@@ -128,7 +129,8 @@ public final class PuckyTurnResponse {
                 input.optBoolean("archived", card != null && card.optBoolean("archived", false)),
                 input.optBoolean("read", card != null && card.optBoolean("read", false)),
                 input.optBoolean("deleted", card != null && card.optBoolean("deleted", false)),
-                input.optJSONObject("telemetry"));
+                input.optJSONObject("telemetry"),
+                input.optJSONObject("origin"));
     }
 
     public String cardId() { return cardId; }
@@ -147,6 +149,7 @@ public final class PuckyTurnResponse {
     public boolean hasAudio() { return !audioBase64.isEmpty(); }
     public boolean hasHtml() { return !htmlBase64.isEmpty(); }
     public JSONObject telemetry() { return telemetry; }
+    public JSONObject origin() { return copyObject(origin); }
     public byte[] audioBytes() { return audioBase64.isEmpty() ? new byte[0] : Base64.getDecoder().decode(audioBase64); }
     public byte[] htmlBytes() { return htmlBase64.isEmpty() ? new byte[0] : Base64.getDecoder().decode(htmlBase64); }
 
@@ -192,5 +195,13 @@ public final class PuckyTurnResponse {
             return "Pucky";
         }
         return clean.length() <= 64 ? clean : clean.substring(0, 64).trim();
+    }
+
+    private static JSONObject copyObject(JSONObject input) {
+        try {
+            return new JSONObject(input == null ? "{}" : input.toString());
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
     }
 }

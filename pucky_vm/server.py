@@ -60,6 +60,10 @@ class CodexProvider(Protocol):
 
     def send_turn(self, text: str) -> str: ...
 
+    def set_thread_title(self, title: str) -> None: ...
+
+    def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
+
 
 @dataclass(frozen=True)
 class ReplyEnvelope:
@@ -89,6 +93,11 @@ class Config:
     developer_instructions: str
     feed_db_path: str
     turn_status_ttl_seconds: float = 900.0
+    codex_home: str | None = None
+    codex_sandbox: str = "danger-full-access"
+    codex_approval_policy: str = "never"
+    codex_model: str | None = None
+    codex_reasoning_effort: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -110,6 +119,11 @@ class Config:
             developer_instructions=os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS,
             feed_db_path=os.environ.get("PUCKY_FEED_DB_PATH", str((Path.cwd() / "pucky_feed.sqlite3").resolve())),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
+            codex_home=os.environ.get("CODEX_HOME") or None,
+            codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
+            codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
+            codex_model=os.environ.get("PUCKY_CODEX_MODEL") or None,
+            codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT") or None,
         )
 
 
@@ -166,6 +180,11 @@ class PuckyVoiceService:
             startup_timeout=config.codex_startup_timeout,
             turn_timeout=config.codex_turn_timeout,
             developer_instructions=config.developer_instructions,
+            codex_home=config.codex_home,
+            sandbox=config.codex_sandbox,
+            approval_policy=config.codex_approval_policy,
+            model=config.codex_model,
+            reasoning_effort=config.codex_reasoning_effort,
         )
         self.feed = FeedStore(config.feed_db_path)
         self._turn_lock = threading.Lock()
@@ -259,6 +278,20 @@ class PuckyVoiceService:
                 telemetry["reply_chars"] = len(envelope.reply_text)
                 telemetry["card_icon"] = envelope.card_icon
                 telemetry["has_html"] = bool(envelope.html_content)
+                try:
+                    self.codex.set_thread_title(envelope.card_title)
+                    telemetry["codex_thread_title_synced"] = True
+                except Exception:
+                    telemetry["codex_thread_title_synced"] = False
+                try:
+                    origin = self.codex.thread_origin()
+                except Exception:
+                    origin = {}
+                if not isinstance(origin, dict):
+                    origin = {}
+                origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
+                telemetry["origin_thread_id"] = origin.get("thread_id", "")
+                telemetry["origin_model"] = origin.get("model", "")
 
                 reply_audio = b""
                 audio_mime_type = ""
@@ -281,7 +314,12 @@ class PuckyVoiceService:
                 self._update_turn_status(turn_id, "failed", "failed", telemetry)
                 _log_json(telemetry)
                 raise
-        card: dict[str, str] = {"title": envelope.card_title, "summary": envelope.reply_text, "icon": envelope.card_icon}
+        card: dict[str, object] = {
+            "title": envelope.card_title,
+            "summary": envelope.reply_text,
+            "icon": envelope.card_icon,
+            "origin": origin,
+        }
         html_mime_type = ""
         html_base64 = ""
         if envelope.html_content:
@@ -303,6 +341,7 @@ class PuckyVoiceService:
             title=envelope.card_title,
             summary=envelope.reply_text,
             icon=envelope.card_icon,
+            origin=origin,
             telemetry=_public_turn_telemetry(telemetry),
             audio_mime_type=audio_mime_type,
             audio_base64=audio_base64,
@@ -449,6 +488,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "codex_end_ms",
         "codex_ms",
         "codex_thread_id",
+        "origin_thread_id",
         "raw_reply_chars",
         "reply_chars",
         "tts_start_ms",
@@ -483,6 +523,8 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "codex_end_ms",
         "codex_ms",
         "codex_thread_id",
+        "origin_thread_id",
+        "origin_model",
         "raw_reply_chars",
         "reply_chars",
         "tts_start_ms",
@@ -497,6 +539,22 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "feed_persisted",
     )
     return {key: telemetry[key] for key in allowed if key in telemetry}
+
+
+def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> dict[str, str]:
+    normalized = {
+        "runtime": "codex",
+        "thread_id": str(origin.get("thread_id") or fallback_thread_id or "").strip(),
+        "thread_title": str(origin.get("thread_title") or "").strip(),
+        "rollout_path": str(origin.get("rollout_path") or "").strip(),
+        "source": str(origin.get("source") or "").strip(),
+        "model": str(origin.get("model") or "").strip(),
+        "model_provider": str(origin.get("model_provider") or "").strip(),
+        "reasoning_effort": str(origin.get("reasoning_effort") or "").strip(),
+        "sandbox_policy": str(origin.get("sandbox_policy") or "").strip(),
+        "approval_mode": str(origin.get("approval_mode") or "").strip(),
+    }
+    return normalized
 
 
 def make_handler(service: PuckyVoiceService):

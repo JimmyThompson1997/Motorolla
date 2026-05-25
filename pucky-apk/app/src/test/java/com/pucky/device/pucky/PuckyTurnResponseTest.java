@@ -25,6 +25,10 @@ public final class PuckyTurnResponseTest {
                 .put("text", " Sure, here you go. ")
                 .put("audio_mime_type", "audio/wav")
                 .put("audio_base64", audio)
+                .put("origin", new JSONObject()
+                        .put("runtime", "codex")
+                        .put("thread_id", "thread-1")
+                        .put("model", "gpt-5.5"))
                 .put("card", new JSONObject()
                         .put("title", " Helpful Thing ")
                         .put("icon", "bolt")
@@ -37,6 +41,8 @@ public final class PuckyTurnResponseTest {
         assertArrayEquals(new byte[] {1, 2, 3, 4}, response.audioBytes());
         assertEquals("Helpful Thing", response.cardTitle());
         assertEquals("bolt", response.cardIcon());
+        assertEquals("thread-1", response.origin().getString("thread_id"));
+        assertEquals("gpt-5.5", response.origin().getString("model"));
         assertTrue(response.hasHtml());
         assertEquals("<!doctype html>", new String(response.htmlBytes(), StandardCharsets.UTF_8));
     }

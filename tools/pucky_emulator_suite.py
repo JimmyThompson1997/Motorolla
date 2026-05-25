@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
 import time
+import textwrap
+import urllib.error
 import urllib.request
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +41,7 @@ DEFAULT_USERDATA_PARTITION_BYTES = str(int(DEFAULT_USERDATA_PARTITION_MB) * 1024
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
+DEFAULT_TURN_URL = "https://pucky.fly.dev/api/turn"
 BASE_DIR = ROOT / ".tmp" / "pucky-emulator"
 RUNS_DIR = ROOT / ".tmp" / "pucky-emulator-runs"
 MIN_RECOMMENDED_AVD_FREE_GB = 8.0
@@ -479,6 +485,234 @@ def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> di
         return {"raw_stdout": result.stdout, "raw_stderr": result.stderr}
 
 
+def extract_json(text: str) -> dict[str, Any] | None:
+    objects: list[dict[str, Any]] = []
+    starts = [index for index, char in enumerate(text) if char == "{"]
+    for start in starts:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(text)):
+            char = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    raw = text[start:index + 1]
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        objects.append(parsed)
+                    break
+    for obj in objects:
+        if obj.get("schema") == "puckyctl.result.v1":
+            return obj
+    return objects[-1] if objects else None
+
+
+def local_broker_url(config: SlotConfig) -> str:
+    return f"http://127.0.0.1:{config.broker_port}"
+
+
+def parse_tap_point(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)\s*,\s*(\d+)\s*", str(value or ""))
+    if not match:
+        raise SuiteError(f"Invalid tap point, expected X,Y: {value}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def tap(args: argparse.Namespace, runner: Runner, config: SlotConfig, point: tuple[int, int]) -> None:
+    x, y = point
+    runner.run(adb_command(args, config.serial, ["shell", "input", "tap", str(x), str(y)]), timeout=30)
+
+
+def turn_url_to_feed_url(turn_url: str) -> str:
+    clean = str(turn_url or "").strip()
+    if clean.endswith("/api/turn"):
+        return clean[: -len("/api/turn")] + "/api/feed"
+    if clean.endswith("/turn"):
+        return clean[: -len("/turn")] + "/api/feed"
+    return clean.rstrip("/") + "/api/feed"
+
+
+def turn_request(turn_url: str, token: str, audio_path: Path, turn_id: str) -> urllib.request.Request:
+    content_type = mimetypes.guess_type(str(audio_path))[0] or "application/octet-stream"
+    return urllib.request.Request(
+        turn_url,
+        data=audio_path.read_bytes(),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": content_type,
+            "X-Pucky-Turn-Id": turn_id,
+        },
+    )
+
+
+def post_live_turn(args: argparse.Namespace, turn_id: str) -> dict[str, Any]:
+    if not args.turn_token:
+        raise SuiteError("prove-thread-origin requires --turn-token or PUCKY_API_TOKEN")
+    audio_path = Path(args.sample_audio)
+    if not audio_path.exists():
+        raise SuiteError(f"Sample audio not found: {audio_path}")
+    request = turn_request(args.turn_url, args.turn_token, audio_path, turn_id)
+    try:
+        with urllib.request.urlopen(request, timeout=args.turn_timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SuiteError(f"Live turn failed with HTTP {exc.code}: {detail}") from exc
+
+
+def find_snapshot_card(snapshot: dict[str, Any], *, card_id: str, turn_id: str) -> dict[str, Any]:
+    cards = snapshot.get("cards") if isinstance(snapshot.get("cards"), list) else []
+    for item in cards:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("card_id") or "") == card_id:
+            return item
+        if str(item.get("turn_id") or "") == turn_id:
+            return item
+        if str(item.get("session_id") or "") == turn_id:
+            return item
+    raise SuiteError(f"Target card not found in emulator snapshot for turn {turn_id}")
+
+
+def normalize_vm_sandbox(value: object) -> str:
+    clean = str(value or "").strip()
+    if not clean:
+        return ""
+    try:
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict):
+            raw_type = str(parsed.get("type") or "").strip()
+            if raw_type == "dangerFullAccess":
+                return "danger-full-access"
+            if raw_type == "workspaceWrite":
+                return "workspace-write"
+            if raw_type == "readOnly":
+                return "read-only"
+            if raw_type:
+                return raw_type
+    except Exception:
+        pass
+    return clean
+
+
+def vm_thread_query_command(args: argparse.Namespace, thread_id: str) -> list[str]:
+    query = textwrap.dedent(
+        f"""
+        import json, pathlib, sqlite3
+        db = pathlib.Path({str(args.vm_codex_home)!r}) / "state_5.sqlite"
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, title, rollout_path, source, model, model_provider, reasoning_effort, sandbox_policy, approval_mode FROM threads WHERE id = ?",
+            ({thread_id!r},),
+        ).fetchone()
+        conn.close()
+        out = dict(row) if row else {{}}
+        rollout = pathlib.Path(str(out.get("rollout_path") or ""))
+        out["rollout_exists"] = rollout.exists() if str(out.get("rollout_path") or "") else False
+        print(json.dumps(out))
+        """
+    ).strip()
+    return [
+        str(args.flyctl),
+        "ssh",
+        "console",
+        "-a",
+        args.fly_app,
+        "--command",
+        f"python3 -c {shlex.quote(query)}",
+    ]
+
+
+def query_live_vm_thread(args: argparse.Namespace, thread_id: str) -> dict[str, Any]:
+    command = vm_thread_query_command(args, thread_id)
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        timeout=args.vm_query_timeout_seconds,
+    )
+    combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    parsed = extract_json(combined)
+    if parsed is None:
+        raise SuiteError(f"Unable to parse VM thread metadata for {thread_id}: {combined}")
+    if not parsed.get("id"):
+        raise SuiteError(f"VM thread metadata not found for {thread_id}: {combined}")
+    parsed["sandbox_policy"] = normalize_vm_sandbox(parsed.get("sandbox_policy"))
+    return parsed
+
+
+def official_refresh_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
+    command = [
+        sys.executable,
+        str(ROOT / "tools" / "refresh_pucky_html_official.py"),
+        "--target",
+        "emulator",
+        "--device-id",
+        config.device_id,
+        "--broker",
+        local_broker_url(config),
+        "--repo-root",
+        str(ROOT),
+        "--vm-base-url",
+        args.vm_base_url,
+        "--command-timeout-seconds",
+        str(args.refresh_timeout_seconds),
+    ]
+    if args.operator_token:
+        command += ["--token", args.operator_token]
+    return command
+
+
+def run_official_refresh(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    command = official_refresh_command(args, config)
+    if runner.dry_run:
+        runner.run(command, timeout=args.refresh_timeout_seconds)
+        return {"ok": True, "dry_run": True, "evidence_path": str(ROOT / ".tmp" / "pucky-html-refresh" / "dry-run.json")}
+    completed = runner.run(command, timeout=args.refresh_timeout_seconds)
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise SuiteError(f"Unable to parse official refresh output: {completed.stdout}\n{completed.stderr}") from exc
+    if not parsed.get("ok"):
+        raise SuiteError(f"Official refresh failed: {completed.stdout}\n{completed.stderr}")
+    return parsed
+
+
+def verify_origin_against_vm(origin: dict[str, Any], vm_thread: dict[str, Any], card_title: str) -> dict[str, bool]:
+    checks = {
+        "thread_id_matches": str(origin.get("thread_id") or "") == str(vm_thread.get("id") or ""),
+        "thread_title_matches": str(origin.get("thread_title") or "") == str(card_title or "") == str(vm_thread.get("title") or ""),
+        "rollout_path_matches": str(origin.get("rollout_path") or "") == str(vm_thread.get("rollout_path") or ""),
+        "model_matches": str(origin.get("model") or "") == str(vm_thread.get("model") or ""),
+        "reasoning_matches": str(origin.get("reasoning_effort") or "") == str(vm_thread.get("reasoning_effort") or ""),
+        "sandbox_matches": str(origin.get("sandbox_policy") or "") == str(vm_thread.get("sandbox_policy") or ""),
+        "approval_matches": str(origin.get("approval_mode") or "") == str(vm_thread.get("approval_mode") or ""),
+        "rollout_exists": bool(vm_thread.get("rollout_exists")),
+    }
+    if not all(checks.values()):
+        failed = [name for name, ok in checks.items() if not ok]
+        raise SuiteError(f"Origin metadata did not match live VM thread row: {', '.join(failed)}")
+    return checks
+
+
 def capture_screenshot(args: argparse.Namespace, runner: Runner, config: SlotConfig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     display_id = primary_display_id(args, runner, config)
@@ -750,6 +984,159 @@ def command_result(payload: dict[str, Any]) -> dict[str, Any]:
     return result if isinstance(result, dict) else payload
 
 
+def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    bundle_refresh = run_official_refresh(args, runner, config) if not args.skip_refresh else {"ok": True, "skipped": True}
+    bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+
+    turn_id = f"prove-thread-origin-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    if args.dry_run:
+        live_turn = {
+            "turn_id": turn_id,
+            "card_id": f"pucky_card_{turn_id}",
+            "title": "Proof card",
+            "origin": {
+                "runtime": "codex",
+                "thread_id": "thread-dry-run",
+                "thread_title": "Proof card",
+                "rollout_path": "/data/home/codex/sessions/dry-run.jsonl",
+                "source": "vscode",
+                "model": "gpt-5.5",
+                "model_provider": "openai",
+                "reasoning_effort": "high",
+                "sandbox_policy": "danger-full-access",
+                "approval_mode": "never",
+            },
+        }
+        vm_thread = {
+            "id": "thread-dry-run",
+            "title": "Proof card",
+            "rollout_path": "/data/home/codex/sessions/dry-run.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+            "rollout_exists": True,
+        }
+    else:
+        live_turn = post_live_turn(args, turn_id)
+        vm_thread = query_live_vm_thread(args, str((live_turn.get("origin") or {}).get("thread_id") or ""))
+
+    origin = live_turn.get("origin") if isinstance(live_turn.get("origin"), dict) else {}
+    if not origin:
+        raise SuiteError("Live turn response did not include origin metadata")
+    vm_checks = verify_origin_against_vm(origin, vm_thread, str(live_turn.get("title") or ""))
+
+    if args.dry_run:
+        runner.run(puckyctl_command(args, config, "pucky.feed.sync", {"reason": f"prove-thread-origin:{turn_id}"}), timeout=180)
+        runner.run(puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120)
+        feed_sync = {"schema": "pucky.feed_sync_result.v1", "dry_run": True}
+        snapshot = {"schema": "pucky.reply_cards.v1", "cards": [{"card_id": live_turn["card_id"], "turn_id": turn_id, "session_id": turn_id, "origin": origin}]}
+    else:
+        feed_sync = command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "pucky.feed.sync", {"reason": f"prove-thread-origin:{turn_id}"}),
+                timeout=180,
+            )
+        )
+        snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+    local_card = find_snapshot_card(snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
+    local_origin = local_card.get("origin") if isinstance(local_card.get("origin"), dict) else {}
+    if local_origin != origin:
+        raise SuiteError("Emulator local store origin does not match live turn origin")
+
+    feed_screenshot = Path(config.evidence_dir) / "feed-card.png"
+    detail_screenshot = Path(config.evidence_dir) / "detail-thread.png"
+    gear_screenshot = Path(config.evidence_dir) / "gear-sheet.png"
+    relaunch_gear_screenshot = Path(config.evidence_dir) / "relaunch-gear-sheet.png"
+
+    runner.run(launch_home_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, feed_screenshot)
+    tap(args, runner, config, parse_tap_point(args.open_card_tap))
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, detail_screenshot)
+    tap(args, runner, config, parse_tap_point(args.gear_tap))
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, gear_screenshot)
+
+    runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
+    runner.run(launch_command(args, config), timeout=30)
+    if not args.dry_run:
+        wait_for_broker_device(config, timeout=45)
+        relaunch_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+    else:
+        runner.run(puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120)
+        relaunch_snapshot = {"schema": "pucky.reply_cards.v1", "cards": [{"card_id": live_turn["card_id"], "turn_id": turn_id, "session_id": turn_id, "origin": origin}]}
+    relaunch_card = find_snapshot_card(relaunch_snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
+    relaunch_origin = relaunch_card.get("origin") if isinstance(relaunch_card.get("origin"), dict) else {}
+    if relaunch_origin != origin:
+        raise SuiteError("Persisted origin did not survive app relaunch")
+
+    runner.run(launch_home_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+    tap(args, runner, config, parse_tap_point(args.open_card_tap))
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+    tap(args, runner, config, parse_tap_point(args.gear_tap))
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, relaunch_gear_screenshot)
+
+    evidence = {
+        "schema": "pucky.emulator_thread_origin_proof.v1",
+        "created_at": now_iso(),
+        "config": asdict(config),
+        "bundle_refresh": bundle_refresh,
+        "bundle_status": bundle_status,
+        "live_turn": {
+            "turn_id": live_turn.get("turn_id"),
+            "card_id": live_turn.get("card_id"),
+            "title": live_turn.get("title"),
+            "origin": origin,
+        },
+        "vm_thread": vm_thread,
+        "vm_checks": vm_checks,
+        "feed_sync": feed_sync,
+        "local_card_origin": local_origin,
+        "relaunch_card_origin": relaunch_origin,
+        "screenshots": {
+            "feed_card": str(feed_screenshot),
+            "detail_thread": str(detail_screenshot),
+            "gear_sheet": str(gear_screenshot),
+            "relaunch_gear_sheet": str(relaunch_gear_screenshot),
+        },
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+    evidence_path = write_evidence(config, "thread-origin-proof.json", evidence)
+    return {
+        "schema": "pucky.emulator_thread_origin_proof_result.v1",
+        "ok": True,
+        "config": asdict(config),
+        "turn_id": turn_id,
+        "card_id": str(live_turn.get("card_id") or ""),
+        "thread_id": str(origin.get("thread_id") or ""),
+        "evidence_path": str(evidence_path),
+        "screenshots": evidence["screenshots"],
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+
+
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -801,6 +1188,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--apk", type=Path, default=DEFAULT_APK)
     parser.add_argument("--puckyctl", type=Path, default=DEFAULT_PUCKYCTL)
     parser.add_argument("--fake-broker", type=Path, default=DEFAULT_FAKE_BROKER)
+    parser.add_argument("--flyctl", type=Path, default=Path("flyctl"))
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -809,7 +1197,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean", "prove-thread-origin"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -821,6 +1209,21 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--cards-json", default="")
             item.add_argument("--cards-file", type=Path)
             item.add_argument("--max-bundle-bytes", type=int, default=20 * 1024 * 1024)
+        if name == "prove-thread-origin":
+            item.add_argument("--turn-url", default=os.environ.get("PUCKY_TURN_URL", DEFAULT_TURN_URL))
+            item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
+            item.add_argument("--sample-audio", type=Path, default=ROOT / "pucky_vm" / "ui_src" / "fixtures" / "artifacts" / "morning.wav")
+            item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
+            item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--fly-app", default="pucky")
+            item.add_argument("--vm-codex-home", default="/data/home/codex")
+            item.add_argument("--turn-timeout-seconds", type=int, default=180)
+            item.add_argument("--vm-query-timeout-seconds", type=int, default=90)
+            item.add_argument("--refresh-timeout-seconds", type=int, default=180)
+            item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--open-card-tap", default="528,230")
+            item.add_argument("--gear-tap", default="930,312")
+            item.add_argument("--skip-refresh", action="store_true")
     return parser
 
 
@@ -841,6 +1244,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_stop(args)
     if args.command == "clean":
         return cmd_clean(args)
+    if args.command == "prove-thread-origin":
+        return cmd_prove_thread_origin(args)
     raise SuiteError(f"Unknown command: {args.command}")
 
 

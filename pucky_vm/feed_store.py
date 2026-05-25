@@ -53,6 +53,7 @@ class FeedStore:
         title: str,
         summary: str,
         icon: str,
+        origin: dict[str, object],
         telemetry: dict[str, object],
         audio_mime_type: str,
         audio_base64: str,
@@ -65,6 +66,7 @@ class FeedStore:
         card_id = "pucky_card_" + turn_id
         audio_artifact_id = f"{card_id}:audio"
         html_artifact_id = f"{card_id}:html" if html_base64 else ""
+        origin_json = json.dumps(origin or {}, separators=(",", ":"))
         with self._lock:
             existing = self._fetch_card_row(card_id)
             created_at = existing["created_at"] if existing else now_iso
@@ -125,8 +127,8 @@ class FeedStore:
                         card_id, turn_id, session_id, title, summary, icon, reply_mode,
                         created_at, updated_at, updated_at_ms,
                         archived, read, deleted,
-                        audio_artifact_id, html_artifact_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
+                        audio_artifact_id, html_artifact_id, origin_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
                     ON CONFLICT(card_id) DO UPDATE SET
                         turn_id=excluded.turn_id,
                         session_id=excluded.session_id,
@@ -138,7 +140,8 @@ class FeedStore:
                         updated_at_ms=excluded.updated_at_ms,
                         deleted=0,
                         audio_artifact_id=excluded.audio_artifact_id,
-                        html_artifact_id=excluded.html_artifact_id
+                        html_artifact_id=excluded.html_artifact_id,
+                        origin_json=excluded.origin_json
                     """,
                     (
                         card_id,
@@ -153,6 +156,7 @@ class FeedStore:
                         now_ms,
                         audio_artifact_id,
                         html_artifact_id,
+                        origin_json,
                     ),
                 )
             return self._build_item(card_id)
@@ -310,7 +314,8 @@ class FeedStore:
                         read INTEGER NOT NULL DEFAULT 0,
                         deleted INTEGER NOT NULL DEFAULT 0,
                         audio_artifact_id TEXT NOT NULL,
-                        html_artifact_id TEXT NOT NULL DEFAULT ''
+                        html_artifact_id TEXT NOT NULL DEFAULT '',
+                        origin_json TEXT NOT NULL DEFAULT ''
                     );
 
                     CREATE TABLE IF NOT EXISTS feed_actions (
@@ -325,6 +330,15 @@ class FeedStore:
                     ON feed_cards (updated_at_ms, card_id);
                     """
                 )
+                self._ensure_column("feed_cards", "origin_json", "TEXT NOT NULL DEFAULT ''")
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _upsert_artifact(
         self,
@@ -402,11 +416,16 @@ class FeedStore:
         audio = self._fetch_artifact(str(row["audio_artifact_id"]))
         html = self._fetch_artifact(str(row["html_artifact_id"]))
         telemetry = {}
+        origin: dict[str, object] = {}
         if turn is not None:
             try:
                 telemetry = json.loads(turn["telemetry_json"])
             except Exception:
                 telemetry = {}
+        try:
+            origin = json.loads(str(row["origin_json"] or "") or "{}")
+        except Exception:
+            origin = {}
         item: dict[str, object] = {
             "schema": "pucky.feed_item.v1",
             "card_id": str(row["card_id"]),
@@ -418,6 +437,7 @@ class FeedStore:
             "title": str(row["title"]),
             "summary": str(row["summary"]),
             "icon": str(row["icon"]),
+            "origin": origin,
             "archived": bool(int(row["archived"])),
             "read": bool(int(row["read"])),
             "deleted": bool(int(row["deleted"])),
@@ -426,6 +446,7 @@ class FeedStore:
                 "title": str(row["title"]),
                 "summary": str(row["summary"]),
                 "icon": str(row["icon"]),
+                "origin": origin,
                 "archived": bool(int(row["archived"])),
                 "read": bool(int(row["read"])),
                 "deleted": bool(int(row["deleted"])),

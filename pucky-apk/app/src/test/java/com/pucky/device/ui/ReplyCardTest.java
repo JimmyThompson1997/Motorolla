@@ -50,6 +50,17 @@ public final class ReplyCardTest {
                                         .put(new JSONObject()
                                                 .put("label", "web_search")
                                                 .put("status", "completed")))));
+        JSONObject origin = new JSONObject()
+                .put("runtime", "codex")
+                .put("thread_id", "thread-1")
+                .put("thread_title", "Morning launch")
+                .put("rollout_path", "/data/home/codex/sessions/rollout.jsonl")
+                .put("source", "vscode")
+                .put("model", "gpt-5.5")
+                .put("model_provider", "openai")
+                .put("reasoning_effort", "high")
+                .put("sandbox_policy", "danger-full-access")
+                .put("approval_mode", "never");
         JSONObject input = new JSONObject()
                 .put("title", " Morning launch ")
                 .put("session_id", " pucky_abc123 ")
@@ -65,7 +76,8 @@ public final class ReplyCardTest {
                 .put("audio_timestamps", audioTimestamps)
                 .put("html_path", "/tmp/reply.html")
                 .put("images", images)
-                .put("trace", trace);
+                .put("trace", trace)
+                .put("origin", origin);
 
         ReplyCard card = ReplyCard.fromJson(input);
 
@@ -84,6 +96,7 @@ public final class ReplyCardTest {
         assertEquals("/tmp/reply.html", card.htmlPath());
         assertEquals(images.toString(), card.images());
         assertEquals(trace.toString(), card.trace());
+        assertEquals(origin.toString(), card.origin());
         assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
         assertEquals("pucky_abc123", card.toJson().getString("session_id"));
@@ -94,6 +107,8 @@ public final class ReplyCardTest {
         assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
         assertEquals(1, card.toJson().getJSONArray("images").length());
         assertEquals("pucky.turn_trace.v1", card.toJson().getJSONObject("trace").getString("schema"));
+        assertEquals("thread-1", card.toJson().getJSONObject("origin").getString("thread_id"));
+        assertEquals("gpt-5.5", card.toJson().getJSONObject("origin").getString("model"));
     }
 
     @Test
@@ -152,6 +167,15 @@ public final class ReplyCardTest {
                     .put("title", "Bad timestamps")
                     .put("audio_timestamps", new JSONObject()));
             fail("Expected object audio_timestamps to fail");
+        } catch (CommandException exc) {
+            assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
+        }
+
+        try {
+            ReplyCard.fromJson(new JSONObject()
+                    .put("title", "Bad origin")
+                    .put("origin", new JSONArray()));
+            fail("Expected array origin to fail");
         } catch (CommandException exc) {
             assertEquals(CommandErrorCodes.MALFORMED_COMMAND, exc.code());
         }

@@ -259,6 +259,7 @@
     timestampTap: null,
     audioCard: null,
     traceCard: null,
+    metaCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
     showArchivedFeed: false,
@@ -1636,6 +1637,15 @@
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
       bubble.append(document.createTextNode(message.text || ""));
       if (message.role !== "user") {
+        const actions = el("div", "bubble-actions");
+        const meta = el("button", "bubble-origin-action");
+        meta.type = "button";
+        meta.innerHTML = iconSvg("settings", { filled: false });
+        meta.setAttribute("aria-label", "Open reply details");
+        meta.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showOriginSheet(card);
+        });
         const trace = el("button", "bubble-trace-action");
         trace.type = "button";
         trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
@@ -1644,7 +1654,8 @@
           event.stopPropagation();
           showTurnTrace(card, message, index);
         });
-        bubble.append(trace);
+        actions.append(meta, trace);
+        bubble.append(actions);
       }
       const stamp = messageTimestamp(message);
       if (stamp) {
@@ -2541,6 +2552,7 @@
   }
 
   function showTurnTrace(card, message = null, index = 0) {
+    dismissOriginSheet();
     state.traceCard = card;
     const sheet = document.getElementById("traceSheet");
     const wrap = el("div", "trace-inner");
@@ -2581,6 +2593,58 @@
     sheet.setAttribute("aria-hidden", "true");
     sheet.replaceChildren();
     state.traceCard = null;
+  }
+
+  function showOriginSheet(card) {
+    dismissTraceSheet();
+    state.metaCard = card;
+    const sheet = document.getElementById("metaSheet");
+    if (!sheet) {
+      return;
+    }
+    const origin = cardOrigin(card);
+    const wrap = el("div", "trace-inner meta-inner");
+    const dragZone = el("div", "sheet-drag-zone");
+    dragZone.append(el("div", "sheet-grip"));
+    wrap.append(dragZone);
+
+    const metaCard = el("article", "meta-card");
+    metaCard.append(el("h1", "trace-title", "Reply Details"));
+    if (!origin.thread_id && !origin.rollout_path && !origin.model) {
+      metaCard.append(el("p", "trace-empty", "No generation metadata is attached to this reply yet."));
+    } else {
+      const rows = el("div", "meta-rows");
+      rows.append(
+        metaRow("Card title", card.title || "Untitled reply"),
+        metaRow("Thread title", origin.thread_title || "Unavailable"),
+        metaRow("Model", origin.model || "Unavailable"),
+        metaRow("Runtime", originRuntime(origin)),
+        metaRow("Reasoning", origin.reasoning_effort || "Default"),
+        metaRow("Sandbox", origin.sandbox_policy || "Unavailable"),
+        metaRow("Approval", origin.approval_mode || "Unavailable"),
+        metaRow("Thread ID", origin.thread_id || "Unavailable", { monospace: true }),
+        metaRow("Rollout path", origin.rollout_path || "Unavailable", { monospace: true }),
+        metaRow("Source", origin.source || "Unavailable")
+      );
+      metaCard.append(rows);
+    }
+    wrap.append(metaCard);
+    installVerticalDismiss(wrap, sheet, dismissOriginSheet);
+    sheet.replaceChildren(wrap);
+    sheet.setAttribute("aria-hidden", "false");
+    sheet.classList.add("is-open");
+  }
+
+  function dismissOriginSheet() {
+    const sheet = document.getElementById("metaSheet");
+    if (!sheet) {
+      return;
+    }
+    sheet.style.transform = "";
+    sheet.classList.remove("is-open", "is-dragging");
+    sheet.setAttribute("aria-hidden", "true");
+    sheet.replaceChildren();
+    state.metaCard = null;
   }
 
   function openSideDetail(panel, title, content, onDismiss) {
@@ -2627,6 +2691,11 @@
     const traceSheet = document.getElementById("traceSheet");
     if (traceSheet && traceSheet.classList.contains("is-open")) {
       dismissTraceSheet();
+      return true;
+    }
+    const metaSheet = document.getElementById("metaSheet");
+    if (metaSheet && metaSheet.classList.contains("is-open")) {
+      dismissOriginSheet();
       return true;
     }
     const overlay = document.getElementById("speedOverlay");
@@ -4153,6 +4222,23 @@
       return isSameAudioCard(state.player, card);
     }
     return samePath(state.activePath, audioControlKey(card));
+  }
+
+  function cardOrigin(card) {
+    return card && card.origin && typeof card.origin === "object" ? card.origin : {};
+  }
+
+  function originRuntime(origin) {
+    const runtime = String(origin.runtime || "codex").trim() || "codex";
+    const provider = String(origin.model_provider || "").trim();
+    return provider ? `${runtime} / ${provider}` : runtime;
+  }
+
+  function metaRow(label, value, options = {}) {
+    const row = el("div", "meta-row");
+    row.append(el("span", "meta-label", label));
+    row.append(el("span", options.monospace ? "meta-value is-monospace" : "meta-value", value));
+    return row;
   }
 
   function isPlayingCard(card) {

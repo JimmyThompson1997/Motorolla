@@ -1182,6 +1182,49 @@ def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     assert fixtures.count('"kind": "reasoning"') == 5
 
 
+def test_reply_origin_metadata_stays_in_detail_gear_sheet_only() -> None:
+    app = read("app.js")
+    html = read("index.html")
+    styles = read("styles.css")
+
+    assert 'id="metaSheet"' in html
+    assert "meta-sheet" in html
+    assert "function showOriginSheet(card)" in app
+    assert "function dismissOriginSheet()" in app
+    assert "dismissOriginSheet();" in app
+    assert "function cardOrigin(card)" in app
+    assert 'return card && card.origin && typeof card.origin === "object" ? card.origin : {};' in app
+    assert '"bubble-origin-action"' in app
+    assert 'Open reply details' in app
+    assert 'showOriginSheet(card);' in app
+    assert '"Reply Details"' in app
+    assert '"No generation metadata is attached to this reply yet."' in app
+    assert 'metaRow("Card title", card.title || "Untitled reply")' in app
+    assert 'metaRow("Thread title", origin.thread_title || "Unavailable")' in app
+    assert 'metaRow("Model", origin.model || "Unavailable")' in app
+    assert 'metaRow("Runtime", originRuntime(origin))' in app
+    assert 'metaRow("Reasoning", origin.reasoning_effort || "Default")' in app
+    assert 'metaRow("Sandbox", origin.sandbox_policy || "Unavailable")' in app
+    assert 'metaRow("Approval", origin.approval_mode || "Unavailable")' in app
+    assert 'metaRow("Thread ID", origin.thread_id || "Unavailable", { monospace: true })' in app
+    assert 'metaRow("Rollout path", origin.rollout_path || "Unavailable", { monospace: true })' in app
+    assert 'metaRow("Source", origin.source || "Unavailable")' in app
+    assert '"bubble-trace-action"' in app
+    assert '"Thinking Logs"' in app
+    assert "state_5.sqlite" not in app
+    assert "sessions/" not in app
+    assert "/data/home/codex" not in app
+    assert "card-origin-badge" not in app
+    assert "origin-badge" not in app
+    assert ".bubble-origin-action" in styles
+    assert ".meta-card" in styles
+    assert ".meta-rows" in styles
+    assert ".meta-row" in styles
+    assert ".meta-label" in styles
+    assert ".meta-value" in styles
+    assert ".meta-value.is-monospace" in styles
+
+
 def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
     app = read("app.js")
     styles = read("styles.css")

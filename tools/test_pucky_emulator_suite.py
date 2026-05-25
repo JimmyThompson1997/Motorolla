@@ -46,6 +46,13 @@ emulator-5556          device product:sdk_gphone64_x86_64
         suite.require_emulator_serial("ZY22JZ26LK")
 
 
+def test_parse_tap_point_requires_xy_pair() -> None:
+    assert suite.parse_tap_point("528,230") == (528, 230)
+
+    with pytest.raises(suite.SuiteError, match="Invalid tap point"):
+        suite.parse_tap_point("bad-point")
+
+
 def test_slot_config_is_deterministic_and_disjoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(suite, "git_short", lambda root=suite.ROOT: "abc123-dirty")
 
@@ -193,6 +200,12 @@ def test_runner_dry_run_records_without_executing(tmp_path: Path) -> None:
     assert not (tmp_path / "out.log").exists()
 
 
+def test_extract_json_recovers_last_valid_object() -> None:
+    text = "noise\n{\"ignored\":true}\nmore\n{\"schema\":\"puckyctl.result.v1\",\"ok\":true}\n"
+
+    assert suite.extract_json(text) == {"schema": "puckyctl.result.v1", "ok": True}
+
+
 def test_doctor_reports_missing_tools_without_mutating(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = ns(tmp_path)
     monkeypatch.setattr(suite, "port_available", lambda port: True)
@@ -298,6 +311,19 @@ def test_clean_removes_slot_avd_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert any(path.endswith("pucky_webview_api35_01.ini") for path in removed)
 
 
+def test_vm_thread_query_command_targets_live_codex_state_row(tmp_path: Path) -> None:
+    args = ns(tmp_path, flyctl=Path("flyctl"), fly_app="pucky", vm_codex_home="/data/home/codex")
+
+    command = suite.vm_thread_query_command(args, "thread-123")
+
+    joined = " ".join(command)
+    assert command[:4] == ["flyctl", "ssh", "console", "-a"]
+    assert "pucky" in command
+    assert "python3 -c" in joined
+    assert "/data/home/codex" in joined
+    assert "thread-123" in joined
+
+
 def test_seed_ui_dry_run_plans_command_bus_not_adb_push(monkeypatch: pytest.MonkeyPatch) -> None:
     args = ns(suite.ROOT, slot=1, cards_json="", max_bundle_bytes=1024 * 1024)
     config = suite.slot_config(suite.ROOT, 1, run_id="dry-run-slot01")
@@ -325,6 +351,45 @@ def test_seed_ui_can_load_cards_from_file(tmp_path: Path) -> None:
 
     assert payload["cards"][0]["session_id"] == "from_file"
     assert payload["cards"][0]["title"] == "From file"
+
+
+def test_prove_thread_origin_dry_run_uses_refresh_sync_and_relaunch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(
+        tmp_path,
+        slot=2,
+        turn_url="https://pucky.fly.dev/api/turn",
+        turn_token="secret",
+        sample_audio=tmp_path / "sample.wav",
+        vm_base_url="https://pucky.fly.dev",
+        operator_token="",
+        fly_app="pucky",
+        vm_codex_home="/data/home/codex",
+        turn_timeout_seconds=180,
+        vm_query_timeout_seconds=90,
+        refresh_timeout_seconds=180,
+        ui_dwell_seconds=0.0,
+        open_card_tap="528,230",
+        gear_tap="930,312",
+        skip_refresh=False,
+    )
+    args.sample_audio.write_bytes(b"RIFFdemo")
+    config = suite.slot_config(tmp_path, 2, run_id="dry-run-slot02")
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "capture_screenshot", lambda *_args, **_kwargs: None)
+
+    result = suite.cmd_prove_thread_origin(args)
+
+    planned = " ".join(" ".join(item["command"]) for item in result.get("commands", []))
+    assert result["ok"] is True
+    assert result["dry_run"] is True
+    assert "refresh_pucky_html_official.py" in planned
+    assert "pucky.feed.sync" in planned
+    assert "ui.reply_cards.get" in planned
+    assert "force-stop" in planned
+    assert "input tap 528 230" in planned
 
 
 def test_provision_refuses_when_configured_serial_is_not_emulator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

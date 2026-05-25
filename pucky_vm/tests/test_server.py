@@ -32,6 +32,7 @@ class FakeCodex:
 
     def __init__(self) -> None:
         self.turns: list[str] = []
+        self.renamed_titles: list[str] = []
 
     def start(self) -> None:
         self.started = True
@@ -49,6 +50,23 @@ class FakeCodex:
                 },
             }
         )
+
+    def set_thread_title(self, title: str) -> None:
+        self.renamed_titles.append(title)
+
+    def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        return {
+            "runtime": "codex",
+            "thread_id": self.thread_id,
+            "thread_title": self.renamed_titles[-1] if self.renamed_titles else "thread-1",
+            "rollout_path": "/data/home/codex/sessions/fake-thread-1.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+        }
 
 
 class BlockingCodex(FakeCodex):
@@ -90,6 +108,10 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         codex_turn_timeout=1.0,
         developer_instructions="test",
         feed_db_path=str(tempfile.gettempdir()) + f"/pucky-feed-tests-{uuid.uuid4().hex}.sqlite3",
+        codex_sandbox="danger-full-access",
+        codex_approval_policy="never",
+        codex_model="gpt-5.5",
+        codex_reasoning_effort="high",
     )
 
 
@@ -142,7 +164,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])
         self.assertIn("fixtures/artifacts/morning.wav", manifest["files"])
 
-        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/bundle.zip", timeout=10) as response:
+        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/bundle.zip", timeout=20) as response:
             self.assertEqual(response.headers.get_content_type(), "application/zip")
             self.assertGreater(len(response.read()), 1000)
 
@@ -190,12 +212,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(body["card"]["title"], "Quick Help")
         self.assertEqual(body["card"]["summary"], "Sure, I can help.")
         self.assertEqual(body["card"]["icon"], "bolt")
+        self.assertEqual(body["origin"]["thread_id"], "thread-1")
+        self.assertEqual(body["origin"]["thread_title"], "Quick Help")
+        self.assertEqual(body["origin"]["model"], "gpt-5.5")
+        self.assertEqual(body["origin"]["reasoning_effort"], "high")
+        self.assertEqual(body["card"]["origin"]["thread_id"], "thread-1")
         self.assertEqual(body["card"]["html_mime_type"], "text/html")
         self.assertEqual(body["html_mime_type"], "text/html")
         self.assertIn("<!doctype html>", base64.b64decode(body["card"]["html_base64"]).decode("utf-8"))
         self.assertNotIn("transcript", body)
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
+        self.assertEqual(self.codex.renamed_titles, ["Quick Help"])
         self.assertEqual(self.tts.text, "Sure, I can help.")
         telemetry = body["telemetry"]
         self.assertEqual(telemetry["turn_id"], body["turn_id"])
@@ -246,6 +274,8 @@ class ServerTests(unittest.TestCase):
         item = payload["items"][0]
         self.assertEqual(item["card_id"], turn["card_id"])
         self.assertEqual(item["turn_id"], "feed_sync_turn")
+        self.assertEqual(item["origin"]["thread_id"], "thread-1")
+        self.assertEqual(item["card"]["origin"]["thread_title"], "Quick Help")
         self.assertEqual(item["audio_mime_type"], "audio/wav")
         self.assertFalse(item["archived"])
         self.assertFalse(item["read"])

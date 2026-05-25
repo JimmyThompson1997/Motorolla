@@ -266,6 +266,7 @@ public final class PuckyFeedController {
         Json.put(card, "created_at", response.createdAt());
         Json.put(card, "updated_at", response.updatedAt());
         Json.put(card, "icon", response.cardIcon());
+        Json.put(card, "origin", response.origin());
         Json.put(card, "archived", response.archived());
         Json.put(card, "read", response.read());
         Json.put(card, "deleted", response.deleted());

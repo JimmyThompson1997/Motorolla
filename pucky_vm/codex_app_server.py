@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import shlex
+import sqlite3
 import subprocess
 import threading
 import time
@@ -16,6 +17,34 @@ class CodexAppServerError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class CodexThreadOrigin:
+    runtime: str = "codex"
+    thread_id: str = ""
+    thread_title: str = ""
+    rollout_path: str = ""
+    source: str = ""
+    model: str = ""
+    model_provider: str = ""
+    reasoning_effort: str = ""
+    sandbox_policy: str = ""
+    approval_mode: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "runtime": self.runtime,
+            "thread_id": self.thread_id,
+            "thread_title": self.thread_title,
+            "rollout_path": self.rollout_path,
+            "source": self.source,
+            "model": self.model,
+            "model_provider": self.model_provider,
+            "reasoning_effort": self.reasoning_effort,
+            "sandbox_policy": self.sandbox_policy,
+            "approval_mode": self.approval_mode,
+        }
+
+
 @dataclass
 class CodexAppServerClient:
     command: list[str] = field(default_factory=lambda: ["codex", "app-server", "--listen", "stdio://"])
@@ -23,6 +52,11 @@ class CodexAppServerClient:
     startup_timeout: float = 30.0
     turn_timeout: float = 300.0
     developer_instructions: str | None = None
+    codex_home: str | None = None
+    approval_policy: str = "never"
+    sandbox: str = "danger-full-access"
+    model: str | None = None
+    reasoning_effort: str | None = None
 
     def __post_init__(self) -> None:
         self._process: subprocess.Popen[str] | None = None
@@ -111,6 +145,7 @@ class CodexAppServerClient:
                 "turn/start",
                 {
                     "threadId": thread_id,
+                    **({"effort": self.reasoning_effort} if _clean_optional(self.reasoning_effort) else {}),
                     "input": [
                         {
                             "type": "text",
@@ -128,9 +163,11 @@ class CodexAppServerClient:
 
     def _start_thread(self) -> str:
         params: dict[str, Any] = {
-            "approvalPolicy": "never",
-            "sandbox": "read-only",
+            "approvalPolicy": self.approval_policy,
+            "sandbox": self.sandbox,
         }
+        if _clean_optional(self.model):
+            params["model"] = _clean_optional(self.model)
         if self.cwd:
             params["cwd"] = str(Path(self.cwd).resolve())
         if self.developer_instructions:
@@ -140,6 +177,73 @@ class CodexAppServerClient:
         if not thread_id:
             raise CodexAppServerError("thread/start did not return a thread id")
         return str(thread_id)
+
+    def set_thread_title(self, title: str) -> None:
+        clean = _clean_optional(title)
+        if not clean or not self._thread_id:
+            return
+        self.request(
+            "thread/name/set",
+            {"threadId": self._thread_id, "name": clean},
+            timeout=self.startup_timeout,
+        )
+
+    def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        return self._thread_origin(self._thread_id or "", retries=retries, delay=delay).as_dict()
+
+    def _thread_origin(self, thread_id: str, *, retries: int, delay: float) -> CodexThreadOrigin:
+        clean_thread_id = _clean_optional(thread_id) or _clean_optional(self._thread_id)
+        origin = CodexThreadOrigin(thread_id=clean_thread_id)
+        if not clean_thread_id:
+            return origin
+        for attempt in range(max(1, retries)):
+            row = self._thread_row(clean_thread_id)
+            if row is not None:
+                origin = CodexThreadOrigin(
+                    thread_id=clean_thread_id,
+                    thread_title=_clean_optional(row.get("title")),
+                    rollout_path=_clean_optional(row.get("rollout_path")),
+                    source=_clean_optional(row.get("source")),
+                    model=_clean_optional(row.get("model")),
+                    model_provider=_clean_optional(row.get("model_provider")),
+                    reasoning_effort=_clean_optional(row.get("reasoning_effort")),
+                    sandbox_policy=_normalize_sandbox_policy(row.get("sandbox_policy")),
+                    approval_mode=_clean_optional(row.get("approval_mode")),
+                )
+                if origin.rollout_path or attempt == retries - 1:
+                    return origin
+            if attempt < retries - 1:
+                time.sleep(max(0.0, delay))
+        return origin
+
+    def _thread_row(self, thread_id: str) -> dict[str, Any] | None:
+        state_db = self._state_db_path()
+        if state_db is None or not state_db.exists():
+            return None
+        try:
+            conn = sqlite3.connect(str(state_db))
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT id, title, rollout_path, source, model, model_provider,
+                           reasoning_effort, sandbox_policy, approval_mode
+                    FROM threads
+                    WHERE id = ?
+                    """,
+                    (thread_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return None
+        return dict(row) if row is not None else None
+
+    def _state_db_path(self) -> Path | None:
+        home = _clean_optional(self.codex_home) or _clean_optional(os.environ.get("CODEX_HOME"))
+        if home:
+            return Path(home).expanduser().resolve() / "state_5.sqlite"
+        return (Path.home() / ".codex" / "state_5.sqlite").resolve()
 
     def _wait_for_reply(self, turn_id: str) -> str:
         deadline = time.monotonic() + self.turn_timeout
@@ -262,3 +366,28 @@ def command_from_env(value: str | None) -> list[str]:
     if value:
         return shlex.split(value)
     return ["codex", "app-server", "--listen", "stdio://"]
+
+
+def _clean_optional(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_sandbox_policy(value: object) -> str:
+    clean = _clean_optional(value)
+    if not clean:
+        return ""
+    try:
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict):
+            raw_type = _clean_optional(parsed.get("type"))
+            if raw_type == "dangerFullAccess":
+                return "danger-full-access"
+            if raw_type == "workspaceWrite":
+                return "workspace-write"
+            if raw_type == "readOnly":
+                return "read-only"
+            if raw_type:
+                return raw_type
+    except Exception:
+        pass
+    return clean
