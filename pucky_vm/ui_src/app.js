@@ -462,23 +462,53 @@
       return state.wakeStatus;
     }
     if (command === "wake.start") {
-      state.wakeStatus = { ...state.wakeStatus, enabled: true, requested_enabled: true, running: true };
+      state.wakeStatus = normalizeWakeStatus({ ...state.wakeStatus, enabled: true, requested_enabled: true, running: true });
       return state.wakeStatus;
     }
     if (command === "wake.stop") {
-      state.wakeStatus = { ...state.wakeStatus, enabled: false, requested_enabled: false, running: false };
+      state.wakeStatus = normalizeWakeStatus({ ...state.wakeStatus, enabled: false, requested_enabled: false, running: false });
       return state.wakeStatus;
     }
     if (command === "wake.config.set") {
       const enabled = args.enabled === undefined ? state.wakeStatus.enabled : truthy(args.enabled);
-      state.wakeStatus = {
+      state.wakeStatus = normalizeWakeStatus({
         ...state.wakeStatus,
         enabled,
         requested_enabled: enabled,
         running: enabled,
         scope: String(args.scope || state.wakeStatus.scope || "awake_and_unlocked_foreground"),
-        mode: String(args.mode || state.wakeStatus.mode || "phase_2a")
+        mode: String(args.mode || state.wakeStatus.mode || "transcript_lab")
+      });
+      return state.wakeStatus;
+    }
+    if (command === "wake.simulate") {
+      const phrase = String(args.phrase || args.text || "");
+      const accepted = /^(hey\s+)?(pucky|bucky|pocky|pookie|pupp)(\s|$)/i.test(phrase);
+      const proof = {
+        active: accepted,
+        visual_state: accepted ? "armed" : "idle",
+        matched_phrase: accepted ? phrase : "",
+        transcript: phrase,
+        remaining_ms: accepted ? 3000 : 0
       };
+      const event = {
+        event: "simulate",
+        transcript: phrase,
+        alternatives: [phrase],
+        accepted,
+        matched_phrase: proof.matched_phrase,
+        match_source: accepted ? "simulate" : ""
+      };
+      state.wakeStatus = normalizeWakeStatus({
+        ...state.wakeStatus,
+        proof_indicator: proof,
+        transcript_history: [event, ...(state.wakeStatus.transcript_history || [])].slice(0, 10),
+        last_match: {
+          matched_phrase: proof.matched_phrase,
+          match_source: accepted ? "simulate" : "",
+          matched_at: accepted ? new Date().toISOString() : ""
+        }
+      });
       return state.wakeStatus;
     }
     if (command === "ui.surface.get") {
@@ -755,8 +785,10 @@
     if (!indicators.length) {
       return;
     }
-    const visualState = turnVisualState(state.turn);
-    const label = turnStateLabel(visualState);
+    const turnState = turnVisualState(state.turn);
+    const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle";
+    const visualState = wakeProofState !== "idle" ? wakeProofState : turnState;
+    const label = wakeProofState !== "idle" ? "wake matched" : turnStateLabel(visualState);
     indicators.forEach(indicator => {
       indicator.className = `voice-status voice-status-${visualState}`;
       indicator.setAttribute("aria-label", `Turn state: ${label}`);
@@ -805,8 +837,22 @@
       requested_enabled: false,
       running: false,
       engine: "unknown",
-      mode: "phase_2a",
-      scope: "awake_and_unlocked_foreground"
+      mode: "transcript_lab",
+      scope: "awake_and_unlocked_foreground",
+      recognizer_state: "idle",
+      transcript_history: [],
+      last_match: {
+        matched_phrase: "",
+        match_source: "",
+        matched_at: ""
+      },
+      proof_indicator: {
+        active: false,
+        visual_state: "idle",
+        matched_phrase: "",
+        transcript: "",
+        remaining_ms: 0
+      }
     };
   }
 
@@ -866,8 +912,29 @@
       requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
       running: truthy(raw.running),
       engine: String(raw.engine || "unknown"),
-      mode: String(raw.mode || "phase_2a"),
-      scope: String(raw.scope || "awake_and_unlocked_foreground")
+      mode: String(raw.mode || "transcript_lab"),
+      scope: String(raw.scope || "awake_and_unlocked_foreground"),
+      recognizer_state: String(raw.recognizer_state || "idle"),
+      transcript_history: Array.isArray(raw.transcript_history) ? raw.transcript_history.slice(0, 10) : [],
+      last_match: raw.last_match && typeof raw.last_match === "object" ? raw.last_match : {
+        matched_phrase: "",
+        match_source: "",
+        matched_at: ""
+      },
+      proof_indicator: normalizeWakeProof(raw.proof_indicator)
+    };
+  }
+
+  function normalizeWakeProof(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    const active = truthy(raw.active);
+    return {
+      active,
+      visual_state: active ? normalizeVisualState(raw.visual_state || "armed") : "idle",
+      matched_phrase: String(raw.matched_phrase || ""),
+      transcript: String(raw.transcript || ""),
+      remaining_ms: safeNumber(raw.remaining_ms),
+      expires_at_elapsed_ms: safeNumber(raw.expires_at_elapsed_ms)
     };
   }
 
@@ -985,6 +1052,14 @@
   function turnVisualState(status) {
     const indicator = turnIndicatorFromStatus(status);
     return normalizeVisualState(indicator.visual_state || indicator.state);
+  }
+
+  function wakeProofVisualState(status) {
+    const proof = normalizeWakeStatus(status).proof_indicator;
+    if (!proof.active) {
+      return "idle";
+    }
+    return normalizeVisualState(proof.visual_state || "armed");
   }
 
   function turnStateLabel(visualState) {
@@ -5130,7 +5205,7 @@
   }
 
   setInterval(async () => {
-    if (state.activePath || isTurnActive(state.turn)) {
+    if (state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
       let changed = false;
       try {
         if (state.activePath) {
@@ -5143,6 +5218,10 @@
         }
         if (isTurnActive(state.turn)) {
           await loadTurnStatus({ render: false });
+          changed = true;
+        }
+        if (wakeProofVisualState(state.wakeStatus) !== "idle") {
+          await loadWakeStatus({ render: false });
           changed = true;
         }
         if (changed) {

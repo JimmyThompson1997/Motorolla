@@ -123,6 +123,8 @@ public final class PuckyWebBridge {
                 return WakeWordController.shared(context).start(args);
             case "wake.stop":
                 return WakeWordController.shared(context).stop(args);
+            case "wake.simulate":
+                return WakeWordController.shared(context).simulate(args);
             case "location.tracker.status":
                 return new LocationController(context).trackerStatus();
             case "location.tracker.start":

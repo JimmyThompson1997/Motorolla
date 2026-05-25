@@ -23,6 +23,7 @@ public final class WakePhraseFamily {
             "hey pookie",
             "hey pokey",
             "hey bucky",
+            "hey pupp",
             "pucky",
             "puppy",
             "pocky",
@@ -42,6 +43,7 @@ public final class WakePhraseFamily {
             {"hey pookie", "hey pookie"},
             {"hey pokey", "hey pokey"},
             {"hey bucky", "hey bucky"},
+            {"hey pupp", "hey pucky"},
             {"pucky", "pucky"},
             {"puppy", "puppy"},
             {"pocky", "pocky"},
@@ -64,10 +66,45 @@ public final class WakePhraseFamily {
         return !matchedPhrase(transcript).isEmpty();
     }
 
+    public static boolean matchesPrefix(String transcript) {
+        return !matchedPhrasePrefix(transcript).isEmpty();
+    }
+
     public static String matchedPhrase(String transcript) {
         String normalized = SpeechTextNormalizer.normalize(transcript);
         String matched = NORMALIZED.get(normalized);
         return matched == null ? "" : matched;
+    }
+
+    public static String matchedPhrasePrefix(String transcript) {
+        String normalized = SpeechTextNormalizer.normalize(transcript);
+        if (normalized.isEmpty()) {
+            return "";
+        }
+        String exact = NORMALIZED.get(normalized);
+        if (exact != null) {
+            return exact;
+        }
+        for (Map.Entry<String, String> entry : NORMALIZED.entrySet()) {
+            String recognized = entry.getKey();
+            if (normalized.startsWith(recognized + " ")) {
+                return entry.getValue();
+            }
+        }
+        return "";
+    }
+
+    public static String matchedPhrasePrefix(JSONArray alternatives) {
+        if (alternatives == null) {
+            return "";
+        }
+        for (int i = 0; i < alternatives.length(); i++) {
+            String matched = matchedPhrasePrefix(alternatives.optString(i, ""));
+            if (!matched.isEmpty()) {
+                return matched;
+            }
+        }
+        return "";
     }
 
     public static boolean isSingleWordVariant(String transcript) {

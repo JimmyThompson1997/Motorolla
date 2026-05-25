@@ -80,7 +80,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.turn.received_cue.test", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read",
             "pucky.feed.sync", "pucky.feed.action",
-            "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate", "wake.debug.confirm_artifact",
+            "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
             "speech.echo.status", "speech.echo.start", "speech.echo.stop",
@@ -439,15 +439,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return wakeWordController.stop(command.args());
             case "wake.simulate":
                 return wakeWordController.simulate(command.args());
-            case "wake.debug.confirm_artifact":
-                try {
-                    return wakeWordController.confirmArtifact(command.args());
-                } catch (CommandException exc) {
-                    throw exc;
-                } catch (Exception exc) {
-                    throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
-                            exc.getClass().getSimpleName() + ": " + exc.getMessage());
-                }
             case "speech.native.status":
                 return nativeSpeechController.status();
             case "speech.native.start":

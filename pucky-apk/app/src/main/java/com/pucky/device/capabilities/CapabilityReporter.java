@@ -147,10 +147,10 @@ public final class CapabilityReporter {
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
                 "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Raw voice capture is save-only and does not replay recordings."));
-        Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate/wake.debug.confirm_artifact",
+        Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Phase-two Hey Pucky wake sentinel. Awake and unlocked foreground-service scope uses a Silero speech sentinel, a speech-bounded wake probe, and Android on-device STT confirmation before handing off to the normal turn pipeline. wake.debug.confirm_artifact provides deterministic fixture validation. Screen-off assistant scope remains reserved."));
+                "Stripped Hey Pucky transcript lab. Awake and unlocked foreground-service scope runs a live Android on-device SpeechRecognizer loop, stores transcript events, and briefly marks proof-only blue UI state on a bounded wake-family match. No wake audio clips, turn handoff, endpointing, or turn upload."));
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));

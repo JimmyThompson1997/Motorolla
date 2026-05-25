@@ -15,6 +15,7 @@ public final class WakePhraseFamilyTest {
         assertEquals("hey pocky", WakePhraseFamily.matchedPhrase("Hey Pocky!"));
         assertEquals("hey pookie", WakePhraseFamily.matchedPhrase("Hey Pookie"));
         assertEquals("hey bucky", WakePhraseFamily.matchedPhrase("Hey Bucky"));
+        assertEquals("hey pucky", WakePhraseFamily.matchedPhrase("Hey Pupp"));
         assertEquals("hey pucky", WakePhraseFamily.matchedPhrase("Hey Pucking!"));
         assertEquals("pucky", WakePhraseFamily.matchedPhrase("Pucking."));
         assertEquals("pookie", WakePhraseFamily.matchedPhrase("Pooking."));
@@ -31,5 +32,21 @@ public final class WakePhraseFamilyTest {
         assertTrue(WakePhraseFamily.matchedPhrase("turn the flashlight on").isEmpty());
         assertTrue(WakePhraseFamily.matchedPhrase("take a photo").isEmpty());
         assertTrue(WakePhraseFamily.matchedPhrase("Parking").isEmpty());
+    }
+
+    @Test
+    public void proofLabAcceptsWakePrefixPhrases() {
+        assertEquals("pucky", WakePhraseFamily.matchedPhrasePrefix("Pucky test 123"));
+        assertEquals("hey pucky", WakePhraseFamily.matchedPhrasePrefix("Hey Pucky what is this"));
+        assertEquals("hey bucky", WakePhraseFamily.matchedPhrasePrefix("Hey Bucky can you hear me"));
+        assertEquals("hey pucky", WakePhraseFamily.matchedPhrasePrefix("Hey Pupp test"));
+    }
+
+    @Test
+    public void proofLabKeepsRiskyNearMissesRejected() {
+        assertTrue(WakePhraseFamily.matchedPhrasePrefix("Parking lot").isEmpty());
+        assertTrue(WakePhraseFamily.matchedPhrasePrefix("Puppet show").isEmpty());
+        assertTrue(WakePhraseFamily.matchedPhrasePrefix("Can you hear me").isEmpty());
+        assertTrue(WakePhraseFamily.matchedPhrasePrefix("Lucky day").isEmpty());
     }
 }

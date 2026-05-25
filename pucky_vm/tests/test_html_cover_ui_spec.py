@@ -99,6 +99,10 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function normalizeTurnStatus(input)" in app
     assert "function isTurnActive(status)" in app
     assert "function turnVisualState(status)" in app
+    assert "function wakeProofVisualState(status)" in app
+    assert "proof_indicator: normalizeWakeProof(raw.proof_indicator)" in app
+    assert 'const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle"' in app
+    assert 'const label = wakeProofState !== "idle" ? "wake matched" : turnStateLabel(visualState)' in app
     assert "hasNativeVisualState" not in app
     assert "indicator.visual_state = \"thinking\"" not in app
     assert "indicator.visual_state = \"speaking\"" not in app
