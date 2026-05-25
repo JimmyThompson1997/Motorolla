@@ -678,6 +678,16 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "function rememberPlayerProgress(player)" in app
     assert "function forgetCompleted(path)" in app
     assert "savedPositionFor(path)" in app
+
+
+def test_pausing_audio_clears_active_card_preview_lane() -> None:
+    app = read("app.js")
+
+    pause_body = app.split("async function pauseWithRewind() {", 1)[1].split("\n  }\n\n  function control(", 1)[0]
+    assert 'command: "player.pause"' in pause_body
+    assert 'command: "player.seek"' in pause_body
+    assert "rememberPlayerProgress(rewound);" in pause_body
+    assert 'state.activePath = "";' in pause_body
     assert "return 0;" in app
     assert "rememberPlayerProgress(current)" in app
 

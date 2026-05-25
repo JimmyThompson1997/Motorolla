@@ -3085,6 +3085,7 @@
     const rewindTo = Math.max(0, Number(paused.position_ms || 0) - 1000);
     const rewound = await Pucky.request({ command: "player.seek", args: { position_ms: rewindTo } });
     rememberPlayerProgress(rewound);
+    state.activePath = "";
     return rewound;
   }
 
