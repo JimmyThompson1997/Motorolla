@@ -671,6 +671,7 @@ public final class WakeWordController {
         androidSttFirstPartialMs = -1L;
         androidSttFinalOrErrorMs = -1L;
         androidSttAcceptedMs = -1L;
+        lastError = "";
         persistAndroidSttEventLocked("session_start", "", new JSONArray(), new JSONArray(), "", "");
         Log.i(TAG, "wake android_stt session_start reason=" + reason + " session_id=" + sessionId);
         main.post(() -> startAndroidSttRecognizerOnMain(sessionId));
@@ -1556,6 +1557,17 @@ public final class WakeWordController {
                 confidences == null ? new JSONArray().toString() : confidences.toString());
         editor.putString(KEY_ANDROID_STT_LAST_ERROR_CODE, errorCode == null ? "" : errorCode);
         editor.putString(KEY_ANDROID_STT_LAST_ERROR_MESSAGE, errorMessage == null ? "" : errorMessage);
+        if ("session_start".equals(event)) {
+            editor.remove(KEY_ANDROID_STT_SESSION_TO_READY_MS);
+            editor.remove(KEY_ANDROID_STT_SESSION_TO_SPEECH_BEGIN_MS);
+            editor.remove(KEY_ANDROID_STT_SESSION_TO_FIRST_PARTIAL_MS);
+            editor.remove(KEY_ANDROID_STT_SESSION_TO_FINAL_OR_ERROR_MS);
+            editor.remove(KEY_ANDROID_STT_SESSION_TO_ACCEPT_MS);
+            editor.remove(KEY_ANDROID_STT_READY_TO_ACCEPT_MS);
+            editor.remove(KEY_ANDROID_STT_SPEECH_BEGIN_TO_ACCEPT_MS);
+            editor.remove(KEY_ANDROID_STT_ACCEPT_TO_CHIME_MS);
+            editor.remove(KEY_ANDROID_STT_ACCEPT_TO_TURN_START_REQUEST_MS);
+        }
         if (androidSttReadyMs > 0L) {
             editor.putInt(KEY_ANDROID_STT_SESSION_TO_READY_MS,
                     elapsedInt(androidSttSessionStartedMs, androidSttReadyMs));
