@@ -119,6 +119,24 @@ def test_tune_avd_config_reduces_userdata_partition_size(tmp_path: Path) -> None
     assert "6442450944" not in content
 
 
+def test_cmd_start_reapplies_userdata_tuning_for_existing_slot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=2, no_wait=True, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    calls: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "tune_avd_config", lambda cfg: calls.append(cfg.avd_name))
+    monkeypatch.setattr(suite.Runner, "start_detached", lambda self, *args, **kwargs: 123)
+
+    result = suite.cmd_start(args)
+
+    assert result["ok"] is True
+    assert calls == [config.avd_name]
+
+
 def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path) -> None:
     args = ns(tmp_path)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
@@ -230,6 +248,21 @@ def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytes
     assert loaded["slot"] == 1
     assert loaded["run_id"] == "fixed"
     assert loaded["serial"] == "emulator-5554"
+
+
+def test_clean_removes_slot_avd_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, dry_run=True)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "cmd_stop", lambda _args: {"ok": True})
+
+    result = suite.cmd_clean(args)
+    removed = result["removed"]
+
+    assert any(path.endswith("pucky_webview_api35_01.avd") for path in removed)
+    assert any(path.endswith("pucky_webview_api35_01.ini") for path in removed)
 
 
 def test_seed_ui_dry_run_plans_command_bus_not_adb_push(monkeypatch: pytest.MonkeyPatch) -> None:

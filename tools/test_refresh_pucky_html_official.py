@@ -200,6 +200,22 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
     assert result["bundle_status"]["ui_version"] == "git-abcdef0"
 
 
+def test_puckyctl_args_forward_explicit_wait_timeout() -> None:
+    args = argparse.Namespace(
+        puckyctl=Path("puckyctl.py"),
+        broker="http://127.0.0.1:18082",
+        token="dev-token",
+        device_id="pucky-emulator-slot-02",
+        command_timeout_seconds=120,
+    )
+
+    command = official.puckyctl_args(args, "ui.bundle.status", {})
+
+    assert command[:5] == [official.sys.executable, "puckyctl.py", "--json", "--timeout-ms", "120000"]
+    assert "--broker" in command
+    assert "--device-id" in command
+
+
 def test_official_helper_source_does_not_reference_low_level_local_install_commands() -> None:
     source = Path(official.__file__).read_text(encoding="utf-8")
 

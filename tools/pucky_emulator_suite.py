@@ -565,6 +565,8 @@ def cmd_create(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_start(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    if not args.dry_run:
+        tune_avd_config(config)
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
     pid = runner.start_detached(
         emulator_start_command(args, config),
@@ -752,7 +754,13 @@ def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_clean(args: argparse.Namespace) -> dict[str, Any]:
     stopped = cmd_stop(args)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
-    targets = [Path(config.run_dir), Path(config.state_path)]
+    avd_root = Path(config.avd_home)
+    targets = [
+        Path(config.run_dir),
+        Path(config.state_path),
+        avd_root / f"{config.avd_name}.avd",
+        avd_root / f"{config.avd_name}.ini",
+    ]
     if not args.dry_run:
         for target in targets:
             assert_inside(target, ROOT / ".tmp")

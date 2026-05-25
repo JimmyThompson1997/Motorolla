@@ -95,7 +95,13 @@ def validate_remote_manifest(remote_manifest: dict[str, Any], local_git: dict[st
 
 
 def puckyctl_args(args: argparse.Namespace, command_type: str, payload: dict[str, Any]) -> list[str]:
-    argv = [sys.executable, str(args.puckyctl), "--json"]
+    argv = [
+        sys.executable,
+        str(args.puckyctl),
+        "--json",
+        "--timeout-ms",
+        str(max(1000, int(args.command_timeout_seconds) * 1000)),
+    ]
     if args.broker:
         argv += ["--broker", args.broker]
     if args.token:
