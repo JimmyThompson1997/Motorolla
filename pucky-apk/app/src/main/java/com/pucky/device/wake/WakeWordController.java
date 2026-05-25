@@ -27,6 +27,7 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Arrays;
 
@@ -40,6 +41,17 @@ public final class WakeWordController {
     private static final String KEY_LAST_START_REQUESTED_AT = "last_start_requested_at";
     private static final String KEY_LAST_STOP_REQUESTED_AT = "last_stop_requested_at";
     private static final String KEY_LAST_SIMULATE_REQUESTED_AT = "last_simulate_requested_at";
+    private static final String KEY_DEBUG_KEEP_LAST_CLIP = "debug_keep_last_clip";
+    private static final String KEY_CANDIDATE_COUNT = "candidate_count";
+    private static final String KEY_LAST_CANDIDATE_AT = "last_candidate_at";
+    private static final String KEY_LAST_CANDIDATE_DURATION_MS = "last_candidate_duration_ms";
+    private static final String KEY_LAST_CANDIDATE_SAMPLES = "last_candidate_samples";
+    private static final String KEY_LAST_CONFIRMATION_STATUS = "last_confirmation_status";
+    private static final String KEY_LAST_CONFIRMATION_TRANSCRIPT = "last_confirmation_transcript";
+    private static final String KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON = "last_confirmation_alternatives_json";
+    private static final String KEY_LAST_CONFIRMATION_CONFIDENCES_JSON = "last_confirmation_confidences_json";
+    private static final String KEY_LAST_REJECT_REASON = "last_reject_reason";
+    private static final String KEY_LAST_DEBUG_CLIP_PATH = "last_debug_clip_path";
 
     private static final String MODE_PHASE_2A = "phase2a_unlocked_service";
     private static final String MODE_PHASE_2B = "assistant_screen_off_reserved";
@@ -62,6 +74,7 @@ public final class WakeWordController {
     private final Handler main;
     private final RecipeDevicePrimitiveExecutor recipeExecutor;
     private final OnDeviceInjectedAudioRecognizer recognizer;
+    private final WakeDebugClipStore debugClipStore;
     private final PowerManager powerManager;
     private final KeyguardManager keyguardManager;
 
@@ -100,6 +113,7 @@ public final class WakeWordController {
         this.main = new Handler(Looper.getMainLooper());
         this.recipeExecutor = new RecipeDevicePrimitiveExecutor(this.context);
         this.recognizer = new OnDeviceInjectedAudioRecognizer(this.context);
+        this.debugClipStore = new WakeDebugClipStore(this.context.getFilesDir());
         this.powerManager = (PowerManager) this.context.getSystemService(Context.POWER_SERVICE);
         this.keyguardManager = (KeyguardManager) this.context.getSystemService(Context.KEYGUARD_SERVICE);
     }
@@ -150,14 +164,30 @@ public final class WakeWordController {
             Json.put(out, "service_started", serviceStarted);
             Json.put(out, "candidate_active", candidateActive);
             Json.put(out, "confirming_candidate", confirmingCandidate);
+            Json.put(out, "debug_keep_last_clip", debugKeepLastClip());
+            Json.put(out, "candidate_count", prefs.getInt(KEY_CANDIDATE_COUNT, 0));
+            Json.put(out, "last_candidate_at", nullable(prefs.getString(KEY_LAST_CANDIDATE_AT, "")));
+            Json.put(out, "last_candidate_duration_ms", nullableInt(KEY_LAST_CANDIDATE_DURATION_MS));
+            Json.put(out, "last_candidate_samples", nullableInt(KEY_LAST_CANDIDATE_SAMPLES));
             Json.put(out, "active_turn_id", activeTurnId.isEmpty() ? JSONObject.NULL : activeTurnId);
             Json.put(out, "active_turn_source", activeTurnSource.isEmpty() ? JSONObject.NULL : activeTurnSource);
             Json.put(out, "suspended_reason", suspendedReason.isEmpty() ? JSONObject.NULL : suspendedReason);
             Json.put(out, "last_error", lastError.isEmpty() ? JSONObject.NULL : lastError);
             Json.put(out, "last_wake_phrase", lastWakePhrase.isEmpty() ? JSONObject.NULL : lastWakePhrase);
             Json.put(out, "last_wake_at", lastWakeAt.isEmpty() ? JSONObject.NULL : lastWakeAt);
+            Json.put(out, "last_confirmation_status",
+                    nullable(prefs.getString(KEY_LAST_CONFIRMATION_STATUS, WakeConfirmationDecision.STATUS_NOT_RUN)));
             Json.put(out, "last_confirmation_transcript",
-                    lastConfirmationTranscript.isEmpty() ? JSONObject.NULL : lastConfirmationTranscript);
+                    nullable(prefs.getString(KEY_LAST_CONFIRMATION_TRANSCRIPT, lastConfirmationTranscript)));
+            Json.put(out, "last_confirmation_alternatives",
+                    jsonArrayPref(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON));
+            Json.put(out, "last_confirmation_confidences",
+                    jsonArrayPref(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON));
+            Json.put(out, "last_reject_reason",
+                    nullable(prefs.getString(KEY_LAST_REJECT_REASON,
+                            WakeConfirmationDecision.REASON_NO_CANDIDATE_DETECTED)));
+            Json.put(out, "last_debug_clip_path",
+                    nullable(storedDebugClipPath()));
             Json.put(out, "last_config_set_at", nullable(prefs.getString(KEY_LAST_CONFIG_SET_AT, "")));
             Json.put(out, "last_start_requested_at", nullable(prefs.getString(KEY_LAST_START_REQUESTED_AT, "")));
             Json.put(out, "last_stop_requested_at", nullable(prefs.getString(KEY_LAST_STOP_REQUESTED_AT, "")));
@@ -181,8 +211,17 @@ public final class WakeWordController {
         if (args != null && args.has("scope")) {
             editor.putString(KEY_SCOPE, sanitizeScope(args.optString("scope", "")));
         }
+        boolean clearDebugForensics = false;
+        if (args != null && args.has("debug_keep_last_clip")) {
+            boolean enabled = args.optBoolean("debug_keep_last_clip", false);
+            editor.putBoolean(KEY_DEBUG_KEEP_LAST_CLIP, enabled);
+            clearDebugForensics = !enabled;
+        }
         editor.putString(KEY_LAST_CONFIG_SET_AT, Instant.now().toString());
         editor.apply();
+        if (clearDebugForensics) {
+            clearWakeDebugForensics();
+        }
         reevaluate();
         JSONObject out = status();
         Json.put(out, "saved", true);
@@ -217,11 +256,27 @@ public final class WakeWordController {
         String matchedPhrase = WakePhraseFamily.matchedPhrase(requested);
         JSONObject out = status();
         if (matchedPhrase.isEmpty()) {
+            recordConfirmationDirect(
+                    WakeConfirmationDecision.STATUS_REJECTED,
+                    requested,
+                    singleValueArray(requested),
+                    new JSONArray(),
+                    WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH);
+            out = status();
             Json.put(out, "simulated", false);
             Json.put(out, "error_code", "invalid_wake_phrase");
             Json.put(out, "error_message", "wake.simulate phrase must match the hey_pucky wake family");
+            Log.i(TAG, "wake rejected trigger=wake_simulate reason="
+                    + WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH
+                    + " transcript=" + requested);
             return out;
         }
+        recordConfirmationDirect(
+                WakeConfirmationDecision.STATUS_ACCEPTED,
+                requested,
+                singleValueArray(requested),
+                new JSONArray(),
+                WakeConfirmationDecision.REASON_ACCEPTED);
         boolean accepted = handleWakeAccepted(matchedPhrase, requested, "wake_simulate");
         out = status();
         Json.put(out, "simulated", accepted);
@@ -417,41 +472,28 @@ public final class WakeWordController {
     }
 
     private void confirmCandidate(short[] candidateSamples) {
+        String debugClipPath = recordCandidateAttempt(candidateSamples);
         OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome =
                 recognizer.recognize(OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidateSamples),
                         CONFIRM_TIMEOUT_MS);
-        String matchedPhrase = WakePhraseFamily.matchedPhrase(outcome.transcript);
-        boolean accepted = !matchedPhrase.isEmpty() && acceptsSingleWordVariant(outcome, matchedPhrase);
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome, SINGLE_WORD_CONFIDENCE_THRESHOLD);
+        recordConfirmationOutcome(outcome, decision, debugClipPath);
         synchronized (lock) {
             confirmingCandidate = false;
             lastConfirmationTranscript = outcome.transcript;
             if (!outcome.succeeded) {
                 lastError = outcome.errorCode + ": " + outcome.errorMessage;
+            } else {
+                lastError = "";
             }
         }
-        if (accepted && handleWakeAccepted(matchedPhrase, outcome.transcript, "voice")) {
+        if (decision.accepted && handleWakeAccepted(decision.matchedPhrase, outcome.transcript, "voice")) {
             return;
         }
+        Log.i(TAG, "wake rejected trigger=voice reason=" + decision.reason
+                + " status=" + decision.confirmationStatus
+                + " transcript=" + outcome.transcript);
         reevaluate();
-    }
-
-    private boolean acceptsSingleWordVariant(OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome, String matchedPhrase) {
-        if (!WakePhraseFamily.isSingleWordVariant(matchedPhrase)) {
-            return true;
-        }
-        double topConfidence = topConfidence(outcome.confidences);
-        return topConfidence < 0.0 || topConfidence >= SINGLE_WORD_CONFIDENCE_THRESHOLD;
-    }
-
-    private static double topConfidence(JSONArray confidences) {
-        if (confidences == null || confidences.length() == 0) {
-            return -1.0;
-        }
-        Object first = confidences.opt(0);
-        if (!(first instanceof Number)) {
-            return -1.0;
-        }
-        return ((Number) first).doubleValue();
     }
 
     private boolean isWakeAllowedNowLocked() {
@@ -549,6 +591,122 @@ public final class WakeWordController {
 
     private static Object nullable(String value) {
         return value == null || value.trim().isEmpty() ? JSONObject.NULL : value;
+    }
+
+    private Object nullableInt(String key) {
+        return prefs.contains(key) ? prefs.getInt(key, 0) : JSONObject.NULL;
+    }
+
+    private boolean debugKeepLastClip() {
+        return prefs.getBoolean(KEY_DEBUG_KEEP_LAST_CLIP, false);
+    }
+
+    private String storedDebugClipPath() {
+        String stored = prefs.getString(KEY_LAST_DEBUG_CLIP_PATH, "");
+        String existing = debugClipStore.currentPathIfExists();
+        if (!stored.isEmpty() && stored.equals(existing)) {
+            return stored;
+        }
+        return existing;
+    }
+
+    private JSONArray jsonArrayPref(String key) {
+        String raw = prefs.getString(key, "");
+        if (raw == null || raw.trim().isEmpty()) {
+            return new JSONArray();
+        }
+        try {
+            return new JSONArray(raw);
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private String recordCandidateAttempt(short[] candidateSamples) {
+        int samples = candidateSamples == null ? 0 : candidateSamples.length;
+        int durationMs = WakeDebugClipStore.durationMs(candidateSamples);
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putInt(KEY_CANDIDATE_COUNT, prefs.getInt(KEY_CANDIDATE_COUNT, 0) + 1);
+        editor.putString(KEY_LAST_CANDIDATE_AT, Instant.now().toString());
+        editor.putInt(KEY_LAST_CANDIDATE_DURATION_MS, durationMs);
+        editor.putInt(KEY_LAST_CANDIDATE_SAMPLES, samples);
+        editor.putString(KEY_LAST_CONFIRMATION_STATUS, WakeConfirmationDecision.STATUS_PENDING);
+        editor.putString(KEY_LAST_REJECT_REASON, "");
+        String debugClipPath = "";
+        if (debugKeepLastClip()) {
+            try {
+                debugClipPath = debugClipStore.save(candidateSamples);
+                editor.putString(KEY_LAST_DEBUG_CLIP_PATH, debugClipPath);
+            } catch (IOException exc) {
+                lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+                editor.remove(KEY_LAST_DEBUG_CLIP_PATH);
+            }
+        } else {
+            editor.remove(KEY_LAST_DEBUG_CLIP_PATH);
+        }
+        editor.apply();
+        Log.i(TAG, "wake candidate captured samples=" + samples
+                + " duration_ms=" + durationMs
+                + " debug_clip=" + (!debugClipPath.isEmpty()));
+        return debugClipPath;
+    }
+
+    private void recordConfirmationOutcome(OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome,
+                                           WakeConfirmationDecision decision,
+                                           String debugClipPath) {
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString(KEY_LAST_CONFIRMATION_STATUS, decision.confirmationStatus);
+        editor.putString(KEY_LAST_CONFIRMATION_TRANSCRIPT, outcome.transcript);
+        editor.putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, outcome.alternatives.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, outcome.confidences.toString());
+        editor.putString(KEY_LAST_REJECT_REASON, decision.reason);
+        if (!debugClipPath.isEmpty()) {
+            editor.putString(KEY_LAST_DEBUG_CLIP_PATH, debugClipPath);
+        }
+        editor.apply();
+    }
+
+    private void recordConfirmationDirect(String status,
+                                          String transcript,
+                                          JSONArray alternatives,
+                                          JSONArray confidences,
+                                          String reason) {
+        lastConfirmationTranscript = transcript == null ? "" : transcript;
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString(KEY_LAST_CONFIRMATION_STATUS, status);
+        editor.putString(KEY_LAST_CONFIRMATION_TRANSCRIPT, transcript == null ? "" : transcript);
+        editor.putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON,
+                alternatives == null ? new JSONArray().toString() : alternatives.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON,
+                confidences == null ? new JSONArray().toString() : confidences.toString());
+        editor.putString(KEY_LAST_REJECT_REASON, reason == null ? "" : reason);
+        editor.apply();
+    }
+
+    private void clearWakeDebugForensics() {
+        debugClipStore.clear();
+        lastConfirmationTranscript = "";
+        lastError = "";
+        prefs.edit()
+                .putInt(KEY_CANDIDATE_COUNT, 0)
+                .remove(KEY_LAST_CANDIDATE_AT)
+                .remove(KEY_LAST_CANDIDATE_DURATION_MS)
+                .remove(KEY_LAST_CANDIDATE_SAMPLES)
+                .putString(KEY_LAST_CONFIRMATION_STATUS, WakeConfirmationDecision.STATUS_NOT_RUN)
+                .remove(KEY_LAST_CONFIRMATION_TRANSCRIPT)
+                .putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, new JSONArray().toString())
+                .putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, new JSONArray().toString())
+                .putString(KEY_LAST_REJECT_REASON, WakeConfirmationDecision.REASON_NO_CANDIDATE_DETECTED)
+                .remove(KEY_LAST_DEBUG_CLIP_PATH)
+                .apply();
+    }
+
+    private static JSONArray singleValueArray(String value) {
+        JSONArray out = new JSONArray();
+        if (value != null && !value.trim().isEmpty()) {
+            Json.add(out, value);
+        }
+        return out;
     }
 
     private final class WakeTurnMonitor extends Thread {

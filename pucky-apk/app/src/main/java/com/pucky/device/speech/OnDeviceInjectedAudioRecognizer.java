@@ -284,6 +284,15 @@ public final class OnDeviceInjectedAudioRecognizer {
                     "");
         }
 
+        public static RecognitionOutcome manual(String transcript, JSONArray alternatives, JSONArray confidences) {
+            return new RecognitionOutcome(true, "matched_or_no_match_ready",
+                    transcript,
+                    alternatives,
+                    confidences,
+                    "",
+                    "");
+        }
+
         public static RecognitionOutcome failed(String code, String message) {
             return new RecognitionOutcome(false, "classifier_failed", "", new JSONArray(),
                     new JSONArray(), code, message);
