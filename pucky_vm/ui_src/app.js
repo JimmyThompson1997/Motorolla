@@ -1033,6 +1033,10 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
+    if (state.route === "settings") {
+      feed.replaceChildren(settingsPageView());
+      return;
+    }
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));

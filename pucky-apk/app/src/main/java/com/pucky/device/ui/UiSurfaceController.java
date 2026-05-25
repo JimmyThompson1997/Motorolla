@@ -57,11 +57,13 @@ public final class UiSurfaceController {
     }
 
     private static String sourceKind(String activeUrl, String requestedUrl, String entrypointUrl, String fallbackAssetUrl) {
-        String effectiveUrl = !safe(activeUrl).isEmpty() ? safe(activeUrl) : safe(requestedUrl);
-        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(entrypointUrl)) {
+        String effectiveUrl = comparableUrl(!safe(activeUrl).isEmpty() ? safe(activeUrl) : safe(requestedUrl));
+        String expectedEntrypoint = comparableUrl(entrypointUrl);
+        String expectedFallback = comparableUrl(fallbackAssetUrl);
+        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(expectedEntrypoint)) {
             return "bundle_current";
         }
-        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(fallbackAssetUrl)) {
+        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(expectedFallback)) {
             return "fallback_asset";
         }
         if (!effectiveUrl.isEmpty() && effectiveUrl.contains("/ui_bundles/previous/")) {
@@ -72,5 +74,21 @@ public final class UiSurfaceController {
 
     private static String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String comparableUrl(String value) {
+        String cleaned = safe(value);
+        if (cleaned.isEmpty()) {
+            return "";
+        }
+        int fragment = cleaned.indexOf('#');
+        if (fragment >= 0) {
+            cleaned = cleaned.substring(0, fragment);
+        }
+        int query = cleaned.indexOf('?');
+        if (query >= 0) {
+            cleaned = cleaned.substring(0, query);
+        }
+        return cleaned;
     }
 }

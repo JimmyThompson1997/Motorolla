@@ -424,6 +424,9 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "async function loadWakeStatus(options = {})" in app
     assert "async function loadUiSurfaceStatus(options = {})" in app
     assert "function ensureSettingsSurfaceCurrent()" in app
+    assert 'if (state.route === "settings") {' in app
+    assert "feed.replaceChildren(settingsPageView());" in app
+    assert '`${current?.label || "Page"} will live here.`' in app
     assert 'command === "pucky.turn.settings.get"' in app
     assert 'command === "pucky.turn.settings.set"' in app
     assert 'command === "wake.status"' in app
@@ -452,6 +455,30 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert ".settings-toggle" in styles
     assert ".settings-action-button" in styles
     assert ".settings-diagnostics" in styles
+
+
+def test_ui_surface_controller_treats_reset_nav_bundle_url_as_current() -> None:
+    surface = (
+        ROOT.parent
+        / "pucky-apk"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "pucky"
+        / "device"
+        / "ui"
+        / "UiSurfaceController.java"
+    ).read_text(encoding="utf-8")
+
+    assert "private static String comparableUrl(String value)" in surface
+    assert "int fragment = cleaned.indexOf('#');" in surface
+    assert "int query = cleaned.indexOf('?');" in surface
+    assert "cleaned = cleaned.substring(0, query);" in surface
+    assert "String effectiveUrl = comparableUrl" in surface
+    assert "String expectedEntrypoint = comparableUrl(entrypointUrl);" in surface
+    assert "return \"bundle_current\";" in surface
 
 
 def test_leaving_home_uses_standard_material_card_icon() -> None:
