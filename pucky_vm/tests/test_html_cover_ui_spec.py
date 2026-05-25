@@ -623,19 +623,21 @@ def test_sheet_drag_waits_for_release_before_dismissal() -> None:
     assert "target.setPointerCapture" not in pointerdown_body
 
 
-def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
+def test_feed_waveform_and_mic_follow_current_playback_only() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
     assert 'waveform(card, "wave-row"' in app
     assert '"action action-audio is-playing"' in app
-    assert "if (isActiveCard(card) && state.player.is_playing) {" in app
+    assert "function isPlayingCard(card) {" in app
+    assert "if (isPlayingCard(card)) {" in app
     click_body = app.split('audio.addEventListener("click", async (event) => {', 1)[1].split(
         "      });\n      actions.append(audio);", 1
     )[0]
     assert "await toggleAudio(card);" in click_body
     assert "showAudioDetail(card)" not in click_body
-    assert '? "Pause" : isActiveCard(card) ? "Resume" : "Play"' in app
+    assert '? "Pause" : "Play"' in app
+    assert '"Resume"' not in app.split('audio.setAttribute("aria-label"', 1)[1].split(");", 1)[0]
     assert ".wave-row" in styles
     assert "width: 50%" not in styles
     assert "width: 100%" in styles
@@ -644,6 +646,11 @@ def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
     active_body = app.split("function isActiveCard(card) {", 1)[1].split("\n  }\n\n  function hasAudio(card)", 1)[0]
     assert "state.player.is_playing && playerHasAudioIdentity(state.player)" in active_body
     assert "return samePath(state.activePath, audioControlKey(card));" in active_body
+    playing_body = app.split("function isPlayingCard(card) {", 1)[1].split("\n  }\n\n  function hasAudio(card)", 1)[0]
+    assert "state.player.is_playing" in playing_body
+    assert "playerHasAudioIdentity(state.player)" in playing_body
+    assert "isSameAudioCard(state.player, card)" in playing_body
+    assert "state.activePath" not in playing_body
 
 
 def test_smart_card_and_message_timestamps_are_rendered() -> None:

@@ -1423,7 +1423,7 @@
     });
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
-    if (isActiveCard(card) && state.player.is_playing) {
+    if (isPlayingCard(card)) {
       body.append(waveform(card, "wave-row", 46));
     } else {
       body.append(el("p", "preview", card.summary || card.transcript || ""));
@@ -1431,13 +1431,13 @@
 
     const actions = el("div", "card-actions");
     if (hasAudio(card)) {
-      const audio = el("button", isActiveCard(card) && state.player.is_playing
+      const audio = el("button", isPlayingCard(card)
         ? "action action-audio is-playing"
         : "action action-audio");
       audio.type = "button";
       audio.disabled = menuOpen;
       audio.innerHTML = iconSvg("mic", { filled: true });
-      audio.setAttribute("aria-label", `${state.player.is_playing && isActiveCard(card) ? "Pause" : isActiveCard(card) ? "Resume" : "Play"} ${card.title}`);
+      audio.setAttribute("aria-label", `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
         if (menuOpen) {
@@ -4063,6 +4063,10 @@
       return isSameAudioCard(state.player, card);
     }
     return samePath(state.activePath, audioControlKey(card));
+  }
+
+  function isPlayingCard(card) {
+    return Boolean(state.player.is_playing && playerHasAudioIdentity(state.player) && isSameAudioCard(state.player, card));
   }
 
   function hasAudio(card) {
