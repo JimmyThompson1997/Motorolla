@@ -186,6 +186,21 @@ class FeedStore:
                 "has_more": has_more,
             }
 
+    def get_item(self, card_id: str) -> dict[str, object] | None:
+        clean_card_id = str(card_id or "").strip()
+        if not clean_card_id:
+            return None
+        with self._lock:
+            row = self._fetch_card_row(clean_card_id)
+            if row is None:
+                return None
+            return self._build_item(clean_card_id)
+
+    def count_items(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS count FROM feed_cards").fetchone()
+            return int(row["count"]) if row is not None else 0
+
     def apply_action(self, *, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
         clean_client_action_id = str(client_action_id or "").strip()
         clean_card_id = str(card_id or "").strip()

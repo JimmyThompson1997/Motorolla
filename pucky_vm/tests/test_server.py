@@ -124,6 +124,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["codex_app_server"], "ready")
         self.assertEqual(payload["thread"], "per_turn")
         self.assertEqual(payload["feed_store"], "ready")
+        self.assertEqual(payload["feed_items_count"], 0)
         self.assertEqual(payload["deepgram_key"], "present")
         self.assertNotIn("secret", json.dumps(payload))
 
@@ -198,8 +199,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.tts.text, "Sure, I can help.")
         telemetry = body["telemetry"]
         self.assertEqual(telemetry["turn_id"], body["turn_id"])
+        self.assertEqual(telemetry["card_id"], body["card_id"])
         self.assertEqual(telemetry["request_audio_bytes"], 5)
         self.assertEqual(telemetry["reply_mode"], "card_only")
+        self.assertTrue(telemetry["feed_persisted"])
         self.assertIn("stt_ms", telemetry)
         self.assertIn("codex_ms", telemetry)
         self.assertIn("tts_ms", telemetry)
@@ -248,6 +251,40 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(item["read"])
         self.assertFalse(item["deleted"])
         self.assertNotIn("Pucky test turn", json.dumps(item))
+        mark_read = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "feed_sync_mark_read",
+                "card_id": turn["card_id"],
+                "action": "mark_read",
+            },
+        )
+        self.assertTrue(mark_read["ok"])
+        self.assertTrue(mark_read["item"]["read"])
+        archive = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "feed_sync_archive",
+                "card_id": turn["card_id"],
+                "action": "archive",
+            },
+        )
+        self.assertTrue(archive["ok"])
+        self.assertTrue(archive["item"]["archived"])
+
+    def test_turn_fails_closed_when_feed_readback_is_missing(self) -> None:
+        original_get_item = self.service.feed.get_item
+        self.service.feed.get_item = lambda card_id: None  # type: ignore[assignment]
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.post_audio(b"audio", "audio/mp4", turn_id="feed_persist_missing")
+        finally:
+            self.service.feed.get_item = original_get_item  # type: ignore[assignment]
+
+        self.assertEqual(caught.exception.code, 500)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "turn_failed")
+        self.assertEqual(payload["detail"], "feed_persist_failed")
 
     def test_feed_actions_are_idempotent_and_ack_gated(self) -> None:
         turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_action_turn")

@@ -181,6 +181,7 @@ class PuckyVoiceService:
             "codex_app_server": "ready" if self.codex.ready else "not_ready",
             "thread": "per_turn",
             "feed_store": "ready",
+            "feed_items_count": self.feed.count_items(),
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
@@ -292,6 +293,7 @@ class PuckyVoiceService:
                 card["html_base64"] = html_base64
         telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["status"] = "ok"
+        telemetry["feed_db_path"] = self.feed.db_path
         audio_base64 = base64.b64encode(reply_audio).decode("ascii") if reply_audio else ""
         result = self.feed.upsert_turn_result(
             turn_id=turn_id,
@@ -307,6 +309,19 @@ class PuckyVoiceService:
             html_mime_type=html_mime_type,
             html_base64=html_base64,
         )
+        card_id = str(result.get("card_id") or "")
+        telemetry["card_id"] = card_id
+        verified = self.feed.get_item(card_id)
+        if verified is None:
+            telemetry["feed_persisted"] = False
+            telemetry["status"] = "failed"
+            telemetry["stage"] = "feed_persist"
+            telemetry["error_type"] = "RuntimeError"
+            self._update_turn_status(turn_id, "failed", "failed", telemetry)
+            _log_json(telemetry)
+            raise RuntimeError("feed_persist_failed")
+        telemetry["feed_persisted"] = True
+        result = verified
         result["card"] = card
         result["telemetry"] = _public_turn_telemetry(telemetry)
         telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
@@ -444,6 +459,8 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "tts_status",
         "response_bytes",
         "total_ms",
+        "card_id",
+        "feed_persisted",
         "error_type",
     )
     return {key: telemetry[key] for key in allowed if key in telemetry}
@@ -476,6 +493,8 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "tts_status",
         "response_bytes",
         "total_ms",
+        "card_id",
+        "feed_persisted",
     )
     return {key: telemetry[key] for key in allowed if key in telemetry}
 
