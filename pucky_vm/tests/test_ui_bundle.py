@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import zipfile
 
+import pytest
+
 from pucky_vm.ui_bundle import build_ui_bundle
+import pucky_vm.ui_bundle as ui_bundle
 
 
 def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
@@ -14,6 +17,10 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert manifest["ui_version"] == "test-ui"
     assert manifest["entrypoint"] == "index.html"
     assert manifest["min_native_bridge_version"] == 1
+    assert "source_commit_full" in manifest
+    assert "source_commit_short" in manifest
+    assert "source_branch" in manifest
+    assert "source_dirty" in manifest
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
@@ -26,9 +33,28 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert bundled_manifest == manifest
 
 
-def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):
-    import pucky_vm.ui_bundle as ui_bundle
+def test_ui_bundle_can_embed_explicit_source_provenance(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        ui_bundle,
+        "source_provenance",
+        lambda repo_root=None: {
+            "source_commit_full": "abc123def456",
+            "source_commit_short": "abc123d",
+            "source_branch": "master",
+            "source_dirty": False,
+        },
+    )
 
+    result = build_ui_bundle(tmp_path, ui_version="test-ui", created_at="2026-05-20T00:00:00+00:00")
+    manifest = result["manifest"]
+
+    assert manifest["source_commit_full"] == "abc123def456"
+    assert manifest["source_commit_short"] == "abc123d"
+    assert manifest["source_branch"] == "master"
+    assert manifest["source_dirty"] is False
+
+
+def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):
     revision = tmp_path / ".pucky_ui_version"
     revision.write_text("git-test123\n", encoding="utf-8")
     monkeypatch.setattr(ui_bundle, "UI_SRC", tmp_path / "ui_src")
@@ -36,3 +62,16 @@ def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):
     monkeypatch.delenv("PUCKY_UI_VERSION", raising=False)
 
     assert ui_bundle.default_version() == "git-test123"
+
+
+def test_source_provenance_falls_back_when_git_is_unavailable(monkeypatch: pytest.MonkeyPatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("no git")
+
+    monkeypatch.setattr(ui_bundle.subprocess, "run", fail)
+    provenance = ui_bundle.source_provenance()
+
+    assert provenance["source_commit_full"] == ""
+    assert provenance["source_commit_short"] == ""
+    assert provenance["source_branch"] == ""
+    assert provenance["source_dirty"] is True

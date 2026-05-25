@@ -132,6 +132,10 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(manifest["schema"], "pucky.ui_bundle.v1")
         self.assertEqual(manifest["entrypoint"], "index.html")
+        self.assertTrue(manifest["source_commit_full"])
+        self.assertTrue(manifest["source_commit_short"])
+        self.assertTrue(manifest["source_branch"])
+        self.assertIn(manifest["source_dirty"], {True, False})
         self.assertIn("app.js", manifest["files"])
         self.assertIn("styles.css", manifest["files"])
         self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])

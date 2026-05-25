@@ -49,6 +49,10 @@ public final class UiBundleController {
                 Json.put(out, "created_at", manifest.optString("created_at", ""));
                 Json.put(out, "entrypoint", manifest.optString("entrypoint", "index.html"));
                 Json.put(out, "bundle_dir", current.getAbsolutePath());
+                Json.put(out, "source_commit_full", manifest.optString("source_commit_full", ""));
+                Json.put(out, "source_commit_short", manifest.optString("source_commit_short", ""));
+                Json.put(out, "source_branch", manifest.optString("source_branch", ""));
+                Json.put(out, "source_dirty", manifest.optBoolean("source_dirty", true));
             } catch (Exception exc) {
                 Json.put(out, "manifest_error", exc.getMessage());
             }

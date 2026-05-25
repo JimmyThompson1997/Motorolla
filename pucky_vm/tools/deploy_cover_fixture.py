@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin
-from urllib.request import urlopen
 
 from pucky_vm.attachment_manifest import normalize_attachments
+import tools.refresh_pucky_html_official as official_html
 
 
 DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
@@ -46,25 +46,8 @@ def utc_stamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def ensure_clean_git(root: Path) -> None:
-    result = subprocess.run(
-        ["git", "status", "--short"],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    if result.stdout.strip():
-        raise DeployError("Refusing to deploy cover fixtures from a dirty git workspace.")
-
-
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def fetch_json(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def nested_contains(value: Any, needles: tuple[str, ...]) -> bool:
@@ -343,12 +326,27 @@ def delete_stale_mock_artifacts(args: argparse.Namespace) -> list[dict[str, Any]
 
 
 def deploy(args: argparse.Namespace) -> dict[str, Any]:
-    ensure_clean_git(args.repo_root)
+    try:
+        local_git = official_html.require_official_local_repo(args.repo_root, args.canonical_root)
+        remote_manifest = official_html.validate_remote_manifest(official_html.fetch_json(args.manifest_url), local_git)
+        emulator_evidence = None
+        if args.target == "phone":
+            if args.emulator_evidence is None:
+                raise official_html.OfficialRefreshError(
+                    "Phone fixture deploy requires --emulator-evidence for the same commit and ui_version"
+                )
+            emulator_evidence = official_html.validate_emulator_evidence(
+                official_html.load_emulator_evidence(args.emulator_evidence),
+                remote_manifest,
+                local_git,
+            )
+    except official_html.OfficialRefreshError as exc:
+        raise DeployError(str(exc)) from exc
+
     spec = load_json(args.cards_manifest)
     if spec.get("schema") != "pucky.reply_cards_deploy.v1":
         raise DeployError("Fixture deploy manifest must use schema pucky.reply_cards_deploy.v1")
 
-    remote_manifest = fetch_json(args.manifest_url)
     expected_files = remote_manifest.get("files") or {}
     required_files = ["fixtures/reply_cards_deploy.json"]
     artifact_base = str(spec.get("artifact_base_path") or "fixtures/artifacts").strip("/")
@@ -363,15 +361,21 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
     cards, downloads = build_cards(args, spec)
     cards_result = run_pucky_command(args, "ui.reply_cards.set", {"cards": cards})
     bundle_status = run_pucky_command(args, "ui.bundle.status", {})
+    try:
+        official_html.verify_bundle_status(bundle_status, remote_manifest, local_git)
+    except official_html.OfficialRefreshError as exc:
+        raise DeployError(str(exc)) from exc
     cards_snapshot = run_pucky_command(args, "ui.reply_cards.get", {})
     artifacts_after = run_pucky_command(args, "artifact.list", {})
 
     evidence = {
         "schema": "pucky.cover_fixture_deploy.v1",
         "created_at": utc_stamp(),
+        "target": {"type": args.target, "id": args.device_id},
         "vm_base_url": args.vm_base_url,
         "bundle_url": args.bundle_url,
         "manifest_url": args.manifest_url,
+        "local_git": local_git,
         "remote_manifest": remote_manifest,
         "stale_deleted": stale_deleted,
         "bundle_install": bundle_install,
@@ -382,6 +386,12 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
         "reply_cards_get": cards_snapshot,
         "artifact_list_after": artifacts_after,
     }
+    if emulator_evidence is not None:
+        evidence["emulator_evidence"] = {
+            "target": emulator_evidence.get("target"),
+            "ui_version": (emulator_evidence.get("remote_manifest") or {}).get("ui_version", ""),
+            "source_commit_full": (emulator_evidence.get("remote_manifest") or {}).get("source_commit_full", ""),
+        }
     if nested_contains(cards_snapshot, BAD_DEVICE_STRINGS):
         raise DeployError("Device reply card snapshot still contains mock, temp, or fixture-only strings.")
     return evidence
@@ -394,8 +404,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cards-manifest", type=Path, default=root / "pucky_vm" / "ui_src" / "fixtures" / "reply_cards_deploy.json")
     parser.add_argument("--puckyctl", type=Path, default=root / "pucky-apk" / "puckyctl" / "puckyctl.py")
     parser.add_argument("--vm-base-url", default=DEFAULT_VM_BASE_URL)
+    parser.add_argument("--target", choices=("emulator", "phone"), required=True)
     parser.add_argument("--bundle-url", default="")
     parser.add_argument("--manifest-url", default="")
+    parser.add_argument("--emulator-evidence", type=Path)
     parser.add_argument("--artifact-base-path", default=DEFAULT_ARTIFACT_BASE_PATH)
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky.fly.dev"))
     parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
@@ -404,8 +416,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-artifact-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--command-timeout-seconds", type=int, default=120)
     parser.add_argument("--evidence-dir", type=Path, default=root / ".tmp" / "pucky-cover-fixture-deploy")
+    parser.add_argument("--canonical-root", type=Path, default=official_html.CANONICAL_REPO_ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.repo_root = args.repo_root.resolve()
+    args.canonical_root = args.canonical_root.resolve()
     args.cards_manifest = args.cards_manifest.resolve()
     args.puckyctl = args.puckyctl.resolve()
     args.vm_base_url = args.vm_base_url.rstrip("/")
