@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import mimetypes
 import os
@@ -318,30 +319,48 @@ def adb_command(args: argparse.Namespace, serial: str, command: Iterable[str]) -
     return [str(args.adb), "-s", serial, *command]
 
 
+def launch_provisioning_json(args: argparse.Namespace, config: SlotConfig) -> str | None:
+    turn_url = str(getattr(args, "turn_url", "") or "").strip()
+    turn_token = str(getattr(args, "turn_token", "") or "").strip()
+    if not turn_url and not turn_token:
+        return None
+    payload: dict[str, Any] = {
+        "schema": "pucky.provisioning.v1",
+        "device_id": config.device_id,
+        "broker_url": f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect",
+        "token": "dev-token",
+        "ui_shell_mode": "web_cached",
+    }
+    if turn_url:
+        payload["pucky_turn_url"] = turn_url
+    if turn_token:
+        payload["pucky_api_token"] = turn_token
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
 def launch_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    return adb_command(
-        args,
-        config.serial,
-        [
-            "shell",
-            "am",
-            "start",
-            "-n",
-            f"{args.package_name}/{args.activity_name}",
-            "--es",
-            "broker_url",
-            f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect",
-            "--es",
-            "device_id",
-            config.device_id,
-            "--es",
-            "token",
-            "dev-token",
-            "--ez",
-            "connect",
-            "true",
-        ],
-    )
+    command = [
+        "shell",
+        "am",
+        "start",
+        "-n",
+        f"{args.package_name}/{args.activity_name}",
+        "--es",
+        "broker_url",
+        f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect",
+        "--es",
+        "device_id",
+        config.device_id,
+        "--es",
+        "token",
+        "dev-token",
+    ]
+    provisioning_json = launch_provisioning_json(args, config)
+    if provisioning_json:
+        command.extend(["--es", "provisioning_json_base64", provisioning_json])
+    command.extend(["--ez", "connect", "true"])
+    return adb_command(args, config.serial, command)
 
 
 def launch_home_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:

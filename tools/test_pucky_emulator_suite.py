@@ -199,6 +199,26 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "--device-id" in command and config.device_id in command
 
 
+def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:
+    args = ns(
+        tmp_path,
+        turn_url="https://pucky.fly.dev/api/turn",
+        turn_token="secret-token",
+    )
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    command = suite.launch_command(args, config)
+
+    assert "provisioning_json_base64" in command
+    encoded = command[command.index("provisioning_json_base64") + 1]
+    payload = json.loads(suite.base64.b64decode(encoded).decode("utf-8"))
+    assert payload["schema"] == "pucky.provisioning.v1"
+    assert payload["pucky_turn_url"] == "https://pucky.fly.dev/api/turn"
+    assert payload["pucky_api_token"] == "secret-token"
+    assert payload["device_id"] == config.device_id
+    assert payload["ui_shell_mode"] == "web_cached"
+
+
 def test_adb_command_refuses_corrupted_physical_serial(tmp_path: Path) -> None:
     args = ns(tmp_path)
 
