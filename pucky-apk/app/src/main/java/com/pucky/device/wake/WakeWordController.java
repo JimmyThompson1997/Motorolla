@@ -59,8 +59,9 @@ public final class WakeWordController {
     private static final String SCOPE_ASSISTANT_RESERVED = "assistant_screen_off_reserved";
     private static final int MAX_TRANSCRIPT_EVENTS = 10;
     private static final long PROOF_WINDOW_MS = 3000L;
-    private static final long RESTART_BASE_MS = 250L;
-    private static final long RESTART_MAX_MS = 2000L;
+    private static final long RESTART_BASE_MS = 1000L;
+    private static final long RESTART_MAX_MS = 10000L;
+    private static final long RESTART_THROTTLED_MS = 8000L;
 
     private static WakeWordController instance;
 
@@ -454,7 +455,7 @@ public final class WakeWordController {
             return;
         }
         int count = prefs.getInt(KEY_RESTART_COUNT, 0) + 1;
-        long delay = Math.min(RESTART_MAX_MS, RESTART_BASE_MS * Math.max(1, count));
+        long delay = restartDelayMs(reason, count);
         prefs.edit()
                 .putInt(KEY_RESTART_COUNT, count)
                 .putString(KEY_LAST_RESTART_REASON, reason)
@@ -812,9 +813,19 @@ public final class WakeWordController {
                 return "ERROR_SERVER";
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
                 return "ERROR_SPEECH_TIMEOUT";
+            case 11:
+                return "ERROR_TOO_MANY_REQUESTS";
             default:
                 return "ERROR_" + error;
         }
+    }
+
+    private static long restartDelayMs(String reason, int count) {
+        String normalized = safe(reason).toLowerCase(Locale.US);
+        if (normalized.contains("_11") || normalized.contains("too_many_requests")) {
+            return RESTART_THROTTLED_MS;
+        }
+        return Math.min(RESTART_MAX_MS, RESTART_BASE_MS * Math.max(1, count));
     }
 
     private static final class TranscriptEvent {
