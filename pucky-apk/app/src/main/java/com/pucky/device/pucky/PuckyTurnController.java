@@ -120,6 +120,7 @@ public final class PuckyTurnController {
         Json.put(out, "schema", "pucky.turn_settings.v1");
         Json.put(out, "reply_mode", settings.getPuckyTurnReplyMode());
         Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
+        Json.put(out, "accepted_chime_enabled", settings.isPuckyTurnAcceptedChimeEnabled());
         JSONArray modes = new JSONArray();
         Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY);
         Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN);
@@ -130,7 +131,17 @@ public final class PuckyTurnController {
     public JSONObject settingsSet(JSONObject args) {
         String mode = args.optString("reply_mode", args.optString("mode", SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY));
         settings.setPuckyTurnReplyMode(mode);
+        if (args.has("accepted_chime_enabled")) {
+            settings.setPuckyTurnAcceptedChimeEnabled(args.optBoolean("accepted_chime_enabled", true));
+        }
         return settingsGet();
+    }
+
+    public JSONObject chimeTest(JSONObject args) {
+        JSONObject out = playAcceptedChime("manual_test");
+        Json.put(out, "turn_id", args.optString("turn_id", "manual_test"));
+        Json.put(out, "test", true);
+        return out;
     }
 
     public JSONObject history(JSONObject args) {
@@ -907,6 +918,9 @@ public final class PuckyTurnController {
         Json.put(out, "schema", "pucky.turn_accepted_chime.v1");
         Json.put(out, "turn_id", turnId);
         Json.put(out, "trigger", trigger);
+        Json.put(out, "accepted_chime_enabled", settings.isPuckyTurnAcceptedChimeEnabled());
+        Json.put(out, "accepted_chime_attempted", false);
+        Json.put(out, "accepted_chime_suppressed", false);
         if (turnId == null || turnId.trim().isEmpty()) {
             Json.put(out, "played", false);
             Json.put(out, "reason", "missing_turn_id");
@@ -921,22 +935,44 @@ public final class PuckyTurnController {
             acceptedChimedTurnId = turnId;
         }
         JSONObject chime = playAcceptedChime(trigger);
-        Json.put(out, "played", chime.optBoolean("played", false));
-        Json.put(out, "reason", chime.optString("reason", ""));
-        copyIfPresent(out, chime, "asset_name");
-        copyIfPresent(out, chime, "asset_path");
-        copyIfPresent(out, chime, "fallback_used");
-        copyIfPresent(out, chime, "player");
-        copyIfPresent(out, chime, "tone");
-        copyIfPresent(out, chime, "duration_ms");
+        mergeAcceptedChime(out, chime);
         return out;
     }
 
     private JSONObject playAcceptedChime(String trigger) {
-        JSONObject out = new RecipeDevicePrimitiveExecutor(context)
-                .playSuccessChime("pucky.turn_accepted_chime_playback.v1");
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_accepted_chime_playback.v1");
         Json.put(out, "trigger", trigger);
+        Json.put(out, "accepted_chime_enabled", settings.isPuckyTurnAcceptedChimeEnabled());
+        Json.put(out, "accepted_chime_attempted", false);
+        Json.put(out, "accepted_chime_suppressed", false);
+        if (!settings.isPuckyTurnAcceptedChimeEnabled()) {
+            Json.put(out, "played", false);
+            Json.put(out, "reason", "disabled");
+            Json.put(out, "accepted_chime_suppressed", true);
+            return out;
+        }
+        JSONObject playback = new RecipeDevicePrimitiveExecutor(context)
+                .playSuccessChime("pucky.turn_accepted_chime_playback.v1");
+        Json.put(out, "accepted_chime_attempted", true);
+        mergeAcceptedChime(out, playback);
         return out;
+    }
+
+    private static void mergeAcceptedChime(JSONObject target, JSONObject source) {
+        Json.put(target, "played", source.optBoolean("played", false));
+        Json.put(target, "reason", source.optString("reason", ""));
+        copyIfPresent(target, source, "asset_name");
+        copyIfPresent(target, source, "asset_path");
+        copyIfPresent(target, source, "fallback_used");
+        copyIfPresent(target, source, "player");
+        copyIfPresent(target, source, "stream");
+        copyIfPresent(target, source, "usage");
+        copyIfPresent(target, source, "tone");
+        copyIfPresent(target, source, "duration_ms");
+        copyIfPresent(target, source, "asset_error");
+        copyIfPresent(target, source, "fallback");
+        copyIfPresent(target, source, "error");
     }
 
     private void buzzOneShot(long millis, int amplitude) {

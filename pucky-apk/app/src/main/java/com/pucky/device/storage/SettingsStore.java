@@ -17,6 +17,7 @@ public final class SettingsStore {
     private static final String PUCKY_TURN_URL = "pucky_turn_url";
     private static final String PUCKY_API_TOKEN = "pucky_api_token";
     private static final String PUCKY_TURN_REPLY_MODE = "pucky_turn_reply_mode";
+    private static final String PUCKY_TURN_ACCEPTED_CHIME_ENABLED = "pucky_turn_accepted_chime_enabled";
     public static final String PUCKY_TURN_REPLY_CARD_ONLY = "card_only";
     public static final String PUCKY_TURN_REPLY_CARD_AND_SPOKEN = "card_and_spoken";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
@@ -94,6 +95,14 @@ public final class SettingsStore {
         prefs.edit().putString(PUCKY_TURN_REPLY_MODE, normalizePuckyTurnReplyMode(mode)).commit();
     }
 
+    public boolean isPuckyTurnAcceptedChimeEnabled() {
+        return prefs.getBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, true);
+    }
+
+    public void setPuckyTurnAcceptedChimeEnabled(boolean enabled) {
+        prefs.edit().putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, enabled).commit();
+    }
+
     public String getUiShellMode() {
         return "web_cached";
     }
@@ -145,6 +154,7 @@ public final class SettingsStore {
         putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
         putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
         putString(editor, input, "pucky_turn_reply_mode", PUCKY_TURN_REPLY_MODE);
+        putBoolean(editor, input, "pucky_turn_accepted_chime_enabled", PUCKY_TURN_ACCEPTED_CHIME_ENABLED);
         putString(editor, input, "ui_shell_mode", UI_SHELL_MODE);
         editor.commit();
         JSONObject out = new JSONObject();

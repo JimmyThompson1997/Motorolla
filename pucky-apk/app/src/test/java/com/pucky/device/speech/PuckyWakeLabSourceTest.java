@@ -46,8 +46,12 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("KEY_CANDIDATE_COUNT"));
         assertTrue(source.contains("KEY_LAST_CONFIRMATION_STATUS"));
         assertTrue(source.contains("KEY_LAST_REJECT_REASON"));
+        assertTrue(source.contains("PROBE_TRAILING_SILENCE_MS = 600L"));
+        assertTrue(source.contains("PROBE_MAX_DURATION_MS = 2500L"));
         assertTrue(source.contains("recordCandidateAttempt(candidateSamples)"));
         assertTrue(source.contains("recordConfirmationOutcome(outcome, decision, debugClipPath)"));
+        assertTrue(source.contains("recognizeCandidate(candidateSamples)"));
+        assertTrue(source.contains("confirmArtifact(JSONObject args)"));
         assertTrue(source.contains("clearWakeDebugForensics()"));
         assertTrue(source.contains("Json.put(out, \"debug_keep_last_clip\""));
         assertTrue(source.contains("Json.put(out, \"last_debug_clip_path\""));
@@ -65,13 +69,15 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(decision.contains("REASON_NO_CANDIDATE_DETECTED"));
         assertTrue(decision.contains("REASON_CONFIRMATION_NO_MATCH"));
         assertTrue(decision.contains("REASON_CONFIRMATION_ERROR"));
-        assertTrue(decision.contains("REASON_SINGLE_WORD_CONFIDENCE_TOO_LOW"));
+        assertTrue(decision.contains("outcome.alternatives"));
         assertTrue(decision.contains("REASON_ACCEPTED"));
         assertTrue(service.contains("WakeWordController.shared(this).onServiceStarted()"));
         assertTrue(service.contains("WakeWordController.shared(this).onServiceStopped()"));
         assertTrue(family.contains("\"hey pucky\""));
         assertTrue(family.contains("\"pucky\""));
         assertTrue(family.contains("\"hey pocky\""));
+        assertTrue(family.contains("\"hey pookie\""));
+        assertTrue(family.contains("\"pokey\""));
         assertFalse(source.contains("LiveKitController"));
     }
 
@@ -114,10 +120,12 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("return puckyRecipeController.clear()"));
         assertTrue(executor.contains("return puckyRecipeController.schema()"));
         assertTrue(executor.contains("return puckyRecipeController.devicePrimitivesList()"));
+        assertTrue(executor.contains("\"wake.debug.confirm_artifact\""));
         assertFalse(executor.contains("return speechEchoLabController.recipesSync(command.args())"));
         assertFalse(executor.contains("\"speech.echo.lab.config.get\""));
         assertFalse(executor.contains("\"speech.echo.lab.config.set\""));
         assertTrue(capability.contains("cap(\"pucky.recipes\""));
+        assertTrue(capability.contains("wake.debug.confirm_artifact"));
         assertFalse(capability.contains("speech.echo.lab.config.get"));
     }
 

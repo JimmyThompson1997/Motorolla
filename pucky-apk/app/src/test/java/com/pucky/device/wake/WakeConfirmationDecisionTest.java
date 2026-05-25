@@ -13,8 +13,7 @@ public final class WakeConfirmationDecisionTest {
     @Test
     public void acceptedPhraseReturnsAcceptedDecision() {
         WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
-                succeeded("Hey Pucky", "Hey Pucky", 0.92f),
-                0.60);
+                succeeded("Hey Pucky", new String[] {"Hey Pucky"}, 0.92f));
 
         assertTrue(decision.accepted);
         assertEquals("hey pucky", decision.matchedPhrase);
@@ -25,28 +24,36 @@ public final class WakeConfirmationDecisionTest {
     @Test
     public void unmatchedPhraseReturnsConfirmationNoMatch() {
         WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
-                succeeded("Pocket", "Pocket", 0.92f),
-                0.60);
+                succeeded("Pocket", new String[] {"Pocket"}, 0.92f));
 
         assertEquals(WakeConfirmationDecision.STATUS_REJECTED, decision.confirmationStatus);
         assertEquals(WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH, decision.reason);
     }
 
     @Test
-    public void lowConfidenceSingleWordIsRejected() {
+    public void lowConfidenceSingleWordWakeAliasIsStillAccepted() {
         WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
-                succeeded("Pocky", "Pocky", 0.22f),
-                0.60);
+                succeeded("Pocky", new String[] {"Pocky"}, 0.22f));
 
-        assertEquals(WakeConfirmationDecision.STATUS_REJECTED, decision.confirmationStatus);
-        assertEquals(WakeConfirmationDecision.REASON_SINGLE_WORD_CONFIDENCE_TOO_LOW, decision.reason);
+        assertTrue(decision.accepted);
+        assertEquals("pocky", decision.matchedPhrase);
+        assertEquals(WakeConfirmationDecision.STATUS_ACCEPTED, decision.confirmationStatus);
+        assertEquals(WakeConfirmationDecision.REASON_ACCEPTED, decision.reason);
+    }
+
+    @Test
+    public void alternativeMatchAcceptsEvenWhenPrimaryTranscriptMisses() {
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
+                succeeded("Cheap Android devices.", new String[] {"Cheap Android devices.", "Hey Pucky"}, 0.18f));
+
+        assertTrue(decision.accepted);
+        assertEquals("hey pucky", decision.matchedPhrase);
     }
 
     @Test
     public void recognizerErrorMapsToConfirmationError() {
         WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
-                OnDeviceInjectedAudioRecognizer.RecognitionOutcome.failed("recognizer_7", "boom"),
-                0.60);
+                OnDeviceInjectedAudioRecognizer.RecognitionOutcome.failed("recognizer_7", "boom"));
 
         assertEquals(WakeConfirmationDecision.STATUS_ERROR, decision.confirmationStatus);
         assertEquals(WakeConfirmationDecision.REASON_CONFIRMATION_ERROR, decision.reason);
@@ -54,12 +61,15 @@ public final class WakeConfirmationDecisionTest {
 
     private static OnDeviceInjectedAudioRecognizer.RecognitionOutcome succeeded(
             String transcript,
-            String alternative,
+            String[] alternativesInput,
             float confidence) {
         JSONArray alternatives = new JSONArray();
-        Json.add(alternatives, transcript);
-        if (alternative != null && !alternative.equals(transcript)) {
-            Json.add(alternatives, alternative);
+        if (alternativesInput != null) {
+            for (String alternative : alternativesInput) {
+                if (alternative != null) {
+                    Json.add(alternatives, alternative);
+                }
+            }
         }
         JSONArray confidences = new JSONArray();
         Json.add(confidences, confidence);

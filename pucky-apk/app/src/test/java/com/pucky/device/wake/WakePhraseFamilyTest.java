@@ -13,6 +13,8 @@ public final class WakePhraseFamilyTest {
         assertEquals("hey puppy", WakePhraseFamily.matchedPhrase("Hey puppy"));
         assertEquals("hey lucky", WakePhraseFamily.matchedPhrase("hey lucky"));
         assertEquals("hey pocky", WakePhraseFamily.matchedPhrase("Hey Pocky!"));
+        assertEquals("hey pookie", WakePhraseFamily.matchedPhrase("Hey Pookie"));
+        assertEquals("pokey", WakePhraseFamily.matchedPhrase("Pokey"));
         assertEquals("packy", WakePhraseFamily.matchedPhrase("Packy"));
         assertEquals("pucky", WakePhraseFamily.matchedPhrase("Pucky"));
         assertTrue(WakePhraseFamily.isSingleWordVariant("Pucky"));

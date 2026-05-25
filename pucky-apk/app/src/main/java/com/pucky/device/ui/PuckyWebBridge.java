@@ -16,6 +16,7 @@ import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
+import com.pucky.device.wake.WakeWordController;
 
 import org.json.JSONObject;
 
@@ -102,10 +103,20 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).settingsGet();
             case "pucky.turn.settings.set":
                 return PuckyTurnController.shared(context).settingsSet(args);
+            case "pucky.turn.chime.test":
+                return PuckyTurnController.shared(context).chimeTest(args);
             case "pucky.turn.history":
                 return PuckyTurnController.shared(context).history(args);
             case "pucky.turn.read":
                 return PuckyTurnController.shared(context).read(args);
+            case "wake.status":
+                return WakeWordController.shared(context).status();
+            case "wake.config.set":
+                return WakeWordController.shared(context).configSet(args);
+            case "wake.start":
+                return WakeWordController.shared(context).start(args);
+            case "wake.stop":
+                return WakeWordController.shared(context).stop(args);
             case "location.tracker.status":
                 return new LocationController(context).trackerStatus();
             case "location.tracker.start":
@@ -130,6 +141,8 @@ public final class PuckyWebBridge {
                 return uiBundles.installDownloaded(args);
             case "ui.bundle.refresh":
                 return uiBundles.refresh(args);
+            case "ui.surface.get":
+                return new UiSurfaceController(context).status(uiBundles);
             case "ui.shell.mode.get":
                 return shellMode();
             case "ui.shell.mode.set":

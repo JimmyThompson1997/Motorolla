@@ -19,10 +19,11 @@ public final class MainActivityWebViewShellTest {
         assertTrue("MainActivity should build exactly one WebView shell",
                 source.contains("private View buildWebShellView()")
                         && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")")
-                        && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this))")
+                        && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController))")
                         && count(source, "new WebView") == 1);
         assertTrue("MainActivity should always load the cached or bundled HTML entrypoint",
                 source.contains("String url = uiBundleController.entrypointUrl();")
+                        && source.contains("uiSurfaceController.recordRequested(url, uiBundleController);")
                         && source.contains("webShell.loadUrl(url)"));
 
         String[] forbidden = {
@@ -70,12 +71,17 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"pucky.turn.status\"")
                         && bridge.contains("case \"pucky.turn.settings.get\"")
                         && bridge.contains("case \"pucky.turn.settings.set\"")
+                        && bridge.contains("case \"pucky.turn.chime.test\"")
+                        && bridge.contains("case \"wake.status\"")
+                        && bridge.contains("case \"wake.start\"")
+                        && bridge.contains("case \"wake.stop\"")
                         && bridge.contains("case \"location.tracker.status\"")
                         && bridge.contains("case \"location.tracker.start\"")
                         && bridge.contains("case \"location.tracker.stop\"")
                         && bridge.contains("case \"location.tracker.query\"")
                         && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"ui.bundle.status\"")
+                        && bridge.contains("case \"ui.surface.get\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
         assertFalse("HTML bridge should not expose raw shell execution",
                 bridge.contains("shell.exec"));
@@ -116,6 +122,12 @@ public final class MainActivityWebViewShellTest {
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsGet();"));
         assertTrue(bridge.contains("case \"pucky.turn.settings.set\":"));
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsSet(args);"));
+        assertTrue(bridge.contains("case \"pucky.turn.chime.test\":"));
+        assertTrue(bridge.contains("return PuckyTurnController.shared(context).chimeTest(args);"));
+        assertTrue(bridge.contains("case \"wake.status\":"));
+        assertTrue(bridge.contains("case \"wake.start\":"));
+        assertTrue(bridge.contains("case \"wake.stop\":"));
+        assertTrue(bridge.contains("case \"ui.surface.get\":"));
         assertTrue(activity.contains("private void emitWebTurnStatus()"));
         assertTrue(activity.contains("webBridge.emit(\"pucky.turn.status\", PuckyTurnController.shared(this).status())"));
         assertTrue(activity.contains("emitWebPlayerState();\n            emitWebTurnStatus();")
@@ -150,6 +162,22 @@ public final class MainActivityWebViewShellTest {
         assertTrue("Native command executor should expose artifact.url for device testing too",
                 executor.contains("\"artifact.url\"")
                         && executor.contains("return artifactController.url(command.args())"));
+    }
+
+    @Test
+    public void uiSurfaceControllerTracksBundleProvenance() throws Exception {
+        String activity = read("src/main/java/com/pucky/device/MainActivity.java");
+        String client = read("src/main/java/com/pucky/device/ui/PuckyWebResourceClient.java");
+        String surface = read("src/main/java/com/pucky/device/ui/UiSurfaceController.java");
+
+        assertTrue(activity.contains("new UiSurfaceController(this)"));
+        assertTrue(activity.contains("uiSurfaceController.recordRequested(url, uiBundleController);"));
+        assertTrue(client.contains("public void onPageFinished(WebView view, String url)"));
+        assertTrue(client.contains("uiSurface.recordLoaded(url, uiBundles);"));
+        assertTrue(surface.contains("\"pucky.ui_surface.v1\""));
+        assertTrue(surface.contains("\"bundle_current\""));
+        assertTrue(surface.contains("\"fallback_asset\""));
+        assertTrue(surface.contains("\"legacy_placeholder\""));
     }
 
     @Test
@@ -259,6 +287,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("\"ui.bundle.status\""));
         assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
         assertTrue(source.contains("\"ui.bundle.refresh\""));
+        assertTrue(source.contains("\"ui.surface.get\""));
         assertTrue(source.contains("\"ui.shell.mode.get\""));
         assertTrue(source.contains("\"ui.shell.mode.set\""));
         assertTrue(source.contains("uiBundleController.status()"));

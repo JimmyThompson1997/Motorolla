@@ -20,10 +20,14 @@ public final class WakePhraseFamily {
             "hay pucky",
             "hey pocky",
             "hey packy",
+            "hey pookie",
+            "hey pokey",
             "pucky",
             "puppy",
             "pocky",
-            "packy"
+            "packy",
+            "pookie",
+            "pokey"
     };
 
     private static final Set<String> NORMALIZED = buildNormalized();

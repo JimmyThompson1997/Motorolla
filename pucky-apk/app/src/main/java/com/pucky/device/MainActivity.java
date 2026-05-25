@@ -44,6 +44,7 @@ import com.pucky.device.ui.PuckyWebBridge;
 import com.pucky.device.ui.PuckyWebResourceClient;
 import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.ui.UiBundleController;
+import com.pucky.device.ui.UiSurfaceController;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
 
@@ -68,6 +69,7 @@ public class MainActivity extends Activity {
     private SettingsStore settingsStore;
     private ReplyCardStore replyCardStore;
     private UiBundleController uiBundleController;
+    private UiSurfaceController uiSurfaceController;
     private ButtonController buttonController;
     private WebView webShell;
     private PuckyWebBridge webBridge;
@@ -106,6 +108,7 @@ public class MainActivity extends Activity {
         settingsStore.setUiShellMode("web_cached");
         replyCardStore = new ReplyCardStore(this);
         uiBundleController = new UiBundleController(this);
+        uiSurfaceController = new UiSurfaceController(this);
         buttonController = new ButtonController(this);
         configureApplianceWindow();
         setContentView(buildWebShellView());
@@ -360,7 +363,7 @@ public class MainActivity extends Activity {
         webShell.setBackgroundColor(BACKGROUND);
         webShell.setOverScrollMode(View.OVER_SCROLL_NEVER);
         configureWebShellSettings(webShell);
-        webShell.setWebViewClient(new PuckyWebResourceClient(this));
+        webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController));
         webBridge = new PuckyWebBridge(this, webShell, replyCardStore, uiBundleController, settingsStore);
         webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
         root.addView(webShell, new FrameLayout.LayoutParams(
@@ -396,6 +399,7 @@ public class MainActivity extends Activity {
             if (resetNavigation) {
                 url = url + (url.contains("?") ? "&" : "?") + "reset_nav=1";
             }
+            uiSurfaceController.recordRequested(url, uiBundleController);
             webShell.loadUrl(url);
         }
     }

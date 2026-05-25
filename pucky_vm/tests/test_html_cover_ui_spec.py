@@ -43,7 +43,6 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "button.innerHTML = iconSvg(tab.icon" in app
     assert 'route: "feed"' in app
     assert 'icon: "mailbox"' not in app
-    assert 'icon: "bell"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
     assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Links" }' in app
@@ -235,14 +234,11 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "installCardLongPressMenu(wrapper, card);" in app
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
-    assert "function focusedCardMenuWrapper()" in app
-    assert "function dismissFocusedCardMenu()" in app
-    assert "function handleFocusedCardOutsideClick(event)" in app
-    assert 'document.addEventListener("click", handleFocusedCardOutsideClick, true);' in app
-    assert 'const focused = focusedCardMenuWrapper();' in app
-    assert "focused.contains(target)" in app
-    assert "dismissFocusedCardMenu();" in app
-    assert "event.stopImmediatePropagation();" in app
+    assert "function dismissOpenCardMenu(suppressClick = true)" in app
+    assert "function installCardMenuOutsideDismiss()" in app
+    assert 'document.addEventListener("pointerdown", event => {' in app
+    assert 'target.closest(".card-wrap.is-card-menu-open, .card-longpress-menu, .settings-segment-button")' in app
+    assert "dismissOpenCardMenu(true);" in app
     assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
     assert "state.openCardMenuSessionId === sessionId ? \"\" : sessionId" in app
@@ -266,6 +262,7 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "CARD_SLOT_REVEAL_MAX" not in app
     assert "CARD_SLOT_OPEN_THRESHOLD" not in app
     assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
+    assert "@keyframes card-menu-tracer-spin" not in styles
 
 
 def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
@@ -304,7 +301,7 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-menu-action.is-selected" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
     assert ".card-wrap.is-card-menu-open .card::after" in styles
-    assert ".card-wrap.is-card-menu-open .card::before" not in styles
+    assert ".card-wrap.is-card-menu-open .card::before" in styles
     assert ".card-wrap.is-card-menu-open .card-menu-action::after" not in styles
     assert ".card-wrap.is-card-menu-open .identity" not in styles
     assert ".card-wrap.is-card-menu-open .card-body" not in styles
@@ -404,22 +401,33 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert ".feed.is-rubber-band-release" in styles
 
 
-def test_settings_tab_renders_mock_html_settings_page() -> None:
+def test_settings_tab_renders_real_backed_settings_page() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "const MOCK_SETTINGS" in app
     assert "turnSettings: initialTurnSettings()" in app
+    assert "wakeStatus: initialWakeStatus()" in app
+    assert "uiSurface: initialUiSurfaceStatus()" in app
     assert 'state.route === "settings"' in app
     assert "settingsPageView()" in app
     assert "function settingsPageView()" in app
-    assert "function settingsRowView(setting)" in app
+    assert "function settingsToggleCard(" in app
+    assert "function wakeWordSettingsCard()" in app
+    assert "function acceptedChimeSettingsCard()" in app
+    assert "function diagnosticsSettingsCard()" in app
     assert "function replyModeSettingsCard()" in app
     assert "function replyModeButton(mode, label)" in app
     assert "async function setTurnReplyMode(mode)" in app
     assert "async function loadTurnSettings" in app
+    assert "async function loadSettingsState(options = {})" in app
+    assert "async function loadWakeStatus(options = {})" in app
+    assert "async function loadUiSurfaceStatus(options = {})" in app
+    assert "function ensureSettingsSurfaceCurrent()" in app
     assert 'command === "pucky.turn.settings.get"' in app
     assert 'command === "pucky.turn.settings.set"' in app
+    assert 'command === "wake.status"' in app
+    assert 'command === "ui.surface.get"' in app
+    assert 'command === "pucky.turn.chime.test"' in app
     assert 'command: "pucky.turn.settings.get"' in app
     assert 'command: "pucky.turn.settings.set"' in app
     assert "Card only" in app
@@ -427,17 +435,21 @@ def test_settings_tab_renders_mock_html_settings_page() -> None:
     assert '"settings-page"' in app
     assert '"settings-hero"' in app
     assert '"settings-card"' in app
-    assert "Pucky's phone-side powers" in app
+    assert "Live controls for wake, walkie, and device feedback." in app
     assert "Walkie reply mode" in app
     assert "Wake word" in app
-    assert "Cover gestures" in app
-    assert "Native bridge" in app
+    assert "Turn accepted chime" in app
+    assert "Diagnostics" in app
+    assert "Test chime" in app
     assert ".settings-page" in styles
     assert ".settings-hero" in styles
     assert ".settings-card" in styles
     assert ".settings-segment" in styles
     assert ".settings-segment-button" in styles
     assert ".settings-card-value" in styles
+    assert ".settings-toggle" in styles
+    assert ".settings-action-button" in styles
+    assert ".settings-diagnostics" in styles
 
 
 def test_leaving_home_uses_standard_material_card_icon() -> None:

@@ -19,9 +19,13 @@ public final class PuckyWebResourceClient extends WebViewClient {
     private static final String TRUSTED_HOST = "pucky.local";
 
     private final Context context;
+    private final UiBundleController uiBundles;
+    private final UiSurfaceController uiSurface;
 
-    public PuckyWebResourceClient(Context context) {
+    public PuckyWebResourceClient(Context context, UiBundleController uiBundles, UiSurfaceController uiSurface) {
         this.context = context.getApplicationContext();
+        this.uiBundles = uiBundles;
+        this.uiSurface = uiSurface;
     }
 
     @Override
@@ -46,6 +50,14 @@ public final class PuckyWebResourceClient extends WebViewClient {
             headers.put("Content-Length", Integer.toString(body.length));
             return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found",
                     headers, new ByteArrayInputStream(body));
+        }
+    }
+
+    @Override
+    public void onPageFinished(WebView view, String url) {
+        super.onPageFinished(view, url);
+        if (uiSurface != null && uiBundles != null) {
+            uiSurface.recordLoaded(url, uiBundles);
         }
     }
 }

@@ -27,6 +27,8 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.Arrays;
@@ -59,13 +61,14 @@ public final class WakeWordController {
     private static final String SCOPE_ASSISTANT_SCREEN_OFF = "assistant_screen_off";
     private static final String ENGINE = "silero_vad_candidate_plus_android_stt_confirmation";
 
-    private static final long CANDIDATE_CAPTURE_MS = 1800L;
+    private static final long PROBE_TRAILING_SILENCE_MS = 600L;
+    private static final long PROBE_MAX_DURATION_MS = 2500L;
+    private static final long PROBE_POLL_MS = 50L;
     private static final long CONFIRM_TIMEOUT_MS = 5000L;
     private static final long SPEECH_START_TIMEOUT_MS = 3000L;
     private static final long TRAILING_SILENCE_MS = 1000L;
     private static final long MAX_TURN_MS = 20000L;
     private static final double TURN_SPEECH_THRESHOLD = WalkieSpeechGate.DEFAULT_SPEECH_THRESHOLD;
-    private static final double SINGLE_WORD_CONFIDENCE_THRESHOLD = 0.60;
 
     private static volatile WakeWordController instance;
 
@@ -104,7 +107,7 @@ public final class WakeWordController {
 
     private AudioFrameBus sentinelBus;
     private PreRollBuffer preRollBuffer;
-    private WakeCandidateRecorder candidateRecorder;
+    private WakeProbeRecorder candidateRecorder;
     private WakeTurnMonitor turnMonitor;
 
     private WakeWordController(Context context) {
@@ -284,6 +287,51 @@ public final class WakeWordController {
         return out;
     }
 
+    public synchronized JSONObject confirmArtifact(JSONObject args) throws Exception {
+        String path = args == null ? "" : args.optString("path", args.optString("device_path", "")).trim();
+        if (path.isEmpty()) {
+            throw new IllegalArgumentException("wake.debug.confirm_artifact requires path");
+        }
+        short[] candidateSamples = OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(readArtifactBytes(path));
+        String debugClipPath = recordCandidateAttempt(candidateSamples);
+        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome = recognizeCandidate(candidateSamples);
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome);
+        recordConfirmationOutcome(outcome, decision, debugClipPath);
+        synchronized (lock) {
+            lastConfirmationTranscript = outcome.transcript;
+            lastError = outcome.succeeded ? "" : outcome.errorCode + ": " + outcome.errorMessage;
+        }
+
+        boolean startTurn = args != null && args.optBoolean("start_turn", false);
+        boolean turnStarted = false;
+        if (decision.accepted && startTurn) {
+            turnStarted = handleWakeAccepted(decision.matchedPhrase, outcome.transcript, "wake_debug_confirm_artifact");
+        }
+
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.wake_debug_confirm_artifact.v1");
+        Json.put(out, "path", path);
+        Json.put(out, "samples", candidateSamples.length);
+        Json.put(out, "duration_ms", WakeDebugClipStore.durationMs(candidateSamples));
+        Json.put(out, "accepted", decision.accepted);
+        Json.put(out, "matched_phrase", decision.matchedPhrase.isEmpty() ? JSONObject.NULL : decision.matchedPhrase);
+        Json.put(out, "confirmation_status", decision.confirmationStatus);
+        Json.put(out, "reject_reason", decision.reason);
+        Json.put(out, "transcript", outcome.transcript);
+        Json.put(out, "alternatives", outcome.alternatives);
+        Json.put(out, "confidences", outcome.confidences);
+        Json.put(out, "recognizer_succeeded", outcome.succeeded);
+        Json.put(out, "error_code", outcome.errorCode.isEmpty() ? JSONObject.NULL : outcome.errorCode);
+        Json.put(out, "error_message", outcome.errorMessage.isEmpty() ? JSONObject.NULL : outcome.errorMessage);
+        Json.put(out, "debug_clip_path", debugClipPath.isEmpty() ? JSONObject.NULL : debugClipPath);
+        Json.put(out, "start_turn", startTurn);
+        Json.put(out, "turn_started", turnStarted);
+        if (turnStarted) {
+            Json.put(out, "turn_status", status());
+        }
+        return out;
+    }
+
     public boolean enabled() {
         return requestedEnabled();
     }
@@ -381,7 +429,7 @@ public final class WakeWordController {
     private void startSentinelLocked() {
         AudioFrameBus bus = new AudioFrameBus(context);
         PreRollBuffer preRoll = new PreRollBuffer();
-        WakeCandidateRecorder recorder = new WakeCandidateRecorder();
+        WakeProbeRecorder recorder = new WakeProbeRecorder(new SileroVadEngine(context));
         WalkieSpeechGate gate = new WalkieSpeechGate(SystemClock.elapsedRealtime(), new SileroVadEngine(context),
                 SystemClock::elapsedRealtime, status -> onSentinelSpeechDetected());
         bus.addSynchronousConsumer(preRoll);
@@ -441,31 +489,37 @@ public final class WakeWordController {
             suspendedReason = "candidate_capturing";
         }
         Thread worker = new Thread(() -> {
-            try {
-                Thread.sleep(CANDIDATE_CAPTURE_MS);
-            } catch (InterruptedException exc) {
-                Thread.currentThread().interrupt();
-                synchronized (lock) {
-                    candidateActive = false;
-                    if (candidateRecorder != null) {
-                        candidateRecorder.cancel();
+            while (true) {
+                try {
+                    Thread.sleep(PROBE_POLL_MS);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    synchronized (lock) {
+                        candidateActive = false;
+                        if (candidateRecorder != null) {
+                            candidateRecorder.cancel();
+                        }
                     }
-                }
-                reevaluate();
-                return;
-            }
-            short[] candidateSamples;
-            synchronized (lock) {
-                if (candidateRecorder == null) {
-                    candidateActive = false;
+                    reevaluate();
                     return;
                 }
-                candidateSamples = candidateRecorder.finish();
-                candidateActive = false;
-                confirmingCandidate = true;
-                stopSentinelLocked("candidate_confirming");
+                short[] candidateSamples;
+                synchronized (lock) {
+                    if (candidateRecorder == null) {
+                        candidateActive = false;
+                        return;
+                    }
+                    if (!candidateRecorder.readyToFinish()) {
+                        continue;
+                    }
+                    candidateSamples = candidateRecorder.finish();
+                    candidateActive = false;
+                    confirmingCandidate = true;
+                    stopSentinelLocked("candidate_confirming");
+                }
+                confirmCandidate(candidateSamples);
+                return;
             }
-            confirmCandidate(candidateSamples);
         }, "pucky-wake-candidate");
         worker.setDaemon(true);
         worker.start();
@@ -473,10 +527,8 @@ public final class WakeWordController {
 
     private void confirmCandidate(short[] candidateSamples) {
         String debugClipPath = recordCandidateAttempt(candidateSamples);
-        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome =
-                recognizer.recognize(OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidateSamples),
-                        CONFIRM_TIMEOUT_MS);
-        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome, SINGLE_WORD_CONFIDENCE_THRESHOLD);
+        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome = recognizeCandidate(candidateSamples);
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome);
         recordConfirmationOutcome(outcome, decision, debugClipPath);
         synchronized (lock) {
             confirmingCandidate = false;
@@ -494,6 +546,12 @@ public final class WakeWordController {
                 + " status=" + decision.confirmationStatus
                 + " transcript=" + outcome.transcript);
         reevaluate();
+    }
+
+    private OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognizeCandidate(short[] candidateSamples) {
+        return recognizer.recognize(
+                OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidateSamples),
+                CONFIRM_TIMEOUT_MS);
     }
 
     private boolean isWakeAllowedNowLocked() {
@@ -709,6 +767,50 @@ public final class WakeWordController {
         return out;
     }
 
+    private byte[] readArtifactBytes(String path) throws Exception {
+        File file = resolveAppOwnedPath(path);
+        byte[] data = new byte[(int) file.length()];
+        int offset = 0;
+        try (FileInputStream input = new FileInputStream(file)) {
+            while (offset < data.length) {
+                int read = input.read(data, offset, data.length - offset);
+                if (read < 0) {
+                    break;
+                }
+                offset += read;
+            }
+        }
+        if (offset == data.length) {
+            return data;
+        }
+        return Arrays.copyOf(data, offset);
+    }
+
+    private File resolveAppOwnedPath(String path) throws Exception {
+        if (path == null || path.trim().isEmpty()) {
+            throw new IllegalArgumentException("artifact path is required");
+        }
+        File file = new File(path).getCanonicalFile();
+        if (!isWithin(file, context.getFilesDir())
+                && !isWithin(file, context.getCacheDir())
+                && !isWithin(file, context.getExternalFilesDir(null))) {
+            throw new IllegalArgumentException("Path is outside app-owned storage");
+        }
+        if (!file.exists() || !file.isFile()) {
+            throw new IllegalArgumentException("Artifact file not found");
+        }
+        return file;
+    }
+
+    private static boolean isWithin(File file, File root) throws Exception {
+        if (root == null) {
+            return false;
+        }
+        String filePath = file.getCanonicalPath();
+        String rootPath = root.getCanonicalPath();
+        return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+    }
+
     private final class WakeTurnMonitor extends Thread {
         private final String turnId;
         private final WakeTurnMonitorPolicy policy;
@@ -785,13 +887,24 @@ public final class WakeWordController {
         }
     }
 
-    private static final class WakeCandidateRecorder implements AudioFrameConsumer {
+    private static final class WakeProbeRecorder implements AudioFrameConsumer {
+        private final SileroVadEngine vadEngine;
+        private final WakeProbeCapturePolicy policy =
+                new WakeProbeCapturePolicy(PROBE_TRAILING_SILENCE_MS, PROBE_MAX_DURATION_MS, TURN_SPEECH_THRESHOLD);
+        private final float[] window = new float[WalkieSpeechGate.WINDOW_SAMPLES];
+
         private short[] samples = new short[0];
         private boolean collecting;
+        private boolean readyToFinish;
+        private int windowSamples;
+
+        WakeProbeRecorder(SileroVadEngine vadEngine) {
+            this.vadEngine = vadEngine;
+        }
 
         @Override
         public String name() {
-            return "wake_candidate_recorder";
+            return "wake_probe_recorder";
         }
 
         @Override
@@ -800,13 +913,15 @@ public final class WakeWordController {
                 return;
             }
             append(frame);
+            evaluate(frame);
         }
 
         @Override
         public synchronized JSONObject snapshot() {
             JSONObject out = new JSONObject();
-            Json.put(out, "schema", "pucky.wake_candidate_recorder.v1");
+            Json.put(out, "schema", "pucky.wake_probe_recorder.v1");
             Json.put(out, "collecting", collecting);
+            Json.put(out, "ready_to_finish", readyToFinish);
             Json.put(out, "samples", samples.length);
             return out;
         }
@@ -814,22 +929,57 @@ public final class WakeWordController {
         synchronized void begin(short[] preRoll) {
             samples = preRoll == null ? new short[0] : Arrays.copyOf(preRoll, preRoll.length);
             collecting = true;
+            readyToFinish = false;
+            windowSamples = 0;
+            vadEngine.reset();
+            long nowMs = SystemClock.elapsedRealtime();
+            policy.begin(nowMs);
+            policy.observe(nowMs, TURN_SPEECH_THRESHOLD);
         }
 
         synchronized short[] finish() {
             collecting = false;
+            readyToFinish = false;
             return Arrays.copyOf(samples, samples.length);
         }
 
         synchronized void cancel() {
             collecting = false;
+            readyToFinish = false;
             samples = new short[0];
+            windowSamples = 0;
+        }
+
+        synchronized boolean readyToFinish() {
+            return readyToFinish;
         }
 
         private void append(short[] frame) {
             short[] next = Arrays.copyOf(samples, samples.length + frame.length);
             System.arraycopy(frame, 0, next, samples.length, frame.length);
             samples = next;
+        }
+
+        private void evaluate(short[] frame) {
+            long nowMs = SystemClock.elapsedRealtime();
+            for (short value : frame) {
+                window[windowSamples++] = value / 32768.0f;
+                if (windowSamples == WalkieSpeechGate.WINDOW_SAMPLES) {
+                    double probability = 0.0;
+                    if (vadEngine.available()) {
+                        try {
+                            probability = vadEngine.speechProbability(window.clone(), WalkieSpeechGate.SAMPLE_RATE);
+                        } catch (RuntimeException ignored) {
+                            probability = 0.0;
+                        }
+                    }
+                    WakeProbeCapturePolicy.Action action = policy.observe(nowMs, probability);
+                    if (action != WakeProbeCapturePolicy.Action.NONE) {
+                        readyToFinish = true;
+                    }
+                    windowSamples = 0;
+                }
+            }
         }
     }
 }

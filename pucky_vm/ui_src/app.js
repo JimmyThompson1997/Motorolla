@@ -15,6 +15,7 @@
   const CARD_MENU_LONG_PRESS_MS = 250;
   const CARD_MENU_MOVE_CANCEL_PX = 12;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
+  const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -140,37 +141,6 @@
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
 
-  const MOCK_SETTINGS = [
-    {
-      icon: "mic",
-      title: "Wake word",
-      value: "Pucky armed",
-      detail: "Local wake phrase test mode",
-      accent: "#72c2ff"
-    },
-    {
-      icon: "sensors",
-      title: "Cover gestures",
-      value: "Wave enabled",
-      detail: "Folded, flat, face-up guardrails",
-      accent: "#50d86a"
-    },
-    {
-      icon: "book",
-      title: "Audio cache",
-      value: "3.8 GB ready",
-      detail: "Replies and audiobook files available offline",
-      accent: "#ffb000"
-    },
-    {
-      icon: "settings",
-      title: "Native bridge",
-      value: "Connected",
-      detail: "Sensors, player, files, and permissions",
-      accent: "#8b63ff"
-    }
-  ];
-
   const MOCK_CARDS = [
     {
       session_id: "mock_morning",
@@ -275,6 +245,8 @@
     readOverrides: loadReadOverrides(),
     turn: initialTurnStatus(),
     turnSettings: initialTurnSettings(),
+    wakeStatus: initialWakeStatus(),
+    uiSurface: initialUiSurfaceStatus(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -418,9 +390,55 @@
         schema: "pucky.turn_settings.v1",
         reply_mode: mode,
         spoken_reply_enabled: mode === "card_and_spoken",
+        accepted_chime_enabled: args.accepted_chime_enabled === undefined
+          ? state.turnSettings.accepted_chime_enabled !== false
+          : truthy(args.accepted_chime_enabled),
         modes: TURN_REPLY_MODES
       };
       return state.turnSettings;
+    }
+    if (command === "pucky.turn.chime.test") {
+      return {
+        schema: "pucky.turn_accepted_chime_playback.v1",
+        test: true,
+        accepted_chime_enabled: state.turnSettings.accepted_chime_enabled !== false,
+        accepted_chime_attempted: state.turnSettings.accepted_chime_enabled !== false,
+        accepted_chime_suppressed: state.turnSettings.accepted_chime_enabled === false,
+        played: state.turnSettings.accepted_chime_enabled !== false,
+        reason: state.turnSettings.accepted_chime_enabled === false ? "disabled" : "",
+        asset_name: "Soft.ogg",
+        asset_path: "/product/media/audio/notifications/Soft.ogg",
+        fallback_used: false,
+        player: "MediaPlayer",
+        stream: "music",
+        usage: "media_sonification"
+      };
+    }
+    if (command === "wake.status") {
+      return state.wakeStatus;
+    }
+    if (command === "wake.start") {
+      state.wakeStatus = { ...state.wakeStatus, enabled: true, requested_enabled: true, running: true };
+      return state.wakeStatus;
+    }
+    if (command === "wake.stop") {
+      state.wakeStatus = { ...state.wakeStatus, enabled: false, requested_enabled: false, running: false };
+      return state.wakeStatus;
+    }
+    if (command === "wake.config.set") {
+      const enabled = args.enabled === undefined ? state.wakeStatus.enabled : truthy(args.enabled);
+      state.wakeStatus = {
+        ...state.wakeStatus,
+        enabled,
+        requested_enabled: enabled,
+        running: enabled,
+        scope: String(args.scope || state.wakeStatus.scope || "awake_and_unlocked_foreground"),
+        mode: String(args.mode || state.wakeStatus.mode || "phase_2a")
+      };
+      return state.wakeStatus;
+    }
+    if (command === "ui.surface.get") {
+      return state.uiSurface;
     }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
@@ -607,6 +625,70 @@
     }
   }
 
+  async function loadWakeStatus(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "wake.status", args: {} });
+      state.wakeStatus = normalizeWakeStatus(snapshot);
+      if (options.render) {
+        render();
+      }
+    } catch (_) {
+      // Keep the current placeholder wake state if the bridge is not ready yet.
+    }
+  }
+
+  async function loadUiSurfaceStatus(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "ui.surface.get", args: {} });
+      state.uiSurface = normalizeUiSurfaceStatus(snapshot);
+      if (options.render) {
+        render();
+      }
+    } catch (_) {
+      // Local browser preview keeps a synthetic bundle_current status.
+    }
+  }
+
+  async function loadSettingsState(options = {}) {
+    await Promise.all([
+      loadTurnSettings({ render: false }),
+      loadWakeStatus({ render: false }),
+      loadUiSurfaceStatus({ render: false })
+    ]);
+    if (options.ensureSurface !== false && ensureSettingsSurfaceCurrent()) {
+      return;
+    }
+    if (options.render) {
+      render();
+    }
+  }
+
+  function ensureSettingsSurfaceCurrent() {
+    if (state.route !== "settings") {
+      return false;
+    }
+    const sourceKind = String(state.uiSurface.source_kind || "");
+    const entrypointUrl = String(state.uiSurface.entrypoint_url || "");
+    if (sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
+      try {
+        sessionStorage.removeItem(SETTINGS_SURFACE_RELOAD_KEY);
+      } catch (_) {
+        // Session storage is a best-effort guardrail.
+      }
+      return false;
+    }
+    try {
+      if (sessionStorage.getItem(SETTINGS_SURFACE_RELOAD_KEY) === entrypointUrl) {
+        return false;
+      }
+      sessionStorage.setItem(SETTINGS_SURFACE_RELOAD_KEY, entrypointUrl);
+    } catch (_) {
+      // If storage is unavailable we still attempt a single reload.
+    }
+    window.location.replace(entrypointUrl);
+    return true;
+  }
+
 
   function render() {
     renderTabs();
@@ -665,7 +747,33 @@
       schema: "pucky.turn_settings.v1",
       reply_mode: "card_only",
       spoken_reply_enabled: false,
+      accepted_chime_enabled: true,
       modes: TURN_REPLY_MODES
+    };
+  }
+
+  function initialWakeStatus() {
+    return {
+      schema: "pucky.wake_status.v1",
+      enabled: false,
+      requested_enabled: false,
+      running: false,
+      engine: "unknown",
+      mode: "phase_2a",
+      scope: "awake_and_unlocked_foreground"
+    };
+  }
+
+  function initialUiSurfaceStatus() {
+    return {
+      schema: "pucky.ui_surface.v1",
+      requested_url: window.location.href,
+      active_url: window.location.href,
+      entrypoint_url: window.location.href,
+      fallback_asset_url: "",
+      ui_version: "browser_preview",
+      source_kind: "bundle_current",
+      bridge_connected: Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")
     };
   }
 
@@ -688,7 +796,35 @@
       schema: "pucky.turn_settings.v1",
       reply_mode: mode,
       spoken_reply_enabled: mode === "card_and_spoken",
+      accepted_chime_enabled: raw.accepted_chime_enabled !== false,
       modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : TURN_REPLY_MODES
+    };
+  }
+
+  function normalizeWakeStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+      schema: raw.schema || "pucky.wake_status.v1",
+      enabled: truthy(raw.enabled),
+      requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
+      running: truthy(raw.running),
+      engine: String(raw.engine || "unknown"),
+      mode: String(raw.mode || "phase_2a"),
+      scope: String(raw.scope || "awake_and_unlocked_foreground")
+    };
+  }
+
+  function normalizeUiSurfaceStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+      schema: raw.schema || "pucky.ui_surface.v1",
+      requested_url: String(raw.requested_url || window.location.href || ""),
+      active_url: String(raw.active_url || window.location.href || ""),
+      entrypoint_url: String(raw.entrypoint_url || window.location.href || ""),
+      fallback_asset_url: String(raw.fallback_asset_url || ""),
+      ui_version: String(raw.ui_version || "unknown"),
+      source_kind: String(raw.source_kind || "legacy_placeholder"),
+      bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid)
     };
   }
 
@@ -829,7 +965,7 @@
         restoreFeedScroll();
         syncFeedCards({ reason: "route_feed", silent: true, render: true });
       } else if (state.route === "settings") {
-        loadTurnSettings({ render: true });
+        loadSettingsState({ render: true });
       }
     });
     return button;
@@ -1008,10 +1144,16 @@
     const heroCopy = el("div", "settings-hero-copy");
     heroCopy.append(
       el("h1", "settings-title", "Settings"),
-      el("p", "settings-subtitle", "Pucky's phone-side powers.")
+      el("p", "settings-subtitle", "Live controls for wake, walkie, and device feedback.")
     );
     hero.append(heroIcon, heroCopy);
-    page.append(hero, replyModeSettingsCard(), ...MOCK_SETTINGS.map(settingsRowView));
+    page.append(
+      hero,
+      replyModeSettingsCard(),
+      wakeWordSettingsCard(),
+      acceptedChimeSettingsCard(),
+      diagnosticsSettingsCard()
+    );
     return page;
   }
 
@@ -1047,12 +1189,18 @@
 
   async function setTurnReplyMode(mode) {
     const replyMode = normalizeReplyMode(mode);
-    state.turnSettings = normalizeTurnSettings({ reply_mode: replyMode });
+    state.turnSettings = normalizeTurnSettings({
+      ...state.turnSettings,
+      reply_mode: replyMode
+    });
     render();
     try {
       const updated = await Pucky.request({
         command: "pucky.turn.settings.set",
-        args: { reply_mode: replyMode }
+        args: {
+          reply_mode: replyMode,
+          accepted_chime_enabled: state.turnSettings.accepted_chime_enabled !== false
+        }
       });
       state.turnSettings = normalizeTurnSettings(updated);
       render();
@@ -1061,19 +1209,162 @@
     }
   }
 
-  function settingsRowView(setting) {
-    const row = el("article", "settings-card");
-    row.style.setProperty("--accent", setting.accent || "#72c2ff");
+  function wakeWordSettingsCard() {
+    return settingsToggleCard({
+      accent: "#72c2ff",
+      icon: "record_voice_over",
+      title: "Wake word",
+      detail: state.wakeStatus.running
+        ? `Listening on ${state.wakeStatus.scope || "awake foreground"}`
+        : "Enable the local wake phrase on device.",
+      enabled: state.wakeStatus.enabled,
+      onToggle: setWakeWordEnabled
+    });
+  }
+
+  function acceptedChimeSettingsCard() {
+    const card = settingsToggleCard({
+      accent: "#ffb000",
+      icon: "bell",
+      title: "Turn accepted chime",
+      detail: "Play one confirmation ping when a walkie turn lands on the VM.",
+      enabled: state.turnSettings.accepted_chime_enabled !== false,
+      onToggle: setAcceptedChimeEnabled
+    });
+    const actions = el("div", "settings-card-actions");
+    actions.append(settingsActionButton("Test chime", testAcceptedChime));
+    card.append(actions);
+    return card;
+  }
+
+  function diagnosticsSettingsCard() {
+    const card = el("article", "settings-card settings-card-diagnostics");
+    card.style.setProperty("--accent", "#8b63ff");
     const icon = el("div", "settings-card-icon");
-    icon.innerHTML = iconSvg(setting.icon, { filled: true });
+    icon.innerHTML = iconSvg("lightbulb_2", { filled: true });
     const copy = el("div", "settings-card-copy");
     copy.append(
-      el("h2", "settings-card-title", setting.title),
-      el("p", "settings-card-detail", setting.detail)
+      el("h2", "settings-card-title", "Diagnostics"),
+      el("p", "settings-card-detail", "Bundle and native bridge facts from the live shell.")
     );
-    const value = el("div", "settings-card-value", setting.value);
-    row.append(icon, copy, value);
+    const diagnostics = el("div", "settings-diagnostics");
+    diagnostics.append(
+      settingsDiagnosticItem("Bundle", state.uiSurface.ui_version || "unknown"),
+      settingsDiagnosticItem("Surface", formatSurfaceKind(state.uiSurface.source_kind)),
+      settingsDiagnosticItem("Wake", state.wakeStatus.running ? "running" : state.wakeStatus.enabled ? "enabled" : "off"),
+      settingsDiagnosticItem("Bridge", state.uiSurface.bridge_connected ? "connected" : "browser")
+    );
+    card.append(icon, copy, diagnostics);
+    return card;
+  }
+
+  async function setWakeWordEnabled(enabled) {
+    state.wakeStatus = normalizeWakeStatus({
+      ...state.wakeStatus,
+      enabled,
+      requested_enabled: enabled,
+      running: enabled
+    });
+    render();
+    try {
+      const updated = await Pucky.request({
+        command: enabled ? "wake.start" : "wake.stop",
+        args: { enabled }
+      });
+      state.wakeStatus = normalizeWakeStatus(updated);
+      render();
+    } catch (_) {
+      // Browser preview keeps the optimistic local state.
+    }
+  }
+
+  async function setAcceptedChimeEnabled(enabled) {
+    state.turnSettings = normalizeTurnSettings({
+      ...state.turnSettings,
+      accepted_chime_enabled: enabled
+    });
+    render();
+    try {
+      const updated = await Pucky.request({
+        command: "pucky.turn.settings.set",
+        args: {
+          reply_mode: state.turnSettings.reply_mode,
+          accepted_chime_enabled: enabled
+        }
+      });
+      state.turnSettings = normalizeTurnSettings(updated);
+      render();
+    } catch (_) {
+      // Browser preview keeps the optimistic local state.
+    }
+  }
+
+  async function testAcceptedChime() {
+    try {
+      await Pucky.request({ command: "pucky.turn.chime.test", args: {} });
+    } catch (_) {
+      showToast("Could not test the accepted chime.");
+    }
+  }
+
+  function settingsToggleCard({ accent, icon, title, detail, enabled, onToggle }) {
+    const row = el("article", "settings-card");
+    row.style.setProperty("--accent", accent || "#72c2ff");
+    const iconEl = el("div", "settings-card-icon");
+    iconEl.innerHTML = iconSvg(icon, { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", title),
+      el("p", "settings-card-detail", detail)
+    );
+    const toggle = settingsToggleButton(enabled, async () => {
+      await onToggle(!enabled);
+    });
+    row.append(iconEl, copy, toggle);
     return row;
+  }
+
+  function settingsToggleButton(enabled, onClick) {
+    const button = el("button", enabled ? "settings-toggle is-on" : "settings-toggle");
+    button.type = "button";
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.append(
+      el("span", "settings-toggle-track"),
+      el("span", "settings-toggle-thumb")
+    );
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      onClick();
+    });
+    return button;
+  }
+
+  function settingsActionButton(label, action) {
+    const button = el("button", "settings-action-button", label);
+    button.type = "button";
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      action();
+    });
+    return button;
+  }
+
+  function settingsDiagnosticItem(label, value) {
+    const item = el("div", "settings-diagnostic-item");
+    item.append(
+      el("span", "settings-diagnostic-label", label),
+      el("span", "settings-diagnostic-value", value)
+    );
+    return item;
+  }
+
+  function formatSurfaceKind(kind) {
+    const value = String(kind || "").trim();
+    if (value === "bundle_current") return "current bundle";
+    if (value === "bundle_previous") return "previous bundle";
+    if (value === "fallback_asset") return "fallback asset";
+    if (value === "legacy_placeholder") return "legacy surface";
+    return value || "unknown";
   }
 
 
@@ -2217,6 +2508,9 @@
   }
 
   function handleAndroidBack() {
+    if (dismissOpenCardMenu()) {
+      return true;
+    }
     const detail = document.getElementById("detail");
     if (detail && detail.classList.contains("is-open")) {
       const back = detail.querySelector(".detail-back");
@@ -2799,32 +3093,20 @@
     return Date.now() < Number(state.cardMenuClickSuppressUntil || 0);
   }
 
-  function focusedCardMenuWrapper() {
-    return document.querySelector(".card-wrap.is-card-menu-open");
-  }
-
-  function dismissFocusedCardMenu() {
+  function dismissOpenCardMenu(suppressClick = true) {
     if (!state.openCardMenuSessionId) {
       return false;
     }
     state.openCardMenuSessionId = "";
+    if (suppressClick) {
+      state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+    }
     renderFeed();
     return true;
   }
 
-  function handleFocusedCardOutsideClick(event) {
-    if (state.route !== "feed" || !state.openCardMenuSessionId) {
-      return;
-    }
-    const target = event.target instanceof Element ? event.target : null;
-    const focused = focusedCardMenuWrapper();
-    if (!target || !focused || focused.contains(target)) {
-      return;
-    }
-    dismissFocusedCardMenu();
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+  function focusedCardMenuWrapper() {
+    return document.querySelector(".card-wrap.is-card-menu-open");
   }
 
   function isCardStarred(card) {
@@ -2877,8 +3159,7 @@
   }
 
   async function archiveHomeCard(card) {
-    state.openCardMenuSessionId = "";
-    renderFeed();
+    dismissOpenCardMenu(false);
     await requestFeedAction(card, "archive", { silent: true });
   }
 
@@ -2972,6 +3253,20 @@
     wrapper.addEventListener("touchcancel", () => {
       finish();
     });
+  }
+
+  function installCardMenuOutsideDismiss() {
+    document.addEventListener("pointerdown", event => {
+      if (!state.openCardMenuSessionId) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const focused = focusedCardMenuWrapper();
+      if (target && focused && focused.contains(target)) {
+        return;
+      }
+      dismissOpenCardMenu(true);
+    }, true);
   }
 
   function installVerticalDismiss(target, panel, onDismiss = dismissTraceSheet) {
@@ -4666,7 +4961,6 @@
   }, 90);
 
   window.addEventListener("pagehide", persistNavState);
-  document.addEventListener("click", handleFocusedCardOutsideClick, true);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       persistNavState();
@@ -4674,6 +4968,10 @@
     }
     if (state.route === "feed") {
       syncFeedCards({ reason: "visibility_visible", silent: true, render: true });
+      return;
+    }
+    if (state.route === "settings") {
+      loadSettingsState({ render: true });
     }
   });
 
@@ -4681,7 +4979,8 @@
   installFeedRubberBand();
   installFeedScrollPersistence();
   installFeedSyncLoop();
+  installCardMenuOutsideDismiss();
   loadTurnStatus({ render: false });
-  loadTurnSettings({ render: false });
+  loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCards();
 })();

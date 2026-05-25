@@ -36,6 +36,7 @@ import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.ui.PuckyUiController;
 import com.pucky.device.ui.UiBundleController;
+import com.pucky.device.ui.UiSurfaceController;
 import com.pucky.device.updates.AppUpdateController;
 import com.pucky.device.voice.VoiceCaptureController;
 import com.pucky.device.wake.WakeWordController;
@@ -74,10 +75,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
-            "pucky.turn.settings.get", "pucky.turn.settings.set",
+            "pucky.turn.settings.get", "pucky.turn.settings.set", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read",
             "pucky.feed.sync", "pucky.feed.action",
-            "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
+            "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate", "wake.debug.confirm_artifact",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
             "speech.echo.status", "speech.echo.start", "speech.echo.stop",
@@ -93,7 +94,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
             "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.get",
             "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
-            "ui.bundle.refresh", "ui.shell.mode.get", "ui.shell.mode.set",
+            "ui.bundle.refresh", "ui.surface.get", "ui.shell.mode.get", "ui.shell.mode.set",
             "launcher.capability.get", "android.substrate"
     };
 
@@ -410,6 +411,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.settingsGet();
             case "pucky.turn.settings.set":
                 return puckyTurnController.settingsSet(command.args());
+            case "pucky.turn.chime.test":
+                return puckyTurnController.chimeTest(command.args());
             case "pucky.turn.history":
                 return puckyTurnController.history(command.args());
             case "pucky.turn.read":
@@ -428,6 +431,15 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return wakeWordController.stop(command.args());
             case "wake.simulate":
                 return wakeWordController.simulate(command.args());
+            case "wake.debug.confirm_artifact":
+                try {
+                    return wakeWordController.confirmArtifact(command.args());
+                } catch (CommandException exc) {
+                    throw exc;
+                } catch (Exception exc) {
+                    throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                            exc.getClass().getSimpleName() + ": " + exc.getMessage());
+                }
             case "speech.native.status":
                 return nativeSpeechController.status();
             case "speech.native.start":
@@ -510,6 +522,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiBundleController.installDownloaded(command.args());
             case "ui.bundle.refresh":
                 return uiBundleController.refresh(command.args());
+            case "ui.surface.get":
+                return new UiSurfaceController(settingsStore.context()).status(uiBundleController);
             case "ui.shell.mode.get":
                 return uiShellMode();
             case "ui.shell.mode.set":

@@ -81,6 +81,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.stop\""));
         assertTrue(source.contains("\"pucky.turn.settings.get\""));
         assertTrue(source.contains("\"pucky.turn.settings.set\""));
+        assertTrue(source.contains("\"pucky.turn.chime.test\""));
         assertTrue(source.contains("\"pucky.turn.history\""));
         assertTrue(source.contains("\"pucky.turn.read\""));
         assertTrue(source.contains("return puckyTurnController.status()"));
@@ -88,6 +89,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
         assertTrue(source.contains("return puckyTurnController.settingsGet()"));
         assertTrue(source.contains("return puckyTurnController.settingsSet(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.chimeTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.history(command.args())"));
         assertTrue(source.contains("return puckyTurnController.read(command.args())"));
         assertTrue(service.contains("PuckyTurnController.shared(this)"));
@@ -202,6 +204,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(status, \"reply_mode\", replyModeAtUpload)"));
         assertTrue(source.contains("Json.put(status, \"spoken_reply_enabled\", spokenReplyEnabledAtUpload)"));
         assertTrue(source.contains("Json.put(status, \"server_telemetry\", parsed.telemetry())"));
+        assertTrue(source.contains("Json.put(out, \"accepted_chime_enabled\", settings.isPuckyTurnAcceptedChimeEnabled())"));
+        assertTrue(source.contains("public JSONObject chimeTest(JSONObject args)"));
+        assertTrue(source.contains("settings.setPuckyTurnAcceptedChimeEnabled"));
         assertFalse(Pattern.compile("Log\\.[^;]*getPuckyTurnAuthToken", Pattern.DOTALL).matcher(source).find());
     }
 
@@ -214,10 +219,13 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("https://pucky.fly.dev/api/turn"));
         assertTrue(source.contains("putString(editor, input, \"pucky_api_token\""));
         assertTrue(source.contains("\"pucky_turn_reply_mode\""));
+        assertTrue(source.contains("\"pucky_turn_accepted_chime_enabled\""));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_ONLY"));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_AND_SPOKEN"));
         assertTrue(source.contains("public String getPuckyTurnReplyMode()"));
         assertTrue(source.contains("public boolean isPuckyTurnSpokenReplyEnabled()"));
+        assertTrue(source.contains("public boolean isPuckyTurnAcceptedChimeEnabled()"));
+        assertTrue(source.contains("public void setPuckyTurnAcceptedChimeEnabled(boolean enabled)"));
         assertTrue(source.contains("public void setPuckyTurnReplyMode(String mode)"));
         assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
         assertTrue(source.contains("String brokerToken = getToken();"));

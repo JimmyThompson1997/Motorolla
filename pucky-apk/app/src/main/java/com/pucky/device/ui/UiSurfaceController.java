@@ -1,0 +1,76 @@
+package com.pucky.device.ui;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import com.pucky.device.util.Json;
+
+import org.json.JSONObject;
+
+import java.time.Instant;
+
+public final class UiSurfaceController {
+    private static final String PREFS = "pucky_ui_surface";
+    private static final String REQUESTED_URL = "requested_url";
+    private static final String ACTIVE_URL = "active_url";
+    private static final String REQUESTED_AT = "requested_at";
+    private static final String LOADED_AT = "loaded_at";
+
+    private final SharedPreferences prefs;
+
+    public UiSurfaceController(Context context) {
+        this.prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    public void recordRequested(String requestedUrl, UiBundleController bundles) {
+        prefs.edit()
+                .putString(REQUESTED_URL, safe(requestedUrl))
+                .putString(REQUESTED_AT, Instant.now().toString())
+                .apply();
+    }
+
+    public void recordLoaded(String activeUrl, UiBundleController bundles) {
+        prefs.edit()
+                .putString(ACTIVE_URL, safe(activeUrl))
+                .putString(LOADED_AT, Instant.now().toString())
+                .apply();
+    }
+
+    public JSONObject status(UiBundleController bundles) {
+        JSONObject bundle = bundles.status();
+        String requestedUrl = prefs.getString(REQUESTED_URL, "");
+        String activeUrl = prefs.getString(ACTIVE_URL, "");
+        String entrypointUrl = bundle.optString("entrypoint_url", "");
+        String fallbackAssetUrl = bundle.optString("fallback_asset_url", "");
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.ui_surface.v1");
+        Json.put(out, "requested_url", requestedUrl);
+        Json.put(out, "active_url", activeUrl);
+        Json.put(out, "entrypoint_url", entrypointUrl);
+        Json.put(out, "fallback_asset_url", fallbackAssetUrl);
+        Json.put(out, "ui_version", bundle.optString("ui_version", ""));
+        Json.put(out, "source_kind", sourceKind(activeUrl, requestedUrl, entrypointUrl, fallbackAssetUrl));
+        Json.put(out, "requested_at", prefs.getString(REQUESTED_AT, ""));
+        Json.put(out, "loaded_at", prefs.getString(LOADED_AT, ""));
+        Json.put(out, "bridge_connected", true);
+        return out;
+    }
+
+    private static String sourceKind(String activeUrl, String requestedUrl, String entrypointUrl, String fallbackAssetUrl) {
+        String effectiveUrl = !safe(activeUrl).isEmpty() ? safe(activeUrl) : safe(requestedUrl);
+        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(entrypointUrl)) {
+            return "bundle_current";
+        }
+        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(fallbackAssetUrl)) {
+            return "fallback_asset";
+        }
+        if (!effectiveUrl.isEmpty() && effectiveUrl.contains("/ui_bundles/previous/")) {
+            return "bundle_previous";
+        }
+        return "legacy_placeholder";
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value.trim();
+    }
+}
