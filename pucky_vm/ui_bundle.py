@@ -45,6 +45,55 @@ def default_version() -> str:
 DEFAULT_VERSION = default_version()
 
 
+def source_provenance(repo_root: Path | None = None) -> dict[str, object]:
+    root = repo_root or UI_SRC.parent.parent
+    fallback: dict[str, object] = {
+        "source_commit_full": "",
+        "source_commit_short": "",
+        "source_branch": "",
+        "source_dirty": True,
+    }
+    try:
+        full = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        short = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--short"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+        )
+        return {
+            "source_commit_full": full,
+            "source_commit_short": short,
+            "source_branch": branch,
+            "source_dirty": dirty,
+        }
+    except Exception:
+        return fallback
+
+
 def build_ui_bundle(
     output_dir: Path | None = None,
     *,
@@ -58,7 +107,12 @@ def build_ui_bundle(
     with TemporaryDirectory() as temp_name:
         staging = Path(temp_name) / "bundle"
         shutil.copytree(UI_SRC, staging)
-        manifest = manifest_for(staging, ui_version=ui_version, created_at=created_at)
+        manifest = manifest_for(
+            staging,
+            ui_version=ui_version,
+            created_at=created_at,
+            source=source_provenance(),
+        )
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         zip_path = output_dir / "pucky-ui-latest.zip"
         write_deterministic_zip(staging, zip_path)
@@ -73,7 +127,14 @@ def build_ui_bundle(
         }
 
 
-def manifest_for(root: Path, *, ui_version: str, created_at: str) -> dict[str, object]:
+def manifest_for(
+    root: Path,
+    *,
+    ui_version: str,
+    created_at: str,
+    source: dict[str, object] | None = None,
+) -> dict[str, object]:
+    source = source or source_provenance()
     files: dict[str, dict[str, object]] = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.name == "manifest.json":
@@ -90,6 +151,10 @@ def manifest_for(root: Path, *, ui_version: str, created_at: str) -> dict[str, o
         "created_at": created_at,
         "entrypoint": "index.html",
         "min_native_bridge_version": 1,
+        "source_commit_full": str(source.get("source_commit_full", "")),
+        "source_commit_short": str(source.get("source_commit_short", "")),
+        "source_branch": str(source.get("source_branch", "")),
+        "source_dirty": bool(source.get("source_dirty", True)),
         "files": files,
     }
 

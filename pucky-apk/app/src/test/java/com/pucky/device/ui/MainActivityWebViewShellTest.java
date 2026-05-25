@@ -89,6 +89,11 @@ public final class MainActivityWebViewShellTest {
                         && bundles.contains("renameTo(previous)")
                         && bundles.contains("renameTo(current)")
                         && bundles.contains("file:///android_asset/pucky_fallback/index.html"));
+        assertTrue("UI bundle status should expose installed source provenance",
+                bundles.contains("source_commit_full")
+                        && bundles.contains("source_commit_short")
+                        && bundles.contains("source_branch")
+                        && bundles.contains("source_dirty"));
         assertTrue("Fallback asset should be bundled HTML, not Java UI",
                 fallback.contains("Pucky is reconnecting")
                         && fallback.contains("cached HTML UI bundle"));

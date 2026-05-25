@@ -8,6 +8,7 @@ import pytest
 
 from pucky_vm.tools import deploy_cover_fixture
 from pucky_vm.ui_bundle import build_ui_bundle
+import tools.refresh_pucky_html_official as official_html
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -128,7 +129,9 @@ def test_deploy_helper_uses_command_path_and_no_adb_shortcuts() -> None:
     assert "ui.reply_cards.set" in source
     assert "artifact.list" in source
     assert "artifact.delete" in source
-    assert '"git", "status", "--short"' in source
+    assert "official_html.require_official_local_repo" in source
+    assert "official_html.validate_remote_manifest" in source
+    assert "official_html.verify_bundle_status" in source
     assert "adb" not in source.lower()
     assert "run-as" not in source
     assert "shared_prefs" not in source
@@ -314,3 +317,39 @@ def test_build_cards_rejects_mock_paths(monkeypatch: pytest.MonkeyPatch) -> None
             args,
             {"artifact_base_path": "fixtures/artifacts", "cards": [{"session_id": "bad", "audio_artifact": "morning.wav"}]},
         )
+
+
+def test_deploy_requires_phone_emulator_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = argparse.Namespace(
+        repo_root=tmp_path,
+        canonical_root=tmp_path,
+        cards_manifest=FIXTURES / "reply_cards_deploy.json",
+        manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",
+        bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
+        target="phone",
+        emulator_evidence=None,
+        device_id="phone-1",
+    )
+
+    monkeypatch.setattr(
+        official_html,
+        "require_official_local_repo",
+        lambda repo_root, canonical_root: {"head": "abcdef", "head_short": "abcdef0"},
+    )
+    monkeypatch.setattr(
+        official_html,
+        "fetch_json",
+        lambda url: {
+            "schema": "pucky.ui_bundle.v1",
+            "ui_version": "git-abcdef0",
+            "source_commit_full": "abcdef",
+            "source_commit_short": "abcdef0",
+            "source_branch": "master",
+            "source_dirty": False,
+            "files": {},
+        },
+    )
+    monkeypatch.setattr(official_html, "validate_remote_manifest", lambda manifest, local_git: manifest)
+
+    with pytest.raises(deploy_cover_fixture.DeployError, match="requires --emulator-evidence"):
+        deploy_cover_fixture.deploy(args)

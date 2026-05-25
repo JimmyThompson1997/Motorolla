@@ -72,7 +72,7 @@ The VM can also ship the cover UI as a versioned HTML bundle. The APK installs
 only verified bundles into app-owned storage and loads the WebView from that
 cached copy, so the feed can still open offline.
 
-Build a local bundle:
+Build a local bundle for low-level debugging only:
 
 ```powershell
 python -m pucky_vm.ui_bundle --out .tmp\pucky_ui_bundle --version local-dev
@@ -89,14 +89,26 @@ Serve the latest source/bundle from the VM service:
 - `GET /ui/pucky/latest/bundle.zip`
 - `GET /ui/pucky/fixtures/reply_cards.json`
 
-Deploy cover fixture cards through the normal command path:
+Official HTML refresh flow is:
+
+`GitHub master -> VM pull/build/serve -> emulator refresh/verify -> phone refresh/verify`
+
+Use the official helper from the canonical repo for bundle refreshes:
 
 ```powershell
-python -m pucky_vm.tools.deploy_cover_fixture
+python .\tools\refresh_pucky_html_official.py --target emulator --device-id <emulator-device-id>
+python .\tools\refresh_pucky_html_official.py --target phone --device-id <phone-device-id> --emulator-evidence .tmp\pucky-html-refresh\<evidence>.json
 ```
 
-The deploy helper refuses to run from a dirty git workspace. It refreshes the
-cached HTML bundle, downloads committed fixture artifacts through
-`file.download`, writes cards with returned app-owned paths through
-`ui.reply_cards.set`, and records evidence under `.tmp/`. Do not seed fixture
-state with direct `adb push`, `run-as`, or SharedPreferences edits.
+Deploy cover fixture cards through the same official gate:
+
+```powershell
+python -m pucky_vm.tools.deploy_cover_fixture --target emulator --device-id <emulator-device-id>
+python -m pucky_vm.tools.deploy_cover_fixture --target phone --device-id <phone-device-id> --emulator-evidence .tmp\pucky-html-refresh\<evidence>.json
+```
+
+The official helpers refuse to run unless the source is clean pushed `master`,
+the VM manifest matches that exact commit, and phone refreshes have matching
+emulator evidence for the same `ui_version`. Local bundle builds and local
+cache pushes are not official deploy state. Do not seed fixture state with
+direct `adb push`, `run-as`, or SharedPreferences edits.

@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin
+from urllib.request import urlopen
+
+
+CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
+DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
+DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
+DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"
+RESULT_SCHEMA = "pucky.ui_bundle_refresh_evidence.v1"
+
+
+class OfficialRefreshError(RuntimeError):
+    pass
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def utc_stamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def local_git_state(root: Path) -> dict[str, object]:
+    return {
+        "repo_root": str(root),
+        "branch": run_git(root, "rev-parse", "--abbrev-ref", "HEAD"),
+        "head": run_git(root, "rev-parse", "HEAD"),
+        "head_short": run_git(root, "rev-parse", "--short", "HEAD"),
+        "upstream": run_git(root, "rev-parse", "@{u}"),
+        "dirty": bool(run_git(root, "status", "--short")),
+    }
+
+
+def require_official_local_repo(root: Path, canonical_root: Path = CANONICAL_REPO_ROOT) -> dict[str, object]:
+    if root.resolve() != canonical_root.resolve():
+        raise OfficialRefreshError(f"Official HTML refresh must run from {canonical_root}")
+    state = local_git_state(root)
+    if state["branch"] != "master":
+        raise OfficialRefreshError("Official HTML refresh requires branch master")
+    if state["dirty"]:
+        raise OfficialRefreshError("Official HTML refresh refuses dirty workspaces")
+    if state["head"] != state["upstream"]:
+        raise OfficialRefreshError("Official HTML refresh requires local HEAD == origin/master")
+    return state
+
+
+def fetch_json(url: str) -> dict[str, Any]:
+    with urlopen(url, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def validate_remote_manifest(remote_manifest: dict[str, Any], local_git: dict[str, object]) -> dict[str, Any]:
+    if remote_manifest.get("schema") != "pucky.ui_bundle.v1":
+        raise OfficialRefreshError("Remote UI manifest schema is invalid")
+    if remote_manifest.get("source_commit_full") != local_git["head"]:
+        raise OfficialRefreshError("Remote UI manifest commit does not match local master HEAD")
+    if remote_manifest.get("source_commit_short") != local_git["head_short"]:
+        raise OfficialRefreshError("Remote UI manifest short commit does not match local master HEAD")
+    if remote_manifest.get("source_branch") != "master":
+        raise OfficialRefreshError("Remote UI manifest branch must be master")
+    if bool(remote_manifest.get("source_dirty", True)):
+        raise OfficialRefreshError("Remote UI manifest must come from a clean master checkout")
+    if not str(remote_manifest.get("ui_version") or "").strip():
+        raise OfficialRefreshError("Remote UI manifest must include ui_version")
+    return remote_manifest
+
+
+def puckyctl_args(args: argparse.Namespace, command_type: str, payload: dict[str, Any]) -> list[str]:
+    argv = [sys.executable, str(args.puckyctl), "--json"]
+    if args.broker:
+        argv += ["--broker", args.broker]
+    if args.token:
+        argv += ["--token", args.token]
+    if args.device_id:
+        argv += ["--device-id", args.device_id]
+    argv += ["command", "send", command_type, "--args-json", json.dumps(payload, separators=(",", ":")), "--wait"]
+    return argv
+
+
+def run_pucky_command(args: argparse.Namespace, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    completed = subprocess.run(
+        puckyctl_args(args, command_type, payload),
+        cwd=args.repo_root,
+        text=True,
+        capture_output=True,
+        timeout=args.command_timeout_seconds,
+    )
+    combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise OfficialRefreshError(f"Unable to parse puckyctl JSON for {command_type}: {combined}") from exc
+    if completed.returncode != 0 or not parsed.get("ok"):
+        raise OfficialRefreshError(f"Command {command_type} failed: {combined}")
+    result = parsed.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def verify_bundle_status(bundle_status: dict[str, Any], remote_manifest: dict[str, Any], local_git: dict[str, object]) -> dict[str, Any]:
+    if not bundle_status.get("installed"):
+        raise OfficialRefreshError("Target did not report an installed UI bundle")
+    expected = {
+        "ui_version": remote_manifest["ui_version"],
+        "source_commit_full": local_git["head"],
+        "source_commit_short": local_git["head_short"],
+        "source_branch": "master",
+        "source_dirty": False,
+    }
+    for key, value in expected.items():
+        if bundle_status.get(key) != value:
+            raise OfficialRefreshError(f"Installed bundle status mismatch for {key}")
+    return bundle_status
+
+
+def load_emulator_evidence(path: Path) -> dict[str, Any]:
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    if evidence.get("schema") != RESULT_SCHEMA:
+        raise OfficialRefreshError("Emulator evidence schema is invalid")
+    return evidence
+
+
+def validate_emulator_evidence(
+    evidence: dict[str, Any],
+    remote_manifest: dict[str, Any],
+    local_git: dict[str, object],
+) -> dict[str, Any]:
+    if (evidence.get("target") or {}).get("type") != "emulator":
+        raise OfficialRefreshError("Phone refresh requires emulator evidence")
+    if (evidence.get("local_git") or {}).get("head") != local_git["head"]:
+        raise OfficialRefreshError("Emulator evidence commit does not match local master HEAD")
+    if (evidence.get("remote_manifest") or {}).get("source_commit_full") != local_git["head"]:
+        raise OfficialRefreshError("Emulator evidence remote manifest commit does not match local master HEAD")
+    if (evidence.get("remote_manifest") or {}).get("ui_version") != remote_manifest["ui_version"]:
+        raise OfficialRefreshError("Emulator evidence ui_version does not match current remote manifest")
+    bundle_status = evidence.get("bundle_status") or {}
+    verify_bundle_status(bundle_status, remote_manifest, local_git)
+    return evidence
+
+
+def refresh_target(
+    args: argparse.Namespace,
+    remote_manifest: dict[str, Any],
+    local_git: dict[str, object],
+) -> dict[str, Any]:
+    bundle_install = run_pucky_command(
+        args,
+        "ui.bundle.refresh",
+        {
+            "url": args.bundle_url,
+            "max_bytes": args.max_bundle_bytes,
+        },
+    )
+    shell_mode = run_pucky_command(args, "ui.shell.mode.set", {"mode": "web_cached"})
+    bundle_status = run_pucky_command(args, "ui.bundle.status", {})
+    verify_bundle_status(bundle_status, remote_manifest, local_git)
+    return {
+        "bundle_install": bundle_install,
+        "shell_mode": shell_mode,
+        "bundle_status": bundle_status,
+    }
+
+
+def build_evidence(
+    args: argparse.Namespace,
+    local_git: dict[str, object],
+    remote_manifest: dict[str, Any],
+    refresh_result: dict[str, Any],
+    emulator_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "schema": RESULT_SCHEMA,
+        "created_at": utc_stamp(),
+        "target": {
+            "type": args.target,
+            "id": args.device_id,
+        },
+        "bundle_url": args.bundle_url,
+        "manifest_url": args.manifest_url,
+        "local_git": local_git,
+        "remote_manifest": remote_manifest,
+        "bundle_install": refresh_result["bundle_install"],
+        "shell_mode": refresh_result["shell_mode"],
+        "bundle_status": refresh_result["bundle_status"],
+    }
+    if emulator_evidence is not None:
+        evidence["emulator_evidence"] = {
+            "target": emulator_evidence.get("target"),
+            "ui_version": (emulator_evidence.get("remote_manifest") or {}).get("ui_version", ""),
+            "source_commit_full": (emulator_evidence.get("remote_manifest") or {}).get("source_commit_full", ""),
+        }
+    return evidence
+
+
+def write_evidence(args: argparse.Namespace, evidence: dict[str, Any]) -> Path:
+    args.evidence_dir.mkdir(parents=True, exist_ok=True)
+    target = args.evidence_dir / f"{args.target}-bundle-refresh-{int(time.time())}.json"
+    target.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return target
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    local_git = require_official_local_repo(args.repo_root, args.canonical_root)
+    remote_manifest = validate_remote_manifest(fetch_json(args.manifest_url), local_git)
+    emulator_evidence = None
+    if args.target == "phone":
+        if args.emulator_evidence is None:
+            raise OfficialRefreshError("Phone refresh requires --emulator-evidence for the same commit and ui_version")
+        emulator_evidence = validate_emulator_evidence(
+            load_emulator_evidence(args.emulator_evidence),
+            remote_manifest,
+            local_git,
+        )
+    refresh_result = refresh_target(args, remote_manifest, local_git)
+    evidence = build_evidence(args, local_git, remote_manifest, refresh_result, emulator_evidence)
+    evidence_path = write_evidence(args, evidence)
+    return {
+        "ok": True,
+        "evidence_path": str(evidence_path),
+        "ui_version": remote_manifest["ui_version"],
+        "source_commit_full": local_git["head"],
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    root = repo_root()
+    parser = argparse.ArgumentParser(description="Refresh the cached Pucky HTML bundle through the official VM-backed path.")
+    parser.add_argument("--target", choices=("emulator", "phone"), required=True)
+    parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
+    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky-bridge-dev-jt323.fly.dev"))
+    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+    parser.add_argument("--vm-base-url", default=DEFAULT_VM_BASE_URL)
+    parser.add_argument("--bundle-url", default="")
+    parser.add_argument("--manifest-url", default="")
+    parser.add_argument("--emulator-evidence", type=Path)
+    parser.add_argument("--max-bundle-bytes", type=int, default=10 * 1024 * 1024)
+    parser.add_argument("--command-timeout-seconds", type=int, default=120)
+    parser.add_argument("--evidence-dir", type=Path, default=root / ".tmp" / "pucky-html-refresh")
+    parser.add_argument("--repo-root", type=Path, default=root, help=argparse.SUPPRESS)
+    parser.add_argument("--canonical-root", type=Path, default=CANONICAL_REPO_ROOT, help=argparse.SUPPRESS)
+    parser.add_argument("--puckyctl", type=Path, default=root / "pucky-apk" / "puckyctl" / "puckyctl.py", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    args.repo_root = args.repo_root.resolve()
+    args.canonical_root = args.canonical_root.resolve()
+    args.puckyctl = args.puckyctl.resolve()
+    if not args.device_id:
+        raise OfficialRefreshError("Official HTML refresh requires --device-id or PUCKY_DEVICE_ID")
+    args.vm_base_url = args.vm_base_url.rstrip("/")
+    args.bundle_url = args.bundle_url or urljoin(args.vm_base_url + "/", DEFAULT_BUNDLE_PATH.lstrip("/"))
+    args.manifest_url = args.manifest_url or urljoin(args.vm_base_url + "/", DEFAULT_MANIFEST_PATH.lstrip("/"))
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parse_args(argv)
+        result = run(args)
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2), file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
