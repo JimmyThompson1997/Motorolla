@@ -2799,6 +2799,34 @@
     return Date.now() < Number(state.cardMenuClickSuppressUntil || 0);
   }
 
+  function focusedCardMenuWrapper() {
+    return document.querySelector(".card-wrap.is-card-menu-open");
+  }
+
+  function dismissFocusedCardMenu() {
+    if (!state.openCardMenuSessionId) {
+      return false;
+    }
+    state.openCardMenuSessionId = "";
+    renderFeed();
+    return true;
+  }
+
+  function handleFocusedCardOutsideClick(event) {
+    if (state.route !== "feed" || !state.openCardMenuSessionId) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    const focused = focusedCardMenuWrapper();
+    if (!target || !focused || focused.contains(target)) {
+      return;
+    }
+    dismissFocusedCardMenu();
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  }
+
   function isCardStarred(card) {
     const sessionId = cardSessionId(card);
     return Boolean(sessionId && state.starredSessionIds.has(sessionId));
@@ -4638,6 +4666,7 @@
   }, 90);
 
   window.addEventListener("pagehide", persistNavState);
+  document.addEventListener("click", handleFocusedCardOutsideClick, true);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       persistNavState();

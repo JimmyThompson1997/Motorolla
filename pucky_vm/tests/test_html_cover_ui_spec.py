@@ -235,6 +235,14 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "installCardLongPressMenu(wrapper, card);" in app
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
+    assert "function focusedCardMenuWrapper()" in app
+    assert "function dismissFocusedCardMenu()" in app
+    assert "function handleFocusedCardOutsideClick(event)" in app
+    assert 'document.addEventListener("click", handleFocusedCardOutsideClick, true);' in app
+    assert 'const focused = focusedCardMenuWrapper();' in app
+    assert "focused.contains(target)" in app
+    assert "dismissFocusedCardMenu();" in app
+    assert "event.stopImmediatePropagation();" in app
     assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
     assert "state.openCardMenuSessionId === sessionId ? \"\" : sessionId" in app
@@ -295,12 +303,15 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-menu-action" in styles
     assert ".card-menu-action.is-selected" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
-    assert ".card-wrap.is-card-menu-open .card::before" in styles
     assert ".card-wrap.is-card-menu-open .card::after" in styles
-    assert ".card-wrap.is-card-menu-open .card-menu-action::after" in styles
-    assert ".card-wrap.is-card-menu-open .identity" in styles
-    assert ".card-wrap.is-card-menu-open .card-body" in styles
-    assert ".card-wrap.is-card-menu-open .card-actions" in styles
+    assert ".card-wrap.is-card-menu-open .card::before" not in styles
+    assert ".card-wrap.is-card-menu-open .card-menu-action::after" not in styles
+    assert ".card-wrap.is-card-menu-open .identity" not in styles
+    assert ".card-wrap.is-card-menu-open .card-body" not in styles
+    assert ".card-wrap.is-card-menu-open .card-actions" not in styles
+    assert "filter: blur(1.8px) saturate(0.7);" not in styles
+    assert "opacity: 0.36;" not in styles
+    assert "color-mix(in srgb, var(--accent, #72c2ff) 68%, black)" in styles
     assert "@keyframes card-menu-tracer-spin" in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
