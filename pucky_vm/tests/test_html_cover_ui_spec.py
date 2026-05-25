@@ -258,6 +258,29 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "CARD_SLOT_REVEAL_MAX" not in app
     assert "CARD_SLOT_OPEN_THRESHOLD" not in app
     assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
+
+
+def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert 'READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1"' in app
+    assert "readOverrides: loadReadOverrides()" in app
+    assert "function loadReadOverrides()" in app
+    assert "function persistReadOverrides()" in app
+    assert "function readOverrideForCard(card)" in app
+    assert "function setCardReadOverride(card, read)" in app
+    assert "function reconcileReadOverrides()" in app
+    assert "function markCardRead(card)" in app
+    assert "setCardReadOverride(card, true);" in app
+    assert "setCardReadOverride(card, false);" in app
+    assert "if (isCardRead(card)) {" in app
+    assert "return Boolean(card && card.read);" in app
+    assert "const override = readOverrideForCard(card);" in app
+    assert "requestMarkRead(card);" in app
+    assert "reconcileReadOverrides();" in app
+    assert 'identity.addEventListener("click"' in app
+    assert "toggleCardRead(card);" in app
     assert ".card-wrap.is-swiping .card" not in styles
     assert ".card-wrap.is-archiving" not in styles
     assert ".card-wrap.is-collapsing" not in styles
@@ -423,6 +446,7 @@ def test_card_actions_have_local_read_state() -> None:
 
     assert "async function requestFeedAction(card, action, options = {})" in app
     assert "function requestMarkRead(card)" in app
+    assert "function markCardRead(card)" in app
     assert "function toggleCardRead(card)" in app
     assert "function isCardRead(card)" in app
     assert "function cardStateClass(card)" in app
@@ -430,7 +454,7 @@ def test_card_actions_have_local_read_state() -> None:
     assert "function isActionRead(card, action)" in app
     assert 'requestFeedAction(card, "mark_read", { silent: true });' in app
     assert "return Boolean(card && card.read);" in app
-    assert 'if (!options.restoring) {\n      requestMarkRead(card);' in app
+    assert 'if (!options.restoring) {\n      markCardRead(card);' in app
     assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
     assert "cardStateClass(card)" in app
     assert 'actionStateClass(card, "page")' in app

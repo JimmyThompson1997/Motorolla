@@ -2,6 +2,7 @@
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
+  const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -271,6 +272,7 @@
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
+    readOverrides: loadReadOverrides(),
     turn: initialTurnStatus(),
     turnSettings: initialTurnSettings(),
     activePath: "",
@@ -552,6 +554,7 @@
         ? result.snapshot
         : { cards: await fetchReplyCards() };
       state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+      reconcileReadOverrides();
       clearMissingFeedIconFilter();
       if (options.render !== false) {
         render();
@@ -571,6 +574,7 @@
     } catch (error) {
       state.cards = MOCK_CARDS;
     }
+    reconcileReadOverrides();
     clearMissingFeedIconFilter();
     render();
     restoreNavStateAfterCards();
@@ -1210,7 +1214,7 @@
         await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       }
-      requestMarkRead(card);
+      markCardRead(card);
       render();
     } catch (error) {
       showToast(error.message);
@@ -1220,7 +1224,7 @@
   function showTranscript(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
-      requestMarkRead(card);
+      markCardRead(card);
     }
     renderFeed();
     if (options.restoring) {
@@ -1316,7 +1320,7 @@
   async function showRichPage(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
-      requestMarkRead(card);
+      markCardRead(card);
     }
     renderFeed();
     if (options.restoring) {
@@ -2671,7 +2675,7 @@
     try {
       const positionMs = Math.max(0, Number(marker.start_ms || 0));
       rememberSelectedTimestamp(card, marker);
-      requestMarkRead(card);
+      markCardRead(card);
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
       const same = isSameAudioCard(current, card);
@@ -3961,6 +3965,7 @@
         ? result.snapshot
         : { cards: await fetchReplyCards() };
       state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : state.cards;
+      reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
       return result;
@@ -3973,17 +3978,32 @@
   }
 
   function requestMarkRead(card) {
-    if (isCardRead(card)) {
+    if (Boolean(card && card.read)) {
       return;
     }
     requestFeedAction(card, "mark_read", { silent: true });
   }
 
-  function toggleCardRead(card) {
+  function markCardRead(card) {
+    setCardReadOverride(card, true);
+    render();
     requestMarkRead(card);
   }
 
+  function toggleCardRead(card) {
+    if (isCardRead(card)) {
+      setCardReadOverride(card, false);
+      render();
+      return;
+    }
+    markCardRead(card);
+  }
+
   function isCardRead(card) {
+    const override = readOverrideForCard(card);
+    if (override !== null) {
+      return override;
+    }
     return Boolean(card && card.read);
   }
 
@@ -3995,7 +4015,7 @@
     if (!action) {
       return;
     }
-    requestMarkRead(card);
+    markCardRead(card);
   }
 
   function isActionRead(card, action) {
@@ -4462,6 +4482,71 @@
 
   function objectFromMap(map) {
     return Object.fromEntries(Array.from(map.entries()).filter(([key]) => key));
+  }
+
+  function cardSessionKey(card) {
+    return String(card?.session_id || card?.card_id || "").trim();
+  }
+
+  function loadReadOverrides() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(READ_OVERRIDES_KEY) || "{}");
+      const entries = parsed && typeof parsed === "object" ? Object.entries(parsed) : [];
+      return new Map(entries
+        .map(([key, value]) => [String(key || "").trim(), Boolean(value)])
+        .filter(([key]) => key));
+    } catch (_) {
+      return new Map();
+    }
+  }
+
+  function persistReadOverrides() {
+    try {
+      localStorage.setItem(READ_OVERRIDES_KEY, JSON.stringify(objectFromMap(state.readOverrides)));
+    } catch (_) {
+      // Manual read-state toggles are convenience state; card data still renders without them.
+    }
+  }
+
+  function readOverrideForCard(card) {
+    const sessionId = cardSessionKey(card);
+    if (!sessionId || !state.readOverrides.has(sessionId)) {
+      return null;
+    }
+    return Boolean(state.readOverrides.get(sessionId));
+  }
+
+  function setCardReadOverride(card, read) {
+    const sessionId = cardSessionKey(card);
+    if (!sessionId) {
+      return;
+    }
+    state.readOverrides.set(sessionId, Boolean(read));
+    persistReadOverrides();
+  }
+
+  function reconcileReadOverrides() {
+    let changed = false;
+    const liveSessions = new Set(state.cards.map(cardSessionKey).filter(Boolean));
+    for (const sessionId of Array.from(state.readOverrides.keys())) {
+      if (!liveSessions.has(sessionId)) {
+        state.readOverrides.delete(sessionId);
+        changed = true;
+      }
+    }
+    state.cards.forEach(card => {
+      const sessionId = cardSessionKey(card);
+      if (!sessionId || !state.readOverrides.has(sessionId)) {
+        return;
+      }
+      if (Boolean(state.readOverrides.get(sessionId)) === Boolean(card.read)) {
+        state.readOverrides.delete(sessionId);
+        changed = true;
+      }
+    });
+    if (changed) {
+      persistReadOverrides();
+    }
   }
 
   function persistAudioState() {
