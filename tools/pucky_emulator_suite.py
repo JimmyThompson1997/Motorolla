@@ -30,6 +30,7 @@ DEFAULT_SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
 DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
 DEFAULT_ACTIVITY = "com.pucky.device.CoverHomeActivity"
+DEFAULT_USERDATA_PARTITION_SIZE = "2G"
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
@@ -261,6 +262,22 @@ def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list
         "-gpu",
         "swiftshader_indirect",
     ]
+
+
+def tune_avd_config(config: SlotConfig, *, userdata_size: str = DEFAULT_USERDATA_PARTITION_SIZE) -> None:
+    config_path = Path(config.avd_home) / f"{config.avd_name}.avd" / "config.ini"
+    if not config_path.exists():
+        return
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    updated = False
+    for index, line in enumerate(lines):
+        if line.startswith("disk.dataPartition.size="):
+            lines[index] = f"disk.dataPartition.size={userdata_size}"
+            updated = True
+            break
+    if not updated:
+        lines.append(f"disk.dataPartition.size={userdata_size}")
+    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def adb_command(args: argparse.Namespace, serial: str, command: Iterable[str]) -> list[str]:
@@ -520,6 +537,8 @@ def cmd_create(args: argparse.Namespace) -> dict[str, Any]:
     assert_inside(Path(config.avd_home), ROOT / ".tmp")
     Path(config.avd_home).mkdir(parents=True, exist_ok=True)
     result = runner.run(avdmanager_create_command(args, config), env=sdk_env(args, config), timeout=120)
+    if not args.dry_run:
+        tune_avd_config(config)
     if not args.dry_run:
         save_state(config, {"config": asdict(config), "create_stdout": result.stdout, "create_stderr": result.stderr})
     return {"ok": True, "config": asdict(config), "commands": runner.planned, "dry_run": args.dry_run}

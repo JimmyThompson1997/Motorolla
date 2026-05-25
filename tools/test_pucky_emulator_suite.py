@@ -103,6 +103,20 @@ def test_create_and_start_commands_use_workspace_avd_home(tmp_path: Path) -> Non
     assert str(tmp_path / ".tmp") in config.avd_home
 
 
+def test_tune_avd_config_reduces_userdata_partition_size(tmp_path: Path) -> None:
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    config_dir = Path(config.avd_home) / f"{config.avd_name}.avd"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "config.ini"
+    config_path.write_text("disk.dataPartition.size=6G\nhw.ramSize=2G\n", encoding="utf-8")
+
+    suite.tune_avd_config(config)
+
+    content = config_path.read_text(encoding="utf-8")
+    assert "disk.dataPartition.size=2G" in content
+    assert "disk.dataPartition.size=6G" not in content
+
+
 def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path) -> None:
     args = ns(tmp_path)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
