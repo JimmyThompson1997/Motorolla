@@ -74,7 +74,7 @@ def test_require_official_local_repo_rejects_nonmaster_dirty_or_unpushed(
 
 
 def test_validate_remote_manifest_rejects_bad_provenance() -> None:
-    local = {"head": "abcdef", "head_short": "abcdef0"}
+    local = {"head": "abcdef0123456789", "head_short": "abcdef0"}
 
     with pytest.raises(official.OfficialRefreshError, match="commit does not match"):
         official.validate_remote_manifest(
@@ -91,29 +91,47 @@ def test_validate_remote_manifest_rejects_bad_provenance() -> None:
 
     with pytest.raises(official.OfficialRefreshError, match="branch must be master"):
         official.validate_remote_manifest(
-            {
-                "schema": "pucky.ui_bundle.v1",
-                "ui_version": "git-abcdef0",
-                "source_commit_full": "abcdef",
-                "source_commit_short": "abcdef0",
-                "source_branch": "develop",
-                "source_dirty": False,
-            },
-            local,
+                {
+                    "schema": "pucky.ui_bundle.v1",
+                    "ui_version": "git-abcdef0",
+                    "source_commit_full": local["head"],
+                    "source_commit_short": "abcdef0",
+                    "source_branch": "develop",
+                    "source_dirty": False,
+                },
+                local,
         )
 
     with pytest.raises(official.OfficialRefreshError, match="clean master checkout"):
         official.validate_remote_manifest(
-            {
-                "schema": "pucky.ui_bundle.v1",
-                "ui_version": "git-abcdef0",
-                "source_commit_full": "abcdef",
-                "source_commit_short": "abcdef0",
-                "source_branch": "master",
-                "source_dirty": True,
-            },
-            local,
+                {
+                    "schema": "pucky.ui_bundle.v1",
+                    "ui_version": "git-abcdef0",
+                    "source_commit_full": local["head"],
+                    "source_commit_short": "abcdef0",
+                    "source_branch": "master",
+                    "source_dirty": True,
+                },
+                local,
         )
+
+
+def test_validate_remote_manifest_accepts_prefix_compatible_short_commit() -> None:
+    local = {"head": "929427768099b4ba8703d09bb0cd128e6297e0ef", "head_short": "92942776"}
+
+    manifest = official.validate_remote_manifest(
+        {
+            "schema": "pucky.ui_bundle.v1",
+            "ui_version": "git-929427768",
+            "source_commit_full": local["head"],
+            "source_commit_short": "929427768",
+            "source_branch": "master",
+            "source_dirty": False,
+        },
+        local,
+    )
+
+    assert manifest["source_commit_short"] == "929427768"
 
 
 def test_validate_emulator_evidence_rejects_mismatch(tmp_path: Path) -> None:
@@ -172,6 +190,7 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
     args = argparse.Namespace(bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip", max_bundle_bytes=10 * 1024 * 1024)
     remote = {
         "ui_version": "git-abcdef0",
+        "source_commit_short": "abcdef0",
     }
     local = {"head": "abcdef", "head_short": "abcdef0"}
 

@@ -72,12 +72,18 @@ def fetch_json(url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def short_commit_matches(full_commit: object, short_commit: object) -> bool:
+    full = str(full_commit or "").strip()
+    short = str(short_commit or "").strip()
+    return bool(full and short and full.startswith(short))
+
+
 def validate_remote_manifest(remote_manifest: dict[str, Any], local_git: dict[str, object]) -> dict[str, Any]:
     if remote_manifest.get("schema") != "pucky.ui_bundle.v1":
         raise OfficialRefreshError("Remote UI manifest schema is invalid")
     if remote_manifest.get("source_commit_full") != local_git["head"]:
         raise OfficialRefreshError("Remote UI manifest commit does not match local master HEAD")
-    if remote_manifest.get("source_commit_short") != local_git["head_short"]:
+    if not short_commit_matches(local_git["head"], remote_manifest.get("source_commit_short")):
         raise OfficialRefreshError("Remote UI manifest short commit does not match local master HEAD")
     if remote_manifest.get("source_branch") != "master":
         raise OfficialRefreshError("Remote UI manifest branch must be master")
@@ -125,7 +131,7 @@ def verify_bundle_status(bundle_status: dict[str, Any], remote_manifest: dict[st
     expected = {
         "ui_version": remote_manifest["ui_version"],
         "source_commit_full": local_git["head"],
-        "source_commit_short": local_git["head_short"],
+        "source_commit_short": remote_manifest["source_commit_short"],
         "source_branch": "master",
         "source_dirty": False,
     }
