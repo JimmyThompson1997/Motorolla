@@ -81,6 +81,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.stop\""));
         assertTrue(source.contains("\"pucky.turn.settings.get\""));
         assertTrue(source.contains("\"pucky.turn.settings.set\""));
+        assertTrue(source.contains("\"pucky.turn.arrival_cue.test\""));
         assertTrue(source.contains("\"pucky.turn.chime.test\""));
         assertTrue(source.contains("\"pucky.turn.history\""));
         assertTrue(source.contains("\"pucky.turn.read\""));
@@ -89,6 +90,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
         assertTrue(source.contains("return puckyTurnController.settingsGet()"));
         assertTrue(source.contains("return puckyTurnController.settingsSet(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.arrivalCueTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.chimeTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.history(command.args())"));
         assertTrue(source.contains("return puckyTurnController.read(command.args())"));
@@ -204,8 +206,11 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(status, \"reply_mode\", replyModeAtUpload)"));
         assertTrue(source.contains("Json.put(status, \"spoken_reply_enabled\", spokenReplyEnabledAtUpload)"));
         assertTrue(source.contains("Json.put(status, \"server_telemetry\", parsed.telemetry())"));
+        assertTrue(source.contains("Json.put(out, \"arrival_cue_mode\", settings.getPuckyTurnArrivalCueMode())"));
         assertTrue(source.contains("Json.put(out, \"accepted_chime_enabled\", settings.isPuckyTurnAcceptedChimeEnabled())"));
+        assertTrue(source.contains("public JSONObject arrivalCueTest(JSONObject args)"));
         assertTrue(source.contains("public JSONObject chimeTest(JSONObject args)"));
+        assertTrue(source.contains("settings.setPuckyTurnArrivalCueMode"));
         assertTrue(source.contains("settings.setPuckyTurnAcceptedChimeEnabled"));
         assertFalse(Pattern.compile("Log\\.[^;]*getPuckyTurnAuthToken", Pattern.DOTALL).matcher(source).find());
     }
@@ -219,12 +224,16 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("https://pucky.fly.dev/api/turn"));
         assertTrue(source.contains("putString(editor, input, \"pucky_api_token\""));
         assertTrue(source.contains("\"pucky_turn_reply_mode\""));
+        assertTrue(source.contains("\"pucky_turn_arrival_cue_mode\""));
         assertTrue(source.contains("\"pucky_turn_accepted_chime_enabled\""));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_ONLY"));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_AND_SPOKEN"));
+        assertTrue(source.contains("PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME"));
         assertTrue(source.contains("public String getPuckyTurnReplyMode()"));
+        assertTrue(source.contains("public String getPuckyTurnArrivalCueMode()"));
         assertTrue(source.contains("public boolean isPuckyTurnSpokenReplyEnabled()"));
         assertTrue(source.contains("public boolean isPuckyTurnAcceptedChimeEnabled()"));
+        assertTrue(source.contains("public void setPuckyTurnArrivalCueMode(String mode)"));
         assertTrue(source.contains("public void setPuckyTurnAcceptedChimeEnabled(boolean enabled)"));
         assertTrue(source.contains("public void setPuckyTurnReplyMode(String mode)"));
         assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
@@ -343,12 +352,15 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("private volatile String acceptedChimedTurnId"));
         assertTrue(source.contains("playRecordingStartHaptic()"));
         assertTrue(source.contains("playRecordingStopHaptic()"));
-        assertTrue(source.contains("playAcceptedChimeOnce(clientTurnId, remoteStage)"));
-        assertTrue(source.contains(".playSuccessChime(\"pucky.turn_accepted_chime_playback.v1\")"));
+        assertTrue(source.contains("playArrivalCueOnce(clientTurnId, remoteStage)"));
+        assertTrue(source.contains(".playSuccessChime(\"pucky.turn_arrival_cue_playback.v1\")"));
         assertFalse(source.contains("ToneGenerator.TONE_PROP_PROMPT"));
-        assertTrue(responseBody.contains("playAcceptedChimeOnce(clientTurnId, \"http_response_success\")"));
+        assertTrue(responseBody.contains("playArrivalCueOnce(clientTurnId, \"http_response_success\")"));
+        assertTrue(source.contains("Json.put(status, \"arrival_cue\""));
         assertTrue(source.contains("Json.put(status, \"accepted_chime\""));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"arrival_cue\")"));
         assertTrue(source.contains("copyIfPresent(record, detail, \"accepted_chime\")"));
+        assertTrue(source.contains("copyIfPresent(event, detail, \"arrival_cue\")"));
         assertTrue(source.contains("copyIfPresent(event, detail, \"accepted_chime\")"));
 
         assertTrue(startBody.contains("final boolean feedback = args.optBoolean(\"feedback\", true)"));
@@ -361,11 +373,13 @@ public final class PuckyTurnSourceTest {
         assertTrue(stopBody.contains("if (feedback) {\n            playRecordingStopHaptic();\n        }\n        if (!speechDetected)"));
         assertTrue(stopBody.indexOf("playRecordingStopHaptic()") < stopBody.indexOf("if (!speechDetected)"));
         assertFalse(finishBody.contains("playRecordingStopHaptic()"));
-        assertFalse(finishBody.substring(finishBody.indexOf("if (!isUploadConfigured())")).contains("playAcceptedChimeOnce"));
+        assertFalse(finishBody.substring(finishBody.indexOf("if (!isUploadConfigured())")).contains("playArrivalCueOnce"));
         assertTrue(remoteStatusBody.contains("if (isAcceptedRemoteStage(remoteStage))"));
-        assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", playAcceptedChimeOnce(clientTurnId, remoteStage))"));
+        assertTrue(remoteStatusBody.contains("JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, remoteStage);"));
+        assertTrue(remoteStatusBody.contains("Json.put(status, \"arrival_cue\", arrivalCue)"));
+        assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", arrivalCue)"));
         assertTrue(source.contains("private static boolean isAcceptedRemoteStage(String stage)"));
-        assertTrue(source.contains("private JSONObject playAcceptedChimeOnce(String turnId, String trigger)"));
+        assertTrue(source.contains("private JSONObject playArrivalCueOnce(String turnId, String trigger)"));
         assertTrue(capture.contains("if (capture.feedback)"));
     }
 

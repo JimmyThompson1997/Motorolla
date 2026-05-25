@@ -17,9 +17,14 @@ public final class SettingsStore {
     private static final String PUCKY_TURN_URL = "pucky_turn_url";
     private static final String PUCKY_API_TOKEN = "pucky_api_token";
     private static final String PUCKY_TURN_REPLY_MODE = "pucky_turn_reply_mode";
+    private static final String PUCKY_TURN_ARRIVAL_CUE_MODE = "pucky_turn_arrival_cue_mode";
     private static final String PUCKY_TURN_ACCEPTED_CHIME_ENABLED = "pucky_turn_accepted_chime_enabled";
     public static final String PUCKY_TURN_REPLY_CARD_ONLY = "card_only";
     public static final String PUCKY_TURN_REPLY_CARD_AND_SPOKEN = "card_and_spoken";
+    public static final String PUCKY_TURN_ARRIVAL_CUE_NONE = "none";
+    public static final String PUCKY_TURN_ARRIVAL_CUE_HAPTIC = "haptic";
+    public static final String PUCKY_TURN_ARRIVAL_CUE_CHIME = "chime";
+    public static final String PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME = "haptic_and_chime";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
@@ -95,12 +100,32 @@ public final class SettingsStore {
         prefs.edit().putString(PUCKY_TURN_REPLY_MODE, normalizePuckyTurnReplyMode(mode)).commit();
     }
 
+    public String getPuckyTurnArrivalCueMode() {
+        if (prefs.contains(PUCKY_TURN_ARRIVAL_CUE_MODE)) {
+            return normalizePuckyTurnArrivalCueMode(prefs.getString(PUCKY_TURN_ARRIVAL_CUE_MODE, PUCKY_TURN_ARRIVAL_CUE_CHIME));
+        }
+        if (prefs.contains(PUCKY_TURN_ACCEPTED_CHIME_ENABLED)) {
+            return prefs.getBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, true)
+                    ? PUCKY_TURN_ARRIVAL_CUE_CHIME
+                    : PUCKY_TURN_ARRIVAL_CUE_NONE;
+        }
+        return PUCKY_TURN_ARRIVAL_CUE_CHIME;
+    }
+
+    public void setPuckyTurnArrivalCueMode(String mode) {
+        String normalized = normalizePuckyTurnArrivalCueMode(mode);
+        prefs.edit()
+                .putString(PUCKY_TURN_ARRIVAL_CUE_MODE, normalized)
+                .putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, arrivalCueModeIncludesChime(normalized))
+                .commit();
+    }
+
     public boolean isPuckyTurnAcceptedChimeEnabled() {
-        return prefs.getBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, true);
+        return arrivalCueModeIncludesChime(getPuckyTurnArrivalCueMode());
     }
 
     public void setPuckyTurnAcceptedChimeEnabled(boolean enabled) {
-        prefs.edit().putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, enabled).commit();
+        setPuckyTurnArrivalCueMode(enabled ? PUCKY_TURN_ARRIVAL_CUE_CHIME : PUCKY_TURN_ARRIVAL_CUE_NONE);
     }
 
     public String getUiShellMode() {
@@ -154,7 +179,17 @@ public final class SettingsStore {
         putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
         putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
         putString(editor, input, "pucky_turn_reply_mode", PUCKY_TURN_REPLY_MODE);
-        putBoolean(editor, input, "pucky_turn_accepted_chime_enabled", PUCKY_TURN_ACCEPTED_CHIME_ENABLED);
+        if (input.has("pucky_turn_arrival_cue_mode")) {
+            String arrivalCueMode = normalizePuckyTurnArrivalCueMode(input.optString("pucky_turn_arrival_cue_mode", PUCKY_TURN_ARRIVAL_CUE_CHIME));
+            editor.putString(PUCKY_TURN_ARRIVAL_CUE_MODE, arrivalCueMode);
+            editor.putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, arrivalCueModeIncludesChime(arrivalCueMode));
+        } else if (input.has("pucky_turn_accepted_chime_enabled")) {
+            boolean acceptedChimeEnabled = input.optBoolean("pucky_turn_accepted_chime_enabled", true);
+            editor.putString(
+                    PUCKY_TURN_ARRIVAL_CUE_MODE,
+                    acceptedChimeEnabled ? PUCKY_TURN_ARRIVAL_CUE_CHIME : PUCKY_TURN_ARRIVAL_CUE_NONE);
+            editor.putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, acceptedChimeEnabled);
+        }
         putString(editor, input, "ui_shell_mode", UI_SHELL_MODE);
         editor.commit();
         JSONObject out = new JSONObject();
@@ -201,6 +236,34 @@ public final class SettingsStore {
             return PUCKY_TURN_REPLY_CARD_AND_SPOKEN;
         }
         return PUCKY_TURN_REPLY_CARD_ONLY;
+    }
+
+    private static String normalizePuckyTurnArrivalCueMode(String mode) {
+        String value = mode == null ? "" : mode.trim().toLowerCase();
+        if (PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME.equals(value)
+                || "both".equals(value)
+                || "buzz_and_chime".equals(value)
+                || "haptic+chime".equals(value)) {
+            return PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME;
+        }
+        if (PUCKY_TURN_ARRIVAL_CUE_HAPTIC.equals(value)
+                || "buzz".equals(value)
+                || "vibrate".equals(value)) {
+            return PUCKY_TURN_ARRIVAL_CUE_HAPTIC;
+        }
+        if (PUCKY_TURN_ARRIVAL_CUE_NONE.equals(value)
+                || "off".equals(value)
+                || "disabled".equals(value)
+                || "silent".equals(value)) {
+            return PUCKY_TURN_ARRIVAL_CUE_NONE;
+        }
+        return PUCKY_TURN_ARRIVAL_CUE_CHIME;
+    }
+
+    private static boolean arrivalCueModeIncludesChime(String mode) {
+        String normalized = normalizePuckyTurnArrivalCueMode(mode);
+        return PUCKY_TURN_ARRIVAL_CUE_CHIME.equals(normalized)
+                || PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME.equals(normalized);
     }
 
     private static void putString(SharedPreferences.Editor editor, JSONObject input, String jsonKey, String prefKey) {

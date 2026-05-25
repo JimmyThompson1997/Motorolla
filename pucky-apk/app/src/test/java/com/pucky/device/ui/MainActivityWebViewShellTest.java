@@ -71,6 +71,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"pucky.turn.status\"")
                         && bridge.contains("case \"pucky.turn.settings.get\"")
                         && bridge.contains("case \"pucky.turn.settings.set\"")
+                        && bridge.contains("case \"pucky.turn.arrival_cue.test\"")
                         && bridge.contains("case \"pucky.turn.chime.test\"")
                         && bridge.contains("case \"wake.status\"")
                         && bridge.contains("case \"wake.start\"")
@@ -122,6 +123,8 @@ public final class MainActivityWebViewShellTest {
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsGet();"));
         assertTrue(bridge.contains("case \"pucky.turn.settings.set\":"));
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).settingsSet(args);"));
+        assertTrue(bridge.contains("case \"pucky.turn.arrival_cue.test\":"));
+        assertTrue(bridge.contains("return PuckyTurnController.shared(context).arrivalCueTest(args);"));
         assertTrue(bridge.contains("case \"pucky.turn.chime.test\":"));
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).chimeTest(args);"));
         assertTrue(bridge.contains("case \"wake.status\":"));

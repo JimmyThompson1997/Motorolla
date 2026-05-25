@@ -140,6 +140,7 @@
   ];
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
+  const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
 
   const MOCK_CARDS = [
     {
@@ -386,26 +387,43 @@
     }
     if (command === "pucky.turn.settings.set") {
       const mode = normalizeReplyMode(args.reply_mode || args.mode);
+      const arrivalCueMode = normalizeArrivalCueMode(
+        args.arrival_cue_mode !== undefined
+          ? args.arrival_cue_mode
+          : args.accepted_chime_enabled !== undefined
+            ? (truthy(args.accepted_chime_enabled) ? "chime" : "none")
+            : state.turnSettings.arrival_cue_mode
+      );
       state.turnSettings = {
         schema: "pucky.turn_settings.v1",
         reply_mode: mode,
         spoken_reply_enabled: mode === "card_and_spoken",
-        accepted_chime_enabled: args.accepted_chime_enabled === undefined
-          ? state.turnSettings.accepted_chime_enabled !== false
-          : truthy(args.accepted_chime_enabled),
-        modes: TURN_REPLY_MODES
+        arrival_cue_mode: arrivalCueMode,
+        accepted_chime_enabled: arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime",
+        modes: TURN_REPLY_MODES,
+        arrival_cue_modes: TURN_ARRIVAL_CUE_MODES
       };
       return state.turnSettings;
     }
-    if (command === "pucky.turn.chime.test") {
+    if (command === "pucky.turn.arrival_cue.test") {
+      const arrivalCueMode = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode);
+      const acceptedChimeEnabled = arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime";
       return {
-        schema: "pucky.turn_accepted_chime_playback.v1",
+        schema: "pucky.turn_arrival_cue_playback.v1",
         test: true,
-        accepted_chime_enabled: state.turnSettings.accepted_chime_enabled !== false,
-        accepted_chime_attempted: state.turnSettings.accepted_chime_enabled !== false,
-        accepted_chime_suppressed: state.turnSettings.accepted_chime_enabled === false,
-        played: state.turnSettings.accepted_chime_enabled !== false,
-        reason: state.turnSettings.accepted_chime_enabled === false ? "disabled" : "",
+        arrival_cue_mode: arrivalCueMode,
+        arrival_cue_attempted: arrivalCueMode !== "none",
+        arrival_cue_suppressed: arrivalCueMode === "none",
+        arrival_cue_result: arrivalCueMode === "none" ? "disabled" : "played",
+        accepted_chime_enabled: acceptedChimeEnabled,
+        accepted_chime_attempted: acceptedChimeEnabled,
+        accepted_chime_suppressed: !acceptedChimeEnabled,
+        haptic_attempted: arrivalCueMode === "haptic" || arrivalCueMode === "haptic_and_chime",
+        haptic_played: arrivalCueMode === "haptic" || arrivalCueMode === "haptic_and_chime",
+        chime_attempted: acceptedChimeEnabled,
+        chime_played: acceptedChimeEnabled,
+        played: arrivalCueMode !== "none",
+        reason: arrivalCueMode === "none" ? "disabled" : "",
         asset_name: "Soft.ogg",
         asset_path: "/product/media/audio/notifications/Soft.ogg",
         fallback_used: false,
@@ -413,6 +431,9 @@
         stream: "music",
         usage: "media_sonification"
       };
+    }
+    if (command === "pucky.turn.chime.test") {
+      return browserRequest("pucky.turn.arrival_cue.test", args);
     }
     if (command === "wake.status") {
       return state.wakeStatus;
@@ -747,8 +768,10 @@
       schema: "pucky.turn_settings.v1",
       reply_mode: "card_only",
       spoken_reply_enabled: false,
+      arrival_cue_mode: "chime",
       accepted_chime_enabled: true,
-      modes: TURN_REPLY_MODES
+      modes: TURN_REPLY_MODES,
+      arrival_cue_modes: TURN_ARRIVAL_CUE_MODES
     };
   }
 
@@ -792,12 +815,23 @@
   function normalizeTurnSettings(input) {
     const raw = input && typeof input === "object" ? input : {};
     const mode = normalizeReplyMode(raw.reply_mode || raw.mode);
+    const arrivalCueMode = normalizeArrivalCueMode(
+      raw.arrival_cue_mode !== undefined
+        ? raw.arrival_cue_mode
+        : raw.accepted_chime_enabled !== false
+          ? "chime"
+          : "none"
+    );
     return {
       schema: "pucky.turn_settings.v1",
       reply_mode: mode,
       spoken_reply_enabled: mode === "card_and_spoken",
-      accepted_chime_enabled: raw.accepted_chime_enabled !== false,
-      modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : TURN_REPLY_MODES
+      arrival_cue_mode: arrivalCueMode,
+      accepted_chime_enabled: arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime",
+      modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : TURN_REPLY_MODES,
+      arrival_cue_modes: Array.isArray(raw.arrival_cue_modes) && raw.arrival_cue_modes.length
+        ? raw.arrival_cue_modes
+        : TURN_ARRIVAL_CUE_MODES
     };
   }
 
@@ -833,6 +867,20 @@
     return value === "card_and_spoken" || value === "spoken" || value === "voice"
       ? "card_and_spoken"
       : "card_only";
+  }
+
+  function normalizeArrivalCueMode(mode) {
+    const value = String(mode || "").trim().toLowerCase();
+    if (value === "haptic_and_chime" || value === "both" || value === "buzz_and_chime") {
+      return "haptic_and_chime";
+    }
+    if (value === "haptic" || value === "buzz" || value === "vibrate") {
+      return "haptic";
+    }
+    if (value === "none" || value === "off" || value === "silent") {
+      return "none";
+    }
+    return "chime";
   }
 
   function applyTurnStatus(input) {
@@ -1164,7 +1212,7 @@
       hero,
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
-      acceptedChimeSettingsCard(),
+      arrivalCueSettingsCard(),
       diagnosticsSettingsCard()
     );
     return page;
@@ -1177,12 +1225,12 @@
     icon.innerHTML = iconSvg("mic", { filled: true });
     const copy = el("div", "settings-card-copy");
     copy.append(
-      el("h2", "settings-card-title", "Walkie reply mode"),
-      el("p", "settings-card-detail", "Volume-up turns save a home card by default.")
+      el("h2", "settings-card-title", "Reply playback"),
+      el("p", "settings-card-detail", "Choose whether a landed walkie reply stays as a card or also speaks out loud.")
     );
     const segment = el("div", "settings-segment");
     segment.setAttribute("role", "group");
-    segment.setAttribute("aria-label", "Walkie reply mode");
+    segment.setAttribute("aria-label", "Reply playback");
     segment.append(
       replyModeButton("card_only", "Card only"),
       replyModeButton("card_and_spoken", "Card + voice")
@@ -1212,7 +1260,7 @@
         command: "pucky.turn.settings.set",
         args: {
           reply_mode: replyMode,
-          accepted_chime_enabled: state.turnSettings.accepted_chime_enabled !== false
+          arrival_cue_mode: state.turnSettings.arrival_cue_mode
         }
       });
       state.turnSettings = normalizeTurnSettings(updated);
@@ -1235,19 +1283,38 @@
     });
   }
 
-  function acceptedChimeSettingsCard() {
-    const card = settingsToggleCard({
-      accent: "#ffb000",
-      icon: "bell",
-      title: "Turn accepted chime",
-      detail: "Play one confirmation ping when a walkie turn lands on the VM.",
-      enabled: state.turnSettings.accepted_chime_enabled !== false,
-      onToggle: setAcceptedChimeEnabled
-    });
+  function arrivalCueSettingsCard() {
+    const card = el("article", "settings-card settings-arrival-cue");
+    card.style.setProperty("--accent", "#ffb000");
+    const icon = el("div", "settings-card-icon");
+    icon.innerHTML = iconSvg("bell", { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", "Reply arrival cue"),
+      el("p", "settings-card-detail", "Choose the one-time cue that tells you the turn landed before any optional voice playback.")
+    );
+    const segment = el("div", "settings-segment");
+    segment.setAttribute("role", "group");
+    segment.setAttribute("aria-label", "Reply arrival cue");
+    segment.append(
+      arrivalCueButton("none", "None"),
+      arrivalCueButton("haptic", "Buzz"),
+      arrivalCueButton("chime", "Chime"),
+      arrivalCueButton("haptic_and_chime", "Buzz + chime")
+    );
     const actions = el("div", "settings-card-actions");
-    actions.append(settingsActionButton("Test chime", testAcceptedChime));
-    card.append(actions);
+    actions.append(settingsActionButton("Test arrival cue", testArrivalCue));
+    card.append(icon, copy, segment, actions);
     return card;
+  }
+
+  function arrivalCueButton(mode, label) {
+    const active = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode) === mode;
+    const button = el("button", active ? "settings-segment-button is-active" : "settings-segment-button", label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.addEventListener("click", () => setArrivalCueMode(mode));
+    return button;
   }
 
   function diagnosticsSettingsCard() {
@@ -1291,10 +1358,11 @@
     }
   }
 
-  async function setAcceptedChimeEnabled(enabled) {
+  async function setArrivalCueMode(mode) {
+    const arrivalCueMode = normalizeArrivalCueMode(mode);
     state.turnSettings = normalizeTurnSettings({
       ...state.turnSettings,
-      accepted_chime_enabled: enabled
+      arrival_cue_mode: arrivalCueMode
     });
     render();
     try {
@@ -1302,7 +1370,7 @@
         command: "pucky.turn.settings.set",
         args: {
           reply_mode: state.turnSettings.reply_mode,
-          accepted_chime_enabled: enabled
+          arrival_cue_mode: arrivalCueMode
         }
       });
       state.turnSettings = normalizeTurnSettings(updated);
@@ -1312,11 +1380,11 @@
     }
   }
 
-  async function testAcceptedChime() {
+  async function testArrivalCue() {
     try {
-      await Pucky.request({ command: "pucky.turn.chime.test", args: {} });
+      await Pucky.request({ command: "pucky.turn.arrival_cue.test", args: {} });
     } catch (_) {
-      showToast("Could not test the accepted chime.");
+      showToast("Could not test the reply arrival cue.");
     }
   }
 
