@@ -339,7 +339,20 @@ def launch_home_command(args: argparse.Namespace, config: SlotConfig) -> list[st
     )
 
 
-def puckyctl_command(args: argparse.Namespace, config: SlotConfig, command_type: str, payload: dict[str, Any]) -> list[str]:
+def puckyctl_timeout_ms(args: argparse.Namespace, *, minimum_seconds: int | float = 0) -> int:
+    configured = int(getattr(args, "puckyctl_timeout_ms", 120000) or 120000)
+    minimum = max(0, int(float(minimum_seconds) * 1000))
+    return max(configured, minimum)
+
+
+def puckyctl_command(
+    args: argparse.Namespace,
+    config: SlotConfig,
+    command_type: str,
+    payload: dict[str, Any],
+    *,
+    timeout_ms: int | None = None,
+) -> list[str]:
     return [
         sys.executable,
         str(args.puckyctl),
@@ -348,6 +361,8 @@ def puckyctl_command(args: argparse.Namespace, config: SlotConfig, command_type:
         f"http://127.0.0.1:{config.broker_port}",
         "--device-id",
         config.device_id,
+        "--timeout-ms",
+        str(timeout_ms if timeout_ms is not None else puckyctl_timeout_ms(args)),
         "command",
         command_type,
         "--args-json",
@@ -397,6 +412,17 @@ def wait_for_broker_device(config: SlotConfig, *, timeout: float = 45.0) -> dict
     raise SuiteError(f"Timed out waiting for broker device {config.device_id}: {last_payload}")
 
 
+def broker_device_snapshot(config: SlotConfig, *, timeout: float = 4.0) -> dict[str, Any] | None:
+    try:
+        payload = wait_http(f"{local_broker_url(config)}/devices", timeout=timeout)
+    except Exception:
+        return None
+    for device in payload.get("devices", []):
+        if device.get("device_id") == config.device_id:
+            return device
+    return None
+
+
 def boot_signal(args: argparse.Namespace, runner: Runner, config: SlotConfig, prop: str) -> str:
     result = runner.run(adb_command(args, config.serial, ["shell", "getprop", prop]), timeout=15, check=False)
     return result.stdout.strip()
@@ -424,12 +450,56 @@ def wait_for_boot(args: argparse.Namespace, runner: Runner, config: SlotConfig, 
     raise SuiteError(f"Timed out waiting for emulator boot: {config.serial}")
 
 
+def package_manager_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
+    service = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "package"]), timeout=15, check=False)
+    service_text = (service.stdout + "\n" + service.stderr).lower()
+    if service.returncode != 0 or "can't find service" in service_text or "not found" in service_text:
+        return False
+
+    query = runner.run(
+        adb_command(args, config.serial, ["shell", "cmd", "package", "list", "packages", "android"]),
+        timeout=20,
+        check=False,
+    )
+    query_text = (query.stdout + "\n" + query.stderr).lower()
+    if query.returncode == 0 and "package:android" in query_text:
+        return True
+    if "can't find service" in query_text or "not found" in query_text:
+        return False
+
+    fallback = runner.run(adb_command(args, config.serial, ["shell", "pm", "path", "android"]), timeout=20, check=False)
+    fallback_text = (fallback.stdout + "\n" + fallback.stderr).lower()
+    return fallback.returncode == 0 and "package:" in fallback_text and "can't find service" not in fallback_text
+
+
+def wait_for_package_manager(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, timeout: float = 120.0) -> None:
+    if runner.dry_run:
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if package_manager_ready(args, runner, config):
+            return
+        time.sleep(2)
+    raise SuiteError(f"Timed out waiting for Android PackageManager readiness: {config.serial}")
+
+
 def serial_is_connected(args: argparse.Namespace, runner: Runner, serial: str) -> bool:
     require_emulator_serial(serial)
     if runner.dry_run:
         return True
     result = runner.run([str(args.adb), "devices", "-l"], check=False)
     return any(device.serial == serial and device.state == "device" for device in parse_adb_devices(result.stdout))
+
+
+def adb_transport_state(args: argparse.Namespace, runner: Runner, serial: str) -> str:
+    require_emulator_serial(serial)
+    if runner.dry_run:
+        return "device"
+    result = runner.run([str(args.adb), "devices", "-l"], check=False, timeout=15)
+    for device in parse_adb_devices(result.stdout):
+        if device.serial == serial:
+            return device.state
+    return "missing"
 
 
 def parse_display_ids(output: str) -> list[str]:
@@ -843,6 +913,7 @@ def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
     if not serial_is_connected(args, runner, config.serial):
         raise SuiteError(f"Emulator is not connected: {config.serial}")
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    wait_for_package_manager(args, runner, config)
     broker_pid = start_node_broker(args, runner, config)
     if not args.skip_build:
         runner.run([str(args.gradle), "-p", str(ROOT / "pucky-apk"), ":app:assembleDebug"], env=sdk_env(args, config), timeout=300)
@@ -984,6 +1055,58 @@ def command_result(payload: dict[str, Any]) -> dict[str, Any]:
     return result if isinstance(result, dict) else payload
 
 
+def ensure_broker_command_channel(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    stage: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    if runner.dry_run:
+        return {"stage": stage, "dry_run": True}
+    device = wait_for_broker_device(config, timeout=float(timeout_seconds))
+    ping = command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "ping",
+                {},
+                timeout_ms=puckyctl_timeout_ms(args, minimum_seconds=timeout_seconds),
+            ),
+            timeout=max(60, int(timeout_seconds)),
+        )
+    )
+    return {"stage": stage, "device": device, "ping": ping}
+
+
+def record_thread_origin_failure(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    stage: str,
+    kind: str,
+    error: Exception,
+    extra: dict[str, Any] | None = None,
+) -> Path:
+    payload = {
+        "schema": "pucky.emulator_thread_origin_failure.v1",
+        "created_at": now_iso(),
+        "stage": stage,
+        "kind": kind,
+        "error": str(error),
+        "config": asdict(config),
+        "adb_state": adb_transport_state(args, runner, config.serial),
+        "broker_url": local_broker_url(config),
+        "broker_device": broker_device_snapshot(config),
+        "extra": extra or {},
+    }
+    return write_evidence(config, "thread-origin-failure.json", payload)
+
+
 def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -992,7 +1115,54 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
         raise SuiteError(f"Emulator is not connected: {config.serial}")
 
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
-    bundle_refresh = run_official_refresh(args, runner, config) if not args.skip_refresh else {"ok": True, "skipped": True}
+    channel_checks: dict[str, Any] = {}
+    if not args.skip_refresh:
+        if not args.dry_run:
+            channel_checks["before_refresh"] = ensure_broker_command_channel(
+                args,
+                runner,
+                config,
+                stage="before_refresh",
+                timeout_seconds=45,
+            )
+        try:
+            bundle_refresh = run_official_refresh(args, runner, config)
+        except Exception as exc:
+            if args.dry_run:
+                raise
+            failure_path = record_thread_origin_failure(
+                args,
+                runner,
+                config,
+                stage="refresh",
+                kind="refresh_failed",
+                error=exc if isinstance(exc, Exception) else SuiteError(str(exc)),
+                extra={"channel_checks": channel_checks},
+            )
+            raise SuiteError(f"Official refresh failed during thread-origin proof; see {failure_path}: {exc}") from exc
+        if not args.dry_run:
+            try:
+                channel_checks["after_refresh"] = ensure_broker_command_channel(
+                    args,
+                    runner,
+                    config,
+                    stage="after_refresh",
+                    timeout_seconds=max(90, args.refresh_timeout_seconds),
+                )
+            except Exception as exc:
+                kind = "device_offline_during_refresh" if adb_transport_state(args, runner, config.serial) != "device" else "broker_not_reconnected_after_refresh"
+                failure_path = record_thread_origin_failure(
+                    args,
+                    runner,
+                    config,
+                    stage="after_refresh",
+                    kind=kind,
+                    error=exc if isinstance(exc, Exception) else SuiteError(str(exc)),
+                    extra={"bundle_refresh": bundle_refresh, "channel_checks": channel_checks},
+                )
+                raise SuiteError(f"Thread-origin proof lost the device after refresh; see {failure_path}: {exc}") from exc
+    else:
+        bundle_refresh = {"ok": True, "skipped": True}
     bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
 
     turn_id = f"prove-thread-origin-{int(time.time())}-{uuid.uuid4().hex[:8]}"
@@ -1075,7 +1245,26 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
     runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
     runner.run(launch_command(args, config), timeout=30)
     if not args.dry_run:
-        wait_for_broker_device(config, timeout=45)
+        try:
+            channel_checks["after_relaunch"] = ensure_broker_command_channel(
+                args,
+                runner,
+                config,
+                stage="after_relaunch",
+                timeout_seconds=45,
+            )
+        except Exception as exc:
+            kind = "device_offline_after_relaunch" if adb_transport_state(args, runner, config.serial) != "device" else "broker_not_reconnected_after_relaunch"
+            failure_path = record_thread_origin_failure(
+                args,
+                runner,
+                config,
+                stage="after_relaunch",
+                kind=kind,
+                error=exc if isinstance(exc, Exception) else SuiteError(str(exc)),
+                extra={"bundle_refresh": bundle_refresh, "channel_checks": channel_checks},
+            )
+            raise SuiteError(f"Thread-origin proof lost the device after relaunch; see {failure_path}: {exc}") from exc
         relaunch_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
     else:
         runner.run(puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120)
@@ -1113,6 +1302,7 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
         "feed_sync": feed_sync,
         "local_card_origin": local_origin,
         "relaunch_card_origin": relaunch_origin,
+        "channel_checks": channel_checks,
         "screenshots": {
             "feed_card": str(feed_screenshot),
             "detail_thread": str(detail_screenshot),
@@ -1189,6 +1379,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--puckyctl", type=Path, default=DEFAULT_PUCKYCTL)
     parser.add_argument("--fake-broker", type=Path, default=DEFAULT_FAKE_BROKER)
     parser.add_argument("--flyctl", type=Path, default=Path("flyctl"))
+    parser.add_argument("--puckyctl-timeout-ms", type=int, default=180000)
     parser.add_argument("--dry-run", action="store_true")
 
 

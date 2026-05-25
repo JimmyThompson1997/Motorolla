@@ -25,6 +25,7 @@ def ns(tmp_path: Path, **overrides):
         "apk": tmp_path / "app-debug.apk",
         "puckyctl": tmp_path / "puckyctl.py",
         "fake_broker": tmp_path / "fake-broker",
+        "puckyctl_timeout_ms": 180000,
         "dry_run": True,
     }
     paths.update(overrides)
@@ -158,6 +159,8 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "-n" in launch
     assert f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect" in launch
     assert "--broker" in command
+    assert "--timeout-ms" in command
+    assert "180000" in command
     assert f"http://127.0.0.1:{config.broker_port}" in command
     assert "--device-id" in command and config.device_id in command
 
@@ -283,6 +286,39 @@ def test_cmd_start_reuses_existing_connected_serial(monkeypatch: pytest.MonkeyPa
     assert launched == []
 
 
+def test_cmd_provision_waits_for_package_manager_before_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, skip_build=True, dry_run=False)
+    args.apk.write_text("apk", encoding="utf-8")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    events: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "start_node_broker", lambda *_args, **_kwargs: -1)
+    monkeypatch.setattr(
+        suite,
+        "wait_for_package_manager",
+        lambda *_args, **_kwargs: events.append("package_manager_ready"),
+    )
+    monkeypatch.setattr(suite, "wait_for_broker_device", lambda *_args, **_kwargs: {"device_id": config.device_id, "online": True})
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+
+    def fake_run(self, command, **kwargs):
+        joined = " ".join(command)
+        if " install " in f" {joined} ":
+            events.append("install")
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+
+    result = suite.cmd_provision(args)
+
+    assert result["ok"] is True
+    assert events[:2] == ["package_manager_ready", "install"]
+
+
 def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     monkeypatch.setattr(suite, "now_iso", lambda: "2026-05-23T00:00:00Z")
@@ -390,6 +426,183 @@ def test_prove_thread_origin_dry_run_uses_refresh_sync_and_relaunch(monkeypatch:
     assert "ui.reply_cards.get" in planned
     assert "force-stop" in planned
     assert "input tap 528 230" in planned
+
+
+def test_prove_thread_origin_waits_for_broker_channel_around_refresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(
+        tmp_path,
+        slot=2,
+        dry_run=False,
+        turn_url="https://pucky.fly.dev/api/turn",
+        turn_token="secret",
+        sample_audio=tmp_path / "sample.wav",
+        vm_base_url="https://pucky.fly.dev",
+        operator_token="",
+        fly_app="pucky",
+        vm_codex_home="/data/home/codex",
+        turn_timeout_seconds=180,
+        vm_query_timeout_seconds=90,
+        refresh_timeout_seconds=180,
+        ui_dwell_seconds=0.0,
+        open_card_tap="528,230",
+        gear_tap="930,312",
+        skip_refresh=False,
+    )
+    args.sample_audio.write_bytes(b"RIFFdemo")
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    channel_stages: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        suite,
+        "ensure_broker_command_channel",
+        lambda _args, _runner, _config, *, stage, timeout_seconds: channel_stages.append(stage) or {"stage": stage, "ok": True},
+    )
+    monkeypatch.setattr(suite, "run_official_refresh", lambda *_args, **_kwargs: {"ok": True, "evidence_path": "refresh.json"})
+    monkeypatch.setattr(
+        suite,
+        "post_live_turn",
+        lambda _args, turn_id: {
+            "turn_id": turn_id,
+            "card_id": "card-prove",
+            "title": "Proof card",
+            "origin": {
+                "runtime": "codex",
+                "thread_id": "thread-123",
+                "thread_title": "Proof card",
+                "rollout_path": "/data/home/codex/sessions/proof.jsonl",
+                "source": "vscode",
+                "model": "gpt-5.5",
+                "model_provider": "openai",
+                "reasoning_effort": "high",
+                "sandbox_policy": "danger-full-access",
+                "approval_mode": "never",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        suite,
+        "query_live_vm_thread",
+        lambda *_args, **_kwargs: {
+            "id": "thread-123",
+            "title": "Proof card",
+            "rollout_path": "/data/home/codex/sessions/proof.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+            "rollout_exists": True,
+        },
+    )
+    monkeypatch.setattr(suite, "tap", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "capture_screenshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "write_evidence", lambda config, name, payload: Path(config.evidence_dir) / name)
+
+    def fake_run(self, command, **kwargs):
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def fake_command_json(_runner, command, **_kwargs):
+        command_type = command[command.index("command") + 1]
+        if command_type == "ui.bundle.status":
+            return {"result": {"ui_version": "git-proof", "source_commit_full": "proof"}}
+        if command_type == "pucky.feed.sync":
+            return {"result": {"ok": True}}
+        if command_type == "ui.reply_cards.get":
+            return {
+                "result": {
+                    "cards": [
+                        {
+                            "card_id": "card-prove",
+                            "turn_id": "prove-thread-origin-turn",
+                            "session_id": "prove-thread-origin-turn",
+                            "origin": {
+                                "runtime": "codex",
+                                "thread_id": "thread-123",
+                                "thread_title": "Proof card",
+                                "rollout_path": "/data/home/codex/sessions/proof.jsonl",
+                                "source": "vscode",
+                                "model": "gpt-5.5",
+                                "model_provider": "openai",
+                                "reasoning_effort": "high",
+                                "sandbox_policy": "danger-full-access",
+                                "approval_mode": "never",
+                            },
+                        }
+                    ]
+                }
+            }
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(suite, "find_snapshot_card", lambda *_args, **_kwargs: {
+        "card_id": "card-prove",
+        "turn_id": "prove-thread-origin-turn",
+        "session_id": "prove-thread-origin-turn",
+        "origin": {
+            "runtime": "codex",
+            "thread_id": "thread-123",
+            "thread_title": "Proof card",
+            "rollout_path": "/data/home/codex/sessions/proof.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+        },
+    })
+
+    result = suite.cmd_prove_thread_origin(args)
+
+    assert result["ok"] is True
+    assert channel_stages == ["before_refresh", "after_refresh", "after_relaunch"]
+
+
+def test_prove_thread_origin_records_structured_refresh_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(
+        tmp_path,
+        slot=1,
+        dry_run=False,
+        turn_url="https://pucky.fly.dev/api/turn",
+        turn_token="secret",
+        sample_audio=tmp_path / "sample.wav",
+        vm_base_url="https://pucky.fly.dev",
+        operator_token="",
+        fly_app="pucky",
+        vm_codex_home="/data/home/codex",
+        refresh_timeout_seconds=180,
+        skip_refresh=False,
+    )
+    args.sample_audio.write_bytes(b"RIFFdemo")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "run_official_refresh", lambda *_args, **_kwargs: (_ for _ in ()).throw(suite.SuiteError("refresh boom")))
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "offline")
+    monkeypatch.setattr(suite, "broker_device_snapshot", lambda *_args, **_kwargs: {"device_id": config.device_id, "online": False})
+    def fake_write_evidence(_config, _name, payload):
+        captured["payload"] = payload
+        return Path(_config.evidence_dir) / "thread-origin-failure.json"
+
+    monkeypatch.setattr(suite, "write_evidence", fake_write_evidence)
+
+    with pytest.raises(suite.SuiteError, match="thread-origin-failure.json"):
+        suite.cmd_prove_thread_origin(args)
+
+    failure = captured["payload"]
+    assert failure["stage"] == "refresh"
+    assert failure["kind"] == "refresh_failed"
+    assert failure["adb_state"] == "offline"
+    assert failure["broker_device"]["online"] is False
 
 
 def test_provision_refuses_when_configured_serial_is_not_emulator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
