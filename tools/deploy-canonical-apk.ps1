@@ -7,7 +7,7 @@ param(
     [string]$ApkProjectDir = "$PSScriptRoot\..\pucky-apk",
     [string]$PackageName = "com.pucky.device.debug",
     [string]$ActivityName = "com.pucky.device.MainActivity",
-    [string]$CanonicalRepoRoot = "C:\Users\jimmy\Desktop\Motorolla-master-deploy",
+    [string]$CanonicalRepoRoot = "C:\Users\jimmy\Desktop\Motorolla-master-ui",
     [string]$ExpectedBranch = "master",
     [int]$ExpectedVersionCode = -1,
     [string]$ExpectedVersionName = "",

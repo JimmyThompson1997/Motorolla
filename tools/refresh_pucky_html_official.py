@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 from urllib.request import urlopen
 
 
-CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-deploy")
+CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
 DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
 DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,11 @@ def test_official_helper_source_does_not_reference_low_level_local_install_comma
     assert "ui.shell.mode.set" in source
     assert "file.put_base64" not in source
     assert "ui.bundle.install_downloaded" not in source
+
+
+def test_official_tools_share_the_same_canonical_repo_root() -> None:
+    deploy_source = Path(official.__file__).with_name("deploy-canonical-apk.ps1").read_text(encoding="utf-8")
+    match = re.search(r'\$CanonicalRepoRoot = "([^"]+)"', deploy_source)
+
+    assert match is not None
+    assert Path(match.group(1)) == official.CANONICAL_REPO_ROOT
