@@ -641,6 +641,9 @@ def test_active_waveform_uses_preview_lane_and_mic_accent() -> None:
     assert "width: 100%" in styles
     assert ".action-audio.is-playing" in styles
     assert "color: var(--accent" in styles
+    active_body = app.split("function isActiveCard(card) {", 1)[1].split("\n  }\n\n  function hasAudio(card)", 1)[0]
+    assert "state.player.is_playing && playerHasAudioIdentity(state.player)" in active_body
+    assert "return samePath(state.activePath, audioControlKey(card));" in active_body
 
 
 def test_smart_card_and_message_timestamps_are_rendered() -> None:
@@ -707,7 +710,7 @@ def test_audiobook_card_uses_single_file_with_timestamps() -> None:
     assert "function isSameAudioCard(player, card)" in app
     assert "function playerHasAudioIdentity(player)" in app
     assert "function syncActivePathFromPlayer(player)" in app
-    assert "if (playerHasAudioIdentity(state.player))" in app
+    assert "if (state.player.is_playing && playerHasAudioIdentity(state.player))" in app
     assert "syncActivePathFromPlayer(state.player)" in app
     assert "|| samePath(state.activePath, audioControlKey(card))" not in app
     assert 'command: "player.queue.set"' in app

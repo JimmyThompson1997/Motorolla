@@ -4059,7 +4059,7 @@
   }
 
   function isActiveCard(card) {
-    if (playerHasAudioIdentity(state.player)) {
+    if (state.player.is_playing && playerHasAudioIdentity(state.player)) {
       return isSameAudioCard(state.player, card);
     }
     return samePath(state.activePath, audioControlKey(card));
