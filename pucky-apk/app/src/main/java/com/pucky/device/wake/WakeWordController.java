@@ -9,28 +9,25 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
 import com.pucky.device.assistant.PuckyAssistantController;
+import com.pucky.device.pucky.SileroVadEngine;
+import com.pucky.device.pucky.VadEngine;
+import com.pucky.device.speech.OnDeviceInjectedAudioRecognizer;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
+import com.pucky.device.speech.lab.AudioFrameBus;
+import com.pucky.device.speech.lab.AudioFrameConsumer;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Locale;
 
 public final class WakeWordController {
     private static final String TAG = "PuckyWakeWord";
@@ -42,26 +39,19 @@ public final class WakeWordController {
     private static final String KEY_LAST_START_REQUESTED_AT = "last_start_requested_at";
     private static final String KEY_LAST_STOP_REQUESTED_AT = "last_stop_requested_at";
     private static final String KEY_LAST_SIMULATE_REQUESTED_AT = "last_simulate_requested_at";
-    private static final String KEY_TRANSCRIPT_HISTORY_JSON = "transcript_history_json";
-    private static final String KEY_LAST_RESTART_REASON = "last_restart_reason";
-    private static final String KEY_RESTART_COUNT = "restart_count";
-    private static final String KEY_LAST_ERROR_CODE = "last_error_code";
-    private static final String KEY_LAST_ERROR_MESSAGE = "last_error_message";
-    private static final String KEY_LAST_EVENT_AT = "last_event_at";
-    private static final String KEY_LAST_TRANSCRIPT = "last_transcript";
+    private static final String KEY_LAST_CANDIDATE_JSON = "last_candidate_json";
+    private static final String KEY_LAST_CONFIRMATION_JSON = "last_confirmation_json";
     private static final String KEY_LAST_MATCHED_PHRASE = "last_matched_phrase";
     private static final String KEY_LAST_MATCH_SOURCE = "last_match_source";
     private static final String KEY_LAST_MATCH_AT = "last_match_at";
+    private static final String KEY_LAST_REJECT_REASON = "last_reject_reason";
 
-    private static final String MODE_TRANSCRIPT_LAB = "transcript_lab";
-    private static final String ENGINE_TRANSCRIPT_LAB = "android_stt_transcript_lab";
+    private static final String MODE_PCM_WAKE = "pcm_wake";
+    private static final String ENGINE_PCM_VAD_INJECTED_STT = "pcm_vad_injected_stt";
     private static final String DEFAULT_SCOPE = "awake_and_unlocked_foreground";
     private static final String SCOPE_ASSISTANT_RESERVED = "assistant_screen_off_reserved";
-    private static final int MAX_TRANSCRIPT_EVENTS = 10;
     private static final long PROOF_WINDOW_MS = 3000L;
-    private static final long RESTART_BASE_MS = 1000L;
-    private static final long RESTART_MAX_MS = 10000L;
-    private static final long RESTART_THROTTLED_MS = 8000L;
+    private static final long CONFIRM_TIMEOUT_MS = 8000L;
 
     private static WakeWordController instance;
 
@@ -74,8 +64,8 @@ public final class WakeWordController {
 
     private final Context context;
     private final SharedPreferences prefs;
-    private final Handler main = new Handler(Looper.getMainLooper());
     private final RecipeDevicePrimitiveExecutor recipeExecutor;
+    private final OnDeviceInjectedAudioRecognizer injectedRecognizer;
     private final PowerManager powerManager;
     private final KeyguardManager keyguardManager;
     private final Object lock = new Object();
@@ -84,76 +74,57 @@ public final class WakeWordController {
     private boolean receiverRegistered;
     private boolean serviceStarted;
     private boolean running;
-    private boolean recognizerListening;
-    private String recognizerState = "idle";
+    private String state = "idle";
     private String suspendedReason = "";
-    private SpeechRecognizer recognizer;
-    private int sessionCounter;
-    private String activeSessionId = "";
-    private String matchedSessionId = "";
-    private long sessionStartElapsedMs;
-    private long readyElapsedMs;
-    private long speechBeginElapsedMs;
-    private long firstPartialElapsedMs;
-    private long finalOrErrorElapsedMs;
+    private AudioFrameBus bus;
+    private WakeCandidateConsumer candidateConsumer;
+    private int generation;
     private long proofUntilElapsedMs;
     private String proofMatchedPhrase = "";
     private String proofTranscript = "";
     private String activeTurnId = "";
     private String activeTurnSource = "";
 
-    private final Runnable restartRunnable = new Runnable() {
-        @Override
-        public void run() {
-            synchronized (lock) {
-                if (!running || hasActiveTurnLocked()) {
-                    return;
-                }
-                startRecognizerSessionLocked("scheduled_restart");
-            }
-        }
-    };
-
     private WakeWordController(Context context) {
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.recipeExecutor = new RecipeDevicePrimitiveExecutor(context);
+        this.injectedRecognizer = new OnDeviceInjectedAudioRecognizer(context);
         this.powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         this.keyguardManager = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
     }
 
     public JSONObject status() {
         synchronized (lock) {
-            JSONObject out = new JSONObject();
             boolean requested = isRequestedEnabledLocked();
-            Json.put(out, "schema", "pucky.wake_word_status.v2");
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.wake_word_status.v3");
             Json.put(out, "wake_word", "Hey Pucky");
             Json.put(out, "wake_family", WakePhraseFamily.statusJson());
             Json.put(out, "enabled", requested);
             Json.put(out, "configured", requested);
             Json.put(out, "requested_enabled", requested);
             Json.put(out, "running", running);
-            Json.put(out, "service_started", serviceStarted);
-            Json.put(out, "mode", MODE_TRANSCRIPT_LAB);
-            Json.put(out, "engine", ENGINE_TRANSCRIPT_LAB);
-            Json.put(out, "requested_engine", ENGINE_TRANSCRIPT_LAB);
-            Json.put(out, "effective_engine", running ? ENGINE_TRANSCRIPT_LAB : "stopped");
+            Json.put(out, "state", state);
+            Json.put(out, "mode", MODE_PCM_WAKE);
+            Json.put(out, "engine", ENGINE_PCM_VAD_INJECTED_STT);
+            Json.put(out, "requested_engine", ENGINE_PCM_VAD_INJECTED_STT);
+            Json.put(out, "effective_engine", running ? ENGINE_PCM_VAD_INJECTED_STT : "stopped");
             Json.put(out, "scope", prefs.getString(KEY_SCOPE, DEFAULT_SCOPE));
             Json.put(out, "supported_scopes", supportedScopesJson());
             Json.put(out, "suspended_reason", suspendedReason);
-            Json.put(out, "recognizer_state", recognizerState);
-            Json.put(out, "recognizer_listening", recognizerListening);
-            Json.put(out, "session_id", activeSessionId);
-            Json.put(out, "restart_count", prefs.getInt(KEY_RESTART_COUNT, 0));
-            Json.put(out, "last_restart_reason", prefs.getString(KEY_LAST_RESTART_REASON, ""));
-            Json.put(out, "last_error_code", prefs.getInt(KEY_LAST_ERROR_CODE, 0));
-            Json.put(out, "last_error_message", prefs.getString(KEY_LAST_ERROR_MESSAGE, ""));
-            Json.put(out, "last_event_at", prefs.getString(KEY_LAST_EVENT_AT, ""));
-            Json.put(out, "last_transcript", prefs.getString(KEY_LAST_TRANSCRIPT, ""));
+            Json.put(out, "audio_source", "VOICE_RECOGNITION");
+            Json.put(out, "sample_rate", AudioFrameBus.SAMPLE_RATE);
+            Json.put(out, "channels", 1);
+            Json.put(out, "encoding", "PCM_16BIT");
+            Json.put(out, "candidate_policy", policyJson());
+            Json.put(out, "vad", candidateConsumer == null ? JSONObject.NULL : candidateConsumer.snapshot());
+            Json.put(out, "audio_frame_bus", bus == null ? JSONObject.NULL : bus.snapshot());
+            Json.put(out, "last_candidate", jsonPref(KEY_LAST_CANDIDATE_JSON));
+            Json.put(out, "last_confirmation", jsonPref(KEY_LAST_CONFIRMATION_JSON));
+            Json.put(out, "last_reject_reason", prefs.getString(KEY_LAST_REJECT_REASON, ""));
             Json.put(out, "last_match", lastMatchJsonLocked());
             Json.put(out, "proof_indicator", proofIndicatorJsonLocked());
-            Json.put(out, "transcript_history", transcriptHistoryJsonLocked());
-            Json.put(out, "last_transcript_event", lastTranscriptEventLocked());
             Json.put(out, "assistant_status", PuckyAssistantController.status(context));
             Json.put(out, "last_config_set_at", prefs.getString(KEY_LAST_CONFIG_SET_AT, ""));
             Json.put(out, "last_start_requested_at", prefs.getString(KEY_LAST_START_REQUESTED_AT, ""));
@@ -209,12 +180,24 @@ public final class WakeWordController {
         prefs.edit().putString(KEY_LAST_SIMULATE_REQUESTED_AT, nowIso()).apply();
         JSONArray alternatives = new JSONArray();
         Json.add(alternatives, phrase);
-        TranscriptEvent event = recordTranscriptEvent("simulate", alternatives, new JSONArray(), 0, "");
+        String matched = WakePhraseFamily.matchedPhrasePrefix(alternatives);
+        boolean accepted = !matched.isEmpty();
+        JSONObject confirmation = confirmationJson("simulate", phrase, alternatives, new JSONArray(),
+                accepted ? "accepted" : "wake_phrase_no_match", 0L);
+        synchronized (lock) {
+            prefs.edit()
+                    .putString(KEY_LAST_CONFIRMATION_JSON, confirmation.toString())
+                    .putString(KEY_LAST_REJECT_REASON, accepted ? "" : "wake_phrase_no_match")
+                    .apply();
+            if (accepted) {
+                markProofLocked(matched, phrase, "simulate");
+            }
+        }
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.wake_simulate.v2");
-        Json.put(out, "accepted", event.accepted);
+        Json.put(out, "schema", "pucky.wake_simulate.v3");
+        Json.put(out, "accepted", accepted);
         Json.put(out, "transcript", phrase);
-        Json.put(out, "matched_phrase", event.matchedPhrase);
+        Json.put(out, "matched_phrase", matched);
         Json.put(out, "proof_indicator", proofIndicatorJsonLockedSafe());
         return out;
     }
@@ -235,7 +218,7 @@ public final class WakeWordController {
         synchronized (lock) {
             serviceStarted = false;
             unregisterReceiverLocked();
-            stopLabLocked("service_stopped");
+            stopAudioLocked("service_stopped", true);
         }
     }
 
@@ -243,7 +226,7 @@ public final class WakeWordController {
         synchronized (lock) {
             activeTurnId = safe(turnId);
             activeTurnSource = safe(source);
-            stopLabLocked("turn_active");
+            stopAudioLocked("turn_active", true);
         }
     }
 
@@ -264,251 +247,254 @@ public final class WakeWordController {
     private void reevaluate(String reason) {
         synchronized (lock) {
             if (!isRequestedEnabledLocked()) {
-                stopLabLocked("disabled");
+                stopAudioLocked("disabled", true);
                 return;
             }
             if (!serviceStarted) {
-                stopLabLocked("service_not_started");
+                stopAudioLocked("service_not_started", true);
                 return;
             }
             String scope = prefs.getString(KEY_SCOPE, DEFAULT_SCOPE);
             if (SCOPE_ASSISTANT_RESERVED.equals(scope)) {
-                stopLabLocked("assistant_scope_reserved");
+                stopAudioLocked("assistant_scope_reserved", true);
                 return;
             }
             if (!isDeviceInteractiveLocked()) {
-                stopLabLocked("device_not_interactive");
+                stopAudioLocked("device_not_interactive", true);
                 return;
             }
             if (isDeviceLockedLocked()) {
-                stopLabLocked("device_locked");
+                stopAudioLocked("device_locked", true);
                 return;
             }
             if (hasActiveTurnLocked()) {
-                stopLabLocked("turn_active");
+                stopAudioLocked("turn_active", true);
                 return;
             }
             if (!hasRecordAudioPermission()) {
-                stopLabLocked("record_audio_permission_missing");
+                stopAudioLocked("record_audio_permission_missing", true);
                 return;
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-                    || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-                stopLabLocked("on_device_speech_recognizer_unavailable");
-                return;
-            }
-            if (!running) {
-                running = true;
-                suspendedReason = "";
-                recognizerState = "starting";
-                recognizerListening = false;
-                prefs.edit()
-                        .putInt(KEY_RESTART_COUNT, 0)
-                        .putString(KEY_LAST_RESTART_REASON, reason)
-                        .apply();
-                startRecognizerSessionLocked(reason);
-                return;
-            }
-            if (recognizer == null && !"starting".equals(recognizerState)) {
-                startRecognizerSessionLocked(reason);
+            if (!running && !"confirming".equals(state)) {
+                startAudioLocked(reason);
             }
         }
     }
 
-    private void startRecognizerSessionLocked(String reason) {
-        if (!running || hasActiveTurnLocked()) {
+    private void startAudioLocked(String reason) {
+        generation += 1;
+        int currentGeneration = generation;
+        suspendedReason = "";
+        state = "armed";
+        running = true;
+        AudioFrameBus nextBus = new AudioFrameBus(context);
+        WakeCandidateConsumer consumer = new WakeCandidateConsumer(
+                new SileroVadEngine(context),
+                candidate -> onCandidateReady(currentGeneration, candidate));
+        nextBus.addSynchronousConsumer(consumer);
+        JSONObject start = nextBus.start();
+        if (!"started".equals(start.optString("result")) && !"already_running".equals(start.optString("result"))) {
+            running = false;
+            state = "error";
+            suspendedReason = start.optString("error", "audio_frame_bus_failed");
+            Log.i(TAG, "pcm_wake start_failed reason=" + reason + " error=" + suspendedReason);
             return;
         }
-        main.removeCallbacks(restartRunnable);
-        cleanupRecognizerOnMain();
-        sessionCounter += 1;
-        activeSessionId = "wake-lab-" + sessionCounter;
-        matchedSessionId = "";
-        sessionStartElapsedMs = SystemClock.elapsedRealtime();
-        readyElapsedMs = 0L;
-        speechBeginElapsedMs = 0L;
-        firstPartialElapsedMs = 0L;
-        finalOrErrorElapsedMs = 0L;
-        recognizerState = "starting";
-        recognizerListening = false;
-        prefs.edit().putString(KEY_LAST_RESTART_REASON, reason).apply();
-        Log.i(TAG, "transcript_lab session_start session=" + activeSessionId + " reason=" + reason);
-        String sessionId = activeSessionId;
-        main.post(() -> startRecognizerOnMain(sessionId));
+        bus = nextBus;
+        candidateConsumer = consumer;
+        Log.i(TAG, "pcm_wake armed reason=" + reason + " generation=" + currentGeneration);
     }
 
-    private void startRecognizerOnMain(String sessionId) {
+    private void onCandidateReady(int candidateGeneration, WakeCandidate candidate) {
         synchronized (lock) {
-            if (!running || !sessionId.equals(activeSessionId) || hasActiveTurnLocked()) {
+            if (candidateGeneration != generation || !"armed".equals(state) || !running) {
                 return;
             }
-            try {
-                recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
-                recognizer.setRecognitionListener(new LabRecognitionListener(sessionId));
-                recognizerState = "listening";
-                recognizerListening = true;
-                recognizer.startListening(recognizerIntent());
-            } catch (Exception exc) {
-                recognizerState = "error";
-                recognizerListening = false;
-                recordErrorLocked(0, exc.getClass().getSimpleName() + ": " + exc.getMessage());
-                Log.i(TAG, "transcript_lab error session=" + sessionId + " message=" + exc.getMessage());
-                scheduleRestartLocked("start_error");
-            }
+            state = "confirming";
+            running = false;
+            prefs.edit().putString(KEY_LAST_CANDIDATE_JSON, candidate.toJson().toString()).apply();
         }
+        Thread worker = new Thread(() -> confirmCandidate(candidateGeneration, candidate), "pucky-wake-confirm");
+        worker.setDaemon(true);
+        worker.start();
     }
 
-    private Intent recognizerIntent() {
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toLanguageTag());
-        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-        intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-        return intent;
-    }
-
-    private TranscriptEvent recordTranscriptEvent(
-            String eventType,
-            JSONArray alternatives,
-            JSONArray confidences,
-            int errorCode,
-            String errorMessage) {
-        TranscriptEvent event = new TranscriptEvent();
-        long nowElapsed = SystemClock.elapsedRealtime();
-        String transcript = alternatives.length() > 0 ? alternatives.optString(0, "") : "";
-        String matched = WakePhraseFamily.matchedPhrasePrefix(alternatives);
-        event.accepted = !matched.isEmpty();
-        event.matchedPhrase = matched;
+    private void confirmCandidate(int candidateGeneration, WakeCandidate candidate) {
+        AudioFrameBus toStop;
         synchronized (lock) {
-            if ("partial".equals(eventType) && firstPartialElapsedMs == 0L) {
-                firstPartialElapsedMs = nowElapsed;
-            }
-            if ("final".equals(eventType) || "error".equals(eventType)) {
-                finalOrErrorElapsedMs = nowElapsed;
-            }
-            JSONObject item = new JSONObject();
-            Json.put(item, "schema", "pucky.wake_transcript_event.v1");
-            Json.put(item, "event", eventType);
-            Json.put(item, "at", nowIso());
-            Json.put(item, "session_id", activeSessionId);
-            Json.put(item, "transcript", transcript);
-            Json.put(item, "alternatives", alternatives);
-            Json.put(item, "confidences", confidences);
-            Json.put(item, "accepted", event.accepted);
-            Json.put(item, "matched_phrase", matched);
-            Json.put(item, "match_source", event.accepted ? eventType : "");
-            Json.put(item, "error_code", errorCode);
-            Json.put(item, "error_message", safe(errorMessage));
-            Json.put(item, "timing", timingJsonLocked(nowElapsed));
-            appendTranscriptHistoryLocked(item);
-            SharedPreferences.Editor editor = prefs.edit()
-                    .putString(KEY_LAST_EVENT_AT, item.optString("at", ""))
-                    .putString(KEY_LAST_TRANSCRIPT, transcript);
-            if (errorCode != 0 || !safe(errorMessage).isEmpty()) {
-                editor.putInt(KEY_LAST_ERROR_CODE, errorCode)
-                        .putString(KEY_LAST_ERROR_MESSAGE, safe(errorMessage));
-            }
-            if (event.accepted) {
-                editor.putString(KEY_LAST_MATCHED_PHRASE, matched)
-                        .putString(KEY_LAST_MATCH_SOURCE, eventType)
-                        .putString(KEY_LAST_MATCH_AT, item.optString("at", ""));
-                proofUntilElapsedMs = nowElapsed + PROOF_WINDOW_MS;
-                proofMatchedPhrase = matched;
-                proofTranscript = transcript;
-            }
-            editor.apply();
+            toStop = bus;
+            bus = null;
+            candidateConsumer = null;
         }
-        if (event.accepted) {
-            playProofChimeOnce(eventType, transcript, matched);
+        if (toStop != null) {
+            toStop.stop();
         }
-        return event;
-    }
 
-    private void playProofChimeOnce(String eventType, String transcript, String matched) {
-        boolean shouldPlay;
+        long startedMs = SystemClock.elapsedRealtime();
+        String status;
+        String transcript = "";
+        JSONArray alternatives = new JSONArray();
+        JSONArray confidences = new JSONArray();
+        String rejectReason = "";
+        String matched = "";
+        if (WakeCandidateEndpointPolicy.FINISH_TOO_SHORT.equals(candidate.finishReason)) {
+            status = "rejected";
+            rejectReason = WakeCandidateEndpointPolicy.FINISH_TOO_SHORT;
+        } else {
+            OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognition = injectedRecognizer.recognize(
+                    OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidate.samples),
+                    CONFIRM_TIMEOUT_MS);
+            transcript = recognition.transcript;
+            alternatives = alternativesWithTranscript(recognition.transcript, recognition.alternatives);
+            confidences = recognition.confidences;
+            if (!recognition.succeeded || transcript.trim().isEmpty()) {
+                status = "error";
+                rejectReason = recognition.errorCode.isEmpty() ? "stt_no_transcript" : recognition.errorCode;
+            } else {
+                matched = WakePhraseFamily.matchedPhrasePrefix(alternatives);
+                status = matched.isEmpty() ? "rejected" : "accepted";
+                rejectReason = matched.isEmpty() ? "wake_phrase_no_match" : "";
+            }
+        }
+        long latencyMs = Math.max(0L, SystemClock.elapsedRealtime() - startedMs);
+        JSONObject confirmation = confirmationJson(status, transcript, alternatives, confidences, rejectReason, latencyMs);
+        boolean accepted = "accepted".equals(status);
         synchronized (lock) {
-            shouldPlay = activeSessionId.isEmpty() || !activeSessionId.equals(matchedSessionId);
-            if (shouldPlay && !activeSessionId.isEmpty()) {
-                matchedSessionId = activeSessionId;
+            prefs.edit()
+                    .putString(KEY_LAST_CONFIRMATION_JSON, confirmation.toString())
+                    .putString(KEY_LAST_REJECT_REASON, rejectReason)
+                    .apply();
+            if (accepted) {
+                markProofLocked(matched, transcript, "pcm_wake");
+            }
+            if (candidateGeneration == generation) {
+                state = accepted ? "matched" : "rejected";
             }
         }
-        Log.i(TAG, "transcript_lab " + eventType + " transcript=" + transcript
-                + " matched=" + matched + " accepted=true");
-        if (shouldPlay) {
-            recipeExecutor.playWakeListeningChime("pucky.wake_transcript_lab_match_chime.v1");
+        Log.i(TAG, "pcm_wake confirmation status=" + status
+                + " reason=" + rejectReason
+                + " matched=" + matched
+                + " transcript=" + transcript
+                + " duration_ms=" + candidate.durationMs);
+        if (accepted) {
+            recipeExecutor.playWakeListeningChime("pucky.wake_pcm_match_chime.v1");
         }
+        reevaluate("candidate_confirmed");
     }
 
-    private void appendTranscriptHistoryLocked(JSONObject item) {
-        JSONArray current = transcriptHistoryJsonLocked();
-        JSONArray next = new JSONArray();
-        Json.add(next, item);
-        for (int i = 0; i < current.length() && next.length() < MAX_TRANSCRIPT_EVENTS; i++) {
-            Json.add(next, current.optJSONObject(i) == null ? current.opt(i) : current.optJSONObject(i));
+    private void stopAudioLocked(String reason, boolean invalidate) {
+        if (invalidate) {
+            generation += 1;
         }
-        prefs.edit().putString(KEY_TRANSCRIPT_HISTORY_JSON, next.toString()).apply();
-    }
-
-    private void scheduleRestartLocked(String reason) {
-        if (!running || hasActiveTurnLocked()) {
-            return;
-        }
-        int count = prefs.getInt(KEY_RESTART_COUNT, 0) + 1;
-        long delay = restartDelayMs(reason, count);
-        prefs.edit()
-                .putInt(KEY_RESTART_COUNT, count)
-                .putString(KEY_LAST_RESTART_REASON, reason)
-                .apply();
-        recognizerState = "restarting";
-        recognizerListening = false;
-        Log.i(TAG, "transcript_lab restart session=" + activeSessionId
-                + " reason=" + reason + " delay_ms=" + delay + " count=" + count);
-        main.removeCallbacks(restartRunnable);
-        main.postDelayed(restartRunnable, delay);
-    }
-
-    private void stopLabLocked(String reason) {
-        if (!running && recognizer == null) {
-            suspendedReason = reason;
-            recognizerState = "idle";
-            recognizerListening = false;
-            return;
-        }
+        AudioFrameBus toStop = bus;
+        bus = null;
+        candidateConsumer = null;
         running = false;
         suspendedReason = reason;
-        recognizerState = "idle";
-        recognizerListening = false;
-        activeSessionId = "";
-        matchedSessionId = "";
-        main.removeCallbacks(restartRunnable);
-        cleanupRecognizerOnMain();
-        Log.i(TAG, "transcript_lab stopped reason=" + reason);
-    }
-
-    private void cleanupRecognizerOnMain() {
-        SpeechRecognizer toDestroy = recognizer;
-        recognizer = null;
-        if (toDestroy == null) {
-            return;
+        state = "idle";
+        if (toStop != null) {
+            Thread worker = new Thread(toStop::stop, "pucky-wake-audio-stop");
+            worker.setDaemon(true);
+            worker.start();
         }
-        main.post(() -> {
-            try {
-                toDestroy.cancel();
-            } catch (Exception ignored) {
-            }
-            try {
-                toDestroy.destroy();
-            } catch (Exception ignored) {
-            }
-        });
+        Log.i(TAG, "pcm_wake stopped reason=" + reason);
     }
 
-    private void recordErrorLocked(int code, String message) {
+    private void markProofLocked(String matched, String transcript, String source) {
+        String at = nowIso();
+        proofUntilElapsedMs = SystemClock.elapsedRealtime() + PROOF_WINDOW_MS;
+        proofMatchedPhrase = safe(matched);
+        proofTranscript = safe(transcript);
         prefs.edit()
-                .putInt(KEY_LAST_ERROR_CODE, code)
-                .putString(KEY_LAST_ERROR_MESSAGE, safe(message))
+                .putString(KEY_LAST_MATCHED_PHRASE, safe(matched))
+                .putString(KEY_LAST_MATCH_SOURCE, safe(source))
+                .putString(KEY_LAST_MATCH_AT, at)
                 .apply();
+    }
+
+    private JSONObject confirmationJson(
+            String status,
+            String transcript,
+            JSONArray alternatives,
+            JSONArray confidences,
+            String rejectReason,
+            long latencyMs) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.wake_confirmation.v1");
+        Json.put(out, "status", status);
+        Json.put(out, "transcript", safe(transcript));
+        Json.put(out, "alternatives", alternatives == null ? new JSONArray() : alternatives);
+        Json.put(out, "confidences", confidences == null ? new JSONArray() : confidences);
+        Json.put(out, "matched_phrase", WakePhraseFamily.matchedPhrasePrefix(alternatives));
+        Json.put(out, "reject_reason", safe(rejectReason));
+        Json.put(out, "latency_ms", latencyMs);
+        Json.put(out, "confirmed_at", nowIso());
+        return out;
+    }
+
+    private JSONObject proofIndicatorJsonLockedSafe() {
+        synchronized (lock) {
+            return proofIndicatorJsonLocked();
+        }
+    }
+
+    private JSONObject proofIndicatorJsonLocked() {
+        long remaining = Math.max(0L, proofUntilElapsedMs - SystemClock.elapsedRealtime());
+        boolean active = remaining > 0L;
+        JSONObject out = new JSONObject();
+        Json.put(out, "active", active);
+        Json.put(out, "visual_state", active ? "armed" : "idle");
+        Json.put(out, "matched_phrase", active ? proofMatchedPhrase : "");
+        Json.put(out, "transcript", active ? proofTranscript : "");
+        Json.put(out, "remaining_ms", remaining);
+        Json.put(out, "expires_at_elapsed_ms", proofUntilElapsedMs);
+        return out;
+    }
+
+    private JSONObject lastMatchJsonLocked() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "matched_phrase", prefs.getString(KEY_LAST_MATCHED_PHRASE, ""));
+        Json.put(out, "match_source", prefs.getString(KEY_LAST_MATCH_SOURCE, ""));
+        Json.put(out, "matched_at", prefs.getString(KEY_LAST_MATCH_AT, ""));
+        return out;
+    }
+
+    private JSONObject policyJson() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "speech_threshold_percent", WakeCandidateEndpointPolicy.SPEECH_THRESHOLD_PERCENT);
+        Json.put(out, "trailing_silence_ms", WakeCandidateEndpointPolicy.TRAILING_SILENCE_MS);
+        Json.put(out, "minimum_speech_ms", WakeCandidateEndpointPolicy.MIN_SPEECH_MS);
+        Json.put(out, "max_candidate_ms", WakeCandidateEndpointPolicy.MAX_CANDIDATE_MS);
+        Json.put(out, "pre_speech_ms", WakeCandidateEndpointPolicy.PRE_SPEECH_MS);
+        return out;
+    }
+
+    private JSONObject jsonPref(String key) {
+        String raw = prefs.getString(key, "");
+        if (raw == null || raw.trim().isEmpty()) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(raw);
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private JSONArray alternativesWithTranscript(String transcript, JSONArray alternatives) {
+        JSONArray out = new JSONArray();
+        if (!safe(transcript).isEmpty()) {
+            Json.add(out, transcript);
+        }
+        if (alternatives != null) {
+            for (int i = 0; i < alternatives.length(); i++) {
+                String value = alternatives.optString(i, "");
+                if (!safe(value).isEmpty()) {
+                    Json.add(out, value);
+                }
+            }
+        }
+        return out;
     }
 
     private boolean isRequestedEnabled() {
@@ -538,74 +524,14 @@ public final class WakeWordController {
         return !activeTurnId.isEmpty();
     }
 
-    private JSONObject timingJsonLocked(long nowElapsedMs) {
-        JSONObject out = new JSONObject();
-        Json.put(out, "session_elapsed_ms", elapsedSince(sessionStartElapsedMs, nowElapsedMs));
-        Json.put(out, "ready_elapsed_ms", elapsedSince(sessionStartElapsedMs, readyElapsedMs));
-        Json.put(out, "speech_begin_elapsed_ms", elapsedSince(sessionStartElapsedMs, speechBeginElapsedMs));
-        Json.put(out, "first_partial_elapsed_ms", elapsedSince(sessionStartElapsedMs, firstPartialElapsedMs));
-        Json.put(out, "final_or_error_elapsed_ms", elapsedSince(sessionStartElapsedMs, finalOrErrorElapsedMs));
-        return out;
-    }
-
-    private JSONObject lastMatchJsonLocked() {
-        JSONObject out = new JSONObject();
-        Json.put(out, "matched_phrase", prefs.getString(KEY_LAST_MATCHED_PHRASE, ""));
-        Json.put(out, "match_source", prefs.getString(KEY_LAST_MATCH_SOURCE, ""));
-        Json.put(out, "matched_at", prefs.getString(KEY_LAST_MATCH_AT, ""));
-        return out;
-    }
-
-    private JSONObject proofIndicatorJsonLockedSafe() {
-        synchronized (lock) {
-            return proofIndicatorJsonLocked();
-        }
-    }
-
-    private JSONObject proofIndicatorJsonLocked() {
-        long nowElapsed = SystemClock.elapsedRealtime();
-        long remaining = Math.max(0L, proofUntilElapsedMs - nowElapsed);
-        boolean active = remaining > 0L;
-        JSONObject out = new JSONObject();
-        Json.put(out, "active", active);
-        Json.put(out, "visual_state", active ? "armed" : "idle");
-        Json.put(out, "matched_phrase", active ? proofMatchedPhrase : prefs.getString(KEY_LAST_MATCHED_PHRASE, ""));
-        Json.put(out, "transcript", active ? proofTranscript : prefs.getString(KEY_LAST_TRANSCRIPT, ""));
-        Json.put(out, "remaining_ms", remaining);
-        Json.put(out, "expires_at_elapsed_ms", proofUntilElapsedMs);
-        return out;
-    }
-
-    private JSONArray transcriptHistoryJsonLocked() {
-        String raw = prefs.getString(KEY_TRANSCRIPT_HISTORY_JSON, "[]");
-        try {
-            return new JSONArray(raw == null || raw.isEmpty() ? "[]" : raw);
-        } catch (Exception ignored) {
-            return new JSONArray();
-        }
-    }
-
-    private JSONObject lastTranscriptEventLocked() {
-        JSONArray history = transcriptHistoryJsonLocked();
-        JSONObject item = history.optJSONObject(0);
-        return item == null ? new JSONObject() : item;
-    }
-
-    private JSONArray supportedScopesJson() {
-        JSONArray out = new JSONArray();
-        Json.add(out, DEFAULT_SCOPE);
-        Json.add(out, SCOPE_ASSISTANT_RESERVED);
-        return out;
-    }
-
     private void registerReceiverLocked() {
         if (receiverRegistered) {
             return;
         }
         screenReceiver = new BroadcastReceiver() {
             @Override
-            public void onReceive(Context ignoredContext, Intent ignoredIntent) {
-                reevaluate("device_state_changed");
+            public void onReceive(Context ignored, Intent intent) {
+                reevaluate(intent == null ? "screen_event" : safe(intent.getAction()));
             }
         };
         IntentFilter filter = new IntentFilter();
@@ -626,17 +552,25 @@ public final class WakeWordController {
         }
         try {
             context.unregisterReceiver(screenReceiver);
-        } catch (Exception ignored) {
+        } catch (IllegalArgumentException ignored) {
         }
         receiverRegistered = false;
         screenReceiver = null;
     }
 
-    private static long elapsedSince(long startMs, long endMs) {
-        if (startMs <= 0L || endMs <= 0L || endMs < startMs) {
-            return 0L;
-        }
-        return endMs - startMs;
+    private static JSONArray supportedScopesJson() {
+        JSONArray out = new JSONArray();
+        Json.add(out, DEFAULT_SCOPE);
+        Json.add(out, SCOPE_ASSISTANT_RESERVED);
+        return out;
+    }
+
+    private static boolean isTerminalTurnState(String value) {
+        return "idle".equals(value)
+                || "completed".equals(value)
+                || "failed".equals(value)
+                || "discarded_silence".equals(value)
+                || "upload_blocked".equals(value);
     }
 
     private static String nowIso() {
@@ -644,192 +578,269 @@ public final class WakeWordController {
     }
 
     private static String safe(String value) {
-        return value == null ? "" : value;
+        return value == null ? "" : value.trim();
     }
 
-    private static boolean isTerminalTurnState(String state) {
-        String normalized = safe(state).trim().toLowerCase(Locale.US);
-        return "succeeded".equals(normalized)
-                || "failed".equals(normalized)
-                || "cancelled".equals(normalized)
-                || "canceled".equals(normalized)
-                || "idle".equals(normalized)
-                || "complete".equals(normalized)
-                || "completed".equals(normalized);
+    private interface CandidateListener {
+        void onCandidate(WakeCandidate candidate);
     }
 
-    private final class LabRecognitionListener implements RecognitionListener {
-        private final String sessionId;
+    private static final class WakeCandidate {
+        final short[] samples;
+        final String finishReason;
+        final long durationMs;
+        final long speechDurationMs;
+        final long trailingSilenceMs;
+        final long startedElapsedMs;
+        final long finishedElapsedMs;
+        final int peakAmplitude;
+        final double maxVadProbability;
+        final long framesSeen;
+        final long vadWindowsSeen;
+        final boolean vadAvailable;
+        final String vadUnavailableReason;
 
-        LabRecognitionListener(String sessionId) {
-            this.sessionId = sessionId;
+        WakeCandidate(
+                short[] samples,
+                String finishReason,
+                long durationMs,
+                long speechDurationMs,
+                long trailingSilenceMs,
+                long startedElapsedMs,
+                long finishedElapsedMs,
+                int peakAmplitude,
+                double maxVadProbability,
+                long framesSeen,
+                long vadWindowsSeen,
+                boolean vadAvailable,
+                String vadUnavailableReason) {
+            this.samples = samples;
+            this.finishReason = finishReason;
+            this.durationMs = durationMs;
+            this.speechDurationMs = speechDurationMs;
+            this.trailingSilenceMs = trailingSilenceMs;
+            this.startedElapsedMs = startedElapsedMs;
+            this.finishedElapsedMs = finishedElapsedMs;
+            this.peakAmplitude = peakAmplitude;
+            this.maxVadProbability = maxVadProbability;
+            this.framesSeen = framesSeen;
+            this.vadWindowsSeen = vadWindowsSeen;
+            this.vadAvailable = vadAvailable;
+            this.vadUnavailableReason = vadUnavailableReason;
+        }
+
+        JSONObject toJson() {
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.wake_candidate.v1");
+            Json.put(out, "finish_reason", finishReason);
+            Json.put(out, "duration_ms", durationMs);
+            Json.put(out, "speech_duration_ms", speechDurationMs);
+            Json.put(out, "trailing_silence_ms", trailingSilenceMs);
+            Json.put(out, "sample_rate", AudioFrameBus.SAMPLE_RATE);
+            Json.put(out, "samples", samples.length);
+            Json.put(out, "bytes", samples.length * 2L);
+            Json.put(out, "peak_amplitude", peakAmplitude);
+            Json.put(out, "max_vad_probability", maxVadProbability);
+            Json.put(out, "frames_seen", framesSeen);
+            Json.put(out, "vad_windows_seen", vadWindowsSeen);
+            Json.put(out, "vad_available", vadAvailable);
+            Json.put(out, "vad_unavailable_reason", safe(vadUnavailableReason));
+            Json.put(out, "started_elapsed_ms", startedElapsedMs);
+            Json.put(out, "finished_elapsed_ms", finishedElapsedMs);
+            Json.put(out, "finished_at", nowIso());
+            return out;
+        }
+    }
+
+    private static final class WakeCandidateConsumer implements AudioFrameConsumer {
+        private static final double SPEECH_THRESHOLD =
+                WakeCandidateEndpointPolicy.SPEECH_THRESHOLD_PERCENT / 100.0;
+        private static final int WINDOW_SAMPLES = 512;
+
+        private final VadEngine engine;
+        private final CandidateListener listener;
+        private final short[] preSpeech = new short[WakeCandidateEndpointPolicy.samplesForMs(
+                WakeCandidateEndpointPolicy.PRE_SPEECH_MS)];
+        private final float[] vadWindow = new float[WINDOW_SAMPLES];
+
+        private short[] candidate = new short[AudioFrameBus.SAMPLE_RATE];
+        private int preSpeechCount;
+        private int preSpeechWriteIndex;
+        private int candidateSamples;
+        private int firstSpeechSample = -1;
+        private int lastSpeechSample = -1;
+        private int vadWindowSamples;
+        private boolean capturing;
+        private boolean finished;
+        private long startedElapsedMs;
+        private long framesSeen;
+        private long samplesSeen;
+        private long vadWindowsSeen;
+        private int peakAmplitude;
+        private double latestVadProbability;
+        private double maxVadProbability;
+        private String lastError = "";
+
+        WakeCandidateConsumer(VadEngine engine, CandidateListener listener) {
+            this.engine = engine;
+            this.listener = listener;
+            this.engine.reset();
         }
 
         @Override
-        public void onReadyForSpeech(Bundle params) {
-            synchronized (lock) {
-                if (!sessionId.equals(activeSessionId)) {
+        public String name() {
+            return "wake_candidate_pcm_vad";
+        }
+
+        @Override
+        public synchronized void onFrame(short[] frame, long timestampNanos) {
+            if (finished || frame == null || frame.length == 0) {
+                return;
+            }
+            framesSeen += 1;
+            samplesSeen += frame.length;
+            for (short value : frame) {
+                int abs = Math.abs((int) value);
+                if (abs > peakAmplitude) {
+                    peakAmplitude = abs;
+                }
+                if (!capturing) {
+                    appendPreSpeech(value);
+                } else {
+                    appendCandidate(value);
+                }
+                vadWindow[vadWindowSamples++] = value / 32768.0f;
+                if (vadWindowSamples == WINDOW_SAMPLES) {
+                    evaluateWindow();
+                    vadWindowSamples = 0;
+                }
+            }
+            maybeFinish();
+        }
+
+        @Override
+        public synchronized JSONObject snapshot() {
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.wake_candidate_vad.v1");
+            Json.put(out, "vad_engine", engine.name());
+            Json.put(out, "vad_available", engine.available());
+            Json.put(out, "unavailable_reason", engine.available() ? "" : safe(engine.unavailableReason()));
+            Json.put(out, "capturing", capturing);
+            Json.put(out, "finished", finished);
+            Json.put(out, "frames_seen", framesSeen);
+            Json.put(out, "samples_seen", samplesSeen);
+            Json.put(out, "candidate_samples", candidateSamples);
+            Json.put(out, "candidate_duration_ms", WakeCandidateEndpointPolicy.durationMs(candidateSamples));
+            Json.put(out, "pre_speech_samples", preSpeechCount);
+            Json.put(out, "peak_amplitude", peakAmplitude);
+            Json.put(out, "vad_windows_seen", vadWindowsSeen);
+            Json.put(out, "vad_probability", latestVadProbability);
+            Json.put(out, "max_vad_probability", maxVadProbability);
+            Json.put(out, "last_error", lastError.isEmpty() ? JSONObject.NULL : lastError);
+            return out;
+        }
+
+        private void appendPreSpeech(short value) {
+            preSpeech[preSpeechWriteIndex] = value;
+            preSpeechWriteIndex = (preSpeechWriteIndex + 1) % preSpeech.length;
+            preSpeechCount = Math.min(preSpeech.length, preSpeechCount + 1);
+        }
+
+        private void beginCandidate() {
+            if (capturing || finished) {
+                return;
+            }
+            capturing = true;
+            startedElapsedMs = SystemClock.elapsedRealtime();
+            int start = (preSpeechWriteIndex - preSpeechCount + preSpeech.length) % preSpeech.length;
+            for (int i = 0; i < preSpeechCount; i++) {
+                appendCandidate(preSpeech[(start + i) % preSpeech.length]);
+            }
+            firstSpeechSample = Math.max(0, candidateSamples - WINDOW_SAMPLES);
+            lastSpeechSample = candidateSamples;
+        }
+
+        private void appendCandidate(short value) {
+            if (candidateSamples >= WakeCandidateEndpointPolicy.samplesForMs(
+                    WakeCandidateEndpointPolicy.MAX_CANDIDATE_MS)) {
+                return;
+            }
+            ensureCandidateCapacity(candidateSamples + 1);
+            candidate[candidateSamples++] = value;
+        }
+
+        private void evaluateWindow() {
+            vadWindowsSeen += 1;
+            if (!engine.available()) {
+                latestVadProbability = 0.0;
+                return;
+            }
+            try {
+                latestVadProbability = clampProbability(engine.speechProbability(vadWindow.clone(), AudioFrameBus.SAMPLE_RATE));
+                maxVadProbability = Math.max(maxVadProbability, latestVadProbability);
+                if (latestVadProbability < SPEECH_THRESHOLD) {
                     return;
                 }
-                readyElapsedMs = SystemClock.elapsedRealtime();
-                recognizerState = "ready";
-                recognizerListening = true;
-            }
-            Log.i(TAG, "transcript_lab ready session=" + sessionId);
-        }
-
-        @Override
-        public void onBeginningOfSpeech() {
-            synchronized (lock) {
-                if (!sessionId.equals(activeSessionId)) {
-                    return;
+                if (!capturing) {
+                    beginCandidate();
                 }
-                speechBeginElapsedMs = SystemClock.elapsedRealtime();
-                recognizerState = "speech";
-            }
-            Log.i(TAG, "transcript_lab speech_begin session=" + sessionId);
-        }
-
-        @Override
-        public void onRmsChanged(float rmsdB) {
-        }
-
-        @Override
-        public void onBufferReceived(byte[] buffer) {
-        }
-
-        @Override
-        public void onEndOfSpeech() {
-            synchronized (lock) {
-                if (sessionId.equals(activeSessionId)) {
-                    recognizerState = "speech_end";
-                }
-            }
-            Log.i(TAG, "transcript_lab speech_end session=" + sessionId);
-        }
-
-        @Override
-        public void onError(int error) {
-            String message = speechErrorName(error);
-            synchronized (lock) {
-                if (!sessionId.equals(activeSessionId)) {
-                    return;
-                }
-                recognizerState = "error";
-                recognizerListening = false;
-                recordErrorLocked(error, message);
-            }
-            JSONArray alternatives = new JSONArray();
-            recordTranscriptEvent("error", alternatives, new JSONArray(), error, message);
-            Log.i(TAG, "transcript_lab error session=" + sessionId + " code=" + error + " message=" + message);
-            synchronized (lock) {
-                if (sessionId.equals(activeSessionId)) {
-                    scheduleRestartLocked("recognizer_error_" + error);
-                }
+                lastSpeechSample = Math.max(candidateSamples, lastSpeechSample);
+            } catch (RuntimeException exc) {
+                lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
             }
         }
 
-        @Override
-        public void onResults(Bundle results) {
-            JSONArray alternatives = alternativesFrom(results);
-            JSONArray confidences = confidencesFrom(results);
-            TranscriptEvent event = recordTranscriptEvent("final", alternatives, confidences, 0, "");
-            Log.i(TAG, "transcript_lab final session=" + sessionId
-                    + " transcript=" + alternatives.optString(0, "")
-                    + " accepted=" + event.accepted
-                    + " matched=" + event.matchedPhrase);
-            synchronized (lock) {
-                if (sessionId.equals(activeSessionId)) {
-                    recognizerState = "final";
-                    recognizerListening = false;
-                    scheduleRestartLocked("final_result");
-                }
+        private void maybeFinish() {
+            if (!capturing || finished) {
+                return;
             }
+            int speechSamples = firstSpeechSample < 0 || lastSpeechSample < firstSpeechSample
+                    ? 0
+                    : lastSpeechSample - firstSpeechSample;
+            int trailingSamples = lastSpeechSample < 0 ? candidateSamples : candidateSamples - lastSpeechSample;
+            String reason = WakeCandidateEndpointPolicy.finishReason(candidateSamples, speechSamples, trailingSamples);
+            if (reason.isEmpty()) {
+                return;
+            }
+            finished = true;
+            short[] out = new short[candidateSamples];
+            System.arraycopy(candidate, 0, out, 0, candidateSamples);
+            WakeCandidate wakeCandidate = new WakeCandidate(
+                    out,
+                    reason,
+                    WakeCandidateEndpointPolicy.durationMs(candidateSamples),
+                    WakeCandidateEndpointPolicy.durationMs(speechSamples),
+                    WakeCandidateEndpointPolicy.durationMs(trailingSamples),
+                    startedElapsedMs,
+                    SystemClock.elapsedRealtime(),
+                    peakAmplitude,
+                    maxVadProbability,
+                    framesSeen,
+                    vadWindowsSeen,
+                    engine.available(),
+                    engine.available() ? "" : engine.unavailableReason());
+            listener.onCandidate(wakeCandidate);
         }
 
-        @Override
-        public void onPartialResults(Bundle partialResults) {
-            JSONArray alternatives = alternativesFrom(partialResults);
-            JSONArray confidences = confidencesFrom(partialResults);
-            TranscriptEvent event = recordTranscriptEvent("partial", alternatives, confidences, 0, "");
-            Log.i(TAG, "transcript_lab partial session=" + sessionId
-                    + " transcript=" + alternatives.optString(0, "")
-                    + " accepted=" + event.accepted
-                    + " matched=" + event.matchedPhrase);
+        private void ensureCandidateCapacity(int needed) {
+            if (candidate.length >= needed) {
+                return;
+            }
+            int max = WakeCandidateEndpointPolicy.samplesForMs(WakeCandidateEndpointPolicy.MAX_CANDIDATE_MS);
+            int next = candidate.length;
+            while (next < needed && next < max) {
+                next = Math.min(max, next * 2);
+            }
+            short[] grown = new short[next];
+            System.arraycopy(candidate, 0, grown, 0, candidateSamples);
+            candidate = grown;
         }
 
-        @Override
-        public void onEvent(int eventType, Bundle params) {
+        private static double clampProbability(double value) {
+            if (Double.isNaN(value) || Double.isInfinite(value)) {
+                return 0.0;
+            }
+            return Math.max(0.0, Math.min(1.0, value));
         }
-    }
-
-    private static JSONArray alternativesFrom(Bundle bundle) {
-        JSONArray out = new JSONArray();
-        if (bundle == null) {
-            return out;
-        }
-        ArrayList<String> values = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-        if (values == null) {
-            return out;
-        }
-        for (String value : values) {
-            Json.add(out, safe(value));
-        }
-        return out;
-    }
-
-    private static JSONArray confidencesFrom(Bundle bundle) {
-        JSONArray out = new JSONArray();
-        if (bundle == null) {
-            return out;
-        }
-        float[] values = bundle.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
-        if (values == null) {
-            return out;
-        }
-        for (float value : values) {
-            Json.add(out, value);
-        }
-        return out;
-    }
-
-    private static String speechErrorName(int error) {
-        switch (error) {
-            case SpeechRecognizer.ERROR_AUDIO:
-                return "ERROR_AUDIO";
-            case SpeechRecognizer.ERROR_CLIENT:
-                return "ERROR_CLIENT";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
-                return "ERROR_INSUFFICIENT_PERMISSIONS";
-            case SpeechRecognizer.ERROR_NETWORK:
-                return "ERROR_NETWORK";
-            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
-                return "ERROR_NETWORK_TIMEOUT";
-            case SpeechRecognizer.ERROR_NO_MATCH:
-                return "ERROR_NO_MATCH";
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                return "ERROR_RECOGNIZER_BUSY";
-            case SpeechRecognizer.ERROR_SERVER:
-                return "ERROR_SERVER";
-            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                return "ERROR_SPEECH_TIMEOUT";
-            case 11:
-                return "ERROR_TOO_MANY_REQUESTS";
-            default:
-                return "ERROR_" + error;
-        }
-    }
-
-    private static long restartDelayMs(String reason, int count) {
-        String normalized = safe(reason).toLowerCase(Locale.US);
-        if (normalized.contains("_11") || normalized.contains("too_many_requests")) {
-            return RESTART_THROTTLED_MS;
-        }
-        return Math.min(RESTART_MAX_MS, RESTART_BASE_MS * Math.max(1, count));
-    }
-
-    private static final class TranscriptEvent {
-        boolean accepted;
-        String matchedPhrase = "";
     }
 }

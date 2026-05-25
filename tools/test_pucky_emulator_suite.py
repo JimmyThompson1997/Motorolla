@@ -104,13 +104,47 @@ def test_create_and_start_commands_use_workspace_avd_home(tmp_path: Path) -> Non
         "-no-snapshot-load",
         "-no-snapshot-save",
         "-no-boot-anim",
-        "-partition-size",
-        suite.DEFAULT_USERDATA_PARTITION_MB,
         "-gpu",
         "swiftshader_indirect",
     ]
     assert env["ANDROID_AVD_HOME"] == config.avd_home
     assert str(tmp_path / ".tmp") in config.avd_home
+
+
+def test_start_command_can_enable_host_audio(tmp_path: Path) -> None:
+    args = ns(tmp_path, audio_mode="host")
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+
+    start = suite.emulator_start_command(args, config)
+
+    assert "-no-audio" not in start
+    assert ["-audio", "dsound"] == start[start.index("-audio"):start.index("-audio") + 2]
+    assert "-allow-host-audio" in start
+
+
+def test_start_command_can_use_wav_input_audio_backend(tmp_path: Path) -> None:
+    wav = tmp_path / "wake.wav"
+    args = ns(tmp_path, audio_mode="wav-in", audio_wav_in=wav)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+
+    start = suite.emulator_start_command(args, config)
+    env = suite.sdk_env(args, config)
+
+    assert "-no-audio" not in start
+    assert ["-audio", "wav"] == start[start.index("-audio"):start.index("-audio") + 2]
+    assert env["QEMU_WAV_IN_PATH"] == str(wav)
+    assert env["QEMU_WAV_PATH"].endswith("qemu-audio-out.wav")
+    assert env["QEMU_AUDIO_ADC_FIXED_FREQ"] == "44100"
+    assert env["QEMU_AUDIO_ADC_FIXED_FMT"] == "S16"
+    assert env["QEMU_AUDIO_ADC_FIXED_CHANNELS"] == "1"
+
+
+def test_wav_input_audio_requires_fixture_path(tmp_path: Path) -> None:
+    args = ns(tmp_path, audio_mode="wav-in", audio_wav_in=None)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+
+    with pytest.raises(suite.SuiteError, match="audio-wav-in"):
+        suite.sdk_env(args, config)
 
 
 def test_tune_avd_config_reduces_userdata_partition_size(tmp_path: Path) -> None:
@@ -123,7 +157,7 @@ def test_tune_avd_config_reduces_userdata_partition_size(tmp_path: Path) -> None
     suite.tune_avd_config(config)
 
     content = config_path.read_text(encoding="utf-8")
-    assert f"disk.dataPartition.size = {suite.DEFAULT_USERDATA_PARTITION_BYTES}" in content
+    assert f"disk.dataPartition.size = {suite.DEFAULT_USERDATA_PARTITION_SIZE}" in content
     assert "6442450944" not in content
 
 

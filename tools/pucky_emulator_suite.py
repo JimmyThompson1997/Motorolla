@@ -37,7 +37,7 @@ DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
 DEFAULT_ACTIVITY = "com.pucky.device.CoverHomeActivity"
 DEFAULT_USERDATA_PARTITION_MB = "2047"
-DEFAULT_USERDATA_PARTITION_BYTES = str(int(DEFAULT_USERDATA_PARTITION_MB) * 1024 * 1024)
+DEFAULT_USERDATA_PARTITION_SIZE = DEFAULT_USERDATA_PARTITION_MB + "M"
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
@@ -237,6 +237,18 @@ def sdk_env(args: argparse.Namespace, config: SlotConfig) -> dict[str, str]:
     env["ANDROID_SDK_ROOT"] = str(args.android_home)
     env["ANDROID_AVD_HOME"] = config.avd_home
     env["JAVA_HOME"] = str(args.java_home)
+    if getattr(args, "audio_mode", "none") == "wav-in":
+        raw_wav_in = getattr(args, "audio_wav_in", None)
+        if raw_wav_in is None or str(raw_wav_in).strip() == "":
+            raise SuiteError("--audio-wav-in is required with --audio-mode wav-in")
+        wav_in = Path(raw_wav_in)
+        if not args.dry_run and not wav_in.exists():
+            raise SuiteError(f"Audio WAV input not found: {wav_in}")
+        env["QEMU_WAV_IN_PATH"] = str(wav_in)
+        env["QEMU_WAV_PATH"] = str(Path(config.evidence_dir) / "qemu-audio-out.wav")
+        env["QEMU_AUDIO_ADC_FIXED_FREQ"] = "44100"
+        env["QEMU_AUDIO_ADC_FIXED_FMT"] = "S16"
+        env["QEMU_AUDIO_ADC_FIXED_CHANNELS"] = "1"
     return env
 
 
@@ -258,25 +270,34 @@ def avdmanager_create_command(args: argparse.Namespace, config: SlotConfig) -> l
 
 
 def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    return [
+    command = [
         str(args.emulator),
         "-avd",
         config.avd_name,
         "-port",
         str(config.emulator_port),
         "-no-window",
-        "-no-audio",
+    ]
+    mode = getattr(args, "audio_mode", "none")
+    if mode == "none":
+        command.append("-no-audio")
+    elif mode == "host":
+        command.extend(["-audio", "dsound", "-allow-host-audio"])
+    elif mode == "wav-in":
+        command.extend(["-audio", "wav"])
+    else:
+        raise SuiteError(f"Unsupported audio mode: {mode}")
+    command.extend([
         "-no-snapshot-load",
         "-no-snapshot-save",
         "-no-boot-anim",
-        "-partition-size",
-        DEFAULT_USERDATA_PARTITION_MB,
         "-gpu",
         "swiftshader_indirect",
-    ]
+    ])
+    return command
 
 
-def tune_avd_config(config: SlotConfig, *, userdata_size: str = DEFAULT_USERDATA_PARTITION_BYTES) -> None:
+def tune_avd_config(config: SlotConfig, *, userdata_size: str = DEFAULT_USERDATA_PARTITION_SIZE) -> None:
     config_path = Path(config.avd_home) / f"{config.avd_name}.avd" / "config.ini"
     if not config_path.exists():
         return
@@ -1424,6 +1445,8 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--slot", type=int, default=1)
         if name == "start":
             item.add_argument("--no-wait", action="store_true")
+            item.add_argument("--audio-mode", choices=("none", "host", "wav-in"), default="none")
+            item.add_argument("--audio-wav-in", type=Path, default=None)
         if name == "provision":
             item.add_argument("--skip-build", action="store_true")
         if name == "seed-ui":

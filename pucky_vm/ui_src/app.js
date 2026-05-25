@@ -489,7 +489,7 @@
         requested_enabled: enabled,
         running: enabled,
         scope: String(args.scope || state.wakeStatus.scope || "awake_and_unlocked_foreground"),
-        mode: String(args.mode || state.wakeStatus.mode || "transcript_lab")
+        mode: String(args.mode || state.wakeStatus.mode || "pcm_wake")
       });
       return state.wakeStatus;
     }
@@ -503,18 +503,9 @@
         transcript: phrase,
         remaining_ms: accepted ? 3000 : 0
       };
-      const event = {
-        event: "simulate",
-        transcript: phrase,
-        alternatives: [phrase],
-        accepted,
-        matched_phrase: proof.matched_phrase,
-        match_source: accepted ? "simulate" : ""
-      };
       state.wakeStatus = normalizeWakeStatus({
         ...state.wakeStatus,
         proof_indicator: proof,
-        transcript_history: [event, ...(state.wakeStatus.transcript_history || [])].slice(0, 10),
         last_match: {
           matched_phrase: proof.matched_phrase,
           match_source: accepted ? "simulate" : "",
@@ -849,10 +840,8 @@
       requested_enabled: false,
       running: false,
       engine: "unknown",
-      mode: "transcript_lab",
+      mode: "pcm_wake",
       scope: "awake_and_unlocked_foreground",
-      recognizer_state: "idle",
-      transcript_history: [],
       last_match: {
         matched_phrase: "",
         match_source: "",
@@ -924,10 +913,8 @@
       requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
       running: truthy(raw.running),
       engine: String(raw.engine || "unknown"),
-      mode: String(raw.mode || "transcript_lab"),
+      mode: String(raw.mode || "pcm_wake"),
       scope: String(raw.scope || "awake_and_unlocked_foreground"),
-      recognizer_state: String(raw.recognizer_state || "idle"),
-      transcript_history: Array.isArray(raw.transcript_history) ? raw.transcript_history.slice(0, 10) : [],
       last_match: raw.last_match && typeof raw.last_match === "object" ? raw.last_match : {
         matched_phrase: "",
         match_source: "",

@@ -38,6 +38,18 @@ python tools\pucky_emulator_suite.py seed-ui --slot 1
 python tools\pucky_emulator_suite.py smoke --slot 1
 ```
 
+Audio wake experiments should use slot 2 and opt into an audio backend:
+
+```powershell
+python tools\pucky_emulator_suite.py start --slot 2 --audio-mode wav-in --audio-wav-in .tmp\wake-fixtures\hey-pucky-timeline.wav
+python tools\pucky_emulator_suite.py start --slot 2 --audio-mode host
+```
+
+The default remains `--audio-mode none`, which preserves the historical
+`-no-audio` startup behavior. `wav-in` configures the QEMU WAV microphone
+backend for deterministic fixture input; `host` enables DirectSound host mic
+passthrough for scratch checks.
+
 To seed the richer committed cover fixtures, including the Morning Launch
 PDF/DOCX/MP4 attachment rail, pass the fixture file directly:
 
@@ -93,4 +105,4 @@ Typical files include broker logs, emulator logs, `seed-ui.json`, `smoke.json`, 
 
 ## Limits
 
-The emulator lab is for parallel agent confidence around APK startup, broker connection, cached HTML, command bus, cards, and screenshots. The physical Razr remains final acceptance for Moto cover-display behavior, wake/display policy, hardware buttons, sensors, and real audio routing.
+The emulator lab is for parallel agent confidence around APK startup, broker connection, cached HTML, command bus, cards, screenshots, and deterministic WAV-backed audio experiments. The physical Razr remains final acceptance for Moto cover-display behavior, wake/display policy, hardware buttons, sensors, and real audio routing.

@@ -150,7 +150,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "Stripped Hey Pucky transcript lab. Awake and unlocked foreground-service scope runs a live Android on-device SpeechRecognizer loop, stores transcript events, and briefly marks proof-only blue UI state on a bounded wake-family match. No wake audio clips, turn handoff, endpointing, or turn upload."));
+                "PCM wake lab. Awake and unlocked foreground-service scope runs AudioRecord PCM capture, Silero VAD short endpointing, and Android injected-audio STT on bounded wake clips. A wake-family match briefly marks proof-only blue UI state. No turn handoff or upload."));
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));
