@@ -429,9 +429,12 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function settingsToggleCard(" in app
     assert "function wakeWordSettingsCard()" in app
     assert "function arrivalCueSettingsCard()" in app
-    assert "function diagnosticsSettingsCard()" in app
+    assert "function advancedSettingsCard()" in app
     assert "function replyModeSettingsCard()" in app
-    assert "function replyModeButton(mode, label)" in app
+    assert "function settingsSelectorCard(" in app
+    assert "function settingsSelectorButton(" in app
+    assert "function openSettingsSelector(" in app
+    assert "function showAdvancedSettingsSheet()" in app
     assert "async function setTurnReplyMode(mode)" in app
     assert "async function loadTurnSettings" in app
     assert "async function loadSettingsState(options = {})" in app
@@ -456,23 +459,32 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert '"settings-page"' in app
     assert '"settings-hero"' in app
     assert '"settings-card"' in app
-    assert "Live controls for wake, walkie, and device feedback." in app
+    assert "Wake, walkie, feedback" in app
     assert "Reply playback" in app
     assert "Message sent cue" in app
     assert "Wake word" in app
-    assert "Diagnostics" in app
-    assert "Test sent cue" in app
+    assert "Advanced" in app
+    assert "Test cue" in app
+    assert "Choose if replies stay as cards or also speak." in app
+    assert "Cue when your message lands." in app
     assert "Buzz + chime" in app
+    assert "settingsSelectorOverlay" in app
+    assert "settingsSheet" in app
+    assert "replyModeButton(mode, label)" not in app
+    assert "arrivalCueButton(mode, label)" not in app
+    assert "diagnosticsSettingsCard()" not in app
     assert "const MOCK_SETTINGS" not in app
     assert ".settings-page" in styles
     assert ".settings-hero" in styles
     assert ".settings-card" in styles
-    assert ".settings-segment" in styles
-    assert ".settings-segment-button" in styles
-    assert ".settings-card-value" in styles
+    assert ".settings-selector-button" in styles
+    assert ".settings-selector-overlay" in styles
+    assert ".settings-selector-option" in styles
+    assert ".settings-nav-card" in styles
     assert ".settings-toggle" in styles
     assert ".settings-action-button" in styles
     assert ".settings-diagnostics" in styles
+    assert ".settings-segment-button" not in styles
 
 
 def test_ui_surface_controller_treats_reset_nav_bundle_url_as_current() -> None:

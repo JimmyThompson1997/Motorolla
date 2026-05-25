@@ -128,6 +128,18 @@
     settings: {
       filled: '<path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.2 7.2 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.2 7.2 0 0 0 7 6L4.6 5l-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5L7 18a7.2 7.2 0 0 0 2.6 1.5L10 22h4l.4-2.5A7.2 7.2 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/>',
       outline: '<path d="m10.2 3-.4 2.2a7 7 0 0 0-2.1.9L5.6 5.2 3.7 8.5l1.8 1.3a7.7 7.7 0 0 0 0 2.4l-1.8 1.3 1.9 3.3 2.1-.9a7 7 0 0 0 2.1.9l.4 2.2h3.6l.4-2.2a7 7 0 0 0 2.1-.9l2.1.9 1.9-3.3-1.8-1.3a7.7 7.7 0 0 0 0-2.4l1.8-1.3-1.9-3.3-2.1.9a7 7 0 0 0-2.1-.9L13.8 3h-3.6Z"/><circle cx="12" cy="12" r="3.1"/>'
+    },
+    expand_more: {
+      filled: '<path d="m7 10 5 5 5-5H7Z"/>',
+      outline: '<path d="m7 10 5 5 5-5"/>'
+    },
+    navigate_next: {
+      filled: '<path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z"/>',
+      outline: '<path d="m9 5 7 7-7 7"/>'
+    },
+    tune: {
+      filled: '<path d="M3 17h6v2H3v-2Zm0-6h10v2H3v-2Zm0-6h18v2H3V5Zm8 12h10v2H11v-2Zm4-6h6v2h-6v-2Z"/>',
+      outline: '<path d="M3 6h18M3 12h10M15 12h6M3 18h6M11 18h10"/><circle cx="13" cy="6" r="2"/><circle cx="11" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>'
     }
   };
 
@@ -1121,6 +1133,9 @@
   function dismissTransientUiForRouteChange() {
     dismissOpenCardMenu(false);
     dismissTraceSheet();
+    dismissOriginSheet();
+    dismissAdvancedSettingsSheet();
+    closeSettingsSelector();
     closeSpeedPicker();
     dismissDetail();
     state.audioCard = null;
@@ -1303,7 +1318,7 @@
     const heroCopy = el("div", "settings-hero-copy");
     heroCopy.append(
       el("h1", "settings-title", "Settings"),
-      el("p", "settings-subtitle", "Live controls for wake, walkie, and device feedback.")
+      el("p", "settings-subtitle", "Wake, walkie, feedback")
     );
     hero.append(heroIcon, heroCopy);
     page.append(
@@ -1311,39 +1326,30 @@
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
       arrivalCueSettingsCard(),
-      diagnosticsSettingsCard()
+      advancedSettingsCard()
     );
     return page;
   }
 
   function replyModeSettingsCard() {
-    const row = el("article", "settings-card settings-reply-mode");
-    row.style.setProperty("--accent", "#ffb000");
-    const icon = el("div", "settings-card-icon");
-    icon.innerHTML = iconSvg("mic", { filled: true });
-    const copy = el("div", "settings-card-copy");
-    copy.append(
-      el("h2", "settings-card-title", "Reply playback"),
-      el("p", "settings-card-detail", "Choose whether a landed walkie reply stays as a card or also speaks out loud.")
-    );
-    const segment = el("div", "settings-segment");
-    segment.setAttribute("role", "group");
-    segment.setAttribute("aria-label", "Reply playback");
-    segment.append(
-      replyModeButton("card_only", "Card only"),
-      replyModeButton("card_and_spoken", "Card + voice")
-    );
-    row.append(icon, copy, segment);
-    return row;
-  }
-
-  function replyModeButton(mode, label) {
-    const active = normalizeReplyMode(state.turnSettings.reply_mode) === mode;
-    const button = el("button", active ? "settings-segment-button is-active" : "settings-segment-button", label);
-    button.type = "button";
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-    button.addEventListener("click", () => setTurnReplyMode(mode));
-    return button;
+    const options = (state.turnSettings.modes || TURN_REPLY_MODES).map(mode => ({
+      value: normalizeReplyMode(mode),
+      label: replyModeLabel(mode)
+    }));
+    const currentMode = normalizeReplyMode(state.turnSettings.reply_mode);
+    return settingsSelectorCard({
+      accent: "#ffb000",
+      icon: "mic",
+      title: "Reply playback",
+      detail: "Choose if replies stay as cards or also speak.",
+      valueLabel: replyModeLabel(currentMode),
+      onOpen: () => openSettingsSelector({
+        title: "Reply playback",
+        currentValue: currentMode,
+        options,
+        onSelect: setTurnReplyMode
+      })
+    });
   }
 
   async function setTurnReplyMode(mode) {
@@ -1382,58 +1388,26 @@
   }
 
   function arrivalCueSettingsCard() {
-    const card = el("article", "settings-card settings-arrival-cue");
-    card.style.setProperty("--accent", "#ffb000");
-    const icon = el("div", "settings-card-icon");
-    icon.innerHTML = iconSvg("bell", { filled: true });
-    const copy = el("div", "settings-card-copy");
-    copy.append(
-      el("h2", "settings-card-title", "Message sent cue"),
-      el("p", "settings-card-detail", "Choose the one-time cue that tells you your message landed before any optional voice reply.")
-    );
-    const segment = el("div", "settings-segment");
-    segment.setAttribute("role", "group");
-    segment.setAttribute("aria-label", "Message sent cue");
-    segment.append(
-      arrivalCueButton("none", "None"),
-      arrivalCueButton("haptic", "Buzz"),
-      arrivalCueButton("chime", "Chime"),
-      arrivalCueButton("haptic_and_chime", "Buzz + chime")
-    );
-    const actions = el("div", "settings-card-actions");
-    actions.append(settingsActionButton("Test sent cue", testArrivalCue));
-    card.append(icon, copy, segment, actions);
-    return card;
-  }
-
-  function arrivalCueButton(mode, label) {
-    const active = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode) === mode;
-    const button = el("button", active ? "settings-segment-button is-active" : "settings-segment-button", label);
-    button.type = "button";
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-    button.addEventListener("click", () => setArrivalCueMode(mode));
-    return button;
-  }
-
-  function diagnosticsSettingsCard() {
-    const card = el("article", "settings-card settings-card-diagnostics");
-    card.style.setProperty("--accent", "#8b63ff");
-    const icon = el("div", "settings-card-icon");
-    icon.innerHTML = iconSvg("lightbulb_2", { filled: true });
-    const copy = el("div", "settings-card-copy");
-    copy.append(
-      el("h2", "settings-card-title", "Diagnostics"),
-      el("p", "settings-card-detail", "Bundle and native bridge facts from the live shell.")
-    );
-    const diagnostics = el("div", "settings-diagnostics");
-    diagnostics.append(
-      settingsDiagnosticItem("Bundle", state.uiSurface.ui_version || "unknown"),
-      settingsDiagnosticItem("Surface", formatSurfaceKind(state.uiSurface.source_kind)),
-      settingsDiagnosticItem("Wake", state.wakeStatus.running ? "running" : state.wakeStatus.enabled ? "enabled" : "off"),
-      settingsDiagnosticItem("Bridge", state.uiSurface.bridge_connected ? "connected" : "browser")
-    );
-    card.append(icon, copy, diagnostics);
-    return card;
+    const options = (state.turnSettings.arrival_cue_modes || TURN_ARRIVAL_CUE_MODES).map(mode => ({
+      value: normalizeArrivalCueMode(mode),
+      label: arrivalCueLabel(mode)
+    }));
+    const currentMode = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode);
+    return settingsSelectorCard({
+      accent: "#ffb000",
+      icon: "bell",
+      title: "Message sent cue",
+      detail: "Cue when your message lands.",
+      valueLabel: arrivalCueLabel(currentMode),
+      onOpen: () => openSettingsSelector({
+        title: "Message sent cue",
+        currentValue: currentMode,
+        options,
+        onSelect: setArrivalCueMode
+      }),
+      actionLabel: "Test cue",
+      action: testArrivalCue
+    });
   }
 
   async function setWakeWordEnabled(enabled) {
@@ -1503,6 +1477,26 @@
     return row;
   }
 
+  function settingsSelectorCard({ accent, icon, title, detail, valueLabel, onOpen, actionLabel = "", action = null }) {
+    const row = el("article", actionLabel ? "settings-card settings-selector-card has-actions" : "settings-card settings-selector-card");
+    row.style.setProperty("--accent", accent || "#72c2ff");
+    const iconEl = el("div", "settings-card-icon");
+    iconEl.innerHTML = iconSvg(icon, { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", title),
+      el("p", "settings-card-detail", detail)
+    );
+    const selector = settingsSelectorButton(valueLabel, onOpen);
+    row.append(iconEl, copy, selector);
+    if (actionLabel && action) {
+      const actions = el("div", "settings-card-actions");
+      actions.append(settingsActionButton(actionLabel, action));
+      row.append(actions);
+    }
+    return row;
+  }
+
   function settingsToggleButton(enabled, onClick) {
     const button = el("button", enabled ? "settings-toggle is-on" : "settings-toggle");
     button.type = "button";
@@ -1516,6 +1510,47 @@
       onClick();
     });
     return button;
+  }
+
+  function settingsSelectorButton(label, onClick) {
+    const button = el("button", "settings-selector-button");
+    button.type = "button";
+    button.setAttribute("aria-haspopup", "dialog");
+    button.append(
+      el("span", "settings-selector-button-label", label),
+      (() => {
+        const icon = el("span", "settings-selector-button-icon");
+        icon.innerHTML = iconSvg("expand_more", { filled: true });
+        return icon;
+      })()
+    );
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    });
+    return button;
+  }
+
+  function advancedSettingsCard() {
+    const card = el("button", "settings-card settings-nav-card");
+    card.type = "button";
+    card.style.setProperty("--accent", "#8b63ff");
+    const icon = el("div", "settings-card-icon");
+    icon.innerHTML = iconSvg("tune", { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", "Advanced"),
+      el("p", "settings-card-detail", "Bundle, surface, wake, bridge.")
+    );
+    const chevron = el("span", "settings-nav-chevron");
+    chevron.innerHTML = iconSvg("navigate_next");
+    card.append(icon, copy, chevron);
+    card.addEventListener("click", event => {
+      event.preventDefault();
+      showAdvancedSettingsSheet();
+    });
+    return card;
   }
 
   function settingsActionButton(label, action) {
@@ -1537,6 +1572,107 @@
     return item;
   }
 
+  function openSettingsSelector({ title, currentValue, options, onSelect }) {
+    dismissAdvancedSettingsSheet();
+    const overlay = document.getElementById("settingsSelectorOverlay");
+    if (!overlay) {
+      return;
+    }
+    const sheet = el("div", "settings-selector-sheet");
+    sheet.addEventListener("click", event => event.stopPropagation());
+    sheet.append(el("h1", "settings-selector-title", title));
+    const list = el("div", "settings-selector-list");
+    for (const option of options) {
+      const active = currentValue === option.value;
+      const button = el("button", active ? "settings-selector-option is-active" : "settings-selector-option");
+      button.type = "button";
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.append(
+        el("span", "settings-selector-option-label", option.label),
+        (() => {
+          const check = el("span", "settings-selector-option-check");
+          check.innerHTML = iconSvg("check");
+          return check;
+        })()
+      );
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSettingsSelector();
+        onSelect(option.value);
+      });
+      list.append(button);
+    }
+    sheet.append(list);
+    overlay.replaceChildren(sheet);
+    overlay.classList.add("is-open");
+    overlay.setAttribute("aria-hidden", "false");
+    overlay.onclick = event => {
+      if (event.target === overlay) {
+        closeSettingsSelector();
+      }
+    };
+  }
+
+  function closeSettingsSelector() {
+    const overlay = document.getElementById("settingsSelectorOverlay");
+    if (!overlay) {
+      return;
+    }
+    overlay.classList.remove("is-open");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.onclick = null;
+    overlay.replaceChildren();
+  }
+
+  function showAdvancedSettingsSheet() {
+    closeSettingsSelector();
+    const sheet = document.getElementById("settingsSheet");
+    if (!sheet) {
+      return;
+    }
+    const wrap = el("div", "trace-inner settings-sheet-inner");
+    const dragZone = el("div", "sheet-drag-zone");
+    dragZone.append(el("div", "sheet-grip"));
+    wrap.append(dragZone);
+
+    const card = el("article", "trace-card settings-sheet-card");
+    card.append(
+      el("h1", "trace-title", "Advanced"),
+      el("p", "trace-empty", "Live bundle and bridge facts from this cover shell.")
+    );
+    const diagnostics = el("div", "settings-diagnostics settings-sheet-diagnostics");
+    diagnostics.append(
+      settingsDiagnosticItem("Bundle", state.uiSurface.ui_version || "unknown"),
+      settingsDiagnosticItem("Surface", formatSurfaceKind(state.uiSurface.source_kind)),
+      settingsDiagnosticItem("Wake", state.wakeStatus.running ? "running" : state.wakeStatus.enabled ? "enabled" : "off"),
+      settingsDiagnosticItem("Bridge", state.uiSurface.bridge_connected ? "connected" : "browser")
+    );
+    card.append(diagnostics);
+    wrap.append(card);
+    installVerticalDismiss(wrap, sheet, dismissAdvancedSettingsSheet);
+    sheet.replaceChildren(wrap);
+    sheet.setAttribute("aria-hidden", "false");
+    sheet.classList.add("is-open");
+    sheet.onclick = event => {
+      if (event.target === sheet) {
+        dismissAdvancedSettingsSheet();
+      }
+    };
+  }
+
+  function dismissAdvancedSettingsSheet() {
+    const sheet = document.getElementById("settingsSheet");
+    if (!sheet) {
+      return;
+    }
+    sheet.style.transform = "";
+    sheet.classList.remove("is-open", "is-dragging");
+    sheet.setAttribute("aria-hidden", "true");
+    sheet.onclick = null;
+    sheet.replaceChildren();
+  }
+
   function formatSurfaceKind(kind) {
     const value = String(kind || "").trim();
     if (value === "bundle_current") return "current bundle";
@@ -1544,6 +1680,18 @@
     if (value === "fallback_asset") return "fallback asset";
     if (value === "legacy_placeholder") return "legacy surface";
     return value || "unknown";
+  }
+
+  function replyModeLabel(mode) {
+    return normalizeReplyMode(mode) === "card_and_spoken" ? "Card + voice" : "Card only";
+  }
+
+  function arrivalCueLabel(mode) {
+    const value = normalizeArrivalCueMode(mode);
+    if (value === "none") return "None";
+    if (value === "haptic") return "Buzz";
+    if (value === "haptic_and_chime") return "Buzz + chime";
+    return "Chime";
   }
 
 
@@ -2751,6 +2899,16 @@
 
   function handleAndroidBack() {
     if (dismissOpenCardMenu()) {
+      return true;
+    }
+    const settingsSelectorOverlay = document.getElementById("settingsSelectorOverlay");
+    if (settingsSelectorOverlay && settingsSelectorOverlay.classList.contains("is-open")) {
+      closeSettingsSelector();
+      return true;
+    }
+    const settingsSheet = document.getElementById("settingsSheet");
+    if (settingsSheet && settingsSheet.classList.contains("is-open")) {
+      dismissAdvancedSettingsSheet();
       return true;
     }
     const detail = document.getElementById("detail");
