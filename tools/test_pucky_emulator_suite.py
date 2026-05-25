@@ -96,6 +96,8 @@ def test_create_and_start_commands_use_workspace_avd_home(tmp_path: Path) -> Non
         "-no-snapshot-load",
         "-no-snapshot-save",
         "-no-boot-anim",
+        "-partition-size",
+        suite.DEFAULT_USERDATA_PARTITION_MB,
         "-gpu",
         "swiftshader_indirect",
     ]
@@ -175,6 +177,7 @@ def test_runner_dry_run_records_without_executing(tmp_path: Path) -> None:
 def test_doctor_reports_missing_tools_without_mutating(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = ns(tmp_path)
     monkeypatch.setattr(suite, "port_available", lambda port: True)
+    monkeypatch.setattr(suite, "free_space_gb", lambda path: 12.0)
 
     result = suite.doctor(args)
 
@@ -183,6 +186,18 @@ def test_doctor_reports_missing_tools_without_mutating(tmp_path: Path, monkeypat
     by_name = {item["name"]: item for item in result["checks"]}
     assert by_name["adb"]["ok"] is False
     assert by_name["emulator"]["ok"] is False
+
+
+def test_doctor_flags_low_avd_workspace_free_space(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = ns(tmp_path)
+    monkeypatch.setattr(suite, "port_available", lambda port: True)
+    monkeypatch.setattr(suite, "free_space_gb", lambda path: 3.09)
+
+    result = suite.doctor(args)
+    by_name = {item["name"]: item for item in result["checks"]}
+
+    assert by_name["avd_workspace_free_space"]["ok"] is False
+    assert "3.09 GB free" in by_name["avd_workspace_free_space"]["detail"]
 
 
 def test_wait_for_broker_device_requires_online_slot_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

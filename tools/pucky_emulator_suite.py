@@ -31,12 +31,14 @@ DEFAULT_SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
 DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
 DEFAULT_ACTIVITY = "com.pucky.device.CoverHomeActivity"
-DEFAULT_USERDATA_PARTITION_BYTES = str(2 * 1024 * 1024 * 1024)
+DEFAULT_USERDATA_PARTITION_MB = "2047"
+DEFAULT_USERDATA_PARTITION_BYTES = str(int(DEFAULT_USERDATA_PARTITION_MB) * 1024 * 1024)
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
 BASE_DIR = ROOT / ".tmp" / "pucky-emulator"
 RUNS_DIR = ROOT / ".tmp" / "pucky-emulator-runs"
+MIN_RECOMMENDED_AVD_FREE_GB = 8.0
 
 
 class SuiteError(RuntimeError):
@@ -260,6 +262,8 @@ def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list
         "-no-snapshot-load",
         "-no-snapshot-save",
         "-no-boot-anim",
+        "-partition-size",
+        DEFAULT_USERDATA_PARTITION_MB,
         "-gpu",
         "swiftshader_indirect",
     ]
@@ -350,6 +354,11 @@ def port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+def free_space_gb(path: Path) -> float:
+    usage = shutil.disk_usage(path)
+    return round(usage.free / (1024 ** 3), 2)
 
 
 def wait_http(url: str, *, timeout: float = 20.0) -> dict[str, Any]:
@@ -483,6 +492,14 @@ def doctor(args: argparse.Namespace) -> dict[str, Any]:
     add("api35_google_apis_x86_64", image_path.exists(), image_path)
     for port in (18081, 18181, 18082, 18182):
         add(f"port_{port}_available", port_available(port), port)
+    avd_root = ROOT / ".tmp" / "pucky-emulator"
+    avd_root.mkdir(parents=True, exist_ok=True)
+    avd_free_gb = free_space_gb(avd_root)
+    add(
+        "avd_workspace_free_space",
+        avd_free_gb >= MIN_RECOMMENDED_AVD_FREE_GB,
+        f"{avd_free_gb} GB free (recommended >= {MIN_RECOMMENDED_AVD_FREE_GB:.0f} GB; clean old emulator artifacts/worktrees if low)",
+    )
     if Path(args.emulator).exists():
         try:
             result = subprocess.run([str(args.emulator), "-accel-check"], capture_output=True, text=True, timeout=20)

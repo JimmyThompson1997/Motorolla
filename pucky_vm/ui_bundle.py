@@ -42,9 +42,6 @@ def default_version() -> str:
     return "dev"
 
 
-DEFAULT_VERSION = default_version()
-
-
 def source_provenance(repo_root: Path | None = None) -> dict[str, object]:
     root = repo_root or UI_SRC.parent.parent
     fallback: dict[str, object] = {
@@ -98,12 +95,13 @@ def source_provenance(repo_root: Path | None = None) -> dict[str, object]:
 def build_ui_bundle(
     output_dir: Path | None = None,
     *,
-    ui_version: str = DEFAULT_VERSION,
+    ui_version: str | None = None,
     created_at: str | None = DEFAULT_CREATED_AT,
 ) -> dict[str, object]:
     output_dir = output_dir or UI_DIST
     output_dir.mkdir(parents=True, exist_ok=True)
     created_at = created_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    ui_version = ui_version or default_version()
 
     with TemporaryDirectory() as temp_name:
         staging = Path(temp_name) / "bundle"

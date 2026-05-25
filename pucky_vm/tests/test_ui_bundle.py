@@ -64,6 +64,14 @@ def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):
     assert ui_bundle.default_version() == "git-test123"
 
 
+def test_build_ui_bundle_uses_runtime_default_version(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setattr(ui_bundle, "default_version", lambda: "git-live123")
+
+    result = ui_bundle.build_ui_bundle(tmp_path, created_at="2026-05-20T00:00:00+00:00")
+
+    assert result["manifest"]["ui_version"] == "git-live123"
+
+
 def test_source_provenance_falls_back_when_git_is_unavailable(monkeypatch: pytest.MonkeyPatch):
     def fail(*args, **kwargs):
         raise RuntimeError("no git")
