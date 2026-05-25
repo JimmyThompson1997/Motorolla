@@ -25,4 +25,7 @@ fi
 mkdir -p /data/home/codex
 
 cd /data/pucky-src
+if git_sha="$(git rev-parse --short HEAD 2>/dev/null)"; then
+  export PUCKY_UI_VERSION="git-${git_sha}"
+fi
 exec bash ./pucky_vm/run_service.sh
