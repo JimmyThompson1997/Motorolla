@@ -695,6 +695,15 @@ def test_pausing_audio_clears_active_card_preview_lane() -> None:
     assert "rememberPlayerProgress(current)" in app
 
 
+def test_non_playing_player_events_clear_active_card_lane() -> None:
+    app = read("app.js")
+
+    sync_body = app.split("function syncActivePathFromPlayer(player) {", 1)[1].split("\n  }\n\n  function samePath(", 1)[0]
+    assert "!playerHasAudioIdentity(player) || !player.is_playing" in sync_body
+    assert 'state.activePath = "";' in sync_body
+    assert "const matched = state.cards.find(card => isSameAudioCard(player, card));" in sync_body
+
+
 def test_audiobook_card_uses_single_file_with_timestamps() -> None:
     app = read("app.js")
     fixtures = read("fixtures/reply_cards.json")
