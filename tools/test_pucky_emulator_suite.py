@@ -286,7 +286,47 @@ def test_cmd_start_reuses_existing_connected_serial(monkeypatch: pytest.MonkeyPa
     assert launched == []
 
 
-def test_cmd_provision_waits_for_package_manager_before_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_install_services_ready_requires_mount_and_storage_probe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+
+    monkeypatch.setattr(suite, "package_manager_ready", lambda *_args, **_kwargs: True)
+
+    results = [
+        suite.subprocess.CompletedProcess([], 0, stdout="Service mount: found\n", stderr=""),
+        suite.subprocess.CompletedProcess([], 0, stdout="private mounted null\n", stderr=""),
+    ]
+
+    def fake_run(self, command, **kwargs):
+        return results.pop(0)
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+
+    assert suite.install_services_ready(args, runner, config) is True
+
+
+def test_wait_for_install_services_requires_stable_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    readiness = iter([False, True, True, True])
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite, "install_services_ready", lambda *_args, **_kwargs: next(readiness))
+
+    def fake_sleep(seconds: float) -> None:
+        now["value"] += seconds
+
+    monkeypatch.setattr(suite.time, "sleep", fake_sleep)
+
+    suite.wait_for_install_services(args, runner, config, timeout=20.0, settle_seconds=4.0)
+
+    assert now["value"] >= 4.0
+
+
+def test_cmd_provision_waits_for_install_services_before_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, slot=1, skip_build=True, dry_run=False)
     args.apk.write_text("apk", encoding="utf-8")
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
@@ -298,8 +338,8 @@ def test_cmd_provision_waits_for_package_manager_before_install(monkeypatch: pyt
     monkeypatch.setattr(suite, "start_node_broker", lambda *_args, **_kwargs: -1)
     monkeypatch.setattr(
         suite,
-        "wait_for_package_manager",
-        lambda *_args, **_kwargs: events.append("package_manager_ready"),
+        "wait_for_install_services",
+        lambda *_args, **_kwargs: events.append("install_services_ready"),
     )
     monkeypatch.setattr(suite, "wait_for_broker_device", lambda *_args, **_kwargs: {"device_id": config.device_id, "online": True})
     monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
@@ -316,7 +356,7 @@ def test_cmd_provision_waits_for_package_manager_before_install(monkeypatch: pyt
     result = suite.cmd_provision(args)
 
     assert result["ok"] is True
-    assert events[:2] == ["package_manager_ready", "install"]
+    assert events[:2] == ["install_services_ready", "install"]
 
 
 def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

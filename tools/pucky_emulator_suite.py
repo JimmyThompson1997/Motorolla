@@ -45,6 +45,7 @@ DEFAULT_TURN_URL = "https://pucky.fly.dev/api/turn"
 BASE_DIR = ROOT / ".tmp" / "pucky-emulator"
 RUNS_DIR = ROOT / ".tmp" / "pucky-emulator-runs"
 MIN_RECOMMENDED_AVD_FREE_GB = 8.0
+INSTALL_SERVICES_SETTLE_SECONDS = 45.0
 
 
 class SuiteError(RuntimeError):
@@ -472,15 +473,44 @@ def package_manager_ready(args: argparse.Namespace, runner: Runner, config: Slot
     return fallback.returncode == 0 and "package:" in fallback_text and "can't find service" not in fallback_text
 
 
-def wait_for_package_manager(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, timeout: float = 120.0) -> None:
+def install_services_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
+    if not package_manager_ready(args, runner, config):
+        return False
+    mount = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "mount"]), timeout=15, check=False)
+    mount_text = (mount.stdout + "\n" + mount.stderr).lower()
+    if mount.returncode != 0 or "can't find service" in mount_text or "not found" in mount_text:
+        return False
+    volumes = runner.run(adb_command(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=20, check=False)
+    volumes_text = (volumes.stdout + "\n" + volumes.stderr).lower()
+    if volumes.returncode != 0:
+        return False
+    if "exception" in volumes_text or "null object reference" in volumes_text:
+        return False
+    return "mounted" in volumes_text
+
+
+def wait_for_install_services(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    timeout: float = 180.0,
+    settle_seconds: float = INSTALL_SERVICES_SETTLE_SECONDS,
+) -> None:
     if runner.dry_run:
         return
     deadline = time.monotonic() + timeout
+    ready_since: float | None = None
     while time.monotonic() < deadline:
-        if package_manager_ready(args, runner, config):
-            return
+        if install_services_ready(args, runner, config):
+            if ready_since is None:
+                ready_since = time.monotonic()
+            if time.monotonic() - ready_since >= settle_seconds:
+                return
+        else:
+            ready_since = None
         time.sleep(2)
-    raise SuiteError(f"Timed out waiting for Android PackageManager readiness: {config.serial}")
+    raise SuiteError(f"Timed out waiting for Android install services readiness: {config.serial}")
 
 
 def serial_is_connected(args: argparse.Namespace, runner: Runner, serial: str) -> bool:
@@ -913,7 +943,7 @@ def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
     if not serial_is_connected(args, runner, config.serial):
         raise SuiteError(f"Emulator is not connected: {config.serial}")
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
-    wait_for_package_manager(args, runner, config)
+    wait_for_install_services(args, runner, config)
     broker_pid = start_node_broker(args, runner, config)
     if not args.skip_build:
         runner.run([str(args.gradle), "-p", str(ROOT / "pucky-apk"), ":app:assembleDebug"], env=sdk_env(args, config), timeout=300)
