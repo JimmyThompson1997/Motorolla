@@ -51,6 +51,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("recordCandidateAttempt(candidateSamples)"));
         assertTrue(source.contains("recordConfirmationOutcome(outcome, decision, debugClipPath)"));
         assertTrue(source.contains("recognizeCandidate(candidateSamples)"));
+        assertTrue(source.contains("WakeProbeClipShaper.limitPreRoll"));
+        assertTrue(source.contains("WakeProbeClipShaper.shapeForConfirmation"));
         assertTrue(source.contains("confirmArtifact(JSONObject args)"));
         assertTrue(source.contains("clearWakeDebugForensics()"));
         assertTrue(source.contains("Json.put(out, \"debug_keep_last_clip\""));
@@ -77,6 +79,9 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(family.contains("\"pucky\""));
         assertTrue(family.contains("\"hey pocky\""));
         assertTrue(family.contains("\"hey pookie\""));
+        assertTrue(family.contains("\"hey bucky\""));
+        assertTrue(family.contains("\"hey pucking\""));
+        assertTrue(family.contains("\"pooking\""));
         assertTrue(family.contains("\"pokey\""));
         assertFalse(source.contains("LiveKitController"));
     }

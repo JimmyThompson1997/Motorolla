@@ -59,6 +59,24 @@ public final class WakeConfirmationDecisionTest {
         assertEquals(WakeConfirmationDecision.REASON_CONFIRMATION_ERROR, decision.reason);
     }
 
+    @Test
+    public void observedHeyPuckingMangleMapsBackIntoWakeFamily() {
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
+                succeeded("Hey Pucking!", new String[] {"Hey Pucking!", "Hey Pucky"}, 0.0f));
+
+        assertTrue(decision.accepted);
+        assertEquals("hey pucky", decision.matchedPhrase);
+    }
+
+    @Test
+    public void parkingRemainsRejectedEvenWhenItLooksClose() {
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(
+                succeeded("Parking.", new String[] {"Parking.", "Parking"}, 0.0f));
+
+        assertEquals(WakeConfirmationDecision.STATUS_REJECTED, decision.confirmationStatus);
+        assertEquals(WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH, decision.reason);
+    }
+
     private static OnDeviceInjectedAudioRecognizer.RecognitionOutcome succeeded(
             String transcript,
             String[] alternativesInput,

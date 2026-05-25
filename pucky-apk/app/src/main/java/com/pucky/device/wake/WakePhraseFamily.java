@@ -6,14 +6,14 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
-import java.util.Set;
+import java.util.Map;
 
 public final class WakePhraseFamily {
     public static final String ID = "hey_pucky";
 
-    private static final String[] PHRASES = new String[] {
+    private static final String[] CANONICAL_PHRASES = new String[] {
             "hey pucky",
             "hey puppy",
             "hey lucky",
@@ -22,15 +22,40 @@ public final class WakePhraseFamily {
             "hey packy",
             "hey pookie",
             "hey pokey",
+            "hey bucky",
             "pucky",
             "puppy",
             "pocky",
             "packy",
             "pookie",
-            "pokey"
+            "pokey",
+            "bucky"
     };
 
-    private static final Set<String> NORMALIZED = buildNormalized();
+    private static final String[][] RECOGNIZED_VARIANTS = new String[][] {
+            {"hey pucky", "hey pucky"},
+            {"hey puppy", "hey puppy"},
+            {"hey lucky", "hey lucky"},
+            {"hay pucky", "hay pucky"},
+            {"hey pocky", "hey pocky"},
+            {"hey packy", "hey packy"},
+            {"hey pookie", "hey pookie"},
+            {"hey pokey", "hey pokey"},
+            {"hey bucky", "hey bucky"},
+            {"pucky", "pucky"},
+            {"puppy", "puppy"},
+            {"pocky", "pocky"},
+            {"packy", "packy"},
+            {"pookie", "pookie"},
+            {"pokey", "pokey"},
+            {"bucky", "bucky"},
+            {"hey pucking", "hey pucky"},
+            {"pucking", "pucky"},
+            {"hey pooking", "hey pookie"},
+            {"pooking", "pookie"}
+    };
+
+    private static final Map<String, String> NORMALIZED = buildNormalized();
 
     private WakePhraseFamily() {
     }
@@ -41,7 +66,8 @@ public final class WakePhraseFamily {
 
     public static String matchedPhrase(String transcript) {
         String normalized = SpeechTextNormalizer.normalize(transcript);
-        return NORMALIZED.contains(normalized) ? normalized : "";
+        String matched = NORMALIZED.get(normalized);
+        return matched == null ? "" : matched;
     }
 
     public static boolean isSingleWordVariant(String transcript) {
@@ -51,8 +77,8 @@ public final class WakePhraseFamily {
 
     public static JSONArray phrasesJson() {
         JSONArray out = new JSONArray();
-        for (String phrase : PHRASES) {
-            Json.add(out, phrase);
+        for (String[] variant : RECOGNIZED_VARIANTS) {
+            Json.add(out, variant[0]);
         }
         return out;
     }
@@ -68,7 +94,7 @@ public final class WakePhraseFamily {
 
     private static JSONArray singleWordVariants() {
         JSONArray out = new JSONArray();
-        for (String phrase : PHRASES) {
+        for (String phrase : CANONICAL_PHRASES) {
             String normalized = SpeechTextNormalizer.normalize(phrase);
             if (!normalized.contains(" ")) {
                 Json.add(out, normalized);
@@ -77,12 +103,16 @@ public final class WakePhraseFamily {
         return out;
     }
 
-    private static Set<String> buildNormalized() {
-        LinkedHashSet<String> out = new LinkedHashSet<>();
-        for (String phrase : PHRASES) {
-            String normalized = SpeechTextNormalizer.normalize(phrase).toLowerCase(Locale.US);
-            if (!normalized.isEmpty()) {
-                out.add(normalized);
+    private static Map<String, String> buildNormalized() {
+        LinkedHashMap<String, String> out = new LinkedHashMap<>();
+        for (String[] variant : RECOGNIZED_VARIANTS) {
+            if (variant == null || variant.length < 2) {
+                continue;
+            }
+            String recognized = SpeechTextNormalizer.normalize(variant[0]).toLowerCase(Locale.US);
+            String canonical = SpeechTextNormalizer.normalize(variant[1]).toLowerCase(Locale.US);
+            if (!recognized.isEmpty() && !canonical.isEmpty()) {
+                out.put(recognized, canonical);
             }
         }
         return out;

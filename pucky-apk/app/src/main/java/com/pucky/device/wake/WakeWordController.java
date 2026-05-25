@@ -483,7 +483,9 @@ public final class WakeWordController {
             if (!sentinelRunning || candidateRecorder == null || candidateActive || confirmingCandidate) {
                 return;
             }
-            preRoll = preRollBuffer == null ? new short[0] : preRollBuffer.snapshotSamples();
+            preRoll = preRollBuffer == null
+                    ? new short[0]
+                    : WakeProbeClipShaper.limitPreRoll(preRollBuffer.snapshotSamples());
             candidateRecorder.begin(preRoll);
             candidateActive = true;
             suspendedReason = "candidate_capturing";
@@ -549,8 +551,9 @@ public final class WakeWordController {
     }
 
     private OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognizeCandidate(short[] candidateSamples) {
+        short[] shaped = WakeProbeClipShaper.shapeForConfirmation(candidateSamples);
         return recognizer.recognize(
-                OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidateSamples),
+                OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(shaped),
                 CONFIRM_TIMEOUT_MS);
     }
 
