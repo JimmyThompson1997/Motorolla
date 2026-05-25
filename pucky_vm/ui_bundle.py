@@ -75,9 +75,10 @@ def source_provenance(repo_root: Path | None = None) -> dict[str, object]:
             capture_output=True,
             check=True,
         ).stdout.strip()
+        # Runtime artifacts such as feed DB files should not invalidate source provenance.
         dirty = bool(
             subprocess.run(
-                ["git", "status", "--short"],
+                ["git", "status", "--short", "--untracked-files=no"],
                 cwd=root,
                 text=True,
                 capture_output=True,

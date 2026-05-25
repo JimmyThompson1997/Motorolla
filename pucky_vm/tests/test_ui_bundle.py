@@ -75,3 +75,32 @@ def test_source_provenance_falls_back_when_git_is_unavailable(monkeypatch: pytes
     assert provenance["source_commit_short"] == ""
     assert provenance["source_branch"] == ""
     assert provenance["source_dirty"] is True
+
+
+def test_source_provenance_ignores_untracked_runtime_artifacts(monkeypatch: pytest.MonkeyPatch):
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        stdout = ""
+        if args[:3] == ["git", "rev-parse", "HEAD"]:
+            stdout = "abcdef1234567890\n"
+        elif args[:4] == ["git", "rev-parse", "--short", "HEAD"]:
+            stdout = "abcdef1\n"
+        elif args[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            stdout = "master\n"
+        elif args[:4] == ["git", "status", "--short", "--untracked-files=no"]:
+            stdout = ""
+        else:
+            raise AssertionError(args)
+        return type("Completed", (), {"stdout": stdout})()
+
+    monkeypatch.setattr(ui_bundle.subprocess, "run", fake_run)
+
+    provenance = ui_bundle.source_provenance()
+
+    assert provenance["source_commit_full"] == "abcdef1234567890"
+    assert provenance["source_commit_short"] == "abcdef1"
+    assert provenance["source_branch"] == "master"
+    assert provenance["source_dirty"] is False
+    assert ["git", "status", "--short", "--untracked-files=no"] in calls
