@@ -40,8 +40,8 @@ android {
         applicationId "com.pucky.device"
         minSdk 26
         targetSdk 35
-        versionCode 82
-        versionName "0.2.81-turn-feed-unified"
+        versionCode 83
+        versionName "0.2.82-hey-pucky-wake"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "PUCKY_GIT_COMMIT", buildConfigString(puckyGitCommit)

@@ -181,9 +181,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains(".header(\"Authorization\", \"Bearer \" + settings.getPuckyTurnAuthToken())"));
         assertTrue(source.contains(".header(\"X-Pucky-Turn-Id\", clientTurnId)"));
         assertTrue(source.contains(".header(\"X-Pucky-Reply-Mode\", replyModeAtUpload)"));
-        assertFalse(source.contains("PuckyTurnKeywordInterceptor.shared(context)"));
-        assertFalse(source.contains("keywordIntercept.optBoolean(\"handled\", false)"));
-        assertFalse(source.contains("Json.put(uploading, \"phase\", \"local_keyword_intercept\")"));
+        assertTrue(source.contains("PuckyTurnKeywordInterceptor.shared(context)"));
+        assertTrue(source.contains("keywordIntercept.optBoolean(\"handled\", false)"));
+        assertTrue(source.contains("Json.put(uploading, \"local_keyword_intercept\", keywordIntercept)"));
         assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("Json.put(out, \"vad_engine\""));
@@ -311,8 +311,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(finishBody.contains("Json.put(blocked, \"upload_configured\", false)"));
         assertTrue(finishBody.contains("deleteQuietly(audio)"));
         assertTrue(finishBody.contains("markStatus(\"upload_blocked\", blocked, null)"));
-        assertFalse(finishBody.contains("PuckyTurnKeywordInterceptor.shared(context)"));
-        assertFalse(finishBody.contains("if (keywordIntercept.optBoolean(\"handled\", false))"));
+        assertTrue(finishBody.contains("PuckyTurnKeywordInterceptor.shared(context)"));
+        assertTrue(finishBody.contains("if (keywordIntercept.optBoolean(\"handled\", false))"));
         assertTrue(source.contains("|| \"upload_blocked\".equals(state)"));
         assertFalse(finishBody.contains("markStatus(\"failed\", detail, \"not_configured\")"));
     }
