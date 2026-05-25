@@ -57,6 +57,7 @@ public final class PuckyTurnController {
     private volatile String activePollTurnId = "";
     private volatile boolean pollActive = false;
     private volatile String acceptedChimedTurnId = "";
+    private volatile String replyReceivedCuedTurnId = "";
 
     public static synchronized PuckyTurnController shared(Context context) {
         if (shared == null) {
@@ -150,7 +151,18 @@ public final class PuckyTurnController {
     }
 
     public JSONObject arrivalCueTest(JSONObject args) {
-        JSONObject out = playArrivalCue("manual_test");
+        JSONObject out = playSentCue("manual_test");
+        Json.put(out, "turn_id", args.optString("turn_id", "manual_test"));
+        Json.put(out, "test", true);
+        return out;
+    }
+
+    public JSONObject sentCueTest(JSONObject args) {
+        return arrivalCueTest(args);
+    }
+
+    public JSONObject receivedCueTest(JSONObject args) {
+        JSONObject out = playReplyReceivedCue("manual_test");
         Json.put(out, "turn_id", args.optString("turn_id", "manual_test"));
         Json.put(out, "test", true);
         return out;
@@ -479,13 +491,19 @@ public final class PuckyTurnController {
                         return;
                     }
                     JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, "http_response_success");
+                    Json.put(status, "sent_cue", arrivalCue);
                     Json.put(status, "arrival_cue", arrivalCue);
                     Json.put(status, "accepted_chime", arrivalCue);
+                    mergeArrivalCue(status, arrivalCue);
                     try {
                         PuckyTurnResponse parsed = PuckyTurnResponse.fromJson(responseText);
                         JSONObject card = PuckyFeedController.shared(context).upsertTurnResponse(localSessionId, parsed);
                         String sessionId = card.optString("session_id", "");
                         String turnId = parsed.turnId().isEmpty() ? sessionId : parsed.turnId();
+                        boolean suppressReceivedCue = spokenReplyEnabledAtUpload && parsed.hasAudio();
+                        JSONObject replyReceivedCue = suppressReceivedCue
+                                ? suppressedReplyReceivedCue(turnId, "spoken_reply_enabled")
+                                : playReplyReceivedCueOnce(turnId, "reply_saved");
                         Json.put(status, "session_id", sessionId);
                         Json.put(status, "turn_id", turnId);
                         Json.put(status, "card_id", card.optString("card_id", parsed.cardId()));
@@ -493,6 +511,8 @@ public final class PuckyTurnController {
                         Json.put(status, "reply_text_chars", parsed.text().length());
                         Json.put(status, "reply_audio_bytes", parsed.audioBytes().length);
                         Json.put(status, "reply_card_saved", true);
+                        Json.put(status, "reply_received_cue", replyReceivedCue);
+                        mergeReplyReceivedCue(status, replyReceivedCue);
                         Json.put(status, "reply_mode", replyModeAtUpload);
                         Json.put(status, "arrival_cue_mode", settings.getPuckyTurnArrivalCueMode());
                         Json.put(status, "spoken_reply_enabled", spokenReplyEnabledAtUpload);
@@ -603,8 +623,10 @@ public final class PuckyTurnController {
         Json.put(status, "codex_running", "codex_running".equals(remoteStage));
         if (isAcceptedRemoteStage(remoteStage)) {
             JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, remoteStage);
+            Json.put(status, "sent_cue", arrivalCue);
             Json.put(status, "arrival_cue", arrivalCue);
             Json.put(status, "accepted_chime", arrivalCue);
+            mergeArrivalCue(status, arrivalCue);
         }
         if ("failed".equals(remoteStage)) {
             markStatus("failed", status, remote.optString("error_type", "remote_failed"));
@@ -756,12 +778,21 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "pucky_clipboard_entry_id");
         copyIfPresent(record, detail, "latency_total_ms");
         copyIfPresent(record, detail, "latency_server_total_ms");
+        copyIfPresent(record, detail, "sent_cue");
         copyIfPresent(record, detail, "arrival_cue_mode");
         copyIfPresent(record, detail, "arrival_cue");
         copyIfPresent(record, detail, "arrival_cue_attempted");
         copyIfPresent(record, detail, "arrival_cue_suppressed");
         copyIfPresent(record, detail, "arrival_cue_result");
         copyIfPresent(record, detail, "accepted_chime");
+        copyIfPresent(record, detail, "reply_received_cue");
+        copyIfPresent(record, detail, "reply_received_cue_attempted");
+        copyIfPresent(record, detail, "reply_received_cue_suppressed");
+        copyIfPresent(record, detail, "reply_received_cue_played");
+        copyIfPresent(record, detail, "reply_received_cue_result");
+        copyIfPresent(record, detail, "reply_received_cue_asset_name");
+        copyIfPresent(record, detail, "reply_received_cue_asset_path");
+        copyIfPresent(record, detail, "reply_received_cue_fallback_used");
         copyIfPresent(record, detail, "spoken_reply_playback_attempted");
         copyIfPresent(record, detail, "spoken_reply_playback_started");
         copyIfPresent(record, detail, "spoken_reply_playback_completed");
@@ -785,8 +816,14 @@ public final class PuckyTurnController {
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "error");
         copyIfPresent(event, detail, "http_status");
+        copyIfPresent(event, detail, "sent_cue");
         copyIfPresent(event, detail, "arrival_cue");
         copyIfPresent(event, detail, "accepted_chime");
+        copyIfPresent(event, detail, "reply_received_cue");
+        copyIfPresent(event, detail, "reply_received_cue_attempted");
+        copyIfPresent(event, detail, "reply_received_cue_suppressed");
+        copyIfPresent(event, detail, "reply_received_cue_played");
+        copyIfPresent(event, detail, "reply_received_cue_result");
         copyIfPresent(event, detail, "spoken_reply_playback_attempted");
         copyIfPresent(event, detail, "spoken_reply_playback_started");
         copyIfPresent(event, detail, "spoken_reply_playback_completed");
@@ -982,12 +1019,12 @@ public final class PuckyTurnController {
             }
             acceptedChimedTurnId = turnId;
         }
-        JSONObject cue = playArrivalCue(trigger);
+        JSONObject cue = playSentCue(trigger);
         mergeArrivalCue(out, cue);
         return out;
     }
 
-    private JSONObject playArrivalCue(String trigger) {
+    private JSONObject playSentCue(String trigger) {
         JSONObject out = new JSONObject();
         String arrivalCueMode = settings.getPuckyTurnArrivalCueMode();
         boolean playHaptic = SettingsStore.PUCKY_TURN_ARRIVAL_CUE_HAPTIC.equals(arrivalCueMode)
@@ -1025,7 +1062,7 @@ public final class PuckyTurnController {
         }
         if (playChime) {
             JSONObject playback = new RecipeDevicePrimitiveExecutor(context)
-                    .playSuccessChime("pucky.turn_arrival_cue_playback.v1");
+                    .playTurnSentChime("pucky.turn_arrival_cue_playback.v1");
             Json.put(out, "accepted_chime_attempted", true);
             Json.put(out, "chime_attempted", true);
             mergeAcceptedChime(out, playback);
@@ -1033,6 +1070,68 @@ public final class PuckyTurnController {
         }
         Json.put(out, "played", out.optBoolean("haptic_played", false) || out.optBoolean("chime_played", false));
         Json.put(out, "arrival_cue_result", out.optBoolean("played", false) ? "played" : out.optString("reason", ""));
+        return out;
+    }
+
+    private JSONObject playReplyReceivedCueOnce(String turnId, String trigger) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_reply_received_cue.v1");
+        Json.put(out, "turn_id", turnId);
+        Json.put(out, "trigger", trigger);
+        Json.put(out, "reply_received_cue_attempted", false);
+        Json.put(out, "reply_received_cue_suppressed", false);
+        Json.put(out, "reply_received_cue_result", "");
+        if (turnId == null || turnId.trim().isEmpty()) {
+            Json.put(out, "played", false);
+            Json.put(out, "reason", "missing_turn_id");
+            Json.put(out, "reply_received_cue_result", "missing_turn_id");
+            return out;
+        }
+        synchronized (pollLock) {
+            if (turnId.equals(replyReceivedCuedTurnId)) {
+                Json.put(out, "played", false);
+                Json.put(out, "reason", "already_played");
+                Json.put(out, "reply_received_cue_result", "already_played");
+                return out;
+            }
+            replyReceivedCuedTurnId = turnId;
+        }
+        JSONObject cue = playReplyReceivedCue(trigger);
+        mergeReplyReceivedCue(out, cue);
+        return out;
+    }
+
+    private JSONObject playReplyReceivedCue(String trigger) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_reply_received_cue_playback.v1");
+        Json.put(out, "trigger", trigger);
+        Json.put(out, "reply_received_cue_attempted", true);
+        Json.put(out, "reply_received_cue_suppressed", false);
+        Json.put(out, "reply_received_cue_result", "");
+        JSONObject playback = new RecipeDevicePrimitiveExecutor(context)
+                .playTurnReceivedChime("pucky.turn_reply_received_cue_playback.v1");
+        mergeAcceptedChime(out, playback);
+        Json.put(out, "played", playback.optBoolean("played", false));
+        Json.put(out, "reply_received_cue_played", playback.optBoolean("played", false));
+        Json.put(out, "reply_received_cue_result", playback.optBoolean("played", false) ? "played" : playback.optString("reason", ""));
+        Json.put(out, "reply_received_cue_asset_name", playback.optString("asset_name", ""));
+        Json.put(out, "reply_received_cue_asset_path", playback.optString("asset_path", ""));
+        Json.put(out, "reply_received_cue_fallback_used", playback.optBoolean("fallback_used", false));
+        return out;
+    }
+
+    private JSONObject suppressedReplyReceivedCue(String turnId, String reason) {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_reply_received_cue.v1");
+        Json.put(out, "turn_id", turnId);
+        Json.put(out, "trigger", "reply_saved");
+        Json.put(out, "reply_received_cue_attempted", false);
+        Json.put(out, "reply_received_cue_suppressed", true);
+        Json.put(out, "reply_received_cue_played", false);
+        Json.put(out, "reply_received_cue_result", reason);
+        Json.put(out, "played", false);
+        Json.put(out, "reason", reason);
+        Json.put(out, "reply_received_cue_fallback_used", false);
         return out;
     }
 
@@ -1047,6 +1146,17 @@ public final class PuckyTurnController {
         copyIfPresent(target, source, "haptic_amplitude");
         copyIfPresent(target, source, "chime_attempted");
         copyIfPresent(target, source, "chime_played");
+        mergeAcceptedChime(target, source);
+    }
+
+    private static void mergeReplyReceivedCue(JSONObject target, JSONObject source) {
+        copyIfPresent(target, source, "reply_received_cue_attempted");
+        copyIfPresent(target, source, "reply_received_cue_suppressed");
+        copyIfPresent(target, source, "reply_received_cue_played");
+        copyIfPresent(target, source, "reply_received_cue_result");
+        copyIfPresent(target, source, "reply_received_cue_asset_name");
+        copyIfPresent(target, source, "reply_received_cue_asset_path");
+        copyIfPresent(target, source, "reply_received_cue_fallback_used");
         mergeAcceptedChime(target, source);
     }
 

@@ -442,6 +442,8 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert 'command === "wake.status"' in app
     assert 'command === "ui.surface.get"' in app
     assert 'command === "pucky.turn.arrival_cue.test"' in app
+    assert 'command === "pucky.turn.sent_cue.test"' in app
+    assert 'command === "pucky.turn.received_cue.test"' in app
     assert 'command === "pucky.turn.chime.test"' in app
     assert 'command: "pucky.turn.settings.get"' in app
     assert 'command: "pucky.turn.settings.set"' in app
@@ -452,10 +454,10 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert '"settings-card"' in app
     assert "Live controls for wake, walkie, and device feedback." in app
     assert "Reply playback" in app
-    assert "Reply arrival cue" in app
+    assert "Message sent cue" in app
     assert "Wake word" in app
     assert "Diagnostics" in app
-    assert "Test arrival cue" in app
+    assert "Test sent cue" in app
     assert "Buzz + chime" in app
     assert "const MOCK_SETTINGS" not in app
     assert ".settings-page" in styles

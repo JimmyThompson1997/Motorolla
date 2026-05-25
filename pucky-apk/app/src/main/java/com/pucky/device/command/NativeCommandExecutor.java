@@ -76,7 +76,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "pucky.turn.settings.get", "pucky.turn.settings.set",
-            "pucky.turn.arrival_cue.test", "pucky.turn.chime.test",
+            "pucky.turn.arrival_cue.test", "pucky.turn.sent_cue.test",
+            "pucky.turn.received_cue.test", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read",
             "pucky.feed.sync", "pucky.feed.action",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate", "wake.debug.confirm_artifact",
@@ -414,6 +415,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.settingsSet(command.args());
             case "pucky.turn.arrival_cue.test":
                 return puckyTurnController.arrivalCueTest(command.args());
+            case "pucky.turn.sent_cue.test":
+                return puckyTurnController.sentCueTest(command.args());
+            case "pucky.turn.received_cue.test":
+                return puckyTurnController.receivedCueTest(command.args());
             case "pucky.turn.chime.test":
                 return puckyTurnController.chimeTest(command.args());
             case "pucky.turn.history":

@@ -1,11 +1,14 @@
 package com.pucky.device.speech;
 
 import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.ToneGenerator;
+import android.net.Uri;
 
+import com.pucky.device.R;
 import com.pucky.device.camera.CameraController;
 import com.pucky.device.camera.VideoCaptureController;
 import com.pucky.device.clipboard.PuckyClipboardController;
@@ -18,6 +21,7 @@ import com.pucky.device.util.Json;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.IOException;
 
 public final class RecipeDevicePrimitiveExecutor {
     public static final String COMMAND_TORCH_SET = "torch.set";
@@ -41,6 +45,8 @@ public final class RecipeDevicePrimitiveExecutor {
     public static final long DEFAULT_VIDEO_MAX_DURATION_MS = 60000L;
     private static final String SUCCESS_SOUND_PATH = "/product/media/audio/notifications/Soft.ogg";
     private static final String FAILURE_SOUND_PATH = "/product/media/audio/ui/LowBattery.ogg";
+    private static final String TURN_SENT_SOUND_NAME = "pucky_system_notification.mp3";
+    private static final String TURN_RECEIVED_SOUND_NAME = "pucky_new_message_2.mp3";
 
     private final Context context;
     private final CameraController cameraController;
@@ -314,6 +320,21 @@ public final class RecipeDevicePrimitiveExecutor {
                 ToneGenerator.TONE_PROP_ACK, 140, "pucky-keyword-action-chime");
     }
 
+    public JSONObject playTurnSentChime(String schema) {
+        return playRawResourceChime(schema, R.raw.pucky_system_notification, TURN_SENT_SOUND_NAME,
+                ToneGenerator.TONE_PROP_ACK, 140, "pucky-turn-sent-chime");
+    }
+
+    public JSONObject playTurnReceivedChime(String schema) {
+        return playRawResourceChime(schema, R.raw.pucky_new_message_2, TURN_RECEIVED_SOUND_NAME,
+                ToneGenerator.TONE_PROP_ACK, 160, "pucky-turn-received-chime");
+    }
+
+    public JSONObject playWakeListeningChime(String schema) {
+        return playRawResourceChime(schema, R.raw.pucky_system_notification, TURN_SENT_SOUND_NAME,
+                ToneGenerator.TONE_PROP_ACK, 140, "pucky-wake-listening-chime");
+    }
+
     public JSONObject playFailureChime(String schema) {
         return playFileChime(schema, FAILURE_SOUND_PATH, "LowBattery.ogg",
                 ToneGenerator.TONE_PROP_NACK, 220, "pucky-keyword-action-failure-chime");
@@ -327,6 +348,7 @@ public final class RecipeDevicePrimitiveExecutor {
         Json.put(out, "asset_name", assetName);
         Json.put(out, "asset_path", assetPath);
         Json.put(out, "player", "MediaPlayer");
+        Json.put(out, "usage", "media_sonification");
         Json.put(out, "played", false);
         Json.put(out, "fallback_used", false);
         Json.put(out, "asset_exists", new File(assetPath).exists());
@@ -356,10 +378,79 @@ public final class RecipeDevicePrimitiveExecutor {
         }
     }
 
+    private JSONObject playRawResourceChime(
+            String schema, int resourceId, String assetName, int fallbackTone, int fallbackDurationMs, String threadName) {
+        JSONObject out = new JSONObject();
+        String assetPath = context == null
+                ? "android.resource://missing/raw/" + assetName.replace('.', '_')
+                : Uri.parse("android.resource://" + context.getPackageName() + "/" + resourceId).toString();
+        Json.put(out, "schema", schema);
+        Json.put(out, "stream", "music");
+        Json.put(out, "asset_name", assetName);
+        Json.put(out, "asset_path", assetPath);
+        Json.put(out, "player", "MediaPlayer");
+        Json.put(out, "usage", "media_sonification");
+        Json.put(out, "played", false);
+        Json.put(out, "fallback_used", false);
+        Json.put(out, "asset_exists", context != null);
+        if (context == null) {
+            Json.put(out, "asset_error", "IllegalStateException: context unavailable");
+            JSONObject fallback = playToneChime(schema + ".fallback", fallbackTone, fallbackDurationMs, threadName);
+            Json.put(out, "played", fallback.optBoolean("played", false));
+            Json.put(out, "fallback_used", true);
+            Json.put(out, "fallback", fallback);
+            return out;
+        }
+        AssetFileDescriptor descriptor = null;
+        MediaPlayer player = null;
+        try {
+            descriptor = context.getResources().openRawResourceFd(resourceId);
+            if (descriptor == null) {
+                throw new IOException("missing raw resource");
+            }
+            player = new MediaPlayer();
+            player.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            player.setDataSource(descriptor.getFileDescriptor(), descriptor.getStartOffset(), descriptor.getLength());
+            final AssetFileDescriptor playbackDescriptor = descriptor;
+            player.setOnCompletionListener(mp -> {
+                mp.release();
+                closeQuietly(playbackDescriptor);
+            });
+            player.setOnErrorListener((mp, what, extra) -> {
+                mp.release();
+                closeQuietly(playbackDescriptor);
+                return true;
+            });
+            player.prepare();
+            player.start();
+            Json.put(out, "played", true);
+            return out;
+        } catch (Exception exc) {
+            if (player != null) {
+                try {
+                    player.release();
+                } catch (RuntimeException ignored) {
+                    // Best-effort release after playback setup failure.
+                }
+            }
+            closeQuietly(descriptor);
+            Json.put(out, "asset_error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+            JSONObject fallback = playToneChime(schema + ".fallback", fallbackTone, fallbackDurationMs, threadName);
+            Json.put(out, "played", fallback.optBoolean("played", false));
+            Json.put(out, "fallback_used", true);
+            Json.put(out, "fallback", fallback);
+            return out;
+        }
+    }
+
     private JSONObject playToneChime(String schema, int tone, int durationMs, String threadName) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", schema);
         Json.put(out, "stream", "music");
+        Json.put(out, "usage", "media_sonification");
         Json.put(out, "volume", 85);
         Json.put(out, "duration_ms", durationMs);
         Json.put(out, "played", false);
@@ -380,6 +471,17 @@ public final class RecipeDevicePrimitiveExecutor {
             Json.put(out, "error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
         }
         return out;
+    }
+
+    private static void closeQuietly(AssetFileDescriptor descriptor) {
+        if (descriptor == null) {
+            return;
+        }
+        try {
+            descriptor.close();
+        } catch (IOException ignored) {
+            // Best-effort close for raw-resource playback descriptors.
+        }
     }
 
     private void handlePendingLocationResolution(JSONObject args, JSONObject result) {

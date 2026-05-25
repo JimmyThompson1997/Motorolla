@@ -105,6 +105,10 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).settingsSet(args);
             case "pucky.turn.arrival_cue.test":
                 return PuckyTurnController.shared(context).arrivalCueTest(args);
+            case "pucky.turn.sent_cue.test":
+                return PuckyTurnController.shared(context).sentCueTest(args);
+            case "pucky.turn.received_cue.test":
+                return PuckyTurnController.shared(context).receivedCueTest(args);
             case "pucky.turn.chime.test":
                 return PuckyTurnController.shared(context).chimeTest(args);
             case "pucky.turn.history":

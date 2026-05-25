@@ -82,6 +82,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.settings.get\""));
         assertTrue(source.contains("\"pucky.turn.settings.set\""));
         assertTrue(source.contains("\"pucky.turn.arrival_cue.test\""));
+        assertTrue(source.contains("\"pucky.turn.sent_cue.test\""));
+        assertTrue(source.contains("\"pucky.turn.received_cue.test\""));
         assertTrue(source.contains("\"pucky.turn.chime.test\""));
         assertTrue(source.contains("\"pucky.turn.history\""));
         assertTrue(source.contains("\"pucky.turn.read\""));
@@ -91,6 +93,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.settingsGet()"));
         assertTrue(source.contains("return puckyTurnController.settingsSet(command.args())"));
         assertTrue(source.contains("return puckyTurnController.arrivalCueTest(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.sentCueTest(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.receivedCueTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.chimeTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.history(command.args())"));
         assertTrue(source.contains("return puckyTurnController.read(command.args())"));
@@ -209,7 +213,13 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(out, \"arrival_cue_mode\", settings.getPuckyTurnArrivalCueMode())"));
         assertTrue(source.contains("Json.put(out, \"accepted_chime_enabled\", settings.isPuckyTurnAcceptedChimeEnabled())"));
         assertTrue(source.contains("public JSONObject arrivalCueTest(JSONObject args)"));
+        assertTrue(source.contains("public JSONObject sentCueTest(JSONObject args)"));
+        assertTrue(source.contains("public JSONObject receivedCueTest(JSONObject args)"));
         assertTrue(source.contains("public JSONObject chimeTest(JSONObject args)"));
+        assertTrue(source.contains("return arrivalCueTest(args);"));
+        assertTrue(source.contains("playReplyReceivedCue(\"manual_test\")"));
+        assertTrue(source.contains(".playTurnSentChime(\"pucky.turn_arrival_cue_playback.v1\")"));
+        assertTrue(source.contains(".playTurnReceivedChime(\"pucky.turn_reply_received_cue_playback.v1\")"));
         assertTrue(source.contains("settings.setPuckyTurnArrivalCueMode"));
         assertTrue(source.contains("settings.setPuckyTurnAcceptedChimeEnabled"));
         assertFalse(Pattern.compile("Log\\.[^;]*getPuckyTurnAuthToken", Pattern.DOTALL).matcher(source).find());
@@ -353,15 +363,21 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("playRecordingStartHaptic()"));
         assertTrue(source.contains("playRecordingStopHaptic()"));
         assertTrue(source.contains("playArrivalCueOnce(clientTurnId, remoteStage)"));
-        assertTrue(source.contains(".playSuccessChime(\"pucky.turn_arrival_cue_playback.v1\")"));
+        assertTrue(source.contains(".playTurnSentChime(\"pucky.turn_arrival_cue_playback.v1\")"));
         assertFalse(source.contains("ToneGenerator.TONE_PROP_PROMPT"));
         assertTrue(responseBody.contains("playArrivalCueOnce(clientTurnId, \"http_response_success\")"));
+        assertTrue(responseBody.contains("playReplyReceivedCueOnce(turnId, \"reply_saved\")")
+                || responseBody.contains("suppressedReplyReceivedCue(turnId, \"spoken_reply_enabled\")"));
         assertTrue(source.contains("Json.put(status, \"arrival_cue\""));
+        assertTrue(source.contains("Json.put(status, \"sent_cue\""));
         assertTrue(source.contains("Json.put(status, \"accepted_chime\""));
+        assertTrue(source.contains("Json.put(status, \"reply_received_cue\""));
         assertTrue(source.contains("copyIfPresent(record, detail, \"arrival_cue\")"));
         assertTrue(source.contains("copyIfPresent(record, detail, \"accepted_chime\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"reply_received_cue\")"));
         assertTrue(source.contains("copyIfPresent(event, detail, \"arrival_cue\")"));
         assertTrue(source.contains("copyIfPresent(event, detail, \"accepted_chime\")"));
+        assertTrue(source.contains("copyIfPresent(event, detail, \"reply_received_cue\")"));
 
         assertTrue(startBody.contains("final boolean feedback = args.optBoolean(\"feedback\", true)"));
         assertTrue(startBody.contains("Json.put(startArgs, \"feedback\", false)"));
@@ -376,10 +392,13 @@ public final class PuckyTurnSourceTest {
         assertFalse(finishBody.substring(finishBody.indexOf("if (!isUploadConfigured())")).contains("playArrivalCueOnce"));
         assertTrue(remoteStatusBody.contains("if (isAcceptedRemoteStage(remoteStage))"));
         assertTrue(remoteStatusBody.contains("JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, remoteStage);"));
+        assertTrue(remoteStatusBody.contains("Json.put(status, \"sent_cue\", arrivalCue)"));
         assertTrue(remoteStatusBody.contains("Json.put(status, \"arrival_cue\", arrivalCue)"));
         assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", arrivalCue)"));
         assertTrue(source.contains("private static boolean isAcceptedRemoteStage(String stage)"));
         assertTrue(source.contains("private JSONObject playArrivalCueOnce(String turnId, String trigger)"));
+        assertTrue(source.contains("private JSONObject playReplyReceivedCueOnce(String turnId, String trigger)"));
+        assertTrue(source.contains("private JSONObject playReplyReceivedCue(String trigger)"));
         assertTrue(capture.contains("if (capture.feedback)"));
     }
 

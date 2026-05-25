@@ -405,7 +405,7 @@
       };
       return state.turnSettings;
     }
-    if (command === "pucky.turn.arrival_cue.test") {
+    if (command === "pucky.turn.arrival_cue.test" || command === "pucky.turn.sent_cue.test") {
       const arrivalCueMode = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode);
       const acceptedChimeEnabled = arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime";
       return {
@@ -424,8 +424,30 @@
         chime_played: acceptedChimeEnabled,
         played: arrivalCueMode !== "none",
         reason: arrivalCueMode === "none" ? "disabled" : "",
-        asset_name: "Soft.ogg",
-        asset_path: "/product/media/audio/notifications/Soft.ogg",
+        asset_name: "pucky_system_notification.mp3",
+        asset_path: "res/raw/pucky_system_notification.mp3",
+        fallback_used: false,
+        player: "MediaPlayer",
+        stream: "music",
+        usage: "media_sonification"
+      };
+    }
+    if (command === "pucky.turn.received_cue.test") {
+      return {
+        schema: "pucky.turn_reply_received_cue_playback.v1",
+        test: true,
+        trigger: "manual_test",
+        reply_received_cue_attempted: true,
+        reply_received_cue_suppressed: false,
+        reply_received_cue_played: true,
+        reply_received_cue_result: "played",
+        played: true,
+        reason: "",
+        asset_name: "pucky_new_message_2.mp3",
+        asset_path: "res/raw/pucky_new_message_2.mp3",
+        reply_received_cue_asset_name: "pucky_new_message_2.mp3",
+        reply_received_cue_asset_path: "res/raw/pucky_new_message_2.mp3",
+        reply_received_cue_fallback_used: false,
         fallback_used: false,
         player: "MediaPlayer",
         stream: "music",
@@ -1290,12 +1312,12 @@
     icon.innerHTML = iconSvg("bell", { filled: true });
     const copy = el("div", "settings-card-copy");
     copy.append(
-      el("h2", "settings-card-title", "Reply arrival cue"),
-      el("p", "settings-card-detail", "Choose the one-time cue that tells you the turn landed before any optional voice playback.")
+      el("h2", "settings-card-title", "Message sent cue"),
+      el("p", "settings-card-detail", "Choose the one-time cue that tells you your message landed before any optional voice reply.")
     );
     const segment = el("div", "settings-segment");
     segment.setAttribute("role", "group");
-    segment.setAttribute("aria-label", "Reply arrival cue");
+    segment.setAttribute("aria-label", "Message sent cue");
     segment.append(
       arrivalCueButton("none", "None"),
       arrivalCueButton("haptic", "Buzz"),
@@ -1303,7 +1325,7 @@
       arrivalCueButton("haptic_and_chime", "Buzz + chime")
     );
     const actions = el("div", "settings-card-actions");
-    actions.append(settingsActionButton("Test arrival cue", testArrivalCue));
+    actions.append(settingsActionButton("Test sent cue", testArrivalCue));
     card.append(icon, copy, segment, actions);
     return card;
   }
@@ -1382,9 +1404,9 @@
 
   async function testArrivalCue() {
     try {
-      await Pucky.request({ command: "pucky.turn.arrival_cue.test", args: {} });
+      await Pucky.request({ command: "pucky.turn.sent_cue.test", args: {} });
     } catch (_) {
-      showToast("Could not test the reply arrival cue.");
+      showToast("Could not test the message sent cue.");
     }
   }
 

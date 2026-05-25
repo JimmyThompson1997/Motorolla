@@ -435,7 +435,7 @@ public final class WakeWordController {
             timing.chimeRequestedMs = SystemClock.elapsedRealtime();
             persistAcceptedTiming(timing);
         }
-        JSONObject chime = recipeExecutor.playSuccessChime("pucky.wake_listening_chime.v1");
+        JSONObject chime = recipeExecutor.playWakeListeningChime("pucky.wake_listening_chime.v1");
         synchronized (lock) {
             lastWakePhrase = matchedPhrase;
             lastWakeAt = Instant.now().toString();
