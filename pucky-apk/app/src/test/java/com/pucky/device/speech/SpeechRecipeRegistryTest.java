@@ -100,11 +100,11 @@ public final class SpeechRecipeRegistryTest {
     @Test
     public void activePhraseConflictsAreRejectedAcrossBundles() throws Exception {
         JSONObject fallback = SpeechRecipeRegistry.normalizeBundle(bundle(
-                recipe("mic_on", phrases("mic on"), new JSONObject()
+                recipe("fallback_flashlight", phrases("flashlight"), new JSONObject()
                         .put("type", "chime")
                         .put("sound", "soft"))), "fallback");
         JSONObject vm = SpeechRecipeRegistry.normalizeBundle(bundle(
-                recipe("custom_mic", phrases("Mic on!"), deviceStep("torch.set", new JSONObject()))), "vm");
+                recipe("custom_flashlight", phrases("Flashlight!"), deviceStep("torch.set", new JSONObject()))), "vm");
 
         CommandException exc = expectCommandException(() ->
                 SpeechRecipeRegistry.requireNoActivePhraseConflicts(
@@ -116,7 +116,7 @@ public final class SpeechRecipeRegistryTest {
     @Test
     public void activeRecipesUseVmSyncSourceForStoredBundle() throws Exception {
         JSONObject fallback = SpeechRecipeRegistry.normalizeBundle(bundle(
-                recipe("hey_pucky", phrases("hey pucky"), new JSONObject()
+                recipe("fallback_ready", phrases("ready"), new JSONObject()
                         .put("type", "chime")
                         .put("sound", "soft"))), "fallback");
         JSONObject vm = SpeechRecipeRegistry.normalizeBundle(bundle(
@@ -141,7 +141,7 @@ public final class SpeechRecipeRegistryTest {
 
     @Test
     public void storedOnlyMatchDoesNotFallBackToApkBuiltins() throws Exception {
-        SpeechRecipeRegistry.RecipeMatch none = SpeechRecipeRegistry.matchStoredOnly("hey pucky", "");
+        SpeechRecipeRegistry.RecipeMatch none = SpeechRecipeRegistry.matchStoredOnly("ready", "");
         JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle(
                 recipe("flashlight", phrases("flashlight"), deviceStep("torch.set", new JSONObject()))), "vm_sync");
         SpeechRecipeRegistry.RecipeMatch yes = SpeechRecipeRegistry.matchStoredOnly("flashlight", normalized.toString());

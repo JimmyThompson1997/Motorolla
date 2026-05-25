@@ -142,7 +142,7 @@ public final class PuckyForegroundService extends Service {
         coverDisplayGestureController.start();
         startReconnectWatchdog();
         scheduleServiceRestart("service_keepalive_started", KEEPALIVE_RESTART_DELAY_MS);
-        WakeWordController.shared(this).start(new org.json.JSONObject());
+        WakeWordController.shared(this).onServiceStarted();
     }
 
     @Override
@@ -190,7 +190,7 @@ public final class PuckyForegroundService extends Service {
             coverDisplayGestureController = null;
         }
         unregisterCoverDisplayListener();
-        WakeWordController.shared(this).stop(new org.json.JSONObject());
+        WakeWordController.shared(this).onServiceStopped();
         disconnectBroker();
         unregisterNetworkCallback();
         PuckyState.get().setServiceRunning(false);

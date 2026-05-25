@@ -33,17 +33,23 @@ public final class PuckyWakeLabSourceTest {
     }
 
     @Test
-    public void wakeWordControllerIsDisabledCompatibilityStub() throws Exception {
+    public void wakeWordControllerOwnsPhaseTwoWakeSentinel() throws Exception {
         String source = read("src/main/java/com/pucky/device/wake/WakeWordController.java");
+        String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
+        String family = read("src/main/java/com/pucky/device/wake/WakePhraseFamily.java");
 
-        assertTrue(source.contains("engine\", \"none\""));
-        assertTrue(source.contains("enabled\", false"));
-        assertTrue(source.contains("running\", false"));
-        assertTrue(source.contains("configured\", false"));
-        assertTrue(source.contains("porcupine_removed_license_risk"));
-        assertTrue(source.contains("volume_down_lab_openwakeword_experiment"));
-        assertFalse(source.contains("NotificationController"));
-        assertFalse(source.contains("Vibrator"));
+        assertTrue(source.contains("silero_vad_candidate_plus_android_stt_confirmation"));
+        assertTrue(source.contains("KEY_LAST_SIMULATE_REQUESTED_AT"));
+        assertTrue(source.contains("assistant_status"));
+        assertTrue(source.contains("WakePhraseFamily.ID"));
+        assertTrue(source.contains("PuckyTurnController.shared(context).start(args)"));
+        assertTrue(source.contains("playFailureChime(\"pucky.wake_no_speech_failure_chime.v1\")"));
+        assertTrue(source.contains("WakeTurnMonitorPolicy"));
+        assertTrue(service.contains("WakeWordController.shared(this).onServiceStarted()"));
+        assertTrue(service.contains("WakeWordController.shared(this).onServiceStopped()"));
+        assertTrue(family.contains("\"hey pucky\""));
+        assertTrue(family.contains("\"pucky\""));
+        assertTrue(family.contains("\"hey pocky\""));
         assertFalse(source.contains("LiveKitController"));
     }
 
@@ -115,11 +121,15 @@ public final class PuckyWakeLabSourceTest {
         String recipes = read("src/main/java/com/pucky/device/speech/SpeechRecipeRegistry.java");
         String normalizer = read("src/main/java/com/pucky/device/speech/SpeechTextNormalizer.java");
         String interceptor = read("src/main/java/com/pucky/device/speech/PuckyTurnKeywordInterceptor.java");
+        String fallbackAsset = read("src/main/assets/pucky_recipes_fallback.json");
 
         assertTrue(recipes.contains("pucky.recipe_bundle.v1"));
         assertTrue(recipes.contains("pucky_recipes_fallback.json"));
         assertTrue(recipes.contains("SpeechTextNormalizer.normalize("));
         assertFalse(recipes.contains("SpeechKeywordMatcher.normalize("));
+        assertFalse(fallbackAsset.contains("\"hey_pucky\""));
+        assertFalse(fallbackAsset.contains("\"mic_on\""));
+        assertFalse(fallbackAsset.contains("\"mic_off\""));
         assertTrue(interceptor.contains("PuckyRecipeController.shared(context).storedRecipeBundleRaw()"));
         assertFalse(Files.exists(Path.of("src/main/java/com/pucky/device/speech/SpeechKeywordMatcher.java")));
         assertTrue(normalizer.contains("replaceAll(\"[^a-z0-9\\\\s]\", \" \")"));
