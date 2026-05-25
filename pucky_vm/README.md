@@ -93,7 +93,7 @@ Official HTML refresh flow is:
 
 `GitHub master -> VM pull/build/serve -> emulator refresh/verify -> phone refresh/verify`
 
-Use the official helper from the canonical repo for bundle refreshes:
+Use the official helper from the canonical deploy repo for bundle refreshes:
 
 ```powershell
 python .\tools\refresh_pucky_html_official.py --target emulator --device-id <emulator-device-id>
