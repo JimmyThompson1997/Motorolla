@@ -49,7 +49,11 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("PROBE_TRAILING_SILENCE_MS = 600L"));
         assertTrue(source.contains("PROBE_MAX_DURATION_MS = 2500L"));
         assertTrue(source.contains("recordCandidateAttempt(candidateSamples)"));
-        assertTrue(source.contains("recordConfirmationOutcome(outcome, decision, debugClipPath)"));
+        assertTrue(source.contains("recordConfirmationOutcome(attempt, decision, debugClipPath, timing)"));
+        assertTrue(source.contains("KEY_LAST_CONFIRMATION_CLIP_DURATION_MS"));
+        assertTrue(source.contains("KEY_LAST_CONFIRMATION_RECOGNIZER_MS"));
+        assertTrue(source.contains("KEY_LAST_WAKE_GATE_TO_CHIME_MS"));
+        assertTrue(source.contains("wake timing status="));
         assertTrue(source.contains("recognizeCandidate(candidateSamples)"));
         assertTrue(source.contains("WakeProbeClipShaper.limitPreRoll"));
         assertTrue(source.contains("WakeProbeClipShaper.shapeForConfirmation"));

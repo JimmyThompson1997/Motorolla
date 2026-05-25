@@ -48,6 +48,21 @@ public final class WakeWordController {
     private static final String KEY_LAST_CANDIDATE_AT = "last_candidate_at";
     private static final String KEY_LAST_CANDIDATE_DURATION_MS = "last_candidate_duration_ms";
     private static final String KEY_LAST_CANDIDATE_SAMPLES = "last_candidate_samples";
+    private static final String KEY_LAST_CONFIRMATION_RAW_DURATION_MS = "last_confirmation_raw_duration_ms";
+    private static final String KEY_LAST_CONFIRMATION_CLIP_DURATION_MS = "last_confirmation_clip_duration_ms";
+    private static final String KEY_LAST_CONFIRMATION_PADDED_DURATION_MS = "last_confirmation_padded_duration_ms";
+    private static final String KEY_LAST_CONFIRMATION_RECOGNIZER_MS = "last_confirmation_recognizer_ms";
+    private static final String KEY_LAST_WAKE_CAPTURE_MS = "last_wake_capture_ms";
+    private static final String KEY_LAST_WAKE_GATE_TO_CAPTURE_START_MS = "last_wake_gate_to_capture_start_ms";
+    private static final String KEY_LAST_WAKE_CAPTURE_FINISH_TO_CONFIRM_START_MS =
+            "last_wake_capture_finish_to_confirm_start_ms";
+    private static final String KEY_LAST_WAKE_CONFIRM_FINISH_TO_DECISION_MS =
+            "last_wake_confirm_finish_to_decision_ms";
+    private static final String KEY_LAST_WAKE_CAPTURE_FINISH_TO_CHIME_MS =
+            "last_wake_capture_finish_to_chime_ms";
+    private static final String KEY_LAST_WAKE_GATE_TO_CHIME_MS = "last_wake_gate_to_chime_ms";
+    private static final String KEY_LAST_WAKE_GATE_TO_TURN_START_REQUEST_MS =
+            "last_wake_gate_to_turn_start_request_ms";
     private static final String KEY_LAST_CONFIRMATION_STATUS = "last_confirmation_status";
     private static final String KEY_LAST_CONFIRMATION_TRANSCRIPT = "last_confirmation_transcript";
     private static final String KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON = "last_confirmation_alternatives_json";
@@ -172,6 +187,23 @@ public final class WakeWordController {
             Json.put(out, "last_candidate_at", nullable(prefs.getString(KEY_LAST_CANDIDATE_AT, "")));
             Json.put(out, "last_candidate_duration_ms", nullableInt(KEY_LAST_CANDIDATE_DURATION_MS));
             Json.put(out, "last_candidate_samples", nullableInt(KEY_LAST_CANDIDATE_SAMPLES));
+            Json.put(out, "last_confirmation_raw_duration_ms", nullableInt(KEY_LAST_CONFIRMATION_RAW_DURATION_MS));
+            Json.put(out, "last_confirmation_clip_duration_ms", nullableInt(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS));
+            Json.put(out, "last_confirmation_padded_duration_ms",
+                    nullableInt(KEY_LAST_CONFIRMATION_PADDED_DURATION_MS));
+            Json.put(out, "last_confirmation_recognizer_ms", nullableInt(KEY_LAST_CONFIRMATION_RECOGNIZER_MS));
+            Json.put(out, "last_wake_capture_ms", nullableInt(KEY_LAST_WAKE_CAPTURE_MS));
+            Json.put(out, "last_wake_gate_to_capture_start_ms",
+                    nullableInt(KEY_LAST_WAKE_GATE_TO_CAPTURE_START_MS));
+            Json.put(out, "last_wake_capture_finish_to_confirm_start_ms",
+                    nullableInt(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CONFIRM_START_MS));
+            Json.put(out, "last_wake_confirm_finish_to_decision_ms",
+                    nullableInt(KEY_LAST_WAKE_CONFIRM_FINISH_TO_DECISION_MS));
+            Json.put(out, "last_wake_capture_finish_to_chime_ms",
+                    nullableInt(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CHIME_MS));
+            Json.put(out, "last_wake_gate_to_chime_ms", nullableInt(KEY_LAST_WAKE_GATE_TO_CHIME_MS));
+            Json.put(out, "last_wake_gate_to_turn_start_request_ms",
+                    nullableInt(KEY_LAST_WAKE_GATE_TO_TURN_START_REQUEST_MS));
             Json.put(out, "active_turn_id", activeTurnId.isEmpty() ? JSONObject.NULL : activeTurnId);
             Json.put(out, "active_turn_source", activeTurnSource.isEmpty() ? JSONObject.NULL : activeTurnSource);
             Json.put(out, "suspended_reason", suspendedReason.isEmpty() ? JSONObject.NULL : suspendedReason);
@@ -294,18 +326,20 @@ public final class WakeWordController {
         }
         short[] candidateSamples = OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(readArtifactBytes(path));
         String debugClipPath = recordCandidateAttempt(candidateSamples);
-        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome = recognizeCandidate(candidateSamples);
-        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome);
-        recordConfirmationOutcome(outcome, decision, debugClipPath);
+        WakeRecognitionAttempt attempt = recognizeCandidate(candidateSamples);
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(attempt.outcome);
+        recordConfirmationOutcome(attempt, decision, debugClipPath, null);
         synchronized (lock) {
-            lastConfirmationTranscript = outcome.transcript;
-            lastError = outcome.succeeded ? "" : outcome.errorCode + ": " + outcome.errorMessage;
+            lastConfirmationTranscript = attempt.outcome.transcript;
+            lastError = attempt.outcome.succeeded ? "" : attempt.outcome.errorCode + ": "
+                    + attempt.outcome.errorMessage;
         }
 
         boolean startTurn = args != null && args.optBoolean("start_turn", false);
         boolean turnStarted = false;
         if (decision.accepted && startTurn) {
-            turnStarted = handleWakeAccepted(decision.matchedPhrase, outcome.transcript, "wake_debug_confirm_artifact");
+            turnStarted = handleWakeAccepted(decision.matchedPhrase, attempt.outcome.transcript,
+                    "wake_debug_confirm_artifact");
         }
 
         JSONObject out = new JSONObject();
@@ -313,16 +347,20 @@ public final class WakeWordController {
         Json.put(out, "path", path);
         Json.put(out, "samples", candidateSamples.length);
         Json.put(out, "duration_ms", WakeDebugClipStore.durationMs(candidateSamples));
+        Json.put(out, "confirmation_clip_duration_ms", attempt.shapedDurationMs);
+        Json.put(out, "confirmation_padded_duration_ms", attempt.paddedDurationMs);
+        Json.put(out, "confirmation_recognizer_ms", attempt.recognizerMs);
         Json.put(out, "accepted", decision.accepted);
         Json.put(out, "matched_phrase", decision.matchedPhrase.isEmpty() ? JSONObject.NULL : decision.matchedPhrase);
         Json.put(out, "confirmation_status", decision.confirmationStatus);
         Json.put(out, "reject_reason", decision.reason);
-        Json.put(out, "transcript", outcome.transcript);
-        Json.put(out, "alternatives", outcome.alternatives);
-        Json.put(out, "confidences", outcome.confidences);
-        Json.put(out, "recognizer_succeeded", outcome.succeeded);
-        Json.put(out, "error_code", outcome.errorCode.isEmpty() ? JSONObject.NULL : outcome.errorCode);
-        Json.put(out, "error_message", outcome.errorMessage.isEmpty() ? JSONObject.NULL : outcome.errorMessage);
+        Json.put(out, "transcript", attempt.outcome.transcript);
+        Json.put(out, "alternatives", attempt.outcome.alternatives);
+        Json.put(out, "confidences", attempt.outcome.confidences);
+        Json.put(out, "recognizer_succeeded", attempt.outcome.succeeded);
+        Json.put(out, "error_code", attempt.outcome.errorCode.isEmpty() ? JSONObject.NULL : attempt.outcome.errorCode);
+        Json.put(out, "error_message", attempt.outcome.errorMessage.isEmpty() ? JSONObject.NULL
+                : attempt.outcome.errorMessage);
         Json.put(out, "debug_clip_path", debugClipPath.isEmpty() ? JSONObject.NULL : debugClipPath);
         Json.put(out, "start_turn", startTurn);
         Json.put(out, "turn_started", turnStarted);
@@ -389,6 +427,14 @@ public final class WakeWordController {
     }
 
     private boolean handleWakeAccepted(String matchedPhrase, String transcript, String trigger) {
+        return handleWakeAccepted(matchedPhrase, transcript, trigger, null);
+    }
+
+    private boolean handleWakeAccepted(String matchedPhrase, String transcript, String trigger, WakeTiming timing) {
+        if (timing != null) {
+            timing.chimeRequestedMs = SystemClock.elapsedRealtime();
+            persistAcceptedTiming(timing);
+        }
         JSONObject chime = recipeExecutor.playSuccessChime("pucky.wake_listening_chime.v1");
         synchronized (lock) {
             lastWakePhrase = matchedPhrase;
@@ -404,6 +450,10 @@ public final class WakeWordController {
             Json.put(args, "trigger_source", "wake_word");
             Json.put(args, "wake_phrase_family", WakePhraseFamily.ID);
             Json.put(args, "wake_phrase_detected", matchedPhrase);
+            if (timing != null) {
+                timing.turnStartRequestedMs = SystemClock.elapsedRealtime();
+                persistAcceptedTiming(timing);
+            }
             JSONObject started = PuckyTurnController.shared(context).start(args);
             String turnId = started.optString("turn_id", "");
             synchronized (lock) {
@@ -479,6 +529,7 @@ public final class WakeWordController {
 
     private void onSentinelSpeechDetected() {
         short[] preRoll;
+        WakeTiming timing = WakeTiming.start(SystemClock.elapsedRealtime());
         synchronized (lock) {
             if (!sentinelRunning || candidateRecorder == null || candidateActive || confirmingCandidate) {
                 return;
@@ -486,6 +537,7 @@ public final class WakeWordController {
             preRoll = preRollBuffer == null
                     ? new short[0]
                     : WakeProbeClipShaper.limitPreRoll(preRollBuffer.snapshotSamples());
+            timing.captureStartedMs = SystemClock.elapsedRealtime();
             candidateRecorder.begin(preRoll);
             candidateActive = true;
             suspendedReason = "candidate_capturing";
@@ -514,12 +566,13 @@ public final class WakeWordController {
                     if (!candidateRecorder.readyToFinish()) {
                         continue;
                     }
+                    timing.captureFinishedMs = SystemClock.elapsedRealtime();
                     candidateSamples = candidateRecorder.finish();
                     candidateActive = false;
                     confirmingCandidate = true;
                     stopSentinelLocked("candidate_confirming");
                 }
-                confirmCandidate(candidateSamples);
+                confirmCandidate(candidateSamples, timing);
                 return;
             }
         }, "pucky-wake-candidate");
@@ -527,34 +580,51 @@ public final class WakeWordController {
         worker.start();
     }
 
-    private void confirmCandidate(short[] candidateSamples) {
+    private void confirmCandidate(short[] candidateSamples, WakeTiming timing) {
         String debugClipPath = recordCandidateAttempt(candidateSamples);
-        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome = recognizeCandidate(candidateSamples);
-        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(outcome);
-        recordConfirmationOutcome(outcome, decision, debugClipPath);
+        if (timing != null) {
+            timing.confirmStartedMs = SystemClock.elapsedRealtime();
+        }
+        WakeRecognitionAttempt attempt = recognizeCandidate(candidateSamples);
+        if (timing != null) {
+            timing.confirmFinishedMs = SystemClock.elapsedRealtime();
+        }
+        WakeConfirmationDecision decision = WakeConfirmationDecision.decide(attempt.outcome);
+        if (timing != null) {
+            timing.decisionMs = SystemClock.elapsedRealtime();
+        }
+        recordConfirmationOutcome(attempt, decision, debugClipPath, timing);
         synchronized (lock) {
             confirmingCandidate = false;
-            lastConfirmationTranscript = outcome.transcript;
-            if (!outcome.succeeded) {
-                lastError = outcome.errorCode + ": " + outcome.errorMessage;
+            lastConfirmationTranscript = attempt.outcome.transcript;
+            if (!attempt.outcome.succeeded) {
+                lastError = attempt.outcome.errorCode + ": " + attempt.outcome.errorMessage;
             } else {
                 lastError = "";
             }
         }
-        if (decision.accepted && handleWakeAccepted(decision.matchedPhrase, outcome.transcript, "voice")) {
+        if (decision.accepted && handleWakeAccepted(decision.matchedPhrase, attempt.outcome.transcript, "voice",
+                timing)) {
             return;
         }
         Log.i(TAG, "wake rejected trigger=voice reason=" + decision.reason
                 + " status=" + decision.confirmationStatus
-                + " transcript=" + outcome.transcript);
+                + " transcript=" + attempt.outcome.transcript);
         reevaluate();
     }
 
-    private OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognizeCandidate(short[] candidateSamples) {
+    private WakeRecognitionAttempt recognizeCandidate(short[] candidateSamples) {
         short[] shaped = WakeProbeClipShaper.shapeForConfirmation(candidateSamples);
-        return recognizer.recognize(
-                OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(shaped),
-                CONFIRM_TIMEOUT_MS);
+        short[] padded = OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(shaped);
+        long startedMs = SystemClock.elapsedRealtime();
+        OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome = recognizer.recognize(padded, CONFIRM_TIMEOUT_MS);
+        long finishedMs = SystemClock.elapsedRealtime();
+        return new WakeRecognitionAttempt(
+                outcome,
+                WakeDebugClipStore.durationMs(candidateSamples),
+                WakeDebugClipStore.durationMs(shaped),
+                WakeDebugClipStore.durationMs(padded),
+                elapsedInt(startedMs, finishedMs));
     }
 
     private boolean isWakeAllowedNowLocked() {
@@ -712,19 +782,36 @@ public final class WakeWordController {
         return debugClipPath;
     }
 
-    private void recordConfirmationOutcome(OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome,
+    private void recordConfirmationOutcome(WakeRecognitionAttempt attempt,
                                            WakeConfirmationDecision decision,
-                                           String debugClipPath) {
+                                           String debugClipPath,
+                                           WakeTiming timing) {
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString(KEY_LAST_CONFIRMATION_STATUS, decision.confirmationStatus);
-        editor.putString(KEY_LAST_CONFIRMATION_TRANSCRIPT, outcome.transcript);
-        editor.putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, outcome.alternatives.toString());
-        editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, outcome.confidences.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_TRANSCRIPT, attempt.outcome.transcript);
+        editor.putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, attempt.outcome.alternatives.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, attempt.outcome.confidences.toString());
         editor.putString(KEY_LAST_REJECT_REASON, decision.reason);
+        editor.putInt(KEY_LAST_CONFIRMATION_RAW_DURATION_MS, attempt.rawDurationMs);
+        editor.putInt(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS, attempt.shapedDurationMs);
+        editor.putInt(KEY_LAST_CONFIRMATION_PADDED_DURATION_MS, attempt.paddedDurationMs);
+        editor.putInt(KEY_LAST_CONFIRMATION_RECOGNIZER_MS, attempt.recognizerMs);
+        putTiming(editor, timing);
         if (!debugClipPath.isEmpty()) {
             editor.putString(KEY_LAST_DEBUG_CLIP_PATH, debugClipPath);
         }
         editor.apply();
+        Log.i(TAG, "wake timing status=" + decision.confirmationStatus
+                + " reason=" + decision.reason
+                + " raw_ms=" + attempt.rawDurationMs
+                + " shaped_ms=" + attempt.shapedDurationMs
+                + " padded_ms=" + attempt.paddedDurationMs
+                + " recognizer_ms=" + attempt.recognizerMs
+                + " capture_ms=" + durationOrNull(timing == null ? -1L : timing.captureStartedMs,
+                timing == null ? -1L : timing.captureFinishedMs)
+                + " finish_to_confirm_start_ms=" + durationOrNull(timing == null ? -1L : timing.captureFinishedMs,
+                timing == null ? -1L : timing.confirmStartedMs)
+                + " transcript=" + attempt.outcome.transcript);
     }
 
     private void recordConfirmationDirect(String status,
@@ -741,6 +828,17 @@ public final class WakeWordController {
         editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON,
                 confidences == null ? new JSONArray().toString() : confidences.toString());
         editor.putString(KEY_LAST_REJECT_REASON, reason == null ? "" : reason);
+        editor.remove(KEY_LAST_CONFIRMATION_RAW_DURATION_MS);
+        editor.remove(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS);
+        editor.remove(KEY_LAST_CONFIRMATION_PADDED_DURATION_MS);
+        editor.remove(KEY_LAST_CONFIRMATION_RECOGNIZER_MS);
+        editor.remove(KEY_LAST_WAKE_CAPTURE_MS);
+        editor.remove(KEY_LAST_WAKE_GATE_TO_CAPTURE_START_MS);
+        editor.remove(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CONFIRM_START_MS);
+        editor.remove(KEY_LAST_WAKE_CONFIRM_FINISH_TO_DECISION_MS);
+        editor.remove(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CHIME_MS);
+        editor.remove(KEY_LAST_WAKE_GATE_TO_CHIME_MS);
+        editor.remove(KEY_LAST_WAKE_GATE_TO_TURN_START_REQUEST_MS);
         editor.apply();
     }
 
@@ -753,6 +851,17 @@ public final class WakeWordController {
                 .remove(KEY_LAST_CANDIDATE_AT)
                 .remove(KEY_LAST_CANDIDATE_DURATION_MS)
                 .remove(KEY_LAST_CANDIDATE_SAMPLES)
+                .remove(KEY_LAST_CONFIRMATION_RAW_DURATION_MS)
+                .remove(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS)
+                .remove(KEY_LAST_CONFIRMATION_PADDED_DURATION_MS)
+                .remove(KEY_LAST_CONFIRMATION_RECOGNIZER_MS)
+                .remove(KEY_LAST_WAKE_CAPTURE_MS)
+                .remove(KEY_LAST_WAKE_GATE_TO_CAPTURE_START_MS)
+                .remove(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CONFIRM_START_MS)
+                .remove(KEY_LAST_WAKE_CONFIRM_FINISH_TO_DECISION_MS)
+                .remove(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CHIME_MS)
+                .remove(KEY_LAST_WAKE_GATE_TO_CHIME_MS)
+                .remove(KEY_LAST_WAKE_GATE_TO_TURN_START_REQUEST_MS)
                 .putString(KEY_LAST_CONFIRMATION_STATUS, WakeConfirmationDecision.STATUS_NOT_RUN)
                 .remove(KEY_LAST_CONFIRMATION_TRANSCRIPT)
                 .putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, new JSONArray().toString())
@@ -789,6 +898,46 @@ public final class WakeWordController {
         return Arrays.copyOf(data, offset);
     }
 
+    private void persistAcceptedTiming(WakeTiming timing) {
+        if (timing == null) {
+            return;
+        }
+        prefs.edit()
+                .putInt(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CHIME_MS,
+                        elapsedInt(timing.captureFinishedMs, timing.chimeRequestedMs))
+                .putInt(KEY_LAST_WAKE_GATE_TO_CHIME_MS,
+                        elapsedInt(timing.gateDetectedMs, timing.chimeRequestedMs))
+                .putInt(KEY_LAST_WAKE_GATE_TO_TURN_START_REQUEST_MS,
+                        elapsedInt(timing.gateDetectedMs, timing.turnStartRequestedMs))
+                .apply();
+    }
+
+    private static void putTiming(SharedPreferences.Editor editor, WakeTiming timing) {
+        if (timing == null) {
+            return;
+        }
+        editor.putInt(KEY_LAST_WAKE_CAPTURE_MS, elapsedInt(timing.captureStartedMs, timing.captureFinishedMs));
+        editor.putInt(KEY_LAST_WAKE_GATE_TO_CAPTURE_START_MS,
+                elapsedInt(timing.gateDetectedMs, timing.captureStartedMs));
+        editor.putInt(KEY_LAST_WAKE_CAPTURE_FINISH_TO_CONFIRM_START_MS,
+                elapsedInt(timing.captureFinishedMs, timing.confirmStartedMs));
+        editor.putInt(KEY_LAST_WAKE_CONFIRM_FINISH_TO_DECISION_MS,
+                elapsedInt(timing.confirmFinishedMs, timing.decisionMs));
+    }
+
+    private static int elapsedInt(long startMs, long endMs) {
+        if (startMs <= 0L || endMs <= 0L || endMs < startMs) {
+            return -1;
+        }
+        long value = endMs - startMs;
+        return value > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) value;
+    }
+
+    private static String durationOrNull(long startMs, long endMs) {
+        int value = elapsedInt(startMs, endMs);
+        return value < 0 ? "null" : String.valueOf(value);
+    }
+
     private File resolveAppOwnedPath(String path) throws Exception {
         if (path == null || path.trim().isEmpty()) {
             throw new IllegalArgumentException("artifact path is required");
@@ -812,6 +961,45 @@ public final class WakeWordController {
         String filePath = file.getCanonicalPath();
         String rootPath = root.getCanonicalPath();
         return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+    }
+
+    private static final class WakeRecognitionAttempt {
+        final OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome;
+        final int rawDurationMs;
+        final int shapedDurationMs;
+        final int paddedDurationMs;
+        final int recognizerMs;
+
+        WakeRecognitionAttempt(OnDeviceInjectedAudioRecognizer.RecognitionOutcome outcome,
+                               int rawDurationMs,
+                               int shapedDurationMs,
+                               int paddedDurationMs,
+                               int recognizerMs) {
+            this.outcome = outcome;
+            this.rawDurationMs = rawDurationMs;
+            this.shapedDurationMs = shapedDurationMs;
+            this.paddedDurationMs = paddedDurationMs;
+            this.recognizerMs = recognizerMs;
+        }
+    }
+
+    private static final class WakeTiming {
+        final long gateDetectedMs;
+        long captureStartedMs = -1L;
+        long captureFinishedMs = -1L;
+        long confirmStartedMs = -1L;
+        long confirmFinishedMs = -1L;
+        long decisionMs = -1L;
+        long chimeRequestedMs = -1L;
+        long turnStartRequestedMs = -1L;
+
+        private WakeTiming(long gateDetectedMs) {
+            this.gateDetectedMs = gateDetectedMs;
+        }
+
+        static WakeTiming start(long gateDetectedMs) {
+            return new WakeTiming(gateDetectedMs);
+        }
     }
 
     private final class WakeTurnMonitor extends Thread {
