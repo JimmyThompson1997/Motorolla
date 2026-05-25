@@ -293,6 +293,36 @@ def test_emulator_boot_ready_accepts_bootanim_stopped(monkeypatch: pytest.Monkey
     assert suite.emulator_boot_ready(args, suite.Runner(dry_run=False), config) is True
 
 
+def test_wait_for_boot_reports_early_emulator_exit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "process_alive", lambda pid: False)
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "missing")
+
+    with pytest.raises(suite.SuiteError, match="Emulator exited before ADB became ready"):
+        suite.wait_for_boot(args, runner, config, pid=123, timeout=10.0)
+
+
+def test_wait_for_boot_reports_final_adb_state_on_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "process_alive", lambda pid: True)
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "offline")
+
+    with pytest.raises(suite.SuiteError, match="adb state: offline"):
+        suite.wait_for_boot(args, runner, config, pid=123, timeout=3.0)
+
+
 def test_parse_display_ids_uses_first_surfaceflinger_display() -> None:
     output = """Display 4619827259835644672 (HWC display 0): port=0 pnpId=GGL displayName="EMU_display_0"
 Display 4619827551948147201 (HWC display 1): port=1 pnpId=GGL displayName="EMU_display_1"
@@ -338,6 +368,24 @@ def test_install_services_ready_requires_mount_and_storage_probe(monkeypatch: py
     monkeypatch.setattr(suite.Runner, "run", fake_run)
 
     assert suite.install_services_ready(args, runner, config) is True
+
+
+def test_install_services_ready_treats_probe_timeout_as_not_ready(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+
+    monkeypatch.setattr(suite, "package_manager_ready", lambda *_args, **_kwargs: True)
+
+    def fake_run(self, command, **kwargs):
+        joined = " ".join(command)
+        if "service check mount" in joined:
+            return suite.subprocess.CompletedProcess(command, 0, stdout="Service mount: found\n", stderr="")
+        raise suite.subprocess.TimeoutExpired(command, kwargs.get("timeout", 20))
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+
+    assert suite.install_services_ready(args, runner, config) is False
 
 
 def test_wait_for_install_services_requires_stable_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -635,6 +683,28 @@ def test_prove_thread_origin_waits_for_broker_channel_around_refresh(monkeypatch
 
     assert result["ok"] is True
     assert channel_stages == ["before_refresh", "after_refresh", "after_relaunch"]
+
+
+def test_wait_for_snapshot_card_retries_until_card_lands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    snapshots = iter(
+        [
+            {"cards": []},
+            {"cards": [{"card_id": "card-prove", "turn_id": "turn-123", "origin": {"thread_id": "thread-123"}}]},
+        ]
+    )
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": next(snapshots)})
+
+    snapshot, card = suite.wait_for_snapshot_card(args, runner, config, card_id="card-prove", turn_id="turn-123", timeout=5.0)
+
+    assert card["card_id"] == "card-prove"
+    assert snapshot["cards"][0]["turn_id"] == "turn-123"
 
 
 def test_prove_thread_origin_records_structured_refresh_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

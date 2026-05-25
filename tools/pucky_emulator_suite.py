@@ -460,36 +460,67 @@ def emulator_boot_ready(args: argparse.Namespace, runner: Runner, config: SlotCo
     return boot_signal(args, runner, config, "init.svc.bootanim") == "stopped"
 
 
-def wait_for_boot(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, timeout: float = 180.0) -> None:
+def process_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def wait_for_boot(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    pid: int | None = None,
+    timeout: float = 180.0,
+) -> None:
     if runner.dry_run:
         return
-    runner.run(adb_command(args, config.serial, ["wait-for-device"]), timeout=int(timeout))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if emulator_boot_ready(args, runner, config):
+        if pid and not process_alive(pid):
+            raise SuiteError(f"Emulator exited before ADB became ready: {config.serial} (pid {pid})")
+        state = adb_transport_state(args, runner, config.serial)
+        if state == "device" and emulator_boot_ready(args, runner, config):
             return
         time.sleep(2)
-    raise SuiteError(f"Timed out waiting for emulator boot: {config.serial}")
+    state = adb_transport_state(args, runner, config.serial)
+    if pid and not process_alive(pid):
+        raise SuiteError(f"Emulator exited before ADB became ready: {config.serial} (pid {pid})")
+    raise SuiteError(f"Timed out waiting for emulator boot: {config.serial} (adb state: {state})")
 
 
 def package_manager_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
-    service = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "package"]), timeout=15, check=False)
+    try:
+        service = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "package"]), timeout=15, check=False)
+    except subprocess.TimeoutExpired:
+        return False
     service_text = (service.stdout + "\n" + service.stderr).lower()
     if service.returncode != 0 or "can't find service" in service_text or "not found" in service_text:
         return False
 
-    query = runner.run(
-        adb_command(args, config.serial, ["shell", "cmd", "package", "list", "packages", "android"]),
-        timeout=20,
-        check=False,
-    )
+    try:
+        query = runner.run(
+            adb_command(args, config.serial, ["shell", "cmd", "package", "list", "packages", "android"]),
+            timeout=20,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     query_text = (query.stdout + "\n" + query.stderr).lower()
     if query.returncode == 0 and "package:android" in query_text:
         return True
     if "can't find service" in query_text or "not found" in query_text:
         return False
 
-    fallback = runner.run(adb_command(args, config.serial, ["shell", "pm", "path", "android"]), timeout=20, check=False)
+    try:
+        fallback = runner.run(adb_command(args, config.serial, ["shell", "pm", "path", "android"]), timeout=20, check=False)
+    except subprocess.TimeoutExpired:
+        return False
     fallback_text = (fallback.stdout + "\n" + fallback.stderr).lower()
     return fallback.returncode == 0 and "package:" in fallback_text and "can't find service" not in fallback_text
 
@@ -497,11 +528,17 @@ def package_manager_ready(args: argparse.Namespace, runner: Runner, config: Slot
 def install_services_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
     if not package_manager_ready(args, runner, config):
         return False
-    mount = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "mount"]), timeout=15, check=False)
+    try:
+        mount = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "mount"]), timeout=15, check=False)
+    except subprocess.TimeoutExpired:
+        return False
     mount_text = (mount.stdout + "\n" + mount.stderr).lower()
     if mount.returncode != 0 or "can't find service" in mount_text or "not found" in mount_text:
         return False
-    volumes = runner.run(adb_command(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=20, check=False)
+    try:
+        volumes = runner.run(adb_command(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=20, check=False)
+    except subprocess.TimeoutExpired:
+        return False
     volumes_text = (volumes.stdout + "\n" + volumes.stderr).lower()
     if volumes.returncode != 0:
         return False
@@ -710,6 +747,27 @@ def find_snapshot_card(snapshot: dict[str, Any], *, card_id: str, turn_id: str) 
         if str(item.get("session_id") or "") == turn_id:
             return item
     raise SuiteError(f"Target card not found in emulator snapshot for turn {turn_id}")
+
+
+def wait_for_snapshot_card(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    card_id: str,
+    turn_id: str,
+    timeout: float = 120.0,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    deadline = time.monotonic() + timeout
+    last_snapshot: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+        last_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        try:
+            return last_snapshot, find_snapshot_card(last_snapshot, card_id=card_id, turn_id=turn_id)
+        except SuiteError:
+            time.sleep(2)
+    raise SuiteError(f"Target card not found in emulator snapshot for turn {turn_id} after {int(timeout)}s")
 
 
 def normalize_vm_sandbox(value: object) -> str:
@@ -947,7 +1005,7 @@ def cmd_start(args: argparse.Namespace) -> dict[str, Any]:
             stderr_path=Path(config.evidence_dir) / "emulator.err.log",
         )
     if not args.no_wait:
-        wait_for_boot(args, runner, config)
+        wait_for_boot(args, runner, config, pid=pid if pid > 0 else None)
     if not args.dry_run:
         state = load_state(ROOT, args.slot)
         pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
@@ -1269,8 +1327,15 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
                 timeout=180,
             )
         )
-        snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
-    local_card = find_snapshot_card(snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
+        snapshot, local_card = wait_for_snapshot_card(
+            args,
+            runner,
+            config,
+            card_id=str(live_turn.get("card_id") or ""),
+            turn_id=turn_id,
+        )
+    if args.dry_run:
+        local_card = find_snapshot_card(snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
     local_origin = local_card.get("origin") if isinstance(local_card.get("origin"), dict) else {}
     if local_origin != origin:
         raise SuiteError("Emulator local store origin does not match live turn origin")
@@ -1316,11 +1381,17 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
                 extra={"bundle_refresh": bundle_refresh, "channel_checks": channel_checks},
             )
             raise SuiteError(f"Thread-origin proof lost the device after relaunch; see {failure_path}: {exc}") from exc
-        relaunch_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+        relaunch_snapshot, relaunch_card = wait_for_snapshot_card(
+            args,
+            runner,
+            config,
+            card_id=str(live_turn.get("card_id") or ""),
+            turn_id=turn_id,
+        )
     else:
         runner.run(puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120)
         relaunch_snapshot = {"schema": "pucky.reply_cards.v1", "cards": [{"card_id": live_turn["card_id"], "turn_id": turn_id, "session_id": turn_id, "origin": origin}]}
-    relaunch_card = find_snapshot_card(relaunch_snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
+        relaunch_card = find_snapshot_card(relaunch_snapshot, card_id=str(live_turn.get("card_id") or ""), turn_id=turn_id)
     relaunch_origin = relaunch_card.get("origin") if isinstance(relaunch_card.get("origin"), dict) else {}
     if relaunch_origin != origin:
         raise SuiteError("Persisted origin did not survive app relaunch")
