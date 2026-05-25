@@ -956,6 +956,7 @@
       if (state.route === tab.route) {
         state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
       } else {
+        dismissTransientUiForRouteChange();
         state.route = tab.route;
         state.openTrayRoute = null;
       }
@@ -969,6 +970,14 @@
       }
     });
     return button;
+  }
+
+  function dismissTransientUiForRouteChange() {
+    dismissOpenCardMenu(false);
+    dismissTraceSheet();
+    closeSpeedPicker();
+    dismissDetail();
+    state.audioCard = null;
   }
 
   function renderRouteTray() {
@@ -1463,31 +1472,10 @@
     wrapper.append(cardEl);
     if (menuOpen) {
       wrapper.classList.add("is-card-menu-open");
-      wrapper.append(cardFocusBorder());
       wrapper.append(cardLongPressMenu(card));
     }
     installCardLongPressMenu(wrapper, card);
     return wrapper;
-  }
-
-  function cardFocusBorder() {
-    const svgNs = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNs, "svg");
-    svg.setAttribute("class", "card-focus-border");
-    svg.setAttribute("viewBox", "0 0 100 100");
-    svg.setAttribute("preserveAspectRatio", "none");
-    svg.setAttribute("aria-hidden", "true");
-    const segment = document.createElementNS(svgNs, "rect");
-    segment.setAttribute("class", "card-focus-border-segment");
-    segment.setAttribute("x", "0.9");
-    segment.setAttribute("y", "0.9");
-    segment.setAttribute("width", "98.2");
-    segment.setAttribute("height", "98.2");
-    segment.setAttribute("rx", "18");
-    segment.setAttribute("ry", "18");
-    segment.setAttribute("pathLength", "100");
-    svg.append(segment);
-    return svg;
   }
 
   async function toggleAudio(card) {
@@ -3286,8 +3274,8 @@
         return;
       }
       const target = event.target instanceof Element ? event.target : null;
-      const focused = focusedCardMenuWrapper();
-      if (target && focused && focused.contains(target)) {
+      const menu = target?.closest(".card-longpress-menu");
+      if (menu) {
         return;
       }
       dismissOpenCardMenu(true);
@@ -4743,6 +4731,11 @@
     }
     state.navRestored = true;
     restoreFeedScroll();
+    if (state.route !== "feed") {
+      state.navDetail = null;
+      persistNavState();
+      return;
+    }
     const detail = normalizeNavDetail(state.navDetail);
     if (!detail) {
       persistNavState();

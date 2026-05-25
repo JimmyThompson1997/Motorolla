@@ -234,13 +234,13 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "installCardLongPressMenu(wrapper, card);" in app
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
-    assert "function cardFocusBorder()" in app
-    assert 'wrapper.append(cardFocusBorder());' in app
+    assert "function cardFocusBorder()" not in app
+    assert 'wrapper.append(cardFocusBorder());' not in app
     assert "function dismissOpenCardMenu(suppressClick = true)" in app
     assert "function installCardMenuOutsideDismiss()" in app
     assert 'document.addEventListener("pointerdown", event => {' in app
-    assert "const focused = focusedCardMenuWrapper();" in app
-    assert "focused.contains(target)" in app
+    assert 'const menu = target?.closest(".card-longpress-menu");' in app
+    assert "focused.contains(target)" not in app
     assert "dismissOpenCardMenu(true);" in app
     assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
@@ -303,23 +303,28 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-menu-action" in styles
     assert ".card-menu-action.is-selected" in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
-    assert ".card-focus-border" in styles
-    assert ".card-focus-border-segment" in styles
+    assert ".card-focus-border" not in styles
+    assert ".card-focus-border-segment" not in styles
     assert ".card-wrap.is-card-menu-open .card-menu-action::after" not in styles
     assert ".card-wrap.is-card-menu-open .identity" in styles
     assert ".card-wrap.is-card-menu-open .card-body" in styles
     assert ".card-wrap.is-card-menu-open .card-actions" in styles
-    assert "filter: blur(3.2px) saturate(0.82);" in styles
-    assert "opacity: 0.24;" in styles
+    assert "filter: blur(3.2px) saturate(0.82);" not in styles
+    assert "opacity: 0.24;" not in styles
+    assert "filter: none;" in styles
+    assert "opacity: 1;" in styles
     assert "animation: card-menu-tracer-path" not in styles
     assert "@keyframes card-menu-tracer-path" not in styles
-    assert "@keyframes card-focus-border-run" in styles
-    assert "stroke-dasharray: 11 89;" in styles
-    assert "stroke-dashoffset: -100;" in styles
+    assert "@keyframes card-focus-border-run" not in styles
+    assert "stroke-dasharray: 11 89;" not in styles
+    assert "stroke-dashoffset: -100;" not in styles
     assert "top: 50%;" in styles
     assert "transform: translateY(-50%);" in styles
-    assert ".card-wrap.is-card-menu-open .card::before" not in styles
-    assert ".card-wrap.is-card-menu-open .card::after" not in styles
+    assert ".card-wrap.is-card-menu-open .card::before" in styles
+    assert ".card-wrap.is-card-menu-open .card::after" in styles
+    assert "top: -1px;" in styles
+    assert "left: 18px;" in styles
+    assert "right: 18px;" in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 
@@ -876,6 +881,7 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert "localStorage.removeItem(NAV_STATE_KEY)" in app
     assert "function persistNavState()" in app
     assert "function restoreNavStateAfterCards()" in app
+    assert "function dismissTransientUiForRouteChange()" in app
     assert "function installFeedScrollPersistence()" in app
     assert "function installDetailScrollPersistence(content, type)" in app
     assert "function restoreScrollPosition(target, scrollTop)" in app
@@ -887,6 +893,10 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert "showImageReel(card, null, { restoring: true" in app
     assert "timestamp_scroll_top" in app
     assert "state.navDetail = null" in app
+    assert 'if (state.route !== "feed") {' in app
+    assert "dismissDetail();" in app
+    assert "dismissTraceSheet();" in app
+    assert "closeSpeedPicker();" in app
     assert 'window.addEventListener("pagehide", persistNavState)' in app
     assert 'document.addEventListener("visibilitychange"' in app
     assert "installFeedScrollPersistence();" in app
