@@ -862,20 +862,11 @@ button {
 .card::after {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 18px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+  inset: 0;
+  border-radius: inherit;
   pointer-events: none;
   opacity: 0;
-  z-index: 2;
-  background: color-mix(in srgb, var(--accent, #72c2ff) 64%, black);
-  box-shadow:
-    0 0 10px color-mix(in srgb, var(--accent, #72c2ff) 20%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--accent, #72c2ff) 28%, transparent);
   transition: opacity 180ms ease;
-  animation: card-menu-tracer-path 3s linear infinite;
 }
 
 .card-wrap.is-card-menu-open .card-menu-action {
@@ -887,51 +878,22 @@ button {
     0 10px 18px rgba(0, 0, 0, 0.22);
 }
 
-@keyframes card-menu-tracer-path {
-  0% {
-    top: 1px;
-    left: 18px;
-  }
+.card::before {
+  z-index: 1;
+  background: linear-gradient(180deg,
+      color-mix(in srgb, var(--accent, #72c2ff) 34%, rgba(245, 249, 255, 0.82)) 0%,
+      color-mix(in srgb, var(--accent, #72c2ff) 14%, rgba(245, 249, 255, 0.10)) 18%,
+      transparent 34%);
+}
 
-  24.9% {
-    top: 1px;
-    left: calc(100% - 27px);
-  }
-
-  25% {
-    top: 18px;
-    left: calc(100% - 9px);
-  }
-
-  49.9% {
-    top: calc(100% - 27px);
-    left: calc(100% - 9px);
-  }
-
-  50% {
-    top: calc(100% - 9px);
-    left: calc(100% - 27px);
-  }
-
-  74.9% {
-    top: calc(100% - 9px);
-    left: 18px;
-  }
-
-  75% {
-    top: calc(100% - 27px);
-    left: 1px;
-  }
-
-  99.9% {
-    top: 18px;
-    left: 1px;
-  }
-
-  100% {
-    top: 1px;
-    left: 18px;
-  }
+.card::after {
+  z-index: 2;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in srgb, var(--accent, #72c2ff) 96%, rgba(245, 249, 255, 0.98)),
+    inset 1px 0 0 0 color-mix(in srgb, var(--accent, #72c2ff) 62%, rgba(245, 249, 255, 0.18)),
+    inset -1px 0 0 0 color-mix(in srgb, var(--accent, #72c2ff) 62%, rgba(245, 249, 255, 0.18)),
+    inset 0 -1px 0 0 color-mix(in srgb, var(--accent, #72c2ff) 48%, rgba(245, 249, 255, 0.14)),
+    0 0 24px color-mix(in srgb, var(--accent, #72c2ff) 22%, transparent);
 }
 
 .card {

@@ -237,7 +237,8 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "function dismissOpenCardMenu(suppressClick = true)" in app
     assert "function installCardMenuOutsideDismiss()" in app
     assert 'document.addEventListener("pointerdown", event => {' in app
-    assert 'target.closest(".card-wrap.is-card-menu-open, .card-longpress-menu, .settings-segment-button")' in app
+    assert "const focused = focusedCardMenuWrapper();" in app
+    assert "focused.contains(target)" in app
     assert "dismissOpenCardMenu(true);" in app
     assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
@@ -308,10 +309,10 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-wrap.is-card-menu-open .card-actions" not in styles
     assert "filter: blur(1.8px) saturate(0.7);" not in styles
     assert "opacity: 0.36;" not in styles
-    assert "background: color-mix(in srgb, var(--accent, #72c2ff) 64%, black);" in styles
-    assert "@keyframes card-menu-tracer-path" in styles
-    assert "card-menu-tracer-spin" not in styles
-    assert "mask-composite: exclude;" not in styles
+    assert "animation: card-menu-tracer-path" not in styles
+    assert "@keyframes card-menu-tracer-path" not in styles
+    assert "inset 0 1px 0 0 color-mix" in styles
+    assert "color-mix(in srgb, var(--accent, #72c2ff) 34%, rgba(245, 249, 255, 0.82))" in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 
@@ -441,6 +442,7 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Turn accepted chime" in app
     assert "Diagnostics" in app
     assert "Test chime" in app
+    assert "const MOCK_SETTINGS" not in app
     assert ".settings-page" in styles
     assert ".settings-hero" in styles
     assert ".settings-card" in styles
