@@ -1,15 +1,22 @@
 package com.pucky.device.wake;
 
+import android.Manifest;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.util.Log;
 
 import com.pucky.device.assistant.PuckyAssistantController;
@@ -31,13 +38,16 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Locale;
 
 public final class WakeWordController {
     private static final String TAG = "PuckyWakeWord";
 
     private static final String PREFS = "pucky_wake_word";
     private static final String KEY_REQUESTED_ENABLED = "requested_enabled";
+    private static final String KEY_WAKE_ENGINE = "wake_engine";
     private static final String KEY_SCOPE = "scope";
     private static final String KEY_LAST_CONFIG_SET_AT = "last_config_set_at";
     private static final String KEY_LAST_START_REQUESTED_AT = "last_start_requested_at";
@@ -48,6 +58,10 @@ public final class WakeWordController {
     private static final String KEY_LAST_CANDIDATE_AT = "last_candidate_at";
     private static final String KEY_LAST_CANDIDATE_DURATION_MS = "last_candidate_duration_ms";
     private static final String KEY_LAST_CANDIDATE_SAMPLES = "last_candidate_samples";
+    private static final String KEY_LAST_CANDIDATE_PEAK = "last_candidate_peak";
+    private static final String KEY_LAST_CANDIDATE_RMS = "last_candidate_rms";
+    private static final String KEY_LAST_CANDIDATE_MAX_VAD_PROBABILITY = "last_candidate_max_vad_probability";
+    private static final String KEY_LAST_CANDIDATE_FINISH_REASON = "last_candidate_finish_reason";
     private static final String KEY_LAST_CONFIRMATION_RAW_DURATION_MS = "last_confirmation_raw_duration_ms";
     private static final String KEY_LAST_CONFIRMATION_CLIP_DURATION_MS = "last_confirmation_clip_duration_ms";
     private static final String KEY_LAST_CONFIRMATION_PADDED_DURATION_MS = "last_confirmation_padded_duration_ms";
@@ -67,19 +81,48 @@ public final class WakeWordController {
     private static final String KEY_LAST_CONFIRMATION_TRANSCRIPT = "last_confirmation_transcript";
     private static final String KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON = "last_confirmation_alternatives_json";
     private static final String KEY_LAST_CONFIRMATION_CONFIDENCES_JSON = "last_confirmation_confidences_json";
+    private static final String KEY_LAST_CONFIRMATION_ERROR_CODE = "last_confirmation_error_code";
+    private static final String KEY_LAST_CONFIRMATION_ERROR_MESSAGE = "last_confirmation_error_message";
     private static final String KEY_LAST_REJECT_REASON = "last_reject_reason";
     private static final String KEY_LAST_DEBUG_CLIP_PATH = "last_debug_clip_path";
+    private static final String KEY_ANDROID_STT_LAST_SESSION_AT = "android_stt_last_session_at";
+    private static final String KEY_ANDROID_STT_LAST_STATE = "android_stt_last_state";
+    private static final String KEY_ANDROID_STT_LAST_EVENT = "android_stt_last_event";
+    private static final String KEY_ANDROID_STT_LAST_TRANSCRIPT = "android_stt_last_transcript";
+    private static final String KEY_ANDROID_STT_LAST_ALTERNATIVES_JSON = "android_stt_last_alternatives_json";
+    private static final String KEY_ANDROID_STT_LAST_CONFIDENCES_JSON = "android_stt_last_confidences_json";
+    private static final String KEY_ANDROID_STT_LAST_ERROR_CODE = "android_stt_last_error_code";
+    private static final String KEY_ANDROID_STT_LAST_ERROR_MESSAGE = "android_stt_last_error_message";
+    private static final String KEY_ANDROID_STT_RESTART_COUNT = "android_stt_restart_count";
+    private static final String KEY_ANDROID_STT_LAST_RESTART_REASON = "android_stt_last_restart_reason";
+    private static final String KEY_ANDROID_STT_SESSION_TO_READY_MS = "android_stt_session_to_ready_ms";
+    private static final String KEY_ANDROID_STT_SESSION_TO_SPEECH_BEGIN_MS = "android_stt_session_to_speech_begin_ms";
+    private static final String KEY_ANDROID_STT_SESSION_TO_FIRST_PARTIAL_MS = "android_stt_session_to_first_partial_ms";
+    private static final String KEY_ANDROID_STT_SESSION_TO_FINAL_OR_ERROR_MS =
+            "android_stt_session_to_final_or_error_ms";
+    private static final String KEY_ANDROID_STT_SESSION_TO_ACCEPT_MS = "android_stt_session_to_accept_ms";
+    private static final String KEY_ANDROID_STT_READY_TO_ACCEPT_MS = "android_stt_ready_to_accept_ms";
+    private static final String KEY_ANDROID_STT_SPEECH_BEGIN_TO_ACCEPT_MS =
+            "android_stt_speech_begin_to_accept_ms";
+    private static final String KEY_ANDROID_STT_ACCEPT_TO_CHIME_MS = "android_stt_accept_to_chime_ms";
+    private static final String KEY_ANDROID_STT_ACCEPT_TO_TURN_START_REQUEST_MS =
+            "android_stt_accept_to_turn_start_request_ms";
 
     private static final String MODE_PHASE_2A = "phase2a_unlocked_service";
     private static final String MODE_PHASE_2B = "assistant_screen_off_reserved";
     private static final String SCOPE_UNLOCKED_SERVICE = "unlocked_service";
     private static final String SCOPE_ASSISTANT_SCREEN_OFF = "assistant_screen_off";
-    private static final String ENGINE = "silero_vad_candidate_plus_android_stt_confirmation";
+    private static final String ENGINE_VAD_CONFIRM = "vad_confirm";
+    private static final String ENGINE_ANDROID_STT_SENTINEL = "android_stt_sentinel";
+    private static final String ENGINE_DESCRIPTION_VAD_CONFIRM =
+            "silero_vad_candidate_plus_android_stt_confirmation";
 
     private static final long PROBE_TRAILING_SILENCE_MS = 600L;
     private static final long PROBE_MAX_DURATION_MS = 2500L;
     private static final long PROBE_POLL_MS = 50L;
     private static final long CONFIRM_TIMEOUT_MS = 5000L;
+    private static final long ANDROID_STT_RESTART_BASE_MS = 250L;
+    private static final long ANDROID_STT_RESTART_MAX_MS = 2000L;
     private static final long SPEECH_START_TIMEOUT_MS = 3000L;
     private static final long TRAILING_SILENCE_MS = 1000L;
     private static final long MAX_TURN_MS = 20000L;
@@ -110,6 +153,7 @@ public final class WakeWordController {
     private boolean sentinelRunning;
     private boolean candidateActive;
     private boolean confirmingCandidate;
+    private String effectiveWakeEngine = "";
     private String suspendedReason = "service_inactive";
     private String lastError = "";
     private String lastWakePhrase = "";
@@ -124,6 +168,18 @@ public final class WakeWordController {
     private PreRollBuffer preRollBuffer;
     private WakeProbeRecorder candidateRecorder;
     private WakeTurnMonitor turnMonitor;
+    private SpeechRecognizer androidSttRecognizer;
+    private String androidSttSessionId = "";
+    private String androidSttState = "idle";
+    private boolean androidSttListening;
+    private int androidSttRestartCount;
+    private long androidSttSessionStartedMs = -1L;
+    private long androidSttReadyMs = -1L;
+    private long androidSttSpeechBeginMs = -1L;
+    private long androidSttFirstPartialMs = -1L;
+    private long androidSttFinalOrErrorMs = -1L;
+    private long androidSttAcceptedMs = -1L;
+    private Runnable androidSttRestartRunnable;
 
     private WakeWordController(Context context) {
         this.context = context.getApplicationContext();
@@ -170,7 +226,10 @@ public final class WakeWordController {
         synchronized (lock) {
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.wake_word_status.v1");
-            Json.put(out, "engine", ENGINE);
+            Json.put(out, "engine", effectiveWakeEngineLocked());
+            Json.put(out, "wake_engine", requestedWakeEngine());
+            Json.put(out, "effective_wake_engine", effectiveWakeEngineLocked());
+            Json.put(out, "vad_confirm_engine", ENGINE_DESCRIPTION_VAD_CONFIRM);
             Json.put(out, "wake_word", "Hey Pucky");
             Json.put(out, "wake_family", WakePhraseFamily.statusJson());
             Json.put(out, "enabled", requestedEnabled());
@@ -187,6 +246,12 @@ public final class WakeWordController {
             Json.put(out, "last_candidate_at", nullable(prefs.getString(KEY_LAST_CANDIDATE_AT, "")));
             Json.put(out, "last_candidate_duration_ms", nullableInt(KEY_LAST_CANDIDATE_DURATION_MS));
             Json.put(out, "last_candidate_samples", nullableInt(KEY_LAST_CANDIDATE_SAMPLES));
+            Json.put(out, "last_candidate_peak", nullableInt(KEY_LAST_CANDIDATE_PEAK));
+            Json.put(out, "last_candidate_rms", nullableInt(KEY_LAST_CANDIDATE_RMS));
+            Json.put(out, "last_candidate_max_vad_probability",
+                    nullableDouble(KEY_LAST_CANDIDATE_MAX_VAD_PROBABILITY));
+            Json.put(out, "last_candidate_finish_reason",
+                    nullable(prefs.getString(KEY_LAST_CANDIDATE_FINISH_REASON, "")));
             Json.put(out, "last_confirmation_raw_duration_ms", nullableInt(KEY_LAST_CONFIRMATION_RAW_DURATION_MS));
             Json.put(out, "last_confirmation_clip_duration_ms", nullableInt(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS));
             Json.put(out, "last_confirmation_padded_duration_ms",
@@ -218,6 +283,10 @@ public final class WakeWordController {
                     jsonArrayPref(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON));
             Json.put(out, "last_confirmation_confidences",
                     jsonArrayPref(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON));
+            Json.put(out, "last_confirmation_error_code",
+                    nullable(prefs.getString(KEY_LAST_CONFIRMATION_ERROR_CODE, "")));
+            Json.put(out, "last_confirmation_error_message",
+                    nullable(prefs.getString(KEY_LAST_CONFIRMATION_ERROR_MESSAGE, "")));
             Json.put(out, "last_reject_reason",
                     nullable(prefs.getString(KEY_LAST_REJECT_REASON,
                             WakeConfirmationDecision.REASON_NO_CANDIDATE_DETECTED)));
@@ -229,6 +298,7 @@ public final class WakeWordController {
             Json.put(out, "last_simulate_requested_at", nullable(prefs.getString(KEY_LAST_SIMULATE_REQUESTED_AT, "")));
             Json.put(out, "sentinel_started_at",
                     sentinelStartedWallMs <= 0L ? JSONObject.NULL : Instant.ofEpochMilli(sentinelStartedWallMs).toString());
+            Json.put(out, "android_stt", androidSttStatusLocked());
             Json.put(out, "assistant_status", PuckyAssistantController.status(context));
             Json.put(out, "supported_scopes", supportedScopes());
             if (sentinelBus != null) {
@@ -245,6 +315,9 @@ public final class WakeWordController {
         }
         if (args != null && args.has("scope")) {
             editor.putString(KEY_SCOPE, sanitizeScope(args.optString("scope", "")));
+        }
+        if (args != null && args.has("wake_engine")) {
+            editor.putString(KEY_WAKE_ENGINE, sanitizeWakeEngine(args.optString("wake_engine", "")));
         }
         boolean clearDebugForensics = false;
         if (args != null && args.has("debug_keep_last_clip")) {
@@ -420,6 +493,10 @@ public final class WakeWordController {
                 stopSentinelLocked(suspendedReason);
                 return;
             }
+            String requestedEngine = requestedWakeEngine();
+            if (sentinelRunning && !requestedEngine.equals(effectiveWakeEngine)) {
+                stopSentinelLocked("wake_engine_changed");
+            }
             if (!sentinelRunning) {
                 startSentinelLocked();
             }
@@ -427,13 +504,27 @@ public final class WakeWordController {
     }
 
     private boolean handleWakeAccepted(String matchedPhrase, String transcript, String trigger) {
-        return handleWakeAccepted(matchedPhrase, transcript, trigger, null);
+        return handleWakeAccepted(matchedPhrase, transcript, trigger, null, -1L);
     }
 
     private boolean handleWakeAccepted(String matchedPhrase, String transcript, String trigger, WakeTiming timing) {
+        return handleWakeAccepted(matchedPhrase, transcript, trigger, timing, -1L);
+    }
+
+    private boolean handleWakeAccepted(String matchedPhrase,
+                                       String transcript,
+                                       String trigger,
+                                       WakeTiming timing,
+                                       long androidAcceptedMs) {
         if (timing != null) {
             timing.chimeRequestedMs = SystemClock.elapsedRealtime();
             persistAcceptedTiming(timing);
+        }
+        long chimeRequestedMs = SystemClock.elapsedRealtime();
+        if (androidAcceptedMs > 0L) {
+            prefs.edit()
+                    .putInt(KEY_ANDROID_STT_ACCEPT_TO_CHIME_MS, elapsedInt(androidAcceptedMs, chimeRequestedMs))
+                    .apply();
         }
         JSONObject chime = recipeExecutor.playWakeListeningChime("pucky.wake_listening_chime.v1");
         synchronized (lock) {
@@ -453,6 +544,13 @@ public final class WakeWordController {
             if (timing != null) {
                 timing.turnStartRequestedMs = SystemClock.elapsedRealtime();
                 persistAcceptedTiming(timing);
+            }
+            long turnStartRequestedMs = SystemClock.elapsedRealtime();
+            if (androidAcceptedMs > 0L) {
+                prefs.edit()
+                        .putInt(KEY_ANDROID_STT_ACCEPT_TO_TURN_START_REQUEST_MS,
+                                elapsedInt(androidAcceptedMs, turnStartRequestedMs))
+                        .apply();
             }
             JSONObject started = PuckyTurnController.shared(context).start(args);
             String turnId = started.optString("turn_id", "");
@@ -477,6 +575,14 @@ public final class WakeWordController {
     }
 
     private void startSentinelLocked() {
+        if (ENGINE_ANDROID_STT_SENTINEL.equals(requestedWakeEngine())) {
+            startAndroidSttSentinelLocked();
+            return;
+        }
+        startVadConfirmSentinelLocked();
+    }
+
+    private void startVadConfirmSentinelLocked() {
         AudioFrameBus bus = new AudioFrameBus(context);
         PreRollBuffer preRoll = new PreRollBuffer();
         WakeProbeRecorder recorder = new WakeProbeRecorder(new SileroVadEngine(context));
@@ -499,6 +605,7 @@ public final class WakeWordController {
         preRollBuffer = preRoll;
         candidateRecorder = recorder;
         sentinelRunning = true;
+        effectiveWakeEngine = ENGINE_VAD_CONFIRM;
         candidateActive = false;
         confirmingCandidate = false;
         suspendedReason = "";
@@ -508,6 +615,7 @@ public final class WakeWordController {
     }
 
     private void stopSentinelLocked(String reason) {
+        stopAndroidSttSentinelLocked(reason);
         if (candidateRecorder != null) {
             candidateRecorder.cancel();
         }
@@ -522,8 +630,360 @@ public final class WakeWordController {
         preRollBuffer = null;
         candidateRecorder = null;
         sentinelRunning = false;
+        effectiveWakeEngine = "";
         if (reason != null && !reason.trim().isEmpty()) {
             suspendedReason = reason;
+        }
+    }
+
+    private void startAndroidSttSentinelLocked() {
+        if (!hasRecordAudio()) {
+            suspendedReason = "record_audio_permission_missing";
+            lastError = "RECORD_AUDIO is not granted";
+            return;
+        }
+        if (!onDeviceRecognitionAvailable()) {
+            suspendedReason = "android_stt_unavailable";
+            lastError = "Android on-device SpeechRecognizer is unavailable";
+            return;
+        }
+        sentinelRunning = true;
+        effectiveWakeEngine = ENGINE_ANDROID_STT_SENTINEL;
+        candidateActive = false;
+        confirmingCandidate = false;
+        suspendedReason = "";
+        lastError = "";
+        sentinelStartedElapsedMs = SystemClock.elapsedRealtime();
+        sentinelStartedWallMs = System.currentTimeMillis();
+        androidSttRestartCount = 0;
+        prefs.edit().putInt(KEY_ANDROID_STT_RESTART_COUNT, 0).apply();
+        startAndroidSttSessionLocked("initial_start");
+    }
+
+    private void startAndroidSttSessionLocked(String reason) {
+        String sessionId = "wake_stt_" + Long.toHexString(System.currentTimeMillis());
+        androidSttSessionId = sessionId;
+        androidSttState = "pending_start";
+        androidSttListening = false;
+        androidSttSessionStartedMs = SystemClock.elapsedRealtime();
+        androidSttReadyMs = -1L;
+        androidSttSpeechBeginMs = -1L;
+        androidSttFirstPartialMs = -1L;
+        androidSttFinalOrErrorMs = -1L;
+        androidSttAcceptedMs = -1L;
+        persistAndroidSttEventLocked("session_start", "", new JSONArray(), new JSONArray(), "", "");
+        Log.i(TAG, "wake android_stt session_start reason=" + reason + " session_id=" + sessionId);
+        main.post(() -> startAndroidSttRecognizerOnMain(sessionId));
+    }
+
+    private void startAndroidSttRecognizerOnMain(String sessionId) {
+        synchronized (lock) {
+            if (!sentinelRunning
+                    || !ENGINE_ANDROID_STT_SENTINEL.equals(effectiveWakeEngine)
+                    || !sessionId.equals(androidSttSessionId)) {
+                return;
+            }
+            androidSttState = "starting";
+        }
+        try {
+            SpeechRecognizer created = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
+            synchronized (lock) {
+                if (!sentinelRunning
+                        || !ENGINE_ANDROID_STT_SENTINEL.equals(effectiveWakeEngine)
+                        || !sessionId.equals(androidSttSessionId)) {
+                    try {
+                        created.destroy();
+                    } catch (RuntimeException ignored) {
+                    }
+                    return;
+                }
+                androidSttRecognizer = created;
+            }
+            created.setRecognitionListener(new AndroidSttListener(sessionId));
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
+            addFormattingExtras(intent);
+            created.startListening(intent);
+        } catch (RuntimeException exc) {
+            handleAndroidSttError(sessionId, "start_failed",
+                    exc.getClass().getSimpleName() + ": " + exc.getMessage(), false);
+        }
+    }
+
+    private void stopAndroidSttSentinelLocked(String reason) {
+        if (androidSttRestartRunnable != null) {
+            main.removeCallbacks(androidSttRestartRunnable);
+            androidSttRestartRunnable = null;
+        }
+        String sessionId = androidSttSessionId;
+        androidSttSessionId = "";
+        androidSttListening = false;
+        androidSttState = "idle";
+        if (androidSttRecognizer != null) {
+            main.post(() -> cleanupAndroidSttRecognizer(sessionId));
+        }
+        if (reason != null && !reason.trim().isEmpty()) {
+            prefs.edit()
+                    .putString(KEY_ANDROID_STT_LAST_EVENT, "stopped")
+                    .putString(KEY_ANDROID_STT_LAST_STATE, "idle")
+                    .putString(KEY_ANDROID_STT_LAST_RESTART_REASON, reason)
+                    .apply();
+        }
+    }
+
+    private void cleanupAndroidSttRecognizer(String sessionId) {
+        SpeechRecognizer recognizerToDestroy;
+        synchronized (lock) {
+            if (sessionId != null && !sessionId.isEmpty() && !sessionId.equals(androidSttSessionId)
+                    && androidSttRecognizer == null) {
+                return;
+            }
+            recognizerToDestroy = androidSttRecognizer;
+            androidSttRecognizer = null;
+            androidSttListening = false;
+        }
+        if (recognizerToDestroy != null) {
+            try {
+                recognizerToDestroy.destroy();
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    private void scheduleAndroidSttRestart(String sessionId, String reason) {
+        synchronized (lock) {
+            if (!sentinelRunning
+                    || !ENGINE_ANDROID_STT_SENTINEL.equals(effectiveWakeEngine)
+                    || !sessionId.equals(androidSttSessionId)
+                    || !activeTurnId.isEmpty()) {
+                return;
+            }
+            androidSttRestartCount += 1;
+            int persistedCount = prefs.getInt(KEY_ANDROID_STT_RESTART_COUNT, 0) + 1;
+            prefs.edit()
+                    .putInt(KEY_ANDROID_STT_RESTART_COUNT, persistedCount)
+                    .putString(KEY_ANDROID_STT_LAST_RESTART_REASON, reason)
+                    .apply();
+            long delayMs = Math.min(ANDROID_STT_RESTART_MAX_MS,
+                    ANDROID_STT_RESTART_BASE_MS * Math.max(1L, Math.min(8L, androidSttRestartCount)));
+            androidSttState = "restart_scheduled";
+            androidSttListening = false;
+            Log.i(TAG, "wake android_stt restart reason=" + reason
+                    + " delay_ms=" + delayMs
+                    + " count=" + persistedCount);
+            androidSttRestartRunnable = () -> {
+                synchronized (lock) {
+                    if (!sentinelRunning
+                            || !ENGINE_ANDROID_STT_SENTINEL.equals(effectiveWakeEngine)
+                            || !sessionId.equals(androidSttSessionId)
+                            || !activeTurnId.isEmpty()) {
+                        return;
+                    }
+                    cleanupAndroidSttRecognizer(sessionId);
+                    startAndroidSttSessionLocked(reason);
+                }
+            };
+            main.postDelayed(androidSttRestartRunnable, delayMs);
+        }
+    }
+
+    private void handleAndroidSttError(String sessionId, String code, String message, boolean recognizerCallback) {
+        long nowMs = SystemClock.elapsedRealtime();
+        synchronized (lock) {
+            if (!sessionId.equals(androidSttSessionId)) {
+                return;
+            }
+            androidSttFinalOrErrorMs = nowMs;
+            androidSttState = "error";
+            androidSttListening = false;
+            lastError = code + ": " + message;
+            persistAndroidSttEventLocked("error", "", new JSONArray(), new JSONArray(), code, message);
+            recordConfirmationDirect(
+                    WakeConfirmationDecision.STATUS_ERROR,
+                    "",
+                    new JSONArray(),
+                    new JSONArray(),
+                    WakeConfirmationDecision.REASON_CONFIRMATION_ERROR,
+                    code,
+                    message);
+        }
+        Log.i(TAG, "wake android_stt error session_id=" + sessionId
+                + " callback=" + recognizerCallback
+                + " code=" + code
+                + " message=" + message);
+        cleanupAndroidSttRecognizer(sessionId);
+        scheduleAndroidSttRestart(sessionId, code);
+    }
+
+    private void handleAndroidSttNoMatch(String sessionId, JSONArray alternatives, JSONArray confidences) {
+        synchronized (lock) {
+            if (!sessionId.equals(androidSttSessionId)) {
+                return;
+            }
+            androidSttFinalOrErrorMs = SystemClock.elapsedRealtime();
+            androidSttState = "no_match";
+            androidSttListening = false;
+            String transcript = alternatives == null || alternatives.length() == 0
+                    ? ""
+                    : alternatives.optString(0, "");
+            persistAndroidSttEventLocked("no_match", transcript, alternatives, confidences, "", "");
+            recordConfirmationDirect(
+                    WakeConfirmationDecision.STATUS_REJECTED,
+                    transcript,
+                    alternatives,
+                    confidences,
+                    WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH);
+        }
+        Log.i(TAG, "wake android_stt final_no_match alternatives=" + alternatives);
+        cleanupAndroidSttRecognizer(sessionId);
+        scheduleAndroidSttRestart(sessionId, WakeConfirmationDecision.REASON_CONFIRMATION_NO_MATCH);
+    }
+
+    private void handleAndroidSttAccepted(String sessionId,
+                                          WakeSttSentinelDecision decision,
+                                          JSONArray alternatives,
+                                          JSONArray confidences) {
+        long acceptedMs = SystemClock.elapsedRealtime();
+        synchronized (lock) {
+            if (!sessionId.equals(androidSttSessionId)) {
+                return;
+            }
+            androidSttAcceptedMs = acceptedMs;
+            androidSttFinalOrErrorMs = acceptedMs;
+            androidSttState = "accepted";
+            androidSttListening = false;
+            lastError = "";
+            persistAndroidSttEventLocked("accepted", decision.transcript, alternatives, confidences, "", "");
+            recordConfirmationDirect(
+                    WakeConfirmationDecision.STATUS_ACCEPTED,
+                    decision.transcript,
+                    alternatives,
+                    confidences,
+                    WakeConfirmationDecision.REASON_ACCEPTED);
+        }
+        Log.i(TAG, "wake android_stt accepted session_id=" + sessionId
+                + " partial=" + decision.partial
+                + " phrase=" + decision.matchedPhrase
+                + " transcript=" + decision.transcript);
+        cleanupAndroidSttRecognizer(sessionId);
+        handleWakeAccepted(decision.matchedPhrase, decision.transcript, "android_stt_sentinel", null, acceptedMs);
+    }
+
+    private final class AndroidSttListener implements RecognitionListener {
+        private final String sessionId;
+
+        AndroidSttListener(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        @Override
+        public void onReadyForSpeech(Bundle params) {
+            synchronized (lock) {
+                if (!sessionId.equals(androidSttSessionId)) {
+                    return;
+                }
+                androidSttReadyMs = SystemClock.elapsedRealtime();
+                androidSttState = "ready";
+                androidSttListening = true;
+                persistAndroidSttEventLocked("ready", "", new JSONArray(), new JSONArray(), "", "");
+            }
+            Log.i(TAG, "wake android_stt ready session_id=" + sessionId);
+        }
+
+        @Override
+        public void onBeginningOfSpeech() {
+            synchronized (lock) {
+                if (!sessionId.equals(androidSttSessionId)) {
+                    return;
+                }
+                androidSttSpeechBeginMs = SystemClock.elapsedRealtime();
+                androidSttState = "speech_begin";
+                persistAndroidSttEventLocked("speech_begin", "", new JSONArray(), new JSONArray(), "", "");
+            }
+            Log.i(TAG, "wake android_stt speech_begin session_id=" + sessionId);
+        }
+
+        @Override
+        public void onRmsChanged(float rmsdB) {
+        }
+
+        @Override
+        public void onBufferReceived(byte[] buffer) {
+        }
+
+        @Override
+        public void onEndOfSpeech() {
+            synchronized (lock) {
+                if (sessionId.equals(androidSttSessionId)) {
+                    androidSttState = "speech_end";
+                    persistAndroidSttEventLocked("speech_end", "", new JSONArray(), new JSONArray(), "", "");
+                }
+            }
+            Log.i(TAG, "wake android_stt speech_end session_id=" + sessionId);
+        }
+
+        @Override
+        public void onError(int error) {
+            handleAndroidSttError(sessionId, errorName(error),
+                    "Android on-device SpeechRecognizer error " + error + " (" + errorName(error) + ")",
+                    true);
+        }
+
+        @Override
+        public void onResults(Bundle results) {
+            JSONArray alternatives = alternatives(results);
+            JSONArray confidences = confidences(results);
+            WakeSttSentinelDecision decision = WakeSttSentinelDecision.decide(alternatives, false);
+            synchronized (lock) {
+                if (!sessionId.equals(androidSttSessionId)) {
+                    return;
+                }
+                androidSttFinalOrErrorMs = SystemClock.elapsedRealtime();
+                androidSttState = "final";
+                persistAndroidSttEventLocked("final", alternatives.optString(0, ""), alternatives, confidences, "", "");
+            }
+            Log.i(TAG, "wake android_stt final session_id=" + sessionId
+                    + " alternatives=" + alternatives);
+            if (decision.accepted) {
+                handleAndroidSttAccepted(sessionId, decision, alternatives, confidences);
+            } else {
+                handleAndroidSttNoMatch(sessionId, alternatives, confidences);
+            }
+        }
+
+        @Override
+        public void onPartialResults(Bundle partialResults) {
+            JSONArray alternatives = alternatives(partialResults);
+            WakeSttSentinelDecision decision = WakeSttSentinelDecision.decide(alternatives, true);
+            synchronized (lock) {
+                if (!sessionId.equals(androidSttSessionId)) {
+                    return;
+                }
+                if (androidSttFirstPartialMs <= 0L) {
+                    androidSttFirstPartialMs = SystemClock.elapsedRealtime();
+                }
+                androidSttState = "partial";
+                persistAndroidSttEventLocked("partial", alternatives.optString(0, ""), alternatives,
+                        new JSONArray(), "", "");
+            }
+            Log.i(TAG, "wake android_stt partial session_id=" + sessionId
+                    + " alternatives=" + alternatives);
+            if (decision.accepted) {
+                handleAndroidSttAccepted(sessionId, decision, alternatives, new JSONArray());
+            }
+        }
+
+        @Override
+        public void onEvent(int eventType, Bundle params) {
+        }
+
+        @Override
+        public void onLanguageDetection(Bundle results) {
         }
     }
 
@@ -558,6 +1018,7 @@ public final class WakeWordController {
                     return;
                 }
                 short[] candidateSamples;
+                WakeCandidateMetrics metrics;
                 synchronized (lock) {
                     if (candidateRecorder == null) {
                         candidateActive = false;
@@ -567,12 +1028,13 @@ public final class WakeWordController {
                         continue;
                     }
                     timing.captureFinishedMs = SystemClock.elapsedRealtime();
+                    metrics = candidateRecorder.metrics();
                     candidateSamples = candidateRecorder.finish();
                     candidateActive = false;
                     confirmingCandidate = true;
                     stopSentinelLocked("candidate_confirming");
                 }
-                confirmCandidate(candidateSamples, timing);
+                confirmCandidate(candidateSamples, timing, metrics);
                 return;
             }
         }, "pucky-wake-candidate");
@@ -580,8 +1042,8 @@ public final class WakeWordController {
         worker.start();
     }
 
-    private void confirmCandidate(short[] candidateSamples, WakeTiming timing) {
-        String debugClipPath = recordCandidateAttempt(candidateSamples);
+    private void confirmCandidate(short[] candidateSamples, WakeTiming timing, WakeCandidateMetrics metrics) {
+        String debugClipPath = recordCandidateAttempt(candidateSamples, metrics);
         if (timing != null) {
             timing.confirmStartedMs = SystemClock.elapsedRealtime();
         }
@@ -697,6 +1159,25 @@ public final class WakeWordController {
         return sanitizeScope(prefs.getString(KEY_SCOPE, SCOPE_UNLOCKED_SERVICE));
     }
 
+    private String requestedWakeEngine() {
+        return sanitizeWakeEngine(prefs.getString(KEY_WAKE_ENGINE, ENGINE_VAD_CONFIRM));
+    }
+
+    private String effectiveWakeEngineLocked() {
+        if (!effectiveWakeEngine.isEmpty()) {
+            return effectiveWakeEngine;
+        }
+        return requestedWakeEngine();
+    }
+
+    private static String sanitizeWakeEngine(String raw) {
+        String engine = raw == null ? "" : raw.trim().toLowerCase(Locale.US);
+        if (ENGINE_ANDROID_STT_SENTINEL.equals(engine)) {
+            return ENGINE_ANDROID_STT_SENTINEL;
+        }
+        return ENGINE_VAD_CONFIRM;
+    }
+
     private static String sanitizeScope(String raw) {
         String scope = raw == null ? "" : raw.trim();
         if (SCOPE_ASSISTANT_SCREEN_OFF.equals(scope)) {
@@ -728,6 +1209,14 @@ public final class WakeWordController {
         return prefs.contains(key) ? prefs.getInt(key, 0) : JSONObject.NULL;
     }
 
+    private Object nullableDouble(String key) {
+        return prefs.contains(key) ? Double.longBitsToDouble(prefs.getLong(key, 0L)) : JSONObject.NULL;
+    }
+
+    private static void putDouble(SharedPreferences.Editor editor, String key, double value) {
+        editor.putLong(key, Double.doubleToRawLongBits(value));
+    }
+
     private boolean debugKeepLastClip() {
         return prefs.getBoolean(KEY_DEBUG_KEEP_LAST_CLIP, false);
     }
@@ -754,13 +1243,24 @@ public final class WakeWordController {
     }
 
     private String recordCandidateAttempt(short[] candidateSamples) {
+        return recordCandidateAttempt(candidateSamples, WakeCandidateMetrics.fromSamples(candidateSamples, "", 0.0));
+    }
+
+    private String recordCandidateAttempt(short[] candidateSamples, WakeCandidateMetrics metrics) {
         int samples = candidateSamples == null ? 0 : candidateSamples.length;
         int durationMs = WakeDebugClipStore.durationMs(candidateSamples);
+        WakeCandidateMetrics safeMetrics = metrics == null
+                ? WakeCandidateMetrics.fromSamples(candidateSamples, "", 0.0)
+                : metrics;
         SharedPreferences.Editor editor = prefs.edit();
         editor.putInt(KEY_CANDIDATE_COUNT, prefs.getInt(KEY_CANDIDATE_COUNT, 0) + 1);
         editor.putString(KEY_LAST_CANDIDATE_AT, Instant.now().toString());
         editor.putInt(KEY_LAST_CANDIDATE_DURATION_MS, durationMs);
         editor.putInt(KEY_LAST_CANDIDATE_SAMPLES, samples);
+        editor.putInt(KEY_LAST_CANDIDATE_PEAK, safeMetrics.peak);
+        editor.putInt(KEY_LAST_CANDIDATE_RMS, safeMetrics.rms);
+        putDouble(editor, KEY_LAST_CANDIDATE_MAX_VAD_PROBABILITY, safeMetrics.maxVadProbability);
+        editor.putString(KEY_LAST_CANDIDATE_FINISH_REASON, safeMetrics.finishReason);
         editor.putString(KEY_LAST_CONFIRMATION_STATUS, WakeConfirmationDecision.STATUS_PENDING);
         editor.putString(KEY_LAST_REJECT_REASON, "");
         String debugClipPath = "";
@@ -778,6 +1278,10 @@ public final class WakeWordController {
         editor.apply();
         Log.i(TAG, "wake candidate captured samples=" + samples
                 + " duration_ms=" + durationMs
+                + " peak=" + safeMetrics.peak
+                + " rms=" + safeMetrics.rms
+                + " max_vad_probability=" + safeMetrics.maxVadProbability
+                + " finish_reason=" + safeMetrics.finishReason
                 + " debug_clip=" + (!debugClipPath.isEmpty()));
         return debugClipPath;
     }
@@ -791,6 +1295,8 @@ public final class WakeWordController {
         editor.putString(KEY_LAST_CONFIRMATION_TRANSCRIPT, attempt.outcome.transcript);
         editor.putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, attempt.outcome.alternatives.toString());
         editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, attempt.outcome.confidences.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_ERROR_CODE, attempt.outcome.errorCode);
+        editor.putString(KEY_LAST_CONFIRMATION_ERROR_MESSAGE, attempt.outcome.errorMessage);
         editor.putString(KEY_LAST_REJECT_REASON, decision.reason);
         editor.putInt(KEY_LAST_CONFIRMATION_RAW_DURATION_MS, attempt.rawDurationMs);
         editor.putInt(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS, attempt.shapedDurationMs);
@@ -811,6 +1317,7 @@ public final class WakeWordController {
                 timing == null ? -1L : timing.captureFinishedMs)
                 + " finish_to_confirm_start_ms=" + durationOrNull(timing == null ? -1L : timing.captureFinishedMs,
                 timing == null ? -1L : timing.confirmStartedMs)
+                + " error_code=" + attempt.outcome.errorCode
                 + " transcript=" + attempt.outcome.transcript);
     }
 
@@ -819,6 +1326,16 @@ public final class WakeWordController {
                                           JSONArray alternatives,
                                           JSONArray confidences,
                                           String reason) {
+        recordConfirmationDirect(status, transcript, alternatives, confidences, reason, "", "");
+    }
+
+    private void recordConfirmationDirect(String status,
+                                          String transcript,
+                                          JSONArray alternatives,
+                                          JSONArray confidences,
+                                          String reason,
+                                          String errorCode,
+                                          String errorMessage) {
         lastConfirmationTranscript = transcript == null ? "" : transcript;
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString(KEY_LAST_CONFIRMATION_STATUS, status);
@@ -827,6 +1344,8 @@ public final class WakeWordController {
                 alternatives == null ? new JSONArray().toString() : alternatives.toString());
         editor.putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON,
                 confidences == null ? new JSONArray().toString() : confidences.toString());
+        editor.putString(KEY_LAST_CONFIRMATION_ERROR_CODE, errorCode == null ? "" : errorCode);
+        editor.putString(KEY_LAST_CONFIRMATION_ERROR_MESSAGE, errorMessage == null ? "" : errorMessage);
         editor.putString(KEY_LAST_REJECT_REASON, reason == null ? "" : reason);
         editor.remove(KEY_LAST_CONFIRMATION_RAW_DURATION_MS);
         editor.remove(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS);
@@ -851,6 +1370,10 @@ public final class WakeWordController {
                 .remove(KEY_LAST_CANDIDATE_AT)
                 .remove(KEY_LAST_CANDIDATE_DURATION_MS)
                 .remove(KEY_LAST_CANDIDATE_SAMPLES)
+                .remove(KEY_LAST_CANDIDATE_PEAK)
+                .remove(KEY_LAST_CANDIDATE_RMS)
+                .remove(KEY_LAST_CANDIDATE_MAX_VAD_PROBABILITY)
+                .remove(KEY_LAST_CANDIDATE_FINISH_REASON)
                 .remove(KEY_LAST_CONFIRMATION_RAW_DURATION_MS)
                 .remove(KEY_LAST_CONFIRMATION_CLIP_DURATION_MS)
                 .remove(KEY_LAST_CONFIRMATION_PADDED_DURATION_MS)
@@ -866,8 +1389,29 @@ public final class WakeWordController {
                 .remove(KEY_LAST_CONFIRMATION_TRANSCRIPT)
                 .putString(KEY_LAST_CONFIRMATION_ALTERNATIVES_JSON, new JSONArray().toString())
                 .putString(KEY_LAST_CONFIRMATION_CONFIDENCES_JSON, new JSONArray().toString())
+                .remove(KEY_LAST_CONFIRMATION_ERROR_CODE)
+                .remove(KEY_LAST_CONFIRMATION_ERROR_MESSAGE)
                 .putString(KEY_LAST_REJECT_REASON, WakeConfirmationDecision.REASON_NO_CANDIDATE_DETECTED)
                 .remove(KEY_LAST_DEBUG_CLIP_PATH)
+                .remove(KEY_ANDROID_STT_LAST_SESSION_AT)
+                .remove(KEY_ANDROID_STT_LAST_STATE)
+                .remove(KEY_ANDROID_STT_LAST_EVENT)
+                .remove(KEY_ANDROID_STT_LAST_TRANSCRIPT)
+                .remove(KEY_ANDROID_STT_LAST_ALTERNATIVES_JSON)
+                .remove(KEY_ANDROID_STT_LAST_CONFIDENCES_JSON)
+                .remove(KEY_ANDROID_STT_LAST_ERROR_CODE)
+                .remove(KEY_ANDROID_STT_LAST_ERROR_MESSAGE)
+                .remove(KEY_ANDROID_STT_RESTART_COUNT)
+                .remove(KEY_ANDROID_STT_LAST_RESTART_REASON)
+                .remove(KEY_ANDROID_STT_SESSION_TO_READY_MS)
+                .remove(KEY_ANDROID_STT_SESSION_TO_SPEECH_BEGIN_MS)
+                .remove(KEY_ANDROID_STT_SESSION_TO_FIRST_PARTIAL_MS)
+                .remove(KEY_ANDROID_STT_SESSION_TO_FINAL_OR_ERROR_MS)
+                .remove(KEY_ANDROID_STT_SESSION_TO_ACCEPT_MS)
+                .remove(KEY_ANDROID_STT_READY_TO_ACCEPT_MS)
+                .remove(KEY_ANDROID_STT_SPEECH_BEGIN_TO_ACCEPT_MS)
+                .remove(KEY_ANDROID_STT_ACCEPT_TO_CHIME_MS)
+                .remove(KEY_ANDROID_STT_ACCEPT_TO_TURN_START_REQUEST_MS)
                 .apply();
     }
 
@@ -961,6 +1505,187 @@ public final class WakeWordController {
         String filePath = file.getCanonicalPath();
         String rootPath = root.getCanonicalPath();
         return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+    }
+
+    private JSONObject androidSttStatusLocked() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.wake_android_stt_status.v1");
+        Json.put(out, "available", onDeviceRecognitionAvailable());
+        Json.put(out, "record_audio_granted", hasRecordAudio());
+        Json.put(out, "state", androidSttState);
+        Json.put(out, "listening", androidSttListening);
+        Json.put(out, "session_id", androidSttSessionId.isEmpty() ? JSONObject.NULL : androidSttSessionId);
+        Json.put(out, "restart_count", prefs.getInt(KEY_ANDROID_STT_RESTART_COUNT, 0));
+        Json.put(out, "last_restart_reason",
+                nullable(prefs.getString(KEY_ANDROID_STT_LAST_RESTART_REASON, "")));
+        Json.put(out, "last_session_at", nullable(prefs.getString(KEY_ANDROID_STT_LAST_SESSION_AT, "")));
+        Json.put(out, "last_state", nullable(prefs.getString(KEY_ANDROID_STT_LAST_STATE, "")));
+        Json.put(out, "last_event", nullable(prefs.getString(KEY_ANDROID_STT_LAST_EVENT, "")));
+        Json.put(out, "last_transcript", nullable(prefs.getString(KEY_ANDROID_STT_LAST_TRANSCRIPT, "")));
+        Json.put(out, "last_alternatives", jsonArrayPref(KEY_ANDROID_STT_LAST_ALTERNATIVES_JSON));
+        Json.put(out, "last_confidences", jsonArrayPref(KEY_ANDROID_STT_LAST_CONFIDENCES_JSON));
+        Json.put(out, "last_error_code", nullable(prefs.getString(KEY_ANDROID_STT_LAST_ERROR_CODE, "")));
+        Json.put(out, "last_error_message", nullable(prefs.getString(KEY_ANDROID_STT_LAST_ERROR_MESSAGE, "")));
+        Json.put(out, "session_to_ready_ms", nullableInt(KEY_ANDROID_STT_SESSION_TO_READY_MS));
+        Json.put(out, "session_to_speech_begin_ms", nullableInt(KEY_ANDROID_STT_SESSION_TO_SPEECH_BEGIN_MS));
+        Json.put(out, "session_to_first_partial_ms", nullableInt(KEY_ANDROID_STT_SESSION_TO_FIRST_PARTIAL_MS));
+        Json.put(out, "session_to_final_or_error_ms", nullableInt(KEY_ANDROID_STT_SESSION_TO_FINAL_OR_ERROR_MS));
+        Json.put(out, "session_to_accept_ms", nullableInt(KEY_ANDROID_STT_SESSION_TO_ACCEPT_MS));
+        Json.put(out, "ready_to_accept_ms", nullableInt(KEY_ANDROID_STT_READY_TO_ACCEPT_MS));
+        Json.put(out, "speech_begin_to_accept_ms", nullableInt(KEY_ANDROID_STT_SPEECH_BEGIN_TO_ACCEPT_MS));
+        Json.put(out, "accept_to_chime_ms", nullableInt(KEY_ANDROID_STT_ACCEPT_TO_CHIME_MS));
+        Json.put(out, "accept_to_turn_start_request_ms",
+                nullableInt(KEY_ANDROID_STT_ACCEPT_TO_TURN_START_REQUEST_MS));
+        return out;
+    }
+
+    private void persistAndroidSttEventLocked(String event,
+                                              String transcript,
+                                              JSONArray alternatives,
+                                              JSONArray confidences,
+                                              String errorCode,
+                                              String errorMessage) {
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString(KEY_ANDROID_STT_LAST_SESSION_AT, Instant.now().toString());
+        editor.putString(KEY_ANDROID_STT_LAST_STATE, androidSttState);
+        editor.putString(KEY_ANDROID_STT_LAST_EVENT, event == null ? "" : event);
+        editor.putString(KEY_ANDROID_STT_LAST_TRANSCRIPT, transcript == null ? "" : transcript);
+        editor.putString(KEY_ANDROID_STT_LAST_ALTERNATIVES_JSON,
+                alternatives == null ? new JSONArray().toString() : alternatives.toString());
+        editor.putString(KEY_ANDROID_STT_LAST_CONFIDENCES_JSON,
+                confidences == null ? new JSONArray().toString() : confidences.toString());
+        editor.putString(KEY_ANDROID_STT_LAST_ERROR_CODE, errorCode == null ? "" : errorCode);
+        editor.putString(KEY_ANDROID_STT_LAST_ERROR_MESSAGE, errorMessage == null ? "" : errorMessage);
+        if (androidSttReadyMs > 0L) {
+            editor.putInt(KEY_ANDROID_STT_SESSION_TO_READY_MS,
+                    elapsedInt(androidSttSessionStartedMs, androidSttReadyMs));
+        }
+        if (androidSttSpeechBeginMs > 0L) {
+            editor.putInt(KEY_ANDROID_STT_SESSION_TO_SPEECH_BEGIN_MS,
+                    elapsedInt(androidSttSessionStartedMs, androidSttSpeechBeginMs));
+        }
+        if (androidSttFirstPartialMs > 0L) {
+            editor.putInt(KEY_ANDROID_STT_SESSION_TO_FIRST_PARTIAL_MS,
+                    elapsedInt(androidSttSessionStartedMs, androidSttFirstPartialMs));
+        }
+        if (androidSttFinalOrErrorMs > 0L) {
+            editor.putInt(KEY_ANDROID_STT_SESSION_TO_FINAL_OR_ERROR_MS,
+                    elapsedInt(androidSttSessionStartedMs, androidSttFinalOrErrorMs));
+        }
+        if (androidSttAcceptedMs > 0L) {
+            editor.putInt(KEY_ANDROID_STT_SESSION_TO_ACCEPT_MS,
+                    elapsedInt(androidSttSessionStartedMs, androidSttAcceptedMs));
+            editor.putInt(KEY_ANDROID_STT_READY_TO_ACCEPT_MS,
+                    elapsedInt(androidSttReadyMs, androidSttAcceptedMs));
+            editor.putInt(KEY_ANDROID_STT_SPEECH_BEGIN_TO_ACCEPT_MS,
+                    elapsedInt(androidSttSpeechBeginMs, androidSttAcceptedMs));
+        }
+        editor.apply();
+    }
+
+    private boolean hasRecordAudio() {
+        return context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean onDeviceRecognitionAvailable() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
+    }
+
+    private static void addFormattingExtras(Intent intent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return;
+        }
+        intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY);
+        intent.putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true);
+    }
+
+    private static JSONArray alternatives(Bundle results) {
+        ArrayList<String> values = results == null
+                ? null
+                : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        JSONArray out = new JSONArray();
+        if (values != null) {
+            for (String value : values) {
+                Json.add(out, value == null ? "" : value);
+            }
+        }
+        return out;
+    }
+
+    private static JSONArray confidences(Bundle results) {
+        float[] values = results == null ? null : results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
+        JSONArray out = new JSONArray();
+        if (values != null) {
+            for (float value : values) {
+                Json.add(out, value);
+            }
+        }
+        return out;
+    }
+
+    private static String errorName(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO:
+                return "ERROR_AUDIO";
+            case SpeechRecognizer.ERROR_CLIENT:
+                return "ERROR_CLIENT";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                return "ERROR_INSUFFICIENT_PERMISSIONS";
+            case SpeechRecognizer.ERROR_NETWORK:
+                return "ERROR_NETWORK";
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                return "ERROR_NETWORK_TIMEOUT";
+            case SpeechRecognizer.ERROR_NO_MATCH:
+                return "ERROR_NO_MATCH";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
+                return "ERROR_RECOGNIZER_BUSY";
+            case SpeechRecognizer.ERROR_SERVER:
+                return "ERROR_SERVER";
+            case SpeechRecognizer.ERROR_SERVER_DISCONNECTED:
+                return "ERROR_SERVER_DISCONNECTED";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                return "ERROR_SPEECH_TIMEOUT";
+            case SpeechRecognizer.ERROR_TOO_MANY_REQUESTS:
+                return "ERROR_TOO_MANY_REQUESTS";
+            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED:
+                return "ERROR_LANGUAGE_NOT_SUPPORTED";
+            case SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE:
+                return "ERROR_LANGUAGE_UNAVAILABLE";
+            default:
+                return "ERROR_" + error;
+        }
+    }
+
+    private static final class WakeCandidateMetrics {
+        final int peak;
+        final int rms;
+        final double maxVadProbability;
+        final String finishReason;
+
+        private WakeCandidateMetrics(int peak, int rms, double maxVadProbability, String finishReason) {
+            this.peak = peak;
+            this.rms = rms;
+            this.maxVadProbability = maxVadProbability;
+            this.finishReason = finishReason == null || finishReason.trim().isEmpty() ? "unknown" : finishReason;
+        }
+
+        static WakeCandidateMetrics fromSamples(short[] samples, String finishReason, double maxVadProbability) {
+            if (samples == null || samples.length == 0) {
+                return new WakeCandidateMetrics(0, 0, maxVadProbability, finishReason);
+            }
+            long sumSquares = 0L;
+            int peak = 0;
+            for (short sample : samples) {
+                int abs = Math.abs(sample);
+                if (abs > peak) {
+                    peak = abs;
+                }
+                sumSquares += (long) sample * sample;
+            }
+            int rms = (int) Math.round(Math.sqrt(sumSquares / (double) samples.length));
+            return new WakeCandidateMetrics(peak, rms, maxVadProbability, finishReason);
+        }
     }
 
     private static final class WakeRecognitionAttempt {
@@ -1088,6 +1813,8 @@ public final class WakeWordController {
         private boolean collecting;
         private boolean readyToFinish;
         private int windowSamples;
+        private double maxVadProbability;
+        private String finishReason = "";
 
         WakeProbeRecorder(SileroVadEngine vadEngine) {
             this.vadEngine = vadEngine;
@@ -1122,6 +1849,8 @@ public final class WakeWordController {
             collecting = true;
             readyToFinish = false;
             windowSamples = 0;
+            maxVadProbability = 0.0;
+            finishReason = "";
             vadEngine.reset();
             long nowMs = SystemClock.elapsedRealtime();
             policy.begin(nowMs);
@@ -1139,10 +1868,16 @@ public final class WakeWordController {
             readyToFinish = false;
             samples = new short[0];
             windowSamples = 0;
+            maxVadProbability = 0.0;
+            finishReason = "";
         }
 
         synchronized boolean readyToFinish() {
             return readyToFinish;
+        }
+
+        synchronized WakeCandidateMetrics metrics() {
+            return WakeCandidateMetrics.fromSamples(samples, finishReason, maxVadProbability);
         }
 
         private void append(short[] frame) {
@@ -1164,8 +1899,12 @@ public final class WakeWordController {
                             probability = 0.0;
                         }
                     }
+                    if (probability > maxVadProbability) {
+                        maxVadProbability = probability;
+                    }
                     WakeProbeCapturePolicy.Action action = policy.observe(nowMs, probability);
                     if (action != WakeProbeCapturePolicy.Action.NONE) {
+                        finishReason = action.name().toLowerCase(Locale.US);
                         readyToFinish = true;
                     }
                     windowSamples = 0;

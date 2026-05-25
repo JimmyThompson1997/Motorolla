@@ -41,6 +41,15 @@ public final class PuckyWakeLabSourceTest {
         String decision = read("src/main/java/com/pucky/device/wake/WakeConfirmationDecision.java");
 
         assertTrue(source.contains("silero_vad_candidate_plus_android_stt_confirmation"));
+        assertTrue(source.contains("ENGINE_ANDROID_STT_SENTINEL = \"android_stt_sentinel\""));
+        assertTrue(source.contains("KEY_WAKE_ENGINE"));
+        assertTrue(source.contains("WakeSttSentinelDecision.decide"));
+        assertTrue(source.contains("SpeechRecognizer.createOnDeviceSpeechRecognizer(context)"));
+        assertTrue(source.contains("Json.put(out, \"android_stt\""));
+        assertTrue(source.contains("Json.put(out, \"last_confirmation_error_code\""));
+        assertTrue(source.contains("KEY_LAST_CANDIDATE_MAX_VAD_PROBABILITY"));
+        assertTrue(source.contains("wake android_stt accepted"));
+        assertTrue(source.contains("wake android_stt restart"));
         assertTrue(source.contains("KEY_LAST_SIMULATE_REQUESTED_AT"));
         assertTrue(source.contains("KEY_DEBUG_KEEP_LAST_CLIP"));
         assertTrue(source.contains("KEY_CANDIDATE_COUNT"));
@@ -64,6 +73,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("Json.put(out, \"last_confirmation_alternatives\""));
         assertTrue(source.contains("Log.i(TAG, \"wake candidate captured"));
         assertTrue(source.contains("Log.i(TAG, \"wake rejected"));
+        assertFalse(read("src/main/java/com/pucky/device/MainActivity.java")
+                .contains("WakeWordController.shared(this).start(new JSONObject())"));
         assertTrue(source.contains("assistant_status"));
         assertTrue(source.contains("WakePhraseFamily.ID"));
         assertTrue(source.contains("PuckyTurnController.shared(context).start(args)"));

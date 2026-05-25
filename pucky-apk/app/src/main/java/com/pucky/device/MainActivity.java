@@ -46,7 +46,6 @@ import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.ui.UiSurfaceController;
 import com.pucky.device.util.Json;
-import com.pucky.device.wake.WakeWordController;
 
 import org.json.JSONObject;
 
@@ -135,7 +134,6 @@ public class MainActivity extends Activity {
         registerStateReceivers();
         applySystemUiForMode();
         ensureAutoConnectService();
-        WakeWordController.shared(this).start(new JSONObject());
         PuckyFeedController.shared(this).syncAsync("activity_resume");
         emitWebPlayerState();
         emitWebTurnStatus();
