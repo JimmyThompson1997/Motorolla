@@ -302,6 +302,7 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert ".card-longpress-menu" in styles
     assert ".card-menu-action" in styles
     assert ".card-menu-action.is-selected" in styles
+    assert ".card-menu-star {" not in styles
     assert ".card-wrap.is-card-menu-open .card" in styles
     assert ".card-focus-border" not in styles
     assert ".card-focus-border-segment" not in styles
@@ -320,11 +321,8 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert "stroke-dashoffset: -100;" not in styles
     assert "top: 50%;" in styles
     assert "transform: translateY(-50%);" in styles
-    assert ".card-wrap.is-card-menu-open .card::before" in styles
-    assert ".card-wrap.is-card-menu-open .card::after" in styles
-    assert "top: -1px;" in styles
-    assert "left: 18px;" in styles
-    assert "right: 18px;" in styles
+    assert ".card-wrap.is-card-menu-open .card::before" not in styles
+    assert ".card-wrap.is-card-menu-open .card::after" not in styles
     assert "-webkit-touch-callout: none;" in styles
     assert "user-select: none;" in styles
 
