@@ -60,6 +60,10 @@ public final class SettingsStore {
         return prefs.getString(TOKEN, "dev-token");
     }
 
+    public Context context() {
+        return context;
+    }
+
     public String getPuckyTurnUrl() {
         return prefs.getString(PUCKY_TURN_URL, "https://pucky.fly.dev/api/turn").trim();
     }

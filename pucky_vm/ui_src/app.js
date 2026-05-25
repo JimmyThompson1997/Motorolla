@@ -1,7 +1,5 @@
 (() => {
-  const READ_STATE_KEY = "pucky.cover.read_actions.v2";
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
-  const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const COMPLETE_EPSILON_MS = 500;
@@ -12,6 +10,7 @@
   const FEED_REFRESH_HOLD_OFFSET = 46;
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
+  const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_LONG_PRESS_MS = 250;
   const CARD_MENU_MOVE_CANCEL_PX = 12;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
@@ -288,17 +287,16 @@
     feedRefreshPromise: null,
     feedRefreshing: false,
     showArchivedFeed: false,
-    archivedSessionIds: loadArchivedSessionIds(),
     starredSessionIds: new Set(),
     openCardMenuSessionId: "",
     cardMenuClickSuppressUntil: 0,
     waveHistory: new Map(),
-    readActions: loadReadActions(),
     drag: null
   };
 
   const pending = new Map();
   let seq = 0;
+  let feedSyncIntervalId = 0;
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
@@ -346,6 +344,15 @@
         applyTurnStatus(payload);
         renderVoiceStatus();
       }
+      if (name === "pucky.feed.updated") {
+        const cards = Array.isArray(payload && payload.cards) ? payload.cards : [];
+        if (cards.length || (payload && payload.count === 0)) {
+          state.cards = cards;
+          clearMissingFeedIconFilter();
+          render();
+          restoreNavStateAfterCards();
+        }
+      }
     }
   };
 
@@ -360,6 +367,39 @@
         // Local file and static preview mode intentionally fall back to fixtures.
       }
       return { schema: "pucky.reply_cards.v1", count: MOCK_CARDS.length, cards: MOCK_CARDS };
+    }
+    if (command === "pucky.feed.sync") {
+      return { schema: "pucky.feed_sync_result.v1", configured: true, reason: args.reason || "browser_mock", snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards } };
+    }
+    if (command === "pucky.feed.action") {
+      const action = String(args.action || "").trim();
+      const cardId = String(args.card_id || "");
+      const sessionId = String(args.session_id || "");
+      state.cards = state.cards
+        .map(card => {
+          const same = (card.card_id && card.card_id === cardId)
+            || (!cardId && card.session_id && card.session_id === sessionId);
+          if (!same) {
+            return card;
+          }
+          if (action === "archive") {
+            return { ...card, archived: true };
+          }
+          if (action === "mark_read") {
+            return { ...card, read: true };
+          }
+          if (action === "delete") {
+            return { ...card, deleted: true };
+          }
+          return card;
+        })
+        .filter(card => !card.deleted);
+      return {
+        schema: "pucky.feed_action_result.v1",
+        ok: true,
+        action,
+        snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards }
+      };
     }
     if (command === "player.state") {
       return state.player;
@@ -504,6 +544,27 @@
     return Array.isArray(snapshot.cards) ? snapshot.cards : [];
   }
 
+  async function syncFeedCards(options = {}) {
+    const reason = options.reason || "feed_sync";
+    try {
+      const result = await Pucky.request({ command: "pucky.feed.sync", args: { reason } });
+      const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
+        ? result.snapshot
+        : { cards: await fetchReplyCards() };
+      state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+      clearMissingFeedIconFilter();
+      if (options.render !== false) {
+        render();
+      }
+      return snapshot;
+    } catch (error) {
+      if (!options.silent) {
+        throw error;
+      }
+      return { cards: state.cards };
+    }
+  }
+
   async function loadCards() {
     try {
       state.cards = await fetchReplyCards();
@@ -513,6 +574,9 @@
     clearMissingFeedIconFilter();
     render();
     restoreNavStateAfterCards();
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      syncFeedCards({ reason: "load_cards", silent: true, render: true });
+    }
   }
 
   async function loadTurnStatus(options = {}) {
@@ -759,6 +823,7 @@
       render();
       if (state.route === "feed") {
         restoreFeedScroll();
+        syncFeedCards({ reason: "route_feed", silent: true, render: true });
       } else if (state.route === "settings") {
         loadTurnSettings({ render: true });
       }
@@ -858,8 +923,10 @@
 
   function filteredFeedCards() {
     return state.cards.filter(card => {
-      const sessionId = cardSessionId(card);
-      const archived = Boolean(sessionId && state.archivedSessionIds.has(sessionId));
+      if (card && card.deleted) {
+        return false;
+      }
+      const archived = Boolean(card && card.archived);
       return state.showArchivedFeed
         ? archived
         : !archived && isFeedIconIncluded(cardIconKey(card));
@@ -1019,14 +1086,13 @@
     identity.type = "button";
     identity.disabled = menuOpen;
     identity.innerHTML = iconSvg(card.icon, { filled: true });
-    identity.setAttribute("aria-label", isCardRead(card) ? `Mark ${card.title} unread` : `Mark ${card.title} read`);
+    identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
       if (menuOpen) {
         return;
       }
       toggleCardRead(card);
-      renderFeed();
     });
 
     const body = el("div", "card-body");
@@ -1144,8 +1210,7 @@
         await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       }
-      markRead(card, "audio");
-      markCardRead(card);
+      requestMarkRead(card);
       render();
     } catch (error) {
       showToast(error.message);
@@ -1155,8 +1220,7 @@
   function showTranscript(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
-      markRead(card, "transcript");
-      markCardRead(card);
+      requestMarkRead(card);
     }
     renderFeed();
     if (options.restoring) {
@@ -1252,8 +1316,7 @@
   async function showRichPage(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
-      markRead(card, "page");
-      markCardRead(card);
+      requestMarkRead(card);
     }
     renderFeed();
     if (options.restoring) {
@@ -2608,8 +2671,7 @@
     try {
       const positionMs = Math.max(0, Number(marker.start_ms || 0));
       rememberSelectedTimestamp(card, marker);
-      markRead(card, "audio");
-      markCardRead(card);
+      requestMarkRead(card);
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
       const same = isSameAudioCard(current, card);
@@ -2782,17 +2844,10 @@
     return menu;
   }
 
-  function archiveHomeCard(card) {
-    const sessionId = cardSessionId(card);
-    if (!sessionId) {
-      state.openCardMenuSessionId = "";
-      renderFeed();
-      return;
-    }
-    state.archivedSessionIds.add(sessionId);
-    persistArchivedSessionIds();
+  async function archiveHomeCard(card) {
     state.openCardMenuSessionId = "";
     renderFeed();
+    await requestFeedAction(card, "archive", { silent: true });
   }
 
   function installCardLongPressMenu(wrapper, card) {
@@ -3194,8 +3249,7 @@
 
     state.feedRefreshPromise = (async () => {
       try {
-        state.cards = await withTimeout(fetchReplyCards(), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
-        clearMissingFeedIconFilter();
+        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
         state.feedScrollTop = 0;
         render();
         restoreScrollPosition(document.getElementById("feed"), 0);
@@ -3887,38 +3941,50 @@
     persistAudioState();
   }
 
-  function actionKey(card, action) {
-    return `${card.session_id || card.title || card.audio_path || "card"}:${action}`;
-  }
-
-  function markRead(card, action) {
-    state.readActions.add(actionKey(card, action));
-    persistReadActions();
-  }
-
-  function markUnread(card, action) {
-    state.readActions.delete(actionKey(card, action));
-    persistReadActions();
-  }
-
-  function markCardRead(card) {
-    markRead(card, "card");
-  }
-
-  function markCardUnread(card) {
-    ["card", "audio", "transcript", "page"].forEach(action => markUnread(card, action));
-  }
-
-  function toggleCardRead(card) {
-    if (isCardRead(card)) {
-      markCardUnread(card);
-    } else {
-      markCardRead(card);
+  async function requestFeedAction(card, action, options = {}) {
+    const cardId = String(card && card.card_id || "");
+    const sessionId = cardSessionId(card);
+    if (!cardId && !sessionId) {
+      return null;
+    }
+    try {
+      const result = await Pucky.request({
+        command: "pucky.feed.action",
+        args: {
+          card_id: cardId,
+          session_id: sessionId,
+          action,
+          client_action_id: `feed_${action}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
+        }
+      });
+      const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
+        ? result.snapshot
+        : { cards: await fetchReplyCards() };
+      state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : state.cards;
+      clearMissingFeedIconFilter();
+      render();
+      return result;
+    } catch (error) {
+      if (!options.silent) {
+        showToast(error.message);
+      }
+      return null;
     }
   }
 
+  function requestMarkRead(card) {
+    if (isCardRead(card)) {
+      return;
+    }
+    requestFeedAction(card, "mark_read", { silent: true });
+  }
+
+  function toggleCardRead(card) {
+    requestMarkRead(card);
+  }
+
   function isCardRead(card) {
-    return ["card", "audio", "transcript", "page"].some(action => isActionRead(card, action));
+    return Boolean(card && card.read);
   }
 
   function cardStateClass(card) {
@@ -3926,19 +3992,18 @@
   }
 
   function toggleRead(card, action) {
-    if (isActionRead(card, action)) {
-      markUnread(card, action);
-    } else {
-      markRead(card, action);
+    if (!action) {
+      return;
     }
+    requestMarkRead(card);
   }
 
   function isActionRead(card, action) {
-    return state.readActions.has(actionKey(card, action));
+    return Boolean(card && card.read);
   }
 
   function actionStateClass(card, action) {
-    return isActionRead(card, action) ? "is-read" : "is-unread";
+    return isCardRead(card) ? "is-read" : "is-unread";
   }
 
   function loadNavState() {
@@ -4069,32 +4134,6 @@
     }
   }
 
-  function loadArchivedSessionIds() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(CARD_HOME_STATE_KEY) || "{}");
-      const archived = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed.archived_session_ids)
-          ? parsed.archived_session_ids
-          : [];
-      return new Set(archived.map(value => String(value)).filter(Boolean));
-    } catch (_) {
-      return new Set();
-    }
-  }
-
-  function persistArchivedSessionIds() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(CARD_HOME_STATE_KEY) || "{}");
-      const next = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-      next.archived_session_ids = Array.from(state.archivedSessionIds);
-      next.updated_at = Date.now();
-      localStorage.setItem(CARD_HOME_STATE_KEY, JSON.stringify(next));
-    } catch (_) {
-      // Archiving is a local organization layer; storage failures should not break the feed.
-    }
-  }
-
   function rememberNavDetail(type, card, options = {}) {
     const sessionId = cardSessionId(card);
     if (!sessionId) {
@@ -4122,6 +4161,18 @@
       rememberFeedScroll();
       persistNavState();
     }, 120), { passive: true });
+  }
+
+  function installFeedSyncLoop() {
+    if (feedSyncIntervalId) {
+      return;
+    }
+    feedSyncIntervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || state.route !== "feed" || state.feedRefreshing) {
+        return;
+      }
+      syncFeedCards({ reason: "feed_visible_poll", silent: true, render: true });
+    }, FEED_SYNC_INTERVAL_MS);
   }
 
   function installDetailScrollPersistence(content, type) {
@@ -4372,22 +4423,6 @@
     };
   }
 
-  function loadReadActions() {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(READ_STATE_KEY) || "[]"));
-    } catch (_) {
-      return new Set();
-    }
-  }
-
-  function persistReadActions() {
-    try {
-      localStorage.setItem(READ_STATE_KEY, JSON.stringify(Array.from(state.readActions)));
-    } catch (_) {
-      // Read state is a visual affordance; failure should never break the shell.
-    }
-  }
-
   function loadFeedIconExcludes() {
     try {
       return new Set(JSON.parse(localStorage.getItem(FEED_ICON_EXCLUDES_KEY) || "[]"));
@@ -4521,12 +4556,17 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       persistNavState();
+      return;
+    }
+    if (state.route === "feed") {
+      syncFeedCards({ reason: "visibility_visible", silent: true, render: true });
     }
   });
 
   window.PuckyHandleAndroidBack = handleAndroidBack;
   installFeedRubberBand();
   installFeedScrollPersistence();
+  installFeedSyncLoop();
   loadTurnStatus({ render: false });
   loadTurnSettings({ render: false });
   loadCards();

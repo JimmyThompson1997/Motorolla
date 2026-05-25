@@ -241,6 +241,7 @@ public final class MainActivityWebViewShellTest {
     @Test
     public void replyCardCommandsAreAllowlistedAndRouted() throws Exception {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String uiController = read("src/main/java/com/pucky/device/ui/PuckyUiController.java");
 
         assertTrue(source.contains("\"ui.reply_cards.set\""));
         assertTrue(source.contains("\"ui.reply_cards.get\""));
@@ -248,6 +249,8 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("uiController.replyCardsSet"));
         assertTrue(source.contains("uiController.replyCardsGet"));
         assertTrue(source.contains("uiController.replyCardsClear"));
+        assertTrue(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));
+        assertTrue(uiController.contains("return PuckyFeedController.shared(context).snapshot();"));
         assertTrue(source.contains("\"ui.bundle.status\""));
         assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
         assertTrue(source.contains("\"ui.bundle.refresh\""));

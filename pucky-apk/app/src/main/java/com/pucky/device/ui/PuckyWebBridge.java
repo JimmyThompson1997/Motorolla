@@ -12,6 +12,7 @@ import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -72,7 +73,11 @@ public final class PuckyWebBridge {
         PlayerController player = PlayerController.shared(context);
         switch (command) {
             case "ui.reply_cards.get":
-                return replyCards.snapshot();
+                return PuckyFeedController.shared(context).snapshot();
+            case "pucky.feed.sync":
+                return PuckyFeedController.shared(context).sync(args);
+            case "pucky.feed.action":
+                return PuckyFeedController.shared(context).action(args);
             case "player.state":
                 return player.state();
             case "player.load":

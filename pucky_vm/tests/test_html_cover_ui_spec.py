@@ -216,23 +216,20 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert 'const CARD_HOME_STATE_KEY = "pucky.cover.card_home_state.v1"' in app
     assert "CARD_MENU_LONG_PRESS_MS = 250" in app
     assert "CARD_MENU_MOVE_CANCEL_PX = 12" in app
     assert "showArchivedFeed: false" in app
-    assert "archivedSessionIds: loadArchivedSessionIds()" in app
     assert "starredSessionIds: new Set()" in app
     assert 'openCardMenuSessionId: ""' in app
-    assert "function loadArchivedSessionIds()" in app
-    assert "function persistArchivedSessionIds()" in app
-    assert "function archiveHomeCard(card)" in app
+    assert "async function archiveHomeCard(card)" in app
+    assert 'await requestFeedAction(card, "archive", { silent: true });' in app
+    assert 'command: "pucky.feed.action"' in app
+    assert "client_action_id" in app
     assert "function toggleCardStar(card)" in app
     assert "function isCardStarred(card)" in app
-    assert "state.archivedSessionIds.add(sessionId)" in app
     assert "state.starredSessionIds.has(sessionId)" in app
-    assert "persistArchivedSessionIds();" in app
     assert "filteredFeedCards()" in app
-    assert "state.archivedSessionIds.has(sessionId)" in app
+    assert "const archived = Boolean(card && card.archived);" in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "installCardLongPressMenu(wrapper, card);" in app
@@ -251,7 +248,7 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "page.disabled = menuOpen;" in app
     assert "toggleCardStar(card);" in app
     assert "persistStarredSessionIds" not in app
-    assert "localStorage.setItem(\"pucky.cover.starred" not in app
+    assert 'localStorage.setItem("pucky.cover.starred' not in app
     assert "!window.PointerEvent" not in app
     assert 'card-swipe-reveal card-swipe-archive' not in app
     assert 'card-swipe-reveal card-swipe-voice' not in app
@@ -424,22 +421,16 @@ def test_card_actions_have_local_read_state() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert 'READ_STATE_KEY = "pucky.cover.read_actions.v2"' in app
-    assert "readActions" in app
-    assert "function markRead(card, action)" in app
-    assert "function markUnread(card, action)" in app
-    assert "function markCardRead(card)" in app
+    assert "async function requestFeedAction(card, action, options = {})" in app
+    assert "function requestMarkRead(card)" in app
     assert "function toggleCardRead(card)" in app
     assert "function isCardRead(card)" in app
     assert "function cardStateClass(card)" in app
     assert "function toggleRead(card, action)" in app
     assert "function isActionRead(card, action)" in app
-    assert 'markRead(card, "card")' in app
-    assert 'markRead(card, "audio")' in app
-    assert 'markRead(card, "transcript")' in app
-    assert 'markRead(card, "page")' in app
-    assert 'if (!options.restoring) {\n      markRead(card, "transcript");\n      markCardRead(card);' in app
-    assert 'if (!options.restoring) {\n      markRead(card, "page");\n      markCardRead(card);' in app
+    assert 'requestFeedAction(card, "mark_read", { silent: true });' in app
+    assert "return Boolean(card && card.read);" in app
+    assert 'if (!options.restoring) {\n      requestMarkRead(card);' in app
     assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
     assert "cardStateClass(card)" in app
     assert 'actionStateClass(card, "page")' in app

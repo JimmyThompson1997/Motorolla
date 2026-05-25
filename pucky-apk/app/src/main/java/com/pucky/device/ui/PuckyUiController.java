@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.provider.Settings;
 
 import com.pucky.device.MainActivity;
+import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.util.Json;
 
@@ -53,7 +54,7 @@ public final class PuckyUiController {
     }
 
     public JSONObject replyCardsGet() {
-        return replyCards.snapshot();
+        return PuckyFeedController.shared(context).snapshot();
     }
 
     public JSONObject replyCardsClear() {

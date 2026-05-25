@@ -19,6 +19,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
@@ -75,6 +76,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "pucky.turn.settings.get", "pucky.turn.settings.set",
             "pucky.turn.history", "pucky.turn.read",
+            "pucky.feed.sync", "pucky.feed.action",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -412,6 +414,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.history(command.args());
             case "pucky.turn.read":
                 return puckyTurnController.read(command.args());
+            case "pucky.feed.sync":
+                return PuckyFeedController.shared(settingsStore.context()).sync(command.args());
+            case "pucky.feed.action":
+                return PuckyFeedController.shared(settingsStore.context()).action(command.args());
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":

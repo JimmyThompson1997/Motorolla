@@ -12,6 +12,8 @@ import java.util.Collections;
 import java.util.List;
 
 public final class ReplyCard {
+    private final String cardId;
+    private final String turnId;
     private final String sessionId;
     private final String title;
     private final String tag;
@@ -19,6 +21,7 @@ public final class ReplyCard {
     private final String transcript;
     private final String transcriptMessages;
     private final String createdAt;
+    private final String updatedAt;
     private final String icon;
     private final String accent;
     private final String audioPath;
@@ -27,8 +30,13 @@ public final class ReplyCard {
     private final String htmlPath;
     private final String images;
     private final String trace;
+    private final boolean archived;
+    private final boolean read;
+    private final boolean deleted;
 
     public ReplyCard(
+            String cardId,
+            String turnId,
             String title,
             String sessionId,
             String tag,
@@ -36,6 +44,7 @@ public final class ReplyCard {
             String transcript,
             String transcriptMessages,
             String createdAt,
+            String updatedAt,
             String icon,
             String accent,
             String audioPath,
@@ -43,7 +52,12 @@ public final class ReplyCard {
             String audioTimestamps,
             String htmlPath,
             String images,
-            String trace) throws CommandException {
+            String trace,
+            boolean archived,
+            boolean read,
+            boolean deleted) throws CommandException {
+        this.cardId = optional(cardId);
+        this.turnId = optional(turnId);
         this.sessionId = optional(sessionId);
         this.title = required(title, "title");
         this.tag = optional(tag);
@@ -51,6 +65,7 @@ public final class ReplyCard {
         this.transcript = optional(transcript);
         this.transcriptMessages = optional(transcriptMessages);
         this.createdAt = optional(createdAt);
+        this.updatedAt = optional(updatedAt);
         this.icon = optional(icon);
         this.accent = optional(accent);
         this.audioPath = optional(audioPath);
@@ -59,6 +74,9 @@ public final class ReplyCard {
         this.htmlPath = optional(htmlPath);
         this.images = jsonArrayOrBlank(images, "images");
         this.trace = jsonObjectOrBlank(trace, "trace");
+        this.archived = archived;
+        this.read = read;
+        this.deleted = deleted;
     }
 
     public static ReplyCard fromJson(JSONObject input) throws CommandException {
@@ -66,6 +84,8 @@ public final class ReplyCard {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "reply card must be an object");
         }
         return new ReplyCard(
+                input.optString("card_id", ""),
+                input.optString("turn_id", ""),
                 input.optString("title", ""),
                 input.optString("session_id", ""),
                 input.optString("tag", ""),
@@ -73,6 +93,7 @@ public final class ReplyCard {
                 input.optString("transcript", input.optString("transcript_text", "")),
                 jsonArrayString(input, "transcript_messages"),
                 input.optString("created_at", ""),
+                input.optString("updated_at", ""),
                 input.optString("icon", ""),
                 input.optString("accent", ""),
                 input.optString("audio_path", ""),
@@ -80,7 +101,10 @@ public final class ReplyCard {
                 jsonArrayString(input, "audio_timestamps"),
                 input.optString("html_path", ""),
                 jsonArrayString(input, "images"),
-                jsonObjectString(input, "trace"));
+                jsonObjectString(input, "trace"),
+                input.optBoolean("archived", false),
+                input.optBoolean("read", false),
+                input.optBoolean("deleted", false));
     }
 
     public static List<ReplyCard> listFromJson(JSONArray input) throws CommandException {
@@ -112,6 +136,8 @@ public final class ReplyCard {
 
     public JSONObject toJson() {
         JSONObject out = new JSONObject();
+        putOptional(out, "card_id", cardId);
+        putOptional(out, "turn_id", turnId);
         putOptional(out, "session_id", sessionId);
         Json.put(out, "title", title);
         putOptional(out, "tag", tag);
@@ -125,6 +151,7 @@ public final class ReplyCard {
             }
         }
         putOptional(out, "created_at", createdAt);
+        putOptional(out, "updated_at", updatedAt);
         putOptional(out, "icon", icon);
         putOptional(out, "accent", accent);
         putOptional(out, "audio_path", audioPath);
@@ -133,7 +160,18 @@ public final class ReplyCard {
         putOptional(out, "html_path", htmlPath);
         putOptionalJsonArray(out, "images", images);
         putOptionalJsonObject(out, "trace", trace);
+        Json.put(out, "archived", archived);
+        Json.put(out, "read", read);
+        Json.put(out, "deleted", deleted);
         return out;
+    }
+
+    public String cardId() {
+        return cardId;
+    }
+
+    public String turnId() {
+        return turnId;
     }
 
     public String title() {
@@ -162,6 +200,10 @@ public final class ReplyCard {
 
     public String createdAt() {
         return createdAt;
+    }
+
+    public String updatedAt() {
+        return updatedAt;
     }
 
     public String icon() {
@@ -194,6 +236,18 @@ public final class ReplyCard {
 
     public String trace() {
         return trace;
+    }
+
+    public boolean archived() {
+        return archived;
+    }
+
+    public boolean read() {
+        return read;
+    }
+
+    public boolean deleted() {
+        return deleted;
     }
 
     public boolean hasAudio() {
