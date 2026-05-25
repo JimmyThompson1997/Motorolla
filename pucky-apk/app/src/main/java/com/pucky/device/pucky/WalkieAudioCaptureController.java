@@ -34,6 +34,9 @@ public final class WalkieAudioCaptureController {
     private static final class ActiveCapture {
         String sessionId;
         String turnId;
+        String triggerSource;
+        String wakePhraseFamily;
+        String wakePhraseDetected;
         File file;
         String startedAt;
         long startedElapsedMs;
@@ -92,6 +95,9 @@ public final class WalkieAudioCaptureController {
         ActiveCapture capture = new ActiveCapture();
         capture.sessionId = sessionId;
         capture.turnId = turnId;
+        capture.triggerSource = args.optString("trigger_source", args.optString("source", "volume_up_hold"));
+        capture.wakePhraseFamily = args.optString("wake_phrase_family", "");
+        capture.wakePhraseDetected = args.optString("wake_phrase_detected", "");
         capture.file = uniqueFile(dir, sessionId + ".wav");
         capture.startedAt = Instant.now().toString();
         capture.startedElapsedMs = SystemClock.elapsedRealtime();
@@ -206,6 +212,13 @@ public final class WalkieAudioCaptureController {
         Json.put(out, "filename", capture.file.getName());
         Json.put(out, "mime_type", "audio/wav");
         Json.put(out, "audio_source", "voice_recognition");
+        Json.put(out, "trigger_source", capture.triggerSource);
+        if (!capture.wakePhraseFamily.isEmpty()) {
+            Json.put(out, "wake_phrase_family", capture.wakePhraseFamily);
+        }
+        if (!capture.wakePhraseDetected.isEmpty()) {
+            Json.put(out, "wake_phrase_detected", capture.wakePhraseDetected);
+        }
         Json.put(out, "sample_rate", AudioFrameBus.SAMPLE_RATE);
         Json.put(out, "channels", 1);
         Json.put(out, "encoding", "PCM_16BIT");

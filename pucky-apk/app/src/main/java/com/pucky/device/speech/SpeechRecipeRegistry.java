@@ -454,35 +454,11 @@ public final class SpeechRecipeRegistry {
             Json.put(out, "version", 1);
             Json.put(out, "updated_at", "2026-05-23T00:00:00Z");
             Json.put(out, "source", "apk_hardcoded");
-            JSONArray recipes = new JSONArray();
-            Json.add(recipes, builtinRecipe("hey_pucky",
-                    new String[]{"hey pucky", "hey puppy", "hey lucky", "hay pucky", "hey pocky", "hey packy", "pucky", "puppy", "pocky", "packy"},
-                    "Hey Pucky recognized."));
-            Json.add(recipes, builtinRecipe("mic_on",
-                    new String[]{"mic on", "mike on", "microphone on"},
-                    "Mic on recognized."));
-            Json.add(recipes, builtinRecipe("mic_off",
-                    new String[]{"mic off", "mike off", "microphone off"},
-                    "Mic off recognized."));
-            Json.put(out, "recipes", recipes);
+            Json.put(out, "recipes", new JSONArray());
             return normalizeBundle(out, "apk_hardcoded");
         } catch (CommandException exc) {
             return emptyStoredBundle();
         }
-    }
-
-    private static JSONObject builtinRecipe(String id, String[] phrases, String reply) {
-        JSONObject recipe = new JSONObject();
-        Json.put(recipe, "id", id);
-        JSONArray aliases = new JSONArray();
-        for (String phrase : phrases) {
-            Json.add(aliases, phrase);
-        }
-        Json.put(recipe, "phrases", aliases);
-        Json.put(recipe, "match", "exact_utterance");
-        Json.put(recipe, "reply_text", reply);
-        Json.put(recipe, "steps", new JSONArray());
-        return recipe;
     }
 
     private static String replyText(JSONObject input, String id) {

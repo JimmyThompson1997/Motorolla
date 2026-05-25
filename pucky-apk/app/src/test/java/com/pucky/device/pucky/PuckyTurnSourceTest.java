@@ -94,6 +94,22 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
+    public void turnControllerCarriesWakeTriggerMetadataAndPausesWakeSentinel() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String capture = read("src/main/java/com/pucky/device/pucky/WalkieAudioCaptureController.java");
+
+        assertTrue(source.contains("WakeWordController.shared(context).onTurnStarting(clientTurnId, triggerSource)"));
+        assertTrue(source.contains("Json.put(startArgs, \"trigger_source\", triggerSource)"));
+        assertTrue(source.contains("Json.put(startArgs, \"wake_phrase_family\""));
+        assertTrue(source.contains("Json.put(startArgs, \"wake_phrase_detected\""));
+        assertTrue(source.contains("WakeWordController.shared(context).onTurnStatusChanged("));
+        assertTrue(capture.contains("capture.triggerSource"));
+        assertTrue(capture.contains("capture.wakePhraseFamily"));
+        assertTrue(capture.contains("capture.wakePhraseDetected"));
+        assertTrue(capture.contains("Json.put(out, \"trigger_source\", capture.triggerSource)"));
+    }
+
+    @Test
     public void nativeCommandExecutorAllowlistsSpeechEchoLabCommands() throws Exception {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String service = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
