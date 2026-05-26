@@ -50,6 +50,8 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("playWakeListeningChime(\"pucky.wake_pcm_match_chime.v1\")"));
         assertTrue(source.contains("KEY_LAST_SIMULATE_REQUESTED_AT"));
         assertTrue(source.contains("wake.simulate requires phrase"));
+        assertTrue(source.contains("wake.fixture.run requires wav_base64"));
+        assertTrue(source.contains("pucky.wake_fixture_run.v1"));
         assertFalse(read("src/main/java/com/pucky/device/MainActivity.java")
                 .contains("WakeWordController.shared(this).start(new JSONObject())"));
         assertTrue(source.contains("assistant_status"));
@@ -130,7 +132,10 @@ public final class PuckyWakeLabSourceTest {
         assertFalse(executor.contains("return speechEchoLabController.recipesSync(command.args())"));
         assertFalse(executor.contains("\"speech.echo.lab.config.get\""));
         assertFalse(executor.contains("\"speech.echo.lab.config.set\""));
+        assertTrue(executor.contains("\"wake.fixture.run\""));
+        assertTrue(executor.contains("return wakeWordController.fixtureRun(command.args())"));
         assertTrue(capability.contains("cap(\"pucky.recipes\""));
+        assertTrue(capability.contains("wake.status/wake.config.set/wake.start/wake.stop/wake.simulate/wake.fixture.run"));
         assertFalse(capability.contains(removedWakeDebugCommand()));
         assertFalse(capability.contains("speech.echo.lab.config.get"));
     }

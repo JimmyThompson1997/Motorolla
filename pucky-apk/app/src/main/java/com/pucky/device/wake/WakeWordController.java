@@ -28,6 +28,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.Instant;
+import java.util.Base64;
 
 public final class WakeWordController {
     private static final String TAG = "PuckyWakeWord";
@@ -52,6 +53,7 @@ public final class WakeWordController {
     private static final String SCOPE_ASSISTANT_RESERVED = "assistant_screen_off_reserved";
     private static final long PROOF_WINDOW_MS = 3000L;
     private static final long CONFIRM_TIMEOUT_MS = 8000L;
+    private static final int FIXTURE_MAX_BYTES = 1024 * 1024;
 
     private static WakeWordController instance;
 
@@ -182,8 +184,18 @@ public final class WakeWordController {
         Json.add(alternatives, phrase);
         String matched = WakePhraseFamily.matchedPhrasePrefix(alternatives);
         boolean accepted = !matched.isEmpty();
-        JSONObject confirmation = confirmationJson("simulate", phrase, alternatives, new JSONArray(),
-                accepted ? "accepted" : "wake_phrase_no_match", 0L);
+        JSONObject confirmation = confirmationJson(
+                "simulate",
+                phrase,
+                alternatives,
+                new JSONArray(),
+                accepted ? "accepted" : "wake_phrase_no_match",
+                0L,
+                "",
+                "",
+                0L,
+                0L,
+                "simulate");
         synchronized (lock) {
             prefs.edit()
                     .putString(KEY_LAST_CONFIRMATION_JSON, confirmation.toString())
@@ -198,6 +210,88 @@ public final class WakeWordController {
         Json.put(out, "accepted", accepted);
         Json.put(out, "transcript", phrase);
         Json.put(out, "matched_phrase", matched);
+        Json.put(out, "proof_indicator", proofIndicatorJsonLockedSafe());
+        return out;
+    }
+
+    public JSONObject fixtureRun(JSONObject args) {
+        String label = args == null ? "" : safe(args.optString("label", ""));
+        byte[] wavBytes = decodeFixtureWav(args);
+        short[] inputSamples = OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(wavBytes);
+        if (inputSamples.length == 0) {
+            throw new IllegalArgumentException("wake.fixture.run requires non-empty PCM WAV audio");
+        }
+        FixtureCandidateResult candidateResult = generateFixtureCandidate(inputSamples);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.wake_fixture_run.v1");
+        Json.put(out, "label", label);
+        Json.put(out, "input_samples", inputSamples.length);
+        Json.put(out, "input_duration_ms", WakeCandidateEndpointPolicy.durationMs(inputSamples.length));
+        Json.put(out, "appended_silence_ms", candidateResult.appendedSilenceMs);
+        Json.put(out, "candidate_generated", candidateResult.candidate != null);
+        Json.put(out, "vad", candidateResult.vadSnapshot);
+        if (candidateResult.candidate == null) {
+            synchronized (lock) {
+                prefs.edit()
+                        .putString(KEY_LAST_REJECT_REASON, "no_candidate")
+                        .apply();
+            }
+            Json.put(out, "accepted", false);
+            Json.put(out, "matched_phrase", "");
+            Json.put(out, "confirmation", new JSONObject());
+            Json.put(out, "proof_indicator", proofIndicatorJsonLockedSafe());
+            return out;
+        }
+
+        WakeCandidate candidate = candidateResult.candidate;
+        OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognition = injectedRecognizer.recognizeSystemFallback(
+                OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidate.samples),
+                CONFIRM_TIMEOUT_MS);
+        String transcript = recognition.transcript;
+        JSONArray alternatives = alternativesWithTranscript(recognition.transcript, recognition.alternatives);
+        JSONArray confidences = recognition.confidences;
+        String matched = "";
+        String status;
+        String rejectReason;
+        if (!recognition.succeeded || transcript.trim().isEmpty()) {
+            status = "error";
+            rejectReason = recognition.errorCode.isEmpty() ? "stt_no_transcript" : recognition.errorCode;
+        } else {
+            matched = WakePhraseFamily.matchedPhrasePrefix(alternatives);
+            status = matched.isEmpty() ? "rejected" : "accepted";
+            rejectReason = matched.isEmpty() ? "wake_phrase_no_match" : "";
+        }
+        JSONObject confirmation = confirmationJson(
+                status,
+                transcript,
+                alternatives,
+                confidences,
+                rejectReason,
+                0L,
+                recognition.errorCode,
+                recognition.errorMessage,
+                candidate.durationMs,
+                WakeCandidateEndpointPolicy.durationMs(
+                        OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidate.samples).length),
+                candidate.finishReason);
+        boolean accepted = "accepted".equals(status);
+        synchronized (lock) {
+            prefs.edit()
+                    .putString(KEY_LAST_CANDIDATE_JSON, candidate.toJson().toString())
+                    .putString(KEY_LAST_CONFIRMATION_JSON, confirmation.toString())
+                    .putString(KEY_LAST_REJECT_REASON, rejectReason)
+                    .apply();
+            if (accepted) {
+                markProofLocked(matched, transcript, "fixture");
+            }
+        }
+        if (accepted && args != null && args.optBoolean("play_chime", false)) {
+            recipeExecutor.playWakeListeningChime("pucky.wake_pcm_match_chime.v1");
+        }
+        Json.put(out, "accepted", accepted);
+        Json.put(out, "matched_phrase", matched);
+        Json.put(out, "candidate", candidate.toJson());
+        Json.put(out, "confirmation", confirmation);
         Json.put(out, "proof_indicator", proofIndicatorJsonLockedSafe());
         return out;
     }
@@ -337,6 +431,8 @@ public final class WakeWordController {
         JSONArray confidences = new JSONArray();
         String rejectReason = "";
         String matched = "";
+        String errorCode = "";
+        String errorMessage = "";
         if (WakeCandidateEndpointPolicy.FINISH_TOO_SHORT.equals(candidate.finishReason)) {
             status = "rejected";
             rejectReason = WakeCandidateEndpointPolicy.FINISH_TOO_SHORT;
@@ -347,6 +443,8 @@ public final class WakeWordController {
             transcript = recognition.transcript;
             alternatives = alternativesWithTranscript(recognition.transcript, recognition.alternatives);
             confidences = recognition.confidences;
+            errorCode = recognition.errorCode;
+            errorMessage = recognition.errorMessage;
             if (!recognition.succeeded || transcript.trim().isEmpty()) {
                 status = "error";
                 rejectReason = recognition.errorCode.isEmpty() ? "stt_no_transcript" : recognition.errorCode;
@@ -357,7 +455,19 @@ public final class WakeWordController {
             }
         }
         long latencyMs = Math.max(0L, SystemClock.elapsedRealtime() - startedMs);
-        JSONObject confirmation = confirmationJson(status, transcript, alternatives, confidences, rejectReason, latencyMs);
+        JSONObject confirmation = confirmationJson(
+                status,
+                transcript,
+                alternatives,
+                confidences,
+                rejectReason,
+                latencyMs,
+                errorCode,
+                errorMessage,
+                candidate.durationMs,
+                WakeCandidateEndpointPolicy.durationMs(
+                        OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(candidate.samples).length),
+                candidate.finishReason);
         boolean accepted = "accepted".equals(status);
         synchronized (lock) {
             prefs.edit()
@@ -418,7 +528,12 @@ public final class WakeWordController {
             JSONArray alternatives,
             JSONArray confidences,
             String rejectReason,
-            long latencyMs) {
+            long latencyMs,
+            String errorCode,
+            String errorMessage,
+            long inputDurationMs,
+            long paddedDurationMs,
+            String candidateFinishReason) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.wake_confirmation.v1");
         Json.put(out, "status", status);
@@ -427,9 +542,69 @@ public final class WakeWordController {
         Json.put(out, "confidences", confidences == null ? new JSONArray() : confidences);
         Json.put(out, "matched_phrase", WakePhraseFamily.matchedPhrasePrefix(alternatives));
         Json.put(out, "reject_reason", safe(rejectReason));
+        Json.put(out, "error_code", safe(errorCode));
+        Json.put(out, "error_message", safe(errorMessage));
         Json.put(out, "latency_ms", latencyMs);
+        Json.put(out, "input_duration_ms", inputDurationMs);
+        Json.put(out, "padded_duration_ms", paddedDurationMs);
+        Json.put(out, "candidate_finish_reason", safe(candidateFinishReason));
         Json.put(out, "confirmed_at", nowIso());
         return out;
+    }
+
+    private byte[] decodeFixtureWav(JSONObject args) {
+        if (args == null) {
+            throw new IllegalArgumentException("wake.fixture.run requires wav_base64");
+        }
+        String encoded = safe(args.optString("wav_base64",
+                args.optString("audio_base64", args.optString("content_base64", ""))));
+        if (encoded.isEmpty()) {
+            throw new IllegalArgumentException("wake.fixture.run requires wav_base64");
+        }
+        byte[] bytes;
+        try {
+            bytes = Base64.getDecoder().decode(encoded);
+        } catch (IllegalArgumentException exc) {
+            throw new IllegalArgumentException("wake.fixture.run received invalid base64 audio");
+        }
+        if (bytes.length == 0) {
+            throw new IllegalArgumentException("wake.fixture.run received empty audio");
+        }
+        if (bytes.length > FIXTURE_MAX_BYTES) {
+            throw new IllegalArgumentException("wake.fixture.run audio exceeds max fixture size");
+        }
+        return bytes;
+    }
+
+    private FixtureCandidateResult generateFixtureCandidate(short[] inputSamples) {
+        WakeCandidate[] captured = new WakeCandidate[1];
+        WakeCandidateConsumer consumer = new WakeCandidateConsumer(
+                new SileroVadEngine(context),
+                candidate -> {
+                    if (captured[0] == null) {
+                        captured[0] = candidate;
+                    }
+                });
+        feedFixtureFrames(consumer, inputSamples);
+        int appendedSilenceMs = 0;
+        short[] silence = new short[AudioFrameBus.FRAME_SAMPLES];
+        while (captured[0] == null
+                && appendedSilenceMs < WakeCandidateEndpointPolicy.TRAILING_SILENCE_MS + 300) {
+            consumer.onFrame(silence, 0L);
+            appendedSilenceMs += AudioFrameBus.FRAME_MS;
+        }
+        return new FixtureCandidateResult(captured[0], consumer.snapshot(), appendedSilenceMs);
+    }
+
+    private void feedFixtureFrames(WakeCandidateConsumer consumer, short[] inputSamples) {
+        int offset = 0;
+        while (offset < inputSamples.length) {
+            int count = Math.min(AudioFrameBus.FRAME_SAMPLES, inputSamples.length - offset);
+            short[] frame = new short[count];
+            System.arraycopy(inputSamples, offset, frame, 0, count);
+            consumer.onFrame(frame, 0L);
+            offset += count;
+        }
     }
 
     private JSONObject proofIndicatorJsonLockedSafe() {
@@ -583,6 +758,18 @@ public final class WakeWordController {
 
     private interface CandidateListener {
         void onCandidate(WakeCandidate candidate);
+    }
+
+    private static final class FixtureCandidateResult {
+        final WakeCandidate candidate;
+        final JSONObject vadSnapshot;
+        final int appendedSilenceMs;
+
+        FixtureCandidateResult(WakeCandidate candidate, JSONObject vadSnapshot, int appendedSilenceMs) {
+            this.candidate = candidate;
+            this.vadSnapshot = vadSnapshot == null ? new JSONObject() : vadSnapshot;
+            this.appendedSilenceMs = appendedSilenceMs;
+        }
     }
 
     private static final class WakeCandidate {

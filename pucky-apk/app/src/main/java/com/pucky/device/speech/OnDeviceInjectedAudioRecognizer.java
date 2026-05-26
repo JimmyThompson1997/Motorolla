@@ -41,12 +41,24 @@ public final class OnDeviceInjectedAudioRecognizer {
     }
 
     public RecognitionOutcome recognize(short[] samples, long timeoutMs) {
+        return recognizeInternal(samples, timeoutMs, true, true);
+    }
+
+    public RecognitionOutcome recognizeSystemFallback(short[] samples, long timeoutMs) {
+        return recognizeInternal(samples, timeoutMs, false, false);
+    }
+
+    private RecognitionOutcome recognizeInternal(
+            short[] samples,
+            long timeoutMs,
+            boolean preferOffline,
+            boolean requireOnDevice) {
         if (samples == null || samples.length == 0) {
             return RecognitionOutcome.failed("empty_capture", "No PCM samples were provided");
         }
         RecognitionSession session = new RecognitionSession();
         CountDownLatch latch = new CountDownLatch(1);
-        main.post(() -> startRecognitionOnMain(samples, session, latch));
+        main.post(() -> startRecognitionOnMain(samples, session, latch, preferOffline, requireOnDevice));
         try {
             boolean completed = latch.await(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
             if (!completed) {
@@ -64,9 +76,15 @@ public final class OnDeviceInjectedAudioRecognizer {
                 : session.outcome;
     }
 
-    private void startRecognitionOnMain(short[] samples, RecognitionSession session, CountDownLatch latch) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-                || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+    private void startRecognitionOnMain(
+            short[] samples,
+            RecognitionSession session,
+            CountDownLatch latch,
+            boolean preferOffline,
+            boolean requireOnDevice) {
+        boolean onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
+        if (requireOnDevice && !onDeviceAvailable) {
             session.outcome = RecognitionOutcome.failed("on_device_unavailable",
                     "Android on-device SpeechRecognizer injected audio is unavailable");
             latch.countDown();
@@ -76,7 +94,9 @@ public final class OnDeviceInjectedAudioRecognizer {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
             session.read = pipe[0];
             ParcelFileDescriptor write = pipe[1];
-            session.recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
+            session.recognizer = requireOnDevice
+                    ? SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                    : SpeechRecognizer.createSpeechRecognizer(context);
             session.recognizer.setRecognitionListener(new RecognitionListener() {
                 private boolean completed;
 
@@ -119,6 +139,7 @@ public final class OnDeviceInjectedAudioRecognizer {
                         return;
                     }
                     completed = true;
+                    Log.i(TAG, "onResults " + bundleSummary(results));
                     session.outcome = RecognitionOutcome.succeeded(results);
                     cleanupRecognition(session);
                     latch.countDown();
@@ -134,6 +155,7 @@ public final class OnDeviceInjectedAudioRecognizer {
 
                 @Override
                 public void onSegmentResults(Bundle segmentResults) {
+                    Log.i(TAG, "onSegmentResults " + bundleSummary(segmentResults));
                     session.latestSegment = RecognitionOutcome.succeeded(segmentResults);
                 }
 
@@ -160,15 +182,17 @@ public final class OnDeviceInjectedAudioRecognizer {
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
             intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline);
             intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
             intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, session.read);
             intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AudioFrameBus.SAMPLE_RATE);
             intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
             intent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
-            intent.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE);
             intent.putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY);
             intent.putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true);
+            Log.i(TAG, "start injected recognition require_on_device=" + requireOnDevice
+                    + " prefer_offline=" + preferOffline
+                    + " samples=" + samples.length);
             session.recognizer.startListening(intent);
             writeCapturedPcmAsync(write, samples);
         } catch (IOException | RuntimeException exc) {
@@ -275,6 +299,15 @@ public final class OnDeviceInjectedAudioRecognizer {
 
         static RecognitionOutcome succeeded(Bundle results) {
             ArrayList<String> values = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            if ((values == null || values.isEmpty()) && results != null) {
+                ArrayList<CharSequence> chars = results.getCharSequenceArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (chars != null && !chars.isEmpty()) {
+                    values = new ArrayList<>();
+                    for (CharSequence value : chars) {
+                        values.add(value == null ? "" : value.toString());
+                    }
+                }
+            }
             float[] confidenceArray = results == null ? null : results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
             return new RecognitionOutcome(true, "matched_or_no_match_ready",
                     first(values),
@@ -323,6 +356,13 @@ public final class OnDeviceInjectedAudioRecognizer {
             }
             return out;
         }
+    }
+
+    private static String bundleSummary(Bundle bundle) {
+        if (bundle == null) {
+            return "bundle=null";
+        }
+        return "keys=" + bundle.keySet() + " values=" + bundle;
     }
 
     private static final class RecognitionSession {

@@ -147,10 +147,10 @@ public final class CapabilityReporter {
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
                 "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Raw voice capture is save-only and does not replay recordings."));
-        Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
+        Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate/wake.fixture.run",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
-                "PCM wake lab. Awake and unlocked foreground-service scope runs AudioRecord PCM capture, Silero VAD short endpointing, and Android injected-audio STT on bounded wake clips. A wake-family match briefly marks proof-only blue UI state. No turn handoff or upload."));
+                "PCM wake lab. Awake and unlocked foreground-service scope runs AudioRecord PCM capture, Silero VAD short endpointing, and Android injected-audio STT on bounded wake clips. A wake-family match briefly marks proof-only blue UI state. wake.fixture.run replays bounded fixture WAVs through the same VAD and confirmation path for deterministic lab testing. No turn handoff or upload."));
         Json.add(out, cap("speech.native", "speech.native.start/speech.native.stop/speech.native.status/speech.native.last/speech.native.list/speech.native.delete",
                 nativeSpeechStatus(), "yes", "microphone", Manifest.permission.RECORD_AUDIO, "not_recorded",
                 "Android SpeechRecognizer live transcription with local transcript history and broker reply-inbox delivery when online."));
