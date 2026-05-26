@@ -477,11 +477,23 @@
       return state.wakeStatus;
     }
     if (command === "wake.start") {
-      state.wakeStatus = normalizeWakeStatus({ ...state.wakeStatus, enabled: true, requested_enabled: true, running: true });
+      state.wakeStatus = normalizeWakeStatus({
+        ...state.wakeStatus,
+        enabled: true,
+        requested_enabled: true,
+        suspended_reason: "service_not_started"
+      });
       return state.wakeStatus;
     }
     if (command === "wake.stop") {
-      state.wakeStatus = normalizeWakeStatus({ ...state.wakeStatus, enabled: false, requested_enabled: false, running: false });
+      state.wakeStatus = normalizeWakeStatus({
+        ...state.wakeStatus,
+        enabled: false,
+        requested_enabled: false,
+        running: false,
+        state: "idle",
+        suspended_reason: "disabled"
+      });
       return state.wakeStatus;
     }
     if (command === "wake.config.set") {
@@ -490,7 +502,13 @@
         ...state.wakeStatus,
         enabled,
         requested_enabled: enabled,
-        running: enabled,
+        running: enabled ? state.wakeStatus.running : false,
+        state: enabled ? state.wakeStatus.state : "idle",
+        suspended_reason: enabled
+          ? state.wakeStatus.running
+            ? ""
+            : state.wakeStatus.suspended_reason || "service_not_started"
+          : "disabled",
         scope: String(args.scope || state.wakeStatus.scope || "awake_and_unlocked_foreground"),
         mode: String(args.mode || state.wakeStatus.mode || "pcm_wake")
       });
@@ -973,6 +991,8 @@
       enabled: false,
       requested_enabled: false,
       running: false,
+      state: "idle",
+      suspended_reason: "",
       engine: "unknown",
       mode: "pcm_wake",
       scope: "awake_and_unlocked_foreground",
@@ -1061,6 +1081,8 @@
       enabled: truthy(raw.enabled),
       requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
       running: truthy(raw.running),
+      state: String(raw.state || "idle"),
+      suspended_reason: String(raw.suspended_reason || ""),
       engine: String(raw.engine || "unknown"),
       mode: String(raw.mode || "pcm_wake"),
       scope: String(raw.scope || "awake_and_unlocked_foreground"),
@@ -1084,6 +1106,36 @@
       remaining_ms: safeNumber(raw.remaining_ms),
       expires_at_elapsed_ms: safeNumber(raw.expires_at_elapsed_ms)
     };
+  }
+
+  function wakeStatusDetail(status) {
+    const current = status && typeof status === "object" ? status : initialWakeStatus();
+    if (current.running) {
+      return "Listening while awake and unlocked";
+    }
+    const reason = String(current.suspended_reason || "");
+    if (reason === "device_not_interactive") {
+      return "Waiting for screen wake";
+    }
+    if (reason === "device_locked") {
+      return "Waiting for unlock";
+    }
+    if (reason === "turn_active") {
+      return "Paused during active turn";
+    }
+    if (reason === "service_not_started") {
+      return "Wake service starting";
+    }
+    if (reason === "record_audio_permission_missing") {
+      return "Microphone permission required";
+    }
+    if (reason === "assistant_scope_reserved") {
+      return "Screen-off wake not enabled in this phase";
+    }
+    if (current.enabled || current.requested_enabled) {
+      return "Wake requested, not armed";
+    }
+    return "Enable the local wake phrase on device.";
   }
 
   function normalizeUiSurfaceStatus(input) {
@@ -1705,9 +1757,7 @@
       accent: "#72c2ff",
       icon: "record_voice_over",
       title: "Wake word",
-      detail: state.wakeStatus.running
-        ? `Listening on ${state.wakeStatus.scope || "awake foreground"}`
-        : "Enable the local wake phrase on device.",
+      detail: wakeStatusDetail(state.wakeStatus),
       enabled: state.wakeStatus.enabled,
       onToggle: setWakeWordEnabled
     });
@@ -1741,7 +1791,13 @@
       ...state.wakeStatus,
       enabled,
       requested_enabled: enabled,
-      running: enabled
+      running: enabled ? state.wakeStatus.running : false,
+      state: enabled ? state.wakeStatus.state : "idle",
+      suspended_reason: enabled
+        ? state.wakeStatus.running
+          ? ""
+          : state.wakeStatus.suspended_reason || "service_not_started"
+        : "disabled"
     });
     render();
     try {
@@ -1971,7 +2027,16 @@
     diagnostics.append(
       settingsDiagnosticItem("Bundle", state.uiSurface.ui_version || "unknown"),
       settingsDiagnosticItem("Surface", formatSurfaceKind(state.uiSurface.source_kind)),
-      settingsDiagnosticItem("Wake", state.wakeStatus.running ? "running" : state.wakeStatus.enabled ? "enabled" : "off"),
+      settingsDiagnosticItem(
+        "Wake",
+        state.wakeStatus.running
+          ? "listening"
+          : state.wakeStatus.suspended_reason
+            ? state.wakeStatus.suspended_reason.replaceAll("_", " ")
+            : state.wakeStatus.enabled || state.wakeStatus.requested_enabled
+              ? "requested"
+              : "off"
+      ),
       settingsDiagnosticItem("Bridge", state.uiSurface.bridge_connected ? "connected" : "browser")
     );
     card.append(diagnostics);

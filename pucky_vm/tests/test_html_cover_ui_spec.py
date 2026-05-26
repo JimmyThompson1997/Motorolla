@@ -514,6 +514,7 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function settingsPageView()" in app
     assert "function settingsToggleCard(" in app
     assert "function wakeWordSettingsCard()" in app
+    assert "function wakeStatusDetail(status)" in app
     assert "function arrivalCueSettingsCard()" in app
     assert "function advancedSettingsCard()" in app
     assert "function replyModeSettingsCard()" in app
@@ -549,6 +550,14 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Reply playback" in app
     assert "Message sent cue" in app
     assert "Wake word" in app
+    assert "Listening while awake and unlocked" in app
+    assert "Waiting for screen wake" in app
+    assert "Waiting for unlock" in app
+    assert "Paused during active turn" in app
+    assert "Wake service starting" in app
+    assert "Microphone permission required" in app
+    assert "Screen-off wake not enabled in this phase" in app
+    assert "Wake requested, not armed" in app
     assert "Advanced" in app
     assert "Test cue" in app
     assert "Choose if replies stay as cards or also speak." in app
@@ -556,6 +565,12 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Buzz + chime" in app
     assert "settingsSelectorOverlay" in app
     assert "settingsSheet" in app
+    assert "detail: wakeStatusDetail(state.wakeStatus)" in app
+    assert "suspended_reason: String(raw.suspended_reason || \"\")" in app
+    assert "state: String(raw.state || \"idle\")" in app
+    assert "requested_enabled: enabled," in app
+    assert "running: enabled\n" not in app
+    assert 'settingsDiagnosticItem(\n        "Wake",' in app
     assert 'id="settingsSelectorOverlay"' in html
     assert 'class="settings-selector-overlay"' in html
     assert 'id="settingsSheet"' in html
