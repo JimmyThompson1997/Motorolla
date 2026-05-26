@@ -418,6 +418,7 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
 
 def test_settings_tab_renders_real_backed_settings_page() -> None:
     app = read("app.js")
+    html = read("index.html")
     styles = read("styles.css")
 
     assert "turnSettings: initialTurnSettings()" in app
@@ -470,6 +471,10 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Buzz + chime" in app
     assert "settingsSelectorOverlay" in app
     assert "settingsSheet" in app
+    assert 'id="settingsSelectorOverlay"' in html
+    assert 'class="settings-selector-overlay"' in html
+    assert 'id="settingsSheet"' in html
+    assert 'class="trace-sheet settings-sheet"' in html
     assert "replyModeButton(mode, label)" not in app
     assert "arrivalCueButton(mode, label)" not in app
     assert "diagnosticsSettingsCard()" not in app
