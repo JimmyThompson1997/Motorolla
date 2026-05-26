@@ -9,6 +9,11 @@ from urllib.parse import quote
 
 
 DEFAULT_KLAVIS_BASE_URL = "https://api.klavis.ai"
+KLAVIS_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/136.0.0.0 Safari/537.36"
+)
 
 
 @dataclass(frozen=True)
@@ -207,6 +212,7 @@ class KlavisClient:
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": KLAVIS_HTTP_USER_AGENT,
             "x-api-key": self.api_key,
         }
         if payload is not None:
