@@ -10,6 +10,7 @@ import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyFeedController;
@@ -143,6 +144,8 @@ public final class PuckyWebBridge {
                 return new ArtifactController(context).readBase64(args);
             case "artifact.url":
                 return new ArtifactController(context).url(args);
+            case "browser.open":
+                return new IntentController(context).browserOpen(args);
             case "ui.bundle.status":
                 return uiBundles.status();
             case "ui.bundle.install_downloaded":

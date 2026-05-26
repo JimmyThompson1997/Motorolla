@@ -90,6 +90,61 @@ class BlockingCodex(FakeCodex):
         )
 
 
+class FakeKlavis:
+    def __init__(self) -> None:
+        self.configured = True
+        self.created: list[dict[str, object]] = []
+
+    def list_servers(self) -> dict[str, object]:
+        return {
+            "servers": [
+                {
+                    "id": "gmail-1",
+                    "name": "Gmail",
+                    "description": "Read, search, and send Gmail.",
+                    "tools": [{"name": "gmail_read_email"}, {"name": "gmail_search_emails"}],
+                    "authNeeded": True,
+                },
+                {
+                    "id": "linkedin-1",
+                    "name": "LinkedIn",
+                    "description": "Read profile info and publish LinkedIn posts.",
+                    "tools": [{"name": "get_my_info"}],
+                    "authNeeded": True,
+                },
+                {
+                    "id": "brave-1",
+                    "name": "Brave Search",
+                    "description": "Search the web.",
+                    "tools": [{"name": "brave_search"}],
+                    "authNeeded": False,
+                },
+            ]
+        }
+
+    def get_user_integrations(self, user_id: str) -> dict[str, object]:
+        return {
+            "integrations": [
+                {"name": "Gmail", "is_authenticated": True},
+                {"name": "LinkedIn", "is_authenticated": False},
+            ],
+            "user_id": user_id,
+        }
+
+    def create_instance(self, *, server_name: str, user_id: str) -> dict[str, object]:
+        payload = {
+            "serverName": server_name,
+            "userId": user_id,
+            "instanceId": "instance-" + server_name.lower().replace(" ", "-"),
+            "serverUrl": "https://example.invalid/mcp/" + server_name.lower().replace(" ", "-"),
+            "oauthUrl": "https://auth.example.invalid/" + server_name.lower().replace(" ", "-"),
+            "authNeeded": True,
+            "isAuthenticated": False,
+        }
+        self.created.append(payload)
+        return payload
+
+
 def make_config(max_html_bytes: int = 512 * 1024) -> Config:
     return Config(
         host="127.0.0.1",
@@ -112,6 +167,9 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         codex_approval_policy="never",
         codex_model="gpt-5.5",
         codex_reasoning_effort="high",
+        klavis_api_key="klavis-test-key",
+        klavis_base_url="https://api.klavis.ai",
+        klavis_default_user_id="jimmythompson323",
     )
 
 
@@ -122,7 +180,8 @@ class ServerTests(unittest.TestCase):
         self.stt = FakeSTT()
         self.tts = FakeTTS()
         self.codex = FakeCodex()
-        self.service = PuckyVoiceService(make_config(), stt=self.stt, tts=self.tts, codex=self.codex)
+        self.klavis = FakeKlavis()
+        self.service = PuckyVoiceService(make_config(), stt=self.stt, tts=self.tts, codex=self.codex, klavis=self.klavis)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -184,7 +243,41 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/pucky-config.js", timeout=10) as response:
             config_script = response.read().decode("utf-8")
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
-            self.assertIn('"links_url":"https://www.klavis.ai/home"', config_script)
+            self.assertNotIn('"links_url"', config_script)
+
+    def test_links_apps_endpoint_returns_filtered_catalog(self) -> None:
+        payload = self.get_json("/api/links/apps")
+
+        self.assertEqual(payload["schema"], "pucky.links_apps.v1")
+        self.assertTrue(payload["available"])
+        names = [item["name"] for item in payload["apps"]]
+        self.assertEqual(names, ["Gmail", "LinkedIn"])
+        self.assertNotIn("Brave Search", names)
+        gmail = payload["apps"][0]
+        self.assertEqual(gmail["key"], "gmail")
+        self.assertEqual(gmail["server_name"], "Gmail")
+        self.assertEqual(gmail["auth_type"], "oauth")
+        self.assertEqual(gmail["tool_count"], 2)
+
+    def test_links_status_endpoint_returns_user_integration_state(self) -> None:
+        payload = self.get_json("/api/links/status")
+
+        self.assertEqual(payload["schema"], "pucky.links_status.v1")
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["user_id"], "jimmythompson323")
+        self.assertEqual(payload["statuses"]["gmail"]["state"], "connected")
+        self.assertEqual(payload["statuses"]["linkedin"]["state"], "available")
+
+    def test_links_connect_endpoint_creates_instance_for_default_user(self) -> None:
+        payload = self.post_json("/api/links/connect", {"server_name": "LinkedIn"})
+
+        self.assertEqual(payload["schema"], "pucky.links_connect.v1")
+        self.assertEqual(payload["server_name"], "LinkedIn")
+        self.assertEqual(payload["user_id"], "jimmythompson323")
+        self.assertEqual(payload["instance_id"], "instance-linkedin")
+        self.assertEqual(payload["oauth_url"], "https://auth.example.invalid/linkedin")
+        self.assertEqual(self.klavis.created[-1]["serverName"], "LinkedIn")
+        self.assertEqual(self.klavis.created[-1]["userId"], "jimmythompson323")
 
     def test_unauthorized_turn_is_rejected(self) -> None:
         request = urllib.request.Request(

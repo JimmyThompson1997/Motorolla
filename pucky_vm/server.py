@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .codex_app_server import CodexAppServerClient, command_from_env
 from .feed_store import FeedStore
+from .klavis import DEFAULT_KLAVIS_BASE_URL, KlavisClient, curated_catalog, integration_status_map
 from .providers import DeepgramSTT, KokoroTTS
 from .ui_bundle import UI_SRC, build_ui_bundle, bundle_config_script
 
@@ -66,6 +67,17 @@ class CodexProvider(Protocol):
     def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
 
 
+class KlavisProvider(Protocol):
+    @property
+    def configured(self) -> bool: ...
+
+    def list_servers(self) -> dict[str, object]: ...
+
+    def get_user_integrations(self, user_id: str) -> dict[str, object]: ...
+
+    def create_instance(self, *, server_name: str, user_id: str) -> dict[str, object]: ...
+
+
 @dataclass(frozen=True)
 class ReplyEnvelope:
     reply_text: str
@@ -99,6 +111,9 @@ class Config:
     codex_approval_policy: str = "never"
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
+    klavis_api_key: str = ""
+    klavis_base_url: str = DEFAULT_KLAVIS_BASE_URL
+    klavis_default_user_id: str = "jimmythompson323"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -125,6 +140,9 @@ class Config:
             codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
             codex_model=os.environ.get("PUCKY_CODEX_MODEL") or None,
             codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT") or None,
+            klavis_api_key=os.environ.get("KLAVIS_API_KEY", "").strip(),
+            klavis_base_url=os.environ.get("KLAVIS_BASE_URL", DEFAULT_KLAVIS_BASE_URL).strip() or DEFAULT_KLAVIS_BASE_URL,
+            klavis_default_user_id=os.environ.get("PUCKY_KLAVIS_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
         )
 
 
@@ -166,7 +184,15 @@ def reset_broker_for_tests(db_path: str):
 
 
 class PuckyVoiceService:
-    def __init__(self, config: Config, *, stt: STTProvider | None = None, tts: TTSProvider | None = None, codex: CodexProvider | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        stt: STTProvider | None = None,
+        tts: TTSProvider | None = None,
+        codex: CodexProvider | None = None,
+        klavis: KlavisProvider | None = None,
+    ) -> None:
         self.config = config
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
@@ -188,6 +214,7 @@ class PuckyVoiceService:
             reasoning_effort=config.codex_reasoning_effort,
         )
         self.feed = FeedStore(config.feed_db_path)
+        self.klavis = klavis or KlavisClient(config.klavis_api_key, config.klavis_base_url)
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
@@ -205,6 +232,70 @@ class PuckyVoiceService:
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
+            "klavis": "present" if self.config.klavis_api_key else "missing",
+        }
+
+    def klavis_user_id(self) -> str:
+        return self.config.klavis_default_user_id
+
+    def links_apps(self) -> dict[str, object]:
+        payload = {
+            "schema": "pucky.links_apps.v1",
+            "available": False,
+            "user_id": self.klavis_user_id(),
+            "apps": [],
+        }
+        if not self.klavis.configured:
+            payload["error"] = "klavis_not_configured"
+            return payload
+        try:
+            payload["apps"] = curated_catalog(self.klavis.list_servers())
+            payload["available"] = True
+            return payload
+        except Exception as exc:
+            payload["error"] = str(exc)
+            return payload
+
+    def links_status(self) -> dict[str, object]:
+        payload = {
+            "schema": "pucky.links_status.v1",
+            "available": False,
+            "user_id": self.klavis_user_id(),
+            "statuses": {},
+        }
+        if not self.klavis.configured:
+            payload["error"] = "klavis_not_configured"
+            return payload
+        try:
+            payload["statuses"] = integration_status_map(self.klavis.get_user_integrations(self.klavis_user_id()))
+            payload["available"] = True
+            return payload
+        except Exception as exc:
+            payload["error"] = str(exc)
+            return payload
+
+    def links_connect(self, server_name: str) -> dict[str, object]:
+        server_name = str(server_name or "").strip()
+        if not server_name:
+            raise ValueError("server_name is required")
+        if not self.klavis.configured:
+            raise RuntimeError("Klavis is not configured")
+        user_id = self.klavis_user_id()
+        raw = self.klavis.create_instance(server_name=server_name, user_id=user_id)
+        return {
+            "schema": "pucky.links_connect.v1",
+            "user_id": user_id,
+            "server_name": str(raw.get("serverName") or raw.get("server_name") or raw.get("name") or server_name).strip(),
+            "instance_id": str(raw.get("instanceId") or raw.get("instance_id") or "").strip(),
+            "server_url": str(raw.get("serverUrl") or raw.get("server_url") or "").strip(),
+            "oauth_url": str(raw.get("oauthUrl") or raw.get("oauth_url") or "").strip(),
+            "already_authenticated": bool(
+                raw.get("isAuthenticated")
+                or raw.get("is_authenticated")
+                or raw.get("connected")
+                or raw.get("authenticated")
+            ),
+            "auth_type": "oauth",
         }
 
     def turn_status(self, turn_id: str) -> dict[str, object] | None:
@@ -564,11 +655,23 @@ def make_handler(service: PuckyVoiceService):
     class Handler(broker.Handler):
         server_version = "PuckyVoice/0.1"
 
+        def do_OPTIONS(self) -> None:
+            self.send_response(int(HTTPStatus.NO_CONTENT))
+            self._cors_headers()
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             path = parsed.path
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
+                return
+            if path == "/api/links/apps":
+                self._json(HTTPStatus.OK, service.links_apps())
+                return
+            if path == "/api/links/status":
+                self._json(HTTPStatus.OK, service.links_status())
                 return
             if path == "/api/feed":
                 if not self._is_authorized():
@@ -623,6 +726,18 @@ def make_handler(service: PuckyVoiceService):
 
         def do_POST(self) -> None:
             path = self.path.split("?", 1)[0]
+            if path == "/api/links/connect":
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    result = service.links_connect(str(payload.get("server_name") or payload.get("serverName") or ""))
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_GATEWAY, {"error": "links_connect_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             if path == "/api/feed/actions":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -692,6 +807,7 @@ def make_handler(service: PuckyVoiceService):
         def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             self.send_response(int(status))
+            self._cors_headers()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -700,6 +816,7 @@ def make_handler(service: PuckyVoiceService):
         def _text(self, status: HTTPStatus, text: str, content_type: str) -> None:
             body = text.encode("utf-8")
             self.send_response(int(status))
+            self._cors_headers()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -729,10 +846,16 @@ def make_handler(service: PuckyVoiceService):
             body = path.read_bytes()
             guessed = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             self.send_response(int(HTTPStatus.OK))
+            self._cors_headers()
             self.send_header("Content-Type", guessed)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _cors_headers(self) -> None:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     return Handler
 

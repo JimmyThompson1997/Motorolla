@@ -64,6 +64,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("window.Pucky&&window.Pucky.__resolve"));
         assertTrue("HTML bridge should allow explicit UI/player/file commands",
                 bridge.contains("case \"ui.reply_cards.get\"")
+                        && bridge.contains("case \"browser.open\"")
                         && bridge.contains("case \"player.play\"")
                         && bridge.contains("case \"player.pause\"")
                         && bridge.contains("case \"player.seek\"")

@@ -129,14 +129,7 @@ def build_ui_bundle(
 
 
 def bundle_config_payload() -> dict[str, str]:
-    links_url = (
-        os.environ.get("PUCKY_LINKS_URL", "").strip()
-        or os.environ.get("KLAVIS_DASHBOARD_URL", "").strip()
-        or "https://www.klavis.ai/home"
-    )
-    return {
-        "links_url": links_url,
-    }
+    return {}
 
 
 def bundle_config_script() -> str:

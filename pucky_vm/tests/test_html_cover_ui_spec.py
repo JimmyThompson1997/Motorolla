@@ -67,8 +67,14 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'if (state.route === "links")' in app
     assert 'feed.replaceChildren(linksPageView());' in app
     assert "links-portal-frame" not in app
-    assert "configuredLinksUrl()" in app
-    assert "window.location.assign(portalUrl);" in app
+    assert "loadLinksState({ render: true, silent: true });" in app
+    assert "launchLinksConnect(app)" in app
+    assert '"/api/links/apps"' in app
+    assert '"/api/links/status"' in app
+    assert '"/api/links/connect"' in app
+    assert 'command: "browser.open"' in app
+    assert "window.location.assign(portalUrl);" not in app
+    assert "configuredLinksUrl()" not in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
     assert ".header" in styles
@@ -81,16 +87,22 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".tab:not(.is-active) .material-icon" in styles
     assert ".links-page" in styles
     assert ".links-portal-frame" not in styles
-    assert ".links-open-button" in styles
+    assert ".links-search" in styles
+    assert ".links-filter" in styles
+    assert ".links-app-row" in styles
+    assert ".links-open-button" not in styles
     assert 'src="./pucky-config.js"' in html
 
 
-def test_links_route_prefers_bundle_config_and_query_route_restore() -> None:
+def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     app = read("app.js")
 
-    assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" in app
-    assert 'return "https://www.klavis.ai/home";' in app
-    assert 'const explicit = String(BUNDLE_CONFIG.links_url || "").trim();' in app
+    assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" not in app
+    assert 'return "https://www.klavis.ai/home";' not in app
+    assert 'BUNDLE_CONFIG.links_url' not in app
+    assert 'fetch(`${linksApiBaseUrl()}${path}`' in app
+    assert "document.visibilityState === \"visible\"" in app
+    assert "loadLinksState({ render: true, silent: true });" in app
     assert "function routeQueryParam()" in app
     assert "const queryRoute = routeQueryParam();" in app
     assert "return queryRoute;" in app
