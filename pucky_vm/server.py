@@ -353,6 +353,7 @@ class PuckyVoiceService:
                 telemetry["stt_ms"] = _elapsed_ms(start)
                 telemetry["stt_end_ms"] = _elapsed_ms(total_start)
                 telemetry["transcript_chars"] = len(transcript)
+                telemetry["user_transcript"] = transcript
 
                 stage = "codex_running"
                 telemetry["codex_start_ms"] = _elapsed_ms(total_start)
@@ -576,6 +577,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "stt_end_ms",
         "stt_ms",
         "transcript_chars",
+        "user_transcript",
         "codex_start_ms",
         "codex_end_ms",
         "codex_ms",

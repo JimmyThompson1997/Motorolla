@@ -21,6 +21,9 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 
 import okhttp3.MediaType;
@@ -33,12 +36,14 @@ public final class PuckyFeedController {
     private static final String TAG = "PuckyFeedController";
     private static final String PREFS = "pucky_feed";
     private static final String KEY_CURSOR = "last_cursor";
+    private static final String PENDING_PLACEHOLDER = "Sending your message...";
     private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
     private static PuckyFeedController shared;
 
     private final Context context;
     private final SettingsStore settings;
     private final ReplyCardStore replyCards;
+    private final PuckyTurnController turnController;
     private final SharedPreferences prefs;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
 
@@ -53,11 +58,12 @@ public final class PuckyFeedController {
         this.context = context.getApplicationContext();
         this.settings = new SettingsStore(this.context);
         this.replyCards = new ReplyCardStore(this.context);
+        this.turnController = PuckyTurnController.shared(this.context);
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     public JSONObject snapshot() {
-        return replyCards.snapshot();
+        return mergedSnapshot();
     }
 
     public JSONObject sync(JSONObject args) throws CommandException {
@@ -87,14 +93,37 @@ public final class PuckyFeedController {
         if (clientActionId.isEmpty()) {
             clientActionId = "feed_action_" + UUID.randomUUID().toString().replace("-", "");
         }
-        JSONObject resolved = replyCards.find(cardId, sessionId);
-        JSONObject existing = resolved.optJSONObject("card");
+        JSONObject snapshot = mergedSnapshot();
+        JSONObject existing = findSnapshotCard(snapshot, cardId, sessionId);
         if (existing == null) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "feed card not found");
         }
         String resolvedCardId = existing.optString("card_id", cardId).trim();
-        if (resolvedCardId.isEmpty()) {
+        if (resolvedCardId.isEmpty() && !existing.optBoolean("pending_outbound", false)) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "feed card is missing card_id");
+        }
+        if (existing.optBoolean("pending_outbound", false)) {
+            if (!"archive".equals(action)) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                        "pending outbound cards only support archive");
+            }
+            boolean archived = turnController.archiveHistoryRecord(
+                    existing.optString("turn_id", ""),
+                    existing.optString("local_session_id", existing.optString("session_id", "")));
+            if (!archived) {
+                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "pending outbound card not found");
+            }
+            emitFeedUpdated();
+            JSONObject after = mergedSnapshot();
+            JSONObject archivedCard = findSnapshotCard(after, resolvedCardId, sessionId);
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.feed_action_result.v1");
+            Json.put(out, "ok", true);
+            Json.put(out, "action", action);
+            Json.put(out, "client_action_id", clientActionId);
+            Json.put(out, "card", archivedCard == null ? existing : archivedCard);
+            Json.put(out, "snapshot", after);
+            return out;
         }
         if (!isConfigured()) {
             throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "feed sync is not configured");
@@ -126,7 +155,7 @@ public final class PuckyFeedController {
             Json.put(out, "action", action);
             Json.put(out, "client_action_id", clientActionId);
             Json.put(out, "card", local);
-            Json.put(out, "snapshot", replyCards.snapshot());
+            Json.put(out, "snapshot", mergedSnapshot());
             return out;
         } catch (CommandException exc) {
             throw exc;
@@ -143,7 +172,7 @@ public final class PuckyFeedController {
     }
 
     private JSONObject syncInternal(String reason, int limit, boolean emitUpdate) throws CommandException {
-        JSONObject before = replyCards.snapshot();
+        JSONObject before = mergedSnapshot();
         if (!isConfigured()) {
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.feed_sync_result.v1");
@@ -193,7 +222,7 @@ public final class PuckyFeedController {
             pages++;
         } while (hasMore && pages < 5);
         prefs.edit().putString(KEY_CURSOR, nextCursor).apply();
-        JSONObject snapshot = replyCards.snapshot();
+        JSONObject snapshot = mergedSnapshot();
         if (emitUpdate && merged > 0) {
             emitFeedUpdated();
         }
@@ -229,6 +258,179 @@ public final class PuckyFeedController {
         JSONObject lookup = replyCards.find(response.cardId(), response.sessionId());
         JSONObject found = lookup.optJSONObject("card");
         return found == null ? card : found;
+    }
+
+    private JSONObject mergedSnapshot() {
+        JSONObject persisted = replyCards.snapshot();
+        JSONArray persistedCards = persisted.optJSONArray("cards");
+        JSONArray pendingCards = synthesizePendingCards(persistedCards);
+        List<JSONObject> merged = new ArrayList<>();
+        appendSnapshotCards(merged, persistedCards);
+        appendSnapshotCards(merged, pendingCards);
+        merged.sort(Comparator
+                .comparingLong(PuckyFeedController::snapshotSortTimestamp)
+                .reversed()
+                .thenComparing(card -> card.optString("summary", ""), String.CASE_INSENSITIVE_ORDER));
+        JSONArray visible = new JSONArray();
+        int count = 0;
+        for (JSONObject card : merged) {
+            if (card == null || card.optBoolean("deleted", false)) {
+                continue;
+            }
+            Json.add(visible, card);
+            count++;
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.reply_cards.v1");
+        Json.put(out, "count", count);
+        Json.put(out, "cards", visible);
+        return out;
+    }
+
+    private JSONArray synthesizePendingCards(JSONArray persistedCards) {
+        JSONArray history = turnController.historySnapshotArray();
+        JSONArray cards = new JSONArray();
+        for (int index = 0; index < history.length(); index++) {
+            JSONObject record = history.optJSONObject(index);
+            if (record == null) {
+                continue;
+            }
+            String state = record.optString("latest_state", "").trim();
+            if (!shouldSynthesizePendingCard(state)) {
+                continue;
+            }
+            if (hasMatchingReplyCard(persistedCards, record)) {
+                continue;
+            }
+            String turnId = record.optString("turn_id", "").trim();
+            String localSessionId = record.optString("local_session_id", "").trim();
+            String sessionId = localSessionId.isEmpty() ? turnId : localSessionId;
+            if (turnId.isEmpty() && sessionId.isEmpty()) {
+                continue;
+            }
+            String transcript = record.optString("user_transcript", "").trim();
+            boolean failed = isFailedPendingState(state);
+            boolean placeholder = transcript.isEmpty();
+            JSONObject card = new JSONObject();
+            String pendingId = "pending_turn_" + (turnId.isEmpty() ? sessionId : turnId);
+            Json.put(card, "card_id", pendingId);
+            Json.put(card, "turn_id", turnId);
+            Json.put(card, "local_session_id", localSessionId);
+            Json.put(card, "session_id", sessionId);
+            Json.put(card, "title", "Sent message");
+            Json.put(card, "summary", placeholder ? PENDING_PLACEHOLDER : transcript);
+            Json.put(card, "transcript", transcript);
+            Json.put(card, "created_at", record.optString("created_at", record.optString("updated_at", Instant.now().toString())));
+            Json.put(card, "updated_at", record.optString("updated_at", record.optString("created_at", Instant.now().toString())));
+            Json.put(card, "archived", record.optBoolean("archived", false));
+            Json.put(card, "read", true);
+            Json.put(card, "deleted", false);
+            Json.put(card, "pending_outbound", true);
+            Json.put(card, "pending_state", state);
+            Json.put(card, "pending_label", pendingLabelFor(state, placeholder));
+            Json.put(card, "pending_error", record.optString("error", ""));
+            Json.put(card, "pending_placeholder", placeholder);
+            Json.add(cards, card);
+        }
+        return cards;
+    }
+
+    private static void appendSnapshotCards(List<JSONObject> target, JSONArray cards) {
+        if (cards == null) {
+            return;
+        }
+        for (int index = 0; index < cards.length(); index++) {
+            JSONObject card = cards.optJSONObject(index);
+            if (card != null) {
+                target.add(card);
+            }
+        }
+    }
+
+    private static JSONObject findSnapshotCard(JSONObject snapshot, String cardId, String sessionId) {
+        JSONArray cards = snapshot == null ? null : snapshot.optJSONArray("cards");
+        String cleanCardId = safe(cardId);
+        String cleanSessionId = safe(sessionId);
+        if (cards == null) {
+            return null;
+        }
+        for (int index = 0; index < cards.length(); index++) {
+            JSONObject card = cards.optJSONObject(index);
+            if (card == null) {
+                continue;
+            }
+            String existingCardId = safe(card.optString("card_id", ""));
+            String existingSessionId = safe(card.optString("session_id", ""));
+            if (!cleanCardId.isEmpty() && cleanCardId.equals(existingCardId)) {
+                return card;
+            }
+            if (!cleanSessionId.isEmpty() && cleanSessionId.equals(existingSessionId)) {
+                return card;
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasMatchingReplyCard(JSONArray persistedCards, JSONObject record) {
+        if (persistedCards == null || record == null) {
+            return false;
+        }
+        String turnId = safe(record.optString("turn_id", ""));
+        String sessionId = safe(record.optString("local_session_id", record.optString("session_id", "")));
+        for (int index = 0; index < persistedCards.length(); index++) {
+            JSONObject card = persistedCards.optJSONObject(index);
+            if (card == null || card.optBoolean("deleted", false)) {
+                continue;
+            }
+            if (!turnId.isEmpty() && turnId.equals(safe(card.optString("turn_id", "")))) {
+                return true;
+            }
+            if (!sessionId.isEmpty() && sessionId.equals(safe(card.optString("session_id", "")))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean shouldSynthesizePendingCard(String state) {
+        return "uploading".equals(state)
+                || "upload_received".equals(state)
+                || "stt_running".equals(state)
+                || "codex_running".equals(state)
+                || "tts_running".equals(state)
+                || "failed".equals(state)
+                || "upload_blocked".equals(state);
+    }
+
+    private static boolean isFailedPendingState(String state) {
+        return "failed".equals(state) || "upload_blocked".equals(state);
+    }
+
+    private static String pendingLabelFor(String state, boolean placeholder) {
+        if (isFailedPendingState(state)) {
+            return "Failed";
+        }
+        if (!placeholder && ("codex_running".equals(state) || "tts_running".equals(state))) {
+            return "Thinking";
+        }
+        return "Sending";
+    }
+
+    private static long snapshotSortTimestamp(JSONObject card) {
+        return parseIso(card == null ? "" : card.optString("updated_at", ""),
+                parseIso(card == null ? "" : card.optString("created_at", ""), 0L));
+    }
+
+    private static long parseIso(String value, long fallback) {
+        String clean = safe(value);
+        if (clean.isEmpty()) {
+            return fallback;
+        }
+        try {
+            return java.time.Instant.parse(clean).toEpochMilli();
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private JSONObject localCardFromResponse(PuckyTurnResponse response) throws Exception {
@@ -312,6 +514,10 @@ public final class PuckyFeedController {
 
     private static String safeName(String raw) {
         return String.valueOf(raw == null ? "" : raw).replaceAll("[^A-Za-z0-9._-]+", "_");
+    }
+
+    private static String safe(String raw) {
+        return raw == null ? "" : raw.trim();
     }
 
     private static void write(File target, byte[] bytes) throws IOException {

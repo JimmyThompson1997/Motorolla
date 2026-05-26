@@ -1385,7 +1385,7 @@
       const archived = Boolean(card && card.archived);
       return state.showArchivedFeed
         ? archived
-        : !archived && isFeedIconIncluded(cardIconKey(card));
+        : !archived && (isPendingOutboundCard(card) || isFeedIconIncluded(cardIconKey(card)));
     });
   }
 
@@ -1397,6 +1397,9 @@
     const seen = new Set();
     const filters = [];
     state.cards.forEach(card => {
+      if (!card || card.deleted || isPendingOutboundCard(card)) {
+        return;
+      }
       const icon = cardIconKey(card);
       if (!seen.has(icon)) {
         seen.add(icon);
@@ -1413,6 +1416,40 @@
 
   function cardIconKey(card) {
     return normalizeIcon(card && card.icon);
+  }
+
+  function isPendingOutboundCard(card) {
+    return Boolean(card && card.pending_outbound);
+  }
+
+  function isFailedPendingOutboundCard(card) {
+    if (!isPendingOutboundCard(card)) {
+      return false;
+    }
+    const stateName = String(card.pending_state || "").trim();
+    return stateName === "failed" || stateName === "upload_blocked";
+  }
+
+  function pendingOutboundSummary(card) {
+    return String(card?.summary || card?.transcript || "Sending your message...");
+  }
+
+  function pendingOutboundStatusLabel(card) {
+    const explicit = String(card?.pending_label || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    if (isFailedPendingOutboundCard(card)) {
+      return "Failed";
+    }
+    return card?.pending_placeholder ? "Sending" : "Thinking";
+  }
+
+  function pendingOutboundStatusClass(card) {
+    const label = pendingOutboundStatusLabel(card).toLowerCase();
+    if (label === "failed") return "is-failed";
+    if (label === "thinking") return "is-thinking";
+    return "is-sending";
   }
 
   function clearMissingFeedIconFilter() {
@@ -1985,6 +2022,9 @@
 
 
   function cardView(card) {
+    if (isPendingOutboundCard(card)) {
+      return outboundCardView(card);
+    }
     const wrapper = el("div", "card-wrap");
     const sessionId = cardSessionId(card);
     const menuOpen = Boolean(sessionId && state.openCardMenuSessionId === sessionId);
@@ -2072,6 +2112,35 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
+    wrapper.append(cardEl);
+    if (menuOpen) {
+      wrapper.classList.add("is-card-menu-open");
+      wrapper.append(cardLongPressMenu(card));
+    }
+    installCardLongPressMenu(wrapper, card);
+    return wrapper;
+  }
+
+  function outboundCardView(card) {
+    const wrapper = el("div", "card-wrap");
+    const sessionId = cardSessionId(card);
+    const menuOpen = Boolean(sessionId && state.openCardMenuSessionId === sessionId);
+    const cardEl = el("article", isFailedPendingOutboundCard(card)
+      ? "card card-outbound is-failed"
+      : "card card-outbound");
+    const copy = el("div", "card-outbound-copy");
+    const preview = el("p", card?.pending_placeholder ? "card-outbound-preview is-placeholder" : "card-outbound-preview", pendingOutboundSummary(card));
+    copy.append(preview);
+    const meta = el("div", "card-outbound-meta");
+    const status = el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card));
+    meta.append(status);
+    const stamp = cardTimestamp(card);
+    if (stamp) {
+      const time = el("time", "card-outbound-time", stamp.text);
+      time.dateTime = stamp.iso;
+      meta.append(time);
+    }
+    cardEl.append(copy, meta);
     wrapper.append(cardEl);
     if (menuOpen) {
       wrapper.classList.add("is-card-menu-open");
@@ -3824,9 +3893,23 @@
 
   function cardLongPressMenu(card) {
     const menu = el("div", "card-longpress-menu");
+    const label = isPendingOutboundCard(card) ? "failed message" : (card.title || "reply");
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", `Actions for ${card.title || "reply"}`);
+    menu.setAttribute("aria-label", `Actions for ${label}`);
     menu.dataset.dragIgnore = "true";
+    const archive = el("button", "card-menu-action card-menu-archive");
+    archive.type = "button";
+    archive.setAttribute("role", "menuitem");
+    archive.innerHTML = `${iconSvg("archive_folder", { filled: true })}<span>Archive</span>`;
+    archive.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      archiveHomeCard(card);
+    });
+    if (isPendingOutboundCard(card)) {
+      menu.append(archive);
+      return menu;
+    }
     const star = el("button", isCardStarred(card)
       ? "card-menu-action card-menu-star is-selected"
       : "card-menu-action card-menu-star");
@@ -3839,15 +3922,6 @@
       event.preventDefault();
       event.stopPropagation();
       toggleCardStar(card);
-    });
-    const archive = el("button", "card-menu-action card-menu-archive");
-    archive.type = "button";
-    archive.setAttribute("role", "menuitem");
-    archive.innerHTML = `${iconSvg("archive_folder", { filled: true })}<span>Archive</span>`;
-    archive.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      archiveHomeCard(card);
     });
     menu.append(star, archive);
     return menu;
@@ -3872,6 +3946,9 @@
     };
     const begin = (x, y, target, pointer = null) => {
       if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)) {
+        return;
+      }
+      if (isPendingOutboundCard(card) && (!isFailedPendingOutboundCard(card) || Boolean(card?.archived))) {
         return;
       }
       const sessionId = cardSessionId(card);
@@ -5018,6 +5095,9 @@
   }
 
   function requestMarkRead(card) {
+    if (isPendingOutboundCard(card)) {
+      return;
+    }
     if (Boolean(card && card.read)) {
       return;
     }
@@ -5025,12 +5105,18 @@
   }
 
   function markCardRead(card) {
+    if (isPendingOutboundCard(card)) {
+      return;
+    }
     setCardReadOverride(card, true);
     render();
     requestMarkRead(card);
   }
 
   function toggleCardRead(card) {
+    if (isPendingOutboundCard(card)) {
+      return;
+    }
     if (isCardRead(card)) {
       setCardReadOverride(card, false);
       render();
@@ -5143,7 +5229,7 @@
   }
 
   function cardSessionId(card) {
-    return String(card?.session_id || "");
+    return String(card?.session_id || card?.local_session_id || card?.turn_id || "");
   }
 
   function findCardBySessionId(sessionId) {

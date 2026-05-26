@@ -1106,6 +1106,22 @@ button {
   overflow: hidden;
 }
 
+.card.card-outbound {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  row-gap: 8px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border-color: rgba(84, 101, 120, 0.42);
+  background:
+    linear-gradient(180deg, rgba(245, 249, 255, 0.03), rgba(245, 249, 255, 0.015)),
+    rgba(10, 14, 18, 0.92);
+}
+
+.card.card-outbound.is-failed {
+  border-color: rgba(255, 125, 104, 0.55);
+}
+
 .card.card-unread {
   border-color: color-mix(in srgb, var(--accent, #72c2ff) 45%, rgba(33, 52, 72, 0.92));
   box-shadow:
@@ -1202,6 +1218,67 @@ button {
   align-items: center;
   justify-content: flex-end;
   width: 98px;
+}
+
+.card-outbound-copy {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.card-outbound-preview {
+  margin: 0;
+  color: rgba(245, 249, 255, 0.92);
+  font-size: 13px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-outbound-preview.is-placeholder {
+  color: rgba(245, 249, 255, 0.66);
+}
+
+.card-outbound-meta {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-outbound-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: rgba(245, 249, 255, 0.72);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card-outbound-status.is-sending {
+  color: rgba(245, 249, 255, 0.72);
+}
+
+.card-outbound-status.is-thinking {
+  color: #ffb000;
+}
+
+.card-outbound-status.is-failed {
+  color: #ff8f7c;
+}
+
+.card-outbound-time {
+  color: rgba(245, 249, 255, 0.54);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
 }
 
 .action {

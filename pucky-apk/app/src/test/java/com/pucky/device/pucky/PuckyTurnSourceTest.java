@@ -87,6 +87,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.chime.test\""));
         assertTrue(source.contains("\"pucky.turn.history\""));
         assertTrue(source.contains("\"pucky.turn.read\""));
+        assertTrue(source.contains("\"pucky.turn.debug.inject_history\""));
         assertTrue(source.contains("return puckyTurnController.status()"));
         assertTrue(source.contains("return puckyTurnController.start(command.args())"));
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
@@ -98,7 +99,45 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.chimeTest(command.args())"));
         assertTrue(source.contains("return puckyTurnController.history(command.args())"));
         assertTrue(source.contains("return puckyTurnController.read(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.debugInjectHistory(command.args())"));
         assertTrue(service.contains("PuckyTurnController.shared(this)"));
+    }
+
+    @Test
+    public void turnControllerAndFeedControllerSupportPendingOutboundCards() throws Exception {
+        String turn = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
+
+        assertTrue(turn.contains("Json.put(out, \"user_transcript\", last.optString(\"user_transcript\", \"\"))"));
+        assertTrue(turn.contains("boolean transcriptChanged = remote.has(\"user_transcript\")"));
+        assertTrue(turn.contains("Json.put(status, \"user_transcript\", remote.optString(\"user_transcript\", \"\"))"));
+        assertTrue(turn.contains("copyIfPresent(record, detail, \"user_transcript\")"));
+        assertTrue(turn.contains("copyIfPresent(event, detail, \"user_transcript\")"));
+        assertTrue(turn.contains("copyIfPresent(record, detail, \"archived\")"));
+        assertTrue(turn.contains("copyIfPresent(record, detail, \"debug_injected\")"));
+        assertTrue(turn.contains("synchronized JSONArray historySnapshotArray()"));
+        assertTrue(turn.contains("synchronized boolean archiveHistoryRecord(String turnId, String localSessionId)"));
+        assertTrue(turn.contains("public JSONObject debugInjectHistory(JSONObject args) throws CommandException"));
+        assertTrue(turn.contains("pucky.turn.debug.inject_history is only available on debug builds"));
+
+        assertTrue(feed.contains("return mergedSnapshot();"));
+        assertTrue(feed.contains("private JSONObject mergedSnapshot()"));
+        assertTrue(feed.contains("private JSONArray synthesizePendingCards(JSONArray persistedCards)"));
+        assertTrue(feed.contains("\"Sending your message...\""));
+        assertTrue(feed.contains("\"Sent message\""));
+        assertTrue(feed.contains("\"pending_outbound\""));
+        assertTrue(feed.contains("\"pending_state\""));
+        assertTrue(feed.contains("\"pending_label\""));
+        assertTrue(feed.contains("\"pending_error\""));
+        assertTrue(feed.contains("\"pending_placeholder\""));
+        assertTrue(feed.contains("turnController.archiveHistoryRecord("));
+        assertTrue(feed.contains("pending outbound cards only support archive"));
+        assertTrue(feed.contains("hasMatchingReplyCard(persistedCards, record)"));
+        assertTrue(feed.contains("shouldSynthesizePendingCard(state)"));
+        assertTrue(feed.contains("pendingLabelFor(state, placeholder)"));
+        assertTrue(feed.contains("\"uploading\".equals(state)"));
+        assertTrue(feed.contains("\"codex_running\".equals(state)"));
+        assertTrue(feed.contains("\"upload_blocked\".equals(state)"));
     }
 
     @Test

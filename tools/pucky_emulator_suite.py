@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -716,6 +717,25 @@ def tap(args: argparse.Namespace, runner: Runner, config: SlotConfig, point: tup
     runner.run(adb_command(args, config.serial, ["shell", "input", "tap", str(x), str(y)]), timeout=30)
 
 
+def long_press(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    point: tuple[int, int],
+    *,
+    duration_ms: int = 360,
+) -> None:
+    x, y = point
+    runner.run(
+        adb_command(
+            args,
+            config.serial,
+            ["shell", "input", "swipe", str(x), str(y), str(x), str(y), str(duration_ms)],
+        ),
+        timeout=30,
+    )
+
+
 def turn_url_to_feed_url(turn_url: str) -> str:
     clean = str(turn_url or "").strip()
     if clean.endswith("/api/turn"):
@@ -787,6 +807,43 @@ def wait_for_snapshot_card(
         except SuiteError:
             time.sleep(2)
     raise SuiteError(f"Target card not found in emulator snapshot for turn {turn_id} after {int(timeout)}s")
+
+
+def wait_for_snapshot_condition(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    description: str,
+    predicate,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last_snapshot: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+        last_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        if predicate(last_snapshot):
+            return last_snapshot
+        time.sleep(2)
+    raise SuiteError(f"{description} after {int(timeout)}s")
+
+
+def snapshot_card_by_card_id(snapshot: dict[str, Any], card_id: str) -> dict[str, Any] | None:
+    cards = snapshot.get("cards")
+    if not isinstance(cards, list):
+        return None
+    target = str(card_id or "")
+    for item in cards:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("card_id") or "") == target:
+            return item
+    return None
+
+
+def screenshot_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def normalize_vm_sandbox(value: object) -> str:
@@ -1471,6 +1528,296 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    if not args.skip_refresh:
+        run_official_refresh(args, runner, config)
+    bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+    runner.run(launch_home_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+
+    command_json(runner, puckyctl_command(args, config, "pucky.turn.debug.inject_history", {"clear": True}), timeout=120)
+    command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
+
+    sending_turn_id = f"pending-feed-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    sending_card_id = f"pending_turn_{sending_turn_id}"
+    sending_inject = {
+        "turn_id": sending_turn_id,
+        "local_session_id": sending_turn_id,
+        "latest_state": "upload_received",
+        "updated_at": now_iso(),
+    }
+    sending_result = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.debug.inject_history", sending_inject),
+            timeout=120,
+        )
+    )
+    sending_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="Pending outbound sending card did not appear",
+        predicate=lambda snapshot: (
+            isinstance(snapshot_card_by_card_id(snapshot, sending_card_id), dict)
+            and snapshot_card_by_card_id(snapshot, sending_card_id).get("pending_outbound") is True
+            and str(snapshot_card_by_card_id(snapshot, sending_card_id).get("pending_label") or "") == "Sending"
+        ),
+        timeout=120,
+    )
+    sending_read = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": sending_turn_id}),
+            timeout=120,
+        )
+    )
+    sending_screenshot = Path(config.evidence_dir) / "sending-placeholder.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, sending_screenshot)
+
+    transcript_text = "Remind me to email Sarah after lunch about the mocks."
+    thinking_inject = {
+        "turn_id": sending_turn_id,
+        "local_session_id": sending_turn_id,
+        "latest_state": "codex_running",
+        "updated_at": now_iso(),
+        "user_transcript": transcript_text,
+    }
+    thinking_result = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.debug.inject_history", thinking_inject),
+            timeout=120,
+        )
+    )
+    thinking_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="Pending outbound thinking card did not update",
+        predicate=lambda snapshot: (
+            isinstance(snapshot_card_by_card_id(snapshot, sending_card_id), dict)
+            and str(snapshot_card_by_card_id(snapshot, sending_card_id).get("pending_label") or "") == "Thinking"
+            and str(snapshot_card_by_card_id(snapshot, sending_card_id).get("summary") or "") == transcript_text
+        ),
+        timeout=120,
+    )
+    thinking_read = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": sending_turn_id}),
+            timeout=120,
+        )
+    )
+    thinking_screenshot = Path(config.evidence_dir) / "thinking-transcript.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, thinking_screenshot)
+
+    reply_card_id = f"reply_{sending_turn_id}"
+    reply_payload = {
+        "cards": [
+            {
+                "card_id": reply_card_id,
+                "turn_id": sending_turn_id,
+                "session_id": sending_turn_id,
+                "title": "Email Sarah",
+                "summary": "Draft a short follow-up and include the mockup link.",
+                "transcript": "Draft a short follow-up and include the mockup link.",
+                "transcript_messages": [
+                    {
+                        "role": "assistant",
+                        "text": "Draft a short follow-up and include the mockup link.",
+                        "created_at": now_iso(),
+                    }
+                ],
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+                "icon": "bolt",
+                "accent": "#72c2ff",
+                "trace": {"schema": "pucky.turn_trace.v1", "sections": []},
+                "origin": {"runtime": "debug"},
+                "archived": False,
+                "read": False,
+                "deleted": False,
+            }
+        ]
+    }
+    reply_set = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "ui.reply_cards.set", reply_payload),
+            timeout=120,
+        )
+    )
+    reply_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="Reply card did not replace outbound pending card",
+        predicate=lambda snapshot: (
+            snapshot_card_by_card_id(snapshot, sending_card_id) is None
+            and isinstance(snapshot_card_by_card_id(snapshot, reply_card_id), dict)
+        ),
+        timeout=120,
+    )
+    reply_screenshot = Path(config.evidence_dir) / "reply-replaced.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, reply_screenshot)
+
+    failed_turn_id = f"pending-failed-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    failed_card_id = f"pending_turn_{failed_turn_id}"
+    failed_inject = {
+        "turn_id": failed_turn_id,
+        "local_session_id": failed_turn_id,
+        "latest_state": "failed",
+        "updated_at": now_iso(),
+        "user_transcript": "This should fail and stay visible.",
+        "error": "debug_failure",
+    }
+    failed_result = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.debug.inject_history", failed_inject),
+            timeout=120,
+        )
+    )
+    failed_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="Failed outbound card did not appear",
+        predicate=lambda snapshot: (
+            isinstance(snapshot_card_by_card_id(snapshot, failed_card_id), dict)
+            and str(snapshot_card_by_card_id(snapshot, failed_card_id).get("pending_label") or "") == "Failed"
+        ),
+        timeout=120,
+    )
+    failed_read = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": failed_turn_id}),
+            timeout=120,
+        )
+    )
+    failed_screenshot = Path(config.evidence_dir) / "failed-card.png"
+    failed_post_tap_screenshot = Path(config.evidence_dir) / "failed-card-after-tap.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, failed_screenshot)
+    tap(args, runner, config, parse_tap_point(args.failed_card_tap))
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, failed_post_tap_screenshot)
+        if screenshot_sha256(failed_screenshot) != screenshot_sha256(failed_post_tap_screenshot):
+            raise SuiteError("Failed outbound card tap changed the UI; expected no detail navigation")
+
+    failed_menu_screenshot = Path(config.evidence_dir) / "failed-archive-menu.png"
+    long_press(args, runner, config, parse_tap_point(args.failed_card_tap), duration_ms=args.long_press_ms)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, failed_menu_screenshot)
+    archive_result = command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "pucky.feed.action",
+                {
+                    "card_id": failed_card_id,
+                    "session_id": failed_turn_id,
+                    "action": "archive",
+                    "client_action_id": f"prove_pending_archive_{int(time.time())}",
+                },
+            ),
+            timeout=120,
+        )
+    )
+    archived_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="Archived failed outbound card still visible in active feed snapshot",
+        predicate=lambda snapshot: (
+            isinstance(snapshot_card_by_card_id(snapshot, failed_card_id), dict)
+            and bool(snapshot_card_by_card_id(snapshot, failed_card_id).get("archived"))
+        ),
+        timeout=120,
+    )
+    archived_screenshot = Path(config.evidence_dir) / "failed-archived.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, archived_screenshot)
+
+    history_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.history", {}), timeout=120))
+    final_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+    evidence = {
+        "schema": "pucky.emulator_pending_outbound_proof.v1",
+        "created_at": now_iso(),
+        "config": asdict(config),
+        "bundle_status": bundle_status,
+        "sending": {
+            "inject": sending_inject,
+            "result": sending_result,
+            "read": sending_read,
+            "snapshot": sending_snapshot,
+        },
+        "thinking": {
+            "inject": thinking_inject,
+            "result": thinking_result,
+            "read": thinking_read,
+            "snapshot": thinking_snapshot,
+        },
+        "reply": {
+            "set": reply_set,
+            "snapshot": reply_snapshot,
+        },
+        "failed": {
+            "inject": failed_inject,
+            "result": failed_result,
+            "read": failed_read,
+            "snapshot": failed_snapshot,
+            "archive": archive_result,
+            "archived_snapshot": archived_snapshot,
+        },
+        "history": history_snapshot,
+        "final_snapshot": final_snapshot,
+        "screenshots": {
+            "sending_placeholder": str(sending_screenshot),
+            "thinking_transcript": str(thinking_screenshot),
+            "reply_replaced": str(reply_screenshot),
+            "failed_card": str(failed_screenshot),
+            "failed_card_after_tap": str(failed_post_tap_screenshot),
+            "failed_archive_menu": str(failed_menu_screenshot),
+            "failed_archived": str(archived_screenshot),
+        },
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+    evidence_path = write_evidence(config, "pending-outbound-proof.json", evidence)
+    return {
+        "schema": "pucky.emulator_pending_outbound_proof_result.v1",
+        "ok": True,
+        "config": asdict(config),
+        "evidence_path": str(evidence_path),
+        "screenshots": evidence["screenshots"],
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+
+
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -1532,7 +1879,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean", "prove-thread-origin"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -1561,6 +1908,14 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--open-card-tap", default="528,230")
             item.add_argument("--gear-tap", default="930,312")
             item.add_argument("--skip-refresh", action="store_true")
+        if name == "prove-pending-outbound-feed":
+            item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
+            item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--refresh-timeout-seconds", type=int, default=180)
+            item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--failed-card-tap", default="528,230")
+            item.add_argument("--long-press-ms", type=int, default=360)
+            item.add_argument("--skip-refresh", action="store_true")
     return parser
 
 
@@ -1583,6 +1938,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_clean(args)
     if args.command == "prove-thread-origin":
         return cmd_prove_thread_origin(args)
+    if args.command == "prove-pending-outbound-feed":
+        return cmd_prove_pending_outbound_feed(args)
     raise SuiteError(f"Unknown command: {args.command}")
 
 

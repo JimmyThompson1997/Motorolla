@@ -7,6 +7,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
 
+import com.pucky.device.BuildConfig;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.net.Ipv4FirstDns;
@@ -119,6 +120,7 @@ public final class PuckyTurnController {
         Json.put(out, "speaking", indicator.optBoolean("speaking", false));
         Json.put(out, "failed", indicator.optBoolean("failed", false));
         Json.put(out, "remote_stage", indicator.optString("remote_stage", ""));
+        Json.put(out, "user_transcript", last.optString("user_transcript", ""));
         return out;
     }
 
@@ -201,6 +203,60 @@ public final class PuckyTurnController {
         Json.put(out, "schema", "pucky.turn_history_read.v1");
         Json.put(out, "found", found != null);
         Json.put(out, "turn", found == null ? JSONObject.NULL : found);
+        return out;
+    }
+
+    public JSONObject debugInjectHistory(JSONObject args) throws CommandException {
+        if (!BuildConfig.DEBUG) {
+            throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
+                    "pucky.turn.debug.inject_history is only available on debug builds");
+        }
+        boolean clear = args.optBoolean("clear", false);
+        int removed = clear ? clearDebugInjectedHistory() : 0;
+        if (!clear || args.has("turn_id") || args.has("local_session_id") || args.has("session_id")) {
+            String turnId = args.optString("turn_id", "").trim();
+            String localSessionId = args.optString("local_session_id", args.optString("session_id", "")).trim();
+            if (turnId.isEmpty() && localSessionId.isEmpty()) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                        "pucky.turn.debug.inject_history requires turn_id or local_session_id");
+            }
+            String state = args.optString("latest_state", args.optString("state", "uploading")).trim();
+            if (state.isEmpty()) {
+                state = "uploading";
+            }
+            String updatedAt = args.optString("updated_at", Instant.now().toString());
+            JSONObject detail = new JSONObject();
+            Json.put(detail, "schema", "pucky.turn_status_item.v1");
+            Json.put(detail, "turn_id", turnId);
+            Json.put(detail, "local_session_id", localSessionId);
+            Json.put(detail, "session_id", localSessionId);
+            Json.put(detail, "created_at", args.optString("created_at", updatedAt));
+            Json.put(detail, "updated_at", updatedAt);
+            Json.put(detail, "visual_state", visualStateFor(state));
+            Json.put(detail, "trigger_source", args.optString("trigger_source", "debug_injected"));
+            Json.put(detail, "debug_injected", true);
+            if (args.has("user_transcript")) {
+                Json.put(detail, "user_transcript", args.optString("user_transcript", ""));
+            }
+            if (args.has("error")) {
+                Json.put(detail, "error", args.optString("error", ""));
+            }
+            if (args.has("archived")) {
+                Json.put(detail, "archived", args.optBoolean("archived", false));
+            }
+            if (args.has("card_id")) {
+                Json.put(detail, "card_id", args.optString("card_id", ""));
+            }
+            if (args.has("reply_card_saved")) {
+                Json.put(detail, "reply_card_saved", args.optBoolean("reply_card_saved", false));
+            }
+            upsertTurnHistory(state, detail);
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_debug_inject_result.v1");
+        Json.put(out, "ok", true);
+        Json.put(out, "removed", removed);
+        Json.put(out, "history", history(new JSONObject()));
         return out;
     }
 
@@ -625,12 +681,18 @@ public final class PuckyTurnController {
             Log.d(TAG, "Ignoring stale remote stage " + remoteStage + " for recovered turn " + clientTurnId);
             return;
         }
-        if (remoteStage.equals(status.optString("remote_stage", ""))) {
+        String remoteTranscript = remote.optString("user_transcript", "").trim();
+        boolean transcriptChanged = remote.has("user_transcript")
+                && !remoteTranscript.equals(status.optString("user_transcript", "").trim());
+        if (remoteStage.equals(status.optString("remote_stage", "")) && !transcriptChanged) {
             return;
         }
         Json.put(status, "turn_id", clientTurnId);
         Json.put(status, "remote_stage", remoteStage);
         Json.put(status, "server_turn_status", remote);
+        if (remote.has("user_transcript")) {
+            Json.put(status, "user_transcript", remote.optString("user_transcript", ""));
+        }
         Json.put(status, "codex_running", "codex_running".equals(remoteStage));
         if (isAcceptedRemoteStage(remoteStage)) {
             JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, remoteStage);
@@ -753,7 +815,7 @@ public final class PuckyTurnController {
         if (record == null) {
             record = new JSONObject();
             Json.put(record, "schema", "pucky.turn_history_item.v1");
-            Json.put(record, "created_at", updatedAt);
+            Json.put(record, "created_at", detail.optString("created_at", updatedAt));
             Json.put(record, "events", new JSONArray());
         }
         if (!turnId.trim().isEmpty()) {
@@ -779,6 +841,7 @@ public final class PuckyTurnController {
         }
         copyIfPresent(record, detail, "request_audio_bytes");
         copyIfPresent(record, detail, "trigger_source");
+        copyIfPresent(record, detail, "user_transcript");
         copyIfPresent(record, detail, "wake_phrase_family");
         copyIfPresent(record, detail, "wake_phrase_detected");
         copyIfPresent(record, detail, "http_status");
@@ -814,6 +877,8 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "spoken_reply_playback_attempted");
         copyIfPresent(record, detail, "spoken_reply_playback_started");
         copyIfPresent(record, detail, "spoken_reply_playback_completed");
+        copyIfPresent(record, detail, "archived");
+        copyIfPresent(record, detail, "debug_injected");
         if (detail.has("server_telemetry")) {
             Json.put(record, "server_telemetry", detail.opt("server_telemetry"));
         }
@@ -831,6 +896,7 @@ public final class PuckyTurnController {
         Json.put(event, "updated_at", updatedAt);
         copyIfPresent(event, detail, "phase");
         copyIfPresent(event, detail, "trigger_source");
+        copyIfPresent(event, detail, "user_transcript");
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "card_id");
         copyIfPresent(event, detail, "reply_card_saved");
@@ -868,6 +934,49 @@ public final class PuckyTurnController {
             }
         }
         prefs.edit().putString(HISTORY, next.toString()).commit();
+    }
+
+    synchronized JSONArray historySnapshotArray() {
+        return turnHistoryArray();
+    }
+
+    synchronized boolean archiveHistoryRecord(String turnId, String localSessionId) {
+        JSONArray history = turnHistoryArray();
+        int index = findHistoryRecordIndex(history, turnId, localSessionId);
+        if (index < 0) {
+            return false;
+        }
+        JSONObject record = history.optJSONObject(index);
+        if (record == null) {
+            return false;
+        }
+        Json.put(record, "archived", true);
+        Json.put(record, "updated_at", Instant.now().toString());
+        prefs.edit().putString(HISTORY, history.toString()).commit();
+        return true;
+    }
+
+    private synchronized int clearDebugInjectedHistory() {
+        JSONArray history = turnHistoryArray();
+        JSONArray next = new JSONArray();
+        int removed = 0;
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject item = history.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            if (item.optBoolean("debug_injected", false)) {
+                removed++;
+                continue;
+            }
+            Json.add(next, item);
+        }
+        prefs.edit().putString(HISTORY, next.toString()).commit();
+        JSONObject last = lastStatus();
+        if (last.optBoolean("debug_injected", false)) {
+            prefs.edit().remove(LAST_STATUS).apply();
+        }
+        return removed;
     }
 
     private JSONArray turnHistoryArray() {
