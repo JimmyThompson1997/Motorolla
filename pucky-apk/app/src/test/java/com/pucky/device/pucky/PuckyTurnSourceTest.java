@@ -415,6 +415,28 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("markStatus(\"codex_running\""));
         assertTrue(source.contains("isRemoteTerminalStage"));
         assertTrue(source.contains("remote_stage"));
+        assertTrue(source.contains("if (!isPollingTurn(clientTurnId))"));
+        assertTrue(source.contains("Ignoring stale turn status poll"));
+        assertTrue(source.contains("Ignoring stale remote stage"));
+    }
+
+    @Test
+    public void controllerRecoversStuckThinkingStateFromLocalReplyProof() throws Exception {
+        String source = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
+        String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
+
+        assertTrue(source.contains("private final ReplyCardStore replyCards;"));
+        assertTrue(source.contains("JSONObject last = maybeRecoverLastStatus(lastStatus(), \"status_lookup\");"));
+        assertTrue(source.contains("public void onReplyRecovered(JSONObject card, String recoverySource)"));
+        assertTrue(source.contains("Json.put(recovered, \"reply_card_saved\", true)"));
+        assertTrue(source.contains("Json.put(recovered, \"recovery_source\", recoverySource)"));
+        assertTrue(source.contains("recovered.remove(\"remote_stage\")"));
+        assertTrue(source.contains("recovered.remove(\"server_turn_status\")"));
+        assertTrue(source.contains("markStatus(nextState, recovered, null)"));
+        assertTrue(source.contains("private static boolean shouldAttemptReplyRecovery(JSONObject status)"));
+        assertTrue(source.contains("private static boolean isLocallyRecovered(JSONObject status)"));
+        assertTrue(source.contains("replyCards.snapshot().optJSONArray(\"cards\")"));
+        assertTrue(feed.contains("PuckyTurnController.shared(context).onReplyRecovered(local, \"feed_sync\")"));
     }
 
     @Test
@@ -434,6 +456,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(record, \"speech_gate\""));
         assertTrue(source.contains("Json.put(record, \"server_telemetry\""));
         assertTrue(source.contains("Json.put(record, \"events\""));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"card_id\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"reply_card_saved\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"recovery_source\")"));
         assertFalse(source.contains("Json.put(record, \"transcript\""));
     }
 

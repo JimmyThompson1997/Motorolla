@@ -175,7 +175,8 @@ public final class PuckyFeedController {
                         continue;
                     }
                     try {
-                        cacheRemoteItem(PuckyTurnResponse.fromJson(item), false);
+                        JSONObject local = cacheRemoteItem(PuckyTurnResponse.fromJson(item), false);
+                        PuckyTurnController.shared(context).onReplyRecovered(local, "feed_sync");
                         merged++;
                     } catch (Exception exc) {
                         Log.d(TAG, "feed item skipped: " + exc.getMessage());

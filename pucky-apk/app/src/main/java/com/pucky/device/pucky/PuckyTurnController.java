@@ -15,6 +15,7 @@ import com.pucky.device.speech.PuckyTurnKeywordInterceptor;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
+import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
 
@@ -51,6 +52,7 @@ public final class PuckyTurnController {
 
     private final Context context;
     private final SettingsStore settings;
+    private final ReplyCardStore replyCards;
     private final SharedPreferences prefs;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
     private final Object pollLock = new Object();
@@ -69,12 +71,13 @@ public final class PuckyTurnController {
     public PuckyTurnController(Context context) {
         this.context = context.getApplicationContext();
         this.settings = new SettingsStore(this.context);
+        this.replyCards = new ReplyCardStore(this.context);
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     public JSONObject status() {
         JSONObject voice = WalkieAudioCaptureController.shared(context).status();
-        JSONObject last = lastStatus();
+        JSONObject last = maybeRecoverLastStatus(lastStatus(), "status_lookup");
         JSONObject liveGate = voice.optJSONObject("speech_gate");
         JSONObject activeSession = voice.optJSONObject("active_session");
         if (liveGate != null && activeSession != null
@@ -602,6 +605,10 @@ public final class PuckyTurnController {
                 return;
             }
             JSONObject remote = new JSONObject(response.body().string());
+            if (!isPollingTurn(clientTurnId)) {
+                Log.d(TAG, "Ignoring stale turn status poll for " + clientTurnId);
+                return;
+            }
             applyRemoteTurnStatus(clientTurnId, remote);
         } catch (Exception exc) {
             Log.d(TAG, "turn status poll skipped: " + exc.getMessage());
@@ -614,6 +621,10 @@ public final class PuckyTurnController {
             return;
         }
         JSONObject status = lastStatus();
+        if (isLocallyRecovered(status)) {
+            Log.d(TAG, "Ignoring stale remote stage " + remoteStage + " for recovered turn " + clientTurnId);
+            return;
+        }
         if (remoteStage.equals(status.optString("remote_stage", ""))) {
             return;
         }
@@ -639,6 +650,10 @@ public final class PuckyTurnController {
         if ("stt_running".equals(remoteStage) || "tts_running".equals(remoteStage) || "upload_received".equals(remoteStage)) {
             markStatus(remoteStage, status, null);
         }
+    }
+
+    public void onReplyRecovered(JSONObject card, String recoverySource) {
+        maybeRecoverTurnFromCard(lastStatus(), card, recoverySource);
     }
 
     private String turnStatusUrl(String clientTurnId) {
@@ -767,9 +782,12 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "wake_phrase_family");
         copyIfPresent(record, detail, "wake_phrase_detected");
         copyIfPresent(record, detail, "http_status");
+        copyIfPresent(record, detail, "card_id");
+        copyIfPresent(record, detail, "reply_card_saved");
         copyIfPresent(record, detail, "reply_text_chars");
         copyIfPresent(record, detail, "reply_audio_bytes");
         copyIfPresent(record, detail, "reply_audio_path");
+        copyIfPresent(record, detail, "recovery_source");
         copyIfPresent(record, detail, "local_classifier_status");
         copyIfPresent(record, detail, "local_classifier_transcript");
         copyIfPresent(record, detail, "local_recipe_matched");
@@ -814,6 +832,9 @@ public final class PuckyTurnController {
         copyIfPresent(event, detail, "phase");
         copyIfPresent(event, detail, "trigger_source");
         copyIfPresent(event, detail, "remote_stage");
+        copyIfPresent(event, detail, "card_id");
+        copyIfPresent(event, detail, "reply_card_saved");
+        copyIfPresent(event, detail, "recovery_source");
         copyIfPresent(event, detail, "error");
         copyIfPresent(event, detail, "http_status");
         copyIfPresent(event, detail, "sent_cue");
@@ -904,6 +925,142 @@ public final class PuckyTurnController {
         } catch (Exception ignored) {
             return new JSONObject();
         }
+    }
+
+    private JSONObject maybeRecoverLastStatus(JSONObject last, String recoverySource) {
+        if (!shouldAttemptReplyRecovery(last)) {
+            return last;
+        }
+        JSONObject card = findRecoveredReplyCard(last);
+        if (card == null) {
+            return last;
+        }
+        JSONObject recovered = maybeRecoverTurnFromCard(last, card, recoverySource);
+        return recovered == null ? last : recovered;
+    }
+
+    private JSONObject maybeRecoverTurnFromCard(JSONObject currentStatus, JSONObject card, String recoverySource) {
+        if (card == null) {
+            return null;
+        }
+        JSONObject status = currentStatus == null ? new JSONObject() : currentStatus;
+        String turnId = card.optString("turn_id", "").trim();
+        String sessionId = card.optString("session_id", "").trim();
+        String lastTurnId = status.optString("turn_id", "").trim();
+        String lastSessionId = status.optString("local_session_id", status.optString("session_id", "")).trim();
+        boolean turnMatches = !turnId.isEmpty() && turnId.equals(lastTurnId);
+        boolean sessionMatches = !sessionId.isEmpty() && sessionId.equals(lastSessionId);
+        if (!turnMatches && !sessionMatches) {
+            return null;
+        }
+        if (isLocallyRecovered(status) && !shouldAttemptReplyRecovery(status)) {
+            return status;
+        }
+        String pollTurnId = turnId.isEmpty() ? lastTurnId : turnId;
+        stopTurnStatusPoll(pollTurnId);
+        JSONObject recovered;
+        try {
+            recovered = new JSONObject(status.toString());
+        } catch (Exception ignored) {
+            recovered = new JSONObject();
+        }
+        if (!turnId.isEmpty()) {
+            Json.put(recovered, "turn_id", turnId);
+        }
+        if (!sessionId.isEmpty()) {
+            Json.put(recovered, "local_session_id", sessionId);
+        }
+        Json.put(recovered, "card_id", card.optString("card_id", ""));
+        Json.put(recovered, "reply_card_saved", true);
+        String audioPath = card.optString("audio_path", "").trim();
+        if (!audioPath.isEmpty()) {
+            Json.put(recovered, "reply_audio_path", audioPath);
+        }
+        Json.put(recovered, "phase", "reply_recovered");
+        Json.put(recovered, "recovery_source", recoverySource);
+        Json.put(recovered, "uploading", false);
+        Json.put(recovered, "stt_running", false);
+        Json.put(recovered, "codex_running", false);
+        Json.put(recovered, "tts_running", false);
+        Json.put(recovered, "failed", false);
+        recovered.remove("error");
+        recovered.remove("remote_stage");
+        recovered.remove("server_turn_status");
+        String nextState = isRecoveredReplyPlaying(card) ? "speaking" : "completed";
+        Json.put(recovered, "speaking", "speaking".equals(nextState));
+        Log.d(TAG, "Recovered turn " + (turnId.isEmpty() ? lastTurnId : turnId)
+                + " from " + recoverySource + "; clearing stale thinking state");
+        markStatus(nextState, recovered, null);
+        return lastStatus();
+    }
+
+    private JSONObject findRecoveredReplyCard(JSONObject status) {
+        if (status == null) {
+            return null;
+        }
+        String turnId = status.optString("turn_id", "").trim();
+        String sessionId = status.optString("local_session_id", status.optString("session_id", "")).trim();
+        JSONArray cards = replyCards.snapshot().optJSONArray("cards");
+        if (cards == null) {
+            return null;
+        }
+        for (int i = 0; i < cards.length(); i++) {
+            JSONObject card = cards.optJSONObject(i);
+            if (card == null) {
+                continue;
+            }
+            if (!turnId.isEmpty() && turnId.equals(card.optString("turn_id", "").trim())) {
+                return card;
+            }
+            if (!sessionId.isEmpty() && sessionId.equals(card.optString("session_id", "").trim())) {
+                return card;
+            }
+        }
+        return null;
+    }
+
+    private boolean isRecoveredReplyPlaying(JSONObject card) {
+        if (card == null) {
+            return false;
+        }
+        JSONObject player = PlayerController.shared(context).state();
+        if (!"pucky.turn".equals(player.optString("source", "")) || !player.optBoolean("is_playing", false)) {
+            return false;
+        }
+        String cardPath = card.optString("audio_path", "").trim();
+        String playerPath = player.optString("path", "").trim();
+        return !cardPath.isEmpty() && cardPath.equals(playerPath);
+    }
+
+    private static boolean shouldAttemptReplyRecovery(JSONObject status) {
+        if (status == null) {
+            return false;
+        }
+        if (isLocallyRecovered(status)) {
+            return status.optBoolean("uploading", false)
+                    || status.optBoolean("stt_running", false)
+                    || status.optBoolean("codex_running", false)
+                    || status.optBoolean("tts_running", false)
+                    || !status.optString("remote_stage", "").trim().isEmpty()
+                    || "thinking".equals(status.optString("visual_state", "").trim());
+        }
+        String state = status.optString("state", "");
+        return "uploading".equals(state)
+                || "stt_running".equals(state)
+                || "codex_running".equals(state)
+                || "tts_running".equals(state)
+                || "failed".equals(state);
+    }
+
+    private static boolean isLocallyRecovered(JSONObject status) {
+        if (status == null) {
+            return false;
+        }
+        if (status.optBoolean("reply_card_saved", false)) {
+            return true;
+        }
+        return !status.optString("reply_audio_path", "").trim().isEmpty()
+                || !status.optString("card_id", "").trim().isEmpty();
     }
 
     private static JSONObject indicatorJson(JSONObject last, JSONObject voice, JSONObject player) {
