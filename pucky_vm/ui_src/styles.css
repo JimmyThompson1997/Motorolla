@@ -701,6 +701,13 @@ button {
   border-bottom: 1px solid rgba(245, 249, 255, 0.08);
 }
 
+.links-shell-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid rgba(245, 249, 255, 0.08);
+}
+
 .links-title {
   margin: 0;
   font-size: 22px;
@@ -719,6 +726,17 @@ button {
   min-height: 0;
   display: flex;
   background: #fff;
+}
+
+.links-open-button {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(114, 194, 255, 0.35);
+  background: rgba(114, 194, 255, 0.12);
+  color: #f5f9ff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .links-portal-frame {

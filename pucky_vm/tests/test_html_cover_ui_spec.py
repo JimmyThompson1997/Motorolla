@@ -29,7 +29,7 @@ def test_html_ui_uses_bundled_material_icon_registry() -> None:
     assert ".material-icon" in styles
 
 
-def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
+def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
@@ -67,9 +67,8 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'if (state.route === "links")' in app
     assert 'feed.replaceChildren(linksPageView());' in app
     assert "links-portal-frame" in app
-    assert "linksPortalIframeUrl()" in app
-    assert "configuredPublicBaseUrl()" in app
-    assert "currentReturnToUrl()" in app
+    assert "configuredLinksUrl()" in app
+    assert "window.location.assign(portalUrl);" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
     assert ".header" in styles
@@ -82,6 +81,7 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert ".tab:not(.is-active) .material-icon" in styles
     assert ".links-page" in styles
     assert ".links-portal-frame" in styles
+    assert ".links-open-button" in styles
     assert 'src="./pucky-config.js"' in html
 
 
@@ -89,7 +89,8 @@ def test_links_route_prefers_bundle_config_and_query_route_restore() -> None:
     app = read("app.js")
 
     assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" in app
-    assert 'target.searchParams.set("route", "links");' in app
+    assert 'return "https://www.klavis.ai/home";' in app
+    assert 'const explicit = String(BUNDLE_CONFIG.links_url || "").trim();' in app
     assert "function routeQueryParam()" in app
     assert "const queryRoute = routeQueryParam();" in app
     assert "return queryRoute;" in app

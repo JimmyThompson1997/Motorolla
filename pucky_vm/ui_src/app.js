@@ -1329,71 +1329,47 @@
     const page = el("section", "links-page");
     const shell = el("article", "links-shell");
     const copy = el("div", "links-shell-copy");
+    const actions = el("div", "links-shell-actions");
     copy.append(
       el("h1", "links-title", "Links"),
-      el("p", "links-subtitle", "Search apps, connect accounts, and manage Klavis-powered integrations here.")
+      el("p", "links-subtitle", "Sign into Klavis, search apps, and connect accounts in their hosted portal.")
     );
-    const portalUrl = linksPortalIframeUrl();
+    const portalUrl = configuredLinksUrl();
     if (!portalUrl) {
       const empty = el("div", "links-unavailable");
       empty.append(
         el("strong", "", "Links are unavailable right now."),
-        el("p", "", "The bundle does not know which Pucky VM should host the Klavis portal yet.")
+        el("p", "", "The bundle does not know which Klavis page to open yet.")
       );
       shell.append(copy, empty);
       page.append(shell);
       return page;
     }
+    const openButton = el("button", "links-open-button", "Open full page");
+    openButton.type = "button";
+    openButton.addEventListener("click", () => {
+      window.location.assign(portalUrl);
+    });
+    actions.append(openButton);
     const frameWrap = el("div", "links-portal-wrap");
     const frame = document.createElement("iframe");
     frame.className = "links-portal-frame";
     frame.src = portalUrl;
-    frame.title = "Klavis app links";
+    frame.title = "Klavis app connections";
     frame.loading = "eager";
     frame.referrerPolicy = "no-referrer";
     frameWrap.append(frame);
-    shell.append(copy, frameWrap);
+    shell.append(copy, actions, frameWrap);
     page.append(shell);
     return page;
   }
 
-  function linksPortalIframeUrl() {
-    const baseUrl = configuredPublicBaseUrl();
-    if (!baseUrl) {
-      return "";
-    }
-    const target = new URL("/links/ui", baseUrl + "/");
-    target.searchParams.set("return_to", currentReturnToUrl());
-    const token = String(BUNDLE_CONFIG.links_portal_token || "").trim();
-    if (token) {
-      target.searchParams.set("token", token);
-    }
-    return target.toString();
-  }
-
-  function configuredPublicBaseUrl() {
-    const explicit = String(BUNDLE_CONFIG.public_base_url || "").trim();
+  function configuredLinksUrl() {
+    const explicit = String(BUNDLE_CONFIG.links_url || "").trim();
     if (explicit) {
-      return explicit.replace(/\/+$/, "");
+      return explicit;
     }
-    const protocol = String(window.location?.protocol || "").toLowerCase();
-    if (protocol === "http:" || protocol === "https:") {
-      return String(window.location.origin || "").replace(/\/+$/, "");
-    }
-    return "";
-  }
-
-  function currentReturnToUrl() {
-    const entrypoint = String(state.uiSurface?.entrypoint_url || "").trim();
-    const current = String(window.location?.href || "").trim();
-    const base = entrypoint || current;
-    if (!base) {
-      return "";
-    }
-    const target = new URL(base);
-    target.searchParams.set("route", "links");
-    target.searchParams.delete("reset_nav");
-    return target.toString();
+    return "https://www.klavis.ai/home";
   }
 
   function replyModeSettingsCard() {

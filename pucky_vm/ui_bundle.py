@@ -129,9 +129,13 @@ def build_ui_bundle(
 
 
 def bundle_config_payload() -> dict[str, str]:
+    links_url = (
+        os.environ.get("PUCKY_LINKS_URL", "").strip()
+        or os.environ.get("KLAVIS_DASHBOARD_URL", "").strip()
+        or "https://www.klavis.ai/home"
+    )
     return {
-        "public_base_url": os.environ.get("PUCKY_PUBLIC_BASE_URL", "").strip(),
-        "links_portal_token": os.environ.get("PUCKY_LINKS_PORTAL_TOKEN", "").strip(),
+        "links_url": links_url,
     }
 
 
@@ -180,14 +184,14 @@ def write_deterministic_zip(root: Path, output: Path) -> None:
     if output.exists():
         deleted = False
         last_error: Exception | None = None
-        for _ in range(8):
+        for _ in range(40):
             try:
                 output.unlink()
                 deleted = True
                 break
             except PermissionError as exc:
                 last_error = exc
-                time.sleep(0.05)
+                time.sleep(0.1)
         if not deleted and output.exists():
             if last_error is not None:
                 raise last_error
