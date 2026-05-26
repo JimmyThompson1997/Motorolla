@@ -1351,15 +1351,7 @@
       window.location.assign(portalUrl);
     });
     actions.append(openButton);
-    const frameWrap = el("div", "links-portal-wrap");
-    const frame = document.createElement("iframe");
-    frame.className = "links-portal-frame";
-    frame.src = portalUrl;
-    frame.title = "Klavis app connections";
-    frame.loading = "eager";
-    frame.referrerPolicy = "no-referrer";
-    frameWrap.append(frame);
-    shell.append(copy, actions, frameWrap);
+    shell.append(copy, actions);
     page.append(shell);
     return page;
   }
