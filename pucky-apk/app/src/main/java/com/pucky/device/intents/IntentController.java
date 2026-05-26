@@ -1,5 +1,6 @@
 package com.pucky.device.intents;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -38,8 +39,9 @@ public final class IntentController {
         if (url.trim().isEmpty()) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "browser.open requires url");
         }
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        launch(intent, args.optBoolean("require_resolvable", true));
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addCategory(Intent.CATEGORY_BROWSABLE);
+        launch(intent, args.optBoolean("require_resolvable", false));
         JSONObject out = new JSONObject();
         Json.put(out, "launched", true);
         Json.put(out, "uri", url);
@@ -199,6 +201,11 @@ public final class IntentController {
         if (requireResolvable && intent.resolveActivity(context.getPackageManager()) == null) {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "No activity can handle " + intent.getAction());
         }
-        context.startActivity(intent);
+        try {
+            context.startActivity(intent);
+        } catch (ActivityNotFoundException exc) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE,
+                    "No activity can handle " + intent.getAction());
+        }
     }
 }

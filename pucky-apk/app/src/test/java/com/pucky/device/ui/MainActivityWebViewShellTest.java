@@ -285,6 +285,7 @@ public final class MainActivityWebViewShellTest {
     public void replyCardCommandsAreAllowlistedAndRouted() throws Exception {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String uiController = read("src/main/java/com/pucky/device/ui/PuckyUiController.java");
+        String intentController = read("src/main/java/com/pucky/device/intents/IntentController.java");
 
         assertTrue(source.contains("\"ui.reply_cards.set\""));
         assertTrue(source.contains("\"ui.reply_cards.get\""));
@@ -304,6 +305,8 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("uiBundleController.installDownloaded"));
         assertTrue(source.contains("uiBundleController.refresh"));
         assertTrue(source.contains("settingsStore.setUiShellMode"));
+        assertTrue(intentController.contains("Intent.CATEGORY_BROWSABLE"));
+        assertTrue(intentController.contains("args.optBoolean(\"require_resolvable\", false)"));
     }
 
     @Test
