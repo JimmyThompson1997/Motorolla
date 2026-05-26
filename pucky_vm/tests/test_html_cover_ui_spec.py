@@ -18,6 +18,12 @@ def css_block(styles: str, selector: str) -> str:
     return match.group("body")
 
 
+def function_block(source: str, name: str) -> str:
+    match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
+    assert match, f"Missing function {name}"
+    return match.group("body")
+
+
 def test_html_ui_uses_bundled_material_icon_registry() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -270,6 +276,51 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "installCardLongPressMenu(wrapper, card);" in app
+
+
+def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filters() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    outbound = function_block(app, "outboundCardView")
+    longpress = function_block(app, "cardLongPressMenu")
+    request_mark_read = function_block(app, "requestMarkRead")
+
+    assert "function isPendingOutboundCard(card)" in app
+    assert "function isFailedPendingOutboundCard(card)" in app
+    assert "function pendingOutboundSummary(card)" in app
+    assert "function pendingOutboundStatusLabel(card)" in app
+    assert "function pendingOutboundStatusClass(card)" in app
+    assert "if (isPendingOutboundCard(card)) {\n      return outboundCardView(card);" in app
+    assert "isPendingOutboundCard(card) || isFeedIconIncluded(cardIconKey(card))" in app
+    assert "if (!card || card.deleted || isPendingOutboundCard(card))" in app
+    assert "card?.session_id || card?.local_session_id || card?.turn_id" in app
+    assert "isPendingOutboundCard(card)" in request_mark_read
+
+    assert "card card-outbound" in outbound
+    assert "card-outbound-copy" in outbound
+    assert "card-outbound-preview" in outbound
+    assert "card-outbound-status" in outbound
+    assert "card-outbound-time" in outbound
+    assert "showTranscript(card)" not in outbound
+    assert "toggleAudio(card)" not in outbound
+    assert "showRichPage(card)" not in outbound
+    assert "identity" not in outbound
+    assert "card-actions" not in outbound
+
+    assert "if (isPendingOutboundCard(card)) {" in longpress
+    assert "menu.append(archive);" in longpress
+    assert "toggleCardStar(card);" in longpress
+
+    assert ".card.card-outbound" in styles
+    assert ".card.card-outbound.is-failed" in styles
+    assert ".card-outbound-copy" in styles
+    assert ".card-outbound-preview" in styles
+    assert "-webkit-line-clamp: 2" in css_block(styles, ".card-outbound-preview")
+    assert ".card-outbound-preview.is-placeholder" in styles
+    assert ".card-outbound-status.is-sending" in styles
+    assert ".card-outbound-status.is-thinking" in styles
+    assert ".card-outbound-status.is-failed" in styles
+    assert ".card-outbound-time" in styles
     assert "function installCardLongPressMenu(wrapper, card)" in app
     assert "function cardLongPressMenu(card)" in app
     assert "function cardFocusBorder()" not in app

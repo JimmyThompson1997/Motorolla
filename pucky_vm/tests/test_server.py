@@ -89,7 +89,6 @@ class BlockingCodex(FakeCodex):
             }
         )
 
-
 class FakeKlavis:
     def __init__(self) -> None:
         self.configured = True
@@ -143,6 +142,20 @@ class FakeKlavis:
         }
         self.created.append(payload)
         return payload
+
+
+class BlockingSTT(FakeSTT):
+    def __init__(self) -> None:
+        self.stt_started = threading.Event()
+        self.release_stt = threading.Event()
+
+    def transcribe(self, audio: bytes, content_type: str) -> str:
+        self.audio = audio
+        self.content_type = content_type
+        self.stt_started.set()
+        if not self.release_stt.wait(timeout=5):
+            raise TimeoutError("test did not release stt")
+        return "Pucky test turn"
 
 
 def make_config(max_html_bytes: int = 512 * 1024) -> Config:
@@ -496,7 +509,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status["status"], "running")
         self.assertTrue(status["codex_running"])
         self.assertEqual(status["transcript_chars"], len("Pucky test turn"))
-        self.assertNotIn("Pucky test turn", json.dumps(status))
+        self.assertEqual(status["user_transcript"], "Pucky test turn")
 
         blocking.release_codex.set()
         post_thread.join(timeout=5)
@@ -515,6 +528,38 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(completed["completed"])
         self.assertIn("total_ms", completed)
         self.assertIn("response_bytes", completed)
+
+    def test_turn_status_hides_user_transcript_until_stt_completes(self) -> None:
+        blocking_stt = BlockingSTT()
+        self.service.stt = blocking_stt
+        client_turn_id = "client_turn_status_2"
+        result: dict[str, object] = {}
+        error: dict[str, BaseException] = {}
+
+        def post_turn() -> None:
+            try:
+                result["body"] = self.post_audio(b"audio", "audio/mp4", turn_id=client_turn_id)
+            except BaseException as exc:
+                error["exc"] = exc
+
+        post_thread = threading.Thread(target=post_turn, daemon=True)
+        post_thread.start()
+        self.assertTrue(blocking_stt.stt_started.wait(timeout=5))
+
+        status = self.get_json(
+            f"/api/turn/status?turn_id={client_turn_id}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(status["stage"], "stt_running")
+        self.assertEqual(status["status"], "running")
+        self.assertTrue(status["stt_running"])
+        self.assertNotIn("user_transcript", status)
+        self.assertNotIn("Pucky test turn", json.dumps(status))
+
+        blocking_stt.release_stt.set()
+        post_thread.join(timeout=5)
+        self.assertNotIn("exc", error)
+        self.assertIsInstance(result["body"], dict)
 
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

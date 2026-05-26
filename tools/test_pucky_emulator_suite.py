@@ -54,6 +54,18 @@ def test_parse_tap_point_requires_xy_pair() -> None:
         suite.parse_tap_point("bad-point")
 
 
+def test_long_press_uses_stationary_swipe() -> None:
+    args = ns(Path("."))
+    config = suite.slot_config(Path("."), 1, run_id="fixed")
+    runner = suite.Runner(dry_run=True)
+
+    suite.long_press(args, runner, config, (528, 230), duration_ms=420)
+
+    planned = runner.planned[-1]["command"]
+    assert planned[:3] == [str(args.adb), "-s", config.serial]
+    assert planned[-8:] == ["shell", "input", "swipe", "528", "230", "528", "230", "420"]
+
+
 def test_slot_config_is_deterministic_and_disjoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(suite, "git_short", lambda root=suite.ROOT: "abc123-dirty")
 
@@ -197,6 +209,16 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "180000" in command
     assert f"http://127.0.0.1:{config.broker_port}" in command
     assert "--device-id" in command and config.device_id in command
+
+
+def test_parser_includes_pending_outbound_proof_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["prove-pending-outbound-feed", "--slot", "2", "--dry-run"])
+
+    assert args.command == "prove-pending-outbound-feed"
+    assert args.slot == 2
+    assert args.long_press_ms == 360
 
 
 def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:
