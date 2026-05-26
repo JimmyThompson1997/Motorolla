@@ -90,6 +90,37 @@ class BlockingCodex(FakeCodex):
         )
 
 
+class FakeKlavis:
+    configured = True
+    user_id = "jimmythompson323"
+    dashboard_url = "https://www.klavis.ai/home"
+
+    def __init__(self) -> None:
+        self.connect_calls: list[tuple[str, str]] = []
+
+    def list_apps(self):
+        return [
+            type("App", (), {"name": "Gmail", "description": "Email", "auth_needed": True})(),
+            type("App", (), {"name": "Notion", "description": "Docs", "auth_needed": True})(),
+        ]
+
+    def list_statuses(self):
+        return {"Gmail": True, "Notion": False}
+
+    def create_connection(self, server_name: str, *, callback_url: str = ""):
+        self.connect_calls.append((server_name, callback_url))
+        return type(
+            "Connection",
+            (),
+            {
+                "server_name": server_name,
+                "instance_id": "instance-123",
+                "server_url": "https://gmail-mcp-server.klavis.ai/mcp/?instance_id=instance-123",
+                "oauth_url": "https://api.klavis.ai/oauth/gmail/authorize?instance_id=instance-123&redirect_url=test",
+            },
+        )()
+
+
 def make_config(max_html_bytes: int = 512 * 1024) -> Config:
     return Config(
         host="127.0.0.1",
@@ -160,6 +191,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(manifest["source_branch"])
         self.assertIn(manifest["source_dirty"], {True, False})
         self.assertIn("app.js", manifest["files"])
+        self.assertIn("pucky-config.js", manifest["files"])
         self.assertIn("styles.css", manifest["files"])
         self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])
         self.assertIn("fixtures/artifacts/morning.wav", manifest["files"])
@@ -179,6 +211,10 @@ class ServerTests(unittest.TestCase):
         fixture = self.get_json("/ui/pucky/fixtures/reply_cards.json")
         self.assertEqual(fixture["schema"], "pucky.reply_cards.v1")
         self.assertGreaterEqual(fixture["count"], 4)
+
+        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/pucky-config.js", timeout=10) as response:
+            config_script = response.read().decode("utf-8")
+            self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
 
     def test_unauthorized_turn_is_rejected(self) -> None:
         request = urllib.request.Request(
@@ -333,6 +369,54 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(first["item"]["archived"])
         payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertTrue(payload["items"][0]["archived"])
+
+    def test_links_endpoints_render_portal_and_proxy_klavis_state(self) -> None:
+        self.service.klavis = FakeKlavis()
+
+        apps = self.get_json("/api/links/apps")
+        self.assertEqual(apps["schema"], "pucky.links_apps.v1")
+        self.assertEqual(apps["user_id"], "jimmythompson323")
+        self.assertEqual([item["name"] for item in apps["apps"]], ["Gmail", "Notion"])
+
+        status = self.get_json("/api/links/status")
+        self.assertEqual(status["schema"], "pucky.links_status.v1")
+        self.assertTrue(status["statuses"]["Gmail"])
+        self.assertFalse(status["statuses"]["Notion"])
+
+        portal_request = urllib.request.Request(
+            self.base_url + "/links/ui?return_to=file%3A%2F%2F%2Ftmp%2Findex.html%3Froute%3Dlinks",
+        )
+        with urllib.request.urlopen(portal_request, timeout=10) as response:
+            html = response.read().decode("utf-8")
+            self.assertIn("Search apps and connect them through Klavis.", html)
+            self.assertIn("file:///tmp/index.html?route=links", html)
+            self.assertIn('src="/links/portal.js"', html)
+
+        with urllib.request.urlopen(self.base_url + "/links/portal.js", timeout=10) as response:
+            portal_js = response.read().decode("utf-8")
+            self.assertIn("/api/links/apps", portal_js)
+            self.assertIn("/api/links/connect", portal_js)
+
+        connect = self.post_json(
+            "/api/links/connect",
+            {"server_name": "Gmail", "return_to": "file:///tmp/index.html?route=links"},
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(connect["schema"], "pucky.links_connect.v1")
+        self.assertEqual(connect["server_name"], "Gmail")
+        self.assertEqual(self.service.klavis.connect_calls[0][0], "Gmail")
+        self.assertIn("/api/links/callback?return_to=", self.service.klavis.connect_calls[0][1])
+
+    def test_links_token_gate_rejects_missing_token(self) -> None:
+        self.service.config = Config(**{**self.service.config.__dict__, "links_portal_token": "portal-secret"})
+        self.service.klavis = FakeKlavis()
+
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/links/apps")
+        self.assertEqual(caught.exception.code, 401)
+
+        payload = self.get_json("/api/links/apps?token=portal-secret")
+        self.assertEqual(payload["schema"], "pucky.links_apps.v1")
 
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

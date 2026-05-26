@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +107,7 @@ def build_ui_bundle(
     with TemporaryDirectory() as temp_name:
         staging = Path(temp_name) / "bundle"
         shutil.copytree(UI_SRC, staging)
+        write_bundle_config(staging)
         manifest = manifest_for(
             staging,
             ui_version=ui_version,
@@ -124,6 +126,22 @@ def build_ui_bundle(
             "bundle_sha256": sha256_file(zip_path),
             "bundle_bytes": zip_path.stat().st_size,
         }
+
+
+def bundle_config_payload() -> dict[str, str]:
+    return {
+        "public_base_url": os.environ.get("PUCKY_PUBLIC_BASE_URL", "").strip(),
+        "links_portal_token": os.environ.get("PUCKY_LINKS_PORTAL_TOKEN", "").strip(),
+    }
+
+
+def bundle_config_script() -> str:
+    return "window.PUCKY_BUNDLE_CONFIG = " + json.dumps(bundle_config_payload(), separators=(",", ":")) + ";\n"
+
+
+def write_bundle_config(root: Path) -> None:
+    text = bundle_config_script()
+    (root / "pucky-config.js").write_text(text, encoding="utf-8")
 
 
 def manifest_for(
@@ -160,7 +178,20 @@ def manifest_for(
 
 def write_deterministic_zip(root: Path, output: Path) -> None:
     if output.exists():
-        output.unlink()
+        deleted = False
+        last_error: Exception | None = None
+        for _ in range(8):
+            try:
+                output.unlink()
+                deleted = True
+                break
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.05)
+        if not deleted and output.exists():
+            if last_error is not None:
+                raise last_error
+            output.unlink()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(root.rglob("*")):
             if not path.is_file():
@@ -183,7 +214,7 @@ def sha256_file(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the Pucky cached HTML UI bundle.")
     parser.add_argument("--out", type=Path, default=UI_DIST)
-    parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument("--version", default=default_version())
     parser.add_argument("--created-at", default=DEFAULT_CREATED_AT)
     args = parser.parse_args()
     result = build_ui_bundle(args.out, ui_version=args.version, created_at=args.created_at)

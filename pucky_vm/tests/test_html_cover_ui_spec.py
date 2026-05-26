@@ -62,6 +62,14 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert 'route: "messages"' not in app
     assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
+    assert "linksPageView()" in app
+    assert "function linksPageView()" in app
+    assert 'if (state.route === "links")' in app
+    assert 'feed.replaceChildren(linksPageView());' in app
+    assert "links-portal-frame" in app
+    assert "linksPortalIframeUrl()" in app
+    assert "configuredPublicBaseUrl()" in app
+    assert "currentReturnToUrl()" in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
     assert ".header" in styles
@@ -72,6 +80,19 @@ def test_top_tabs_are_visible_icon_pages_with_placeholders() -> None:
     assert "shape-rendering: crispEdges" not in styles
     assert ".tab.is-active .material-icon" in styles
     assert ".tab:not(.is-active) .material-icon" in styles
+    assert ".links-page" in styles
+    assert ".links-portal-frame" in styles
+    assert 'src="./pucky-config.js"' in html
+
+
+def test_links_route_prefers_bundle_config_and_query_route_restore() -> None:
+    app = read("app.js")
+
+    assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" in app
+    assert 'target.searchParams.set("route", "links");' in app
+    assert "function routeQueryParam()" in app
+    assert "const queryRoute = routeQueryParam();" in app
+    assert "return queryRoute;" in app
 
 
 def test_voice_status_dot_is_single_turn_indicator() -> None:

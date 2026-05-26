@@ -153,6 +153,9 @@
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
+  const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG && typeof window.PUCKY_BUNDLE_CONFIG === "object"
+    ? window.PUCKY_BUNDLE_CONFIG
+    : {};
 
   const MOCK_CARDS = [
     {
@@ -1194,6 +1197,10 @@
       feed.replaceChildren(settingsPageView());
       return;
     }
+    if (state.route === "links") {
+      feed.replaceChildren(linksPageView());
+      return;
+    }
     if (state.route !== "feed") {
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
@@ -1316,6 +1323,77 @@
       advancedSettingsCard()
     );
     return page;
+  }
+
+  function linksPageView() {
+    const page = el("section", "links-page");
+    const shell = el("article", "links-shell");
+    const copy = el("div", "links-shell-copy");
+    copy.append(
+      el("h1", "links-title", "Links"),
+      el("p", "links-subtitle", "Search apps, connect accounts, and manage Klavis-powered integrations here.")
+    );
+    const portalUrl = linksPortalIframeUrl();
+    if (!portalUrl) {
+      const empty = el("div", "links-unavailable");
+      empty.append(
+        el("strong", "", "Links are unavailable right now."),
+        el("p", "", "The bundle does not know which Pucky VM should host the Klavis portal yet.")
+      );
+      shell.append(copy, empty);
+      page.append(shell);
+      return page;
+    }
+    const frameWrap = el("div", "links-portal-wrap");
+    const frame = document.createElement("iframe");
+    frame.className = "links-portal-frame";
+    frame.src = portalUrl;
+    frame.title = "Klavis app links";
+    frame.loading = "eager";
+    frame.referrerPolicy = "no-referrer";
+    frameWrap.append(frame);
+    shell.append(copy, frameWrap);
+    page.append(shell);
+    return page;
+  }
+
+  function linksPortalIframeUrl() {
+    const baseUrl = configuredPublicBaseUrl();
+    if (!baseUrl) {
+      return "";
+    }
+    const target = new URL("/links/ui", baseUrl + "/");
+    target.searchParams.set("return_to", currentReturnToUrl());
+    const token = String(BUNDLE_CONFIG.links_portal_token || "").trim();
+    if (token) {
+      target.searchParams.set("token", token);
+    }
+    return target.toString();
+  }
+
+  function configuredPublicBaseUrl() {
+    const explicit = String(BUNDLE_CONFIG.public_base_url || "").trim();
+    if (explicit) {
+      return explicit.replace(/\/+$/, "");
+    }
+    const protocol = String(window.location?.protocol || "").toLowerCase();
+    if (protocol === "http:" || protocol === "https:") {
+      return String(window.location.origin || "").replace(/\/+$/, "");
+    }
+    return "";
+  }
+
+  function currentReturnToUrl() {
+    const entrypoint = String(state.uiSurface?.entrypoint_url || "").trim();
+    const current = String(window.location?.href || "").trim();
+    const base = entrypoint || current;
+    if (!base) {
+      return "";
+    }
+    const target = new URL(base);
+    target.searchParams.set("route", "links");
+    target.searchParams.delete("reset_nav");
+    return target.toString();
   }
 
   function replyModeSettingsCard() {
@@ -4787,8 +4865,20 @@
   }
 
   function initialRoute(route) {
+    const queryRoute = routeQueryParam();
+    if (PAGE_TABS.some(tab => tab.route === queryRoute)) {
+      return queryRoute;
+    }
     const value = String(route || "");
     return PAGE_TABS.some(tab => tab.route === value) ? value : "feed";
+  }
+
+  function routeQueryParam() {
+    try {
+      return String(new URLSearchParams(window.location.search || "").get("route") || "").trim();
+    } catch (_) {
+      return "";
+    }
   }
 
   function initialOpenTrayRoute(openTrayRoute, route) {

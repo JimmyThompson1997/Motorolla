@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import importlib.util
 import json
 import mimetypes
@@ -14,12 +15,13 @@ from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .codex_app_server import CodexAppServerClient, command_from_env
 from .feed_store import FeedStore
+from .klavis import KlavisClient, KlavisError
 from .providers import DeepgramSTT, KokoroTTS
-from .ui_bundle import UI_SRC, build_ui_bundle
+from .ui_bundle import UI_SRC, build_ui_bundle, bundle_config_script
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
@@ -98,6 +100,12 @@ class Config:
     codex_approval_policy: str = "never"
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
+    public_base_url: str = ""
+    links_portal_token: str = ""
+    klavis_api_key: str = ""
+    klavis_base_url: str = "https://api.klavis.ai"
+    klavis_dashboard_url: str = "https://www.klavis.ai/home"
+    klavis_user_id: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -124,6 +132,12 @@ class Config:
             codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
             codex_model=os.environ.get("PUCKY_CODEX_MODEL") or None,
             codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT") or None,
+            public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL", "").strip(),
+            links_portal_token=os.environ.get("PUCKY_LINKS_PORTAL_TOKEN", "").strip(),
+            klavis_api_key=os.environ.get("KLAVIS_API_KEY", "").strip(),
+            klavis_base_url=os.environ.get("KLAVIS_BASE_URL", "https://api.klavis.ai").strip() or "https://api.klavis.ai",
+            klavis_dashboard_url=os.environ.get("KLAVIS_DASHBOARD_URL", "https://www.klavis.ai/home").strip() or "https://www.klavis.ai/home",
+            klavis_user_id=os.environ.get("KLAVIS_USER_ID", "").strip(),
         )
 
 
@@ -165,7 +179,7 @@ def reset_broker_for_tests(db_path: str):
 
 
 class PuckyVoiceService:
-    def __init__(self, config: Config, *, stt: STTProvider | None = None, tts: TTSProvider | None = None, codex: CodexProvider | None = None) -> None:
+    def __init__(self, config: Config, *, stt: STTProvider | None = None, tts: TTSProvider | None = None, codex: CodexProvider | None = None, klavis: KlavisClient | None = None) -> None:
         self.config = config
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
@@ -187,6 +201,12 @@ class PuckyVoiceService:
             reasoning_effort=config.codex_reasoning_effort,
         )
         self.feed = FeedStore(config.feed_db_path)
+        self.klavis = klavis or KlavisClient(
+            config.klavis_api_key,
+            base_url=config.klavis_base_url,
+            dashboard_url=config.klavis_dashboard_url,
+            user_id=config.klavis_user_id,
+        )
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
@@ -557,6 +577,21 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
     return normalized
 
 
+def _links_portal_template() -> str:
+    return (UI_SRC / "links_portal.html").read_text(encoding="utf-8")
+
+
+def _links_portal_html(*, api_base_url: str, dashboard_url: str, return_to: str, token: str) -> str:
+    return (
+        _links_portal_template()
+        .replace("__RETURN_TO_ATTR__", html.escape(return_to, quote=True))
+        .replace("__API_BASE_URL_JSON__", json.dumps(api_base_url))
+        .replace("__DASHBOARD_URL_JSON__", json.dumps(dashboard_url))
+        .replace("__RETURN_TO_JSON__", json.dumps(return_to))
+        .replace("__TOKEN_JSON__", json.dumps(token))
+    )
+
+
 def make_handler(service: PuckyVoiceService):
     broker = _load_broker_module()
 
@@ -568,6 +603,28 @@ def make_handler(service: PuckyVoiceService):
             path = parsed.path
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
+                return
+            if path == "/links/ui":
+                if not self._links_authorized(parsed):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                return_to = parse_qs(parsed.query).get("return_to", [""])[0].strip()
+                if not return_to:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "missing_return_to"})
+                    return
+                body = _links_portal_html(
+                    api_base_url=self._external_base_url(),
+                    dashboard_url=service.klavis.dashboard_url,
+                    return_to=return_to,
+                    token=service.config.links_portal_token,
+                )
+                self._html(HTTPStatus.OK, body)
+                return
+            if path == "/links/portal.css":
+                self._file(UI_SRC / "links_portal.css", "text/css; charset=utf-8")
+                return
+            if path == "/links/portal.js":
+                self._file(UI_SRC / "links_portal.js", "application/javascript; charset=utf-8")
                 return
             if path == "/api/feed":
                 if not self._is_authorized():
@@ -597,6 +654,70 @@ def make_handler(service: PuckyVoiceService):
                     return
                 self._json(HTTPStatus.OK, status)
                 return
+            if path == "/api/links/apps":
+                if not self._links_authorized(parsed):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                if not service.klavis.configured:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "klavis_not_configured"})
+                    return
+                try:
+                    apps = [
+                        {
+                            "name": item.name,
+                            "description": item.description,
+                            "auth_needed": item.auth_needed,
+                        }
+                        for item in service.klavis.list_apps()
+                    ]
+                except KlavisError as exc:
+                    self._json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+                    return
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "schema": "pucky.links_apps.v1",
+                        "configured": True,
+                        "user_id": service.klavis.user_id,
+                        "dashboard_url": service.klavis.dashboard_url,
+                        "apps": apps,
+                    },
+                )
+                return
+            if path == "/api/links/status":
+                if not self._links_authorized(parsed):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                if not service.klavis.configured:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "klavis_not_configured"})
+                    return
+                try:
+                    statuses = service.klavis.list_statuses()
+                except KlavisError as exc:
+                    self._json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+                    return
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "schema": "pucky.links_status.v1",
+                        "configured": True,
+                        "user_id": service.klavis.user_id,
+                        "statuses": statuses,
+                    },
+                )
+                return
+            if path == "/api/links/callback":
+                if not self._links_authorized(parsed):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                return_to = parse_qs(parsed.query).get("return_to", [""])[0].strip()
+                if not return_to:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "missing_return_to"})
+                    return
+                self.send_response(int(HTTPStatus.FOUND))
+                self.send_header("Location", return_to)
+                self.end_headers()
+                return
             if path == "/ui/pucky/latest/manifest.json":
                 result = build_ui_bundle()
                 self._json(HTTPStatus.OK, result["manifest"])
@@ -611,6 +732,9 @@ def make_handler(service: PuckyVoiceService):
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
                 self._file(UI_SRC / "index.html", "text/html; charset=utf-8")
                 return
+            if path == "/ui/pucky/latest/pucky-config.js":
+                self._text(HTTPStatus.OK, bundle_config_script(), "application/javascript; charset=utf-8")
+                return
             if path.startswith("/ui/pucky/latest/"):
                 relative = unquote(path.removeprefix("/ui/pucky/latest/")).lstrip("/")
                 self._safe_ui_file(relative)
@@ -619,6 +743,7 @@ def make_handler(service: PuckyVoiceService):
 
         def do_POST(self) -> None:
             path = self.path.split("?", 1)[0]
+            parsed = urlsplit(self.path)
             if path == "/api/feed/actions":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -640,6 +765,45 @@ def make_handler(service: PuckyVoiceService):
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_action_failed", "detail": str(exc)})
                     return
                 self._json(HTTPStatus.OK, result)
+                return
+            if path == "/api/links/connect":
+                if not self._links_authorized(parsed):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                if not service.klavis.configured:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "klavis_not_configured"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                except Exception:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+                    return
+                server_name = str(payload.get("server_name") or "").strip()
+                return_to = str(payload.get("return_to") or "").strip()
+                if not server_name:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "missing_server_name"})
+                    return
+                if not return_to:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "missing_return_to"})
+                    return
+                callback_url = self._links_callback_url(return_to)
+                try:
+                    result = service.klavis.create_connection(server_name, callback_url=callback_url)
+                except KlavisError as exc:
+                    self._json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+                    return
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "schema": "pucky.links_connect.v1",
+                        "configured": True,
+                        "user_id": service.klavis.user_id,
+                        "server_name": result.server_name,
+                        "instance_id": result.instance_id,
+                        "server_url": result.server_url,
+                        "oauth_url": result.oauth_url,
+                    },
+                )
                 return
             if path != "/api/turn":
                 super().do_POST()
@@ -685,6 +849,31 @@ def make_handler(service: PuckyVoiceService):
         def _is_authorized(self) -> bool:
             return bool(service.config.pucky_api_token) and self.headers.get("Authorization", "") == f"Bearer {service.config.pucky_api_token}"
 
+        def _links_authorized(self, parsed) -> bool:
+            expected = service.config.links_portal_token
+            if not expected:
+                return True
+            header = self.headers.get("X-Pucky-Links-Token", "").strip()
+            if header and header == expected:
+                return True
+            query = parse_qs(parsed.query)
+            return query.get("token", [""])[0].strip() == expected
+
+        def _external_base_url(self) -> str:
+            configured = service.config.public_base_url.strip()
+            if configured:
+                return configured.rstrip("/")
+            proto = self.headers.get("X-Forwarded-Proto", "http").strip() or "http"
+            host = self.headers.get("Host", "").strip()
+            return f"{proto}://{host}".rstrip("/")
+
+        def _links_callback_url(self, return_to: str) -> str:
+            base = self._external_base_url()
+            url = f"{base}/api/links/callback?return_to={quote(return_to, safe='')}"
+            if service.config.links_portal_token:
+                url += "&token=" + quote(service.config.links_portal_token, safe="")
+            return url
+
         def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             self.send_response(int(status))
@@ -692,6 +881,17 @@ def make_handler(service: PuckyVoiceService):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _text(self, status: HTTPStatus, text: str, content_type: str) -> None:
+            body = text.encode("utf-8")
+            self.send_response(int(status))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _html(self, status: HTTPStatus, html_text: str) -> None:
+            self._text(status, html_text, "text/html; charset=utf-8")
 
         def _safe_ui_file(self, relative: str) -> None:
             try:
