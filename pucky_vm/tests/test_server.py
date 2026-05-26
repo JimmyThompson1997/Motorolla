@@ -7,6 +7,7 @@ import threading
 import unittest
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -89,59 +90,108 @@ class BlockingCodex(FakeCodex):
             }
         )
 
-class FakeKlavis:
+class FakeComposio:
     def __init__(self) -> None:
         self.configured = True
-        self.created: list[dict[str, object]] = []
+        self.starts: list[dict[str, object]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.invalidated: list[str] = []
+        self.apps = [
+            {
+                "slug": "gmail",
+                "name": "Gmail",
+                "logo": "https://logos.example.invalid/gmail.png",
+                "description": "Read, search, and send Gmail.",
+                "tools_count": 61,
+                "connectable": True,
+                "auth_schemes": ["OAUTH2"],
+                "managed_auth_schemes": ["OAUTH2"],
+            },
+            {
+                "slug": "linkedin",
+                "name": "LinkedIn",
+                "logo": "https://logos.example.invalid/linkedin.png",
+                "description": "Read profile info and publish LinkedIn posts.",
+                "tools_count": 4,
+                "connectable": True,
+                "auth_schemes": ["OAUTH2"],
+                "managed_auth_schemes": ["OAUTH2"],
+            },
+            {
+                "slug": "notion",
+                "name": "Notion",
+                "logo": "https://logos.example.invalid/notion.png",
+                "description": "Read and write workspace pages.",
+                "tools_count": 12,
+                "connectable": True,
+                "auth_schemes": ["OAUTH2"],
+                "managed_auth_schemes": ["OAUTH2"],
+            },
+            {
+                "slug": "composio",
+                "name": "Composio",
+                "logo": "",
+                "description": "Internal utility.",
+                "tools_count": 24,
+                "connectable": False,
+                "auth_schemes": ["NO_AUTH"],
+                "managed_auth_schemes": [],
+            },
+        ]
+        self.connected = [
+            {
+                "slug": "gmail",
+                "name": "Gmail",
+                "logo": "https://logos.example.invalid/gmail.png",
+                "status": "active",
+                "id": "ca_gmail_active",
+                "instance_name": "Jimmy Gmail",
+            },
+            {
+                "slug": "linkedin",
+                "name": "LinkedIn",
+                "logo": "https://logos.example.invalid/linkedin.png",
+                "status": "initiated",
+                "id": "ca_linkedin_pending",
+                "instance_name": "LinkedIn",
+            },
+            {
+                "slug": "linkedin",
+                "name": "LinkedIn",
+                "logo": "https://logos.example.invalid/linkedin.png",
+                "status": "expired",
+                "id": "ca_linkedin_expired",
+                "instance_name": "LinkedIn stale",
+            },
+        ]
 
-    def list_servers(self) -> dict[str, object]:
-        return {
-            "servers": [
-                {
-                    "id": "gmail-1",
-                    "name": "Gmail",
-                    "description": "Read, search, and send Gmail.",
-                    "tools": [{"name": "gmail_read_email"}, {"name": "gmail_search_emails"}],
-                    "authNeeded": True,
-                },
-                {
-                    "id": "linkedin-1",
-                    "name": "LinkedIn",
-                    "description": "Read profile info and publish LinkedIn posts.",
-                    "tools": [{"name": "get_my_info"}],
-                    "authNeeded": True,
-                },
-                {
-                    "id": "brave-1",
-                    "name": "Brave Search",
-                    "description": "Search the web.",
-                    "tools": [{"name": "brave_search"}],
-                    "authNeeded": False,
-                },
-            ]
-        }
+    def list_apps(self) -> dict[str, object]:
+        return {"ok": True, "apps": list(self.apps)}
 
-    def get_user_integrations(self, user_id: str) -> dict[str, object]:
-        return {
-            "integrations": [
-                {"name": "Gmail", "is_authenticated": True},
-                {"name": "LinkedIn", "is_authenticated": False},
-            ],
-            "user_id": user_id,
-        }
+    def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, object]:
+        return {"connected_apps": list(self.connected), "user_id": user_id, "force": force}
 
-    def create_instance(self, *, server_name: str, user_id: str) -> dict[str, object]:
+    def invalidate_connected_cache(self, user_id: str) -> None:
+        self.invalidated.append(user_id)
+
+    def start_oauth(self, user_id: str, app_slug: str, redirect_url: str | None = None) -> dict[str, object]:
         payload = {
-            "serverName": server_name,
-            "userId": user_id,
-            "instanceId": "instance-" + server_name.lower().replace(" ", "-"),
-            "serverUrl": "https://example.invalid/mcp/" + server_name.lower().replace(" ", "-"),
-            "oauthUrl": "https://auth.example.invalid/" + server_name.lower().replace(" ", "-"),
-            "authNeeded": True,
-            "isAuthenticated": False,
+            "user_id": user_id,
+            "app_slug": app_slug,
+            "redirect_url": redirect_url,
+            "auth_url": f"https://connect.example.invalid/{app_slug}",
+            "connection_id": f"ca_{app_slug}_new",
         }
-        self.created.append(payload)
-        return payload
+        self.starts.append(payload)
+        return {"ok": True, **payload}
+
+    def delete_connection(self, user_id: str, connection_id: str) -> dict[str, object]:
+        owned_ids = {item["id"] for item in self.connected}
+        if connection_id not in owned_ids:
+            return {"ok": False, "error": "forbidden", "status_code": 403}
+        self.deleted.append((user_id, connection_id))
+        self.connected = [item for item in self.connected if item["id"] != connection_id]
+        return {"ok": True, "deleted": connection_id}
 
 
 class BlockingSTT(FakeSTT):
@@ -180,9 +230,12 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         codex_approval_policy="never",
         codex_model="gpt-5.5",
         codex_reasoning_effort="high",
-        klavis_api_key="klavis-test-key",
-        klavis_base_url="https://api.klavis.ai",
-        klavis_default_user_id="jimmythompson323",
+        composio_api_key="composio-test-key",
+        composio_base_url="https://backend.composio.dev/api/v3",
+        composio_default_user_id="jimmythompson323",
+        connect_portal_secret="portal-secret",
+        connect_portal_ttl_seconds=3600,
+        composio_default_auth_mode="webview",
     )
 
 
@@ -193,8 +246,8 @@ class ServerTests(unittest.TestCase):
         self.stt = FakeSTT()
         self.tts = FakeTTS()
         self.codex = FakeCodex()
-        self.klavis = FakeKlavis()
-        self.service = PuckyVoiceService(make_config(), stt=self.stt, tts=self.tts, codex=self.codex, klavis=self.klavis)
+        self.composio = FakeComposio()
+        self.service = PuckyVoiceService(make_config(), stt=self.stt, tts=self.tts, codex=self.codex, composio=self.composio)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -258,39 +311,95 @@ class ServerTests(unittest.TestCase):
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
             self.assertNotIn('"links_url"', config_script)
 
-    def test_links_apps_endpoint_returns_filtered_catalog(self) -> None:
-        payload = self.get_json("/api/links/apps")
+    def test_links_portal_url_endpoint_returns_signed_first_party_url(self) -> None:
+        payload = self.get_json("/api/links/composio/portal-url")
 
-        self.assertEqual(payload["schema"], "pucky.links_apps.v1")
-        self.assertTrue(payload["available"])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.links_portal_url.v1")
+        self.assertEqual(payload["auth_mode"], "webview")
+        self.assertEqual(payload["user_id"], "jimmythompson323")
+        self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
+        token = self.portal_token(payload["portal_url"])
+        verified = self.service._verify_links_portal_token(token)
+        self.assertIsNotNone(verified)
+        self.assertEqual(verified["user_id"], "jimmythompson323")
+
+    def test_links_portal_page_renders_first_party_apps_portal(self) -> None:
+        token = self.issue_portal_token()
+        text = self.get_text(f"/links/connect/apps?token={token}")
+
+        self.assertIn("Pucky Links", text)
+        self.assertIn("My Apps", text)
+        self.assertIn("All Apps", text)
+        self.assertIn("Refresh My Apps", text)
+        self.assertIn("This view", text)
+        self.assertIn("Browser", text)
+        self.assertIn("/api/links/composio/my-apps", text)
+        self.assertIn("/api/links/composio/all-apps", text)
+        self.assertIn("/api/links/composio/disconnect", text)
+
+    def test_links_my_apps_groups_connected_needs_attention_and_details(self) -> None:
+        token = self.issue_portal_token()
+        payload = self.get_json(f"/api/links/composio/my-apps?token={token}")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.links_my_apps.v1")
+        self.assertEqual(payload["summary"]["connected"], 1)
+        self.assertEqual(payload["summary"]["needs_attention"], 1)
+        self.assertEqual(payload["apps"][0]["slug"], "gmail")
+        self.assertEqual(payload["apps"][0]["state"], "connected")
+        linkedin = next(item for item in payload["apps"] if item["slug"] == "linkedin")
+        self.assertEqual(linkedin["state"], "needs-attention")
+        self.assertEqual(linkedin["counts"]["pending"], 1)
+        self.assertEqual(linkedin["counts"]["expired"], 1)
+        self.assertEqual(len(linkedin["details"]), 2)
+
+    def test_links_all_apps_filters_search_and_hides_nonconnectable(self) -> None:
+        token = self.issue_portal_token()
+        payload = self.get_json(f"/api/links/composio/all-apps?token={token}&q=git&offset=0&limit=20")
+
+        self.assertTrue(payload["ok"])
         names = [item["name"] for item in payload["apps"]]
-        self.assertEqual(names, ["Gmail", "LinkedIn"])
-        self.assertNotIn("Brave Search", names)
-        gmail = payload["apps"][0]
-        self.assertEqual(gmail["key"], "gmail")
-        self.assertEqual(gmail["server_name"], "Gmail")
-        self.assertEqual(gmail["auth_type"], "oauth")
-        self.assertEqual(gmail["tool_count"], 2)
+        self.assertEqual(names, [])
 
-    def test_links_status_endpoint_returns_user_integration_state(self) -> None:
-        payload = self.get_json("/api/links/status")
+        payload = self.get_json(f"/api/links/composio/all-apps?token={token}&q=link&offset=0&limit=20")
+        self.assertEqual([item["slug"] for item in payload["apps"]], ["linkedin"])
 
-        self.assertEqual(payload["schema"], "pucky.links_status.v1")
-        self.assertTrue(payload["available"])
+        payload = self.get_json(f"/api/links/composio/all-apps?token={token}&offset=0&limit=20")
+        slugs = [item["slug"] for item in payload["apps"]]
+        self.assertIn("gmail", slugs)
+        self.assertIn("linkedin", slugs)
+        self.assertNotIn("composio", slugs)
+
+    def test_links_oauth_start_uses_token_user_and_webview_callback(self) -> None:
+        token = self.issue_portal_token()
+        payload = self.get_json(f"/api/links/composio/oauth/start?token={token}&app=linkedin&auth_mode=webview")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.links_oauth_start.v1")
         self.assertEqual(payload["user_id"], "jimmythompson323")
-        self.assertEqual(payload["statuses"]["gmail"]["state"], "connected")
-        self.assertEqual(payload["statuses"]["linkedin"]["state"], "available")
+        self.assertEqual(payload["slug"], "linkedin")
+        self.assertEqual(payload["auth_mode"], "webview")
+        self.assertEqual(payload["auth_url"], "https://connect.example.invalid/linkedin")
+        self.assertIn("just_connected=linkedin", self.composio.starts[-1]["redirect_url"])
+        self.assertEqual(self.composio.starts[-1]["app_slug"], "linkedin")
 
-    def test_links_connect_endpoint_creates_instance_for_default_user(self) -> None:
-        payload = self.post_json("/api/links/connect", {"server_name": "LinkedIn"})
+    def test_links_disconnect_requires_owned_connection(self) -> None:
+        token = self.issue_portal_token()
+        payload = self.post_empty(f"/api/links/composio/disconnect?token={token}&connection_id=ca_linkedin_pending")
 
-        self.assertEqual(payload["schema"], "pucky.links_connect.v1")
-        self.assertEqual(payload["server_name"], "LinkedIn")
-        self.assertEqual(payload["user_id"], "jimmythompson323")
-        self.assertEqual(payload["instance_id"], "instance-linkedin")
-        self.assertEqual(payload["oauth_url"], "https://auth.example.invalid/linkedin")
-        self.assertEqual(self.klavis.created[-1]["serverName"], "LinkedIn")
-        self.assertEqual(self.klavis.created[-1]["userId"], "jimmythompson323")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["deleted"], "ca_linkedin_pending")
+        self.assertEqual(self.composio.deleted[-1], ("jimmythompson323", "ca_linkedin_pending"))
+
+        request = urllib.request.Request(
+            self.base_url + f"/api/links/composio/disconnect?token={token}&connection_id=ca_missing",
+            data=b"",
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 403)
 
     def test_unauthorized_turn_is_rejected(self) -> None:
         request = urllib.request.Request(
@@ -604,6 +713,11 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def get_text(self, path: str, headers: dict[str, str] | None = None) -> str:
+        request = urllib.request.Request(self.base_url + path, headers=headers or {})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.read().decode("utf-8")
+
     def post_audio(self, audio: bytes, content_type: str, turn_id: str = "", reply_mode: str = "") -> dict:
         headers = {
             "Authorization": "Bearer secret",
@@ -637,6 +751,24 @@ class ServerTests(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def post_empty(self, path: str, headers: dict[str, str] | None = None) -> dict:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=b"",
+            method="POST",
+            headers=headers or {},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def portal_token(self, portal_url: str) -> str:
+        parsed = urllib.parse.urlsplit(portal_url)
+        return urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
+
+    def issue_portal_token(self) -> str:
+        payload = self.get_json("/api/links/composio/portal-url")
+        return self.portal_token(payload["portal_url"])
 
 
 if __name__ == "__main__":

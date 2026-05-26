@@ -17,7 +17,6 @@
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
-  const LINKS_FILTERS = ["all", "connected", "needs_setup"];
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -780,23 +779,27 @@
     }
   }
 
-  async function loadLinksState(options = {}) {
+  async function loadLinksPortal(options = {}) {
     state.links.loading = true;
+    state.links.error = "";
     if (options.render) {
       render();
     }
     try {
-      const [appsPayload, statusPayload] = await Promise.all([
-        linksApiRequest("/api/links/apps"),
-        linksApiRequest("/api/links/status")
-      ]);
-      state.links.apps = normalizeLinksCatalogPayload(appsPayload);
-      state.links.statuses = normalizeLinksStatusPayload(statusPayload);
-      state.links.available = appsPayload.available !== false && statusPayload.available !== false;
-      state.links.error = String(appsPayload.error || statusPayload.error || "").trim();
+      const payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+      state.links.portal_url = payload.portal_url;
+      state.links.auth_mode = payload.auth_mode;
+      state.links.available = payload.available;
+      if (payload.portal_url && options.navigate !== false && window.location && typeof window.location.assign === "function") {
+        window.location.assign(payload.portal_url);
+        return;
+      }
+      if (!payload.portal_url) {
+        state.links.error = payload.error || "Links portal unavailable";
+      }
     } catch (error) {
       state.links.available = false;
-      state.links.error = String(error && error.message ? error.message : "Unable to load Links");
+      state.links.error = String(error && error.message ? error.message : "Unable to open Links");
     } finally {
       state.links.loading = false;
       if (options.render !== false) {
@@ -805,36 +808,12 @@
     }
   }
 
-  function normalizeLinksCatalogPayload(payload) {
-    const rawApps = Array.isArray(payload && payload.apps) ? payload.apps : [];
-    return rawApps.map(item => ({
-      key: String(item && item.key || ""),
-      name: String(item && item.name || ""),
-      server_name: String(item && item.server_name || item && item.serverName || item && item.name || ""),
-      description: String(item && item.description || ""),
-      auth_type: String(item && item.auth_type || item && item.authType || "oauth"),
-      tool_count: Number(item && item.tool_count || item && item.toolCount || 0)
-    })).filter(item => item.key && item.name && item.server_name);
-  }
-
-  function normalizeLinksStatusPayload(payload) {
-    const raw = payload && payload.statuses && typeof payload.statuses === "object" ? payload.statuses : {};
-    return Object.fromEntries(Object.entries(raw).map(([key, value]) => {
-      const item = value && typeof value === "object" ? value : {};
-      return [String(key || ""), {
-        state: String(item.state || "available"),
-        server_name: String(item.server_name || item.serverName || "")
-      }];
-    }).filter(([key]) => key));
-  }
-
-  function normalizeLinksConnectPayload(payload) {
+  function normalizeLinksPortalPayload(payload) {
     return {
-      server_name: String(payload && (payload.server_name || payload.serverName) || ""),
-      instance_id: String(payload && (payload.instance_id || payload.instanceId) || ""),
-      server_url: String(payload && (payload.server_url || payload.serverUrl) || ""),
-      oauth_url: String(payload && (payload.oauth_url || payload.oauthUrl) || ""),
-      already_authenticated: Boolean(payload && (payload.already_authenticated || payload.isAuthenticated))
+      portal_url: String(payload && (payload.portal_url || payload.url) || ""),
+      auth_mode: String(payload && payload.auth_mode || "webview"),
+      available: payload ? payload.ok !== false : false,
+      error: String(payload && payload.error || "")
     };
   }
 
@@ -862,34 +841,6 @@
       throw new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
     }
     return payload;
-  }
-
-  async function launchLinksConnect(app) {
-    state.links.error = "";
-    state.links.connecting_key = app.key;
-    render();
-    try {
-      const result = normalizeLinksConnectPayload(await linksApiRequest("/api/links/connect", {
-        method: "POST",
-        body: { server_name: app.server_name }
-      }));
-      if (result.already_authenticated || !result.oauth_url) {
-        state.links.pending_keys.delete(app.key);
-        await loadLinksState({ render: false });
-        render();
-        return;
-      }
-      state.links.pending_keys.add(app.key);
-      render();
-      await Pucky.request({ command: "browser.open", args: { url: result.oauth_url } });
-    } catch (error) {
-      state.links.pending_keys.delete(app.key);
-      state.links.error = String(error && error.message ? error.message : "Could not open auth");
-      showToast(state.links.error);
-    } finally {
-      state.links.connecting_key = "";
-      render();
-    }
   }
 
   function ensureSettingsSurfaceCurrent() {
@@ -1026,16 +977,11 @@
 
   function initialLinksState() {
     return {
-      apps: [],
-      statuses: {},
       available: true,
       loading: false,
-      status_loading: false,
-      connecting_key: "",
-      pending_keys: new Set(),
       error: "",
-      search: "",
-      filter: "all"
+      portal_url: "",
+      auth_mode: "webview"
     };
   }
 
@@ -1312,7 +1258,7 @@
         restoreFeedScroll();
         syncFeedCards({ reason: "route_feed", silent: true, render: true });
       } else if (state.route === "links") {
-        loadLinksState({ render: true, silent: true });
+        loadLinksPortal({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
       }
@@ -1568,145 +1514,51 @@
     const copy = el("div", "links-shell-copy");
     copy.append(
       el("h1", "links-title", "Links"),
-      el("p", "links-subtitle", "Connect accounts without a Klavis login. Pick an app, then finish auth in the browser.")
+      el("p", "links-subtitle", "Opening your signed Connect Apps portal...")
     );
-    hero.append(copy);
+    const status = el("div", "links-shell-status", state.links.loading ? "Opening portal..." : "Portal ready");
+    hero.append(copy, status);
     page.append(hero);
 
-    const controls = el("div", "links-controls");
-    const search = el("label", "links-search");
-    const input = document.createElement("input");
-    input.type = "search";
-    input.placeholder = "Search apps";
-    input.value = state.links.search;
-    input.addEventListener("input", event => {
-      state.links.search = String(event.target?.value || "");
-      render();
-    });
-    search.append(input);
-    controls.append(search);
+    const body = el("div", "links-empty", "");
+    if (state.links.loading) {
+      body.append(
+        el("strong", "", "Opening Connect Apps..."),
+        el("p", "", "Pucky is minting a signed portal URL and loading the first-party apps page.")
+      );
+      page.append(body);
+      return page;
+    }
 
-    const filters = el("div", "links-filters");
-    LINKS_FILTERS.forEach(filter => {
-      const button = el("button", state.links.filter === filter ? "links-filter is-selected" : "links-filter", linksFilterLabel(filter));
-      button.type = "button";
-      button.addEventListener("click", () => {
-        state.links.filter = filter;
-        render();
+    if (state.links.error || !state.links.portal_url) {
+      body.append(
+        el("strong", "", "Could not open Links right now."),
+        el("p", "", state.links.error || "The Connect Apps portal did not return a valid URL.")
+      );
+      const retry = el("button", "links-open-button", "Retry");
+      retry.type = "button";
+      retry.addEventListener("click", () => {
+        loadLinksPortal({ render: true });
       });
-      filters.append(button);
+      body.append(retry);
+      page.append(body);
+      return page;
+    }
+
+    body.append(
+      el("strong", "", "Portal URL ready."),
+      el("p", "", "If the portal does not open automatically, use the button below.")
+    );
+    const openButton = el("button", "links-open-button", "Open Connect Apps");
+    openButton.type = "button";
+    openButton.addEventListener("click", () => {
+      if (window.location && typeof window.location.assign === "function") {
+        window.location.assign(state.links.portal_url);
+      }
     });
-    page.append(controls, filters);
-
-    if (!state.links.available && !state.links.apps.length) {
-      const unavailable = el("div", "links-unavailable");
-      unavailable.append(
-        el("strong", "", "Connections are unavailable right now."),
-        el("p", "", state.links.error || "Klavis is not responding yet.")
-      );
-      page.append(unavailable);
-      return page;
-    }
-
-    const apps = filteredLinksApps();
-    if (state.links.loading && !state.links.apps.length) {
-      page.append(el("div", "links-empty", "Loading apps..."));
-      return page;
-    }
-    if (!apps.length) {
-      const empty = el("div", "links-empty", "");
-      empty.append(
-        el("strong", "", "No apps match that filter."),
-        el("p", "", state.links.search ? "Try a broader search." : "Connected apps will show up here once Klavis responds.")
-      );
-      page.append(empty);
-      return page;
-    }
-
-    const list = el("div", "links-list");
-    list.append(...apps.map(app => linksAppRow(app)));
-    page.append(list);
+    body.append(openButton);
+    page.append(body);
     return page;
-  }
-
-  function linksFilterLabel(filter) {
-    if (filter === "connected") {
-      return "Connected";
-    }
-    if (filter === "needs_setup") {
-      return "Needs setup";
-    }
-    return "All";
-  }
-
-  function filteredLinksApps() {
-    const query = state.links.search.trim().toLowerCase();
-    return state.links.apps.filter(app => {
-      const status = linksStatusFor(app);
-      if (state.links.filter === "connected" && status.state !== "connected") {
-        return false;
-      }
-      if (state.links.filter === "needs_setup" && status.state === "connected") {
-        return false;
-      }
-      if (!query) {
-        return true;
-      }
-      return [app.name, app.description, app.server_name]
-        .filter(Boolean)
-        .some(value => String(value).toLowerCase().includes(query));
-    });
-  }
-
-  function linksStatusFor(app) {
-    const current = state.links.statuses[app.key];
-    if (current && current.state === "connected") {
-      state.links.pending_keys.delete(app.key);
-      return current;
-    }
-    if (state.links.pending_keys.has(app.key)) {
-      return { state: "pending" };
-    }
-    return current || { state: "available" };
-  }
-
-  function linksStatusLabel(status) {
-    if (status.state === "connected") {
-      return "Connected";
-    }
-    if (status.state === "pending") {
-      return "Pending";
-    }
-    return "Connect";
-  }
-
-  function linksAppRow(app) {
-    const row = el("article", "links-app-row");
-    const copy = el("div", "links-app-copy");
-    copy.append(
-      el("h2", "links-app-title", app.name),
-      el("div", "links-app-meta", app.auth_type === "api_key" ? "API key" : "OAuth"),
-      el("p", "links-app-detail", app.description || "Connect this app through Klavis.")
-    );
-    const status = linksStatusFor(app);
-    const action = el(
-      "button",
-      status.state === "connected"
-        ? "links-app-action is-connected"
-        : status.state === "pending"
-          ? "links-app-action is-pending"
-          : "links-app-action",
-      linksStatusLabel(status)
-    );
-    action.type = "button";
-    action.disabled = status.state === "connected" || status.state === "pending" || state.links.connecting_key === app.key;
-    if (!action.disabled) {
-      action.addEventListener("click", () => {
-        launchLinksConnect(app);
-      });
-    }
-    row.append(copy, action);
-    return row;
   }
 
   function replyModeSettingsCard() {
@@ -5859,10 +5711,6 @@
       syncFeedCards({ reason: "visibility_visible", silent: true, render: true });
       return;
     }
-    if (document.visibilityState === "visible" && state.route === "links") {
-      loadLinksState({ render: true, silent: true });
-      return;
-    }
     if (state.route === "settings") {
       loadSettingsState({ render: true });
     }
@@ -5877,6 +5725,6 @@
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCards();
   if (state.route === "links") {
-    loadLinksState({ render: true, silent: true });
+    loadLinksPortal({ render: true });
   }
 })();

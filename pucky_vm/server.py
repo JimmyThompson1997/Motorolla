@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
+import hmac
 import importlib.util
 import json
 import mimetypes
@@ -15,11 +17,11 @@ from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .codex_app_server import CodexAppServerClient, command_from_env
+from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
-from .klavis import DEFAULT_KLAVIS_BASE_URL, KlavisClient, curated_catalog, integration_status_map
 from .providers import DeepgramSTT, KokoroTTS
 from .ui_bundle import UI_SRC, build_ui_bundle, bundle_config_script
 
@@ -67,15 +69,19 @@ class CodexProvider(Protocol):
     def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
 
 
-class KlavisProvider(Protocol):
+class ComposioProvider(Protocol):
     @property
     def configured(self) -> bool: ...
 
-    def list_servers(self) -> dict[str, object]: ...
+    def list_apps(self) -> dict[str, object]: ...
 
-    def get_user_integrations(self, user_id: str) -> dict[str, object]: ...
+    def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, object]: ...
 
-    def create_instance(self, *, server_name: str, user_id: str) -> dict[str, object]: ...
+    def invalidate_connected_cache(self, user_id: str) -> None: ...
+
+    def start_oauth(self, user_id: str, app_slug: str, redirect_url: str | None = None) -> dict[str, object]: ...
+
+    def delete_connection(self, user_id: str, connection_id: str) -> dict[str, object]: ...
 
 
 @dataclass(frozen=True)
@@ -111,9 +117,12 @@ class Config:
     codex_approval_policy: str = "never"
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
-    klavis_api_key: str = ""
-    klavis_base_url: str = DEFAULT_KLAVIS_BASE_URL
-    klavis_default_user_id: str = "jimmythompson323"
+    composio_api_key: str = ""
+    composio_base_url: str = DEFAULT_COMPOSIO_BASE_URL
+    composio_default_user_id: str = "jimmythompson323"
+    connect_portal_secret: str = ""
+    connect_portal_ttl_seconds: int = 12 * 60 * 60
+    composio_default_auth_mode: str = "webview"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -140,9 +149,15 @@ class Config:
             codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
             codex_model=os.environ.get("PUCKY_CODEX_MODEL") or None,
             codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT") or None,
-            klavis_api_key=os.environ.get("KLAVIS_API_KEY", "").strip(),
-            klavis_base_url=os.environ.get("KLAVIS_BASE_URL", DEFAULT_KLAVIS_BASE_URL).strip() or DEFAULT_KLAVIS_BASE_URL,
-            klavis_default_user_id=os.environ.get("PUCKY_KLAVIS_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
+            composio_api_key=os.environ.get("COMPOSIO_API_KEY", "").strip(),
+            composio_base_url=os.environ.get("COMPOSIO_BASE_URL", DEFAULT_COMPOSIO_BASE_URL).strip() or DEFAULT_COMPOSIO_BASE_URL,
+            composio_default_user_id=os.environ.get("PUCKY_COMPOSIO_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
+            connect_portal_secret=(
+                os.environ.get("PUCKY_CONNECT_PORTAL_SECRET", "").strip()
+                or os.environ.get("PUCKY_API_TOKEN", "").strip()
+            ),
+            connect_portal_ttl_seconds=max(300, int(os.environ.get("PUCKY_CONNECT_PORTAL_TTL_SECONDS", str(12 * 60 * 60)))),
+            composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "webview").strip().lower() or "webview",
         )
 
 
@@ -183,6 +198,56 @@ def reset_broker_for_tests(db_path: str):
     return broker
 
 
+def _base64url_encode_bytes(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _base64url_encode_json(payload: dict[str, object]) -> str:
+    return _base64url_encode_bytes(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+
+def _base64url_decode_text(value: str) -> bytes:
+    token = str(value or "").strip()
+    if not token:
+        raise ValueError("empty token segment")
+    padding = "=" * (-len(token) % 4)
+    return base64.urlsafe_b64decode(token + padding)
+
+
+def _encode_signed_token(header: dict[str, object], payload: dict[str, object], secret: str) -> str:
+    encoded_header = _base64url_encode_json(header)
+    encoded_payload = _base64url_encode_json(payload)
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("utf-8")
+    signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{encoded_header}.{encoded_payload}.{_base64url_encode_bytes(signature)}"
+
+
+def _decode_signed_token(token: str, secret: str) -> dict[str, object] | None:
+    if not token or not secret:
+        return None
+    parts = str(token).split(".")
+    if len(parts) != 3:
+        return None
+    header_segment, payload_segment, signature_segment = parts
+    signing_input = f"{header_segment}.{payload_segment}".encode("utf-8")
+    expected = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    try:
+        provided = _base64url_decode_text(signature_segment)
+        payload = json.loads(_base64url_decode_text(payload_segment).decode("utf-8"))
+    except Exception:
+        return None
+    if not hmac.compare_digest(expected, provided):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        if int(payload.get("exp") or 0) < int(time.time()):
+            return None
+    except Exception:
+        return None
+    return payload
+
+
 class PuckyVoiceService:
     def __init__(
         self,
@@ -191,7 +256,7 @@ class PuckyVoiceService:
         stt: STTProvider | None = None,
         tts: TTSProvider | None = None,
         codex: CodexProvider | None = None,
-        klavis: KlavisProvider | None = None,
+        composio: ComposioProvider | None = None,
     ) -> None:
         self.config = config
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
@@ -214,10 +279,11 @@ class PuckyVoiceService:
             reasoning_effort=config.codex_reasoning_effort,
         )
         self.feed = FeedStore(config.feed_db_path)
-        self.klavis = klavis or KlavisClient(config.klavis_api_key, config.klavis_base_url)
+        self.composio = composio or ComposioClient(config.composio_api_key, config.composio_base_url)
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
+        self._links_interactions: dict[str, set[str]] = {}
 
     def start(self) -> None:
         self.codex.start()
@@ -232,71 +298,282 @@ class PuckyVoiceService:
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
-            "klavis": "present" if self.config.klavis_api_key else "missing",
+            "composio": "present" if self.config.composio_api_key else "missing",
         }
 
-    def klavis_user_id(self) -> str:
-        return self.config.klavis_default_user_id
+    def composio_user_id(self) -> str:
+        return self.config.composio_default_user_id
 
-    def links_apps(self) -> dict[str, object]:
+    def composio_auth_mode(self, value: str | None = None) -> str:
+        candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
+        return "browser" if candidate == "browser" else "webview"
+
+    def _portal_token_secret(self) -> str:
+        return str(self.config.connect_portal_secret or "").strip()
+
+    def _mint_links_portal_token(self, *, user_id: str, ttl_seconds: int | None = None) -> str:
+        secret = self._portal_token_secret()
+        if not secret:
+            return ""
+        now = int(time.time())
         payload = {
-            "schema": "pucky.links_apps.v1",
-            "available": False,
-            "user_id": self.klavis_user_id(),
-            "apps": [],
+            "typ": "pucky_connect_portal",
+            "iat": now,
+            "exp": now + max(60, int(ttl_seconds or self.config.connect_portal_ttl_seconds)),
+            "user_id": str(user_id or "").strip(),
         }
-        if not self.klavis.configured:
-            payload["error"] = "klavis_not_configured"
-            return payload
-        try:
-            payload["apps"] = curated_catalog(self.klavis.list_servers())
-            payload["available"] = True
-            return payload
-        except Exception as exc:
-            payload["error"] = str(exc)
-            return payload
+        header = {"alg": "HS256", "typ": "JWT"}
+        return _encode_signed_token(header, payload, secret)
 
-    def links_status(self) -> dict[str, object]:
-        payload = {
-            "schema": "pucky.links_status.v1",
-            "available": False,
-            "user_id": self.klavis_user_id(),
-            "statuses": {},
-        }
-        if not self.klavis.configured:
-            payload["error"] = "klavis_not_configured"
-            return payload
-        try:
-            payload["statuses"] = integration_status_map(self.klavis.get_user_integrations(self.klavis_user_id()))
-            payload["available"] = True
-            return payload
-        except Exception as exc:
-            payload["error"] = str(exc)
-            return payload
+    def _verify_links_portal_token(self, token: str) -> dict[str, object] | None:
+        payload = _decode_signed_token(str(token or "").strip(), self._portal_token_secret())
+        if not payload:
+            return None
+        if str(payload.get("typ") or "") != "pucky_connect_portal":
+            return None
+        return payload
 
-    def links_connect(self, server_name: str) -> dict[str, object]:
-        server_name = str(server_name or "").strip()
-        if not server_name:
-            raise ValueError("server_name is required")
-        if not self.klavis.configured:
-            raise RuntimeError("Klavis is not configured")
-        user_id = self.klavis_user_id()
-        raw = self.klavis.create_instance(server_name=server_name, user_id=user_id)
+    def _resolve_links_portal_user(self, token: str) -> str:
+        payload = self._verify_links_portal_token(token)
+        if not payload:
+            raise ValueError("invalid_or_expired_connect_link")
+        user_id = str(payload.get("user_id") or "").strip()
+        if not user_id:
+            raise ValueError("invalid_connect_link")
+        return user_id
+
+    def _record_links_interaction(self, user_id: str, slug: str) -> None:
+        user_key = str(user_id or "").strip()
+        slug_key = str(slug or "").strip().lower()
+        if not user_key or not slug_key:
+            return
+        self._links_interactions.setdefault(user_key, set()).add(slug_key)
+
+    def links_portal_url(self, base_url: str, *, auth_mode: str | None = None) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        token = self._mint_links_portal_token(user_id=self.composio_user_id())
+        if not token:
+            return {"ok": False, "error": "connect_portal_token_unavailable"}
+        mode = self.composio_auth_mode(auth_mode)
+        url = f"{base_url.rstrip('/')}/links/connect/apps?token={quote(token, safe='')}&auth_mode={quote(mode, safe='')}"
         return {
-            "schema": "pucky.links_connect.v1",
-            "user_id": user_id,
-            "server_name": str(raw.get("serverName") or raw.get("server_name") or raw.get("name") or server_name).strip(),
-            "instance_id": str(raw.get("instanceId") or raw.get("instance_id") or "").strip(),
-            "server_url": str(raw.get("serverUrl") or raw.get("server_url") or "").strip(),
-            "oauth_url": str(raw.get("oauthUrl") or raw.get("oauth_url") or "").strip(),
-            "already_authenticated": bool(
-                raw.get("isAuthenticated")
-                or raw.get("is_authenticated")
-                or raw.get("connected")
-                or raw.get("authenticated")
-            ),
-            "auth_type": "oauth",
+            "ok": True,
+            "schema": "pucky.links_portal_url.v1",
+            "url": url,
+            "portal_url": url,
+            "auth_mode": mode,
+            "user_id": self.composio_user_id(),
         }
+
+    def links_my_apps(self, token: str) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        apps_payload = self.composio.list_apps()
+        connected_payload = self.composio.list_connected_apps(user_id, force=False)
+        app_meta = {
+            str(item.get("slug") or "").lower(): item
+            for item in list(apps_payload.get("apps") or [])
+            if isinstance(item, dict) and str(item.get("slug") or "").strip()
+        }
+        counts_by_slug: dict[str, dict[str, int]] = {}
+        details_by_slug: dict[str, list[dict[str, object]]] = {}
+        for item in list(connected_payload.get("connected_apps") or []):
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug") or "").strip().lower()
+            if not slug:
+                continue
+            status = str(item.get("status") or "").strip().lower()
+            bucket = counts_by_slug.setdefault(slug, {"total": 0, "active": 0, "pending": 0, "expired": 0})
+            bucket["total"] += 1
+            if status == "active":
+                bucket["active"] += 1
+            elif status in {"initiated", "initializing", "pending"}:
+                bucket["pending"] += 1
+            elif status == "expired":
+                bucket["expired"] += 1
+            details_by_slug.setdefault(slug, []).append(
+                {
+                    "id": str(item.get("id") or "").strip(),
+                    "status": status,
+                    "instance_name": str(item.get("instance_name") or "").strip(),
+                }
+            )
+        rows: list[dict[str, object]] = []
+        for slug, counts in counts_by_slug.items():
+            meta = app_meta.get(slug, {})
+            active = int(counts.get("active") or 0)
+            pending = int(counts.get("pending") or 0)
+            expired = int(counts.get("expired") or 0)
+            state = "connected" if active > 0 else ("needs-attention" if (pending > 0 or expired > 0) else "interacted")
+            rows.append(
+                {
+                    "slug": slug,
+                    "name": str(meta.get("name") or slug.title()),
+                    "logo": str(meta.get("logo") or ""),
+                    "state": state,
+                    "counts": {
+                        "total": int(counts.get("total") or 0),
+                        "active": active,
+                        "pending": pending,
+                        "expired": expired,
+                    },
+                    "details": list(details_by_slug.get(slug) or []),
+                }
+            )
+        for slug in sorted(self._links_interactions.get(user_id, set())):
+            if slug in counts_by_slug:
+                continue
+            meta = app_meta.get(slug, {})
+            rows.append(
+                {
+                    "slug": slug,
+                    "name": str(meta.get("name") or slug.title()),
+                    "logo": str(meta.get("logo") or ""),
+                    "state": "interacted",
+                    "counts": {"total": 0, "active": 0, "pending": 0, "expired": 0},
+                    "details": [],
+                }
+            )
+        rows.sort(key=lambda row: (0 if row["state"] == "connected" else 1 if row["state"] == "needs-attention" else 2, str(row["name"]).lower()))
+        return {
+            "ok": True,
+            "schema": "pucky.links_my_apps.v1",
+            "user_id": user_id,
+            "apps": rows,
+            "summary": {
+                "connected": sum(1 for row in rows if row["state"] == "connected"),
+                "needs_attention": sum(1 for row in rows if row["state"] == "needs-attention"),
+                "interacted": sum(1 for row in rows if row["state"] == "interacted"),
+            },
+        }
+
+    def links_all_apps(self, token: str, *, query: str = "", offset: int = 0, limit: int = 60) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        apps_payload = self.composio.list_apps()
+        my_payload = self.links_my_apps(token)
+        rows = []
+        my_counts = {
+            str(item.get("slug") or "").strip().lower(): item
+            for item in list(my_payload.get("apps") or [])
+            if isinstance(item, dict) and str(item.get("slug") or "").strip()
+        }
+        needle = str(query or "").strip().lower()
+        for item in list(apps_payload.get("apps") or []):
+            if not isinstance(item, dict) or not bool(item.get("connectable")):
+                continue
+            slug = str(item.get("slug") or "").strip()
+            name = str(item.get("name") or slug).strip()
+            if not slug:
+                continue
+            if needle and needle not in slug.lower() and needle not in name.lower():
+                continue
+            current = my_counts.get(slug.lower(), {})
+            state = str(current.get("state") or "not-connected")
+            counts = current.get("counts") if isinstance(current.get("counts"), dict) else {"total": 0, "active": 0, "pending": 0, "expired": 0}
+            rows.append(
+                {
+                    "slug": slug,
+                    "name": name,
+                    "logo": str(item.get("logo") or ""),
+                    "description": str(item.get("description") or ""),
+                    "state": state,
+                    "counts": counts,
+                }
+            )
+        rows.sort(key=lambda row: (0 if row["state"] == "connected" else 1 if row["state"] == "needs-attention" else 2, str(row["name"]).lower()))
+        total = len(rows)
+        page = rows[offset : offset + limit]
+        return {
+            "ok": True,
+            "schema": "pucky.links_all_apps.v1",
+            "user_id": user_id,
+            "apps": page,
+            "q": needle,
+            "offset": offset,
+            "limit": limit,
+            "count": len(page),
+            "total": total,
+            "has_more": offset + len(page) < total,
+        }
+
+    def links_app_details(self, token: str, slug: str) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        key = str(slug or "").strip().lower()
+        if not key:
+            raise ValueError("slug_required")
+        my_payload = self.links_my_apps(token)
+        item = next((app for app in list(my_payload.get("apps") or []) if isinstance(app, dict) and str(app.get("slug") or "").lower() == key), None)
+        return {
+            "ok": True,
+            "schema": "pucky.links_app_details.v1",
+            "slug": key,
+            "details": list(item.get("details") or []) if isinstance(item, dict) else [],
+        }
+
+    def links_refresh_my_apps(self, token: str) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        self.composio.invalidate_connected_cache(user_id)
+        connected = self.composio.list_connected_apps(user_id, force=True)
+        return {
+            "ok": True,
+            "schema": "pucky.links_refresh.v1",
+            "user_id": user_id,
+            "connected_count": len(list(connected.get("connected_apps") or [])),
+        }
+
+    def links_disconnect(self, token: str, connection_id: str) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        result = self.composio.delete_connection(user_id, connection_id)
+        if result.get("ok"):
+            return {"ok": True, "schema": "pucky.links_disconnect.v1", "deleted": result.get("deleted")}
+        return result
+
+    def links_start_oauth(
+        self,
+        token: str,
+        *,
+        app_slug: str,
+        base_url: str,
+        auth_mode: str | None = None,
+        redirect_url: str | None = None,
+    ) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        slug = str(app_slug or "").strip().lower()
+        if not slug:
+            raise ValueError("app_required")
+        self._record_links_interaction(user_id, slug)
+        mode = self.composio_auth_mode(auth_mode)
+        callback_url = str(redirect_url or "").strip()
+        if not callback_url and mode == "webview":
+            callback_url = (
+                f"{base_url.rstrip('/')}/links/connect/apps?token={quote(token, safe='')}"
+                f"&auth_mode=webview&tab=my&just_connected={quote(slug, safe='')}"
+            )
+        result = self.composio.start_oauth(user_id, slug, callback_url or None)
+        if result.get("ok"):
+            return {
+                "ok": True,
+                "schema": "pucky.links_oauth_start.v1",
+                "user_id": user_id,
+                "slug": slug,
+                "auth_mode": mode,
+                "auth_url": str(result.get("auth_url") or ""),
+                "redirect_url": str(result.get("redirect_url") or ""),
+                "connection_id": str(result.get("connection_id") or ""),
+            }
+        return result
 
     def turn_status(self, turn_id: str) -> dict[str, object] | None:
         clean_turn_id = str(turn_id or "").strip()
@@ -651,6 +928,655 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
     return normalized
 
 
+def _request_base_url(handler) -> str:
+    proto = str(handler.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+    host = str(handler.headers.get("X-Forwarded-Host") or handler.headers.get("Host") or "").split(",", 1)[0].strip()
+    if not host:
+        host = f"{handler.server.server_address[0]}:{handler.server.server_address[1]}"
+    return f"{proto}://{host}"
+
+
+def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_connected: str = "") -> str:
+    token_q = quote(token, safe="")
+    back_q = html.escape(back_url, quote=True)
+    connected_label = html.escape(just_connected, quote=True)
+    initial_mode = "browser" if auth_mode == "browser" else "webview"
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Pucky Links</title>
+    <style>
+      :root {{
+        color-scheme: dark;
+        --bg: #060d15;
+        --panel: #111927;
+        --panel-2: #0b1320;
+        --line: rgba(245, 249, 255, 0.1);
+        --text: #f5f9ff;
+        --muted: #9db1c7;
+        --soft: rgba(245, 249, 255, 0.05);
+        --accent: #72c2ff;
+        --accent-soft: rgba(114, 194, 255, 0.12);
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        background: radial-gradient(circle at top, rgba(114, 194, 255, 0.08), transparent 40%), var(--bg);
+        color: var(--text);
+        font-family: Inter, Segoe UI, Arial, sans-serif;
+      }}
+      .shell {{
+        min-height: 100vh;
+        padding: 14px 14px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }}
+      .hero, .toolbar, .card, .msg {{
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+      }}
+      .hero {{
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }}
+      .hero-top {{
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: flex-start;
+      }}
+      .back {{
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 34px;
+        min-height: 34px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        color: var(--text);
+        text-decoration: none;
+        background: var(--panel-2);
+      }}
+      .hero h1 {{
+        margin: 0;
+        font-size: 22px;
+        line-height: 1;
+        font-weight: 850;
+      }}
+      .hero p {{
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+      }}
+      .tabs, .mode-row {{
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }}
+      .tab, .mode-pill, .btn {{
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--soft);
+        color: var(--text);
+        font-size: 11px;
+        font-weight: 780;
+        padding: 0 12px;
+        text-decoration: none;
+      }}
+      .tab.active, .mode-pill.active {{
+        background: var(--accent-soft);
+        border-color: rgba(114, 194, 255, 0.34);
+      }}
+      .toolbar {{
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }}
+      .toolbar-row {{
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }}
+      .toolbar-row.wrap {{ flex-wrap: wrap; }}
+      .search {{
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 0 12px;
+        font-size: 13px;
+      }}
+      .msg {{
+        display: none;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.35;
+      }}
+      .msg.show {{ display: block; }}
+      .msg.error {{ border-color: rgba(255, 111, 111, 0.4); color: #ffd7d7; }}
+      .msg.ok {{ border-color: rgba(80, 216, 106, 0.35); color: #d8ffe1; }}
+      .summary {{
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }}
+      .grid {{
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }}
+      .card {{
+        overflow: hidden;
+      }}
+      .card-main {{
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 11px 12px;
+      }}
+      .logo {{
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        background: var(--panel-2);
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        overflow: hidden;
+      }}
+      .logo img {{
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        padding: 6px;
+      }}
+      .meta {{
+        min-width: 0;
+      }}
+      .name {{
+        font-size: 14px;
+        font-weight: 800;
+        line-height: 1.05;
+      }}
+      .slug {{
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.2;
+      }}
+      .status, .tools {{
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }}
+      .pill {{
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        padding: 2px 7px;
+        font-size: 10px;
+        line-height: 1.2;
+      }}
+      .pill.active {{ color: #d8ffe1; border-color: rgba(80, 216, 106, 0.34); }}
+      .pill.pending {{ color: #ffe9b0; border-color: rgba(255, 176, 0, 0.34); }}
+      .pill.expired {{ color: #ffd7d7; border-color: rgba(255, 111, 111, 0.34); }}
+      .pill.muted {{ color: var(--muted); }}
+      .btn {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }}
+      .details {{
+        display: none;
+        border-top: 1px solid var(--line);
+        background: var(--panel-2);
+        padding: 10px 12px;
+      }}
+      .card.open .details {{ display: block; }}
+      .detail-row {{
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 0;
+        border-top: 1px solid rgba(245, 249, 255, 0.06);
+      }}
+      .detail-row:first-child {{ border-top: 0; }}
+      .detail-id {{
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+      }}
+      .detail-status {{
+        color: var(--muted);
+        font-size: 10px;
+      }}
+      .empty {{
+        border: 1px dashed var(--line);
+        border-radius: 18px;
+        padding: 16px 14px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }}
+      .hide {{ display: none !important; }}
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-top">
+          <div>
+            <h1>Links</h1>
+            <p>Browse your connected apps, search the catalog, and hand off app auth through Composio.</p>
+          </div>
+          <a class="back" href="{back_q}" aria-label="Back to Pucky">&lt;</a>
+        </div>
+        <div class="tabs">
+          <button id="tab-my" class="tab active" type="button">My Apps</button>
+          <button id="tab-all" class="tab" type="button">All Apps</button>
+        </div>
+      </section>
+      <section class="toolbar">
+        <div class="toolbar-row wrap">
+          <button id="refresh-my" class="btn" type="button">Refresh My Apps</button>
+          <div class="mode-row" aria-label="Auth handoff mode">
+            <button id="mode-webview" class="mode-pill" type="button">This view</button>
+            <button id="mode-browser" class="mode-pill" type="button">Browser</button>
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <input id="search" class="search hide" type="search" placeholder="Search all apps">
+          <button id="all-more" class="btn hide" type="button">Load more</button>
+        </div>
+        <div id="portal-msg" class="msg" aria-live="polite"></div>
+        <div id="summary" class="summary">Loading...</div>
+      </section>
+      <section id="my-grid" class="grid"></section>
+      <section id="all-grid" class="grid hide"></section>
+      <div id="all-sentinel" class="hide" style="height: 1px;"></div>
+    </main>
+    <script>
+      const token = '{token_q}';
+      const initialAuthMode = '{initial_mode}';
+      const justConnected = '{connected_label}';
+      const pending = new Map();
+      let seq = 0;
+      let authMode = initialAuthMode === 'browser' ? 'browser' : 'webview';
+      const tabMy = document.getElementById('tab-my');
+      const tabAll = document.getElementById('tab-all');
+      const myGrid = document.getElementById('my-grid');
+      const allGrid = document.getElementById('all-grid');
+      const summary = document.getElementById('summary');
+      const search = document.getElementById('search');
+      const msg = document.getElementById('portal-msg');
+      const refreshMy = document.getElementById('refresh-my');
+      const allMore = document.getElementById('all-more');
+      const allSentinel = document.getElementById('all-sentinel');
+      const modeWebview = document.getElementById('mode-webview');
+      const modeBrowser = document.getElementById('mode-browser');
+
+      window.Pucky = window.Pucky || {{}};
+      if (typeof window.Pucky.request !== 'function') {{
+        window.Pucky.request = function request(payload) {{
+          const command = payload && payload.command;
+          const args = payload && payload.args ? payload.args : {{}};
+          if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === 'function') {{
+            const id = String(++seq);
+            const message = JSON.stringify({{ id, command, args }});
+            return new Promise((resolve, reject) => {{
+              pending.set(id, {{ resolve, reject }});
+              window.PuckyAndroid.postMessage(message);
+              setTimeout(() => {{
+                if (pending.has(id)) {{
+                  pending.delete(id);
+                  reject(new Error('Pucky native bridge timed out'));
+                }}
+              }}, 15000);
+            }});
+          }}
+          if (command === 'browser.open') {{
+            const url = String(args.url || '').trim();
+            if (!url) throw new Error('browser.open requires url');
+            try {{
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }} catch (_err) {{
+              window.location.assign(url);
+            }}
+            return Promise.resolve({{ launched: true, uri: url }});
+          }}
+          return Promise.reject(new Error('Pucky bridge unavailable'));
+        }};
+      }}
+      if (typeof window.Pucky.__resolve !== 'function') {{
+        window.Pucky.__resolve = function resolve(id, payload) {{
+          const slot = pending.get(String(id));
+          if (!slot) return;
+          pending.delete(String(id));
+          if (payload && payload.ok) slot.resolve(payload.result || {{}});
+          else slot.reject(new Error((payload && payload.error) || 'Native command failed'));
+        }};
+      }}
+
+      function showMessage(text, kind) {{
+        msg.className = 'msg show ' + (kind || '');
+        msg.textContent = String(text || '');
+      }}
+      function hideMessage() {{
+        msg.className = 'msg';
+        msg.textContent = '';
+      }}
+      function setAuthMode(next) {{
+        authMode = next === 'browser' ? 'browser' : 'webview';
+        modeWebview.classList.toggle('active', authMode === 'webview');
+        modeBrowser.classList.toggle('active', authMode === 'browser');
+        try {{
+          const url = new URL(window.location.href);
+          url.searchParams.set('auth_mode', authMode);
+          window.history.replaceState(null, '', url.toString());
+        }} catch (_err) {{}}
+      }}
+      function pills(counts) {{
+        const parts = [];
+        const current = counts && typeof counts === 'object' ? counts : {{}};
+        if ((current.active || 0) > 0) parts.push("<span class='pill active'>" + current.active + " active</span>");
+        if ((current.pending || 0) > 0) parts.push("<span class='pill pending'>" + current.pending + " pending</span>");
+        if ((current.expired || 0) > 0) parts.push("<span class='pill expired'>" + current.expired + " expired</span>");
+        if (!parts.length) parts.push("<span class='pill muted'>not connected</span>");
+        return parts.join('');
+      }}
+      function buildConnectHref(slug) {{
+        return '/links/connect/apps?token=' + token + '&app=' + encodeURIComponent(slug) + '&auth_mode=' + encodeURIComponent(authMode);
+      }}
+      function detailBlock(details) {{
+        const list = Array.isArray(details) ? details : [];
+        if (!list.length) {{
+          return "<div class='detail-status'>No connection details.</div>";
+        }}
+        const stale = list.filter(item => ['expired', 'initiated', 'initializing', 'pending'].includes(String(item.status || '').toLowerCase())).map(item => item.id).filter(Boolean);
+        const active = list.filter(item => String(item.status || '').toLowerCase() === 'active').map(item => item.id).filter(Boolean);
+        const tools = [];
+        if (stale.length) tools.push("<button class='btn bulk' data-ids='" + stale.join(',') + "'>Remove stale (" + stale.length + ")</button>");
+        if (active.length) tools.push("<button class='btn bulk' data-ids='" + active.join(',') + "'>Disconnect active (" + active.length + ")</button>");
+        return (tools.length ? "<div class='tools'>" + tools.join('') + "</div>" : '') + list.map(item =>
+          "<div class='detail-row'><span class='detail-id'>" + (item.instance_name || item.id || '') + "</span><span class='detail-status'>" + (item.status || '') + "</span><button class='btn del' data-id='" + (item.id || '') + "'>Remove</button></div>"
+        ).join('');
+      }}
+      function cardHtml(app, showDetails) {{
+        const logo = app.logo ? "<img src='" + app.logo + "' alt=''>" : "o";
+        const counts = app.counts && typeof app.counts === 'object' ? app.counts : {{}};
+        const label = (counts.total || 0) > 0 ? 'Reconnect' : 'Connect';
+        const description = showDetails ? '' : ("<div class='slug'>" + (app.description || '') + "</div>");
+        const detailHtml = showDetails ? "<div class='details' data-loaded='" + ((app.details || []).length ? '1' : '0') + "'>" + ((app.details || []).length ? detailBlock(app.details) : "<div class='detail-status'>Loading details...</div>") + "</div>" : '';
+        return "<article class='card' data-slug='" + app.slug + "'><div class='card-main'><div class='logo'>" + logo + "</div><div class='meta'><div class='name'>" + (app.name || app.slug) + "</div><div class='slug'>" + (app.slug || '') + "</div>" + description + "<div class='status'>" + pills(counts) + "</div></div><a class='btn connect-btn' href='#' data-slug='" + app.slug + "'>" + label + "</a></div>" + detailHtml + "</article>";
+      }}
+      async function apiJson(url, options) {{
+        const response = await fetch(url, options || {{ cache: 'no-store' }});
+        const payload = await response.json().catch(() => ({{}}));
+        if (!response.ok || payload.ok === false) {{
+          throw new Error(String((payload && (payload.error || payload.detail || payload.message)) || 'Request failed'));
+        }}
+        return payload;
+      }}
+      async function disconnectOne(id) {{
+        await apiJson('/api/links/composio/disconnect?token=' + encodeURIComponent(token) + '&connection_id=' + encodeURIComponent(id), {{ method: 'POST' }});
+      }}
+      let allOffset = 0;
+      let allLimit = 24;
+      let allHasMore = false;
+      let allQuery = '';
+      let allLoaded = false;
+      let allLoading = false;
+      let searchTimer = null;
+      async function loadMy() {{
+        const t0 = Date.now();
+        const payload = await apiJson('/api/links/composio/my-apps?token=' + encodeURIComponent(token));
+        const list = Array.isArray(payload.apps) ? payload.apps : [];
+        myGrid.innerHTML = list.length ? list.map(item => cardHtml(item, true)).join('') : "<div class='empty'>No connected or interacted apps yet.</div>";
+        summary.textContent = 'My Apps loaded in ' + (Date.now() - t0) + 'ms. Connected ' + (payload.summary?.connected || 0) + ', needs attention ' + (payload.summary?.needs_attention || 0) + ', interacted ' + (payload.summary?.interacted || 0) + '.';
+      }}
+      async function loadDetails(card) {{
+        const slug = card.getAttribute('data-slug');
+        const details = card.querySelector('.details');
+        if (!slug || !details || details.getAttribute('data-loaded') === '1') return;
+        const payload = await apiJson('/api/links/composio/app-details?token=' + encodeURIComponent(token) + '&slug=' + encodeURIComponent(slug));
+        const list = Array.isArray(payload.details) ? payload.details : [];
+        details.innerHTML = detailBlock(list);
+        details.setAttribute('data-loaded', '1');
+      }}
+      async function loadAll(query, reset) {{
+        if (allLoading) return;
+        allLoading = true;
+        summary.textContent = 'Loading apps...';
+        const t0 = Date.now();
+        try {{
+          if (reset) {{
+            allOffset = 0;
+            allQuery = String(query || '');
+            allGrid.innerHTML = '';
+            allHasMore = false;
+          }}
+          const payload = await apiJson('/api/links/composio/all-apps?token=' + encodeURIComponent(token) + '&offset=' + allOffset + '&limit=' + allLimit + (allQuery ? '&q=' + encodeURIComponent(allQuery) : ''));
+          const list = Array.isArray(payload.apps) ? payload.apps : [];
+          if (reset && !list.length) {{
+            allGrid.innerHTML = "<div class='empty'>No apps match your search.</div>";
+          }} else if (list.length) {{
+            allGrid.insertAdjacentHTML('beforeend', list.map(item => cardHtml(item, false)).join(''));
+          }}
+          allOffset += list.length;
+          allHasMore = !!payload.has_more;
+          allMore.classList.toggle('hide', !allHasMore);
+          allSentinel.classList.toggle('hide', !allHasMore);
+          allLoaded = true;
+          summary.textContent = 'All Apps loaded in ' + (Date.now() - t0) + 'ms. Showing ' + allOffset + ' / ' + (payload.total || allOffset) + '.';
+        }} finally {{
+          allLoading = false;
+        }}
+      }}
+      function nearBottom() {{
+        const doc = document.documentElement;
+        return (window.innerHeight + window.scrollY) >= (doc.scrollHeight - 220);
+      }}
+      async function maybeAutoLoadAll() {{
+        if (!tabAll.classList.contains('active') || !allHasMore || allLoading) return;
+        try {{
+          await loadAll(allQuery, false);
+        }} catch (error) {{
+          showMessage(error.message || 'Load failed', 'error');
+        }}
+      }}
+      document.body.addEventListener('click', async event => {{
+        const connect = event.target.closest('.connect-btn');
+        if (connect) {{
+          event.preventDefault();
+          hideMessage();
+          const slug = connect.getAttribute('data-slug');
+          if (!slug) return;
+          const href = buildConnectHref(slug);
+          if (authMode === 'browser') {{
+            try {{
+              await window.Pucky.request({{ command: 'browser.open', args: {{ url: new URL(href, window.location.href).toString() }} }});
+              showMessage('Opened ' + slug + ' in the browser. Return here after auth to refresh status.', 'ok');
+            }} catch (error) {{
+              showMessage(error.message || 'Could not open browser auth', 'error');
+            }}
+            return;
+          }}
+          window.location.assign(href);
+          return;
+        }}
+        const main = event.target.closest('.card-main');
+        if (main && !event.target.closest('.btn')) {{
+          const card = main.parentElement;
+          card.classList.toggle('open');
+          if (card.classList.contains('open') && myGrid.contains(card)) {{
+            try {{
+              await loadDetails(card);
+            }} catch (error) {{
+              showMessage(error.message || 'Failed loading details', 'error');
+            }}
+          }}
+          return;
+        }}
+        const del = event.target.closest('.del');
+        if (del) {{
+          event.preventDefault();
+          const id = del.getAttribute('data-id');
+          if (!id) return;
+          const prev = del.textContent;
+          del.textContent = 'Removing...';
+          del.disabled = true;
+          try {{
+            await disconnectOne(id);
+            await loadMy();
+            showMessage('Connection removed.', 'ok');
+          }} catch (error) {{
+            showMessage(error.message || 'Disconnect failed', 'error');
+          }} finally {{
+            del.textContent = prev;
+            del.disabled = false;
+          }}
+          return;
+        }}
+        const bulk = event.target.closest('.bulk');
+        if (bulk) {{
+          event.preventDefault();
+          const ids = String(bulk.getAttribute('data-ids') || '').split(',').map(value => value.trim()).filter(Boolean);
+          if (!ids.length) return;
+          const prev = bulk.textContent;
+          bulk.textContent = 'Updating...';
+          bulk.disabled = true;
+          let ok = 0;
+          try {{
+            for (const id of ids) {{
+              try {{
+                await disconnectOne(id);
+                ok += 1;
+              }} catch (_err) {{}}
+            }}
+            await loadMy();
+            showMessage('Updated ' + ok + '/' + ids.length + ' connection(s).', ok === ids.length ? 'ok' : 'error');
+          }} catch (error) {{
+            showMessage(error.message || 'Bulk update failed', 'error');
+          }} finally {{
+            bulk.textContent = prev;
+            bulk.disabled = false;
+          }}
+        }}
+      }});
+      function showMyTab() {{
+        tabMy.classList.add('active');
+        tabAll.classList.remove('active');
+        myGrid.classList.remove('hide');
+        allGrid.classList.add('hide');
+        search.classList.add('hide');
+        allMore.classList.add('hide');
+        allSentinel.classList.add('hide');
+      }}
+      function showAllTab() {{
+        tabAll.classList.add('active');
+        tabMy.classList.remove('active');
+        allGrid.classList.remove('hide');
+        myGrid.classList.add('hide');
+        search.classList.remove('hide');
+        allMore.classList.toggle('hide', !allHasMore);
+        allSentinel.classList.toggle('hide', !allHasMore);
+      }}
+      tabMy.addEventListener('click', async () => {{
+        showMyTab();
+        hideMessage();
+        try {{
+          await loadMy();
+        }} catch (error) {{
+          showMessage(error.message || 'Load failed', 'error');
+        }}
+      }});
+      tabAll.addEventListener('click', async () => {{
+        showAllTab();
+        hideMessage();
+        try {{
+          if (!allLoaded) {{
+            await loadAll('', true);
+          }}
+        }} catch (error) {{
+          showMessage(error.message || 'Load failed', 'error');
+        }}
+      }});
+      refreshMy.addEventListener('click', async () => {{
+        hideMessage();
+        refreshMy.disabled = true;
+        const prev = refreshMy.textContent;
+        refreshMy.textContent = 'Refreshing...';
+        try {{
+          const payload = await apiJson('/api/links/composio/my-apps/refresh?token=' + encodeURIComponent(token), {{ method: 'POST' }});
+          await loadMy();
+          if (tabAll.classList.contains('active')) {{
+            allLoaded = false;
+            await loadAll(search.value || '', true);
+          }}
+          showMessage('My Apps refreshed. Connected count: ' + (payload.connected_count || 0) + '.', 'ok');
+        }} catch (error) {{
+          showMessage(error.message || 'Refresh failed', 'error');
+        }} finally {{
+          refreshMy.textContent = prev;
+          refreshMy.disabled = false;
+        }}
+      }});
+      allMore.addEventListener('click', async () => {{
+        allMore.disabled = true;
+        const prev = allMore.textContent;
+        allMore.textContent = 'Loading...';
+        try {{
+          await loadAll(allQuery, false);
+        }} catch (error) {{
+          showMessage(error.message || 'Load failed', 'error');
+        }} finally {{
+          allMore.textContent = prev;
+          allMore.disabled = false;
+        }}
+      }});
+      search.addEventListener('input', () => {{
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(async () => {{
+          try {{
+            await loadAll(search.value || '', true);
+          }} catch (error) {{
+            showMessage(error.message || 'Search failed', 'error');
+          }}
+        }}, 220);
+      }});
+      modeWebview.addEventListener('click', () => setAuthMode('webview'));
+      modeBrowser.addEventListener('click', () => setAuthMode('browser'));
+      window.addEventListener('scroll', () => {{
+        if (nearBottom()) maybeAutoLoadAll();
+      }}, {{ passive: true }});
+      setAuthMode(initialAuthMode);
+      if (justConnected) {{
+        showMessage('Connection flow finished for ' + justConnected + '. Refreshing your app states...', 'ok');
+      }}
+      loadMy().catch(error => showMessage(error.message || 'Failed loading My Apps', 'error'));
+    </script>
+  </body>
+</html>"""
+
+
 def make_handler(service: PuckyVoiceService):
     broker = _load_broker_module()
 
@@ -669,11 +1595,111 @@ def make_handler(service: PuckyVoiceService):
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
                 return
-            if path == "/api/links/apps":
-                self._json(HTTPStatus.OK, service.links_apps())
+            if path == "/api/links/composio/portal-url":
+                query = parse_qs(parsed.query)
+                payload = service.links_portal_url(
+                    _request_base_url(self),
+                    auth_mode=query.get("auth_mode", [""])[0],
+                )
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
                 return
-            if path == "/api/links/status":
-                self._json(HTTPStatus.OK, service.links_status())
+            if path == "/links/connect/apps":
+                query = parse_qs(parsed.query)
+                token = query.get("token", [""])[0]
+                app = query.get("app", [""])[0]
+                auth_mode = query.get("auth_mode", [""])[0]
+                just_connected = query.get("just_connected", [""])[0]
+                redirect_url = query.get("redirect_url", [""])[0]
+                base_url = _request_base_url(self)
+                if app:
+                    try:
+                        payload = service.links_start_oauth(
+                            token,
+                            app_slug=app,
+                            base_url=base_url,
+                            auth_mode=auth_mode,
+                            redirect_url=redirect_url or None,
+                        )
+                    except ValueError as exc:
+                        self._html(HTTPStatus.BAD_REQUEST, f"<h3>{html.escape(str(exc))}</h3>")
+                        return
+                    if payload.get("ok") and str(payload.get("auth_url") or "").strip():
+                        self.send_response(int(HTTPStatus.TEMPORARY_REDIRECT))
+                        self._cors_headers()
+                        self.send_header("Location", str(payload.get("auth_url") or "").strip())
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                    detail = html.escape(str(payload.get("error") or "Unable to start connection"))
+                    self._html(HTTPStatus.BAD_GATEWAY, f"<h3>Unable to start app connection.</h3><p>{detail}</p>")
+                    return
+                try:
+                    service._resolve_links_portal_user(token)
+                except ValueError:
+                    self._html(HTTPStatus.UNAUTHORIZED, "<h3>Invalid or expired connect link.</h3>")
+                    return
+                back_url = f"{base_url.rstrip('/')}/ui/pucky/latest/?route=feed"
+                self._html(
+                    HTTPStatus.OK,
+                    _links_portal_document(
+                        token=token,
+                        auth_mode=service.composio_auth_mode(auth_mode),
+                        back_url=back_url,
+                        just_connected=just_connected,
+                    ),
+                )
+                return
+            if path == "/api/links/composio/my-apps":
+                query = parse_qs(parsed.query)
+                try:
+                    payload = service.links_my_apps(query.get("token", [""])[0])
+                except ValueError as exc:
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
+                    return
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
+                return
+            if path == "/api/links/composio/all-apps":
+                query = parse_qs(parsed.query)
+                try:
+                    payload = service.links_all_apps(
+                        query.get("token", [""])[0],
+                        query=query.get("q", [""])[0],
+                        offset=int(query.get("offset", ["0"])[0]),
+                        limit=int(query.get("limit", ["60"])[0]),
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
+                return
+            if path == "/api/links/composio/app-details":
+                query = parse_qs(parsed.query)
+                try:
+                    payload = service.links_app_details(query.get("token", [""])[0], query.get("slug", [""])[0])
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
+                return
+            if path == "/api/links/composio/oauth/start":
+                query = parse_qs(parsed.query)
+                try:
+                    payload = service.links_start_oauth(
+                        query.get("token", [""])[0],
+                        app_slug=query.get("app", [""])[0],
+                        base_url=_request_base_url(self),
+                        auth_mode=query.get("auth_mode", [""])[0],
+                        redirect_url=query.get("redirect_url", [""])[0] or None,
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
                 return
             if path == "/api/feed":
                 if not self._is_authorized():
@@ -727,18 +1753,27 @@ def make_handler(service: PuckyVoiceService):
             super().do_GET()
 
         def do_POST(self) -> None:
-            path = self.path.split("?", 1)[0]
-            if path == "/api/links/connect":
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            if path == "/api/links/composio/my-apps/refresh":
+                query = parse_qs(parsed.query)
                 try:
-                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
-                    result = service.links_connect(str(payload.get("server_name") or payload.get("serverName") or ""))
+                    result = service.links_refresh_my_apps(query.get("token", [""])[0])
                 except ValueError as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
                     return
-                except Exception as exc:
-                    self._json(HTTPStatus.BAD_GATEWAY, {"error": "links_connect_failed", "detail": str(exc)})
+                status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, result)
+                return
+            if path == "/api/links/composio/disconnect":
+                query = parse_qs(parsed.query)
+                try:
+                    result = service.links_disconnect(query.get("token", [""])[0], query.get("connection_id", [""])[0])
+                except ValueError as exc:
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
                     return
-                self._json(HTTPStatus.OK, result)
+                status_code = int(result.get("status_code") or (HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_GATEWAY))
+                self._json(HTTPStatus(status_code), result)
                 return
             if path == "/api/feed/actions":
                 if not self._is_authorized():
