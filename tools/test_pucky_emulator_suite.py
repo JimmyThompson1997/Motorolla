@@ -564,6 +564,7 @@ def test_prove_thread_origin_dry_run_uses_refresh_sync_and_relaunch(monkeypatch:
     assert result["ok"] is True
     assert result["dry_run"] is True
     assert "refresh_pucky_html_official.py" in planned
+    assert "provisioning_json_base64" in planned
     assert "pucky.feed.sync" in planned
     assert "ui.reply_cards.get" in planned
     assert "force-stop" in planned

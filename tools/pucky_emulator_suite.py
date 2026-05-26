@@ -1292,6 +1292,9 @@ def cmd_prove_thread_origin(args: argparse.Namespace) -> dict[str, Any]:
     else:
         bundle_refresh = {"ok": True, "skipped": True}
     bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+    runner.run(launch_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
 
     turn_id = f"prove-thread-origin-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     if args.dry_run:
