@@ -9,8 +9,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
-from urllib.request import urlopen
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import Request, urlopen
 
 
 CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
@@ -68,8 +68,22 @@ def require_official_local_repo(root: Path, canonical_root: Path = CANONICAL_REP
 
 
 def fetch_json(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=30) as response:
+    request = Request(
+        url,
+        headers={
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def cache_busted_url(url: str, cache_key: object) -> str:
+    parsed = urlparse(url)
+    query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "_pucky_refresh"]
+    query.append(("_pucky_refresh", str(cache_key)))
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 def short_commit_matches(full_commit: object, short_commit: object) -> bool:
@@ -235,6 +249,9 @@ def write_evidence(args: argparse.Namespace, evidence: dict[str, Any]) -> Path:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     local_git = require_official_local_repo(args.repo_root, args.canonical_root)
+    refresh_key = local_git["head_short"]
+    args.manifest_url = cache_busted_url(args.manifest_url, refresh_key)
+    args.bundle_url = cache_busted_url(args.bundle_url, refresh_key)
     remote_manifest = validate_remote_manifest(fetch_json(args.manifest_url), local_git)
     emulator_evidence = None
     if args.target == "phone":

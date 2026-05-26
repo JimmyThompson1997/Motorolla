@@ -134,6 +134,20 @@ def test_validate_remote_manifest_accepts_prefix_compatible_short_commit() -> No
     assert manifest["source_commit_short"] == "929427768"
 
 
+def test_cache_busted_url_appends_or_replaces_refresh_key() -> None:
+    assert (
+        official.cache_busted_url("https://pucky.fly.dev/ui/pucky/latest/manifest.json", "abc123")
+        == "https://pucky.fly.dev/ui/pucky/latest/manifest.json?_pucky_refresh=abc123"
+    )
+    assert (
+        official.cache_busted_url(
+            "https://pucky.fly.dev/ui/pucky/latest/bundle.zip?foo=bar&_pucky_refresh=old",
+            "new",
+        )
+        == "https://pucky.fly.dev/ui/pucky/latest/bundle.zip?foo=bar&_pucky_refresh=new"
+    )
+
+
 def test_validate_emulator_evidence_rejects_mismatch(tmp_path: Path) -> None:
     local = {"head": "abcdef", "head_short": "abcdef0"}
     remote = {
@@ -198,6 +212,81 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
 
     assert calls == ["ui.bundle.refresh", "ui.shell.mode.set", "ui.bundle.status"]
     assert result["bundle_status"]["ui_version"] == "git-abcdef0"
+
+
+def test_run_cache_busts_manifest_and_bundle_urls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    local_git = {
+        "repo_root": str(tmp_path),
+        "branch": "master",
+        "head": "abcdef0123456789",
+        "head_short": "abcdef0",
+        "upstream": "abcdef0123456789",
+        "dirty": False,
+    }
+    observed: dict[str, object] = {}
+
+    def fake_fetch_json(url: str) -> dict[str, object]:
+        observed["manifest_url"] = url
+        return {
+            "schema": "pucky.ui_bundle.v1",
+            "ui_version": "git-abcdef0",
+            "source_commit_full": local_git["head"],
+            "source_commit_short": local_git["head_short"],
+            "source_branch": "master",
+            "source_dirty": False,
+        }
+
+    def fake_refresh_target(args: argparse.Namespace, remote_manifest: dict[str, object], local: dict[str, object]) -> dict[str, object]:
+        observed["bundle_url"] = args.bundle_url
+        return {
+            "bundle_install": {},
+            "shell_mode": {},
+            "bundle_status": {
+                "installed": True,
+                "ui_version": "git-abcdef0",
+                "source_commit_full": local_git["head"],
+                "source_commit_short": local_git["head_short"],
+                "source_branch": "master",
+                "source_dirty": False,
+            },
+        }
+
+    monkeypatch.setattr(official, "require_official_local_repo", lambda root, canonical_root: local_git)
+    monkeypatch.setattr(official, "fetch_json", fake_fetch_json)
+    monkeypatch.setattr(official, "validate_remote_manifest", lambda manifest, local: manifest)
+    monkeypatch.setattr(official, "refresh_target", fake_refresh_target)
+    monkeypatch.setattr(
+        official,
+        "build_evidence",
+        lambda args, local_git, remote_manifest, refresh_result, emulator_evidence=None: {
+            "manifest_url": args.manifest_url,
+            "bundle_url": args.bundle_url,
+        },
+    )
+    monkeypatch.setattr(official, "write_evidence", lambda args, evidence: tmp_path / "evidence.json")
+
+    args = argparse.Namespace(
+        target="emulator",
+        device_id="pucky-emulator-slot-02",
+        broker="http://127.0.0.1:18082",
+        token="",
+        vm_base_url="https://pucky.fly.dev",
+        bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
+        manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",
+        emulator_evidence=None,
+        max_bundle_bytes=10 * 1024 * 1024,
+        command_timeout_seconds=120,
+        evidence_dir=tmp_path,
+        repo_root=tmp_path,
+        canonical_root=tmp_path,
+        puckyctl=tmp_path / "puckyctl.py",
+    )
+
+    result = official.run(args)
+
+    assert result["ok"] is True
+    assert observed["manifest_url"] == "https://pucky.fly.dev/ui/pucky/latest/manifest.json?_pucky_refresh=abcdef0"
+    assert observed["bundle_url"] == "https://pucky.fly.dev/ui/pucky/latest/bundle.zip?_pucky_refresh=abcdef0"
 
 
 def test_puckyctl_args_forward_explicit_wait_timeout() -> None:
