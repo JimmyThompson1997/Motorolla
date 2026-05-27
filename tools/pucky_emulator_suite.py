@@ -2231,6 +2231,9 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 stage="displayable_reply_files_after_refresh",
                 timeout_seconds=max(90, args.refresh_timeout_seconds),
             )
+    runner.run(launch_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
     bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
     command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
     runner.run(launch_home_command(args, config), timeout=30)
