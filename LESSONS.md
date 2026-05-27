@@ -2,3 +2,4 @@
 - 2026-05-27 - `prove-displayable-reply-files --skip-refresh` can only validate the local UI bundle; if the VM-side attachment or icon endpoints have changed, live prompt proof must wait until the server code is pushed and the VM is updated.
 - 2026-05-27 - For wake-turn emulator proof, assert progression from `pucky.turn.history` instead of a single live indicator snapshot; the blue/red/yellow states can advance faster than harness polling.
 - 2026-05-27 - The emulator `flashlight` recipe path needs `android.permission.CAMERA`; without that grant, `wake-handoff-local` fails for environment reasons rather than wake routing.
+- 2026-05-27 - The Links cover list should render page 1 immediately and fetch more only on near-bottom scroll or 2+ character search; eager 973-row hydration made cold opens and route restores feel stuck on the cover WebView.

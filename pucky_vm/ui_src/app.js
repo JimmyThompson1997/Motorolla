@@ -154,6 +154,11 @@
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
+  const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
+  const LINKS_INITIAL_PAGE_SIZE = 24;
+  const LINKS_REMOTE_SEARCH_MIN = 2;
+  const LINKS_SCROLL_LOAD_THRESHOLD_PX = 160;
+  const LINKS_SEARCH_DEBOUNCE_MS = 180;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -829,6 +834,10 @@
     if (state.links.loading) {
       return;
     }
+    linksDebugEnsureRouteSession(options.force ? "force_reload" : "route_open");
+    if (options.force) {
+      resetLinksCatalogState({ keepSearch: true });
+    }
     state.links.loading = true;
     state.links.error = "";
     state.links.message = "";
@@ -839,23 +848,43 @@
     try {
       let payload = null;
       if (!state.links.token || options.force === true) {
+        linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
         payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
         state.links.portal_url = payload.portal_url;
         state.links.token = payload.token;
         state.links.auth_mode = payload.auth_mode;
         state.links.available = payload.available;
+        linksDebugRecord(
+          "portal_url_end",
+          {
+            auth_mode: payload.auth_mode,
+            available: payload.available,
+            server_timing: String(payload && payload._server_timing || "")
+          },
+          "route"
+        );
       }
       if (!state.links.token) {
         state.links.error = payload.error || "Links portal unavailable";
       } else {
-        await Promise.all([
-          loadLinksConnected({ render: false }),
-          state.links.apps.length ? Promise.resolve() : loadLinksAllApps({ render: false })
-        ]);
+        const connectedPromise = loadLinksConnected({ render: false })
+          .then(() => {
+            if (optionsShouldRenderLinksPage()) {
+              render();
+            }
+          })
+          .catch(() => {
+            // Keep the list usable even if connection badges arrive later.
+          });
+        if (!state.links.firstPageReady || !state.links.apps.length) {
+          await loadLinksAllApps({ render: false, query: state.links.catalogQuery });
+        }
+        void connectedPromise;
       }
     } catch (error) {
       state.links.available = false;
       state.links.error = String(error && error.message ? error.message : "Unable to open Links");
+      linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
     } finally {
       state.links.loading = false;
       if (options.render !== false) {
@@ -889,6 +918,114 @@
     };
   }
 
+  function resetLinksCatalogState(options = {}) {
+    state.links.apps = [];
+    if (options.clearConnected === true) {
+      state.links.connectedApps = [];
+      state.links.connectedSlugs = new Set();
+    }
+    state.links.totalAvailable = 0;
+    state.links.catalogHasMore = false;
+    state.links.catalogFetchedAll = false;
+    state.links.loadingPage = false;
+    state.links.nextOffset = 0;
+    state.links.lastRefreshAt = 0;
+    state.links.firstPageReady = false;
+    state.links.catalogQuery = String(options.query || "");
+    if (options.keepSearch !== true) {
+      state.links.search = "";
+    }
+    state.links.catalogRequestId += 1;
+  }
+
+  function linksCountLabel(filtered) {
+    const totalLoaded = Array.isArray(state.links.apps) ? state.links.apps.length : 0;
+    const totalAvailable = safeNumber(state.links.totalAvailable);
+    if (totalAvailable > totalLoaded) {
+      return `${totalLoaded}/${totalAvailable}`;
+    }
+    return filtered.length ? String(filtered.length) : "";
+  }
+
+  function linksFooterText(filtered) {
+    if (!state.links.firstPageReady && state.links.loading) {
+      return "";
+    }
+    if (state.links.loadingPage) {
+      return state.links.catalogQuery
+        ? "Loading more results..."
+        : "Loading more apps...";
+    }
+    if (state.links.catalogHasMore) {
+      return state.links.catalogQuery
+        ? "Scroll for more results."
+        : "Scroll for more apps.";
+    }
+    if (state.links.search && !filtered.length) {
+      return "";
+    }
+    return "";
+  }
+
+  function createLinksRow(app, handoffLocked) {
+    const row = el("button", "links-app-row");
+    row.type = "button";
+    row.disabled = handoffLocked;
+    row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
+
+    const icon = el("span", "links-app-icon");
+    const fallback = el("span", "links-app-fallback", linksAppInitial(app));
+    if (app.logo) {
+      const img = document.createElement("img");
+      img.className = "links-app-logo";
+      img.src = app.logo;
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.addEventListener("load", () => {
+        icon.classList.add("has-image");
+        state.links.logoLoads += 1;
+      });
+      img.addEventListener("error", () => {
+        state.links.logoErrors += 1;
+        img.remove();
+      });
+      icon.append(img);
+    }
+    icon.append(fallback);
+
+    const name = el("span", "links-app-name", app.name || app.slug);
+    const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
+    const mark = el("span", state.links.connectedSlugs.has(app.slug) ? "links-app-mark is-connected" : "links-app-mark");
+
+    row.append(icon, name, auth, mark);
+    row.addEventListener("click", () => {
+      openLinksAuthFlow(app);
+    });
+    return row;
+  }
+
+  function renderLinksListContents(list, listCount, footer, handoffLocked) {
+    const filtered = linksFilteredApps();
+    listCount.textContent = linksCountLabel(filtered);
+    list.replaceChildren();
+    footer.textContent = linksFooterText(filtered);
+    footer.classList.toggle("is-visible", Boolean(footer.textContent));
+    if (!filtered.length) {
+      list.append(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
+      return;
+    }
+    if (!state.links.firstRowsTelemetrySent) {
+      state.links.firstRowsTelemetrySent = true;
+      linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
+    }
+    const fragment = document.createDocumentFragment();
+    filtered.forEach(app => {
+      fragment.append(createLinksRow(app, handoffLocked));
+    });
+    list.append(fragment);
+  }
+
   function linksAuthLabelForApp(app) {
     const fromPayload = String(app && app.auth_label || "").trim();
     if (fromPayload) {
@@ -913,10 +1050,123 @@
     return labels.join(" + ");
   }
 
+  function linksDebugRoot() {
+    if (!window.__PUCKY_LINKS_DEBUG__ || typeof window.__PUCKY_LINKS_DEBUG__ !== "object") {
+      window.__PUCKY_LINKS_DEBUG__ = {
+        schema: "pucky.links_debug.v1",
+        route_sessions: [],
+        click_sessions: [],
+        last_event: null
+      };
+    }
+    return window.__PUCKY_LINKS_DEBUG__;
+  }
+
+  function linksDebugNow() {
+    if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  function linksDebugSession(kind) {
+    const root = linksDebugRoot();
+    const sessionId = kind === "click" ? state.links.debugClickSessionId : state.links.debugRouteSessionId;
+    if (!sessionId) {
+      return null;
+    }
+    const list = kind === "click" ? root.click_sessions : root.route_sessions;
+    return list.find(item => item && item.id === sessionId) || null;
+  }
+
+  function linksDebugSnapshot(extra = {}) {
+    let renderedRows = 0;
+    try {
+      renderedRows = document.querySelectorAll(".links-app-row").length;
+    } catch (_) {
+      renderedRows = 0;
+    }
+    return Object.assign(
+      {
+        at: new Date().toISOString(),
+        route: state.route,
+        loading: Boolean(state.links.loading),
+        total_hydrated_apps: Array.isArray(state.links.apps) ? state.links.apps.length : 0,
+        rendered_rows: renderedRows,
+        connected_count: Array.isArray(state.links.connectedApps) ? state.links.connectedApps.length : 0,
+        logo_loads: safeNumber(state.links.logoLoads),
+        logo_errors: safeNumber(state.links.logoErrors),
+        search_value: String(state.links.search || ""),
+        handoff_locked: Boolean(state.links.handoffLocked),
+        opening_slug: String(state.links.openingSlug || "")
+      },
+      extra
+    );
+  }
+
+  function linksDebugStartSession(kind, meta = {}) {
+    const root = linksDebugRoot();
+    const session = {
+      id: `links_${kind}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      kind,
+      started_at: new Date().toISOString(),
+      started_perf_ms: linksDebugNow(),
+      meta,
+      events: []
+    };
+    const list = kind === "click" ? root.click_sessions : root.route_sessions;
+    list.push(session);
+    if (list.length > 12) {
+      list.splice(0, list.length - 12);
+    }
+    if (kind === "click") {
+      state.links.debugClickSessionId = session.id;
+    } else {
+      state.links.debugRouteSessionId = session.id;
+      state.links.firstRowsTelemetrySent = false;
+      state.links.logoLoads = 0;
+      state.links.logoErrors = 0;
+    }
+    return session;
+  }
+
+  function linksDebugRecord(event, extra = {}, kind = "route") {
+    const session = linksDebugSession(kind);
+    if (!session) {
+      return null;
+    }
+    const entry = linksDebugSnapshot(
+      Object.assign(
+        {
+          event,
+          elapsed_ms: Math.round((linksDebugNow() - safeNumber(session.started_perf_ms)) * 10) / 10
+        },
+        extra
+      )
+    );
+    session.events.push(entry);
+    linksDebugRoot().last_event = entry;
+    console.info("links.telemetry", entry);
+    return entry;
+  }
+
+  function linksDebugEnsureRouteSession(reason) {
+    if (!linksDebugSession("route")) {
+      linksDebugStartSession("route", { reason: String(reason || "") });
+      linksDebugRecord("links_route_enter", { reason: String(reason || "") }, "route");
+    }
+  }
+
+  function linksDebugStartClickSession(slug) {
+    linksDebugStartSession("click", { slug: String(slug || "") });
+    linksDebugRecord("row_click", { slug: String(slug || "") }, "click");
+  }
+
   async function loadLinksConnected(options = {}) {
     if (!state.links.token) {
       return;
     }
+    linksDebugRecord("my_apps_start", { force: Boolean(options.force) }, "route");
     const payload = await linksApiRequest(`/api/links/composio/my-apps?token=${encodeURIComponent(state.links.token)}`);
     const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
     const active = [];
@@ -937,44 +1187,267 @@
     state.links.connectedApps = active;
     state.links.connectedSlugs = slugs;
     state.links.lastRefreshAt = Date.now();
+    linksDebugRecord(
+      "my_apps_end",
+      {
+        connected_count: active.length,
+        payload_count: list.length,
+        server_timing: String(payload && payload._server_timing || "")
+      },
+      "route"
+    );
     if (options.render) {
       render();
     }
+  }
+
+  async function fetchLinksAllAppsPage(offset, limit, query = "") {
+    const trimmedQuery = String(query || "").trim();
+    linksDebugRecord(
+      "all_apps_page_start",
+      { offset, limit, page_index: Math.floor(offset / Math.max(1, limit)), query: trimmedQuery },
+      "route"
+    );
+    const suffix = trimmedQuery ? `&q=${encodeURIComponent(trimmedQuery)}` : "";
+    const payload = await linksApiRequest(
+      `/api/links/composio/all-apps?token=${encodeURIComponent(state.links.token)}&offset=${offset}&limit=${limit}${suffix}`
+    );
+    const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
+    linksDebugRecord(
+      "all_apps_page_end",
+      {
+        offset,
+        limit,
+        page_index: Math.floor(offset / Math.max(1, limit)),
+        count: list.length,
+        has_more: Boolean(payload && payload.has_more),
+        total_count: safeNumber(payload && payload.total),
+        query: trimmedQuery,
+        server_timing: String(payload && payload._server_timing || "")
+      },
+      "route"
+    );
+    return {
+      payload,
+      list: list.map(normalizeLinksApp).filter(item => item.slug && item.name)
+    };
+  }
+
+  function applyLinksAllAppsPage(items, payload, options = {}) {
+    const existing = new Set((Array.isArray(state.links.apps) ? state.links.apps : []).map(app => app.slug));
+    const next = items.filter(app => !existing.has(app.slug));
+    if (next.length) {
+      state.links.apps = state.links.apps.concat(next);
+    }
+    state.links.totalAvailable = Math.max(
+      safeNumber(state.links.totalAvailable),
+      safeNumber(payload && payload.total),
+      state.links.apps.length
+    );
+    state.links.catalogHasMore = Boolean(payload && payload.has_more);
+    state.links.catalogFetchedAll = !state.links.catalogHasMore;
+    state.links.nextOffset = safeNumber(payload && payload.offset) + items.length;
+    state.links.firstPageReady = state.links.firstPageReady || Boolean(options.firstPage);
+    state.links.catalogQuery = String(options.query ?? state.links.catalogQuery ?? "");
+    return next;
+  }
+
+  function optionsShouldRenderLinksPage() {
+    return state.route === "links";
+  }
+
+  function currentLinksListElements() {
+    if (!optionsShouldRenderLinksPage()) {
+      return null;
+    }
+    const page = document.querySelector(".links-page");
+    const list = page ? page.querySelector(".links-list") : null;
+    const listCount = page ? page.querySelector(".links-list-count") : null;
+    const footer = page ? page.querySelector(".links-loading-footer") : null;
+    if (!page || !list || !listCount || !footer) {
+      return null;
+    }
+    return { page, list, listCount, footer };
+  }
+
+  function updateLinksListChrome() {
+    const refs = currentLinksListElements();
+    if (!refs) {
+      return;
+    }
+    const filtered = linksFilteredApps();
+    refs.listCount.textContent = linksCountLabel(filtered);
+    refs.footer.textContent = linksFooterText(filtered);
+    refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
+  }
+
+  function linksMatchesSearch(app, needle) {
+    return String(app && app.name || "").toLowerCase().includes(needle)
+      || String(app && app.slug || "").toLowerCase().includes(needle);
+  }
+
+  function appendLinksRowsToActiveList(items) {
+    if (!items.length) {
+      updateLinksListChrome();
+      return;
+    }
+    const refs = currentLinksListElements();
+    if (!refs) {
+      if (optionsShouldRenderLinksPage()) {
+        render();
+      }
+      return;
+    }
+    const filtered = linksFilteredApps();
+    const handoffLocked = linksHandoffLocked();
+    refs.listCount.textContent = linksCountLabel(filtered);
+    refs.footer.textContent = linksFooterText(filtered);
+    refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
+    if (!filtered.length || !refs.list.querySelector(".links-app-row")) {
+      renderLinksListContents(refs.list, refs.listCount, refs.footer, handoffLocked);
+      return;
+    }
+    const needle = String(state.links.search || "").trim().toLowerCase();
+    const remoteQueryActive = Boolean(state.links.catalogQuery) && state.links.catalogQuery === linksRequestedCatalogQuery();
+    const toAppend = items.filter(app => !needle || remoteQueryActive || linksMatchesSearch(app, needle));
+    if (!toAppend.length) {
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    toAppend.forEach(app => {
+      fragment.append(createLinksRow(app, handoffLocked));
+    });
+    refs.list.append(fragment);
+  }
+
+  function linksRequestedCatalogQuery() {
+    const query = String(state.links.search || "").trim();
+    return query.length >= LINKS_REMOTE_SEARCH_MIN ? query : "";
   }
 
   async function loadLinksAllApps(options = {}) {
     if (!state.links.token) {
       return;
     }
-    const found = [];
-    let offset = 0;
-    let hasMore = true;
-    let pages = 0;
-    while (hasMore && pages < 30) {
-      const payload = await linksApiRequest(
-        `/api/links/composio/all-apps?token=${encodeURIComponent(state.links.token)}&offset=${offset}&limit=100`
-      );
-      const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
-      if (!list.length) {
-        break;
-      }
-      found.push(...list.map(normalizeLinksApp).filter(item => item.slug && item.name));
-      offset += list.length;
-      hasMore = Boolean(payload && payload.has_more);
-      pages += 1;
+    const requestId = state.links.catalogRequestId;
+    const query = String(options.query ?? state.links.catalogQuery ?? "");
+    const offset = safeNumber(options.offset);
+    const firstPage = offset <= 0;
+    const limit = safeNumber(options.limit) || LINKS_INITIAL_PAGE_SIZE;
+    const { payload, list } = await fetchLinksAllAppsPage(offset, limit, query);
+    if (state.links.catalogRequestId !== requestId) {
+      return;
     }
-    found.sort((a, b) => {
-      const aConnected = state.links.connectedSlugs.has(a.slug) ? 0 : 1;
-      const bConnected = state.links.connectedSlugs.has(b.slug) ? 0 : 1;
-      if (aConnected !== bConnected) {
-        return aConnected - bConnected;
-      }
-      return a.name.localeCompare(b.name);
-    });
-    state.links.apps = found;
+    const appended = applyLinksAllAppsPage(list, payload, { firstPage, query });
     if (options.render) {
       render();
     }
+    if (!firstPage && options.appendDom !== false) {
+      appendLinksRowsToActiveList(appended);
+    }
+  }
+
+  async function loadMoreLinksApps() {
+    if (!state.links.token || state.links.loading || state.links.loadingPage || !state.links.catalogHasMore) {
+      return;
+    }
+    const requestId = state.links.catalogRequestId;
+    state.links.loadingPage = true;
+    updateLinksListChrome();
+    try {
+      await loadLinksAllApps({
+        offset: safeNumber(state.links.nextOffset),
+        limit: LINKS_INITIAL_PAGE_SIZE,
+        query: state.links.catalogQuery,
+        appendDom: true,
+        render: false
+      });
+    } catch (error) {
+      if (state.links.catalogRequestId !== requestId) {
+        return;
+      }
+      state.links.message = String(error && error.message ? error.message : "Could not load more apps.");
+      state.links.messageKind = "";
+    } finally {
+      if (state.links.catalogRequestId === requestId) {
+        state.links.loadingPage = false;
+        updateLinksListChrome();
+        if (state.links.message && optionsShouldRenderLinksPage()) {
+          render();
+        }
+      }
+    }
+  }
+
+  let linksSearchTimer = 0;
+
+  function clearLinksSearchTimer() {
+    if (linksSearchTimer) {
+      clearTimeout(linksSearchTimer);
+      linksSearchTimer = 0;
+    }
+  }
+
+  async function refreshLinksSearchResults() {
+    if (!state.links.token || !optionsShouldRenderLinksPage()) {
+      return;
+    }
+    const requestedQuery = linksRequestedCatalogQuery();
+    if (!requestedQuery && !state.links.catalogQuery) {
+      if (optionsShouldRenderLinksPage()) {
+        render();
+      }
+      return;
+    }
+    if (requestedQuery === state.links.catalogQuery) {
+      if (optionsShouldRenderLinksPage()) {
+        render();
+      }
+      return;
+    }
+    resetLinksCatalogState({ keepSearch: true, query: requestedQuery });
+    state.links.loading = true;
+    state.links.error = "";
+    state.links.message = "";
+    state.links.messageKind = "";
+    if (optionsShouldRenderLinksPage()) {
+      render();
+    }
+    try {
+      await loadLinksAllApps({ render: false, query: requestedQuery });
+    } catch (error) {
+      state.links.error = String(error && error.message ? error.message : "Unable to search Links");
+      linksDebugRecord("handoff_error", { stage: "search", detail: state.links.error }, "route");
+    } finally {
+      state.links.loading = false;
+      if (optionsShouldRenderLinksPage()) {
+        render();
+      }
+    }
+  }
+
+  function scheduleLinksSearchRefresh() {
+    clearLinksSearchTimer();
+    linksSearchTimer = window.setTimeout(() => {
+      linksSearchTimer = 0;
+      void refreshLinksSearchResults();
+    }, LINKS_SEARCH_DEBOUNCE_MS);
+  }
+
+  function maybeLoadMoreLinksOnScroll(feed) {
+    if (!feed || state.route !== "links" || state.links.loading || state.links.loadingPage || linksHandoffLocked()) {
+      return;
+    }
+    if (linksRequestedCatalogQuery() !== state.links.catalogQuery) {
+      return;
+    }
+    if (!state.links.firstPageReady || !state.links.catalogHasMore) {
+      return;
+    }
+    if (feed.scrollTop + feed.clientHeight < feed.scrollHeight - LINKS_SCROLL_LOAD_THRESHOLD_PX) {
+      return;
+    }
+    void loadMoreLinksApps();
   }
 
   async function refreshLinksConnectedSoon(options = {}) {
@@ -992,28 +1465,82 @@
     }
   }
 
-  async function openLinksAuthFlow(app) {
-    const slug = String(app && app.slug || "").trim();
-    if (!slug || !state.links.token) {
-      return;
+  let linksHandoffTimer = 0;
+
+  function clearLinksHandoffTimer() {
+    if (linksHandoffTimer) {
+      clearTimeout(linksHandoffTimer);
+      linksHandoffTimer = 0;
     }
+  }
+
+  function linksHandoffLocked() {
+    return Boolean(state.route === "links" && state.links.handoffLocked);
+  }
+
+  function releaseLinksHandoff(options = {}) {
+    const wasLocked = state.links.handoffLocked;
+    const slug = String(state.links.openingSlug || "");
+    clearLinksHandoffTimer();
+    state.links.handoffLocked = false;
+    state.links.handoffDeadlineAt = 0;
+    state.links.openingSlug = "";
+    if (wasLocked) {
+      linksDebugRecord("handoff_unlock", { slug, reason: String(options.reason || "release") }, "click");
+      if (options.clearClick !== false) {
+        state.links.debugClickSessionId = "";
+      }
+    }
+    if (options.render !== false) {
+      render();
+    }
+  }
+
+  function startLinksHandoff(slug) {
+    clearLinksHandoffTimer();
+    state.links.handoffLocked = true;
+    state.links.handoffDeadlineAt = Date.now() + LINKS_BROWSER_HANDOFF_LOCK_MS;
     state.links.openingSlug = slug;
     state.links.error = "";
     state.links.message = "";
     state.links.messageKind = "";
+    linksHandoffTimer = setTimeout(() => {
+      if (!state.links.handoffLocked || state.links.openingSlug !== slug) {
+        return;
+      }
+      releaseLinksHandoff();
+    }, LINKS_BROWSER_HANDOFF_LOCK_MS);
+  }
+
+  async function openLinksAuthFlow(app) {
+    const slug = String(app && app.slug || "").trim();
+    if (!slug || !state.links.token || linksHandoffLocked()) {
+      return;
+    }
+    linksDebugStartClickSession(slug);
+    startLinksHandoff(slug);
     render();
     try {
+      linksDebugRecord("oauth_start_start", { slug }, "click");
       const payload = await linksApiRequest(
         `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`
+      );
+      linksDebugRecord(
+        "oauth_start_end",
+        {
+          slug,
+          auth_mode: String(payload && payload.auth_mode || state.links.auth_mode),
+          server_timing: String(payload && payload._server_timing || "")
+        },
+        "click"
       );
       const authUrl = String(payload && payload.auth_url || "").trim();
       if (!authUrl) {
         throw new Error("Links did not return a valid auth URL.");
       }
       if (String(payload && payload.auth_mode || state.links.auth_mode) === "browser") {
+        linksDebugRecord("browser_open_requested", { slug }, "click");
         await Pucky.request({ command: "browser.open", args: { url: authUrl } });
-        state.links.message = `Opened ${app.name || slug} in your browser. Come back here when you are done.`;
-        state.links.messageKind = "ok";
       } else if (window.location && typeof window.location.assign === "function") {
         window.location.assign(authUrl);
         return;
@@ -1028,9 +1555,12 @@
       } else {
         state.links.error = detail || "Could not open the auth flow.";
       }
+      linksDebugRecord("handoff_error", { slug, detail: state.links.error }, "click");
+      releaseLinksHandoff({ render: false, reason: "error" });
     } finally {
-      state.links.openingSlug = "";
-      render();
+      if (!state.links.handoffLocked) {
+        render();
+      }
     }
   }
 
@@ -1054,6 +1584,10 @@
     }
     const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
     const payload = await response.json().catch(() => ({}));
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      payload._server_timing = String(response.headers.get("Server-Timing") || "");
+      payload._http_status = response.status;
+    }
     if (!response.ok) {
       throw new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
     }
@@ -1214,7 +1748,22 @@
       connectedApps: [],
       connectedSlugs: new Set(),
       search: "",
+      catalogQuery: "",
       openingSlug: "",
+      handoffLocked: false,
+      handoffDeadlineAt: 0,
+      firstPageReady: false,
+      totalAvailable: 0,
+      catalogHasMore: false,
+      catalogFetchedAll: false,
+      loadingPage: false,
+      nextOffset: 0,
+      catalogRequestId: 0,
+      debugRouteSessionId: "",
+      debugClickSessionId: "",
+      firstRowsTelemetrySent: false,
+      logoLoads: 0,
+      logoErrors: 0,
       message: "",
       messageKind: "",
       lastRefreshAt: 0
@@ -1488,11 +2037,15 @@
   function tabView(tab) {
     const button = el("button", tab.route === state.route ? "tab is-active" : "tab");
     button.type = "button";
+    button.disabled = linksHandoffLocked();
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
     button.addEventListener("click", () => {
+      if (linksHandoffLocked()) {
+        return;
+      }
       rememberFeedScroll();
       if (state.route === tab.route) {
         state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
@@ -1507,6 +2060,8 @@
         restoreFeedScroll();
         syncFeedCards({ reason: "route_feed", silent: true, render: true });
       } else if (state.route === "links") {
+        linksDebugStartSession("route", { reason: "route_open" });
+        linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
         loadLinksPortal({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
@@ -1588,6 +2143,7 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
+    feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked());
     if (state.route === "settings") {
       feed.replaceChildren(settingsPageView());
       return;
@@ -1759,6 +2315,8 @@
 
   function linksPageView() {
     const page = el("section", "links-page");
+    const handoffLocked = linksHandoffLocked();
+    page.classList.toggle("is-handoff-lock", handoffLocked);
 
     if (state.links.error || state.links.message) {
       const message = el(
@@ -1769,7 +2327,7 @@
       page.append(message);
     }
 
-    if (!state.links.token && state.links.loading) {
+    if (state.links.loading && !state.links.firstPageReady && !state.links.apps.length) {
       const empty = el("div", "links-empty", "");
       empty.append(
         el("strong", "", "Loading Links..."),
@@ -1788,6 +2346,8 @@
       const retry = el("button", "links-open-button", "Retry");
       retry.type = "button";
       retry.addEventListener("click", () => {
+        linksDebugStartSession("route", { reason: "force_reload" });
+        linksDebugRecord("links_route_enter", { reason: "force_reload" }, "route");
         loadLinksPortal({ render: true, force: true });
       });
       empty.append(retry);
@@ -1815,6 +2375,7 @@
     search.placeholder = "Search apps";
     search.autocomplete = "off";
     search.spellcheck = false;
+    search.disabled = handoffLocked;
     search.value = state.links.search;
     searchWrap.append(search);
     page.append(searchWrap);
@@ -1827,54 +2388,33 @@
     listCard.append(listHead);
     const list = el("div", "links-list");
     listCard.append(list);
+    const footer = el("div", "links-loading-footer", "");
+    listCard.append(footer);
     page.append(listCard);
 
     const renderList = () => {
-      const filtered = linksFilteredApps();
-      listCount.textContent = filtered.length ? String(filtered.length) : "";
-      list.replaceChildren();
-      if (!filtered.length) {
-        list.append(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
-        return;
-      }
-      filtered.forEach(app => {
-        const row = el("button", "links-app-row");
-        row.type = "button";
-        row.disabled = state.links.openingSlug === app.slug;
-
-        const icon = el("span", "links-app-icon");
-        const fallback = el("span", "links-app-fallback", linksAppInitial(app));
-        if (app.logo) {
-          const img = document.createElement("img");
-          img.className = "links-app-logo";
-          img.src = app.logo;
-          img.alt = "";
-          img.loading = "lazy";
-          img.decoding = "async";
-          img.addEventListener("load", () => {
-            icon.classList.add("has-image");
-          });
-          img.addEventListener("error", () => {
-            img.remove();
-          });
-          icon.append(img);
-        }
-        icon.append(fallback);
-
-        const name = el("span", "links-app-name", app.name || app.slug);
-        const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
-        const mark = el("span", state.links.connectedSlugs.has(app.slug) ? "links-app-mark is-connected" : "links-app-mark");
-
-        row.append(icon, name, auth, mark);
-        row.addEventListener("click", () => {
-          openLinksAuthFlow(app);
-        });
-        list.append(row);
-      });
+      renderLinksListContents(list, listCount, footer, handoffLocked);
     };
     search.addEventListener("input", () => {
       state.links.search = search.value;
+      linksDebugRecord("search_input", { search_value: state.links.search }, "route");
+      const requestedQuery = linksRequestedCatalogQuery();
+      if (!requestedQuery && !state.links.catalogQuery) {
+        renderList();
+        return;
+      }
       renderList();
+      scheduleLinksSearchRefresh();
+    });
+    search.addEventListener("search", () => {
+      state.links.search = search.value;
+      linksDebugRecord("search_input", { search_value: state.links.search }, "route");
+      if (!linksRequestedCatalogQuery() && !state.links.catalogQuery) {
+        renderList();
+        return;
+      }
+      renderList();
+      scheduleLinksSearchRefresh();
     });
     renderList();
     return page;
@@ -1882,21 +2422,15 @@
 
   function linksFilteredApps() {
     const needle = String(state.links.search || "").trim().toLowerCase();
-    const apps = (Array.isArray(state.links.apps) ? state.links.apps : []).filter(app =>
-      !needle || (
-      String(app.name || "").toLowerCase().includes(needle) ||
-      String(app.slug || "").toLowerCase().includes(needle)
-      )
-    );
-    apps.sort((a, b) => {
-      const aConnected = state.links.connectedSlugs.has(a.slug) ? 0 : 1;
-      const bConnected = state.links.connectedSlugs.has(b.slug) ? 0 : 1;
-      if (aConnected !== bConnected) {
-        return aConnected - bConnected;
-      }
-      return String(a.name || "").localeCompare(String(b.name || ""));
-    });
-    return apps;
+    const apps = Array.isArray(state.links.apps) ? state.links.apps : [];
+    if (!needle) {
+      return apps;
+    }
+    const remoteQueryActive = Boolean(state.links.catalogQuery) && state.links.catalogQuery === linksRequestedCatalogQuery();
+    if (remoteQueryActive) {
+      return apps;
+    }
+    return apps.filter(app => linksMatchesSearch(app, needle));
   }
 
   function linksAppInitial(app) {
@@ -5622,6 +6156,7 @@
     feed.addEventListener("scroll", debounce(() => {
       rememberFeedScroll();
       persistNavState();
+      maybeLoadMoreLinksOnScroll(feed);
     }, 120), { passive: true });
   }
 
@@ -6192,6 +6727,10 @@
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      if (state.links.handoffLocked) {
+        linksDebugRecord("document_hidden", { slug: String(state.links.openingSlug || "") }, "click");
+        releaseLinksHandoff({ render: false, reason: "document_hidden" });
+      }
       persistNavState();
       return;
     }
@@ -6218,6 +6757,8 @@
   loadCardIconRegistry({ render: false });
   loadCards();
   if (state.route === "links") {
+    linksDebugStartSession("route", { reason: "boot_route" });
+    linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
     loadLinksPortal({ render: true });
   }
 })();

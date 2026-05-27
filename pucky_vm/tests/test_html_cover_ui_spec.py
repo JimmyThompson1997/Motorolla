@@ -79,8 +79,24 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "loadLinksPortal({ render: true });" in app
     assert '"/api/links/composio/portal-url"' in app
     assert 'state.links.token = payload.token;' in app
+    assert "const LINKS_INITIAL_PAGE_SIZE = 24;" in app
+    assert "const LINKS_REMOTE_SEARCH_MIN = 2;" in app
+    assert "const LINKS_SEARCH_DEBOUNCE_MS = 180;" in app
+    assert "const LINKS_BACKGROUND_PAGE_SIZE = 100;" not in app
+    assert "streamRemainingLinksApps" not in app
+    assert "Scroll for more apps." in app
+    assert "Loading more results..." in app
     assert "Links did not return a valid auth URL." in app
-    assert "Opened " in app
+    assert "Opened " not in app
+    assert "linksHandoffLocked()" in app
+    assert "window.__PUCKY_LINKS_DEBUG__" in app
+    assert 'console.info("links.telemetry", entry);' in app
+    assert "startLinksHandoff(slug);" in app
+    assert 'releaseLinksHandoff({ render: false, reason: "error" });' in app
+    assert "state.links.handoffLocked = true;" in app
+    assert "state.links.handoffLocked = false;" in app
+    assert "state.links.handoffDeadlineAt = Date.now() + LINKS_BROWSER_HANDOFF_LOCK_MS;" in app
+    assert 'state.links.openingSlug !== slug || document.visibilityState === "hidden"' not in app
     assert 'el("h1", "links-title", "Links")' not in app
     assert "Quick search. Tap an app to open the Composio connect flow." not in app
     assert "configuredLinksUrl()" not in app
@@ -104,6 +120,11 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-app-mark.is-connected" in styles
     assert ".links-open-button" in styles
     assert ".links-search" in styles
+    assert ".links-loading-footer" in styles
+    assert ".feed.is-links-handoff-locked" in styles
+    assert ".links-page.is-handoff-lock" in styles
+    assert ".links-app-row.is-opening" in styles
+    assert "@keyframes linksHandoffPulse" in styles
     assert ".links-filter" not in styles
     assert ".links-app-row" in styles
     assert "min-height: 52px" in styles
@@ -141,8 +162,29 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "return queryRoute;" in app
     assert '"/api/links/composio/portal-url"' in app
     assert '/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}' in app
+    assert '"all_apps_page_start"' in app
+    assert '"all_apps_page_end"' in app
+    assert '"full_catalog_hydrated"' not in app
+    assert '"oauth_start_start"' in app
+    assert '"oauth_start_end"' in app
+    assert '"browser_open_requested"' in app
+    assert '"document_hidden"' in app
     assert 'command: "browser.open"' in app
     assert "Browser handoff failed." in app
+    assert "button.disabled = linksHandoffLocked();" in app
+    assert "search.disabled = handoffLocked;" in app
+    assert "row.disabled = handoffLocked;" in app
+    assert "const connectedPromise = loadLinksConnected({ render: false })" in app
+    assert "await loadLinksAllApps({ render: false, query: state.links.catalogQuery });" in app
+    assert "if (!state.links.firstPageReady || !state.links.apps.length)" in app
+    assert "state.links.totalAvailable = 0;" in app
+    assert "state.links.catalogFetchedAll = false;" in app
+    assert "state.links.loadingPage = false;" in app
+    assert "state.links.catalogQuery = String(options.query || \"\");" in app
+    assert "scheduleLinksSearchRefresh();" in app
+    assert "maybeLoadMoreLinksOnScroll(feed);" in app
+    assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' in app
+    assert 'page.classList.toggle("is-handoff-lock", handoffLocked);' in app
     assert "window.location.assign(payload.portal_url);" not in app
     assert '"/api/links/apps"' not in app
     assert '"/api/links/status"' not in app
