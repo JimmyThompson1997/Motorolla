@@ -12,7 +12,14 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from pucky_vm.server import Config, PuckyVoiceService, make_handler, parse_reply_envelope, reset_broker_for_tests
+from pucky_vm.server import (
+    Config,
+    PuckyVoiceService,
+    make_handler,
+    parse_reply_envelope,
+    reply_output_schema,
+    reset_broker_for_tests,
+)
 
 
 class FakeSTT:
@@ -708,6 +715,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.reply_text, "Plain answer text.")
         self.assertEqual(envelope.card_title, "Plain answer text.")
         self.assertEqual(envelope.card_icon, "mail")
+
+    def test_reply_output_schema_requires_nullable_attachment_fields(self) -> None:
+        schema = reply_output_schema()
+        attachments = schema["properties"]["attachments"]
+        self.assertEqual(attachments["type"], ["array", "null"])
+        self.assertIn("attachments", schema["required"])
+        item_schema = attachments["items"]
+        self.assertEqual(
+            item_schema["required"],
+            ["path", "mime_type", "title", "kind", "viewer_path", "preview_path", "text"],
+        )
+        for key in item_schema["required"]:
+            self.assertEqual(item_schema["properties"][key]["type"], ["string", "null"])
 
     def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(

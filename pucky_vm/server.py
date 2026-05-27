@@ -1175,19 +1175,19 @@ def reply_output_schema() -> dict[str, object]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "path": {"type": "string"},
-                        "mime_type": {"type": "string"},
-                        "title": {"type": "string"},
-                        "kind": {"type": "string"},
-                        "viewer_path": {"type": "string"},
-                        "preview_path": {"type": "string"},
-                        "text": {"type": "string"},
+                        "path": {"type": ["string", "null"]},
+                        "mime_type": {"type": ["string", "null"]},
+                        "title": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "viewer_path": {"type": ["string", "null"]},
+                        "preview_path": {"type": ["string", "null"]},
+                        "text": {"type": ["string", "null"]},
                     },
-                    "required": ["title"],
+                    "required": ["path", "mime_type", "title", "kind", "viewer_path", "preview_path", "text"],
                 },
             },
         },
-        "required": ["reply_text", "card_title", "card_icon", "html"],
+        "required": ["reply_text", "card_title", "card_icon", "html", "attachments"],
     }
 
 
