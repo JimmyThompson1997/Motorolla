@@ -279,6 +279,8 @@ def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list
         "-port",
         str(config.emulator_port),
         "-no-window",
+        "-partition-size",
+        DEFAULT_USERDATA_PARTITION_MB,
     ]
     mode = getattr(args, "audio_mode", "none")
     if mode == "none":
@@ -299,8 +301,16 @@ def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list
     return command
 
 
-def tune_avd_config(config: SlotConfig, *, userdata_size: str = DEFAULT_USERDATA_PARTITION_SIZE) -> None:
+def tune_avd_config(
+    config: SlotConfig,
+    *,
+    userdata_size: str = DEFAULT_USERDATA_PARTITION_SIZE,
+    wait_seconds: float = 10.0,
+) -> None:
     config_path = Path(config.avd_home) / f"{config.avd_name}.avd" / "config.ini"
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    while not config_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.25)
     if not config_path.exists():
         return
     lines = config_path.read_text(encoding="utf-8").splitlines()
@@ -656,11 +666,35 @@ def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Pa
 
 
 def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
-    result = runner.run(command, timeout=timeout)
+    attempts = 3
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            result = runner.run(command, timeout=timeout)
+            break
+        except SuiteError as exc:
+            if attempt >= attempts or not is_transient_puckyctl_failure(exc):
+                raise
+            last_error = exc
+            time.sleep(0.5 * attempt)
+    else:
+        raise last_error or SuiteError("Unknown puckyctl command failure")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
         return {"raw_stdout": result.stdout, "raw_stderr": result.stderr}
+
+
+def is_transient_puckyctl_failure(exc: Exception) -> bool:
+    text = str(exc or "")
+    markers = (
+        "WinError 10053",
+        "WinError 10054",
+        "ConnectionAbortedError",
+        "ConnectionResetError",
+        "RemoteDisconnected",
+    )
+    return any(marker in text for marker in markers)
 
 
 def extract_json(text: str) -> dict[str, Any] | None:
@@ -1106,6 +1140,8 @@ def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
         raise SuiteError(f"APK not found: {args.apk}")
     runner.run(adb_command(args, config.serial, ["reverse", f"tcp:{config.broker_port}", f"tcp:{config.broker_port}"]), timeout=30)
     runner.run(adb_command(args, config.serial, ["install", "-r", str(args.apk)]), timeout=180)
+    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.RECORD_AUDIO"]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.POST_NOTIFICATIONS"]), timeout=30, check=False)
     runner.run(adb_command(args, config.serial, ["shell", "wm", "size", "1056x1056"]), timeout=30)
     runner.run(adb_command(args, config.serial, ["shell", "wm", "density", "420"]), timeout=30)
     runner.run(launch_command(args, config), timeout=30)
@@ -1172,10 +1208,10 @@ def cmd_seed_ui(args: argparse.Namespace) -> dict[str, Any]:
             "ui.bundle.refresh",
             {"url": f"http://127.0.0.1:{config.ui_port}/pucky-ui-latest.zip", "max_bytes": args.max_bundle_bytes},
         ),
-        timeout=120,
+        timeout=300,
     )
     cards_payload = cards_payload_from_args(args, config)
-    cards_status = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.set", cards_payload), timeout=120)
+    cards_status = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.set", cards_payload), timeout=300)
     if not args.dry_run:
         state = load_state(ROOT, args.slot)
         pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
@@ -1238,6 +1274,124 @@ def cmd_smoke(args: argparse.Namespace) -> dict[str, Any]:
 def command_result(payload: dict[str, Any]) -> dict[str, Any]:
     result = payload.get("result")
     return result if isinstance(result, dict) else payload
+
+
+def wake_status(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    return command_result(command_json(runner, puckyctl_command(args, config, "wake.status", {}), timeout=60))
+
+
+def wake_command(args: argparse.Namespace, runner: Runner, config: SlotConfig, name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return command_result(command_json(runner, puckyctl_command(args, config, name, payload or {}), timeout=120))
+
+
+def turn_status(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    return command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.status", {}), timeout=60))
+
+
+def appops_record_audio(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
+    result = runner.run(
+        adb_command(args, config.serial, ["shell", "cmd", "appops", "get", args.package_name, "RECORD_AUDIO"]),
+        timeout=30,
+        check=False,
+    )
+    return (result.stdout + "\n" + result.stderr).strip()
+
+
+def appops_indicates_running(text: str) -> bool:
+    return "running" in str(text or "").lower()
+
+
+def dumpsys_audio_excerpt(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
+    result = runner.run(
+        adb_command(args, config.serial, ["shell", "dumpsys", "audio"]),
+        timeout=45,
+        check=False,
+    )
+    text = (result.stdout + "\n" + result.stderr).splitlines()
+    lowered_package = args.package_name.lower()
+    matches = [line for line in text if lowered_package in line.lower() or "voice_recognition" in line.lower()]
+    return "\n".join(matches[:120]) if matches else "\n".join(text[:120])
+
+
+def filtered_logcat(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
+    result = runner.run(
+        adb_command(
+            args,
+            config.serial,
+            ["logcat", "-d", "PuckyWakeWord:V", "PuckyWakeRecognizer:V", "AudioRecord:V", "*:S"],
+        ),
+        timeout=45,
+        check=False,
+    )
+    return (result.stdout + "\n" + result.stderr).strip()
+
+
+def wait_for_wake_status(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    predicate,
+    *,
+    timeout_seconds: float = 20.0,
+    sleep_seconds: float = 0.5,
+    description: str = "wake status condition",
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        last = wake_status(args, runner, config)
+        if predicate(last):
+            return last
+        time.sleep(sleep_seconds)
+    raise SuiteError(f"Timed out waiting for {description}: {last}")
+
+
+def wait_for_turn_status(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    predicate,
+    *,
+    timeout_seconds: float = 20.0,
+    sleep_seconds: float = 0.5,
+    description: str = "turn status condition",
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        last = turn_status(args, runner, config)
+        if predicate(last):
+            return last
+        time.sleep(sleep_seconds)
+    raise SuiteError(f"Timed out waiting for {description}: {last}")
+
+
+def wake_stage_snapshot(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    stage: str,
+    *,
+    screenshot_name: str | None = None,
+) -> dict[str, Any]:
+    wake = wake_status(args, runner, config)
+    turn = turn_status(args, runner, config)
+    appops = appops_record_audio(args, runner, config)
+    audio = dumpsys_audio_excerpt(args, runner, config)
+    screenshot_path = ""
+    if screenshot_name and not runner.dry_run:
+        screenshot = Path(config.evidence_dir) / screenshot_name
+        capture_screenshot(args, runner, config, screenshot)
+        screenshot_path = str(screenshot)
+    return {
+        "stage": stage,
+        "wake_status": wake,
+        "turn_status": turn,
+        "appops_record_audio": appops,
+        "appops_running": appops_indicates_running(appops),
+        "dumpsys_audio_excerpt": audio,
+        "screenshot": screenshot_path,
+    }
 
 
 def ensure_broker_command_channel(
@@ -1818,6 +1972,339 @@ def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def wake_lab_gates(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    snapshots: list[dict[str, Any]] = []
+    commands: list[dict[str, Any]] = []
+
+    commands.append({"wake.stop": wake_command(args, runner, config, "wake.stop", {})})
+    snapshots.append(wake_stage_snapshot(args, runner, config, "after_wake_stop", screenshot_name="wake-gates-stop.png"))
+
+    commands.append({
+        "wake.config.set": wake_command(
+            args,
+            runner,
+            config,
+            "wake.config.set",
+            {"enabled": True, "recognizer_mode": "fake"},
+        )
+    })
+    armed = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        description="wake running after wake.start",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "armed", screenshot_name="wake-gates-armed.png"))
+
+    runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "26"]), timeout=30)
+    blocked = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: status.get("suspended_reason") == "device_not_interactive",
+        description="wake blocked after screen off",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "screen_off", screenshot_name="wake-gates-screen-off.png"))
+
+    runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "224"]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "wm", "dismiss-keyguard"]), timeout=30, check=False)
+    runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "82"]), timeout=30, check=False)
+    rearmed = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        description="wake rearmed after wake/unlock",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "screen_on", screenshot_name="wake-gates-screen-on.png"))
+
+    commands.append({
+        "pucky.turn.start": wake_command(
+            args,
+            runner,
+            config,
+            "pucky.turn.start",
+            {"trigger_source": "volume_up_hold", "source": "volume_up_hold"},
+        )
+    })
+    wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: status.get("suspended_reason") == "turn_active",
+        description="wake paused during manual turn",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "turn_active", screenshot_name="wake-gates-turn-active.png"))
+
+    commands.append({"pucky.turn.stop": wake_command(args, runner, config, "pucky.turn.stop", {"reason": "wake_lab"})})
+    wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        description="wake resumed after manual turn stop",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "turn_idle", screenshot_name="wake-gates-turn-idle.png"))
+
+    runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
+    time.sleep(1.0)
+    runner.run(launch_command(args, config), timeout=30)
+    ensure_broker_command_channel(args, runner, config, stage="wake_lab_relaunch", timeout_seconds=90)
+    wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        timeout_seconds=30.0,
+        description="wake running after relaunch",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "after_relaunch", screenshot_name="wake-gates-relaunch.png"))
+
+    commands.append({"wake.stop.final": wake_command(args, runner, config, "wake.stop", {})})
+    stopped = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: not bool(status.get("running")) and not bool(status.get("requested_enabled")),
+        description="wake stopped at end of gates scenario",
+    )
+    snapshots.append(wake_stage_snapshot(args, runner, config, "final_stop", screenshot_name="wake-gates-final-stop.png"))
+
+    return {
+        "scenario": "gates",
+        "snapshots": snapshots,
+        "commands": commands,
+        "checks": {
+            "armed_running": bool(armed.get("running")),
+            "armed_appops_running": appops_indicates_running(snapshots[1]["appops_record_audio"]),
+            "screen_off_blocked": blocked.get("suspended_reason") == "device_not_interactive",
+            "screen_on_rearmed": bool(rearmed.get("running")),
+            "relaunch_rearmed": bool(snapshots[-2]["wake_status"].get("running")),
+            "final_stop_requested_disabled": not bool(stopped.get("requested_enabled")),
+        },
+    }
+
+
+def wake_lab_simulated_transcripts(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    cases = [
+        {"label": "hey-pucky-partial", "payload": {"event": "partial", "transcript": "Hey Pucky what is this"}, "accepted": True, "matched": "hey pucky"},
+        {"label": "pucky-final", "payload": {"event": "final", "transcript": "Pucky"}, "accepted": True, "matched": "pucky"},
+        {"label": "hey-bucky-partial", "payload": {"event": "partial", "transcript": "Hey Bucky can you hear me"}, "accepted": True, "matched": "hey bucky"},
+        {"label": "hey-pookie-final", "payload": {"event": "final", "transcript": "Hey Pookie"}, "accepted": True, "matched": "hey pookie"},
+        {"label": "hey-pocky-final", "payload": {"event": "final", "transcript": "Hey Pocky"}, "accepted": True, "matched": "hey pocky"},
+        {"label": "hey-pupp-partial", "payload": {"event": "partial", "transcript": "Hey Pupp test"}, "accepted": True, "matched": "hey pucky"},
+        {"label": "pucky-test-final", "payload": {"event": "final", "transcript": "Pucky test 123"}, "accepted": True, "matched": "pucky"},
+        {"label": "alternative-hit", "payload": {"event": "partial", "transcript": "noise", "alternatives": ["Hey Pucky"]}, "accepted": True, "matched": "hey pucky"},
+        {"label": "parking-negative", "payload": {"event": "final", "transcript": "Parking"}, "accepted": False, "matched": ""},
+        {"label": "hear-me-negative", "payload": {"event": "final", "transcript": "Can you hear me at all"}, "accepted": False, "matched": ""},
+        {"label": "lucky-day-negative", "payload": {"event": "final", "transcript": "Lucky day"}, "accepted": False, "matched": ""},
+        {"label": "puppet-show-negative", "payload": {"event": "final", "transcript": "Puppet show"}, "accepted": False, "matched": ""},
+    ]
+    commands: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+
+    wake_command(args, runner, config, "wake.stop", {})
+    wake_command(args, runner, config, "wake.config.set", {"enabled": True, "recognizer_mode": "fake"})
+    wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake running before simulated transcript matrix")
+
+    for case in cases:
+        response = wake_command(args, runner, config, "wake.simulate", case["payload"])
+        snapshot = wake_stage_snapshot(args, runner, config, case["label"], screenshot_name=f"wake-{case['label']}.png")
+        matched = str(response.get("matched_phrase") or "")
+        accepted = bool(response.get("accepted"))
+        result = {
+            "label": case["label"],
+            "response": response,
+            "snapshot": snapshot,
+            "accepted": accepted,
+            "matched_phrase": matched,
+            "expected_accepted": case["accepted"],
+            "expected_matched": case["matched"],
+            "turn_idle": str(snapshot["turn_status"].get("state", "idle")) == "idle",
+        }
+        results.append(result)
+        commands.append({case["label"]: response})
+        if case["accepted"]:
+            wait_for_wake_status(
+                args,
+                runner,
+                config,
+                lambda status: bool(status.get("running")),
+                timeout_seconds=8.0,
+                description=f"wake rearmed after {case['label']}",
+            )
+
+    return {
+        "scenario": "simulated-transcripts",
+        "commands": commands,
+        "results": results,
+        "all_passed": all(
+            item["accepted"] == item["expected_accepted"]
+            and item["matched_phrase"] == item["expected_matched"]
+            and item["turn_idle"]
+            for item in results
+        ),
+    }
+
+
+def wake_lab_restart_regression(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    errors = ["ERROR_NO_MATCH", "ERROR_SPEECH_TIMEOUT", "ERROR_TOO_MANY_REQUESTS", "ERROR_CLIENT"]
+    results: list[dict[str, Any]] = []
+
+    wake_command(args, runner, config, "wake.stop", {})
+    wake_command(args, runner, config, "wake.config.set", {"enabled": True, "recognizer_mode": "fake"})
+    wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake running before restart regression")
+
+    for error_code in errors:
+        response = wake_command(
+            args,
+            runner,
+            config,
+            "wake.simulate",
+            {"event": "error", "error_code": error_code, "error_message": f"Simulated {error_code}"},
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")),
+            timeout_seconds=8.0,
+            description=f"wake rearmed after {error_code}",
+        )
+        results.append({
+            "error_code": error_code,
+            "response": response,
+            "rearmed_status": rearmed,
+            "restart_count": rearmed.get("restart_count"),
+            "last_restart_reason": rearmed.get("last_restart_reason"),
+        })
+
+    double_start_first = wake_command(args, runner, config, "wake.start", {})
+    double_start_second = wake_command(args, runner, config, "wake.start", {})
+    first_stop = wake_command(args, runner, config, "wake.stop", {})
+    second_stop = wake_command(args, runner, config, "wake.stop", {})
+    wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: not bool(status.get("running")) and not bool(status.get("requested_enabled")),
+        description="wake disabled after repeated stop",
+    )
+
+    wake_command(args, runner, config, "wake.start", {})
+    wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake rerunning before turn pause test")
+    wake_command(args, runner, config, "pucky.turn.start", {"trigger_source": "volume_up_hold", "source": "volume_up_hold"})
+    turn_blocked = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: status.get("suspended_reason") == "turn_active",
+        description="wake blocked during manual turn in restart regression",
+    )
+    wake_command(args, runner, config, "pucky.turn.stop", {"reason": "wake_lab"})
+    wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake resumed after manual turn in restart regression")
+
+    runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
+    time.sleep(1.0)
+    runner.run(launch_command(args, config), timeout=30)
+    ensure_broker_command_channel(args, runner, config, stage="wake_lab_restart_relaunch", timeout_seconds=90)
+    relaunch = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        timeout_seconds=30.0,
+        description="wake running after relaunch in restart regression",
+    )
+
+    return {
+        "scenario": "restart-regression",
+        "error_results": results,
+        "double_start_first": double_start_first,
+        "double_start_second": double_start_second,
+        "double_stop_first": first_stop,
+        "double_stop_second": second_stop,
+        "turn_blocked": turn_blocked,
+        "relaunch_status": relaunch,
+        "all_passed": all(
+            isinstance(item.get("restart_count"), (int, float)) and item.get("restart_count", 0) >= 1
+            for item in results
+        ) and turn_blocked.get("suspended_reason") == "turn_active" and bool(relaunch.get("running")),
+    }
+
+
+def wake_lab_host_audio_smoke(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    wake_command(args, runner, config, "wake.stop", {})
+    wake_command(args, runner, config, "wake.config.set", {"enabled": True, "recognizer_mode": "android"})
+    armed = wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake armed before host audio smoke")
+    before = wake_stage_snapshot(args, runner, config, "host_audio_before", screenshot_name="wake-host-before.png")
+    time.sleep(8.0 if not runner.dry_run else 0.0)
+    after = wake_stage_snapshot(args, runner, config, "host_audio_after", screenshot_name="wake-host-after.png")
+    return {
+        "scenario": "host-audio-smoke",
+        "armed_status": armed,
+        "before": before,
+        "after": after,
+        "note": "Evidence-only live recognizer smoke. Use emulator start --audio-mode host or wav-in for meaningful audio input.",
+    }
+
+
+def cmd_wake_lab(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    if args.slot != 2:
+        raise SuiteError("wake-lab is reserved for slot 2")
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    ensure_broker_command_channel(args, runner, config, stage="wake_lab_start", timeout_seconds=90)
+    runner.run(launch_home_command(args, config), timeout=30)
+    runner.run(adb_command(args, config.serial, ["logcat", "-c"]), timeout=30, check=False)
+
+    preflight = {
+        "broker_device": broker_device_snapshot(config),
+        "bundle_status": command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=60)),
+        "wake_status": wake_status(args, runner, config),
+    }
+
+    if args.scenario == "gates":
+        scenario_result = wake_lab_gates(args, runner, config)
+    elif args.scenario == "simulated-transcripts":
+        scenario_result = wake_lab_simulated_transcripts(args, runner, config)
+    elif args.scenario == "restart-regression":
+        scenario_result = wake_lab_restart_regression(args, runner, config)
+    elif args.scenario == "host-audio-smoke":
+        scenario_result = wake_lab_host_audio_smoke(args, runner, config)
+    else:
+        raise SuiteError(f"Unsupported wake-lab scenario: {args.scenario}")
+
+    final_snapshot = wake_stage_snapshot(args, runner, config, "final", screenshot_name=f"wake-{args.scenario}-final.png")
+    logcat_text = filtered_logcat(args, runner, config)
+    evidence = {
+        "schema": "pucky.emulator_wake_lab.v1",
+        "scenario": args.scenario,
+        "preflight": preflight,
+        "result": scenario_result,
+        "final_snapshot": final_snapshot,
+        "logcat": logcat_text,
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+    evidence_path = write_evidence(config, f"wake-lab-{args.scenario}.json", evidence)
+    return {
+        "schema": "pucky.emulator_wake_lab_result.v1",
+        "ok": True,
+        "config": asdict(config),
+        "scenario": args.scenario,
+        "evidence_path": str(evidence_path),
+        "result": scenario_result,
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+
+
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -1879,7 +2366,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -1893,6 +2380,12 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--cards-json", default="")
             item.add_argument("--cards-file", type=Path)
             item.add_argument("--max-bundle-bytes", type=int, default=20 * 1024 * 1024)
+        if name == "wake-lab":
+            item.add_argument(
+                "--scenario",
+                choices=("gates", "simulated-transcripts", "restart-regression", "host-audio-smoke"),
+                required=True,
+            )
         if name == "prove-thread-origin":
             item.add_argument("--turn-url", default=os.environ.get("PUCKY_TURN_URL", DEFAULT_TURN_URL))
             item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
@@ -1932,6 +2425,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_seed_ui(args)
     if args.command == "smoke":
         return cmd_smoke(args)
+    if args.command == "wake-lab":
+        return cmd_wake_lab(args)
     if args.command == "stop":
         return cmd_stop(args)
     if args.command == "clean":

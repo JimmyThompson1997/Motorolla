@@ -112,6 +112,8 @@ def test_create_and_start_commands_use_workspace_avd_home(tmp_path: Path) -> Non
         "-port",
         "5558",
         "-no-window",
+        "-partition-size",
+        suite.DEFAULT_USERDATA_PARTITION_MB,
         "-no-audio",
         "-no-snapshot-load",
         "-no-snapshot-save",
@@ -221,6 +223,96 @@ def test_parser_includes_pending_outbound_proof_command() -> None:
     assert args.long_press_ms == 360
 
 
+def test_parser_includes_wake_lab_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["wake-lab", "--slot", "2", "--scenario", "gates", "--dry-run"])
+
+    assert args.command == "wake-lab"
+    assert args.slot == 2
+    assert args.scenario == "gates"
+
+
+def test_wake_lab_gates_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(suite, "wake_command", lambda *_args: commands.append((_args[3], _args[4])) or {"ok": True})
+    monkeypatch.setattr(suite, "wake_stage_snapshot", lambda *_args, **_kwargs: {"wake_status": {"running": True}, "appops_record_audio": "RECORD_AUDIO: running", "turn_status": {"state": "idle"}})
+    monkeypatch.setattr(suite, "wait_for_wake_status", lambda *_args, **_kwargs: {"running": True, "requested_enabled": True, "suspended_reason": ""})
+    monkeypatch.setattr(runner, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    suite.wake_lab_gates(args, runner, config)
+
+    assert ("wake.config.set", {"enabled": True, "recognizer_mode": "fake"}) in commands
+
+
+def test_wake_lab_simulated_transcripts_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict]] = []
+
+    def fake_wake_command(*call_args):
+        command = call_args[3]
+        payload = call_args[4]
+        commands.append((command, payload))
+        if command == "wake.simulate":
+            transcript = str(payload.get("transcript", ""))
+            lowered = transcript.lower()
+            accepted = lowered.startswith("hey") or lowered.startswith("pucky")
+            matched = ""
+            if lowered.startswith("pucky"):
+                matched = "pucky"
+            elif lowered.startswith("hey pucky"):
+                matched = "hey pucky"
+            elif lowered.startswith("hey pupp"):
+                matched = "hey pucky"
+            elif lowered.startswith("hey bucky"):
+                matched = "hey bucky"
+            elif lowered.startswith("hey pookie"):
+                matched = "hey pookie"
+            elif lowered.startswith("hey pocky"):
+                matched = "hey pocky"
+            if transcript in {"Parking", "Can you hear me at all", "Lucky day", "Puppet show"}:
+                accepted = False
+                matched = ""
+            if payload.get("alternatives") == ["Hey Pucky"]:
+                accepted = True
+                matched = "hey pucky"
+            return {"accepted": accepted, "matched_phrase": matched}
+        return {"ok": True}
+
+    monkeypatch.setattr(suite, "wake_command", fake_wake_command)
+    monkeypatch.setattr(suite, "wake_stage_snapshot", lambda *_args, **_kwargs: {"turn_status": {"state": "idle"}})
+    monkeypatch.setattr(suite, "wait_for_wake_status", lambda *_args, **_kwargs: {"running": True})
+
+    result = suite.wake_lab_simulated_transcripts(args, runner, config)
+
+    assert ("wake.config.set", {"enabled": True, "recognizer_mode": "fake"}) in commands
+    assert result["all_passed"] is True
+
+
+def test_wake_lab_host_audio_smoke_uses_android_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(suite, "wake_command", lambda *_args: commands.append((_args[3], _args[4])) or {"ok": True})
+    monkeypatch.setattr(suite, "wake_stage_snapshot", lambda *_args, **_kwargs: {"wake_status": {"running": True}})
+    monkeypatch.setattr(suite, "wait_for_wake_status", lambda *_args, **_kwargs: {"running": True})
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    suite.wake_lab_host_audio_smoke(args, runner, config)
+
+    assert ("wake.config.set", {"enabled": True, "recognizer_mode": "android"}) in commands
+
+
 def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:
     args = ns(
         tmp_path,
@@ -285,6 +377,29 @@ def test_extract_json_recovers_last_valid_object() -> None:
     assert suite.extract_json(text) == {"schema": "puckyctl.result.v1", "ok": True}
 
 
+def test_command_json_retries_transient_puckyctl_failures() -> None:
+    runner = suite.Runner(dry_run=False)
+    attempts = {"count": 0}
+
+    def fake_run(command, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise suite.SuiteError("ConnectionAbortedError: [WinError 10053] An established connection was aborted")
+        return suite.subprocess.CompletedProcess(command, 0, stdout='{"ok":true}', stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+
+    result = suite.command_json(runner, ["fake", "command"], timeout=1)
+
+    assert attempts["count"] == 3
+    assert result == {"ok": True}
+
+
+def test_appops_running_parser_is_case_insensitive() -> None:
+    assert suite.appops_indicates_running("RECORD_AUDIO: running; time=+2m15s")
+    assert not suite.appops_indicates_running("RECORD_AUDIO: time=+2m15s")
+
+
 def test_doctor_reports_missing_tools_without_mutating(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     args = ns(tmp_path)
     monkeypatch.setattr(suite, "port_available", lambda port: True)
@@ -320,6 +435,32 @@ def test_wait_for_broker_device_requires_online_slot_device(monkeypatch: pytest.
     )
 
     assert suite.wait_for_broker_device(config, timeout=0.1)["device_id"] == config.device_id
+
+
+def test_wait_for_wake_status_retries_until_predicate_matches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    statuses = iter([
+        {"running": False, "suspended_reason": "service_not_started"},
+        {"running": True, "suspended_reason": ""},
+    ])
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "wake_status", lambda *_args, **_kwargs: next(statuses))
+
+    result = suite.wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        timeout_seconds=3.0,
+        description="wake running",
+    )
+
+    assert result["running"] is True
 
 
 def test_emulator_boot_ready_accepts_bootanim_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

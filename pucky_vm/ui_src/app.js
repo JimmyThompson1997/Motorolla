@@ -480,6 +480,14 @@
         ...state.wakeStatus,
         enabled: true,
         requested_enabled: true,
+        running: false,
+        state: "idle",
+        mode: "android_stt_wake",
+        engine: "android_stt_sentinel",
+        requested_engine: "android_stt_sentinel",
+        effective_engine: "stopped",
+        debug_recognizer_mode: state.wakeStatus.debug_recognizer_mode || "android",
+        recognizer_state: "idle",
         suspended_reason: "service_not_started"
       });
       return state.wakeStatus;
@@ -491,6 +499,8 @@
         requested_enabled: false,
         running: false,
         state: "idle",
+        debug_recognizer_mode: state.wakeStatus.debug_recognizer_mode || "android",
+        recognizer_state: "stopped",
         suspended_reason: "disabled"
       });
       return state.wakeStatus;
@@ -503,19 +513,30 @@
         requested_enabled: enabled,
         running: enabled ? state.wakeStatus.running : false,
         state: enabled ? state.wakeStatus.state : "idle",
+        mode: "android_stt_wake",
+        engine: "android_stt_sentinel",
+        requested_engine: "android_stt_sentinel",
+        effective_engine: enabled && state.wakeStatus.running ? "android_stt_sentinel" : "stopped",
+        debug_recognizer_mode: String(args.recognizer_mode || state.wakeStatus.debug_recognizer_mode || "android"),
+        recognizer_state: enabled ? state.wakeStatus.recognizer_state || "idle" : "stopped",
         suspended_reason: enabled
           ? state.wakeStatus.running
             ? ""
             : state.wakeStatus.suspended_reason || "service_not_started"
           : "disabled",
         scope: String(args.scope || state.wakeStatus.scope || "awake_and_unlocked_foreground"),
-        mode: String(args.mode || state.wakeStatus.mode || "pcm_wake")
+        mode: String(args.mode || state.wakeStatus.mode || "android_stt_wake")
       });
       return state.wakeStatus;
     }
     if (command === "wake.simulate") {
-      const phrase = String(args.phrase || args.text || "");
-      const accepted = /^(hey\s+)?(pucky|bucky|pocky|pookie|pupp)(\s|$)/i.test(phrase);
+      const event = String(args.event || "final").toLowerCase();
+      const phrase = String(args.transcript || args.phrase || args.text || "");
+      const alternatives = Array.isArray(args.alternatives) ? args.alternatives : [];
+      const acceptedWake = /^(hey\s+)?(pucky|bucky|pocky|pookie|pupp)(\s|$)/i.test(phrase)
+        || alternatives.some(value => /^(hey\s+)?(pucky|bucky|pocky|pookie|pupp)(\s|$)/i.test(String(value || "")));
+      const singleWord = /^(pucky|bucky|pocky|pookie|pupp)(\s|$)/i.test(phrase);
+      const accepted = event === "partial" ? acceptedWake && !singleWord : acceptedWake;
       const proof = {
         active: accepted,
         visual_state: accepted ? "armed" : "idle",
@@ -525,10 +546,25 @@
       };
       state.wakeStatus = normalizeWakeStatus({
         ...state.wakeStatus,
+        mode: "android_stt_wake",
+        engine: "android_stt_sentinel",
+        requested_engine: "android_stt_sentinel",
+        effective_engine: accepted ? "stopped" : "android_stt_sentinel",
+        debug_recognizer_mode: state.wakeStatus.debug_recognizer_mode || "android",
+        running: !accepted,
+        state: accepted ? "matched" : event === "error" ? "error" : "armed",
+        recognizer_state: accepted ? "matched" : event === "error" ? "error" : "ready",
+        last_transcript: phrase,
+        last_alternatives: alternatives,
+        last_error_code: event === "error" ? String(args.error_code || "ERROR_CLIENT") : "",
+        last_error_message: event === "error" ? String(args.error_message || "Simulated recognizer error") : "",
+        last_restart_reason: event === "error" ? "recognizer_error" : (accepted ? "proof_window_elapsed" : "final_no_match"),
+        restart_count: event === "error" ? safeNumber(state.wakeStatus.restart_count) + 1 : safeNumber(state.wakeStatus.restart_count),
+        suspended_reason: accepted ? "" : (event === "error" ? "" : ""),
         proof_indicator: proof,
         last_match: {
           matched_phrase: proof.matched_phrase,
-          match_source: accepted ? "simulate" : "",
+          match_source: accepted ? `simulate_${event}` : "",
           matched_at: accepted ? new Date().toISOString() : ""
         }
       });
@@ -938,15 +974,25 @@
 
   function initialWakeStatus() {
     return {
-      schema: "pucky.wake_status.v1",
+      schema: "pucky.wake_word_status.v4",
       enabled: false,
       requested_enabled: false,
       running: false,
       state: "idle",
       suspended_reason: "",
-      engine: "unknown",
-      mode: "pcm_wake",
+      engine: "android_stt_sentinel",
+      requested_engine: "android_stt_sentinel",
+      effective_engine: "stopped",
+      mode: "android_stt_wake",
       scope: "awake_and_unlocked_foreground",
+      debug_recognizer_mode: "android",
+      recognizer_state: "idle",
+      restart_count: 0,
+      last_restart_reason: "",
+      last_transcript: "",
+      last_alternatives: [],
+      last_error_code: "",
+      last_error_message: "",
       last_match: {
         matched_phrase: "",
         match_source: "",
@@ -1023,15 +1069,25 @@
   function normalizeWakeStatus(input) {
     const raw = input && typeof input === "object" ? input : {};
     return {
-      schema: raw.schema || "pucky.wake_status.v1",
+      schema: raw.schema || "pucky.wake_word_status.v4",
       enabled: truthy(raw.enabled),
       requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
       running: truthy(raw.running),
       state: String(raw.state || "idle"),
       suspended_reason: String(raw.suspended_reason || ""),
-      engine: String(raw.engine || "unknown"),
-      mode: String(raw.mode || "pcm_wake"),
+      engine: String(raw.engine || "android_stt_sentinel"),
+      requested_engine: String(raw.requested_engine || raw.engine || "android_stt_sentinel"),
+      effective_engine: String(raw.effective_engine || (truthy(raw.running) ? "android_stt_sentinel" : "stopped")),
+      mode: String(raw.mode || "android_stt_wake"),
       scope: String(raw.scope || "awake_and_unlocked_foreground"),
+      debug_recognizer_mode: String(raw.debug_recognizer_mode || "android"),
+      recognizer_state: String(raw.recognizer_state || "idle"),
+      restart_count: safeNumber(raw.restart_count),
+      last_restart_reason: String(raw.last_restart_reason || ""),
+      last_transcript: String(raw.last_transcript || ""),
+      last_alternatives: Array.isArray(raw.last_alternatives) ? raw.last_alternatives : [],
+      last_error_code: String(raw.last_error_code || ""),
+      last_error_message: String(raw.last_error_message || ""),
       last_match: raw.last_match && typeof raw.last_match === "object" ? raw.last_match : {
         matched_phrase: "",
         match_source: "",
@@ -1074,6 +1130,9 @@
     }
     if (reason === "record_audio_permission_missing") {
       return "Microphone permission required";
+    }
+    if (reason === "speech_recognition_unavailable") {
+      return "Speech recognizer unavailable";
     }
     if (reason === "assistant_scope_reserved") {
       return "Screen-off wake not enabled in this phase";
