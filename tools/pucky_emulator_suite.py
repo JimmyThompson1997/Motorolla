@@ -29,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pucky_vm.attachment_manifest import normalize_attachments
+
 ANDROID_TOOLS = Path(r"C:\Users\jimmy\Desktop\Android\tools")
 DEFAULT_ANDROID_HOME = ANDROID_TOOLS / "android-sdk"
 DEFAULT_JAVA_HOME = ANDROID_TOOLS / "jdk-17"
@@ -1075,11 +1077,15 @@ def first_displayable_attachment_snapshot(card: dict[str, Any]) -> dict[str, Any
             continue
         if str(message.get("role") or "").lower() == "user":
             continue
-        attachments = [item for item in (message.get("attachments") if isinstance(message.get("attachments"), list) else []) if isinstance(item, dict)]
+        attachments = normalize_attachments(
+            [item for item in (message.get("attachments") if isinstance(message.get("attachments"), list) else []) if isinstance(item, dict)]
+        )
         if attachments:
             sets.append(attachments)
             break
-    card_level = [item for item in (card.get("attachments") if isinstance(card.get("attachments"), list) else []) if isinstance(item, dict)]
+    card_level = normalize_attachments(
+        [item for item in (card.get("attachments") if isinstance(card.get("attachments"), list) else []) if isinstance(item, dict)]
+    )
     if card_level:
         sets.append(card_level)
     for attachments in sets:

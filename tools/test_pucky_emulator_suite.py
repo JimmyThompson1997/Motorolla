@@ -269,6 +269,33 @@ def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message(
     assert suite.card_open_title(card) == "Newest"
 
 
+def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
+    card = {
+        "title": "Localized attachment",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Proof HTML Dashboard",
+                        "mime_type": "text/html",
+                        "kind": "html",
+                        "path": "/data/user/0/com.pucky.device.debug/files/proof_html_dashboard.html",
+                        "viewer_path": "/data/user/0/com.pucky.device.debug/files/proof_html_dashboard.html",
+                    }
+                ],
+            }
+        ],
+    }
+
+    info = suite.first_displayable_attachment_snapshot(card)
+
+    assert info is not None
+    assert info["viewer_type"] == "html_iframe"
+    assert info["item"]["viewer"]["viewer_path"].endswith("proof_html_dashboard.html")
+    assert suite.card_action_accessibility_label(card) == "Open file for Localized attachment"
+
+
 def test_parser_includes_wake_lab_command() -> None:
     parser = suite.build_parser()
 
