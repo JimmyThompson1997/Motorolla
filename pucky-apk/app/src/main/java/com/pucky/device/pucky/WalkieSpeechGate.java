@@ -20,6 +20,7 @@ public final class WalkieSpeechGate implements AudioFrameConsumer {
     private int windowSamples;
     private boolean speechDetected;
     private long speechStartedElapsedMs = -1L;
+    private long lastSpeechElapsedMs = -1L;
     private int peakAmplitude;
     private long framesSeen;
     private long vadWindowsSeen;
@@ -86,6 +87,11 @@ public final class WalkieSpeechGate implements AudioFrameConsumer {
         Json.put(out, "speech_threshold", DEFAULT_SPEECH_THRESHOLD);
         Json.put(out, "speech_detected", speechDetected);
         Json.put(out, "speech_started_elapsed_ms", speechStartedElapsedMs);
+        Json.put(out, "last_speech_elapsed_ms", lastSpeechElapsedMs);
+        Json.put(out, "speech_duration_ms",
+                speechStartedElapsedMs < 0L ? 0L : Math.max(0L, clock.elapsedRealtimeMs() - speechStartedElapsedMs));
+        Json.put(out, "trailing_silence_ms",
+                lastSpeechElapsedMs < 0L ? 0L : Math.max(0L, clock.elapsedRealtimeMs() - lastSpeechElapsedMs));
         Json.put(out, "peak_amplitude", peakAmplitude);
         Json.put(out, "frames_seen", framesSeen);
         Json.put(out, "vad_windows_seen", vadWindowsSeen);
@@ -113,11 +119,12 @@ public final class WalkieSpeechGate implements AudioFrameConsumer {
                 return;
             }
             speechFrames += 1;
+            lastSpeechElapsedMs = clock.elapsedRealtimeMs();
             if (speechDetected) {
                 return;
             }
             speechDetected = true;
-            speechStartedElapsedMs = clock.elapsedRealtimeMs();
+            speechStartedElapsedMs = lastSpeechElapsedMs;
             listener.onSpeechDetected(statusJson());
         } catch (RuntimeException exc) {
             lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();

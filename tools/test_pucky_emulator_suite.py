@@ -304,11 +304,11 @@ def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths
 def test_parser_includes_wake_lab_command() -> None:
     parser = suite.build_parser()
 
-    args = parser.parse_args(["wake-lab", "--slot", "2", "--scenario", "gates", "--dry-run"])
+    args = parser.parse_args(["wake-lab", "--slot", "2", "--scenario", "wake-handoff-local", "--dry-run"])
 
     assert args.command == "wake-lab"
     assert args.slot == 2
-    assert args.scenario == "gates"
+    assert args.scenario == "wake-handoff-local"
 
 
 def test_wake_lab_gates_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -329,7 +329,7 @@ def test_wake_lab_gates_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatc
     assert ("wake.config.set", {"enabled": True, "recognizer_mode": "fake"}) in commands
 
 
-def test_wake_lab_simulated_transcripts_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_arm_wake_turn_lab_uses_fixture_capture_and_fake_recognizer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 2, run_id="fixed")
     runner = suite.Runner(dry_run=False)
@@ -339,40 +339,76 @@ def test_wake_lab_simulated_transcripts_uses_fake_recognizer_mode(monkeypatch: p
         command = call_args[3]
         payload = call_args[4]
         commands.append((command, payload))
-        if command == "wake.simulate":
-            transcript = str(payload.get("transcript", ""))
-            lowered = transcript.lower()
-            accepted = lowered.startswith("hey") or lowered.startswith("pucky")
-            matched = ""
-            if lowered.startswith("pucky"):
-                matched = "pucky"
-            elif lowered.startswith("hey pucky"):
-                matched = "hey pucky"
-            elif lowered.startswith("hey pupp"):
-                matched = "hey pucky"
-            elif lowered.startswith("hey bucky"):
-                matched = "hey bucky"
-            elif lowered.startswith("hey pookie"):
-                matched = "hey pookie"
-            elif lowered.startswith("hey pocky"):
-                matched = "hey pocky"
-            if transcript in {"Parking", "Can you hear me at all", "Lucky day", "Puppet show"}:
-                accepted = False
-                matched = ""
-            if payload.get("alternatives") == ["Hey Pucky"]:
-                accepted = True
-                matched = "hey pucky"
-            return {"accepted": accepted, "matched_phrase": matched}
         return {"ok": True}
 
     monkeypatch.setattr(suite, "wake_command", fake_wake_command)
-    monkeypatch.setattr(suite, "wake_stage_snapshot", lambda *_args, **_kwargs: {"turn_status": {"state": "idle"}})
     monkeypatch.setattr(suite, "wait_for_wake_status", lambda *_args, **_kwargs: {"running": True})
 
-    result = suite.wake_lab_simulated_transcripts(args, runner, config)
+    result = suite.arm_wake_turn_lab(
+        args,
+        runner,
+        config,
+        fixture_name="wake_flashlight",
+        fixture_path="/data/local/tmp/wake_flashlight.wav",
+        debug_fixture_transcript="flashlight",
+        fixture_start_delay_ms=2200,
+    )
 
-    assert ("wake.config.set", {"enabled": True, "recognizer_mode": "fake"}) in commands
-    assert result["all_passed"] is True
+    assert ("wake.stop", {}) in commands
+    assert (
+        "wake.config.set",
+        {
+            "enabled": True,
+            "recognizer_mode": "fake",
+            "capture_source": "fixture",
+            "fixture_name": "wake_flashlight",
+            "fixture_path": "/data/local/tmp/wake_flashlight.wav",
+            "debug_fixture_transcript": "flashlight",
+            "fixture_start_delay_ms": 2200,
+        },
+    ) in commands
+    assert result == {"ok": True}
+
+
+def test_turn_history_helpers_filter_and_extract_states(tmp_path: Path) -> None:
+    payload = {
+        "turns": [
+            {"turn_id": "old", "trigger_source": "volume_up_hold", "events": [{"state": "armed"}]},
+            {"turn_id": "new", "trigger_source": "wake_word", "events": [{"state": "armed"}, {"state": "recording"}, {"state": "uploading"}]},
+        ]
+    }
+
+    record = suite.latest_turn_record(payload, trigger_source="wake_word", exclude_turn_id="old")
+
+    assert record is not None
+    assert record["turn_id"] == "new"
+    assert suite.turn_event_states(record) == ["armed", "recording", "uploading"]
+
+
+def test_wait_for_turn_history_record_retries_until_match(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    histories = iter([
+        {"turns": [{"turn_id": "old", "trigger_source": "wake_word"}]},
+        {"turns": [{"turn_id": "new", "trigger_source": "wake_word"}]},
+    ])
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "turn_history", lambda *_args, **_kwargs: next(histories))
+
+    result = suite.wait_for_turn_history_record(
+        args,
+        runner,
+        config,
+        lambda record, _history: bool(record) and record.get("turn_id") == "new",
+        timeout_seconds=2.0,
+        description="new wake turn",
+    )
+
+    assert result["record"]["turn_id"] == "new"
 
 
 def test_wake_lab_host_audio_smoke_uses_android_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -389,6 +425,27 @@ def test_wake_lab_host_audio_smoke_uses_android_recognizer_mode(monkeypatch: pyt
     suite.wake_lab_host_audio_smoke(args, runner, config)
 
     assert ("wake.config.set", {"enabled": True, "recognizer_mode": "android"}) in commands
+
+
+def test_sync_default_recipe_bundle_uses_clear_sync_and_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[str] = []
+
+    def fake_command_json(_runner, command, **_kwargs):
+        name = command[command.index("command") + 1]
+        commands.append(name)
+        return {"result": {"name": name}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    result = suite.sync_default_recipe_bundle(args, runner, config)
+
+    assert commands == ["pucky.recipes.clear", "pucky.recipes.sync", "pucky.recipes.list"]
+    assert result["cleared"]["name"] == "pucky.recipes.clear"
+    assert result["synced"]["name"] == "pucky.recipes.sync"
+    assert result["listed"]["name"] == "pucky.recipes.list"
 
 
 def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:
