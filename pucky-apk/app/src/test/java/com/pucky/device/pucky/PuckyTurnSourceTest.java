@@ -154,6 +154,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(capture.contains("capture.wakePhraseFamily"));
         assertTrue(capture.contains("capture.wakePhraseDetected"));
         assertTrue(capture.contains("Json.put(out, \"trigger_source\", capture.triggerSource)"));
+        assertTrue(source.contains("copyIfPresent(target, capture, \"fixture_start_delay_ms\")"));
     }
 
     @Test

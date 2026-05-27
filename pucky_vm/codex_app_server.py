@@ -52,6 +52,7 @@ class CodexAppServerClient:
     startup_timeout: float = 30.0
     turn_timeout: float = 300.0
     developer_instructions: str | None = None
+    output_schema: dict[str, Any] | None = None
     codex_home: str | None = None
     approval_policy: str = "never"
     sandbox: str = "danger-full-access"
@@ -146,6 +147,7 @@ class CodexAppServerClient:
                 {
                     "threadId": thread_id,
                     **({"effort": self.reasoning_effort} if _clean_optional(self.reasoning_effort) else {}),
+                    **({"outputSchema": self.output_schema} if isinstance(self.output_schema, dict) else {}),
                     "input": [
                         {
                             "type": "text",

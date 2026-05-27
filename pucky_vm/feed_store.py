@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 import threading
@@ -55,6 +56,7 @@ class FeedStore:
         icon: str,
         origin: dict[str, object],
         telemetry: dict[str, object],
+        transcript_messages: list[dict[str, object]],
         audio_mime_type: str,
         audio_base64: str,
         html_mime_type: str,
@@ -75,14 +77,15 @@ class FeedStore:
                     """
                     INSERT INTO turns (
                         turn_id, session_id, card_id, reply_mode, reply_text,
-                        telemetry_json, created_at, updated_at, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        telemetry_json, transcript_messages_json, created_at, updated_at, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(turn_id) DO UPDATE SET
                         session_id=excluded.session_id,
                         card_id=excluded.card_id,
                         reply_mode=excluded.reply_mode,
                         reply_text=excluded.reply_text,
                         telemetry_json=excluded.telemetry_json,
+                        transcript_messages_json=excluded.transcript_messages_json,
                         updated_at=excluded.updated_at,
                         updated_at_ms=excluded.updated_at_ms
                     """,
@@ -93,6 +96,7 @@ class FeedStore:
                         reply_mode,
                         reply_text,
                         json.dumps(telemetry, separators=(",", ":")),
+                        json.dumps(transcript_messages or [], separators=(",", ":")),
                         created_at,
                         now_iso,
                         now_ms,
@@ -121,6 +125,16 @@ class FeedStore:
                     )
                 else:
                     self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (html_artifact_id,))
+                self._store_transcript_attachment_artifacts(
+                    transcript_messages=transcript_messages,
+                    html_artifact_id=html_artifact_id,
+                    html_mime_type=html_mime_type,
+                    html_base64=html_base64,
+                    card_id=card_id,
+                    created_at=created_at,
+                    updated_at=now_iso,
+                    updated_at_ms=now_ms,
+                )
                 self._conn.execute(
                     """
                     INSERT INTO feed_cards (
@@ -199,6 +213,24 @@ class FeedStore:
             if row is None:
                 return None
             return self._build_item(clean_card_id)
+
+    def get_artifact(self, artifact_id: str) -> dict[str, object] | None:
+        clean = str(artifact_id or "").strip()
+        if not clean:
+            return None
+        with self._lock:
+            row = self._fetch_artifact(clean)
+            if row is None:
+                return None
+            return {
+                "artifact_id": str(row["artifact_id"]),
+                "card_id": str(row["card_id"]),
+                "kind": str(row["kind"]),
+                "mime_type": str(row["mime_type"]),
+                "content_base64": str(row["content_base64"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+            }
 
     def count_items(self) -> int:
         with self._lock:
@@ -282,6 +314,7 @@ class FeedStore:
                         reply_mode TEXT NOT NULL,
                         reply_text TEXT NOT NULL,
                         telemetry_json TEXT NOT NULL,
+                        transcript_messages_json TEXT NOT NULL DEFAULT '[]',
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         updated_at_ms INTEGER NOT NULL
@@ -331,6 +364,7 @@ class FeedStore:
                     """
                 )
                 self._ensure_column("feed_cards", "origin_json", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column("turns", "transcript_messages_json", "TEXT NOT NULL DEFAULT '[]'")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -378,6 +412,64 @@ class FeedStore:
             ),
         )
 
+    def _store_transcript_attachment_artifacts(
+        self,
+        *,
+        transcript_messages: list[dict[str, object]],
+        html_artifact_id: str,
+        html_mime_type: str,
+        html_base64: str,
+        card_id: str,
+        created_at: str,
+        updated_at: str,
+        updated_at_ms: int,
+    ) -> None:
+        for message in transcript_messages or []:
+            if not isinstance(message, dict):
+                continue
+            for attachment in message.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                for artifact_field, path_field, fallback_mime in (
+                    ("artifact", "path", str(attachment.get("mime_type") or "application/octet-stream")),
+                    ("viewer_artifact", "viewer_path", "text/html"),
+                    ("html_artifact", "html_viewer_path", "text/html"),
+                    ("document_html_artifact", "document_html_path", "text/html"),
+                    ("preview_artifact", "preview_path", "image/png"),
+                ):
+                    artifact_id = str(attachment.get(artifact_field) or "").strip()
+                    if not artifact_id:
+                        continue
+                    if artifact_id == html_artifact_id and html_base64:
+                        self._upsert_artifact(
+                            artifact_id=artifact_id,
+                            card_id=card_id,
+                            kind="html",
+                            mime_type=html_mime_type or "text/html",
+                            content_base64=html_base64,
+                            created_at=created_at,
+                            updated_at=updated_at,
+                            updated_at_ms=updated_at_ms,
+                        )
+                        continue
+                    source_path = str(attachment.get(path_field) or "").strip()
+                    if not source_path:
+                        continue
+                    path = Path(source_path)
+                    if not path.exists() or not path.is_file():
+                        continue
+                    raw = path.read_bytes()
+                    self._upsert_artifact(
+                        artifact_id=artifact_id,
+                        card_id=card_id,
+                        kind=str(attachment.get("kind") or "attachment"),
+                        mime_type=fallback_mime,
+                        content_base64=base64.b64encode(raw).decode("ascii"),
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        updated_at_ms=updated_at_ms,
+                    )
+
     def _fetch_card_row(self, card_id: str) -> sqlite3.Row | None:
         return self._conn.execute(
             """
@@ -422,6 +514,12 @@ class FeedStore:
                 telemetry = json.loads(turn["telemetry_json"])
             except Exception:
                 telemetry = {}
+            try:
+                transcript_messages = json.loads(str(turn["transcript_messages_json"] or "[]") or "[]")
+            except Exception:
+                transcript_messages = []
+        else:
+            transcript_messages = []
         try:
             origin = json.loads(str(row["origin_json"] or "") or "{}")
         except Exception:
@@ -442,6 +540,7 @@ class FeedStore:
             "read": bool(int(row["read"])),
             "deleted": bool(int(row["deleted"])),
             "text": str(turn["reply_text"]) if turn is not None else str(row["summary"]),
+            "transcript_messages": transcript_messages if isinstance(transcript_messages, list) else [],
             "card": {
                 "title": str(row["title"]),
                 "summary": str(row["summary"]),

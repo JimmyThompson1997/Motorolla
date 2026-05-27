@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 from pucky_vm.server import Config, PuckyVoiceService, make_handler, parse_reply_envelope, reset_broker_for_tests
 
@@ -227,6 +228,9 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         deepinfra_api_key="di",
         max_audio_bytes=1024 * 1024,
         max_html_bytes=max_html_bytes,
+        max_attachment_count=4,
+        max_attachment_bytes=8 * 1024 * 1024,
+        max_attachment_viewer_bytes=16 * 1024 * 1024,
         tts_voice="af_heart",
         tts_response_format="wav",
         tts_speed=1.0,
@@ -705,7 +709,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.card_title, "Plain answer text.")
         self.assertEqual(envelope.card_icon, "mail")
 
-    def test_reply_envelope_normalizes_unknown_icon(self) -> None:
+    def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(
             json.dumps(
                 {
@@ -718,7 +722,7 @@ class ServerTests(unittest.TestCase):
         )
 
         self.assertEqual(envelope.reply_text, "Text")
-        self.assertEqual(envelope.card_icon, "mail")
+        self.assertEqual(envelope.card_icon, "sparkles")
         self.assertEqual(envelope.html_content, "")
 
     def test_large_html_is_omitted(self) -> None:
@@ -730,6 +734,180 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("html_mime_type", body["card"])
         self.assertNotIn("html_base64", body)
         self.assertNotIn("html_mime_type", body)
+
+    def test_reply_envelope_parses_structured_attachments(self) -> None:
+        envelope = parse_reply_envelope(
+            json.dumps(
+                {
+                    "reply_text": "Done",
+                    "card_title": "Files",
+                    "card_icon": "sparkles",
+                    "html": None,
+                    "attachments": [
+                        {
+                            "path": "/data/home/codex/report.csv",
+                            "mime_type": "text/csv",
+                            "title": "Report CSV",
+                        }
+                    ],
+                }
+            )
+        )
+
+        self.assertEqual(envelope.card_icon, "sparkles")
+        self.assertEqual(len(envelope.attachments), 1)
+        self.assertEqual(envelope.attachments[0]["path"], "/data/home/codex/report.csv")
+
+    def test_text_turn_returns_transcript_attachments_and_artifact_downloads(self) -> None:
+        csv_path = Path(self.tmp.name) / "report.csv"
+        csv_path.write_text("name,value\nA,1\nB,2\n", encoding="utf-8")
+        viewer_path = Path(self.tmp.name) / "brief-viewer.html"
+        viewer_path.write_text("<!doctype html><title>Brief</title><p>Viewer</p>", encoding="utf-8")
+        pdf_path = Path(self.tmp.name) / "brief.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 demo")
+        object.__setattr__(self.service.config, "codex_cwd", self.tmp.name)
+
+        def reply(_text: str) -> str:
+            return json.dumps(
+                {
+                    "reply_text": "Done. I created the files you asked for.",
+                    "card_title": "Quarterly Summary",
+                    "card_icon": "sunny",
+                    "html": None,
+                    "attachments": [
+                        {
+                            "path": str(csv_path),
+                            "mime_type": "text/csv",
+                            "title": "Report CSV",
+                        },
+                        {
+                            "path": str(pdf_path),
+                            "mime_type": "application/pdf",
+                            "title": "Brief PDF",
+                            "viewer_path": str(viewer_path),
+                        },
+                    ],
+                }
+            )
+
+        self.codex.send_turn = reply  # type: ignore[assignment]
+
+        body = self.post_json("/api/turn/text", {"text": "Create a CSV and a PDF viewer.", "turn_id": "text-turn-files"})
+
+        self.assertEqual(body["card_id"], "pucky_card_text-turn-files")
+        self.assertEqual(body["icon"], "sunny")
+        messages = body["transcript_messages"]
+        self.assertEqual(len(messages), 1)
+        attachments = messages[0]["attachments"]
+        self.assertEqual(attachments[0]["viewer"]["type"], "table")
+        self.assertEqual(attachments[1]["viewer"]["type"], "document_html")
+        artifact_id = attachments[0]["artifact"]
+        request = urllib.request.Request(
+            self.base_url + "/api/artifacts/" + urllib.parse.quote(artifact_id, safe=""),
+            headers={"Authorization": "Bearer secret"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.headers.get_content_type(), "text/csv")
+            self.assertIn("name,value", response.read().decode("utf-8"))
+        feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(feed["items"][0]["transcript_messages"][0]["attachments"][0]["artifact"], artifact_id)
+
+    def test_reply_text_path_fallback_promotes_displayable_file(self) -> None:
+        html_path = Path(self.tmp.name) / "fallback.html"
+        html_path.write_text("<!doctype html><title>Fallback</title><p>Hello</p>", encoding="utf-8")
+        object.__setattr__(self.service.config, "codex_cwd", self.tmp.name)
+        self.codex.send_turn = lambda _text: json.dumps(  # type: ignore[assignment]
+            {
+                "reply_text": f"Created {html_path}",
+                "card_title": "Fallback Page",
+                "card_icon": "bolt",
+                "html": None,
+            }
+        )
+
+        body = self.post_json("/api/turn/text", {"text": "Create an HTML page.", "turn_id": "text-turn-fallback"})
+
+        attachments = body["transcript_messages"][0]["attachments"]
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["kind"], "html")
+        self.assertTrue(body["telemetry"]["attachment_fallback_from_reply_text"])
+
+    def test_text_turn_caps_attachment_count_and_skips_outside_paths(self) -> None:
+        first = Path(self.tmp.name) / "first.html"
+        first.write_text("<!doctype html><title>First</title>", encoding="utf-8")
+        second = Path(self.tmp.name) / "second.csv"
+        second.write_text("name,value\nA,1\n", encoding="utf-8")
+        third = Path(self.tmp.name) / "third.txt"
+        third.write_text("hello", encoding="utf-8")
+        with tempfile.TemporaryDirectory() as outside_tmp:
+            outside = Path(outside_tmp) / "outside.html"
+            outside.write_text("<!doctype html><title>Outside</title>", encoding="utf-8")
+            object.__setattr__(self.service.config, "codex_cwd", self.tmp.name)
+            object.__setattr__(self.service.config, "max_attachment_count", 2)
+            self.codex.send_turn = lambda _text: json.dumps(  # type: ignore[assignment]
+                {
+                    "reply_text": "Done",
+                    "card_title": "Many Files",
+                    "card_icon": "bolt",
+                    "html": None,
+                    "attachments": [
+                        {"path": str(outside), "mime_type": "text/html", "title": "Outside"},
+                        {"path": str(first), "mime_type": "text/html", "title": "First"},
+                        {"path": str(second), "mime_type": "text/csv", "title": "Second"},
+                        {"path": str(third), "mime_type": "text/plain", "title": "Third"},
+                    ],
+                }
+            )
+
+            body = self.post_json("/api/turn/text", {"text": "Create many files.", "turn_id": "text-turn-cap"})
+
+        attachments = body["transcript_messages"][0]["attachments"]
+        self.assertEqual([item["title"] for item in attachments], ["First", "Second"])
+        self.assertEqual(len(attachments), 2)
+        self.assertEqual(body["telemetry"]["attachment_count"], 2)
+
+    def test_text_turn_marks_zip_attachment_as_download_only(self) -> None:
+        zip_path = Path(self.tmp.name) / "bundle.zip"
+        zip_path.write_bytes(b"PK\x03\x04demo")
+        object.__setattr__(self.service.config, "codex_cwd", self.tmp.name)
+        self.codex.send_turn = lambda _text: json.dumps(  # type: ignore[assignment]
+            {
+                "reply_text": "Created a ZIP archive.",
+                "card_title": "Archive",
+                "card_icon": "mail",
+                "html": None,
+                "attachments": [
+                    {
+                        "path": str(zip_path),
+                        "mime_type": "application/zip",
+                        "title": "Bundle ZIP",
+                    }
+                ],
+            }
+        )
+
+        body = self.post_json("/api/turn/text", {"text": "Create a zip archive.", "turn_id": "text-turn-zip"})
+
+        attachment = body["transcript_messages"][0]["attachments"][0]
+        self.assertEqual(attachment["kind"], "archive")
+        self.assertEqual(attachment["viewer"]["type"], "download_only")
+
+    def test_card_icons_endpoint_lists_defaults_and_persists_runtime_icons(self) -> None:
+        before = self.get_json("/api/card-icons")
+        self.assertTrue(any(item["name"] == "mail" for item in before["icons"]))
+
+        result = self.post_json(
+            "/api/card-icons",
+            {
+                "name": "sunny",
+                "label": "Sunny",
+                "filled_svg": '<path d="M12 5V2"/>',
+                "outline_svg": '<circle cx="12" cy="12" r="4"/>',
+            },
+        )
+        self.assertTrue(result["ok"])
+        after = self.get_json("/api/card-icons")
+        self.assertTrue(any(item["name"] == "sunny" for item in after["icons"]))
 
     def get_json(self, path: str, headers: dict[str, str] | None = None) -> dict:
         request = urllib.request.Request(self.base_url + path, headers=headers or {})

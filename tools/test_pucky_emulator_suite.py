@@ -223,6 +223,52 @@ def test_parser_includes_pending_outbound_proof_command() -> None:
     assert args.long_press_ms == 360
 
 
+def test_parser_includes_displayable_reply_files_proof_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["prove-displayable-reply-files", "--slot", "3", "--dry-run"])
+
+    assert args.command == "prove-displayable-reply-files"
+    assert args.slot == 3
+    assert args.turn_url == suite.DEFAULT_TURN_URL
+    assert args.snapshot_timeout_seconds == 120
+
+
+def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.Button" package="com.pucky.device.debug" content-desc="Open file for Proof CSV Table" bounds="[900,180][1000,260]" />
+  <node index="1" text="Proof CSV Table File" resource-id="" class="android.widget.TextView" package="com.pucky.device.debug" content-desc="" bounds="[88,96][430,154]" />
+</hierarchy>
+"""
+
+    nodes = suite.find_ui_nodes(xml, content_desc_pattern=r"^Open file for Proof CSV Table$")
+    assert len(nodes) == 1
+    assert suite.parse_node_bounds(nodes[0]["bounds"]) == (900, 180, 1000, 260)
+
+    title_nodes = suite.find_ui_nodes(xml, text_pattern=r"^Proof CSV Table File$")
+    assert len(title_nodes) == 1
+
+
+def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message() -> None:
+    card = {
+        "title": "Attachment card",
+        "transcript_messages": [
+            {"role": "assistant", "attachments": [{"title": "Older", "viewer": {"type": "download_only"}}]},
+            {"role": "user", "attachments": [{"title": "Ignore user", "viewer": {"type": "text"}}]},
+            {"role": "assistant", "attachments": [{"title": "Newest", "viewer": {"type": "table"}}]},
+        ],
+    }
+
+    info = suite.first_displayable_attachment_snapshot(card)
+
+    assert info is not None
+    assert info["item"]["title"] == "Newest"
+    assert info["viewer_type"] == "table"
+    assert suite.card_action_accessibility_label(card) == "Open file for Attachment card"
+    assert suite.card_open_title(card) == "Newest"
+
+
 def test_parser_includes_wake_lab_command() -> None:
     parser = suite.build_parser()
 

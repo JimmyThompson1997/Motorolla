@@ -2,12 +2,17 @@ package com.pucky.device.pucky;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.Base64;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 public final class PuckyTurnResponse {
+    private static final Pattern CARD_ICON_RE = Pattern.compile("^[a-z0-9_]{1,48}$");
+
     private final String cardId;
     private final String sessionId;
     private final String turnId;
@@ -24,13 +29,15 @@ public final class PuckyTurnResponse {
     private final boolean archived;
     private final boolean read;
     private final boolean deleted;
+    private final JSONArray transcriptMessages;
     private final JSONObject telemetry;
     private final JSONObject origin;
 
     private PuckyTurnResponse(String cardId, String sessionId, String turnId, String text, String summary,
                               String audioMimeType, String audioBase64, String cardTitle, String cardIcon,
                               String htmlMimeType, String htmlBase64, String createdAt, String updatedAt,
-                              boolean archived, boolean read, boolean deleted, JSONObject telemetry, JSONObject origin) {
+                              boolean archived, boolean read, boolean deleted, JSONArray transcriptMessages,
+                              JSONObject telemetry, JSONObject origin) {
         this.cardId = cardId;
         this.sessionId = sessionId;
         this.turnId = turnId;
@@ -47,6 +54,7 @@ public final class PuckyTurnResponse {
         this.archived = archived;
         this.read = read;
         this.deleted = deleted;
+        this.transcriptMessages = transcriptMessages == null ? new JSONArray() : transcriptMessages;
         this.telemetry = telemetry == null ? new JSONObject() : telemetry;
         this.origin = origin == null ? new JSONObject() : origin;
     }
@@ -106,6 +114,7 @@ public final class PuckyTurnResponse {
         String turnId = optional(input.optString("turn_id", ""));
         String sessionId = optional(input.optString("session_id", ""));
         String cardId = optional(input.optString("card_id", ""));
+        JSONArray transcriptMessages = copyArray(input.optJSONArray("transcript_messages"));
         if (sessionId.isEmpty()) {
             sessionId = turnId;
         }
@@ -129,6 +138,7 @@ public final class PuckyTurnResponse {
                 input.optBoolean("archived", card != null && card.optBoolean("archived", false)),
                 input.optBoolean("read", card != null && card.optBoolean("read", false)),
                 input.optBoolean("deleted", card != null && card.optBoolean("deleted", false)),
+                transcriptMessages,
                 input.optJSONObject("telemetry"),
                 input.optJSONObject("origin"));
     }
@@ -146,6 +156,7 @@ public final class PuckyTurnResponse {
     public boolean archived() { return archived; }
     public boolean read() { return read; }
     public boolean deleted() { return deleted; }
+    public JSONArray transcriptMessages() { return copyArray(transcriptMessages); }
     public boolean hasAudio() { return !audioBase64.isEmpty(); }
     public boolean hasHtml() { return !htmlBase64.isEmpty(); }
     public JSONObject telemetry() { return telemetry; }
@@ -177,16 +188,7 @@ public final class PuckyTurnResponse {
 
     private static String normalizeIcon(String raw) {
         String icon = optional(raw).toLowerCase(Locale.US);
-        switch (icon) {
-            case "clock":
-            case "bolt":
-            case "calendar":
-            case "moon":
-            case "mail":
-                return icon;
-            default:
-                return "mail";
-        }
+        return CARD_ICON_RE.matcher(icon).matches() ? icon : "mail";
     }
 
     private static String fallbackTitle(String text) {
@@ -202,6 +204,14 @@ public final class PuckyTurnResponse {
             return new JSONObject(input == null ? "{}" : input.toString());
         } catch (Exception ignored) {
             return new JSONObject();
+        }
+    }
+
+    private static JSONArray copyArray(JSONArray input) {
+        try {
+            return new JSONArray(input == null ? "[]" : input.toString());
+        } catch (Exception ignored) {
+            return new JSONArray();
         }
     }
 }

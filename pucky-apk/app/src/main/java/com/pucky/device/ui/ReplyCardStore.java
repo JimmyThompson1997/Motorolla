@@ -136,6 +136,7 @@ public final class ReplyCardStore {
         validateAudioPath(card.audioPlaylistPath(), "audio_playlist_path");
         validateAppOwnedPath(card.htmlPath(), "html_path");
         validateImagePaths(card.images());
+        validateTranscriptMessages(card.transcriptMessages());
         validateTrace(card.trace());
     }
 
@@ -158,6 +159,53 @@ public final class ReplyCardStore {
         } catch (Exception exc) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
                     "Unable to validate images: " + exc.getMessage());
+        }
+    }
+
+    private void validateTranscriptMessages(String transcriptMessagesJson) throws CommandException {
+        if (transcriptMessagesJson == null || transcriptMessagesJson.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONArray messages = new JSONArray(transcriptMessagesJson);
+            for (int index = 0; index < messages.length(); index++) {
+                JSONObject message = messages.optJSONObject(index);
+                if (message == null) {
+                    throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                            "transcript_messages[" + index + "] must be an object");
+                }
+                validateAttachmentPaths(message.optJSONArray("attachments"),
+                        "transcript_messages[" + index + "].attachments");
+            }
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "Unable to validate transcript_messages: " + exc.getMessage());
+        }
+    }
+
+    private void validateAttachmentPaths(JSONArray attachments, String field) throws CommandException {
+        if (attachments == null) {
+            return;
+        }
+        for (int index = 0; index < attachments.length(); index++) {
+            JSONObject attachment = attachments.optJSONObject(index);
+            if (attachment == null) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                        field + "[" + index + "] must be an object");
+            }
+            for (String key : new String[] {
+                    "path",
+                    "local_path",
+                    "image_path",
+                    "preview_path",
+                    "viewer_path",
+                    "html_viewer_path",
+                    "document_html_path"
+            }) {
+                validateAppOwnedPath(attachment.optString(key, ""), field + "[" + index + "]." + key);
+            }
         }
     }
 

@@ -12,13 +12,14 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
@@ -28,17 +29,26 @@ from .ui_bundle import UI_SRC, build_ui_bundle, bundle_config_script
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "You are Pucky, a concise voice assistant. Return only strict JSON with keys "
-    "reply_text, card_title, card_icon, and html. reply_text is the spoken user-facing answer. "
-    "card_title is a short title. card_icon must be one of clock, bolt, calendar, moon, mail. "
+    "reply_text, card_title, card_icon, html, and attachments. reply_text is the spoken user-facing answer. "
+    "card_title is a short title. card_icon is a lowercase slug using only letters, numbers, and underscores. "
     "html is either null or an object with title and content, where content is a complete HTML document. "
+    "attachments is either null or an array of objects with path, mime_type, title, optional kind, "
+    "optional viewer_path, optional preview_path, and optional text. If you create a browser-displayable file, "
+    "do not only mention its filesystem path in reply_text. You must return it in attachments. "
+    "If the result is inline HTML, html must not be null. "
+    "Available reply-card icons can be listed from {local_api_base}/api/card-icons. "
+    "If none fit, you may add one by POSTing JSON to {local_api_base}/api/card-icons with Authorization: "
+    "Bearer from the local PUCKY_API_TOKEN environment variable, then use that slug in card_icon. "
     "Do not include markdown fences or any text outside the JSON object."
 )
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
-ALLOWED_CARD_ICONS = {"clock", "bolt", "calendar", "moon", "mail"}
 DEFAULT_CARD_ICON = "mail"
 REPLY_MODE_CARD_ONLY = "card_only"
 REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
 MAX_CARD_TITLE_CHARS = 64
+MAX_CARD_ICON_NAME_CHARS = 48
+CARD_ICON_NAME_RE = re.compile(r"^[a-z0-9_]{1,48}$")
+DISPLAYABLE_ATTACHMENT_PATH_RE = re.compile(r"(/[^\\s\"'<>()[\\]{}]+)")
 BROKER_MODULE_PATH = Path(__file__).resolve().parents[1] / "pucky-apk" / "fly-broker" / "pucky_fly_broker.py"
 LINKS_AUTH_SCHEME_LABELS = {
     "OAUTH2": "OAuth",
@@ -50,6 +60,38 @@ LINKS_AUTH_SCHEME_LABELS = {
 
 _BROKER_MODULE = None
 _BROKER_DB_PATH: str | None = None
+DEFAULT_CARD_ICONS = {
+    "clock": {
+        "name": "clock",
+        "label": "Clock",
+        "filled_svg": '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 17c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7Zm1-12h-2v6l5 3 1-1.73-4-2.27V7Z"/>',
+        "outline_svg": '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.3v5.1l3.8 2.2"/>',
+    },
+    "bolt": {
+        "name": "bolt",
+        "label": "Bolt",
+        "filled_svg": '<path d="M7 2h10l-3.2 7H20L9 22l2.3-8H5l2-12Z"/>',
+        "outline_svg": '<path d="M13.5 2.8 5.7 13.2h5.7L9.9 21.2l8.4-10.4h-5.8l1-8Z"/>',
+    },
+    "calendar": {
+        "name": "calendar",
+        "label": "Calendar",
+        "filled_svg": '<path d="M7 2h2v2h6V2h2v2h1c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h1V2Zm11 8H6v10h12V10Z"/>',
+        "outline_svg": '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M13 14h3"/>',
+    },
+    "moon": {
+        "name": "moon",
+        "label": "Moon",
+        "filled_svg": '<path d="M21 14.4C19.7 18.8 15.6 22 10.8 22 5.4 22 1 17.6 1 12.2 1 7.4 4.2 3.3 8.6 2c-.8 1.3-1.2 2.8-1.2 4.4 0 5.6 4.6 10.2 10.2 10.2 1.6 0 3.1-.4 4.4-1.2Z"/>',
+        "outline_svg": '<path d="M20.8 14.8A8.8 8.8 0 1 1 9.2 3.2a7.3 7.3 0 0 0 11.6 11.6Z"/>',
+    },
+    "mail": {
+        "name": "mail",
+        "label": "Mail",
+        "filled_svg": '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
+        "outline_svg": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/><path d="m4.4 18 5.7-5.1"/><path d="m19.6 18-5.7-5.1"/>',
+    },
+}
 
 
 class STTProvider(Protocol):
@@ -98,6 +140,7 @@ class ReplyEnvelope:
     card_icon: str
     html_title: str = ""
     html_content: str = ""
+    attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -109,6 +152,9 @@ class Config:
     deepinfra_api_key: str
     max_audio_bytes: int
     max_html_bytes: int
+    max_attachment_count: int
+    max_attachment_bytes: int
+    max_attachment_viewer_bytes: int
     tts_voice: str
     tts_response_format: str
     tts_speed: float
@@ -141,6 +187,11 @@ class Config:
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),
             max_html_bytes=int(os.environ.get("PUCKY_MAX_HTML_BYTES", str(512 * 1024))),
+            max_attachment_count=max(1, int(os.environ.get("PUCKY_MAX_ATTACHMENT_COUNT", "4"))),
+            max_attachment_bytes=max(1, int(os.environ.get("PUCKY_MAX_ATTACHMENT_BYTES", str(8 * 1024 * 1024)))),
+            max_attachment_viewer_bytes=max(
+                1, int(os.environ.get("PUCKY_MAX_ATTACHMENT_VIEWER_BYTES", str(16 * 1024 * 1024)))
+            ),
             tts_voice=os.environ.get("PUCKY_TTS_VOICE", "af_heart"),
             tts_response_format=os.environ.get("PUCKY_TTS_FORMAT", "wav"),
             tts_speed=float(os.environ.get("PUCKY_TTS_SPEED", "1.0")),
@@ -148,7 +199,10 @@ class Config:
             codex_cwd=os.environ.get("PUCKY_CODEX_CWD") or None,
             codex_startup_timeout=float(os.environ.get("PUCKY_CODEX_STARTUP_TIMEOUT", "60")),
             codex_turn_timeout=float(os.environ.get("PUCKY_CODEX_TURN_TIMEOUT", "300")),
-            developer_instructions=os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS,
+            developer_instructions=(
+                (os.environ.get("PUCKY_CODEX_DEVELOPER_INSTRUCTIONS") or DEFAULT_DEVELOPER_INSTRUCTIONS)
+                .replace("{local_api_base}", f"http://127.0.0.1:{int(os.environ.get('PORT', os.environ.get('PUCKY_PORT', '8080')))}")
+            ),
             feed_db_path=os.environ.get("PUCKY_FEED_DB_PATH", str((Path.cwd() / "pucky_feed.sqlite3").resolve())),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
@@ -295,6 +349,7 @@ class PuckyVoiceService:
             startup_timeout=config.codex_startup_timeout,
             turn_timeout=config.codex_turn_timeout,
             developer_instructions=config.developer_instructions,
+            output_schema=reply_output_schema(),
             codex_home=config.codex_home,
             sandbox=config.codex_sandbox,
             approval_policy=config.codex_approval_policy,
@@ -307,6 +362,8 @@ class PuckyVoiceService:
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
         self._links_interactions: dict[str, set[str]] = {}
+        self._card_icon_lock = threading.Lock()
+        self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
 
     def start(self) -> None:
         self.codex.start()
@@ -608,6 +665,25 @@ class PuckyVoiceService:
             }
         return result
 
+    def card_icons(self) -> dict[str, object]:
+        return {
+            "schema": "pucky.card_icon_registry.v1",
+            "icons": list(self._load_card_icons().values()),
+        }
+
+    def upsert_card_icon(self, payload: dict[str, object]) -> dict[str, object]:
+        icon = _normalize_card_icon_record(payload)
+        with self._card_icon_lock:
+            registry = self._load_runtime_card_icons_locked()
+            registry[icon["name"]] = icon
+            self._persist_runtime_card_icons_locked(registry)
+        return {
+            "schema": "pucky.card_icon_upsert.v1",
+            "ok": True,
+            "icon": icon,
+            "icons": list(self._load_card_icons().values()),
+        }
+
     def turn_status(self, turn_id: str) -> dict[str, object] | None:
         clean_turn_id = str(turn_id or "").strip()
         if not clean_turn_id:
@@ -621,6 +697,47 @@ class PuckyVoiceService:
             public = dict(status)
             public.pop("_updated_epoch", None)
             return public
+
+    def artifact(self, artifact_id: str) -> dict[str, object] | None:
+        return self.feed.get_artifact(artifact_id)
+
+    def _load_card_icons(self) -> dict[str, dict[str, str]]:
+        with self._card_icon_lock:
+            runtime = self._load_runtime_card_icons_locked()
+        merged = {name: dict(icon) for name, icon in DEFAULT_CARD_ICONS.items()}
+        for name, icon in runtime.items():
+            merged[name] = dict(icon)
+        return dict(sorted(merged.items(), key=lambda item: item[0]))
+
+    def _load_runtime_card_icons_locked(self) -> dict[str, dict[str, str]]:
+        path = self._card_icons_path
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        icons = data.get("icons") if isinstance(data, dict) else data
+        if not isinstance(icons, list):
+            return {}
+        registry: dict[str, dict[str, str]] = {}
+        for item in icons:
+            if not isinstance(item, dict):
+                continue
+            try:
+                icon = _normalize_card_icon_record(item)
+            except ValueError:
+                continue
+            registry[icon["name"]] = icon
+        return registry
+
+    def _persist_runtime_card_icons_locked(self, registry: dict[str, dict[str, str]]) -> None:
+        self._card_icons_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema": "pucky.card_icon_registry.v1",
+            "icons": [registry[name] for name in sorted(registry)],
+        }
+        self._card_icons_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
 
     def handle_audio_turn(
         self,
@@ -650,12 +767,12 @@ class PuckyVoiceService:
             "tts_voice": getattr(self.tts, "voice", ""),
             "tts_format": getattr(self.tts, "response_format", ""),
             "tts_speed": getattr(self.tts, "speed", ""),
+            "stage": "upload_received",
         }
-        stage = "upload_received"
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         with self._turn_lock:
             try:
-                stage = "stt_running"
+                telemetry["stage"] = "stt_running"
                 telemetry["stt_start_ms"] = _elapsed_ms(total_start)
                 self._update_turn_status(turn_id, "stt_running", "running", telemetry)
                 start = time.perf_counter()
@@ -664,59 +781,142 @@ class PuckyVoiceService:
                 telemetry["stt_end_ms"] = _elapsed_ms(total_start)
                 telemetry["transcript_chars"] = len(transcript)
                 telemetry["user_transcript"] = transcript
-
-                stage = "codex_running"
-                telemetry["codex_start_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "codex_running", "running", telemetry)
-                start = time.perf_counter()
-                raw_reply = self.codex.send_turn(transcript)
-                telemetry["codex_ms"] = _elapsed_ms(start)
-                telemetry["codex_end_ms"] = _elapsed_ms(total_start)
-                telemetry["codex_thread_id"] = self.codex.thread_id or ""
-                telemetry["raw_reply_chars"] = len(raw_reply)
-
-                stage = "envelope"
-                envelope = parse_reply_envelope(raw_reply)
-                telemetry["envelope_parse"] = "ok"
-                telemetry["reply_chars"] = len(envelope.reply_text)
-                telemetry["card_icon"] = envelope.card_icon
-                telemetry["has_html"] = bool(envelope.html_content)
-                try:
-                    self.codex.set_thread_title(envelope.card_title)
-                    telemetry["codex_thread_title_synced"] = True
-                except Exception:
-                    telemetry["codex_thread_title_synced"] = False
-                try:
-                    origin = self.codex.thread_origin()
-                except Exception:
-                    origin = {}
-                if not isinstance(origin, dict):
-                    origin = {}
-                origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
-                telemetry["origin_thread_id"] = origin.get("thread_id", "")
-                telemetry["origin_model"] = origin.get("model", "")
-
-                reply_audio = b""
-                audio_mime_type = ""
-                stage = "tts_running"
-                telemetry["tts_start_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "tts_running", "running", telemetry)
-                start = time.perf_counter()
-                reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
-                telemetry["tts_ms"] = _elapsed_ms(start)
-                telemetry["tts_end_ms"] = _elapsed_ms(total_start)
-                telemetry["tts_status"] = "ok"
-                telemetry["reply_audio_bytes"] = len(reply_audio)
-                telemetry["audio_mime_type"] = audio_mime_type
+                return self._handle_transcript_turn(
+                    turn_id=turn_id,
+                    session_id=session_id,
+                    reply_mode=reply_mode,
+                    transcript=transcript,
+                    telemetry=telemetry,
+                    total_start=total_start,
+                )
             except Exception as exc:
                 telemetry["event"] = "pucky.turn.failed"
                 telemetry["status"] = "failed"
-                telemetry["stage"] = stage
+                telemetry["stage"] = str(telemetry.get("stage") or "stt_running")
                 telemetry["error_type"] = exc.__class__.__name__
                 telemetry["total_ms"] = _elapsed_ms(total_start)
                 self._update_turn_status(turn_id, "failed", "failed", telemetry)
                 _log_json(telemetry)
                 raise
+
+    def handle_text_turn(
+        self,
+        text: str,
+        turn_id: str | None = None,
+        reply_mode: str | None = None,
+    ) -> dict[str, object]:
+        transcript = str(text or "").strip()
+        if not transcript:
+            raise ValueError("text body is empty")
+        turn_id = _normalize_turn_id(turn_id)
+        session_id = turn_id
+        reply_mode = _normalize_reply_mode(reply_mode)
+        total_start = time.perf_counter()
+        telemetry: dict[str, object] = {
+            "event": "pucky.turn.text",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "content_type": "text/plain",
+            "reply_mode": reply_mode,
+            "input_text_chars": len(transcript),
+            "transcript_chars": len(transcript),
+            "user_transcript": transcript,
+            "tts_provider": "deepinfra",
+            "tts_model": getattr(self.tts, "model", ""),
+            "tts_voice": getattr(self.tts, "voice", ""),
+            "tts_format": getattr(self.tts, "response_format", ""),
+            "tts_speed": getattr(self.tts, "speed", ""),
+            "stage": "codex_running",
+        }
+        self._update_turn_status(turn_id, "upload_received", "running", telemetry)
+        with self._turn_lock:
+            try:
+                return self._handle_transcript_turn(
+                    turn_id=turn_id,
+                    session_id=session_id,
+                    reply_mode=reply_mode,
+                    transcript=transcript,
+                    telemetry=telemetry,
+                    total_start=total_start,
+                )
+            except Exception as exc:
+                telemetry["event"] = "pucky.turn.failed"
+                telemetry["status"] = "failed"
+                telemetry["stage"] = str(telemetry.get("stage") or "codex_running")
+                telemetry["error_type"] = exc.__class__.__name__
+                telemetry["total_ms"] = _elapsed_ms(total_start)
+                self._update_turn_status(turn_id, "failed", "failed", telemetry)
+                _log_json(telemetry)
+                raise
+
+    def _handle_transcript_turn(
+        self,
+        *,
+        turn_id: str,
+        session_id: str,
+        reply_mode: str,
+        transcript: str,
+        telemetry: dict[str, object],
+        total_start: float,
+    ) -> dict[str, object]:
+        telemetry["stage"] = "codex_running"
+        telemetry["codex_start_ms"] = _elapsed_ms(total_start)
+        self._update_turn_status(turn_id, "codex_running", "running", telemetry)
+        start = time.perf_counter()
+        raw_reply = self.codex.send_turn(transcript)
+        telemetry["codex_ms"] = _elapsed_ms(start)
+        telemetry["codex_end_ms"] = _elapsed_ms(total_start)
+        telemetry["codex_thread_id"] = self.codex.thread_id or ""
+        telemetry["raw_reply_chars"] = len(raw_reply)
+
+        telemetry["stage"] = "envelope"
+        envelope = parse_reply_envelope(raw_reply)
+        telemetry["envelope_parse"] = "ok"
+        telemetry["reply_chars"] = len(envelope.reply_text)
+        telemetry["card_icon"] = envelope.card_icon
+        telemetry["has_html"] = bool(envelope.html_content)
+        try:
+            self.codex.set_thread_title(envelope.card_title)
+            telemetry["codex_thread_title_synced"] = True
+        except Exception:
+            telemetry["codex_thread_title_synced"] = False
+        try:
+            origin = self.codex.thread_origin()
+        except Exception:
+            origin = {}
+        if not isinstance(origin, dict):
+            origin = {}
+        origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
+        telemetry["origin_thread_id"] = origin.get("thread_id", "")
+        telemetry["origin_model"] = origin.get("model", "")
+
+        attachments, attachment_meta = self._prepare_reply_attachments(
+            turn_id=turn_id,
+            envelope=envelope,
+            reply_text=envelope.reply_text,
+        )
+        telemetry["attachment_count"] = len(attachments)
+        telemetry["displayable_attachment_count"] = int(sum(1 for item in attachments if _attachment_is_displayable(item)))
+        telemetry["attachment_fallback_from_reply_text"] = bool(attachment_meta.get("fallback_from_reply_text"))
+
+        telemetry["stage"] = "tts_running"
+        telemetry["tts_start_ms"] = _elapsed_ms(total_start)
+        self._update_turn_status(turn_id, "tts_running", "running", telemetry)
+        start = time.perf_counter()
+        reply_audio, audio_mime_type = self.tts.synthesize(envelope.reply_text)
+        telemetry["tts_ms"] = _elapsed_ms(start)
+        telemetry["tts_end_ms"] = _elapsed_ms(total_start)
+        telemetry["tts_status"] = "ok"
+        telemetry["reply_audio_bytes"] = len(reply_audio)
+        telemetry["audio_mime_type"] = audio_mime_type
+
+        transcript_messages = [
+            _assistant_transcript_message(
+                text=envelope.reply_text,
+                created_at=_iso_time(time.time()),
+                attachments=attachments,
+            )
+        ]
         card: dict[str, object] = {
             "title": envelope.card_title,
             "summary": envelope.reply_text,
@@ -746,6 +946,7 @@ class PuckyVoiceService:
             icon=envelope.card_icon,
             origin=origin,
             telemetry=_public_turn_telemetry(telemetry),
+            transcript_messages=transcript_messages,
             audio_mime_type=audio_mime_type,
             audio_base64=audio_base64,
             html_mime_type=html_mime_type,
@@ -771,6 +972,97 @@ class PuckyVoiceService:
         self._update_turn_status(turn_id, "completed", "ok", telemetry)
         _log_json(telemetry)
         return result
+
+    def _prepare_reply_attachments(
+        self,
+        *,
+        turn_id: str,
+        envelope: ReplyEnvelope,
+        reply_text: str,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        raw_items = [dict(item) for item in envelope.attachments]
+        meta = {"fallback_from_reply_text": False}
+        if not raw_items and self.config.codex_cwd:
+            fallback_paths = _extract_displayable_paths_from_text(reply_text, self.config.codex_cwd)
+            if fallback_paths:
+                raw_items = [{"path": path, "title": Path(path).name} for path in fallback_paths]
+                meta["fallback_from_reply_text"] = True
+        prepared: list[dict[str, object]] = []
+        if envelope.html_content:
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{turn_id}:html",
+                        "artifact": f"pucky_card_{turn_id}:html",
+                        "mime_type": "text/html",
+                        "title": envelope.html_title or envelope.card_title or "HTML page",
+                        "kind": "html",
+                    }
+                )
+            )
+        for index, item in enumerate(raw_items):
+            normalized = self._prepare_one_reply_attachment(turn_id=turn_id, index=index, item=item)
+            if normalized is not None:
+                prepared.append(normalized)
+            if len(prepared) >= self.config.max_attachment_count:
+                break
+        return prepared, meta
+
+    def _prepare_one_reply_attachment(
+        self,
+        *,
+        turn_id: str,
+        index: int,
+        item: dict[str, object],
+    ) -> dict[str, object] | None:
+        raw = dict(item or {})
+        title = str(raw.get("title") or "").strip()
+        mime_type = str(raw.get("mime_type") or "").strip().lower()
+        kind = str(raw.get("kind") or "").strip().lower()
+        text = str(raw.get("text") or "")
+        resolved_path = _resolve_codex_path(self.config.codex_cwd, raw.get("path"))
+        viewer_path = _resolve_codex_path(self.config.codex_cwd, raw.get("viewer_path"))
+        preview_path = _resolve_codex_path(self.config.codex_cwd, raw.get("preview_path"))
+        if not mime_type:
+            mime_type = _guess_attachment_mime(resolved_path or viewer_path or preview_path or title)
+        normalized: dict[str, object] = {
+            "id": str(raw.get("id") or f"{turn_id}:attachment:{index + 1}"),
+            "title": title or Path(str(resolved_path or viewer_path or preview_path or f'attachment-{index + 1}')).name,
+            "mime_type": mime_type,
+        }
+        if kind:
+            normalized["kind"] = kind
+        if text:
+            normalized["text"] = text
+        if resolved_path:
+            normalized["path"] = resolved_path
+        if preview_path:
+            normalized["preview_path"] = preview_path
+        if viewer_path:
+            if _requires_document_html_viewer(mime_type, resolved_path):
+                normalized["document_html_path"] = viewer_path
+            else:
+                normalized["viewer_path"] = viewer_path
+        if resolved_path:
+            original_bytes = _read_limited_bytes(resolved_path, self.config.max_attachment_bytes)
+            if original_bytes is not None:
+                normalized["artifact"] = f"pucky_card_{turn_id}:attachment:{index + 1}:original"
+                if _is_inline_text_mime(mime_type) and "text" not in normalized:
+                    normalized["text"] = original_bytes.decode("utf-8", errors="replace")
+        if preview_path:
+            preview_bytes = _read_limited_bytes(preview_path, self.config.max_attachment_viewer_bytes)
+            if preview_bytes is not None:
+                normalized["preview_artifact"] = f"pucky_card_{turn_id}:attachment:{index + 1}:preview"
+        if viewer_path:
+            viewer_bytes = _read_limited_bytes(viewer_path, self.config.max_attachment_viewer_bytes)
+            if viewer_bytes is not None:
+                if _requires_document_html_viewer(mime_type, resolved_path):
+                    normalized["document_html_artifact"] = f"pucky_card_{turn_id}:attachment:{index + 1}:viewer"
+                else:
+                    normalized["viewer_artifact"] = f"pucky_card_{turn_id}:attachment:{index + 1}:viewer"
+        if not normalized.get("artifact") and not normalized.get("viewer_artifact") and not normalized.get("document_html_artifact") and not normalized.get("text"):
+            return None
+        return normalize_attachment(normalized)
 
     def feed_sync(self, cursor: str | None, limit: int) -> dict[str, object]:
         return self.feed.list_feed(cursor, limit)
@@ -835,17 +1127,233 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
     if isinstance(html, dict):
         html_title = str(html.get("title") or "").strip()
         html_content = str(html.get("content") or "").strip()
-    return ReplyEnvelope(reply_text, card_title, normalize_card_icon(data.get("card_icon")), html_title, html_content)
+    attachments: list[dict[str, object]] = []
+    if isinstance(data.get("attachments"), list):
+        for item in data.get("attachments") or []:
+            if isinstance(item, dict):
+                attachments.append(dict(item))
+    return ReplyEnvelope(
+        reply_text,
+        card_title,
+        normalize_card_icon(data.get("card_icon")),
+        html_title,
+        html_content,
+        tuple(attachments),
+    )
 
 
 def normalize_card_icon(value: object) -> str:
     icon = str(value or "").strip().lower()
-    return icon if icon in ALLOWED_CARD_ICONS else DEFAULT_CARD_ICON
+    return icon if CARD_ICON_NAME_RE.fullmatch(icon) else DEFAULT_CARD_ICON
 
 
 def fallback_title(text: str) -> str:
     clean = re.sub(r"\s+", " ", (text or "").strip())
     return (clean[:MAX_CARD_TITLE_CHARS].strip() if clean else "Pucky") or "Pucky"
+
+
+def reply_output_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "reply_text": {"type": "string"},
+            "card_title": {"type": "string"},
+            "card_icon": {"type": "string"},
+            "html": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["title", "content"],
+            },
+            "attachments": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "mime_type": {"type": "string"},
+                        "title": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "viewer_path": {"type": "string"},
+                        "preview_path": {"type": "string"},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        "required": ["reply_text", "card_title", "card_icon", "html"],
+    }
+
+
+def _normalize_card_icon_record(payload: dict[str, object]) -> dict[str, str]:
+    name = normalize_card_icon(payload.get("name") or payload.get("slug") or payload.get("card_icon"))
+    if name == DEFAULT_CARD_ICON and str(payload.get("name") or payload.get("slug") or payload.get("card_icon") or "").strip().lower() != DEFAULT_CARD_ICON:
+        raise ValueError("invalid_card_icon_name")
+    filled_svg = _sanitize_svg_fragment(payload.get("filled_svg") or payload.get("filled") or "")
+    outline_svg = _sanitize_svg_fragment(payload.get("outline_svg") or payload.get("outline") or "")
+    if not filled_svg and not outline_svg:
+        raise ValueError("card_icon_svg_required")
+    return {
+        "name": name,
+        "label": str(payload.get("label") or name.replace("_", " ").title()).strip() or name,
+        "filled_svg": filled_svg or outline_svg,
+        "outline_svg": outline_svg or filled_svg,
+    }
+
+
+def _sanitize_svg_fragment(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw.encode("utf-8")) > 16 * 1024:
+        raise ValueError("card_icon_svg_too_large")
+    lower = raw.lower()
+    forbidden = ("<script", "<style", "onload=", "onclick=", "href=", "xlink:href", "foreignobject")
+    if any(token in lower for token in forbidden):
+        raise ValueError("card_icon_svg_contains_unsupported_content")
+    tags = re.findall(r"<\s*/?\s*([a-zA-Z0-9:_-]+)", raw)
+    allowed = {"path", "circle", "rect", "ellipse", "line", "polyline", "polygon", "g"}
+    if any(tag.lower() not in allowed for tag in tags):
+        raise ValueError("card_icon_svg_contains_unsupported_tags")
+    return raw
+
+
+def _assistant_transcript_message(
+    *,
+    text: str,
+    created_at: str,
+    attachments: list[dict[str, object]],
+) -> dict[str, object]:
+    message = {
+        "role": "assistant",
+        "text": text,
+        "created_at": created_at,
+    }
+    if attachments:
+        message["attachments"] = attachments
+    return message
+
+
+def _resolve_codex_path(codex_cwd: str | None, raw: object) -> str:
+    clean = str(raw or "").strip()
+    if not clean:
+        return ""
+    path = Path(clean)
+    if not path.is_absolute():
+        return ""
+    try:
+        resolved = path.resolve()
+    except Exception:
+        return ""
+    if codex_cwd:
+        root = Path(codex_cwd).resolve()
+        if resolved != root and root not in resolved.parents:
+            return ""
+    if not resolved.exists() or not resolved.is_file():
+        return ""
+    return str(resolved)
+
+
+def _extract_displayable_paths_from_text(reply_text: str, codex_cwd: str | None) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    candidates = []
+    for match in DISPLAYABLE_ATTACHMENT_PATH_RE.findall(str(reply_text or "")):
+        candidates.append(match)
+    for token in re.split(r"[\s\"'<>]+", str(reply_text or "")):
+        clean = token.strip(".,;:()[]{}")
+        if clean:
+            candidates.append(clean)
+    for candidate in candidates:
+        resolved = _resolve_codex_path(codex_cwd, candidate)
+        if not resolved or resolved in seen:
+            continue
+        mime = _guess_attachment_mime(resolved)
+        if _looks_browser_displayable(mime, resolved):
+            seen.add(resolved)
+            found.append(resolved)
+    return found
+
+
+def _guess_attachment_mime(value: str) -> str:
+    guessed, _ = mimetypes.guess_type(str(value or ""))
+    return (guessed or "application/octet-stream").lower()
+
+
+def _is_inline_text_mime(mime_type: str) -> bool:
+    mime = str(mime_type or "").lower()
+    return mime in {
+        "text/plain",
+        "text/markdown",
+        "application/json",
+        "text/xml",
+        "application/xml",
+        "text/csv",
+        "text/tab-separated-values",
+    }
+
+
+def _read_limited_bytes(path: str, limit: int) -> bytes | None:
+    try:
+        resolved = Path(path).resolve()
+    except Exception:
+        return None
+    try:
+        if resolved.stat().st_size > max(0, int(limit)):
+            return None
+    except Exception:
+        return None
+    try:
+        return resolved.read_bytes()
+    except Exception:
+        return None
+
+
+def _requires_document_html_viewer(mime_type: str, resolved_path: str) -> bool:
+    mime = str(mime_type or "").lower()
+    path = str(resolved_path or "").lower()
+    return (
+        mime == "application/pdf"
+        or mime.endswith("wordprocessingml.document")
+        or mime.endswith("presentationml.presentation")
+        or mime.endswith("spreadsheetml.sheet")
+        or path.endswith(".pdf")
+        or path.endswith(".docx")
+        or path.endswith(".pptx")
+        or path.endswith(".xlsx")
+    )
+
+
+def _looks_browser_displayable(mime_type: str, resolved_path: str) -> bool:
+    mime = str(mime_type or "").lower()
+    path = str(resolved_path or "").lower()
+    if mime.startswith("image/") or mime.startswith("video/") or mime.startswith("audio/"):
+        return True
+    if mime in {
+        "text/html",
+        "application/xhtml+xml",
+        "text/plain",
+        "text/markdown",
+        "application/json",
+        "text/xml",
+        "application/xml",
+        "text/csv",
+        "text/tab-separated-values",
+    }:
+        return True
+    return path.endswith((".html", ".htm", ".txt", ".md", ".json", ".xml", ".csv", ".tsv", ".png", ".jpg", ".jpeg", ".svg", ".mp4", ".webm", ".wav", ".mp3"))
+
+
+def _attachment_is_displayable(item: dict[str, object]) -> bool:
+    viewer = item.get("viewer") if isinstance(item.get("viewer"), dict) else {}
+    viewer_type = str(viewer.get("type") or "").lower()
+    return viewer_type in {"html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"}
 
 
 def _elapsed_ms(start: float) -> int:
@@ -881,6 +1389,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "session_id",
         "content_type",
         "request_audio_bytes",
+        "input_text_chars",
         "reply_mode",
         "upload_received_ms",
         "stt_start_ms",
@@ -901,6 +1410,9 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "reply_audio_bytes",
         "audio_mime_type",
         "tts_status",
+        "attachment_count",
+        "displayable_attachment_count",
+        "attachment_fallback_from_reply_text",
         "response_bytes",
         "total_ms",
         "card_id",
@@ -937,6 +1449,9 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "reply_audio_bytes",
         "audio_mime_type",
         "tts_status",
+        "attachment_count",
+        "displayable_attachment_count",
+        "attachment_fallback_from_reply_text",
         "response_bytes",
         "total_ms",
         "card_id",
@@ -1558,6 +2073,30 @@ def make_handler(service: PuckyVoiceService):
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
                 self._json(status, payload)
                 return
+            if path == "/api/card-icons":
+                self._json(HTTPStatus.OK, service.card_icons())
+                return
+            if path.startswith("/api/artifacts/"):
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                artifact_id = unquote(path.removeprefix("/api/artifacts/")).strip()
+                artifact = service.artifact(artifact_id)
+                if artifact is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "artifact_not_found"})
+                    return
+                try:
+                    body = base64.b64decode(str(artifact.get("content_base64") or ""))
+                except Exception:
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "artifact_decode_failed"})
+                    return
+                self._bytes(
+                    HTTPStatus.OK,
+                    body,
+                    str(artifact.get("mime_type") or "application/octet-stream"),
+                    filename=str(artifact.get("artifact_id") or "artifact"),
+                )
+                return
             if path == "/api/feed":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -1632,6 +2171,23 @@ def make_handler(service: PuckyVoiceService):
                 status_code = int(result.get("status_code") or (HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_GATEWAY))
                 self._json(HTTPStatus(status_code), result)
                 return
+            if path == "/api/card-icons":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("card_icon_payload_must_be_object")
+                    result = service.upsert_card_icon(payload)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "card_icon_upsert_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             if path == "/api/feed/actions":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -1651,6 +2207,28 @@ def make_handler(service: PuckyVoiceService):
                     return
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_action_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path == "/api/turn/text":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("text_payload_must_be_object")
+                    result = service.handle_text_turn(
+                        str(payload.get("text") or ""),
+                        str(payload.get("turn_id") or self.headers.get("X-Pucky-Turn-Id", "") or ""),
+                        str(payload.get("reply_mode") or self.headers.get("X-Pucky-Reply-Mode", "") or ""),
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self.log_error("text turn failed: %s", exc)
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "turn_failed", "detail": str(exc)})
                     return
                 self._json(HTTPStatus.OK, result)
                 return
@@ -1718,6 +2296,16 @@ def make_handler(service: PuckyVoiceService):
 
         def _html(self, status: HTTPStatus, html_text: str) -> None:
             self._text(status, html_text, "text/html; charset=utf-8")
+
+        def _bytes(self, status: HTTPStatus, body: bytes, content_type: str, *, filename: str = "") -> None:
+            self.send_response(int(status))
+            self._cors_headers()
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            if filename:
+                self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(filename)}")
+            self.end_headers()
+            self.wfile.write(body)
 
         def _safe_ui_file(self, relative: str) -> None:
             try:

@@ -81,6 +81,7 @@ class CodexAppServerClientTests(unittest.TestCase):
                 startup_timeout=5,
                 turn_timeout=5,
                 developer_instructions="return json",
+                output_schema={"type": "object", "properties": {"reply_text": {"type": "string"}}},
                 sandbox="danger-full-access",
                 approval_policy="never",
                 model="gpt-5.5",
@@ -113,6 +114,7 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(thread_start["params"]["developerInstructions"], "return json")
             self.assertEqual(turn_start["params"]["threadId"], "thread-1")
             self.assertEqual(turn_start["params"]["effort"], "high")
+            self.assertEqual(turn_start["params"]["outputSchema"]["type"], "object")
             self.assertEqual(turn_start["params"]["input"][0]["text"], "Pucky test")
             self.assertEqual(rename["params"], {"threadId": "thread-1", "name": "Quick Help"})
 

@@ -120,6 +120,51 @@ def test_vm_attachment_normalizer_produces_generic_preview_contract() -> None:
     assert [item["id"] for item in normalize_attachments([{"artifact": "one.png", "mime_type": "image/png"}])] == ["one.png"]
 
 
+def test_vm_attachment_normalizer_file_type_matrix() -> None:
+    from pucky_vm.attachment_manifest import normalize_attachment
+
+    direct_cases = [
+        ({"artifact": "page.html", "mime_type": "text/html"}, "html", "html_iframe"),
+        ({"artifact": "page.htm", "mime_type": "application/xhtml+xml"}, "html", "html_iframe"),
+        ({"artifact": "note.txt", "mime_type": "text/plain", "text": "hello"}, "text", "text"),
+        ({"artifact": "note.md", "mime_type": "text/markdown", "text": "# hi"}, "text", "text"),
+        ({"artifact": "summary.json", "mime_type": "application/json", "text": '{"ok":true}'}, "text", "text"),
+        ({"artifact": "summary.xml", "mime_type": "application/xml", "text": "<ok/>"}, "text", "text"),
+        ({"artifact": "table.csv", "mime_type": "text/csv"}, "table", "table"),
+        ({"artifact": "table.tsv", "mime_type": "text/tab-separated-values"}, "table", "table"),
+        ({"artifact": "photo.png", "mime_type": "image/png"}, "image", "image_gallery"),
+        ({"artifact": "photo.jpg", "mime_type": "image/jpeg"}, "image", "image_gallery"),
+        ({"artifact": "clip.mp4", "mime_type": "video/mp4"}, "video", "video_player"),
+        ({"artifact": "clip.webm", "mime_type": "video/webm"}, "video", "video_player"),
+        ({"artifact": "voice.wav", "mime_type": "audio/wav"}, "audio", "audio_player"),
+        ({"artifact": "voice.mp3", "mime_type": "audio/mpeg"}, "audio", "audio_player"),
+    ]
+    for raw, expected_kind, expected_viewer in direct_cases:
+        normalized = normalize_attachment(raw)
+        assert normalized["kind"] == expected_kind
+        assert normalized["viewer"]["type"] == expected_viewer
+
+    derivative_cases = [
+        ("brief.pdf", "application/pdf"),
+        ("brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("brief.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+        ("brief.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ]
+    for artifact, mime in derivative_cases:
+        with_viewer = normalize_attachment({"artifact": artifact, "mime_type": mime, "viewer_artifact": artifact + ".html"})
+        without_viewer = normalize_attachment({"artifact": artifact, "mime_type": mime})
+        assert with_viewer["kind"] == "document"
+        assert with_viewer["viewer"]["type"] == "document_html"
+        assert without_viewer["viewer"]["type"] == "download_only"
+
+    for artifact, mime in (
+        ("bundle.zip", "application/zip"),
+        ("blob.bin", "application/octet-stream"),
+    ):
+        normalized = normalize_attachment({"artifact": artifact, "mime_type": mime})
+        assert normalized["viewer"]["type"] == "download_only"
+
+
 def test_deploy_helper_uses_command_path_and_no_adb_shortcuts() -> None:
     source = (ROOT / "pucky_vm" / "tools" / "deploy_cover_fixture.py").read_text(encoding="utf-8")
 

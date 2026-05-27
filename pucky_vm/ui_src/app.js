@@ -257,6 +257,9 @@
   const persistedNavState = loadNavState();
   const state = {
     cards: [],
+    cardIconRegistry: {},
+    cardIconRegistryLoading: false,
+    cardIconRegistryRequestedAt: 0,
     route: initialRoute(persistedNavState.route),
     openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route),
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
@@ -1567,7 +1570,7 @@
     button.style.setProperty("--filter-accent", filter.accent || "#f5f9ff");
     button.setAttribute("aria-label", filter.label);
     button.setAttribute("aria-pressed", selected ? "true" : "false");
-    button.innerHTML = iconSvg(filter.icon, { filled: selected });
+    button.innerHTML = replyCardIconSvg(filter.icon, { filled: selected });
     button.addEventListener("click", () => {
       if (state.showArchivedFeed) {
         state.showArchivedFeed = false;
@@ -1659,7 +1662,7 @@
   }
 
   function cardIconKey(card) {
-    return normalizeIcon(card && card.icon);
+    return normalizeReplyCardIcon(card && card.icon);
   }
 
   function isPendingOutboundCard(card) {
@@ -2293,7 +2296,7 @@
     const identity = el("button", `identity ${cardStateClass(card)}`);
     identity.type = "button";
     identity.disabled = menuOpen;
-    identity.innerHTML = iconSvg(card.icon, { filled: true });
+    identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -2347,6 +2350,7 @@
       });
       actions.append(audio);
     }
+    const attachmentInfo = firstDisplayableAttachmentInfo(card);
     if (card.html_path) {
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
@@ -2361,6 +2365,20 @@
         showRichPage(card);
       });
       actions.append(page);
+    } else if (attachmentInfo) {
+      const file = el("button", `action ${actionStateClass(card, "attachment")}`);
+      file.type = "button";
+      file.disabled = menuOpen;
+      file.innerHTML = iconSvg("attachment", { filled: true });
+      file.setAttribute("aria-label", `Open file for ${card.title}`);
+      file.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (menuOpen) {
+          return;
+        }
+        showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
+      });
+      actions.append(file);
     }
 
     cardEl.append(identity, body, actions);
@@ -3198,10 +3216,10 @@
 
   function documentHtmlSrc(item) {
     const viewer = item && item.viewer && typeof item.viewer === "object" ? item.viewer : {};
-    if (viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url) {
-      return String(viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url);
+    if (viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url || viewer.viewer_path || viewer.html_viewer_path || viewer.document_html_path) {
+      return String(viewer.viewer_src || viewer.viewer_url || viewer.html_src || viewer.html_url || viewer.viewer_path || viewer.html_viewer_path || viewer.document_html_path);
     }
-    const direct = item && (item.viewer_src || item.viewer_url || item.html_src || item.html_url);
+    const direct = item && (item.viewer_src || item.viewer_url || item.html_src || item.html_url || item.viewer_path || item.html_viewer_path || item.document_html_path);
     if (direct) {
       return String(direct);
     }
@@ -4186,7 +4204,7 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await requestFeedAction(card, "archive", { silent: true });
+    await requestFeedAction(card, "archive");
   }
 
   function installCardLongPressMenu(wrapper, card) {
@@ -4861,10 +4879,10 @@
     if (mime.startsWith("image/")) return "image";
     if (mime.startsWith("video/")) return "video";
     if (mime.startsWith("audio/")) return "audio";
-    if (mime === "text/csv" || mime === "text/tab-separated-values" || mime.includes("spreadsheetml")) return "table";
+    if (mime === "text/csv" || mime === "text/tab-separated-values") return "table";
     if (mime === "text/html" || mime === "application/xhtml+xml") return "html";
-    if (mime === "text/plain") return "text";
-    if (mime === "application/pdf" || mime.includes("wordprocessingml") || mime.includes("presentationml")) return "document";
+    if (["text/plain", "text/markdown", "application/json", "text/xml", "application/xml"].includes(mime)) return "text";
+    if (mime === "application/pdf" || mime.includes("wordprocessingml") || mime.includes("presentationml") || mime.includes("spreadsheetml")) return "document";
     const path = String(mediaPath(item) || bundledArtifactPath(item) || item.src || "").toLowerCase();
     if (/\.(zip|rar|7z|tar|gz)(?:$|[?#])/i.test(path)) return "archive";
     return "unknown";
@@ -4968,6 +4986,35 @@
       }
     }
     return [];
+  }
+
+  function firstDisplayableAttachmentInfo(card) {
+    const sets = [];
+    const messages = messagesForCard(card);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (String(messages[index]?.role || "").toLowerCase() === "user") {
+        continue;
+      }
+      const attachments = normalizedAttachments(messages[index]?.attachments);
+      if (attachments.length) {
+        sets.push(attachments);
+        break;
+      }
+    }
+    const cardLevel = normalizedAttachments(card?.attachments);
+    if (cardLevel.length) {
+      sets.push(cardLevel);
+    }
+    for (const attachments of sets) {
+      const index = attachments.findIndex(item => {
+        const type = attachmentViewerType(item);
+        return ["html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"].includes(type);
+      });
+      if (index >= 0) {
+        return { attachments, index, item: attachments[index] };
+      }
+    }
+    return null;
   }
 
   function lastAssistantMessageIndex(messages) {
@@ -5338,7 +5385,7 @@
       const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
         ? result.snapshot
         : { cards: await fetchReplyCards() };
-      state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : state.cards;
+      state.cards = applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
@@ -5975,6 +6022,30 @@
     return MATERIAL_SYMBOLS[value] ? value : "mail";
   }
 
+  function applyLocalFeedAction(cards, sourceCard, action) {
+    const sourceCardId = String(sourceCard && sourceCard.card_id || "");
+    const sourceSessionId = cardSessionId(sourceCard);
+    return (Array.isArray(cards) ? cards : [])
+      .map(card => {
+        const same = (sourceCardId && String(card && card.card_id || "") === sourceCardId)
+          || (!sourceCardId && sourceSessionId && cardSessionId(card) === sourceSessionId);
+        if (!same) {
+          return card;
+        }
+        if (action === "archive") {
+          return { ...card, archived: true };
+        }
+        if (action === "mark_read") {
+          return { ...card, read: true };
+        }
+        if (action === "delete") {
+          return { ...card, deleted: true };
+        }
+        return card;
+      })
+      .filter(card => !card.deleted);
+  }
+
   function iconSvg(icon, options = {}) {
     const name = normalizeIcon(icon);
     const filled = options.filled !== false;
@@ -5982,6 +6053,83 @@
     const symbol = MATERIAL_SYMBOLS[name] || MATERIAL_SYMBOLS.mail;
     const paths = filled ? (symbol.filled || symbol.outline) : (symbol.outline || symbol.filled);
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function normalizeReplyCardIcon(icon) {
+    const value = String(icon || "").toLowerCase().trim();
+    if (!/^[a-z0-9_]{1,48}$/.test(value)) {
+      return "mail";
+    }
+    if (state.cardIconRegistry[value] || MATERIAL_SYMBOLS[value]) {
+      return value;
+    }
+    scheduleCardIconRegistryRefresh();
+    return "mail";
+  }
+
+  function replyCardIconSvg(icon, options = {}) {
+    const name = normalizeReplyCardIcon(icon);
+    const symbol = state.cardIconRegistry[name] || MATERIAL_SYMBOLS[name] || MATERIAL_SYMBOLS.mail;
+    const filled = options.filled !== false;
+    const className = options.className || "material-icon";
+    const paths = filled ? (symbol.filled || symbol.filled_svg || symbol.outline || symbol.outline_svg) : (symbol.outline || symbol.outline_svg || symbol.filled || symbol.filled_svg);
+    return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function scheduleCardIconRegistryRefresh() {
+    if (state.cardIconRegistryLoading) {
+      return;
+    }
+    const age = Date.now() - Number(state.cardIconRegistryRequestedAt || 0);
+    if (age < 1500) {
+      return;
+    }
+    state.cardIconRegistryRequestedAt = Date.now();
+    Promise.resolve().then(() => loadCardIconRegistry({ render: true, force: true })).catch(() => {});
+  }
+
+  async function loadCardIconRegistry(options = {}) {
+    if (state.cardIconRegistryLoading) {
+      return;
+    }
+    state.cardIconRegistryLoading = true;
+    try {
+      const payload = await fetchCardIconRegistry();
+      const next = {};
+      const icons = Array.isArray(payload?.icons) ? payload.icons : [];
+      icons.forEach((icon) => {
+        const name = String(icon?.name || "").toLowerCase().trim();
+        if (!/^[a-z0-9_]{1,48}$/.test(name)) {
+          return;
+        }
+        const filled = String(icon?.filled_svg || "").trim();
+        const outline = String(icon?.outline_svg || "").trim();
+        if (!filled && !outline) {
+          return;
+        }
+        next[name] = {
+          filled: filled || outline,
+          outline: outline || filled
+        };
+      });
+      state.cardIconRegistry = next;
+    } catch (_) {
+      // Keep bundled icons if the runtime registry is temporarily unavailable.
+    } finally {
+      state.cardIconRegistryLoading = false;
+      if (options.render) {
+        render();
+      }
+    }
+  }
+
+  async function fetchCardIconRegistry() {
+    const response = await fetch(`${linksApiBaseUrl()}/api/card-icons`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload?.detail || payload?.error || `Card icon registry failed (${response.status})`));
+    }
+    return payload;
   }
 
   function formatTime(ms) {
@@ -6067,6 +6215,7 @@
   installCardMenuOutsideDismiss();
   loadTurnStatus({ render: false });
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
+  loadCardIconRegistry({ render: false });
   loadCards();
   if (state.route === "links") {
     loadLinksPortal({ render: true });

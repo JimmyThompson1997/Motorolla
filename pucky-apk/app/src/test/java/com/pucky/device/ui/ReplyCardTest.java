@@ -25,6 +25,11 @@ public final class ReplyCardTest {
                 .put(new JSONObject()
                         .put("sender", "pucky")
                         .put("text", "Brief me")
+                        .put("attachments", new JSONArray()
+                                .put(new JSONObject()
+                                        .put("artifact", "report.csv")
+                                        .put("mime_type", "text/csv")
+                                        .put("title", "Report CSV")))
                         .put("media_type", "image")
                         .put("media_label", "Inbox chart"));
         JSONArray images = new JSONArray()
@@ -105,6 +110,8 @@ public final class ReplyCardTest {
         assertEquals("/tmp/book.m3u", card.toJson().getString("audio_playlist_path"));
         assertEquals(1, card.toJson().getJSONArray("audio_timestamps").length());
         assertEquals(2, card.toJson().getJSONArray("transcript_messages").length());
+        assertEquals("Report CSV", card.toJson().getJSONArray("transcript_messages")
+                .getJSONObject(1).getJSONArray("attachments").getJSONObject(0).getString("title"));
         assertEquals(1, card.toJson().getJSONArray("images").length());
         assertEquals("pucky.turn_trace.v1", card.toJson().getJSONObject("trace").getString("schema"));
         assertEquals("thread-1", card.toJson().getJSONObject("origin").getString("thread_id"));

@@ -30,6 +30,9 @@ def test_html_ui_uses_bundled_material_icon_registry() -> None:
 
     assert "const MATERIAL_SYMBOLS" in app
     assert "function iconSvg(" in app
+    assert "function replyCardIconSvg(" in app
+    assert "function loadCardIconRegistry(" in app
+    assert 'fetch(`${linksApiBaseUrl()}/api/card-icons`' in app
     assert "const ICONS = {" not in app
     assert "stroke-width: 2.8" not in styles
     assert ".material-icon" in styles
@@ -297,7 +300,7 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "starredSessionIds: new Set()" in app
     assert 'openCardMenuSessionId: ""' in app
     assert "async function archiveHomeCard(card)" in app
-    assert 'await requestFeedAction(card, "archive", { silent: true });' in app
+    assert 'await requestFeedAction(card, "archive");' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
     assert "function toggleCardStar(card)" in app
@@ -655,7 +658,7 @@ def test_leaving_home_uses_standard_material_card_icon() -> None:
 
     assert "function cardIdentityIconSvg(card)" not in app
     assert "function shouldUseRetroCardIcon(card)" not in app
-    assert 'identity.innerHTML = iconSvg(card.icon, { filled: true })' in app
+    assert 'identity.innerHTML = replyCardIconSvg(card.icon, { filled: true })' in app
     assert '"icon_style": "retro"' not in fixtures
     assert '"session_id": "fixture_leave"' in fixtures
     assert ".retro-card-icon" not in styles
@@ -666,6 +669,7 @@ def test_card_actions_have_local_read_state() -> None:
     styles = read("styles.css")
 
     assert "async function requestFeedAction(card, action, options = {})" in app
+    assert "function applyLocalFeedAction(cards, sourceCard, action)" in app
     assert "function requestMarkRead(card)" in app
     assert "function markCardRead(card)" in app
     assert "function toggleCardRead(card)" in app
@@ -674,6 +678,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert "function toggleRead(card, action)" in app
     assert "function isActionRead(card, action)" in app
     assert 'requestFeedAction(card, "mark_read", { silent: true });' in app
+    assert "state.cards = applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);" in app
+    assert "return { ...card, archived: true };" in app
     assert "return Boolean(card && card.read);" in app
     assert 'if (!options.restoring) {\n      markCardRead(card);' in app
     assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
@@ -1406,3 +1412,25 @@ def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
     assert ".table-viewer" in styles
     assert ".text-viewer" in styles
     assert ".attachment-audio-card" in styles
+
+
+def test_feed_tile_uses_first_displayable_transcript_attachment_when_no_html_path() -> None:
+    app = read("app.js")
+
+    assert "function firstDisplayableAttachmentInfo(card)" in app
+    assert "normalizedAttachments(messages[index]?.attachments)" in app
+    assert '["html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"]' in app
+    assert "const attachmentInfo = firstDisplayableAttachmentInfo(card);" in app
+    assert 'showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });' in app
+
+
+def test_document_html_detection_accepts_local_viewer_paths_and_xlsx_is_not_raw_table() -> None:
+    app = read("app.js")
+
+    assert "viewer.viewer_path" in app
+    assert "viewer.html_viewer_path" in app
+    assert "viewer.document_html_path" in app
+    kind_block = function_block(app, "normalizedAttachmentKind")
+    assert 'mime.includes("spreadsheetml")) return "table"' not in kind_block
+    assert 'mime.includes("spreadsheetml")) return "document"' in kind_block
+    assert '["text/plain", "text/markdown", "application/json", "text/xml", "application/xml"].includes(mime)' in kind_block

@@ -459,12 +459,14 @@ public final class PuckyFeedController {
         Json.put(card, "title", response.cardTitle());
         Json.put(card, "summary", response.summary().isEmpty() ? response.text() : response.summary());
         Json.put(card, "transcript", response.text());
-        JSONArray transcriptMessages = new JSONArray();
-        JSONObject assistant = new JSONObject();
-        Json.put(assistant, "role", "assistant");
-        Json.put(assistant, "text", response.text());
-        Json.put(assistant, "created_at", response.createdAt());
-        Json.add(transcriptMessages, assistant);
+        JSONArray transcriptMessages = localizeTranscriptMessages(response.transcriptMessages(), dir);
+        if (transcriptMessages.length() == 0) {
+            JSONObject assistant = new JSONObject();
+            Json.put(assistant, "role", "assistant");
+            Json.put(assistant, "text", response.text());
+            Json.put(assistant, "created_at", response.createdAt());
+            Json.add(transcriptMessages, assistant);
+        }
         Json.put(card, "transcript_messages", transcriptMessages);
         Json.put(card, "created_at", response.createdAt());
         Json.put(card, "updated_at", response.updatedAt());
@@ -480,6 +482,102 @@ public final class PuckyFeedController {
             Json.put(card, "html_path", htmlPath);
         }
         return card;
+    }
+
+    private JSONArray localizeTranscriptMessages(JSONArray input, File dir) throws Exception {
+        JSONArray localized = new JSONArray();
+        if (input == null) {
+            return localized;
+        }
+        for (int index = 0; index < input.length(); index++) {
+            JSONObject message = input.optJSONObject(index);
+            if (message == null) {
+                continue;
+            }
+            JSONObject copy = new JSONObject(message.toString());
+            JSONArray attachments = localizeAttachments(copy.optJSONArray("attachments"), dir, "message_" + (index + 1));
+            if (attachments.length() > 0) {
+                Json.put(copy, "attachments", attachments);
+            } else {
+                copy.remove("attachments");
+            }
+            localized.put(copy);
+        }
+        return localized;
+    }
+
+    private JSONArray localizeAttachments(JSONArray input, File dir, String prefix) throws Exception {
+        JSONArray localized = new JSONArray();
+        if (input == null) {
+            return localized;
+        }
+        for (int index = 0; index < input.length(); index++) {
+            JSONObject attachment = input.optJSONObject(index);
+            if (attachment == null) {
+                continue;
+            }
+            JSONObject localizedAttachment = localizeAttachment(attachment, dir, prefix + "_attachment_" + (index + 1));
+            if (localizedAttachment != null) {
+                localized.put(localizedAttachment);
+            }
+        }
+        return localized;
+    }
+
+    private JSONObject localizeAttachment(JSONObject attachment, File dir, String filenameBase) throws Exception {
+        JSONObject copy = new JSONObject(attachment.toString());
+        localizeArtifactField(copy, "artifact", "path", dir, filenameBase);
+        localizeArtifactField(copy, "viewer_artifact", "viewer_path", dir, filenameBase + "_viewer");
+        localizeArtifactField(copy, "html_artifact", "html_viewer_path", dir, filenameBase + "_html");
+        localizeArtifactField(copy, "document_html_artifact", "document_html_path", dir, filenameBase + "_document");
+        localizeArtifactField(copy, "preview_artifact", "preview_path", dir, filenameBase + "_preview");
+        if (!isAppOwnedPath(copy.optString("path", "")) && !copy.has("text")) {
+            copy.remove("path");
+        }
+        if (!isAppOwnedPath(copy.optString("viewer_path", ""))) {
+            copy.remove("viewer_path");
+        }
+        if (!isAppOwnedPath(copy.optString("html_viewer_path", ""))) {
+            copy.remove("html_viewer_path");
+        }
+        if (!isAppOwnedPath(copy.optString("document_html_path", ""))) {
+            copy.remove("document_html_path");
+        }
+        if (!isAppOwnedPath(copy.optString("preview_path", ""))) {
+            copy.remove("preview_path");
+        }
+        copy.remove("viewer");
+        copy.remove("preview");
+        return copy;
+    }
+
+    private void localizeArtifactField(JSONObject attachment, String artifactField, String pathField, File dir, String filenameBase)
+            throws Exception {
+        String artifactId = safe(attachment.optString(artifactField, ""));
+        if (artifactId.isEmpty()) {
+            return;
+        }
+        String existingPath = safe(attachment.optString(pathField, ""));
+        String hint = existingPath.isEmpty() ? artifactId : new File(existingPath).getName();
+        File target = downloadArtifact(artifactId, dir, filenameBase, hint);
+        Json.put(attachment, pathField, target.getAbsolutePath());
+    }
+
+    private File downloadArtifact(String artifactId, File dir, String filenameBase, String hint) throws Exception {
+        String url = baseUrl("/api/artifacts/" + URLEncoder.encode(artifactId, "UTF-8").replace("+", "%20"));
+        Request request = new Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful() || response.body() == null) {
+                throw new IOException("artifact http_" + response.code());
+            }
+            File target = new File(dir, safeAttachmentFilename(filenameBase, hint));
+            write(target, response.body().bytes());
+            return target;
+        }
     }
 
     private void emitFeedUpdated() {
@@ -516,8 +614,46 @@ public final class PuckyFeedController {
         return String.valueOf(raw == null ? "" : raw).replaceAll("[^A-Za-z0-9._-]+", "_");
     }
 
+    private boolean isAppOwnedPath(String raw) {
+        String clean = safe(raw);
+        if (clean.isEmpty()) {
+            return false;
+        }
+        try {
+            File file = new File(clean).getCanonicalFile();
+            return isWithin(file, context.getFilesDir())
+                    || isWithin(file, context.getCacheDir())
+                    || isWithin(file, context.getExternalFilesDir(null));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isWithin(File file, File root) throws IOException {
+        if (file == null || root == null) {
+            return false;
+        }
+        File candidate = file.getCanonicalFile();
+        File base = root.getCanonicalFile();
+        return candidate.equals(base) || candidate.getPath().startsWith(base.getPath() + File.separator);
+    }
+
     private static String safe(String raw) {
         return raw == null ? "" : raw.trim();
+    }
+
+    private static String safeAttachmentFilename(String prefix, String hint) {
+        String cleanHint = safeName(hint);
+        if (cleanHint.isEmpty()) {
+            cleanHint = prefix;
+        }
+        int dot = cleanHint.lastIndexOf('.');
+        String ext = dot >= 0 ? cleanHint.substring(dot) : "";
+        String stem = dot >= 0 ? cleanHint.substring(0, dot) : cleanHint;
+        if (stem.isEmpty()) {
+            stem = prefix;
+        }
+        return safeName(prefix + "_" + stem) + ext;
     }
 
     private static void write(File target, byte[] bytes) throws IOException {

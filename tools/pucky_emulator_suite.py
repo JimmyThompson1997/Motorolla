@@ -15,8 +15,10 @@ import sys
 import time
 import textwrap
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +50,8 @@ BASE_DIR = ROOT / ".tmp" / "pucky-emulator"
 RUNS_DIR = ROOT / ".tmp" / "pucky-emulator-runs"
 MIN_RECOMMENDED_AVD_FREE_GB = 8.0
 INSTALL_SERVICES_SETTLE_SECONDS = 45.0
+DISPLAYABLE_VIEWER_TYPES = {"html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"}
+NODE_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
 class SuiteError(RuntimeError):
@@ -793,6 +797,66 @@ def turn_request(turn_url: str, token: str, audio_path: Path, turn_id: str) -> u
     )
 
 
+def text_turn_url(turn_url: str) -> str:
+    clean = str(turn_url or "").strip()
+    if clean.endswith("/api/turn"):
+        return clean + "/text"
+    if clean.endswith("/turn"):
+        return clean + "/text"
+    return clean.rstrip("/") + "/text"
+
+
+def text_turn_request(turn_url: str, token: str, text: str, turn_id: str, *, reply_mode: str = "card_only") -> urllib.request.Request:
+    payload = {
+        "text": text,
+        "turn_id": turn_id,
+        "reply_mode": reply_mode,
+    }
+    return urllib.request.Request(
+        text_turn_url(turn_url),
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-Pucky-Turn-Id": turn_id,
+            "X-Pucky-Reply-Mode": reply_mode,
+        },
+    )
+
+
+def http_json_request(
+    request_or_url: urllib.request.Request | str,
+    *,
+    timeout: int | float,
+    method: str = "GET",
+    token: str = "",
+    body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    if isinstance(request_or_url, urllib.request.Request):
+        request = request_or_url
+    else:
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        merged_headers = dict(headers or {})
+        if token:
+            merged_headers.setdefault("Authorization", f"Bearer {token}")
+        if payload is not None:
+            merged_headers.setdefault("Content-Type", "application/json")
+        request = urllib.request.Request(
+            str(request_or_url),
+            data=payload,
+            method=method,
+            headers=merged_headers,
+        )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SuiteError(f"HTTP {exc.code} for {request.full_url}: {detail}") from exc
+
+
 def post_live_turn(args: argparse.Namespace, turn_id: str) -> dict[str, Any]:
     if not args.turn_token:
         raise SuiteError("prove-thread-origin requires --turn-token or PUCKY_API_TOKEN")
@@ -806,6 +870,38 @@ def post_live_turn(args: argparse.Namespace, turn_id: str) -> dict[str, Any]:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise SuiteError(f"Live turn failed with HTTP {exc.code}: {detail}") from exc
+
+
+def post_live_text_turn(args: argparse.Namespace, turn_id: str, text: str) -> dict[str, Any]:
+    if not args.turn_token:
+        raise SuiteError("prove-displayable-reply-files requires --turn-token or PUCKY_API_TOKEN")
+    request = text_turn_request(args.turn_url, args.turn_token, text, turn_id)
+    return http_json_request(request, timeout=args.turn_timeout_seconds)
+
+
+def feed_request(turn_url: str, token: str, *, limit: int = 25, cursor: str = "") -> dict[str, Any]:
+    url = turn_url_to_feed_url(turn_url) + f"?limit={int(limit)}"
+    if cursor:
+        url += "&cursor=" + urllib.parse.quote(cursor, safe="")
+    return http_json_request(url, timeout=60, token=token)
+
+
+def wait_for_live_feed_item(args: argparse.Namespace, turn_id: str, *, timeout: float = 120.0, limit: int = 25) -> dict[str, Any]:
+    if not args.turn_token:
+        raise SuiteError("prove-displayable-reply-files requires --turn-token or PUCKY_API_TOKEN")
+    deadline = time.monotonic() + timeout
+    last_page: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        page = feed_request(args.turn_url, args.turn_token, limit=limit)
+        last_page = page
+        items = page.get("items") if isinstance(page.get("items"), list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("turn_id") or "") == turn_id:
+                return item
+        time.sleep(2.0)
+    raise SuiteError(f"Live feed item for turn {turn_id} was not visible after {int(timeout)}s: {last_page}")
 
 
 def find_snapshot_card(snapshot: dict[str, Any], *, card_id: str, turn_id: str) -> dict[str, Any]:
@@ -874,6 +970,148 @@ def snapshot_card_by_card_id(snapshot: dict[str, Any], card_id: str) -> dict[str
         if str(item.get("card_id") or "") == target:
             return item
     return None
+
+
+def dump_ui_hierarchy(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
+    remote_path = "/sdcard/pucky_window_dump.xml"
+    runner.run(adb_command(args, config.serial, ["shell", "uiautomator", "dump", remote_path]), timeout=30, check=False)
+    if runner.dry_run:
+        runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
+        return "<hierarchy rotation=\"0\"/>"
+    result = runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
+    text = result.stdout.strip()
+    if "<hierarchy" not in text:
+        raise SuiteError(f"Unable to capture UI hierarchy: {text or result.stderr}")
+    return text
+
+
+def parse_node_bounds(bounds: str) -> tuple[int, int, int, int]:
+    match = NODE_BOUNDS_RE.fullmatch(str(bounds or "").strip())
+    if not match:
+        raise SuiteError(f"Invalid node bounds: {bounds}")
+    left, top, right, bottom = map(int, match.groups())
+    return left, top, right, bottom
+
+
+def find_ui_nodes(
+    xml_text: str,
+    *,
+    text_pattern: str | None = None,
+    content_desc_pattern: str | None = None,
+) -> list[dict[str, str]]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise SuiteError(f"Unable to parse UI hierarchy XML: {exc}") from exc
+    text_re = re.compile(text_pattern) if text_pattern else None
+    desc_re = re.compile(content_desc_pattern) if content_desc_pattern else None
+    found: list[dict[str, str]] = []
+    for node in root.iter("node"):
+        attrs = dict(node.attrib)
+        text_value = str(attrs.get("text") or "")
+        desc_value = str(attrs.get("content-desc") or "")
+        if text_re and not text_re.search(text_value):
+            continue
+        if desc_re and not desc_re.search(desc_value):
+            continue
+        found.append(attrs)
+    return found
+
+
+def wait_for_ui_node(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    description: str,
+    text_pattern: str | None = None,
+    content_desc_pattern: str | None = None,
+    timeout: float = 30.0,
+) -> tuple[dict[str, str], str]:
+    deadline = time.monotonic() + timeout
+    last_xml = ""
+    while time.monotonic() < deadline:
+        xml_text = dump_ui_hierarchy(args, runner, config)
+        last_xml = xml_text
+        nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
+        if nodes:
+            return nodes[0], xml_text
+        time.sleep(1.0)
+    raise SuiteError(f"{description} after {int(timeout)}s")
+
+
+def wait_for_ui_absence(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    description: str,
+    text_pattern: str | None = None,
+    content_desc_pattern: str | None = None,
+    timeout: float = 30.0,
+) -> str:
+    deadline = time.monotonic() + timeout
+    last_xml = ""
+    while time.monotonic() < deadline:
+        xml_text = dump_ui_hierarchy(args, runner, config)
+        last_xml = xml_text
+        nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
+        if not nodes:
+            return xml_text
+        time.sleep(1.0)
+    raise SuiteError(f"{description} after {int(timeout)}s")
+
+
+def tap_ui_node(args: argparse.Namespace, runner: Runner, config: SlotConfig, node: dict[str, str]) -> None:
+    left, top, right, bottom = parse_node_bounds(node.get("bounds", ""))
+    tap(args, runner, config, ((left + right) // 2, (top + bottom) // 2))
+
+
+def first_displayable_attachment_snapshot(card: dict[str, Any]) -> dict[str, Any] | None:
+    messages = card.get("transcript_messages") if isinstance(card.get("transcript_messages"), list) else []
+    sets: list[list[dict[str, Any]]] = []
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").lower() == "user":
+            continue
+        attachments = [item for item in (message.get("attachments") if isinstance(message.get("attachments"), list) else []) if isinstance(item, dict)]
+        if attachments:
+            sets.append(attachments)
+            break
+    card_level = [item for item in (card.get("attachments") if isinstance(card.get("attachments"), list) else []) if isinstance(item, dict)]
+    if card_level:
+        sets.append(card_level)
+    for attachments in sets:
+        for index, item in enumerate(attachments):
+            viewer = item.get("viewer") if isinstance(item.get("viewer"), dict) else {}
+            viewer_type = str(viewer.get("type") or "").lower()
+            if viewer_type in DISPLAYABLE_VIEWER_TYPES:
+                return {"attachments": attachments, "index": index, "item": item, "viewer_type": viewer_type}
+    return None
+
+
+def card_action_accessibility_label(card: dict[str, Any]) -> str | None:
+    title = str(card.get("title") or "").strip()
+    if not title:
+        title = "Pucky"
+    if str(card.get("html_path") or "").strip():
+        return f"Open page for {title}"
+    attachment = first_displayable_attachment_snapshot(card)
+    if attachment:
+        return f"Open file for {title}"
+    return None
+
+
+def card_open_title(card: dict[str, Any]) -> str:
+    if str(card.get("html_path") or "").strip():
+        return str(card.get("title") or "Pucky")
+    attachment = first_displayable_attachment_snapshot(card)
+    if attachment:
+        title = str((attachment.get("item") or {}).get("title") or "").strip()
+        if title:
+            return title
+    return str(card.get("title") or "Attachment")
 
 
 def screenshot_sha256(path: Path) -> str:
@@ -1972,6 +2210,393 @@ def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+    if not args.turn_token:
+        raise SuiteError("prove-displayable-reply-files requires --turn-token or PUCKY_API_TOKEN")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    bundle_refresh = {"ok": True, "skipped": True}
+    if not args.skip_refresh:
+        bundle_refresh = run_official_refresh(args, runner, config)
+        if not args.dry_run:
+            ensure_broker_command_channel(
+                args,
+                runner,
+                config,
+                stage="displayable_reply_files_after_refresh",
+                timeout_seconds=max(90, args.refresh_timeout_seconds),
+            )
+    bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+    command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
+    runner.run(launch_home_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+
+    card_icons_url = args.vm_base_url.rstrip("/") + "/api/card-icons"
+    icon_registry_before = http_json_request(card_icons_url, timeout=30)
+    runtime_icon_slug = "proof_orbit"
+    runtime_icon_payload = {
+        "name": runtime_icon_slug,
+        "label": "Proof Orbit",
+        "filled_svg": '<path d="M12 2 14.8 9.2 22 12 14.8 14.8 12 22 9.2 14.8 2 12 9.2 9.2Z"/>',
+        "outline_svg": '<path d="M12 4.5 14 10 19.5 12 14 14 12 19.5 10 14 4.5 12 10 10Z"/>',
+    }
+    icon_registry_upsert = http_json_request(
+        card_icons_url,
+        timeout=30,
+        method="POST",
+        token=args.turn_token,
+        body=runtime_icon_payload,
+    )
+    icon_registry_after = http_json_request(card_icons_url, timeout=30)
+
+    cases = [
+        {
+            "key": "html",
+            "card_title": "Proof HTML Dashboard",
+            "card_icon": "bolt",
+            "prompt": (
+                "Create a small browser-displayable HTML dashboard with three goals for today. "
+                "Save it as a complete HTML file and return it as the first browser-displayable result. "
+                "Use card_title exactly 'Proof HTML Dashboard' and card_icon exactly 'bolt'."
+            ),
+            "tile_screenshot": "html-tile.png",
+            "opened_screenshot": "html-opened.png",
+            "expects_action": True,
+            "aliases": [],
+        },
+        {
+            "key": "csv",
+            "card_title": "Proof CSV Table",
+            "card_icon": "calendar",
+            "prompt": (
+                "Create a CSV table comparing three options with columns option, cost, and speed. "
+                "Return the CSV as the first attachment. "
+                "Use card_title exactly 'Proof CSV Table' and card_icon exactly 'calendar'. "
+                "Make the first attachment title exactly 'Proof CSV Table File'."
+            ),
+            "tile_screenshot": "csv-tile.png",
+            "opened_screenshot": "csv-opened.png",
+            "expects_action": True,
+            "aliases": [],
+        },
+        {
+            "key": "txt",
+            "card_title": "Proof Text Note",
+            "card_icon": "mail",
+            "prompt": (
+                "Create a plain text note file listing three next steps. "
+                "Return that text file as the first attachment. "
+                "Use card_title exactly 'Proof Text Note' and card_icon exactly 'mail'. "
+                "Make the first attachment title exactly 'Proof Text Note File'."
+            ),
+            "tile_screenshot": "txt-tile.png",
+            "opened_screenshot": "txt-opened.png",
+            "expects_action": True,
+            "aliases": [],
+        },
+        {
+            "key": "json",
+            "card_title": "Proof JSON Summary",
+            "card_icon": "clock",
+            "prompt": (
+                "Create a JSON file summarizing three findings with keys summary, risks, and next_action. "
+                "Return that JSON file as the first attachment. "
+                "Use card_title exactly 'Proof JSON Summary' and card_icon exactly 'clock'. "
+                "Make the first attachment title exactly 'Proof JSON Summary File'."
+            ),
+            "tile_screenshot": "json-tile.png",
+            "opened_screenshot": "json-opened.png",
+            "expects_action": True,
+            "aliases": [],
+        },
+        {
+            "key": "pdf_derivative",
+            "card_title": "Proof PDF Viewer",
+            "card_icon": "moon",
+            "prompt": (
+                "Create a tiny PDF file and also create a browser-safe HTML viewer page for it. "
+                "Return the PDF as the first attachment and set its viewer_path to the HTML viewer page. "
+                "Use card_title exactly 'Proof PDF Viewer' and card_icon exactly 'moon'. "
+                "Make the first attachment title exactly 'Proof PDF Viewer File'."
+            ),
+            "tile_screenshot": "pdf-tile.png",
+            "opened_screenshot": "pdf-opened-derivative.png",
+            "expects_action": True,
+            "aliases": ["icon-existing.png"],
+        },
+        {
+            "key": "multi",
+            "card_title": "Proof Multi Attachment Order",
+            "card_icon": "bolt",
+            "prompt": (
+                "Create two browser-displayable files and return them in this exact attachment order: "
+                "first an HTML page titled 'Proof Multi First', then a CSV file titled 'Proof Multi Second'. "
+                "Use card_title exactly 'Proof Multi Attachment Order' and card_icon exactly 'bolt'."
+            ),
+            "tile_screenshot": "multi-tile.png",
+            "opened_screenshot": "multi-opened-first.png",
+            "expects_action": True,
+            "aliases": [],
+        },
+        {
+            "key": "binary",
+            "card_title": "Proof Binary Archive",
+            "card_icon": "mail",
+            "prompt": (
+                "Create only a ZIP archive containing two tiny text files. "
+                "Return the ZIP archive as an attachment, but do not create any browser-displayable viewer file for it. "
+                "Use card_title exactly 'Proof Binary Archive' and card_icon exactly 'mail'. "
+                "Make the first attachment title exactly 'Proof Binary Archive File'."
+            ),
+            "tile_screenshot": "binary-no-file-icon.png",
+            "opened_screenshot": "",
+            "expects_action": False,
+            "aliases": [],
+        },
+        {
+            "key": "icon_added",
+            "card_title": "Proof Runtime Icon",
+            "card_icon": runtime_icon_slug,
+            "prompt": (
+                f"Create a plain text note file with two bullet points and return it as the first attachment. "
+                f"Use card_title exactly 'Proof Runtime Icon' and card_icon exactly '{runtime_icon_slug}'. "
+                "Make the first attachment title exactly 'Proof Runtime Icon File'."
+            ),
+            "tile_screenshot": "icon-added.png",
+            "opened_screenshot": "",
+            "expects_action": True,
+            "aliases": [],
+        },
+    ]
+
+    results: list[dict[str, Any]] = []
+    for index, case in enumerate(cases, start=1):
+        turn_id = f"prove-displayable-{case['key']}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+        prompt = str(case["prompt"])
+        live_turn = post_live_text_turn(args, turn_id, prompt)
+        live_feed_item = wait_for_live_feed_item(args, turn_id, timeout=args.turn_timeout_seconds)
+        feed_sync = command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "pucky.feed.sync", {"reason": f"prove-displayable:{turn_id}"}),
+                timeout=180,
+            )
+        )
+        snapshot, local_card = wait_for_snapshot_card(
+            args,
+            runner,
+            config,
+            card_id=str(live_turn.get("card_id") or ""),
+            turn_id=turn_id,
+            timeout=float(args.snapshot_timeout_seconds),
+        )
+        runner.run(launch_home_command(args, config), timeout=30)
+        if not args.dry_run:
+            time.sleep(args.ui_dwell_seconds)
+
+        tile_screenshot = Path(config.evidence_dir) / str(case["tile_screenshot"])
+        opened_screenshot = Path(config.evidence_dir) / str(case["opened_screenshot"]) if case["opened_screenshot"] else None
+        if not args.dry_run:
+            capture_screenshot(args, runner, config, tile_screenshot)
+        action_label = card_action_accessibility_label(local_card)
+        title = str(local_card.get("title") or case["card_title"])
+        action_pattern = rf"^Open (?:page|file) for {re.escape(title)}$"
+        tile_xml = dump_ui_hierarchy(args, runner, config)
+        tile_xml_path = Path(config.evidence_dir) / f"{case['key']}-tile.xml"
+        tile_xml_path.write_text(tile_xml, encoding="utf-8")
+        open_title = card_open_title(local_card)
+
+        opened_xml = ""
+        opened_xml_path = Path(config.evidence_dir) / f"{case['key']}-opened.xml"
+        if case["expects_action"]:
+            if not action_label:
+                raise SuiteError(f"{case['key']} returned no tile-openable attachment")
+            nodes = find_ui_nodes(tile_xml, content_desc_pattern=rf"^{re.escape(action_label)}$")
+            if not nodes:
+                raise SuiteError(f"{case['key']} did not expose the expected tile file action: {action_label}")
+            tap_ui_node(args, runner, config, nodes[0])
+            if not args.dry_run:
+                time.sleep(args.ui_dwell_seconds)
+            _, opened_xml = wait_for_ui_node(
+                args,
+                runner,
+                config,
+                description=f"{case['key']} did not open a detail view titled {open_title}",
+                text_pattern=rf"^{re.escape(open_title)}$",
+                timeout=float(args.viewer_timeout_seconds),
+            )
+            opened_xml_path.write_text(opened_xml, encoding="utf-8")
+            if opened_screenshot is not None and not args.dry_run:
+                capture_screenshot(args, runner, config, opened_screenshot)
+                if screenshot_sha256(tile_screenshot) == screenshot_sha256(opened_screenshot):
+                    raise SuiteError(f"{case['key']} tile tap did not visibly change the UI")
+            runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30)
+            if not args.dry_run:
+                time.sleep(args.ui_dwell_seconds)
+        else:
+            nodes = find_ui_nodes(tile_xml, content_desc_pattern=action_pattern)
+            if nodes:
+                raise SuiteError(f"{case['key']} unexpectedly rendered a displayable tile action")
+            opened_xml_path.write_text("", encoding="utf-8")
+
+        for alias in case.get("aliases", []):
+            if not args.dry_run:
+                shutil.copyfile(tile_screenshot, Path(config.evidence_dir) / str(alias))
+
+        attachment_info = first_displayable_attachment_snapshot(local_card)
+        results.append(
+            {
+                "key": case["key"],
+                "turn_id": turn_id,
+                "prompt": prompt,
+                "live_turn": live_turn,
+                "live_feed_item": live_feed_item,
+                "feed_sync": feed_sync,
+                "snapshot": snapshot,
+                "local_card": local_card,
+                "expected_action": bool(case["expects_action"]),
+                "action_label": action_label,
+                "open_title": open_title,
+                "first_displayable_attachment": attachment_info,
+                "tile_screenshot": str(tile_screenshot),
+                "opened_screenshot": str(opened_screenshot) if opened_screenshot else "",
+                "tile_xml_path": str(tile_xml_path),
+                "opened_xml_path": str(opened_xml_path),
+                "card_icon": str(local_card.get("icon") or ""),
+                "attachment_count": len((attachment_info or {}).get("attachments") or []),
+                "case_index": index,
+            }
+        )
+
+    archive_case = next((item for item in results if str(item.get("key") or "") == "icon_added"), results[-1] if results else None)
+    archive_proof: dict[str, Any] = {}
+    if archive_case:
+        archive_title = str((archive_case.get("local_card") or {}).get("title") or archive_case.get("card_title") or "").strip()
+        archive_card_id = str((archive_case.get("local_card") or {}).get("card_id") or "")
+        archive_turn_id = str(archive_case.get("turn_id") or "")
+        runner.run(launch_home_command(args, config), timeout=30)
+        if not args.dry_run:
+            time.sleep(args.ui_dwell_seconds)
+        archive_card_node, archive_before_xml = wait_for_ui_node(
+            args,
+            runner,
+            config,
+            description=f"Did not find archive proof card titled {archive_title}",
+            text_pattern=rf"^{re.escape(archive_title)}$",
+            timeout=float(args.viewer_timeout_seconds),
+        )
+        archive_before_xml_path = Path(config.evidence_dir) / "archive-before.xml"
+        archive_before_xml_path.write_text(archive_before_xml, encoding="utf-8")
+        left, top, right, bottom = parse_node_bounds(archive_card_node.get("bounds", ""))
+        long_press(
+            args,
+            runner,
+            config,
+            ((left + right) // 2, (top + bottom) // 2),
+            duration_ms=args.long_press_ms,
+        )
+        if not args.dry_run:
+            time.sleep(args.ui_dwell_seconds)
+        archive_menu_node, archive_menu_xml = wait_for_ui_node(
+            args,
+            runner,
+            config,
+            description="Archive menu did not appear after long-pressing reply card",
+            text_pattern=r"^Archive$",
+            timeout=float(args.viewer_timeout_seconds),
+        )
+        archive_menu_xml_path = Path(config.evidence_dir) / "archive-menu.xml"
+        archive_menu_xml_path.write_text(archive_menu_xml, encoding="utf-8")
+        archive_menu_screenshot = Path(config.evidence_dir) / "reply-archive-menu.png"
+        if not args.dry_run:
+            capture_screenshot(args, runner, config, archive_menu_screenshot)
+        tap_ui_node(args, runner, config, archive_menu_node)
+        if not args.dry_run:
+            time.sleep(args.ui_dwell_seconds)
+        archived_snapshot = wait_for_snapshot_condition(
+            args,
+            runner,
+            config,
+            description="Archived reply card never became archived in the local snapshot",
+            predicate=lambda snapshot: (
+                isinstance(snapshot_card_by_card_id(snapshot, archive_card_id), dict)
+                and bool(snapshot_card_by_card_id(snapshot, archive_card_id).get("archived"))
+            ),
+            timeout=120,
+        )
+        archive_removed_xml = wait_for_ui_absence(
+            args,
+            runner,
+            config,
+            description="Archived reply card remained visible in the default home feed",
+            text_pattern=rf"^{re.escape(archive_title)}$",
+            timeout=float(args.viewer_timeout_seconds),
+        )
+        archive_removed_xml_path = Path(config.evidence_dir) / "archive-removed.xml"
+        archive_removed_xml_path.write_text(archive_removed_xml, encoding="utf-8")
+        archive_removed_screenshot = Path(config.evidence_dir) / "reply-archived-removed.png"
+        if not args.dry_run:
+            capture_screenshot(args, runner, config, archive_removed_screenshot)
+        archive_proof = {
+            "title": archive_title,
+            "card_id": archive_card_id,
+            "turn_id": archive_turn_id,
+            "menu_screenshot": str(archive_menu_screenshot),
+            "removed_screenshot": str(archive_removed_screenshot),
+            "before_xml_path": str(archive_before_xml_path),
+            "menu_xml_path": str(archive_menu_xml_path),
+            "removed_xml_path": str(archive_removed_xml_path),
+            "snapshot": archived_snapshot,
+        }
+
+    evidence = {
+        "schema": "pucky.emulator_displayable_reply_files_proof.v1",
+        "created_at": now_iso(),
+        "config": asdict(config),
+        "bundle_refresh": bundle_refresh,
+        "bundle_status": bundle_status,
+        "icon_registry_before": icon_registry_before,
+        "icon_registry_upsert": icon_registry_upsert,
+        "icon_registry_after": icon_registry_after,
+        "cases": results,
+        "archive_proof": archive_proof,
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+    evidence_path = write_evidence(config, "displayable-reply-files-proof.json", evidence)
+    return {
+        "schema": "pucky.emulator_displayable_reply_files_proof_result.v1",
+        "ok": True,
+        "config": asdict(config),
+        "evidence_path": str(evidence_path),
+        "screenshots": {
+            item["key"]: {
+                "tile": item["tile_screenshot"],
+                "opened": item["opened_screenshot"],
+            }
+            for item in results
+        }
+        | (
+            {
+                "archive": {
+                    "menu": archive_proof.get("menu_screenshot", ""),
+                    "removed": archive_proof.get("removed_screenshot", ""),
+                }
+            }
+            if archive_proof
+            else {}
+        ),
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+
+
 def wake_lab_gates(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
     snapshots: list[dict[str, Any]] = []
     commands: list[dict[str, Any]] = []
@@ -2366,7 +2991,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-displayable-reply-files"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -2409,6 +3034,17 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--failed-card-tap", default="528,230")
             item.add_argument("--long-press-ms", type=int, default=360)
             item.add_argument("--skip-refresh", action="store_true")
+        if name == "prove-displayable-reply-files":
+            item.add_argument("--turn-url", default=os.environ.get("PUCKY_TURN_URL", DEFAULT_TURN_URL))
+            item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
+            item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
+            item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--turn-timeout-seconds", type=int, default=180)
+            item.add_argument("--refresh-timeout-seconds", type=int, default=180)
+            item.add_argument("--snapshot-timeout-seconds", type=int, default=120)
+            item.add_argument("--viewer-timeout-seconds", type=int, default=30)
+            item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--skip-refresh", action="store_true")
     return parser
 
 
@@ -2435,6 +3071,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_prove_thread_origin(args)
     if args.command == "prove-pending-outbound-feed":
         return cmd_prove_pending_outbound_feed(args)
+    if args.command == "prove-displayable-reply-files":
+        return cmd_prove_displayable_reply_files(args)
     raise SuiteError(f"Unknown command: {args.command}")
 
 

@@ -29,6 +29,15 @@ public final class PuckyTurnResponseTest {
                         .put("runtime", "codex")
                         .put("thread_id", "thread-1")
                         .put("model", "gpt-5.5"))
+                .put("transcript_messages", new org.json.JSONArray()
+                        .put(new JSONObject()
+                                .put("role", "assistant")
+                                .put("text", "Sure, here you go.")
+                                .put("attachments", new org.json.JSONArray()
+                                        .put(new JSONObject()
+                                                .put("artifact", "csv-1")
+                                                .put("mime_type", "text/csv")
+                                                .put("title", "Report CSV")))))
                 .put("card", new JSONObject()
                         .put("title", " Helpful Thing ")
                         .put("icon", "bolt")
@@ -43,6 +52,9 @@ public final class PuckyTurnResponseTest {
         assertEquals("bolt", response.cardIcon());
         assertEquals("thread-1", response.origin().getString("thread_id"));
         assertEquals("gpt-5.5", response.origin().getString("model"));
+        assertEquals(1, response.transcriptMessages().length());
+        assertEquals("Report CSV", response.transcriptMessages().getJSONObject(0)
+                .getJSONArray("attachments").getJSONObject(0).getString("title"));
         assertTrue(response.hasHtml());
         assertEquals("<!doctype html>", new String(response.htmlBytes(), StandardCharsets.UTF_8));
     }
@@ -56,8 +68,17 @@ public final class PuckyTurnResponseTest {
                 .put("card", new JSONObject().put("icon", "sparkles")));
 
         assertEquals("This is a reply.", response.cardTitle());
-        assertEquals("mail", response.cardIcon());
+        assertEquals("sparkles", response.cardIcon());
         assertFalse(response.hasHtml());
+    }
+
+    @Test
+    public void rejectsInvalidIconSlug() throws Exception {
+        PuckyTurnResponse response = PuckyTurnResponse.fromJson(new JSONObject()
+                .put("text", "Hi")
+                .put("card", new JSONObject().put("icon", "sparkles!")));
+
+        assertEquals("mail", response.cardIcon());
     }
 
     @Test

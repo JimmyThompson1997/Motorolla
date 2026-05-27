@@ -8,13 +8,17 @@ from typing import Any
 KIND_BY_MIME = {
     "application/pdf": "document",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "document",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "table",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "document",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "document",
     "text/csv": "table",
     "text/tab-separated-values": "table",
     "text/html": "html",
     "application/xhtml+xml": "html",
     "text/plain": "text",
+    "text/markdown": "text",
+    "application/json": "text",
+    "text/xml": "text",
+    "application/xml": "text",
 }
 
 
@@ -158,7 +162,7 @@ def media_source(item: dict[str, Any], *, type_: str) -> dict[str, Any]:
 
 
 def original_name(item: dict[str, Any]) -> str:
-    for key in ("name", "filename", "artifact", "path", "local_path", "image_path", "artifact_path", "src", "url"):
+    for key in ("name", "filename", "path", "local_path", "image_path", "artifact_path", "artifact", "src", "url"):
         value = str(item.get(key) or "").strip()
         if value:
             return value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]

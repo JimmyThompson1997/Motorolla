@@ -1466,6 +1466,7 @@ public final class PuckyTurnController {
             return;
         }
         copyIfPresent(target, capture, "trigger_source");
+        copyIfPresent(target, capture, "fixture_start_delay_ms");
         copyIfPresent(target, capture, "wake_phrase_family");
         copyIfPresent(target, capture, "wake_phrase_detected");
     }
