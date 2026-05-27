@@ -335,6 +335,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn("/api/links/composio/my-apps", text)
         self.assertIn("/api/links/composio/all-apps", text)
         self.assertIn("browser.open", text)
+        self.assertIn("window.location.assign(href);", text)
+        self.assertIn("if (!/browser\\.open/i.test(detail)) {", text)
         self.assertNotIn("Refresh My Apps", text)
         self.assertNotIn("This view", text)
         self.assertNotIn("/api/links/composio/disconnect", text)

@@ -1324,8 +1324,20 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
         if (!slug) return;
         const href = buildConnectHref(slug);
         if (authMode === 'browser') {{
-          await window.Pucky.request({{ command: 'browser.open', args: {{ url: new URL(href, window.location.href).toString() }} }});
-          showMessage('Opened ' + slug + ' in the browser. Come back here when you are done.', 'ok');
+          const externalUrl = new URL(href, window.location.href).toString();
+          if (window.Pucky && typeof window.Pucky.request === 'function') {{
+            try {{
+              await window.Pucky.request({{ command: 'browser.open', args: {{ url: externalUrl }} }});
+              showMessage('Opened ' + slug + ' in the browser. Come back here when you are done.', 'ok');
+              return;
+            }} catch (error) {{
+              const detail = String(error && error.message ? error.message : error || '');
+              if (!/browser\\.open/i.test(detail)) {{
+                throw error;
+              }}
+            }}
+          }}
+          window.location.assign(href);
           return;
         }}
         window.location.assign(href);
