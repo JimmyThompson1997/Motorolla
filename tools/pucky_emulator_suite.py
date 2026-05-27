@@ -2428,6 +2428,8 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 raise SuiteError(f"{case['key']} returned no tile-openable attachment")
             nodes = find_ui_nodes(tile_xml, content_desc_pattern=rf"^{re.escape(action_label)}$")
             if not nodes:
+                nodes = find_ui_nodes(tile_xml, text_pattern=rf"^{re.escape(action_label)}$")
+            if not nodes:
                 raise SuiteError(f"{case['key']} did not expose the expected tile file action: {action_label}")
             tap_ui_node(args, runner, config, nodes[0])
             if not args.dry_run:

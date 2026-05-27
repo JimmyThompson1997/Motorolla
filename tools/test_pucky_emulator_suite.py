@@ -238,13 +238,18 @@ def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
     xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
   <node index="0" text="" resource-id="" class="android.widget.Button" package="com.pucky.device.debug" content-desc="Open file for Proof CSV Table" bounds="[900,180][1000,260]" />
-  <node index="1" text="Proof CSV Table File" resource-id="" class="android.widget.TextView" package="com.pucky.device.debug" content-desc="" bounds="[88,96][430,154]" />
+  <node index="1" text="Open file for Proof HTML Dashboard" resource-id="" class="android.widget.Button" package="com.pucky.device.debug" content-desc="" bounds="[876,204][989,307]" />
+  <node index="2" text="Proof CSV Table File" resource-id="" class="android.widget.TextView" package="com.pucky.device.debug" content-desc="" bounds="[88,96][430,154]" />
 </hierarchy>
 """
 
     nodes = suite.find_ui_nodes(xml, content_desc_pattern=r"^Open file for Proof CSV Table$")
     assert len(nodes) == 1
     assert suite.parse_node_bounds(nodes[0]["bounds"]) == (900, 180, 1000, 260)
+
+    action_text_nodes = suite.find_ui_nodes(xml, text_pattern=r"^Open file for Proof HTML Dashboard$")
+    assert len(action_text_nodes) == 1
+    assert suite.parse_node_bounds(action_text_nodes[0]["bounds"]) == (876, 204, 989, 307)
 
     title_nodes = suite.find_ui_nodes(xml, text_pattern=r"^Proof CSV Table File$")
     assert len(title_nodes) == 1
