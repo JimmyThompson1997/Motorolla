@@ -2411,14 +2411,21 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
 
         tile_screenshot = Path(config.evidence_dir) / str(case["tile_screenshot"])
         opened_screenshot = Path(config.evidence_dir) / str(case["opened_screenshot"]) if case["opened_screenshot"] else None
+        title = str(local_card.get("title") or case["card_title"])
+        _, tile_xml = wait_for_ui_node(
+            args,
+            runner,
+            config,
+            description=f"{case['key']} did not render card text for {title}",
+            text_pattern=re.escape(title),
+            timeout=float(args.viewer_timeout_seconds),
+        )
+        tile_xml_path = Path(config.evidence_dir) / f"{case['key']}-tile.xml"
+        tile_xml_path.write_text(tile_xml, encoding="utf-8")
         if not args.dry_run:
             capture_screenshot(args, runner, config, tile_screenshot)
         action_label = card_action_accessibility_label(local_card)
-        title = str(local_card.get("title") or case["card_title"])
         action_pattern = rf"^Open (?:page|file) for {re.escape(title)}$"
-        tile_xml = dump_ui_hierarchy(args, runner, config)
-        tile_xml_path = Path(config.evidence_dir) / f"{case['key']}-tile.xml"
-        tile_xml_path.write_text(tile_xml, encoding="utf-8")
         open_title = card_open_title(local_card)
 
         opened_xml = ""
