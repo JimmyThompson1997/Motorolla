@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat;
 
 import com.pucky.device.BuildConfig;
 import com.pucky.device.assistant.PuckyAssistantController;
+import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
 import com.pucky.device.util.Json;
 
@@ -51,7 +52,13 @@ public final class WakeWordController {
     private static final String KEY_LAST_ARM_AT = "last_arm_at";
     private static final String KEY_LAST_DISARM_AT = "last_disarm_at";
     private static final String KEY_LAST_DISARM_REASON = "last_disarm_reason";
+    private static final String KEY_LAST_HANDOFF_AT = "last_handoff_at";
+    private static final String KEY_LAST_HANDOFF_RESULT = "last_handoff_result";
     private static final String KEY_DEBUG_RECOGNIZER_MODE = "debug_recognizer_mode";
+    private static final String KEY_DEBUG_TURN_CAPTURE_SOURCE = "debug_turn_capture_source";
+    private static final String KEY_DEBUG_TURN_FIXTURE_NAME = "debug_turn_fixture_name";
+    private static final String KEY_DEBUG_TURN_FIXTURE_TRANSCRIPT = "debug_turn_fixture_transcript";
+    private static final String KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS = "debug_turn_fixture_start_delay_ms";
     private static final String KEY_PREFS_SCHEMA = "prefs_schema";
 
     private static final String MODE_ANDROID_STT_WAKE = "android_stt_wake";
@@ -61,8 +68,9 @@ public final class WakeWordController {
     private static final String DEFAULT_SCOPE = "awake_and_unlocked_foreground";
     private static final String SCOPE_ASSISTANT_RESERVED = "assistant_screen_off_reserved";
     private static final long PROOF_WINDOW_MS = 3000L;
+    private static final long LATCHED_WAKE_DEBOUNCE_MS = 250L;
     private static final int MAX_HISTORY = 10;
-    private static final int PREFS_SCHEMA_V3 = 3;
+    private static final int PREFS_SCHEMA_V4 = 4;
 
     private static final String[] LEGACY_WAKE_KEYS = new String[] {
             "last_candidate_json",
@@ -122,12 +130,14 @@ public final class WakeWordController {
     private final Object lock = new Object();
     private final WakeRecognizerFactory recognizerFactory;
     private final Runnable rearmRunnable = this::runScheduledRearm;
+    private final Runnable latchedHandoffRunnable = this::runLatchedHandoff;
 
     private BroadcastReceiver screenReceiver;
     private boolean receiverRegistered;
     private boolean serviceStarted;
     private boolean running;
     private String state = "idle";
+    private String phase = "idle";
     private String suspendedReason = "";
     private WakeRecognizer recognizer;
     private int generation;
@@ -136,12 +146,17 @@ public final class WakeWordController {
     private String proofTranscript = "";
     private String activeTurnId = "";
     private String activeTurnSource = "";
+    private boolean wakeLatched;
+    private String latchedMatchedPhrase = "";
+    private String latchedTranscript = "";
+    private String latchedMatchSource = "";
     private String recognizerState = "idle";
     private int restartCount;
     private int consecutiveErrorCount;
     private String lastRestartReason = "";
     private boolean rearmScheduled;
     private String scheduledRearmReason = "";
+    private boolean latchedHandoffScheduled;
 
     WakeWordController(Context context, WakeRecognizerFactory recognizerFactory) {
         this.context = context.getApplicationContext();
@@ -165,6 +180,7 @@ public final class WakeWordController {
             Json.put(out, "requested_enabled", requested);
             Json.put(out, "running", running);
             Json.put(out, "state", state);
+            Json.put(out, "phase", phase);
             Json.put(out, "mode", MODE_ANDROID_STT_WAKE);
             Json.put(out, "engine", ENGINE_ANDROID_STT_SENTINEL);
             Json.put(out, "requested_engine", ENGINE_ANDROID_STT_SENTINEL);
@@ -177,6 +193,9 @@ public final class WakeWordController {
             Json.put(out, "restart_count", restartCount);
             Json.put(out, "last_restart_reason", lastRestartReason);
             Json.put(out, "debug_recognizer_mode", debugRecognizerModeLocked());
+            Json.put(out, "debug_turn_capture_source", stringPref(KEY_DEBUG_TURN_CAPTURE_SOURCE, ""));
+            Json.put(out, "debug_turn_fixture_name", stringPref(KEY_DEBUG_TURN_FIXTURE_NAME, ""));
+            Json.put(out, "debug_turn_fixture_start_delay_ms", intPref(KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS, 0));
             Json.put(out, "last_transcript", stringPref(KEY_LAST_TRANSCRIPT, ""));
             Json.put(out, "last_alternatives", jsonArrayPref(KEY_LAST_ALTERNATIVES_JSON));
             Json.put(out, "last_error_code", stringPref(KEY_LAST_ERROR_CODE, ""));
@@ -186,9 +205,12 @@ public final class WakeWordController {
             Json.put(out, "last_match", lastMatchJsonLocked());
             Json.put(out, "proof_indicator", proofIndicatorJsonLocked());
             Json.put(out, "assistant_status", PuckyAssistantController.status(context));
+            Json.put(out, "active_turn_id", activeTurnId);
             Json.put(out, "last_arm_at", stringPref(KEY_LAST_ARM_AT, ""));
             Json.put(out, "last_disarm_at", stringPref(KEY_LAST_DISARM_AT, ""));
             Json.put(out, "last_disarm_reason", stringPref(KEY_LAST_DISARM_REASON, ""));
+            Json.put(out, "last_handoff_at", stringPref(KEY_LAST_HANDOFF_AT, ""));
+            Json.put(out, "last_handoff_result", stringPref(KEY_LAST_HANDOFF_RESULT, ""));
             Json.put(out, "last_config_set_at", stringPref(KEY_LAST_CONFIG_SET_AT, ""));
             Json.put(out, "last_start_requested_at", stringPref(KEY_LAST_START_REQUESTED_AT, ""));
             Json.put(out, "last_stop_requested_at", stringPref(KEY_LAST_STOP_REQUESTED_AT, ""));
@@ -215,6 +237,21 @@ public final class WakeWordController {
         if (BuildConfig.DEBUG && args != null && args.has("recognizer_mode")) {
             editor.putString(KEY_DEBUG_RECOGNIZER_MODE,
                     normalizeDebugRecognizerMode(args.optString("recognizer_mode", DEBUG_RECOGNIZER_MODE_ANDROID)));
+        }
+        if (BuildConfig.DEBUG && args != null) {
+            if (args.has("capture_source")) {
+                editor.putString(KEY_DEBUG_TURN_CAPTURE_SOURCE, safe(args.optString("capture_source", "")));
+            }
+            if (args.has("fixture_name")) {
+                editor.putString(KEY_DEBUG_TURN_FIXTURE_NAME, safe(args.optString("fixture_name", "")));
+            }
+            if (args.has("debug_fixture_transcript")) {
+                editor.putString(KEY_DEBUG_TURN_FIXTURE_TRANSCRIPT, safe(args.optString("debug_fixture_transcript", "")));
+            }
+            if (args.has("fixture_start_delay_ms")) {
+                editor.putInt(KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS,
+                        Math.max(0, args.optInt("fixture_start_delay_ms", 0)));
+            }
         }
         editor.apply();
         reevaluate("config_set");
@@ -313,6 +350,7 @@ public final class WakeWordController {
         synchronized (lock) {
             activeTurnId = safe(turnId);
             activeTurnSource = safe(source);
+            phase = "turn_paused";
             action = stopForReasonLocked("turn_active", true);
         }
         applyAction(action);
@@ -324,6 +362,9 @@ public final class WakeWordController {
                 if (isTerminalTurnState(nextState)) {
                     activeTurnId = "";
                     activeTurnSource = "";
+                    phase = "idle";
+                } else if (!safe(turnId).isEmpty()) {
+                    phase = "turn_paused";
                 }
             }
         }
@@ -353,8 +394,6 @@ public final class WakeWordController {
                     action = stopForReasonLocked("record_audio_permission_missing", true);
                 } else if (usesAndroidRecognizerLocked() && !SpeechRecognizer.isRecognitionAvailable(context)) {
                     action = stopForReasonLocked("speech_recognition_unavailable", true);
-                } else if (proofWindowActiveLocked()) {
-                    return;
                 } else if (recognizer == null) {
                     action = startRecognizerLocked(reason);
                 }
@@ -369,8 +408,10 @@ public final class WakeWordController {
         int currentGeneration = generation;
         suspendedReason = "";
         state = "armed";
+        phase = "wake_armed";
         running = true;
         recognizerState = "starting";
+        clearLatchedWakeLocked();
         prefs.edit()
                 .putString(KEY_LAST_ARM_AT, nowIso())
                 .apply();
@@ -437,6 +478,7 @@ public final class WakeWordController {
             running = true;
             recognizerState = "ready";
             state = "armed";
+            phase = "wake_armed";
             consecutiveErrorCount = 0;
             appendHistoryLocked("ready", "", new JSONArray(), "", "", "");
         }
@@ -448,6 +490,9 @@ public final class WakeWordController {
                 return;
             }
             recognizerState = "speech";
+            if (!wakeLatched) {
+                phase = "wake_armed";
+            }
             appendHistoryLocked("speech_begin", "", new JSONArray(), "", "", "");
         }
     }
@@ -502,20 +547,29 @@ public final class WakeWordController {
                 : WakeTranscriptMatcher.matchPartial(transcript, alternatives);
         clearLastErrorLocked();
         if (!matched.isEmpty()) {
-            markProofLocked(matched, transcript, source + "_" + eventType);
-            state = "matched";
-            suspendedReason = "";
-            recognizerState = "matched";
+            latchWakeMatchLocked(matched, transcript, source + "_" + eventType);
             appendHistoryLocked(eventType, transcript, combined, matched, "", "");
-            Action action = detachRecognizerLocked("wake_matched");
+            Action action = new Action();
             action.accepted = true;
             action.matchedPhrase = matched;
-            action.playChime = true;
-            scheduleRearmLocked("proof_window_elapsed", PROOF_WINDOW_MS);
+            if (finalResult) {
+                action = beginWakeTurnHandoffLocked("final_result");
+                action.accepted = true;
+                action.matchedPhrase = matched;
+            } else {
+                scheduleLatchedHandoffLocked();
+            }
             Log.i(TAG, "android_stt_wake matched event=" + eventType + " matched=" + matched + " transcript=" + transcript);
             return action;
         }
         appendHistoryLocked(eventType, transcript, combined, "", "", "");
+        if (finalResult && wakeLatched) {
+            Action action = beginWakeTurnHandoffLocked("latched_final_result");
+            action.accepted = true;
+            action.matchedPhrase = latchedMatchedPhrase;
+            Log.i(TAG, "android_stt_wake latched_final_handoff transcript=" + transcript);
+            return action;
+        }
         if (!finalResult) {
             Log.i(TAG, "android_stt_wake partial_no_match transcript=" + transcript);
             return new Action();
@@ -538,10 +592,19 @@ public final class WakeWordController {
             code = "ERROR_CLIENT";
         }
         String message = safe(errorMessage);
+        if (wakeLatched) {
+            appendHistoryLocked("error", "", new JSONArray(), latchedMatchedPhrase, code, message);
+            Action action = beginWakeTurnHandoffLocked("latched_error_" + code.toLowerCase(Locale.US));
+            action.accepted = true;
+            action.matchedPhrase = latchedMatchedPhrase;
+            Log.i(TAG, "android_stt_wake latched_error_handoff source=" + source + " code=" + code);
+            return action;
+        }
         persistLastErrorLocked(code, message);
         appendHistoryLocked("error", "", new JSONArray(), "", code, message);
         state = "error";
         recognizerState = "error";
+        phase = "idle";
         suspendedReason = "";
         Action action = detachRecognizerLocked(code);
         restartCount += 1;
@@ -556,10 +619,13 @@ public final class WakeWordController {
 
     private Action stopForReasonLocked(String reason, boolean clearToIdle) {
         cancelScheduledRearmLocked();
+        cancelLatchedHandoffLocked();
+        clearLatchedWakeLocked();
         Action action = detachRecognizerLocked(reason);
         if (clearToIdle) {
             state = "idle";
             suspendedReason = reason;
+            phase = hasActiveTurnLocked() ? "turn_paused" : "idle";
         }
         return action;
     }
@@ -567,6 +633,7 @@ public final class WakeWordController {
     private Action detachRecognizerLocked(String reason) {
         Action action = new Action();
         cancelScheduledRearmLocked();
+        cancelLatchedHandoffLocked();
         generation += 1;
         action.toStop = recognizer;
         recognizer = null;
@@ -588,7 +655,35 @@ public final class WakeWordController {
         if (action.toStop != null) {
             action.toStop.stop();
         }
-        if (action.playChime) {
+        boolean turnStarted = false;
+        if (action.turnStartArgs != null) {
+            try {
+                PuckyTurnController.shared(context).start(action.turnStartArgs);
+                turnStarted = true;
+                synchronized (lock) {
+                    prefs.edit()
+                            .putString(KEY_LAST_HANDOFF_AT, nowIso())
+                            .putString(KEY_LAST_HANDOFF_RESULT, "turn_started")
+                            .apply();
+                    phase = hasActiveTurnLocked() ? "turn_paused" : phase;
+                }
+            } catch (Exception exc) {
+                synchronized (lock) {
+                    persistLastErrorLocked("turn_start_failed",
+                            exc.getClass().getSimpleName() + ": " + safe(exc.getMessage()));
+                    prefs.edit()
+                            .putString(KEY_LAST_HANDOFF_AT, nowIso())
+                            .putString(KEY_LAST_HANDOFF_RESULT, "turn_start_failed")
+                            .apply();
+                    state = "error";
+                    phase = "idle";
+                    suspendedReason = "turn_start_failed";
+                }
+                recipeExecutor.playFailureChime("pucky.wake_turn_start_failure_chime.v1");
+                reevaluate("turn_start_failed");
+            }
+        }
+        if (action.playChime && (action.turnStartArgs == null || turnStarted)) {
             recipeExecutor.playWakeListeningChime("pucky.wake_stt_sentinel_match_chime.v1");
         }
     }
@@ -619,10 +714,109 @@ public final class WakeWordController {
         scheduledRearmReason = "";
     }
 
+    private void runLatchedHandoff() {
+        Action action;
+        synchronized (lock) {
+            latchedHandoffScheduled = false;
+            if (!wakeLatched || recognizer == null) {
+                return;
+            }
+            action = beginWakeTurnHandoffLocked("partial_debounce");
+            action.accepted = true;
+            action.matchedPhrase = latchedMatchedPhrase;
+        }
+        applyAction(action);
+    }
+
+    private void scheduleLatchedHandoffLocked() {
+        cancelLatchedHandoffLocked();
+        latchedHandoffScheduled = true;
+        main.postDelayed(latchedHandoffRunnable, LATCHED_WAKE_DEBOUNCE_MS);
+    }
+
+    private void cancelLatchedHandoffLocked() {
+        if (!latchedHandoffScheduled) {
+            return;
+        }
+        main.removeCallbacks(latchedHandoffRunnable);
+        latchedHandoffScheduled = false;
+    }
+
+    private void latchWakeMatchLocked(String matched, String transcript, String source) {
+        wakeLatched = true;
+        latchedMatchedPhrase = safe(matched);
+        latchedTranscript = safe(transcript);
+        latchedMatchSource = safe(source);
+        markProofLocked(matched, transcript, source);
+        state = "matched";
+        phase = "wake_latched";
+        suspendedReason = "";
+        recognizerState = "matched";
+    }
+
+    private void clearLatchedWakeLocked() {
+        wakeLatched = false;
+        latchedMatchedPhrase = "";
+        latchedTranscript = "";
+        latchedMatchSource = "";
+    }
+
+    private Action beginWakeTurnHandoffLocked(String reason) {
+        cancelLatchedHandoffLocked();
+        markProofLocked(latchedMatchedPhrase, latchedTranscript, latchedMatchSource);
+        state = "matched";
+        phase = "turn_starting";
+        suspendedReason = "";
+        recognizerState = "matched";
+        prefs.edit()
+                .putString(KEY_LAST_HANDOFF_AT, nowIso())
+                .putString(KEY_LAST_HANDOFF_RESULT, safe(reason))
+                .apply();
+        Action action = detachRecognizerLocked("wake_turn_handoff");
+        action.accepted = true;
+        action.matchedPhrase = latchedMatchedPhrase;
+        action.playChime = true;
+        action.turnStartArgs = buildWakeTurnStartArgsLocked();
+        clearLatchedWakeLocked();
+        return action;
+    }
+
+    private JSONObject buildWakeTurnStartArgsLocked() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "auto_endpoint", true);
+        Json.put(out, "speech_start_timeout_ms", PuckyTurnController.WAKE_SPEECH_START_TIMEOUT_MS);
+        Json.put(out, "trailing_silence_ms", PuckyTurnController.WAKE_TRAILING_SILENCE_MS);
+        Json.put(out, "min_speech_ms", PuckyTurnController.WAKE_MIN_SPEECH_MS);
+        Json.put(out, "max_duration_ms", PuckyTurnController.WAKE_AUTO_ENDPOINT_MAX_DURATION_MS);
+        Json.put(out, "feedback", false);
+        Json.put(out, "trigger_source", PuckyTurnController.TRIGGER_SOURCE_WAKE_WORD);
+        Json.put(out, "wake_phrase_family", "hey_pucky");
+        Json.put(out, "wake_phrase_detected", latchedMatchedPhrase);
+        if (BuildConfig.DEBUG) {
+            String captureSource = safe(stringPref(KEY_DEBUG_TURN_CAPTURE_SOURCE, ""));
+            String fixtureName = safe(stringPref(KEY_DEBUG_TURN_FIXTURE_NAME, ""));
+            String fixtureTranscript = safe(stringPref(KEY_DEBUG_TURN_FIXTURE_TRANSCRIPT, ""));
+            int fixtureStartDelayMs = Math.max(0, intPref(KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS, 0));
+            if (!captureSource.isEmpty()) {
+                Json.put(out, "capture_source", captureSource);
+            }
+            if (!fixtureName.isEmpty()) {
+                Json.put(out, "fixture_name", fixtureName);
+            }
+            if (fixtureStartDelayMs > 0) {
+                Json.put(out, "fixture_start_delay_ms", fixtureStartDelayMs);
+            }
+            if (!fixtureTranscript.isEmpty()) {
+                Json.put(out, "debug_fixture_transcript", fixtureTranscript);
+            }
+        }
+        return out;
+    }
+
     private void migratePrefs() {
         synchronized (lock) {
             int version = prefs.getInt(KEY_PREFS_SCHEMA, 0);
-            if (version >= PREFS_SCHEMA_V3) {
+            if (version >= PREFS_SCHEMA_V4) {
                 return;
             }
             SharedPreferences.Editor editor = prefs.edit();
@@ -640,13 +834,19 @@ public final class WakeWordController {
             coerceStringPref(editor, KEY_LAST_ARM_AT, "");
             coerceStringPref(editor, KEY_LAST_DISARM_AT, "");
             coerceStringPref(editor, KEY_LAST_DISARM_REASON, "");
+            coerceStringPref(editor, KEY_LAST_HANDOFF_AT, "");
+            coerceStringPref(editor, KEY_LAST_HANDOFF_RESULT, "");
+            coerceStringPref(editor, KEY_DEBUG_TURN_CAPTURE_SOURCE, "");
+            coerceStringPref(editor, KEY_DEBUG_TURN_FIXTURE_NAME, "");
+            coerceStringPref(editor, KEY_DEBUG_TURN_FIXTURE_TRANSCRIPT, "");
+            editor.putInt(KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS, intPref(KEY_DEBUG_TURN_FIXTURE_START_DELAY_MS, 0));
             coerceStringPref(editor, KEY_LAST_CONFIG_SET_AT, "");
             coerceStringPref(editor, KEY_LAST_START_REQUESTED_AT, "");
             coerceStringPref(editor, KEY_LAST_STOP_REQUESTED_AT, "");
             coerceStringPref(editor, KEY_LAST_SIMULATE_REQUESTED_AT, "");
             coerceStringPref(editor, KEY_SCOPE, DEFAULT_SCOPE);
             coerceStringPref(editor, KEY_TRANSCRIPT_HISTORY_JSON, "[]");
-            editor.putInt(KEY_PREFS_SCHEMA, PREFS_SCHEMA_V3);
+            editor.putInt(KEY_PREFS_SCHEMA, PREFS_SCHEMA_V4);
             if (BuildConfig.DEBUG && stringPref(KEY_DEBUG_RECOGNIZER_MODE, "").trim().isEmpty()) {
                 editor.putString(KEY_DEBUG_RECOGNIZER_MODE, DEBUG_RECOGNIZER_MODE_ANDROID);
             }
@@ -856,6 +1056,24 @@ public final class WakeWordController {
         return String.valueOf(value);
     }
 
+    private int intPref(String key, int fallback) {
+        Object value = prefs.getAll().get(key);
+        if (value == null) {
+            return fallback;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Integer.parseInt(((String) value).trim());
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
     private static boolean isTerminalTurnState(String value) {
         return "idle".equals(value)
                 || "completed".equals(value)
@@ -887,5 +1105,6 @@ public final class WakeWordController {
         String matchedPhrase = "";
         long rearmDelayMs;
         String rearmReason = "";
+        JSONObject turnStartArgs;
     }
 }

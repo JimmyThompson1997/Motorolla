@@ -1157,6 +1157,7 @@
       requested_enabled: false,
       running: false,
       state: "idle",
+      phase: "idle",
       suspended_reason: "",
       engine: "android_stt_sentinel",
       requested_engine: "android_stt_sentinel",
@@ -1176,6 +1177,9 @@
         match_source: "",
         matched_at: ""
       },
+      active_turn_id: "",
+      last_handoff_at: "",
+      last_handoff_result: "",
       proof_indicator: {
         active: false,
         visual_state: "idle",
@@ -1261,6 +1265,7 @@
       requested_enabled: truthy(raw.requested_enabled ?? raw.enabled),
       running: truthy(raw.running),
       state: String(raw.state || "idle"),
+      phase: String(raw.phase || "idle"),
       suspended_reason: String(raw.suspended_reason || ""),
       engine: String(raw.engine || "android_stt_sentinel"),
       requested_engine: String(raw.requested_engine || raw.engine || "android_stt_sentinel"),
@@ -1280,6 +1285,9 @@
         match_source: "",
         matched_at: ""
       },
+      active_turn_id: String(raw.active_turn_id || ""),
+      last_handoff_at: String(raw.last_handoff_at || ""),
+      last_handoff_result: String(raw.last_handoff_result || ""),
       proof_indicator: normalizeWakeProof(raw.proof_indicator)
     };
   }

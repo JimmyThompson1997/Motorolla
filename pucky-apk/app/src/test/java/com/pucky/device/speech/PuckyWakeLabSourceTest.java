@@ -48,19 +48,26 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("SpeechRecognizer.isRecognitionAvailable(context)"));
         assertTrue(source.contains("KEY_TRANSCRIPT_HISTORY_JSON"));
         assertTrue(source.contains("KEY_DEBUG_RECOGNIZER_MODE"));
+        assertTrue(source.contains("KEY_LAST_HANDOFF_AT"));
+        assertTrue(source.contains("KEY_LAST_HANDOFF_RESULT"));
         assertTrue(source.contains("\"debug_recognizer_mode\""));
+        assertTrue(source.contains("\"phase\""));
+        assertTrue(source.contains("\"active_turn_id\""));
+        assertTrue(source.contains("\"last_handoff_result\""));
         assertTrue(source.contains("transcript_history"));
         assertTrue(source.contains("wake.simulate requires transcript or alternatives"));
         assertTrue(source.contains("wake.simulate event must be partial, final, or error"));
         assertTrue(source.contains("playWakeListeningChime(\"pucky.wake_stt_sentinel_match_chime.v1\")"));
         assertTrue(source.contains("Json.put(out, \"proof_indicator\""));
+        assertTrue(source.contains("PuckyTurnController.shared(context).start(action.turnStartArgs)"));
+        assertTrue(source.contains("scheduleLatchedHandoffLocked()"));
+        assertTrue(source.contains("beginWakeTurnHandoffLocked(\"partial_debounce\")"));
         assertTrue(source.contains("new FakeWakeRecognizer.Factory().create()"));
         assertFalse(source.contains("AudioFrameBus"));
         assertFalse(source.contains("SileroVadEngine"));
         assertFalse(source.contains("OnDeviceInjectedAudioRecognizer"));
         assertFalse(source.contains("WakeCandidateEndpointPolicy"));
         assertFalse(source.contains("fixtureRun("));
-        assertFalse(source.contains("PuckyTurnController.shared(context).start(args)"));
         assertFalse(source.contains("SpeechRecognizer.createOnDeviceSpeechRecognizer(context)"));
         assertTrue(recognizer.contains("SpeechRecognizer.createSpeechRecognizer(context)"));
         assertTrue(recognizer.contains("RecognizerIntent.EXTRA_PARTIAL_RESULTS"));
@@ -134,6 +141,7 @@ public final class PuckyWakeLabSourceTest {
         assertFalse(capability.contains("wake.fixture.run"));
         assertFalse(capability.contains(removedWakeDebugCommand()));
         assertFalse(capability.contains("speech.echo.lab.config.get"));
+        assertTrue(capability.contains("real auto-ended raw-audio turn"));
     }
 
     @Test

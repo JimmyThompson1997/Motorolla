@@ -5,28 +5,46 @@ import android.os.Build;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Log;
 
+import com.pucky.device.BuildConfig;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.speech.OnDeviceInjectedAudioRecognizer;
 import com.pucky.device.speech.lab.AudioFrameBus;
 import com.pucky.device.speech.lab.PcmCaptureConsumer;
 import com.pucky.device.util.Json;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.time.Instant;
 import java.util.Locale;
 
 public final class WalkieAudioCaptureController {
+    private static final String TAG = "WalkieAudioCapture";
     private static final String READY_HAPTIC_MS = "ready_haptic_ms";
     private static final int DEFAULT_READY_HAPTIC_MS = 55;
     private static final int HAPTIC_AMPLITUDE = 220;
     private static final int DEFAULT_MAX_DURATION_MS = 60_000;
     private static final int HARD_MAX_DURATION_MS = 120_000;
+    private static final int DEFAULT_SPEECH_START_TIMEOUT_MS = 3_000;
+    private static final String CAPTURE_SOURCE_MIC = "mic";
+    private static final String CAPTURE_SOURCE_FIXTURE = "fixture";
+    private static final double DEBUG_FIXTURE_SPEECH_THRESHOLD = 0.05;
 
     private static WalkieAudioCaptureController shared;
+
+    public interface Listener extends WalkieSpeechGate.Listener {
+        default void onSpeechStartTimeout(JSONObject status) {
+        }
+
+        default void onCaptureShouldStop(JSONObject status, String reason) {
+        }
+    }
 
     private final Context context;
     private ActiveCapture active;
@@ -37,11 +55,19 @@ public final class WalkieAudioCaptureController {
         String triggerSource;
         String wakePhraseFamily;
         String wakePhraseDetected;
+        String captureSource;
+        String fixtureName;
+        String debugFixtureTranscript;
+        int fixtureStartDelayMs;
         File file;
         String startedAt;
         long startedElapsedMs;
         int maxDurationMs;
+        int speechStartTimeoutMs;
+        int trailingSilenceMs;
+        int minSpeechMs;
         boolean feedback;
+        boolean autoEndpoint;
         AudioFrameBus bus;
         PcmCaptureConsumer pcm;
         WalkieSpeechGate gate;
@@ -60,7 +86,7 @@ public final class WalkieAudioCaptureController {
 
     public synchronized JSONObject status() {
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.walkie_audio_capture_status.v1");
+        Json.put(out, "schema", "pucky.walkie_audio_capture_status.v2");
         Json.put(out, "state", active == null ? "idle" : activeState(active));
         Json.put(out, "active_session", active == null ? JSONObject.NULL : activeJson(active));
         Json.put(out, "permission", JSONObject.NULL);
@@ -72,10 +98,10 @@ public final class WalkieAudioCaptureController {
         return out;
     }
 
-    public synchronized JSONObject start(JSONObject args, WalkieSpeechGate.Listener listener) throws CommandException {
+    public synchronized JSONObject start(JSONObject args, Listener listener) throws CommandException {
         if (active != null) {
             JSONObject out = new JSONObject();
-            Json.put(out, "schema", "pucky.walkie_audio_capture_start.v1");
+            Json.put(out, "schema", "pucky.walkie_audio_capture_start.v2");
             Json.put(out, "state", activeState(active));
             Json.put(out, "result", "already_recording");
             Json.put(out, "active_session", activeJson(active));
@@ -92,57 +118,121 @@ public final class WalkieAudioCaptureController {
         }
         String sessionId = safeSessionId(args.optString("session_id", ""));
         String turnId = safeSessionId(args.optString("turn_id", sessionId));
+        String captureSource = normalizeCaptureSource(args.optString("capture_source", CAPTURE_SOURCE_MIC));
+        if (!CAPTURE_SOURCE_MIC.equals(captureSource) && !BuildConfig.DEBUG) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Fixture capture source is debug-only");
+        }
         ActiveCapture capture = new ActiveCapture();
         capture.sessionId = sessionId;
         capture.turnId = turnId;
         capture.triggerSource = args.optString("trigger_source", args.optString("source", "volume_up_hold"));
         capture.wakePhraseFamily = args.optString("wake_phrase_family", "");
         capture.wakePhraseDetected = args.optString("wake_phrase_detected", "");
+        capture.captureSource = captureSource;
+        capture.fixtureName = safeFixtureName(args.optString("fixture_name", ""));
+        capture.debugFixtureTranscript = BuildConfig.DEBUG ? args.optString("debug_fixture_transcript", "") : "";
         capture.file = uniqueFile(dir, sessionId + ".wav");
         capture.startedAt = Instant.now().toString();
         capture.startedElapsedMs = SystemClock.elapsedRealtime();
         capture.maxDurationMs = clamp(args.optInt("max_duration_ms", DEFAULT_MAX_DURATION_MS), 1_000, HARD_MAX_DURATION_MS);
+        capture.fixtureStartDelayMs = BuildConfig.DEBUG && CAPTURE_SOURCE_FIXTURE.equals(capture.captureSource)
+                ? clamp(args.optInt("fixture_start_delay_ms", 0), 0, capture.maxDurationMs)
+                : 0;
         capture.feedback = args.optBoolean("feedback", true);
-        capture.bus = new AudioFrameBus(context);
+        capture.autoEndpoint = args.optBoolean("auto_endpoint", false);
+        capture.speechStartTimeoutMs = capture.autoEndpoint
+                ? clamp(args.optInt("speech_start_timeout_ms", DEFAULT_SPEECH_START_TIMEOUT_MS), 250, capture.maxDurationMs)
+                : 0;
+        capture.trailingSilenceMs = capture.autoEndpoint
+                ? clamp(args.optInt("trailing_silence_ms", WalkieSpeechGate.DEFAULT_TRAILING_SILENCE_MS), 90, 10_000)
+                : 0;
+        capture.minSpeechMs = capture.autoEndpoint
+                ? clamp(args.optInt("min_speech_ms", WalkieSpeechGate.DEFAULT_MIN_SPEECH_MS), 0, capture.maxDurationMs)
+                : 0;
+        double speechThreshold = BuildConfig.DEBUG && CAPTURE_SOURCE_FIXTURE.equals(capture.captureSource)
+                ? DEBUG_FIXTURE_SPEECH_THRESHOLD
+                : WalkieSpeechGate.DEFAULT_SPEECH_THRESHOLD;
         int maxSamples = AudioFrameBus.SAMPLE_RATE * Math.max(1, (capture.maxDurationMs + 999) / 1_000);
         capture.pcm = new PcmCaptureConsumer(maxSamples);
-        capture.gate = new WalkieSpeechGate(capture.startedElapsedMs, new SileroVadEngine(context),
-                SystemClock::elapsedRealtime, listener);
-        capture.bus.addSynchronousConsumer(capture.pcm);
-        capture.bus.addConsumer(capture.gate);
-        active = capture;
-        JSONObject start = capture.bus.start();
-        if (!"started".equals(start.optString("result")) && !"already_running".equals(start.optString("result"))) {
-            active = null;
-            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
-                    "Unable to start walkie audio capture: " + start.optString("error", "audio_frame_bus_failed"));
+        capture.gate = new WalkieSpeechGate(
+                capture.startedElapsedMs,
+                new SileroVadEngine(context),
+                SystemClock::elapsedRealtime,
+                new WalkieSpeechGate.Listener() {
+                    @Override
+                    public void onSpeechDetected(JSONObject status) {
+                        if (listener != null) {
+                            listener.onSpeechDetected(status);
+                        }
+                    }
+
+                    @Override
+                    public void onSpeechEnded(JSONObject status) {
+                        if (listener != null && capture.autoEndpoint) {
+                            listener.onCaptureShouldStop(captureStatusJson(capture), "trailing_silence");
+                        }
+                    }
+                },
+                capture.trailingSilenceMs,
+                capture.minSpeechMs,
+                speechThreshold);
+
+        JSONObject transportStart = new JSONObject();
+        if (CAPTURE_SOURCE_MIC.equals(capture.captureSource)) {
+            capture.bus = new AudioFrameBus(context);
+            capture.bus.addSynchronousConsumer(capture.pcm);
+            capture.bus.addConsumer(capture.gate);
+            active = capture;
+            transportStart = capture.bus.start();
+            if (!"started".equals(transportStart.optString("result")) && !"already_running".equals(transportStart.optString("result"))) {
+                active = null;
+                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                        "Unable to start walkie audio capture: " + transportStart.optString("error", "audio_frame_bus_failed"));
+            }
+        } else {
+            if (capture.fixtureName.isEmpty()) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "fixture_name is required when capture_source=fixture");
+            }
+            short[] fixtureSamples = loadFixtureSamples(capture.fixtureName);
+            active = capture;
+            startFixtureFeed(capture, fixtureSamples);
+            Json.put(transportStart, "schema", "pucky.walkie_fixture_capture_start.v1");
+            Json.put(transportStart, "result", "started");
+            Json.put(transportStart, "state", "running");
+            Json.put(transportStart, "capture_source", capture.captureSource);
+            Json.put(transportStart, "fixture_name", capture.fixtureName);
         }
+
         if (capture.feedback) {
             buzzOneShot(args.optInt(READY_HAPTIC_MS, DEFAULT_READY_HAPTIC_MS), HAPTIC_AMPLITUDE);
         }
-        scheduleAutoDiscard(sessionId, capture.maxDurationMs);
+        if (capture.autoEndpoint && capture.speechStartTimeoutMs > 0) {
+            scheduleSpeechStartTimeout(sessionId, capture, listener);
+        }
+        scheduleMaxDuration(sessionId, capture, listener);
 
         JSONObject out = activeJson(capture);
-        Json.put(out, "schema", "pucky.walkie_audio_capture_start.v1");
+        Json.put(out, "schema", "pucky.walkie_audio_capture_start.v2");
         Json.put(out, "state", activeState(capture));
         Json.put(out, "result", "started");
         Json.put(out, "speech_gate", capture.gate.statusJson());
         Json.put(out, "vad_engine", capture.gate.statusJson().optString("vad_engine", ""));
         Json.put(out, "vad_available", capture.gate.statusJson().optBoolean("vad_available", false));
+        Json.put(out, "audio_frame_bus", transportStart);
         return out;
     }
 
     public synchronized JSONObject stop(JSONObject args) throws CommandException {
         if (active == null) {
             JSONObject out = new JSONObject();
-            Json.put(out, "schema", "pucky.walkie_audio_capture_stop.v1");
+            Json.put(out, "schema", "pucky.walkie_audio_capture_stop.v2");
             Json.put(out, "state", "idle");
             Json.put(out, "result", "no_active_capture");
             return out;
         }
         ActiveCapture capture = active;
         active = null;
-        JSONObject busStop = capture.bus.stop();
+        JSONObject transportStop = stopCaptureSource(capture);
         short[] samples = capture.pcm.snapshotSamples();
         if (samples.length <= 0) {
             deleteQuietly(capture.file);
@@ -158,7 +248,7 @@ public final class WalkieAudioCaptureController {
         long durationMs = Math.max(0L, SystemClock.elapsedRealtime() - capture.startedElapsedMs);
         JSONObject completed = captureJson(capture, durationMs, args.optString("reason", "button_release"));
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.walkie_audio_capture_stop.v1");
+        Json.put(out, "schema", "pucky.walkie_audio_capture_stop.v2");
         Json.put(out, "state", "completed");
         Json.put(out, "result", "completed");
         Json.put(out, "capture", completed);
@@ -168,24 +258,24 @@ public final class WalkieAudioCaptureController {
         Json.put(out, "duration_ms", durationMs);
         Json.put(out, "bytes", capture.file.length());
         Json.put(out, "speech_gate", capture.gate.statusJson());
-        Json.put(out, "audio_frame_bus", busStop.optJSONObject("snapshot"));
+        Json.put(out, "audio_frame_bus", transportStop);
         return out;
     }
 
     public synchronized JSONObject discard(JSONObject args) {
         if (active == null) {
             JSONObject out = new JSONObject();
-            Json.put(out, "schema", "pucky.walkie_audio_capture_discard.v1");
+            Json.put(out, "schema", "pucky.walkie_audio_capture_discard.v2");
             Json.put(out, "state", "idle");
             Json.put(out, "result", "no_active_capture");
             return out;
         }
         ActiveCapture capture = active;
         active = null;
-        JSONObject busStop = capture.bus.stop();
+        JSONObject transportStop = stopCaptureSource(capture);
         boolean deleted = deleteQuietly(capture.file);
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.walkie_audio_capture_discard.v1");
+        Json.put(out, "schema", "pucky.walkie_audio_capture_discard.v2");
         Json.put(out, "state", "discarded");
         Json.put(out, "result", "discarded");
         Json.put(out, "reason", args.optString("reason", "silence"));
@@ -194,7 +284,7 @@ public final class WalkieAudioCaptureController {
         Json.put(out, "deleted_file", deleted);
         Json.put(out, "capture", activeJson(capture));
         Json.put(out, "speech_gate", capture.gate.statusJson());
-        Json.put(out, "audio_frame_bus", busStop.optJSONObject("snapshot"));
+        Json.put(out, "audio_frame_bus", transportStop);
         return out;
     }
 
@@ -211,8 +301,18 @@ public final class WalkieAudioCaptureController {
         Json.put(out, "device_path", capture.file.getAbsolutePath());
         Json.put(out, "filename", capture.file.getName());
         Json.put(out, "mime_type", "audio/wav");
-        Json.put(out, "audio_source", "voice_recognition");
+        Json.put(out, "audio_source", CAPTURE_SOURCE_FIXTURE.equals(capture.captureSource) ? "fixture" : "voice_recognition");
         Json.put(out, "trigger_source", capture.triggerSource);
+        Json.put(out, "auto_endpoint", capture.autoEndpoint);
+        Json.put(out, "speech_start_timeout_ms", capture.speechStartTimeoutMs);
+        Json.put(out, "trailing_silence_ms", capture.trailingSilenceMs);
+        Json.put(out, "min_speech_ms", capture.minSpeechMs);
+        Json.put(out, "capture_source", capture.captureSource);
+        Json.put(out, "fixture_name", capture.fixtureName);
+        Json.put(out, "fixture_start_delay_ms", capture.fixtureStartDelayMs);
+        if (!capture.debugFixtureTranscript.isEmpty()) {
+            Json.put(out, "debug_fixture_transcript", capture.debugFixtureTranscript);
+        }
         if (!capture.wakePhraseFamily.isEmpty()) {
             Json.put(out, "wake_phrase_family", capture.wakePhraseFamily);
         }
@@ -228,7 +328,7 @@ public final class WalkieAudioCaptureController {
 
     private static JSONObject captureJson(ActiveCapture capture, long durationMs, String reason) {
         JSONObject out = activeJson(capture);
-        Json.put(out, "schema", "pucky.walkie_audio_capture.v1");
+        Json.put(out, "schema", "pucky.walkie_audio_capture.v2");
         Json.put(out, "state", "completed");
         Json.put(out, "completed_at", Instant.now().toString());
         Json.put(out, "duration_ms", durationMs);
@@ -251,23 +351,211 @@ public final class WalkieAudioCaptureController {
         return artifact;
     }
 
-    private void scheduleAutoDiscard(String sessionId, int maxDurationMs) {
+    private JSONObject captureStatusJson(ActiveCapture capture) {
+        JSONObject out = activeJson(capture);
+        Json.put(out, "schema", "pucky.walkie_audio_capture_status_item.v1");
+        Json.put(out, "state", activeState(capture));
+        Json.put(out, "speech_gate", capture.gate.statusJson());
+        Json.put(out, "elapsed_ms", Math.max(0L, SystemClock.elapsedRealtime() - capture.startedElapsedMs));
+        return out;
+    }
+
+    private void scheduleSpeechStartTimeout(String sessionId, ActiveCapture capture, Listener listener) {
         Thread worker = new Thread(() -> {
             try {
-                Thread.sleep(maxDurationMs + 250L);
+                Thread.sleep(capture.speechStartTimeoutMs);
             } catch (InterruptedException exc) {
                 Thread.currentThread().interrupt();
                 return;
             }
             synchronized (WalkieAudioCaptureController.this) {
-                if (active == null || !sessionId.equals(active.sessionId)) {
+                if (active == null || active != capture || !sessionId.equals(active.sessionId) || active.gate.speechDetected()) {
                     return;
                 }
-                discard(reasonArgs("max_duration"));
             }
-        }, "pucky-walkie-capture-autodiscard");
+            if (listener != null) {
+                listener.onSpeechStartTimeout(captureStatusJson(capture));
+            }
+        }, "pucky-walkie-speech-start-timeout");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private void scheduleMaxDuration(String sessionId, ActiveCapture capture, Listener listener) {
+        Thread worker = new Thread(() -> {
+            try {
+                Thread.sleep(capture.maxDurationMs + 250L);
+            } catch (InterruptedException exc) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            synchronized (WalkieAudioCaptureController.this) {
+                if (active == null || active != capture || !sessionId.equals(active.sessionId)) {
+                    return;
+                }
+            }
+            if (capture.autoEndpoint) {
+                if (listener != null) {
+                    listener.onCaptureShouldStop(captureStatusJson(capture), "max_duration");
+                }
+                return;
+            }
+            synchronized (WalkieAudioCaptureController.this) {
+                if (active == capture) {
+                    discard(reasonArgs("max_duration"));
+                }
+            }
+        }, "pucky-walkie-capture-max-duration");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void startFixtureFeed(ActiveCapture capture, short[] samples) {
+        Thread worker = new Thread(() -> {
+            long timestampNanos = System.nanoTime();
+            long frameSleepMs = AudioFrameBus.FRAME_MS;
+            int frameSamples = AudioFrameBus.FRAME_SAMPLES;
+            try {
+                if (capture.fixtureStartDelayMs > 0) {
+                    sleepQuietly(capture.fixtureStartDelayMs);
+                }
+                feedSamples(capture, samples, timestampNanos, frameSamples, frameSleepMs);
+                if (capture.autoEndpoint) {
+                    int silenceFrames = Math.max(1,
+                            (int) Math.ceil(Math.max(capture.trailingSilenceMs, AudioFrameBus.FRAME_MS) / (double) AudioFrameBus.FRAME_MS));
+                    short[] silence = new short[frameSamples];
+                    for (int i = 0; i < silenceFrames; i++) {
+                        timestampNanos = timestampNanos + (AudioFrameBus.FRAME_MS * 1_000_000L);
+                        if (!deliverFixtureFrame(capture, silence, timestampNanos)) {
+                            return;
+                        }
+                        sleepQuietly(frameSleepMs);
+                    }
+                }
+            } catch (RuntimeException exc) {
+                Log.w(TAG, "Fixture feed failed: " + exc.getMessage());
+            }
+        }, "pucky-walkie-fixture-feed");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void feedSamples(ActiveCapture capture, short[] samples, long timestampNanos, int frameSamples, long frameSleepMs) {
+        int offset = 0;
+        while (offset < samples.length) {
+            int count = Math.min(frameSamples, samples.length - offset);
+            short[] frame = new short[count];
+            System.arraycopy(samples, offset, frame, 0, count);
+            if (!deliverFixtureFrame(capture, frame, timestampNanos)) {
+                return;
+            }
+            offset += count;
+            timestampNanos += AudioFrameBus.FRAME_MS * 1_000_000L;
+            sleepQuietly(frameSleepMs);
+        }
+    }
+
+    private boolean deliverFixtureFrame(ActiveCapture capture, short[] frame, long timestampNanos) {
+        synchronized (this) {
+            if (active == null || active != capture) {
+                return false;
+            }
+        }
+        capture.pcm.onFrame(frame, timestampNanos);
+        capture.gate.onFrame(frame, timestampNanos);
+        return true;
+    }
+
+    private JSONObject stopCaptureSource(ActiveCapture capture) {
+        if (capture.bus != null) {
+            return capture.bus.stop().optJSONObject("snapshot");
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.audio_frame_bus_snapshot.v1");
+        Json.put(out, "state", "stopped");
+        Json.put(out, "capture_source", capture.captureSource);
+        Json.put(out, "fixture_name", capture.fixtureName);
+        Json.put(out, "running", false);
+        return out;
+    }
+
+    private short[] loadFixtureSamples(String fixtureName) throws CommandException {
+        File file = resolveFixtureFile(fixtureName);
+        if (!file.exists() || !file.isFile()) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Missing fixture WAV: " + fixtureName);
+        }
+        try {
+            return OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(readAllBytes(file));
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    "Unable to read fixture WAV: " + exc.getMessage());
+        }
+    }
+
+    private File resolveFixtureFile(String fixtureName) {
+        String clean = safeFixtureName(fixtureName);
+        File[] roots = new File[] {
+                context.getExternalFilesDir(null),
+                context.getFilesDir(),
+        };
+        for (File root : roots) {
+            if (root == null) {
+                continue;
+            }
+            File dir = new File(root, "turn-fixtures");
+            File direct = new File(dir, clean);
+            if (direct.exists()) {
+                return direct;
+            }
+            if (!clean.toLowerCase(Locale.US).endsWith(".wav")) {
+                File wav = new File(dir, clean + ".wav");
+                if (wav.exists()) {
+                    return wav;
+                }
+            }
+        }
+        File fallbackRoot = context.getExternalFilesDir(null);
+        if (fallbackRoot == null) {
+            fallbackRoot = context.getFilesDir();
+        }
+        File fallbackDir = new File(fallbackRoot, "turn-fixtures");
+        if (!clean.toLowerCase(Locale.US).endsWith(".wav")) {
+            return new File(fallbackDir, clean + ".wav");
+        }
+        return new File(fallbackDir, clean);
+    }
+
+    private static byte[] readAllBytes(File file) throws Exception {
+        try (FileInputStream input = new FileInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private static String normalizeCaptureSource(String raw) {
+        String value = raw == null ? "" : raw.trim().toLowerCase(Locale.US);
+        if (CAPTURE_SOURCE_FIXTURE.equals(value)) {
+            return CAPTURE_SOURCE_FIXTURE;
+        }
+        return CAPTURE_SOURCE_MIC;
+    }
+
+    private static String safeFixtureName(String raw) {
+        String clean = raw == null ? "" : raw.trim().replaceAll("[^A-Za-z0-9._-]", "_");
+        return clean.length() > 128 ? clean.substring(0, 128) : clean;
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(Math.max(0L, millis));
+        } catch (InterruptedException exc) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static JSONObject reasonArgs(String reason) {

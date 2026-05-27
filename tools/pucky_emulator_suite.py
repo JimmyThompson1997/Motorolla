@@ -3,22 +3,29 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import io
 import json
+import math
 import mimetypes
 import os
 import re
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
+import threading
 import time
 import textwrap
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
+import wave
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -38,12 +45,14 @@ DEFAULT_SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
 DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
 DEFAULT_ACTIVITY = "com.pucky.device.CoverHomeActivity"
-DEFAULT_USERDATA_PARTITION_MB = "2047"
-DEFAULT_USERDATA_PARTITION_SIZE = DEFAULT_USERDATA_PARTITION_MB + "M"
+DEFAULT_USERDATA_PARTITION_MB = "768"
+DEFAULT_USERDATA_PARTITION_SIZE = str(int(DEFAULT_USERDATA_PARTITION_MB) * 1024 * 1024)
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
 DEFAULT_TURN_URL = "https://pucky.fly.dev/api/turn"
+DEFAULT_RECIPE_BUNDLE = ROOT / "pucky_vm" / "recipes" / "volume_down_lab_dev_bundle.json"
+WAKE_TURN_FIXTURE_START_DELAY_MS = 2200
 BASE_DIR = ROOT / ".tmp" / "pucky-emulator"
 RUNS_DIR = ROOT / ".tmp" / "pucky-emulator-runs"
 MIN_RECOMMENDED_AVD_FREE_GB = 8.0
@@ -76,6 +85,16 @@ class SlotConfig:
     evidence_dir: str
     state_path: str
     bundle_version: str
+
+
+@dataclass(frozen=True)
+class FakeTurnEndpointConfig:
+    response_text: str
+    summary: str
+    response_delay_seconds: float = 0.0
+    remote_stage: str = "stt_running"
+    with_audio: bool = False
+    audio_duration_ms: int = 900
 
 
 def now_iso() -> str:
@@ -330,9 +349,15 @@ def adb_command(args: argparse.Namespace, serial: str, command: Iterable[str]) -
     return [str(args.adb), "-s", serial, *command]
 
 
-def launch_provisioning_json(args: argparse.Namespace, config: SlotConfig) -> str | None:
-    turn_url = str(getattr(args, "turn_url", "") or "").strip()
-    turn_token = str(getattr(args, "turn_token", "") or "").strip()
+def launch_provisioning_json(
+    args: argparse.Namespace,
+    config: SlotConfig,
+    *,
+    turn_url_override: str | None = None,
+    turn_token_override: str | None = None,
+) -> str | None:
+    turn_url = str(turn_url_override if turn_url_override is not None else getattr(args, "turn_url", "") or "").strip()
+    turn_token = str(turn_token_override if turn_token_override is not None else getattr(args, "turn_token", "") or "").strip()
     if not turn_url and not turn_token:
         return None
     payload: dict[str, Any] = {
@@ -350,7 +375,13 @@ def launch_provisioning_json(args: argparse.Namespace, config: SlotConfig) -> st
     return base64.b64encode(raw).decode("ascii")
 
 
-def launch_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
+def launch_command(
+    args: argparse.Namespace,
+    config: SlotConfig,
+    *,
+    turn_url_override: str | None = None,
+    turn_token_override: str | None = None,
+) -> list[str]:
     command = [
         "shell",
         "am",
@@ -367,7 +398,12 @@ def launch_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
         "token",
         "dev-token",
     ]
-    provisioning_json = launch_provisioning_json(args, config)
+    provisioning_json = launch_provisioning_json(
+        args,
+        config,
+        turn_url_override=turn_url_override,
+        turn_token_override=turn_token_override,
+    )
     if provisioning_json:
         command.extend(["--es", "provisioning_json_base64", provisioning_json])
     command.extend(["--ez", "connect", "true"])
@@ -663,6 +699,221 @@ def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Pa
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return path
+
+
+def read_wav_pcm16_mono(path: Path) -> tuple[int, bytes]:
+    with wave.open(str(path), "rb") as handle:
+        channels = handle.getnchannels()
+        sample_width = handle.getsampwidth()
+        sample_rate = handle.getframerate()
+        if channels != 1 or sample_width != 2:
+            raise SuiteError(f"Fixture WAV must be 16-bit mono: {path}")
+        return sample_rate, handle.readframes(handle.getnframes())
+
+
+def write_wav_pcm16_mono(path: Path, sample_rate: int, pcm_bytes: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm_bytes)
+    return path
+
+
+def silence_pcm16(sample_rate: int, duration_ms: int) -> bytes:
+    frames = max(0, round(sample_rate * max(0, duration_ms) / 1000.0))
+    return b"\x00\x00" * frames
+
+
+def normalize_pcm16_peak(pcm_bytes: bytes, *, target_peak: int = 16000) -> bytes:
+    if not pcm_bytes:
+        return pcm_bytes
+    sample_count = len(pcm_bytes) // 2
+    samples = list(struct.unpack("<" + "h" * sample_count, pcm_bytes))
+    peak = max(abs(sample) for sample in samples)
+    if peak <= 0 or peak >= target_peak:
+        return pcm_bytes
+    scale = min(target_peak / peak, 32767.0 / peak)
+    normalized = bytearray()
+    for sample in samples:
+        amplified = int(round(sample * scale))
+        if amplified > 32767:
+            amplified = 32767
+        elif amplified < -32768:
+            amplified = -32768
+        normalized.extend(struct.pack("<h", amplified))
+    return bytes(normalized)
+
+
+def build_buffered_turn_fixture(
+    source_path: Path,
+    target_path: Path,
+    *,
+    lead_silence_ms: int,
+    trail_silence_ms: int,
+) -> Path:
+    sample_rate, pcm_bytes = read_wav_pcm16_mono(source_path)
+    pcm_bytes = normalize_pcm16_peak(pcm_bytes)
+    payload = b"".join(
+        (
+            silence_pcm16(sample_rate, lead_silence_ms),
+            pcm_bytes,
+            silence_pcm16(sample_rate, trail_silence_ms),
+        )
+    )
+    return write_wav_pcm16_mono(target_path, sample_rate, payload)
+
+
+def build_silence_turn_fixture(target_path: Path, *, duration_ms: int, sample_rate: int = 16000) -> Path:
+    return write_wav_pcm16_mono(target_path, sample_rate, silence_pcm16(sample_rate, duration_ms))
+
+
+def response_audio_base64(*, duration_ms: int = 900, sample_rate: int = 16000, frequency_hz: float = 660.0) -> str:
+    frame_count = max(1, round(sample_rate * max(1, duration_ms) / 1000.0))
+    pcm = bytearray()
+    for index in range(frame_count):
+        envelope = 0.25 if index < frame_count - (sample_rate // 20) else 0.0
+        sample = int(envelope * 32767 * math.sin((2.0 * math.pi * frequency_hz * index) / sample_rate))
+        pcm.extend(int(sample).to_bytes(2, byteorder="little", signed=True))
+    output = io.BytesIO()
+    with wave.open(output, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(bytes(pcm))
+    return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+class FakeTurnEndpoint:
+    def __init__(self, config: FakeTurnEndpointConfig):
+        self.config = config
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+        self.port = 0
+        self.lock = threading.Lock()
+        self.requests: list[dict[str, Any]] = []
+        self.server_root = ""
+        self._audio_base64 = response_audio_base64(duration_ms=config.audio_duration_ms) if config.with_audio else ""
+
+    @property
+    def emulator_turn_url(self) -> str:
+        if self.port <= 0:
+            raise SuiteError("Fake turn endpoint has not been started")
+        return f"http://10.0.2.2:{self.port}/api/turn"
+
+    def start(self) -> None:
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *args: Any) -> None:
+                return
+
+            def _json(self, payload: dict[str, Any], *, status: int = 200) -> None:
+                raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_POST(self) -> None:
+                parsed = urllib.parse.urlparse(self.path)
+                if parsed.path != "/api/turn":
+                    self._json({"error": "not_found"}, status=404)
+                    return
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length)
+                turn_id = self.headers.get("X-Pucky-Turn-Id", "") or f"turn-{uuid.uuid4().hex[:8]}"
+                now = now_iso()
+                record = {
+                    "turn_id": turn_id,
+                    "received_at": now,
+                    "headers": dict(self.headers.items()),
+                    "body_bytes": len(body),
+                    "body_sha256": hashlib.sha256(body).hexdigest(),
+                    "body_path": "",
+                    "response_started_at": "",
+                    "response_sent_at": "",
+                }
+                with owner.lock:
+                    owner.requests.append(record)
+                    request_index = len(owner.requests) - 1
+                body_path = Path(owner.server_root) / f"{turn_id}.wav"
+                body_path.write_bytes(body)
+                with owner.lock:
+                    owner.requests[request_index]["body_path"] = str(body_path)
+                    owner.requests[request_index]["response_started_at"] = now_iso()
+                if owner.config.response_delay_seconds > 0:
+                    time.sleep(owner.config.response_delay_seconds)
+                payload = {
+                    "turn_id": turn_id,
+                    "session_id": turn_id,
+                    "card_id": f"card_{turn_id}",
+                    "title": "Wake lab reply",
+                    "summary": owner.config.summary,
+                    "text": owner.config.response_text,
+                    "icon": "bolt",
+                    "telemetry": {"total_ms": round(owner.config.response_delay_seconds * 1000)},
+                    "origin": {"runtime": "wake_lab_fake_server"},
+                    "created_at": now_iso(),
+                    "updated_at": now_iso(),
+                }
+                if owner._audio_base64:
+                    payload["audio_mime_type"] = "audio/wav"
+                    payload["audio_base64"] = owner._audio_base64
+                self._json(payload)
+                with owner.lock:
+                    owner.requests[request_index]["response_sent_at"] = now_iso()
+
+            def do_GET(self) -> None:
+                parsed = urllib.parse.urlparse(self.path)
+                if parsed.path != "/api/turn/status":
+                    self._json({"error": "not_found"}, status=404)
+                    return
+                turn_id = urllib.parse.parse_qs(parsed.query).get("turn_id", [""])[0]
+                with owner.lock:
+                    matching = next((item for item in owner.requests if item.get("turn_id") == turn_id), None)
+                if matching is None:
+                    self._json({"turn_id": turn_id, "stage": "missing"}, status=404)
+                    return
+                stage = "completed" if matching.get("response_sent_at") else owner.config.remote_stage
+                self._json(
+                    {
+                        "turn_id": turn_id,
+                        "stage": stage,
+                        "user_transcript": owner.config.summary,
+                        "updated_at": now_iso(),
+                    }
+                )
+
+        evidence_root = BASE_DIR / "fake-turn-endpoint"
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        self.server_root = str(evidence_root / f"server-{uuid.uuid4().hex[:8]}")
+        Path(self.server_root).mkdir(parents=True, exist_ok=True)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, name="pucky-fake-turn-endpoint", daemon=True)
+        self.thread.start()
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            requests = json.loads(json.dumps(self.requests))
+        return {
+            "emulator_turn_url": self.emulator_turn_url if self.port > 0 else "",
+            "port": self.port,
+            "config": asdict(self.config),
+            "requests": requests,
+        }
+
+    def stop(self) -> None:
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+        if self.thread is not None:
+            self.thread.join(timeout=2.0)
+            self.thread = None
 
 
 def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
@@ -1288,6 +1539,95 @@ def turn_status(args: argparse.Namespace, runner: Runner, config: SlotConfig) ->
     return command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.status", {}), timeout=60))
 
 
+def turn_history(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    return command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.history", {}), timeout=60))
+
+
+def turn_read(args: argparse.Namespace, runner: Runner, config: SlotConfig, turn_id: str) -> dict[str, Any]:
+    return command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.read", {"turn_id": turn_id}), timeout=60))
+
+
+def relaunch_with_provisioning(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    turn_url: str = "",
+    turn_token: str = "",
+    stage: str,
+) -> None:
+    runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
+    time.sleep(1.0 if not runner.dry_run else 0.0)
+    runner.run(
+        launch_command(
+            args,
+            config,
+            turn_url_override=turn_url,
+            turn_token_override=turn_token,
+        ),
+        timeout=30,
+    )
+    ensure_broker_command_channel(args, runner, config, stage=stage, timeout_seconds=90)
+    runner.run(launch_home_command(args, config), timeout=30)
+
+
+def push_turn_fixture(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    local_path: Path,
+    fixture_name: str,
+) -> dict[str, Any]:
+    target_name = fixture_name if fixture_name.lower().endswith(".wav") else fixture_name + ".wav"
+    staging_dir = "/data/local/tmp/pucky-turn-fixtures"
+    staging_path = f"{staging_dir}/{target_name}"
+    internal_dir = f"/data/user/0/{args.package_name}/files/turn-fixtures"
+    internal_path = f"{internal_dir}/{target_name}"
+    runner.run(adb_command(args, config.serial, ["shell", "mkdir", "-p", staging_dir]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["push", str(local_path), staging_path]), timeout=60)
+    runner.run(adb_command(args, config.serial, ["shell", "chmod", "0644", staging_path]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "run-as", args.package_name, "mkdir", "-p", internal_dir]), timeout=30)
+    runner.run(adb_command(args, config.serial, ["shell", "run-as", args.package_name, "cp", staging_path, internal_path]), timeout=30)
+    return {
+        "fixture_name": fixture_name,
+        "local_path": str(local_path),
+        "remote_path": staging_path,
+        "internal_path": internal_path,
+    }
+
+
+def prepare_turn_fixtures(config: SlotConfig) -> dict[str, Path]:
+    fixture_dir = Path(config.run_dir) / "turn-fixtures"
+    source_dir = ROOT / "pucky_vm" / "ui_src" / "fixtures" / "artifacts"
+    speech_source = source_dir / "meeting.wav"
+    upload_source = source_dir / "morning.wav"
+    fixtures = {
+        "wake_flashlight": build_buffered_turn_fixture(
+            speech_source,
+            fixture_dir / "wake_flashlight.wav",
+            lead_silence_ms=350,
+            trail_silence_ms=1200,
+        ),
+        "wake_weather": build_buffered_turn_fixture(
+            upload_source,
+            fixture_dir / "wake_weather.wav",
+            lead_silence_ms=350,
+            trail_silence_ms=1200,
+        ),
+        "manual_flashlight": build_buffered_turn_fixture(
+            speech_source,
+            fixture_dir / "manual_flashlight.wav",
+            lead_silence_ms=350,
+            trail_silence_ms=1200,
+        ),
+        "wake_silence": build_silence_turn_fixture(
+            fixture_dir / "wake_silence.wav",
+            duration_ms=3600,
+        ),
+    }
+    return fixtures
+
+
 def appops_record_audio(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
     result = runner.run(
         adb_command(args, config.serial, ["shell", "cmd", "appops", "get", args.package_name, "RECORD_AUDIO"]),
@@ -1318,7 +1658,7 @@ def filtered_logcat(args: argparse.Namespace, runner: Runner, config: SlotConfig
         adb_command(
             args,
             config.serial,
-            ["logcat", "-d", "PuckyWakeWord:V", "PuckyWakeRecognizer:V", "AudioRecord:V", "*:S"],
+            ["logcat", "-d", "PuckyWakeWord:V", "PuckyWakeRecognizer:V", "PuckyTurnController:V", "PuckyTurnKeyword:V", "AudioRecord:V", "*:S"],
         ),
         timeout=45,
         check=False,
@@ -1364,6 +1704,16 @@ def wait_for_turn_status(
             return last
         time.sleep(sleep_seconds)
     raise SuiteError(f"Timed out waiting for {description}: {last}")
+
+
+def turn_indicator(status: dict[str, Any]) -> dict[str, Any]:
+    indicator = status.get("indicator")
+    return indicator if isinstance(indicator, dict) else {}
+
+
+def turn_visual_state(status: dict[str, Any]) -> str:
+    indicator = turn_indicator(status)
+    return str(indicator.get("visual_state") or status.get("visual_state") or indicator.get("state") or status.get("state") or "idle")
 
 
 def wake_stage_snapshot(
@@ -1972,6 +2322,110 @@ def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def wait_for_turn_visual(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    visual_state: str,
+    *,
+    timeout_seconds: float = 12.0,
+    sleep_seconds: float = 0.1,
+    description: str,
+) -> dict[str, Any]:
+    return wait_for_turn_status(
+        args,
+        runner,
+        config,
+        lambda status: turn_visual_state(status) == visual_state,
+        timeout_seconds=timeout_seconds,
+        sleep_seconds=sleep_seconds,
+        description=description,
+    )
+
+
+def configure_turn_lab_runtime(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    fake_turn: FakeTurnEndpoint | None,
+    reply_mode: str,
+) -> dict[str, Any]:
+    if fake_turn is not None:
+        relaunch_with_provisioning(
+            args,
+            runner,
+            config,
+            turn_url=fake_turn.emulator_turn_url,
+            turn_token="debug-token",
+            stage="wake_turn_lab_relaunch",
+        )
+    recipe_sync = sync_default_recipe_bundle(args, runner, config)
+    turn_settings = wake_command(args, runner, config, "pucky.turn.settings.set", {"reply_mode": reply_mode})
+    return {
+        "recipe_sync": recipe_sync,
+        "turn_settings": turn_settings,
+    }
+
+
+def arm_wake_turn_lab(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    fixture_name: str = "",
+    debug_fixture_transcript: str = "",
+    fixture_start_delay_ms: int = 0,
+) -> dict[str, Any]:
+    wake_command(args, runner, config, "wake.stop", {})
+    payload: dict[str, Any] = {
+        "enabled": True,
+        "recognizer_mode": "fake",
+        "capture_source": "fixture" if fixture_name else "",
+        "fixture_name": fixture_name,
+        "debug_fixture_transcript": debug_fixture_transcript,
+    }
+    if fixture_start_delay_ms > 0:
+        payload["fixture_start_delay_ms"] = fixture_start_delay_ms
+    wake_command(args, runner, config, "wake.config.set", payload)
+    return wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")),
+        description="wake armed for wake-to-turn lab",
+    )
+
+
+def scenario_turn_id(snapshot: dict[str, Any]) -> str:
+    turn = snapshot.get("turn_status") or {}
+    last = turn.get("last_status") if isinstance(turn.get("last_status"), dict) else {}
+    return str(last.get("turn_id") or turn.get("turn_id") or "")
+
+
+def sync_default_recipe_bundle(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    bundle_path = DEFAULT_RECIPE_BUNDLE
+    if not bundle_path.exists():
+        raise SuiteError(f"Recipe bundle not found: {bundle_path}")
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    cleared = command_result(command_json(runner, puckyctl_command(args, config, "pucky.recipes.clear", {}), timeout=120))
+    synced = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.recipes.sync", {"bundle": bundle}),
+            timeout=120,
+        )
+    )
+    listed = command_result(command_json(runner, puckyctl_command(args, config, "pucky.recipes.list", {}), timeout=120))
+    return {
+        "bundle_path": str(bundle_path),
+        "bundle_id": bundle.get("bundle_id"),
+        "cleared": cleared,
+        "sync": synced,
+        "listed": listed,
+    }
+
+
 def wake_lab_gates(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
     snapshots: list[dict[str, Any]] = []
     commands: list[dict[str, Any]] = []
@@ -2234,6 +2688,575 @@ def wake_lab_restart_regression(args: argparse.Namespace, runner: Runner, config
     }
 
 
+def wake_lab_wake_handoff_local(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    fixtures = prepare_turn_fixtures(config)
+    pushed = [push_turn_fixture(args, runner, config, fixtures["wake_flashlight"], "wake_flashlight")]
+    fake_turn = FakeTurnEndpoint(
+        FakeTurnEndpointConfig(
+            response_text="This local path should never upload.",
+            summary="flashlight",
+            response_delay_seconds=0.2,
+        )
+    )
+    fake_turn.start()
+    try:
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=fake_turn, reply_mode="card_only")
+        armed = arm_wake_turn_lab(
+            args,
+            runner,
+            config,
+            fixture_name="wake_flashlight",
+            debug_fixture_transcript="flashlight",
+            fixture_start_delay_ms=WAKE_TURN_FIXTURE_START_DELAY_MS,
+        )
+        wake_stage_snapshot(args, runner, config, "wake_handoff_local_armed", screenshot_name="wake-handoff-local-armed.png")
+        simulate = wake_command(args, runner, config, "wake.simulate", {"event": "final", "transcript": "Hey Pucky"})
+        blue = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "armed",
+            timeout_seconds=6.0,
+            description="wake-started turn blue/armed state for local recipe",
+        )
+        blue_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_local_blue", screenshot_name="wake-handoff-local-blue.png")
+        red = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "recording",
+            timeout_seconds=6.0,
+            description="wake-started turn red/recording state for local recipe",
+        )
+        red_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_local_red", screenshot_name="wake-handoff-local-red.png")
+        yellow = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "uploading",
+            timeout_seconds=6.0,
+            sleep_seconds=0.05,
+            description="wake-started turn yellow/uploading state for local recipe",
+        )
+        yellow_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_local_yellow", screenshot_name="wake-handoff-local-yellow.png")
+        completed = wait_for_turn_status(
+            args,
+            runner,
+            config,
+            lambda status: str((status.get("last_status") or {}).get("state") or "") == "completed",
+            timeout_seconds=10.0,
+            sleep_seconds=0.1,
+            description="local recipe turn completion",
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+            timeout_seconds=10.0,
+            sleep_seconds=0.1,
+            description="wake rearmed after local recipe handoff",
+        )
+        final_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_local_final", screenshot_name="wake-handoff-local-final.png")
+        turn_id = scenario_turn_id(final_snapshot) or scenario_turn_id(yellow_snapshot) or scenario_turn_id(red_snapshot)
+        turn_read_payload = turn_read(args, runner, config, turn_id) if turn_id else {}
+        history = turn_history(args, runner, config)
+        server_snapshot = fake_turn.snapshot()
+        latest = completed.get("last_status") if isinstance(completed.get("last_status"), dict) else {}
+        return {
+            "scenario": "wake-handoff-local",
+            "runtime": runtime,
+            "fixtures": pushed,
+            "simulate": simulate,
+            "snapshots": {
+                "blue": blue_snapshot,
+                "red": red_snapshot,
+                "yellow": yellow_snapshot,
+                "final": final_snapshot,
+            },
+            "turn_statuses": {
+                "armed": armed,
+                "blue": blue,
+                "red": red,
+                "yellow": yellow,
+                "completed": completed,
+                "rearmed": rearmed,
+            },
+            "turn_read": turn_read_payload,
+            "turn_history": history,
+            "fake_turn_endpoint": server_snapshot,
+            "all_passed": (
+                simulate.get("accepted") is True
+                and turn_visual_state(blue) == "armed"
+                and turn_visual_state(red) == "recording"
+                and turn_visual_state(yellow) == "uploading"
+                and str(latest.get("phase") or "") == "local_keyword_handled"
+                and bool(latest.get("local_recipe_matched"))
+                and len(server_snapshot["requests"]) == 0
+                and bool(rearmed.get("running"))
+            ),
+        }
+    finally:
+        fake_turn.stop()
+
+
+def wake_lab_wake_handoff_upload(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    fixtures = prepare_turn_fixtures(config)
+    pushed = [push_turn_fixture(args, runner, config, fixtures["wake_weather"], "wake_weather")]
+    fake_turn = FakeTurnEndpoint(
+        FakeTurnEndpointConfig(
+            response_text="Weather is clear and traffic is light.",
+            summary="weather request",
+            response_delay_seconds=1.0,
+            remote_stage="stt_running",
+        )
+    )
+    fake_turn.start()
+    try:
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=fake_turn, reply_mode="card_only")
+        armed = arm_wake_turn_lab(
+            args,
+            runner,
+            config,
+            fixture_name="wake_weather",
+            debug_fixture_transcript="what's the weather today",
+            fixture_start_delay_ms=WAKE_TURN_FIXTURE_START_DELAY_MS,
+        )
+        simulate = wake_command(args, runner, config, "wake.simulate", {"event": "final", "transcript": "Hey Pucky"})
+        blue = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "armed",
+            timeout_seconds=6.0,
+            description="wake-started turn blue/armed state for upload path",
+        )
+        blue_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_upload_blue", screenshot_name="wake-handoff-upload-blue.png")
+        red = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "recording",
+            timeout_seconds=6.0,
+            description="wake-started turn red/recording state for upload path",
+        )
+        red_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_upload_red", screenshot_name="wake-handoff-upload-red.png")
+        yellow = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "uploading",
+            timeout_seconds=8.0,
+            sleep_seconds=0.05,
+            description="wake-started turn yellow/uploading state for upload path",
+        )
+        yellow_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_upload_yellow", screenshot_name="wake-handoff-upload-yellow.png")
+        completed = wait_for_turn_status(
+            args,
+            runner,
+            config,
+            lambda status: str((status.get("last_status") or {}).get("state") or "") == "completed",
+            timeout_seconds=12.0,
+            sleep_seconds=0.1,
+            description="uploaded wake-started turn completion",
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+            timeout_seconds=12.0,
+            sleep_seconds=0.1,
+            description="wake rearmed after uploaded wake-started turn",
+        )
+        final_snapshot = wake_stage_snapshot(args, runner, config, "wake_handoff_upload_final", screenshot_name="wake-handoff-upload-final.png")
+        turn_id = scenario_turn_id(final_snapshot) or scenario_turn_id(yellow_snapshot)
+        turn_read_payload = turn_read(args, runner, config, turn_id) if turn_id else {}
+        history = turn_history(args, runner, config)
+        server_snapshot = fake_turn.snapshot()
+        latest = completed.get("last_status") if isinstance(completed.get("last_status"), dict) else {}
+        first_request = server_snapshot["requests"][0] if server_snapshot["requests"] else {}
+        return {
+            "scenario": "wake-handoff-upload",
+            "runtime": runtime,
+            "fixtures": pushed,
+            "simulate": simulate,
+            "snapshots": {
+                "blue": blue_snapshot,
+                "red": red_snapshot,
+                "yellow": yellow_snapshot,
+                "final": final_snapshot,
+            },
+            "turn_statuses": {
+                "armed": armed,
+                "blue": blue,
+                "red": red,
+                "yellow": yellow,
+                "completed": completed,
+                "rearmed": rearmed,
+            },
+            "turn_read": turn_read_payload,
+            "turn_history": history,
+            "fake_turn_endpoint": server_snapshot,
+            "all_passed": (
+                simulate.get("accepted") is True
+                and turn_visual_state(blue) == "armed"
+                and turn_visual_state(red) == "recording"
+                and turn_visual_state(yellow) == "uploading"
+                and len(server_snapshot["requests"]) == 1
+                and first_request.get("body_bytes", 0) > 0
+                and str(latest.get("state") or "") == "completed"
+                and not bool(latest.get("local_recipe_matched"))
+                and bool(rearmed.get("running"))
+            ),
+        }
+    finally:
+        fake_turn.stop()
+
+
+def wake_lab_wake_no_speech_timeout(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    fixtures = prepare_turn_fixtures(config)
+    pushed = [push_turn_fixture(args, runner, config, fixtures["wake_silence"], "wake_silence")]
+    fake_turn = FakeTurnEndpoint(
+        FakeTurnEndpointConfig(
+            response_text="No speech should have uploaded.",
+            summary="silence",
+            response_delay_seconds=0.2,
+        )
+    )
+    fake_turn.start()
+    try:
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=fake_turn, reply_mode="card_only")
+        armed = arm_wake_turn_lab(
+            args,
+            runner,
+            config,
+            fixture_name="wake_silence",
+            debug_fixture_transcript="",
+            fixture_start_delay_ms=WAKE_TURN_FIXTURE_START_DELAY_MS,
+        )
+        simulate = wake_command(args, runner, config, "wake.simulate", {"event": "final", "transcript": "Hey Pucky"})
+        blue = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "armed",
+            timeout_seconds=6.0,
+            description="wake-started turn blue/armed state for no-speech timeout",
+        )
+        blue_snapshot = wake_stage_snapshot(args, runner, config, "wake_no_speech_blue", screenshot_name="wake-no-speech-blue.png")
+        discarded = wait_for_turn_status(
+            args,
+            runner,
+            config,
+            lambda status: str((status.get("last_status") or {}).get("state") or "") == "discarded_silence",
+            timeout_seconds=8.0,
+            sleep_seconds=0.1,
+            description="wake-started turn no-speech timeout",
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+            timeout_seconds=10.0,
+            sleep_seconds=0.1,
+            description="wake rearmed after no-speech timeout",
+        )
+        final_snapshot = wake_stage_snapshot(args, runner, config, "wake_no_speech_final", screenshot_name="wake-no-speech-final.png")
+        server_snapshot = fake_turn.snapshot()
+        latest = discarded.get("last_status") if isinstance(discarded.get("last_status"), dict) else {}
+        return {
+            "scenario": "wake-no-speech-timeout",
+            "runtime": runtime,
+            "fixtures": pushed,
+            "simulate": simulate,
+            "snapshots": {
+                "blue": blue_snapshot,
+                "final": final_snapshot,
+            },
+            "turn_statuses": {
+                "armed": armed,
+                "blue": blue,
+                "discarded": discarded,
+                "rearmed": rearmed,
+            },
+            "fake_turn_endpoint": server_snapshot,
+            "all_passed": (
+                simulate.get("accepted") is True
+                and turn_visual_state(blue) == "armed"
+                and str(latest.get("state") or "") == "discarded_silence"
+                and "failure_chime" in latest
+                and len(server_snapshot["requests"]) == 0
+                and bool(rearmed.get("running"))
+            ),
+        }
+    finally:
+        fake_turn.stop()
+
+
+def wake_lab_wake_negative(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    wake_command(args, runner, config, "wake.stop", {})
+    wake_command(
+        args,
+        runner,
+        config,
+        "wake.config.set",
+        {"enabled": True, "recognizer_mode": "fake", "capture_source": "", "fixture_name": "", "debug_fixture_transcript": ""},
+    )
+    armed = wait_for_wake_status(args, runner, config, lambda status: bool(status.get("running")), description="wake armed before negative scenario")
+    response = wake_command(args, runner, config, "wake.simulate", {"event": "final", "transcript": "Parking"})
+    idle_turn = wait_for_turn_status(
+        args,
+        runner,
+        config,
+        lambda status: str(status.get("state") or "idle") == "idle" or str((status.get("indicator") or {}).get("visual_state") or "idle") == "idle",
+        timeout_seconds=4.0,
+        sleep_seconds=0.1,
+        description="turn remained idle after non-wake transcript",
+    )
+    wake_running = wait_for_wake_status(
+        args,
+        runner,
+        config,
+        lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+        timeout_seconds=6.0,
+        sleep_seconds=0.1,
+        description="wake stayed armed after negative transcript",
+    )
+    snapshot = wake_stage_snapshot(args, runner, config, "wake_negative_final", screenshot_name="wake-negative-final.png")
+    return {
+        "scenario": "wake-negative",
+        "armed": armed,
+        "response": response,
+        "idle_turn": idle_turn,
+        "wake_running": wake_running,
+        "snapshot": snapshot,
+        "all_passed": response.get("accepted") is False and turn_visual_state(idle_turn) == "idle" and bool(wake_running.get("running")),
+    }
+
+
+def wake_lab_wake_pause_on_reply(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    fixtures = prepare_turn_fixtures(config)
+    pushed = [push_turn_fixture(args, runner, config, fixtures["wake_weather"], "wake_weather")]
+    fake_turn = FakeTurnEndpoint(
+        FakeTurnEndpointConfig(
+            response_text="I found the weather and queued a spoken reply.",
+            summary="spoken weather reply",
+            response_delay_seconds=1.0,
+            remote_stage="tts_running",
+            with_audio=True,
+            audio_duration_ms=2500,
+        )
+    )
+    fake_turn.start()
+    try:
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=fake_turn, reply_mode="card_and_spoken")
+        armed = arm_wake_turn_lab(
+            args,
+            runner,
+            config,
+            fixture_name="wake_weather",
+            debug_fixture_transcript="tell me the weather",
+            fixture_start_delay_ms=WAKE_TURN_FIXTURE_START_DELAY_MS,
+        )
+        simulate = wake_command(args, runner, config, "wake.simulate", {"event": "final", "transcript": "Hey Pucky"})
+        blue = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "armed",
+            timeout_seconds=6.0,
+            description="wake-started turn blue/armed state for spoken reply",
+        )
+        blue_snapshot = wake_stage_snapshot(args, runner, config, "wake_pause_reply_blue", screenshot_name="wake-pause-reply-blue.png")
+        red = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "recording",
+            timeout_seconds=6.0,
+            description="wake-started turn red/recording state for spoken reply",
+        )
+        red_snapshot = wake_stage_snapshot(args, runner, config, "wake_pause_reply_red", screenshot_name="wake-pause-reply-red.png")
+        yellow = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "uploading",
+            timeout_seconds=8.0,
+            sleep_seconds=0.05,
+            description="wake-started turn yellow/uploading state for spoken reply",
+        )
+        yellow_snapshot = wake_stage_snapshot(args, runner, config, "wake_pause_reply_yellow", screenshot_name="wake-pause-reply-yellow.png")
+        speaking = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "speaking",
+            timeout_seconds=12.0,
+            sleep_seconds=0.1,
+            description="spoken reply playback state",
+        )
+        speaking_snapshot = wake_stage_snapshot(args, runner, config, "wake_pause_reply_speaking", screenshot_name="wake-pause-reply-speaking.png")
+        wake_paused = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: not bool(status.get("running")) and str(status.get("phase") or "") == "turn_paused",
+            timeout_seconds=6.0,
+            sleep_seconds=0.1,
+            description="wake paused while spoken reply is active",
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+            timeout_seconds=20.0,
+            sleep_seconds=0.2,
+            description="wake rearmed after spoken reply completed",
+        )
+        final_snapshot = wake_stage_snapshot(args, runner, config, "wake_pause_reply_final", screenshot_name="wake-pause-reply-final.png")
+        turn_id = scenario_turn_id(final_snapshot) or scenario_turn_id(yellow_snapshot)
+        turn_read_payload = turn_read(args, runner, config, turn_id) if turn_id else {}
+        server_snapshot = fake_turn.snapshot()
+        return {
+            "scenario": "wake-pause-on-reply",
+            "runtime": runtime,
+            "fixtures": pushed,
+            "simulate": simulate,
+            "snapshots": {
+                "blue": blue_snapshot,
+                "red": red_snapshot,
+                "yellow": yellow_snapshot,
+                "speaking": speaking_snapshot,
+                "final": final_snapshot,
+            },
+            "turn_statuses": {
+                "armed": armed,
+                "blue": blue,
+                "red": red,
+                "yellow": yellow,
+                "speaking": speaking,
+                "wake_paused": wake_paused,
+                "rearmed": rearmed,
+            },
+            "turn_read": turn_read_payload,
+            "fake_turn_endpoint": server_snapshot,
+            "all_passed": (
+                simulate.get("accepted") is True
+                and turn_visual_state(blue) == "armed"
+                and turn_visual_state(red) == "recording"
+                and turn_visual_state(yellow) == "uploading"
+                and turn_visual_state(speaking) == "speaking"
+                and len(server_snapshot["requests"]) == 1
+                and not bool(wake_paused.get("running"))
+                and bool(rearmed.get("running"))
+            ),
+        }
+    finally:
+        fake_turn.stop()
+
+
+def wake_lab_manual_regression(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    fixtures = prepare_turn_fixtures(config)
+    pushed = [push_turn_fixture(args, runner, config, fixtures["manual_flashlight"], "manual_flashlight")]
+    fake_turn = FakeTurnEndpoint(
+        FakeTurnEndpointConfig(
+            response_text="Manual flashlight path should stay local.",
+            summary="flashlight",
+            response_delay_seconds=0.2,
+        )
+    )
+    fake_turn.start()
+    try:
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=fake_turn, reply_mode="card_only")
+        armed = arm_wake_turn_lab(args, runner, config)
+        start = wake_command(
+            args,
+            runner,
+            config,
+            "pucky.turn.start",
+            {
+                "trigger_source": "volume_up_hold",
+                "source": "volume_up_hold",
+                "capture_source": "fixture",
+                "fixture_name": "manual_flashlight",
+                "fixture_start_delay_ms": WAKE_TURN_FIXTURE_START_DELAY_MS,
+                "debug_fixture_transcript": "flashlight",
+            },
+        )
+        paused = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: str(status.get("suspended_reason") or "") == "turn_active" or str(status.get("phase") or "") == "turn_paused",
+            timeout_seconds=6.0,
+            sleep_seconds=0.1,
+            description="wake paused during manual fixture-backed turn",
+        )
+        recording = wait_for_turn_visual(
+            args,
+            runner,
+            config,
+            "recording",
+            timeout_seconds=6.0,
+            description="manual turn reached recording state",
+        )
+        recording_snapshot = wake_stage_snapshot(args, runner, config, "manual_regression_recording", screenshot_name="wake-manual-regression-recording.png")
+        stop = wake_command(args, runner, config, "pucky.turn.stop", {"reason": "wake_lab_manual"})
+        completed = wait_for_turn_status(
+            args,
+            runner,
+            config,
+            lambda status: str((status.get("last_status") or {}).get("state") or "") == "completed",
+            timeout_seconds=10.0,
+            sleep_seconds=0.1,
+            description="manual fixture-backed turn completion",
+        )
+        rearmed = wait_for_wake_status(
+            args,
+            runner,
+            config,
+            lambda status: bool(status.get("running")) and str(status.get("phase") or "") == "wake_armed",
+            timeout_seconds=10.0,
+            sleep_seconds=0.1,
+            description="wake rearmed after manual turn regression",
+        )
+        final_snapshot = wake_stage_snapshot(args, runner, config, "manual_regression_final", screenshot_name="wake-manual-regression-final.png")
+        server_snapshot = fake_turn.snapshot()
+        latest = completed.get("last_status") if isinstance(completed.get("last_status"), dict) else {}
+        return {
+            "scenario": "manual-regression",
+            "runtime": runtime,
+            "fixtures": pushed,
+            "start": start,
+            "stop": stop,
+            "snapshots": {
+                "recording": recording_snapshot,
+                "final": final_snapshot,
+            },
+            "turn_statuses": {
+                "armed": armed,
+                "paused": paused,
+                "recording": recording,
+                "completed": completed,
+                "rearmed": rearmed,
+            },
+            "fake_turn_endpoint": server_snapshot,
+            "all_passed": (
+                turn_visual_state(recording) == "recording"
+                and str(latest.get("phase") or "") == "local_keyword_handled"
+                and bool(latest.get("local_recipe_matched"))
+                and len(server_snapshot["requests"]) == 0
+                and bool(rearmed.get("running"))
+            ),
+        }
+    finally:
+        fake_turn.stop()
+
+
 def wake_lab_host_audio_smoke(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
     wake_command(args, runner, config, "wake.stop", {})
     wake_command(args, runner, config, "wake.config.set", {"enabled": True, "recognizer_mode": "android"})
@@ -2275,6 +3298,18 @@ def cmd_wake_lab(args: argparse.Namespace) -> dict[str, Any]:
         scenario_result = wake_lab_simulated_transcripts(args, runner, config)
     elif args.scenario == "restart-regression":
         scenario_result = wake_lab_restart_regression(args, runner, config)
+    elif args.scenario == "wake-handoff-local":
+        scenario_result = wake_lab_wake_handoff_local(args, runner, config)
+    elif args.scenario == "wake-handoff-upload":
+        scenario_result = wake_lab_wake_handoff_upload(args, runner, config)
+    elif args.scenario == "wake-no-speech-timeout":
+        scenario_result = wake_lab_wake_no_speech_timeout(args, runner, config)
+    elif args.scenario == "wake-negative":
+        scenario_result = wake_lab_wake_negative(args, runner, config)
+    elif args.scenario == "wake-pause-on-reply":
+        scenario_result = wake_lab_wake_pause_on_reply(args, runner, config)
+    elif args.scenario == "manual-regression":
+        scenario_result = wake_lab_manual_regression(args, runner, config)
     elif args.scenario == "host-audio-smoke":
         scenario_result = wake_lab_host_audio_smoke(args, runner, config)
     else:
@@ -2383,7 +3418,18 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "wake-lab":
             item.add_argument(
                 "--scenario",
-                choices=("gates", "simulated-transcripts", "restart-regression", "host-audio-smoke"),
+                choices=(
+                    "gates",
+                    "simulated-transcripts",
+                    "restart-regression",
+                    "wake-handoff-local",
+                    "wake-handoff-upload",
+                    "wake-no-speech-timeout",
+                    "wake-negative",
+                    "wake-pause-on-reply",
+                    "manual-regression",
+                    "host-audio-smoke",
+                ),
                 required=True,
             )
         if name == "prove-thread-origin":

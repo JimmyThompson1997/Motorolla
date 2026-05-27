@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import struct
+import subprocess
+import urllib.request
+import wave
 from pathlib import Path
 
 import pytest
@@ -233,6 +237,108 @@ def test_parser_includes_wake_lab_command() -> None:
     assert args.scenario == "gates"
 
 
+def test_parser_accepts_wake_handoff_local_scenario() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["wake-lab", "--slot", "2", "--scenario", "wake-handoff-local", "--dry-run"])
+
+    assert args.command == "wake-lab"
+    assert args.scenario == "wake-handoff-local"
+
+
+def test_build_buffered_turn_fixture_wraps_source_with_silence(tmp_path: Path) -> None:
+    source = tmp_path / "source.wav"
+    suite.write_wav_pcm16_mono(source, 16000, b"\x01\x02" * 1600)
+    target = tmp_path / "buffered.wav"
+
+    suite.build_buffered_turn_fixture(source, target, lead_silence_ms=250, trail_silence_ms=500)
+
+    with wave.open(str(target), "rb") as handle:
+        assert handle.getframerate() == 16000
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+        frames = handle.readframes(handle.getnframes())
+    assert frames.startswith(b"\x00\x00" * 4000)
+    assert frames.endswith(b"\x00\x00" * 8000)
+
+
+def test_build_buffered_turn_fixture_normalizes_low_amplitude_source(tmp_path: Path) -> None:
+    source = tmp_path / "quiet.wav"
+    quiet_pcm = struct.pack("<" + "h" * 800, *([150] * 800))
+    suite.write_wav_pcm16_mono(source, 16000, quiet_pcm)
+    target = tmp_path / "normalized.wav"
+
+    suite.build_buffered_turn_fixture(source, target, lead_silence_ms=0, trail_silence_ms=0)
+
+    _, pcm_bytes = suite.read_wav_pcm16_mono(target)
+    samples = struct.unpack("<" + "h" * (len(pcm_bytes) // 2), pcm_bytes)
+    assert max(abs(sample) for sample in samples) > 150
+
+
+def test_fake_turn_endpoint_records_upload_and_status() -> None:
+    server = suite.FakeTurnEndpoint(
+        suite.FakeTurnEndpointConfig(
+            response_text="Weather is clear.",
+            summary="weather request",
+            response_delay_seconds=0.0,
+            remote_stage="stt_running",
+            with_audio=True,
+        )
+    )
+    server.start()
+    try:
+        request = urllib.request.Request(
+            server.emulator_turn_url.replace("10.0.2.2", "127.0.0.1"),
+            data=b"RIFFfake",
+            headers={"X-Pucky-Turn-Id": "turn-123", "Authorization": "Bearer debug-token"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["turn_id"] == "turn-123"
+        assert payload["text"] == "Weather is clear."
+        assert payload["audio_base64"]
+
+        with urllib.request.urlopen(
+            server.emulator_turn_url.replace("/api/turn", "/api/turn/status?turn_id=turn-123").replace("10.0.2.2", "127.0.0.1"),
+            timeout=10,
+        ) as response:
+            status = json.loads(response.read().decode("utf-8"))
+        assert status["turn_id"] == "turn-123"
+        assert status["stage"] == "completed"
+        snapshot = server.snapshot()
+        assert len(snapshot["requests"]) == 1
+        assert snapshot["requests"][0]["body_bytes"] == len(b"RIFFfake")
+    finally:
+        server.stop()
+
+
+def test_push_turn_fixture_mirrors_into_app_internal_storage(tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    local_path = tmp_path / "fixture.wav"
+    local_path.write_bytes(b"RIFFfake")
+    calls: list[list[str]] = []
+
+    def fake_run(command, timeout=None, check=True, capture_output=True, text=True):
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    runner.run = fake_run  # type: ignore[assignment]
+
+    result = suite.push_turn_fixture(args, runner, config, local_path, "wake_flashlight")
+
+    assert result["remote_path"].endswith("/wake_flashlight.wav")
+    assert result["remote_path"].startswith("/data/local/tmp/")
+    assert result["internal_path"].endswith("/files/turn-fixtures/wake_flashlight.wav")
+    joined = [" ".join(call) for call in calls]
+    assert any(" push " in f" {call} " and "wake_flashlight.wav" in call for call in joined)
+    assert any(" chmod 0644 " in f" {call} " and "wake_flashlight.wav" in call for call in joined)
+    assert any(" run-as " in f" {call} " and "mkdir -p /data/user/0/" in call for call in joined)
+    assert any(" run-as " in f" {call} " and " cp " in f" {call} " and "/data/local/tmp/" in call and "/data/user/0/" in call and "wake_flashlight.wav" in call for call in joined)
+
+
 def test_wake_lab_gates_uses_fake_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 2, run_id="fixed")
@@ -295,6 +401,55 @@ def test_wake_lab_simulated_transcripts_uses_fake_recognizer_mode(monkeypatch: p
 
     assert ("wake.config.set", {"enabled": True, "recognizer_mode": "fake"}) in commands
     assert result["all_passed"] is True
+
+
+def test_arm_wake_turn_lab_can_include_fixture_start_delay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(suite, "wake_command", lambda *_args: commands.append((_args[3], _args[4])) or {"ok": True})
+    monkeypatch.setattr(suite, "wait_for_wake_status", lambda *_args, **_kwargs: {"running": True})
+
+    suite.arm_wake_turn_lab(
+        args,
+        runner,
+        config,
+        fixture_name="wake_flashlight",
+        debug_fixture_transcript="flashlight",
+        fixture_start_delay_ms=1200,
+    )
+
+    assert ("wake.config.set", {
+        "enabled": True,
+        "recognizer_mode": "fake",
+        "capture_source": "fixture",
+        "fixture_name": "wake_flashlight",
+        "debug_fixture_transcript": "flashlight",
+        "fixture_start_delay_ms": 1200,
+    }) in commands
+
+
+def test_sync_default_recipe_bundle_uses_clear_sync_and_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        suite,
+        "command_json",
+        lambda _runner, command, **_kwargs: (
+            calls.append(command[command.index("command") + 1])
+            or {"result": {"ok": True}}
+        ),
+    )
+
+    result = suite.sync_default_recipe_bundle(args, runner, config)
+
+    assert calls == ["pucky.recipes.clear", "pucky.recipes.sync", "pucky.recipes.list"]
+    assert result["bundle_id"] == "vm_dev_volume_down_lab_keywords"
 
 
 def test_wake_lab_host_audio_smoke_uses_android_recognizer_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -48,6 +49,11 @@ public final class PuckyTurnController {
     private static final int RECORDING_STOP_HAPTIC_MS = 40;
     private static final int ARRIVAL_CUE_HAPTIC_MS = 32;
     private static final int HAPTIC_AMPLITUDE = 220;
+    public static final int WAKE_AUTO_ENDPOINT_MAX_DURATION_MS = 20_000;
+    public static final int WAKE_SPEECH_START_TIMEOUT_MS = 3_000;
+    public static final int WAKE_TRAILING_SILENCE_MS = 800;
+    public static final int WAKE_MIN_SPEECH_MS = 180;
+    public static final String TRIGGER_SOURCE_WAKE_WORD = "wake_word";
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -55,6 +61,7 @@ public final class PuckyTurnController {
     private final SettingsStore settings;
     private final ReplyCardStore replyCards;
     private final SharedPreferences prefs;
+    private final RecipeDevicePrimitiveExecutor recipeExecutor;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
     private final Object pollLock = new Object();
     private volatile String activePollTurnId = "";
@@ -74,6 +81,7 @@ public final class PuckyTurnController {
         this.settings = new SettingsStore(this.context);
         this.replyCards = new ReplyCardStore(this.context);
         this.prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.recipeExecutor = new RecipeDevicePrimitiveExecutor(this.context);
     }
 
     public JSONObject status() {
@@ -264,7 +272,9 @@ public final class PuckyTurnController {
         String clientTurnId = generateClientTurnId();
         String localSessionId = clientTurnId;
         final boolean feedback = args.optBoolean("feedback", true);
+        final boolean autoEndpoint = args.optBoolean("auto_endpoint", false);
         String triggerSource = args.optString("trigger_source", args.optString("source", "volume_up_hold"));
+        AtomicBoolean autoStopRequested = new AtomicBoolean(false);
         JSONObject startArgs = new JSONObject();
         Json.put(startArgs, "format", "wav");
         Json.put(startArgs, "session_id", localSessionId);
@@ -273,6 +283,27 @@ public final class PuckyTurnController {
         Json.put(startArgs, "sample_tag", "pucky_turn");
         Json.put(startArgs, "feedback", false);
         Json.put(startArgs, "trigger_source", triggerSource);
+        Json.put(startArgs, "auto_endpoint", autoEndpoint);
+        if (autoEndpoint) {
+            Json.put(startArgs, "speech_start_timeout_ms",
+                    args.optInt("speech_start_timeout_ms", WAKE_SPEECH_START_TIMEOUT_MS));
+            Json.put(startArgs, "trailing_silence_ms",
+                    args.optInt("trailing_silence_ms", WAKE_TRAILING_SILENCE_MS));
+            Json.put(startArgs, "min_speech_ms",
+                    args.optInt("min_speech_ms", WAKE_MIN_SPEECH_MS));
+        }
+        if (args.has("capture_source")) {
+            Json.put(startArgs, "capture_source", args.optString("capture_source", "mic"));
+        }
+        if (args.has("fixture_name")) {
+            Json.put(startArgs, "fixture_name", args.optString("fixture_name", ""));
+        }
+        if (BuildConfig.DEBUG && args.has("fixture_start_delay_ms")) {
+            Json.put(startArgs, "fixture_start_delay_ms", args.optInt("fixture_start_delay_ms", 0));
+        }
+        if (BuildConfig.DEBUG && args.has("debug_fixture_transcript")) {
+            Json.put(startArgs, "debug_fixture_transcript", args.optString("debug_fixture_transcript", ""));
+        }
         if (args.has("wake_phrase_family")) {
             Json.put(startArgs, "wake_phrase_family", args.optString("wake_phrase_family", ""));
         }
@@ -282,23 +313,61 @@ public final class PuckyTurnController {
         WakeWordController.shared(context).onTurnStarting(clientTurnId, triggerSource);
         JSONObject out;
         try {
-            out = WalkieAudioCaptureController.shared(context).start(startArgs, speechGateStatus -> {
-                JSONObject status = new JSONObject();
-                Json.put(status, "schema", "pucky.turn_status_item.v1");
-                Json.put(status, "state", "recording");
-                Json.put(status, "phase", "speech_detected");
-                Json.put(status, "local_session_id", localSessionId);
-                Json.put(status, "turn_id", clientTurnId);
-                Json.put(status, "trigger_source", triggerSource);
-                if (args.has("wake_phrase_family")) {
-                    Json.put(status, "wake_phrase_family", args.optString("wake_phrase_family", ""));
+            out = WalkieAudioCaptureController.shared(context).start(startArgs, new WalkieAudioCaptureController.Listener() {
+                @Override
+                public void onSpeechDetected(JSONObject speechGateStatus) {
+                    JSONObject status = new JSONObject();
+                    Json.put(status, "schema", "pucky.turn_status_item.v1");
+                    Json.put(status, "state", "recording");
+                    Json.put(status, "phase", "speech_detected");
+                    Json.put(status, "local_session_id", localSessionId);
+                    Json.put(status, "turn_id", clientTurnId);
+                    Json.put(status, "trigger_source", triggerSource);
+                    if (args.has("wake_phrase_family")) {
+                        Json.put(status, "wake_phrase_family", args.optString("wake_phrase_family", ""));
+                    }
+                    if (args.has("wake_phrase_detected")) {
+                        Json.put(status, "wake_phrase_detected", args.optString("wake_phrase_detected", ""));
+                    }
+                    Json.put(status, "speech_gate", speechGateStatus);
+                    Json.put(status, "speech_detected", true);
+                    markStatus("recording", status, null);
                 }
-                if (args.has("wake_phrase_detected")) {
-                    Json.put(status, "wake_phrase_detected", args.optString("wake_phrase_detected", ""));
+
+                @Override
+                public void onSpeechStartTimeout(JSONObject status) {
+                    if (autoStopRequested.compareAndSet(false, true)) {
+                        requestAutoStopAsync("speech_start_timeout", true);
+                    }
                 }
-                Json.put(status, "speech_gate", speechGateStatus);
-                Json.put(status, "speech_detected", true);
-                markStatus("recording", status, null);
+
+                @Override
+                public void onCaptureShouldStop(JSONObject status, String reason) {
+                    if (autoStopRequested.compareAndSet(false, true)) {
+                        requestAutoStopAsync(reason, false);
+                    }
+                }
+
+                private void requestAutoStopAsync(String reason, boolean playFailureChime) {
+                    Thread worker = new Thread(() -> {
+                        try {
+                            JSONObject stopArgs = reasonArgs(reason);
+                            Json.put(stopArgs, "feedback", false);
+                            Json.put(stopArgs, "play_failure_chime", playFailureChime);
+                            stop(stopArgs);
+                        } catch (CommandException exc) {
+                            JSONObject failed = new JSONObject();
+                            Json.put(failed, "schema", "pucky.turn_status_item.v1");
+                            Json.put(failed, "turn_id", clientTurnId);
+                            Json.put(failed, "local_session_id", localSessionId);
+                            Json.put(failed, "trigger_source", triggerSource);
+                            Json.put(failed, "phase", "auto_endpoint_failed");
+                            markStatus("failed", failed, exc.getMessage());
+                        }
+                    }, "PuckyTurnAutoStop");
+                    worker.setDaemon(true);
+                    worker.start();
+                }
             });
         } catch (CommandException exc) {
             WakeWordController.shared(context).onTurnStatusChanged(clientTurnId, "failed", new JSONObject());
@@ -372,6 +441,10 @@ public final class PuckyTurnController {
             Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
             Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
             Json.put(out, "voice_capture", discarded);
+            if (args.optBoolean("play_failure_chime", false)) {
+                Json.put(out, "failure_chime",
+                        recipeExecutor.playFailureChime("pucky.wake_turn_no_speech_failure_chime.v1"));
+            }
             markStatus("discarded_silence", out, null);
             return out;
         }
@@ -452,7 +525,8 @@ public final class PuckyTurnController {
             copyCaptureMetadata(uploading, capture);
             markStatus("uploading", uploading, null);
             JSONObject keywordIntercept = PuckyTurnKeywordInterceptor.shared(context)
-                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate);
+                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate,
+                            capture.optString("debug_fixture_transcript", ""));
             Json.put(uploading, "local_keyword_intercept", keywordIntercept);
             Json.put(uploading, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
             Json.put(uploading, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
@@ -462,6 +536,12 @@ public final class PuckyTurnController {
                             ? JSONObject.NULL
                             : keywordIntercept.optJSONObject("match").optString("id", ""));
             if (keywordIntercept.optBoolean("handled", false)) {
+                String interceptErrorCode = keywordIntercept.isNull("error_code")
+                        ? ""
+                        : keywordIntercept.optString("error_code", "");
+                String interceptErrorMessage = keywordIntercept.isNull("error_message")
+                        ? ""
+                        : keywordIntercept.optString("error_message", "");
                 boolean deleted = deleteQuietly(audio);
                 JSONObject handled = baseStatus(localSessionId, finalizeStartedMs, audioBytes.length);
                 Json.put(handled, "turn_id", clientTurnId);
@@ -482,12 +562,13 @@ public final class PuckyTurnController {
                 copyIfPresent(handled, keywordIntercept, "pucky_clipboard_entry_id");
                 Json.put(handled, "deleted_file", deleted);
                 boolean failed = "failed".equals(keywordIntercept.optString("execution_status", ""))
-                        || !"".equals(keywordIntercept.optString("error_code", ""));
+                        || !interceptErrorCode.isEmpty();
                 Json.put(handled, "state", failed ? "failed" : "completed");
                 Json.put(handled, "phase", failed ? "local_keyword_failed" : "local_keyword_handled");
                 if (failed) {
-                    String error = keywordIntercept.optString("error_message",
-                            keywordIntercept.optString("error_code", "keyword_action_failed"));
+                    String error = !interceptErrorMessage.isEmpty()
+                            ? interceptErrorMessage
+                            : (!interceptErrorCode.isEmpty() ? interceptErrorCode : "keyword_action_failed");
                     markStatus("failed", handled, error);
                 } else {
                     markStatus("completed", handled, null);
@@ -841,6 +922,13 @@ public final class PuckyTurnController {
         }
         copyIfPresent(record, detail, "request_audio_bytes");
         copyIfPresent(record, detail, "trigger_source");
+        copyIfPresent(record, detail, "capture_source");
+        copyIfPresent(record, detail, "fixture_name");
+        copyIfPresent(record, detail, "fixture_start_delay_ms");
+        copyIfPresent(record, detail, "auto_endpoint");
+        copyIfPresent(record, detail, "speech_start_timeout_ms");
+        copyIfPresent(record, detail, "trailing_silence_ms");
+        copyIfPresent(record, detail, "min_speech_ms");
         copyIfPresent(record, detail, "user_transcript");
         copyIfPresent(record, detail, "wake_phrase_family");
         copyIfPresent(record, detail, "wake_phrase_detected");
@@ -896,6 +984,13 @@ public final class PuckyTurnController {
         Json.put(event, "updated_at", updatedAt);
         copyIfPresent(event, detail, "phase");
         copyIfPresent(event, detail, "trigger_source");
+        copyIfPresent(event, detail, "capture_source");
+        copyIfPresent(event, detail, "fixture_name");
+        copyIfPresent(event, detail, "fixture_start_delay_ms");
+        copyIfPresent(event, detail, "auto_endpoint");
+        copyIfPresent(event, detail, "speech_start_timeout_ms");
+        copyIfPresent(event, detail, "trailing_silence_ms");
+        copyIfPresent(event, detail, "min_speech_ms");
         copyIfPresent(event, detail, "user_transcript");
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "card_id");
@@ -1468,6 +1563,14 @@ public final class PuckyTurnController {
         copyIfPresent(target, capture, "trigger_source");
         copyIfPresent(target, capture, "wake_phrase_family");
         copyIfPresent(target, capture, "wake_phrase_detected");
+        copyIfPresent(target, capture, "auto_endpoint");
+        copyIfPresent(target, capture, "speech_start_timeout_ms");
+        copyIfPresent(target, capture, "trailing_silence_ms");
+        copyIfPresent(target, capture, "min_speech_ms");
+        copyIfPresent(target, capture, "capture_source");
+        copyIfPresent(target, capture, "fixture_name");
+        copyIfPresent(target, capture, "fixture_start_delay_ms");
+        copyIfPresent(target, capture, "debug_fixture_transcript");
     }
 
     private static JSONObject reasonArgs(String reason) {

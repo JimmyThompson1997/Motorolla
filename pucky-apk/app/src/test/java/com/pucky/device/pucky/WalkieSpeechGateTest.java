@@ -83,6 +83,74 @@ public final class WalkieSpeechGateTest {
         assertEquals(0, status.getInt("speech_frames"));
     }
 
+    @Test
+    public void trailingSilenceMarksSpeechEndedForAutoEndpointTurns() throws Exception {
+        FakeVadEngine engine = new FakeVadEngine(true, 0.91, 0.92, 0.04, 0.03, 0.02);
+        MutableClock clock = new MutableClock(4_000L);
+        AtomicInteger detected = new AtomicInteger();
+        AtomicInteger ended = new AtomicInteger();
+        WalkieSpeechGate gate = new WalkieSpeechGate(
+                4_000L,
+                engine,
+                clock,
+                new WalkieSpeechGate.Listener() {
+                    @Override
+                    public void onSpeechDetected(JSONObject status) {
+                        detected.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSpeechEnded(JSONObject status) {
+                        ended.incrementAndGet();
+                    }
+                },
+                60,
+                30);
+
+        clock.now = 4_032L;
+        gate.onFrame(frame(1_000), 1L);
+        clock.now = 4_064L;
+        gate.onFrame(frame(1_200), 2L);
+        clock.now = 4_128L;
+        gate.onFrame(frame(0), 3L);
+        clock.now = 4_192L;
+        gate.onFrame(frame(0), 4L);
+        clock.now = 4_256L;
+        gate.onFrame(frame(0), 5L);
+
+        JSONObject status = gate.statusJson();
+        assertEquals(1, detected.get());
+        assertEquals(1, ended.get());
+        assertTrue(status.getBoolean("speech_detected"));
+        assertTrue(status.getBoolean("speech_ended"));
+        assertTrue(status.getLong("speech_duration_ms") >= 30L);
+        assertTrue(status.getLong("silence_after_speech_ms") >= 60L);
+    }
+
+    @Test
+    public void customSpeechThresholdAllowsDebugFixtureSpeechDetection() throws Exception {
+        FakeVadEngine engine = new FakeVadEngine(true, 0.12, 0.01);
+        MutableClock clock = new MutableClock(5_000L);
+        AtomicInteger commits = new AtomicInteger();
+        WalkieSpeechGate gate = new WalkieSpeechGate(
+                5_000L,
+                engine,
+                clock,
+                status -> commits.incrementAndGet(),
+                0,
+                0,
+                0.05);
+
+        clock.now = 5_032L;
+        gate.onFrame(frame(10_000), 1L);
+
+        JSONObject status = gate.statusJson();
+        assertTrue(gate.speechDetected());
+        assertTrue(status.getBoolean("speech_detected"));
+        assertEquals(1, commits.get());
+        assertEquals(0.05, status.getDouble("speech_threshold"), 0.0001);
+    }
+
     private static short[] frame(int amplitude) {
         short[] frame = new short[WalkieSpeechGate.WINDOW_SAMPLES];
         short value = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, amplitude));

@@ -9,11 +9,13 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.Voice;
 import android.util.Log;
 
+import com.pucky.device.BuildConfig;
 import com.pucky.device.audio.AudioRouteDetector;
 import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.util.Json;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.Instant;
@@ -65,6 +67,15 @@ public final class PuckyTurnKeywordInterceptor {
     }
 
     public JSONObject intercept(byte[] wavBytes, String localSessionId, String turnId, JSONObject speechGate) {
+        return intercept(wavBytes, localSessionId, turnId, speechGate, "");
+    }
+
+    public JSONObject intercept(
+            byte[] wavBytes,
+            String localSessionId,
+            String turnId,
+            JSONObject speechGate,
+            String debugFixtureTranscript) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_keyword_intercept.v1");
         Json.put(out, "local_session_id", localSessionId);
@@ -78,6 +89,16 @@ public final class PuckyTurnKeywordInterceptor {
             Json.put(out, "handled", false);
             Json.put(out, "matched", false);
             return out;
+        }
+        String forcedTranscript = debugFixtureTranscript == null ? "" : debugFixtureTranscript.trim();
+        if (BuildConfig.DEBUG && !forcedTranscript.isEmpty()) {
+            JSONArray alternatives = new JSONArray();
+            Json.add(alternatives, forcedTranscript);
+            Json.put(out, "classifier_status", "debug_fixture_transcript");
+            Json.put(out, "final_transcript", forcedTranscript);
+            Json.put(out, "alternatives", alternatives);
+            Json.put(out, "confidence_scores", new JSONArray());
+            return handleRecognizedTranscript(out, storedRaw, localSessionId, turnId, forcedTranscript, alternatives, new JSONArray());
         }
         short[] samples = OnDeviceInjectedAudioRecognizer.padSamplesForRecognition(
                 OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(wavBytes));
@@ -101,8 +122,25 @@ public final class PuckyTurnKeywordInterceptor {
             Json.put(out, "matched", false);
             return out;
         }
+        return handleRecognizedTranscript(
+                out,
+                storedRaw,
+                localSessionId,
+                turnId,
+                recognition.transcript,
+                recognition.alternatives,
+                recognition.confidences);
+    }
 
-        SpeechRecipeRegistry.RecipeMatch recipe = SpeechRecipeRegistry.matchStoredOnly(recognition.transcript, storedRaw);
+    private JSONObject handleRecognizedTranscript(
+            JSONObject out,
+            String storedRaw,
+            String localSessionId,
+            String turnId,
+            String transcript,
+            JSONArray alternatives,
+            JSONArray confidences) {
+        SpeechRecipeRegistry.RecipeMatch recipe = SpeechRecipeRegistry.matchStoredOnly(transcript, storedRaw);
         Json.put(out, "match", SpeechRecipeRegistry.matchJson(recipe));
         Json.put(out, "matched", recipe.matched);
         if (!recipe.matched) {
@@ -118,9 +156,9 @@ public final class PuckyTurnKeywordInterceptor {
         Json.put(session, "route", routeDetector.snapshot());
         Json.put(session, "started_at", Instant.now().toString());
         Json.put(session, "completed_at", Instant.now().toString());
-        Json.put(session, "final_transcript", recognition.transcript);
-        Json.put(session, "alternatives", recognition.alternatives);
-        Json.put(session, "confidence_scores", recognition.confidences);
+        Json.put(session, "final_transcript", transcript);
+        Json.put(session, "alternatives", alternatives);
+        Json.put(session, "confidence_scores", confidences);
         Json.put(session, "keyword_raw_transcript", recipe.rawTranscript);
         Json.put(session, "keyword_normalized_transcript", recipe.normalizedTranscript);
         Json.put(session, "keyword_match_strategy", "exact_utterance");
