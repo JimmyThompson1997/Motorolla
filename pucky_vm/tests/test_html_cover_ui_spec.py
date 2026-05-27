@@ -78,7 +78,8 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'state.links.token = payload.token;' in app
     assert "Links did not return a valid auth URL." in app
     assert "Opened " in app
-    assert "Quick search. Tap an app to open the Composio connect flow." in app
+    assert 'el("h1", "links-title", "Links")' not in app
+    assert "Quick search. Tap an app to open the Composio connect flow." not in app
     assert "configuredLinksUrl()" not in app
     assert ".page-tabs" in styles
     assert "display: flex" in styles
@@ -92,6 +93,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".tab:not(.is-active) .material-icon" in styles
     assert ".links-page" in styles
     assert ".links-portal-frame" not in styles
+    assert ".links-shell" not in styles
+    assert ".links-title" not in styles
+    assert ".links-subtitle" not in styles
     assert ".links-app-icon" in styles
     assert ".links-app-auth" in styles
     assert ".links-app-mark.is-connected" in styles
@@ -99,6 +103,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-search" in styles
     assert ".links-filter" not in styles
     assert ".links-app-row" in styles
+    assert "min-height: 46px" in styles
+    assert "min-height: 54px" in styles
+    assert "font-size: 15px" in styles
     assert 'src="./pucky-config.js"' in html
 
 

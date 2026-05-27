@@ -1756,17 +1756,6 @@
 
   function linksPageView() {
     const page = el("section", "links-page");
-    const shell = el("article", "links-shell");
-    const copy = el("div", "links-shell-copy");
-    copy.append(
-      el("h1", "links-title", "Links"),
-      el("p", "links-subtitle", "Quick search. Tap an app to open the Composio connect flow.")
-    );
-    if (state.links.loading) {
-      copy.append(el("div", "links-shell-status", "Refreshing apps..."));
-    }
-    shell.append(copy);
-    page.append(shell);
 
     if (state.links.error || state.links.message) {
       const message = el(
