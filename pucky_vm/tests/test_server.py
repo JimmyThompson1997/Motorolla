@@ -235,7 +235,7 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         composio_default_user_id="jimmythompson323",
         connect_portal_secret="portal-secret",
         connect_portal_ttl_seconds=3600,
-        composio_default_auth_mode="webview",
+        composio_default_auth_mode="browser",
     )
 
 
@@ -316,7 +316,7 @@ class ServerTests(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["schema"], "pucky.links_portal_url.v1")
-        self.assertEqual(payload["auth_mode"], "webview")
+        self.assertEqual(payload["auth_mode"], "browser")
         self.assertEqual(payload["user_id"], "jimmythompson323")
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
         token = self.portal_token(payload["portal_url"])
@@ -329,14 +329,16 @@ class ServerTests(unittest.TestCase):
         text = self.get_text(f"/links/connect/apps?token={token}")
 
         self.assertIn("Pucky Links", text)
-        self.assertIn("My Apps", text)
+        self.assertIn("Search apps", text)
+        self.assertIn("Connected", text)
         self.assertIn("All Apps", text)
-        self.assertIn("Refresh My Apps", text)
-        self.assertIn("This view", text)
-        self.assertIn("Browser", text)
         self.assertIn("/api/links/composio/my-apps", text)
         self.assertIn("/api/links/composio/all-apps", text)
-        self.assertIn("/api/links/composio/disconnect", text)
+        self.assertIn("browser.open", text)
+        self.assertNotIn("Refresh My Apps", text)
+        self.assertNotIn("This view", text)
+        self.assertNotIn("/api/links/composio/disconnect", text)
+        self.assertNotIn("/api/links/composio/app-details", text)
 
     def test_links_my_apps_groups_connected_needs_attention_and_details(self) -> None:
         token = self.issue_portal_token()

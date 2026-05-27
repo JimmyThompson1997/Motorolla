@@ -122,7 +122,7 @@ class Config:
     composio_default_user_id: str = "jimmythompson323"
     connect_portal_secret: str = ""
     connect_portal_ttl_seconds: int = 12 * 60 * 60
-    composio_default_auth_mode: str = "webview"
+    composio_default_auth_mode: str = "browser"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -157,7 +157,7 @@ class Config:
                 or os.environ.get("PUCKY_API_TOKEN", "").strip()
             ),
             connect_portal_ttl_seconds=max(300, int(os.environ.get("PUCKY_CONNECT_PORTAL_TTL_SECONDS", str(12 * 60 * 60)))),
-            composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "webview").strip().lower() or "webview",
+            composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "browser").strip().lower() or "browser",
         )
 
 
@@ -950,20 +950,19 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
     <style>
       :root {{
         color-scheme: dark;
-        --bg: #060d15;
-        --panel: #111927;
-        --panel-2: #0b1320;
-        --line: rgba(245, 249, 255, 0.1);
+        --bg: #070d14;
+        --panel: #0f1722;
+        --panel-2: #101b29;
+        --line: rgba(245, 249, 255, 0.09);
         --text: #f5f9ff;
-        --muted: #9db1c7;
-        --soft: rgba(245, 249, 255, 0.05);
-        --accent: #72c2ff;
-        --accent-soft: rgba(114, 194, 255, 0.12);
+        --muted: #90a4bb;
+        --accent: #76c6ff;
       }}
       * {{ box-sizing: border-box; }}
       body {{
         margin: 0;
-        background: radial-gradient(circle at top, rgba(114, 194, 255, 0.08), transparent 40%), var(--bg);
+        min-height: 100vh;
+        background: var(--bg);
         color: var(--text);
         font-family: Inter, Segoe UI, Arial, sans-serif;
       }}
@@ -974,204 +973,153 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
         flex-direction: column;
         gap: 10px;
       }}
-      .hero, .toolbar, .card, .msg {{
+      .topbar,
+      .msg,
+      .section,
+      .search-wrap {{
         border: 1px solid var(--line);
-        border-radius: 18px;
+        border-radius: 16px;
         background: var(--panel);
       }}
-      .hero {{
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
+      .topbar {{
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
         gap: 10px;
-      }}
-      .hero-top {{
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        align-items: flex-start;
+        align-items: start;
       }}
       .back {{
-        flex: 0 0 auto;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 34px;
-        min-height: 34px;
-        border-radius: 12px;
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
         border: 1px solid var(--line);
-        color: var(--text);
         text-decoration: none;
+        color: var(--text);
         background: var(--panel-2);
       }}
-      .hero h1 {{
+      h1 {{
         margin: 0;
-        font-size: 22px;
+        font-size: 21px;
         line-height: 1;
         font-weight: 850;
       }}
-      .hero p {{
+      .subtle {{
         margin: 5px 0 0;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.35;
       }}
-      .tabs, .mode-row {{
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }}
-      .tab, .mode-pill, .btn {{
-        min-height: 32px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: var(--soft);
-        color: var(--text);
-        font-size: 11px;
-        font-weight: 780;
-        padding: 0 12px;
-        text-decoration: none;
-      }}
-      .tab.active, .mode-pill.active {{
-        background: var(--accent-soft);
-        border-color: rgba(114, 194, 255, 0.34);
-      }}
-      .toolbar {{
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }}
-      .toolbar-row {{
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }}
-      .toolbar-row.wrap {{ flex-wrap: wrap; }}
-      .search {{
-        flex: 1 1 auto;
-        min-width: 0;
-        min-height: 36px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel-2);
-        color: var(--text);
-        padding: 0 12px;
-        font-size: 13px;
-      }}
       .msg {{
         display: none;
-        padding: 10px 12px;
+        padding: 9px 11px;
         font-size: 12px;
         line-height: 1.35;
       }}
       .msg.show {{ display: block; }}
-      .msg.error {{ border-color: rgba(255, 111, 111, 0.4); color: #ffd7d7; }}
-      .msg.ok {{ border-color: rgba(80, 216, 106, 0.35); color: #d8ffe1; }}
-      .summary {{
+      .msg.ok {{ border-color: rgba(80, 216, 106, 0.32); color: #d8ffe1; }}
+      .msg.error {{ border-color: rgba(255, 111, 111, 0.35); color: #ffd7d7; }}
+      .search-wrap {{
+        padding: 0 12px;
+      }}
+      .search {{
+        width: 100%;
+        min-height: 40px;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: var(--text);
+        font-size: 14px;
+      }}
+      .search::placeholder {{ color: var(--muted); }}
+      .section {{
+        padding: 10px 11px;
+      }}
+      .section-head {{
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }}
+      .section-label {{
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }}
+      .count {{
         color: var(--muted);
         font-size: 11px;
-        line-height: 1.35;
       }}
-      .grid {{
+      .connected-strip {{
         display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }}
-      .card {{
-        overflow: hidden;
-      }}
-      .card-main {{
-        display: grid;
-        grid-template-columns: 38px minmax(0, 1fr) auto;
-        gap: 10px;
-        align-items: center;
-        padding: 11px 12px;
-      }}
-      .logo {{
-        width: 38px;
-        height: 38px;
-        border-radius: 12px;
-        background: var(--panel-2);
-        display: grid;
-        place-items: center;
-        color: var(--muted);
-        overflow: hidden;
-      }}
-      .logo img {{
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        padding: 6px;
-      }}
-      .meta {{
-        min-width: 0;
-      }}
-      .name {{
-        font-size: 14px;
-        font-weight: 800;
-        line-height: 1.05;
-      }}
-      .slug {{
-        margin-top: 2px;
-        color: var(--muted);
-        font-size: 10px;
-        line-height: 1.2;
-      }}
-      .status, .tools {{
-        display: flex;
-        gap: 6px;
         flex-wrap: wrap;
-        margin-top: 6px;
+        gap: 6px;
       }}
-      .pill {{
+      .connected-chip {{
+        min-height: 28px;
+        padding: 0 10px;
         border-radius: 999px;
         border: 1px solid var(--line);
-        padding: 2px 7px;
-        font-size: 10px;
-        line-height: 1.2;
-      }}
-      .pill.active {{ color: #d8ffe1; border-color: rgba(80, 216, 106, 0.34); }}
-      .pill.pending {{ color: #ffe9b0; border-color: rgba(255, 176, 0, 0.34); }}
-      .pill.expired {{ color: #ffd7d7; border-color: rgba(255, 111, 111, 0.34); }}
-      .pill.muted {{ color: var(--muted); }}
-      .btn {{
+        background: var(--panel-2);
         display: inline-flex;
         align-items: center;
-        justify-content: center;
+        gap: 6px;
+        font-size: 12px;
         white-space: nowrap;
       }}
-      .details {{
-        display: none;
-        border-top: 1px solid var(--line);
-        background: var(--panel-2);
-        padding: 10px 12px;
+      .mark::before {{
+        content: '\\2713';
+        color: var(--accent);
+        font-weight: 800;
       }}
-      .card.open .details {{ display: block; }}
-      .detail-row {{
+      .list {{
+        display: flex;
+        flex-direction: column;
+      }}
+      .app-row {{
+        width: 100%;
+        border: 0;
+        border-top: 1px solid rgba(245, 249, 255, 0.06);
+        background: transparent;
+        color: var(--text);
+        min-height: 44px;
+        padding: 0;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 8px;
         align-items: center;
-        padding: 6px 0;
-        border-top: 1px solid rgba(245, 249, 255, 0.06);
+        text-align: left;
+        cursor: pointer;
       }}
-      .detail-row:first-child {{ border-top: 0; }}
-      .detail-id {{
+      .app-row:first-child {{ border-top: 0; }}
+      .app-row:disabled {{
+        opacity: 0.7;
+        cursor: progress;
+      }}
+      .app-name {{
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-size: 11px;
+        font-size: 14px;
+        font-weight: 700;
       }}
-      .detail-status {{
-        color: var(--muted);
-        font-size: 10px;
+      .status-mark {{
+        min-width: 18px;
+        text-align: right;
+      }}
+      .status-mark.mark::before {{
+        content: '\\2713';
+        color: var(--accent);
+        font-weight: 800;
       }}
       .empty {{
-        border: 1px dashed var(--line);
-        border-radius: 18px;
-        padding: 16px 14px;
+        padding: 10px 0 4px;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.4;
@@ -1181,37 +1129,32 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
   </head>
   <body>
     <main class="shell">
-      <section class="hero">
-        <div class="hero-top">
-          <div>
-            <h1>Links</h1>
-            <p>Browse your connected apps, search the catalog, and hand off app auth through Composio.</p>
-          </div>
-          <a class="back" href="{back_q}" aria-label="Back to Pucky">&lt;</a>
+      <header class="topbar">
+        <a class="back" href="{back_q}" aria-label="Back to Pucky">&lt;</a>
+        <div>
+          <h1>Links</h1>
+          <p class="subtle">Quick search. Tap an app name to jump into the Composio connect flow.</p>
         </div>
-        <div class="tabs">
-          <button id="tab-my" class="tab active" type="button">My Apps</button>
-          <button id="tab-all" class="tab" type="button">All Apps</button>
+      </header>
+      <div id="portal-msg" class="msg" aria-live="polite"></div>
+      <section id="connected-section" class="section hide">
+        <div class="section-head">
+          <span class="section-label">Connected</span>
+        </div>
+        <div id="connected-strip" class="connected-strip"></div>
+      </section>
+      <label class="search-wrap" for="search">
+        <input id="search" class="search" type="search" placeholder="Search apps" autocomplete="off" spellcheck="false">
+      </label>
+      <section class="section">
+        <div class="section-head">
+          <span class="section-label">All Apps</span>
+          <span id="count" class="count"></span>
+        </div>
+        <div id="app-list" class="list">
+          <div class="empty">Loading apps...</div>
         </div>
       </section>
-      <section class="toolbar">
-        <div class="toolbar-row wrap">
-          <button id="refresh-my" class="btn" type="button">Refresh My Apps</button>
-          <div class="mode-row" aria-label="Auth handoff mode">
-            <button id="mode-webview" class="mode-pill" type="button">This view</button>
-            <button id="mode-browser" class="mode-pill" type="button">Browser</button>
-          </div>
-        </div>
-        <div class="toolbar-row">
-          <input id="search" class="search hide" type="search" placeholder="Search all apps">
-          <button id="all-more" class="btn hide" type="button">Load more</button>
-        </div>
-        <div id="portal-msg" class="msg" aria-live="polite"></div>
-        <div id="summary" class="summary">Loading...</div>
-      </section>
-      <section id="my-grid" class="grid"></section>
-      <section id="all-grid" class="grid hide"></section>
-      <div id="all-sentinel" class="hide" style="height: 1px;"></div>
     </main>
     <script>
       const token = '{token_q}';
@@ -1220,18 +1163,17 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
       const pending = new Map();
       let seq = 0;
       let authMode = initialAuthMode === 'browser' ? 'browser' : 'webview';
-      const tabMy = document.getElementById('tab-my');
-      const tabAll = document.getElementById('tab-all');
-      const myGrid = document.getElementById('my-grid');
-      const allGrid = document.getElementById('all-grid');
-      const summary = document.getElementById('summary');
-      const search = document.getElementById('search');
+      let allApps = [];
+      let connectedApps = [];
+      let connectedSlugs = new Set();
+      let lastRefreshAt = 0;
+
       const msg = document.getElementById('portal-msg');
-      const refreshMy = document.getElementById('refresh-my');
-      const allMore = document.getElementById('all-more');
-      const allSentinel = document.getElementById('all-sentinel');
-      const modeWebview = document.getElementById('mode-webview');
-      const modeBrowser = document.getElementById('mode-browser');
+      const connectedSection = document.getElementById('connected-section');
+      const connectedStrip = document.getElementById('connected-strip');
+      const searchInput = document.getElementById('search');
+      const appList = document.getElementById('app-list');
+      const count = document.getElementById('count');
 
       window.Pucky = window.Pucky || {{}};
       if (typeof window.Pucky.request !== 'function') {{
@@ -1279,54 +1221,25 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
         msg.className = 'msg show ' + (kind || '');
         msg.textContent = String(text || '');
       }}
+
       function hideMessage() {{
         msg.className = 'msg';
         msg.textContent = '';
       }}
-      function setAuthMode(next) {{
-        authMode = next === 'browser' ? 'browser' : 'webview';
-        modeWebview.classList.toggle('active', authMode === 'webview');
-        modeBrowser.classList.toggle('active', authMode === 'browser');
-        try {{
-          const url = new URL(window.location.href);
-          url.searchParams.set('auth_mode', authMode);
-          window.history.replaceState(null, '', url.toString());
-        }} catch (_err) {{}}
+
+      function escapeHtml(value) {{
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
       }}
-      function pills(counts) {{
-        const parts = [];
-        const current = counts && typeof counts === 'object' ? counts : {{}};
-        if ((current.active || 0) > 0) parts.push("<span class='pill active'>" + current.active + " active</span>");
-        if ((current.pending || 0) > 0) parts.push("<span class='pill pending'>" + current.pending + " pending</span>");
-        if ((current.expired || 0) > 0) parts.push("<span class='pill expired'>" + current.expired + " expired</span>");
-        if (!parts.length) parts.push("<span class='pill muted'>not connected</span>");
-        return parts.join('');
-      }}
+
       function buildConnectHref(slug) {{
         return '/links/connect/apps?token=' + token + '&app=' + encodeURIComponent(slug) + '&auth_mode=' + encodeURIComponent(authMode);
       }}
-      function detailBlock(details) {{
-        const list = Array.isArray(details) ? details : [];
-        if (!list.length) {{
-          return "<div class='detail-status'>No connection details.</div>";
-        }}
-        const stale = list.filter(item => ['expired', 'initiated', 'initializing', 'pending'].includes(String(item.status || '').toLowerCase())).map(item => item.id).filter(Boolean);
-        const active = list.filter(item => String(item.status || '').toLowerCase() === 'active').map(item => item.id).filter(Boolean);
-        const tools = [];
-        if (stale.length) tools.push("<button class='btn bulk' data-ids='" + stale.join(',') + "'>Remove stale (" + stale.length + ")</button>");
-        if (active.length) tools.push("<button class='btn bulk' data-ids='" + active.join(',') + "'>Disconnect active (" + active.length + ")</button>");
-        return (tools.length ? "<div class='tools'>" + tools.join('') + "</div>" : '') + list.map(item =>
-          "<div class='detail-row'><span class='detail-id'>" + (item.instance_name || item.id || '') + "</span><span class='detail-status'>" + (item.status || '') + "</span><button class='btn del' data-id='" + (item.id || '') + "'>Remove</button></div>"
-        ).join('');
-      }}
-      function cardHtml(app, showDetails) {{
-        const logo = app.logo ? "<img src='" + app.logo + "' alt=''>" : "o";
-        const counts = app.counts && typeof app.counts === 'object' ? app.counts : {{}};
-        const label = (counts.total || 0) > 0 ? 'Reconnect' : 'Connect';
-        const description = showDetails ? '' : ("<div class='slug'>" + (app.description || '') + "</div>");
-        const detailHtml = showDetails ? "<div class='details' data-loaded='" + ((app.details || []).length ? '1' : '0') + "'>" + ((app.details || []).length ? detailBlock(app.details) : "<div class='detail-status'>Loading details...</div>") + "</div>" : '';
-        return "<article class='card' data-slug='" + app.slug + "'><div class='card-main'><div class='logo'>" + logo + "</div><div class='meta'><div class='name'>" + (app.name || app.slug) + "</div><div class='slug'>" + (app.slug || '') + "</div>" + description + "<div class='status'>" + pills(counts) + "</div></div><a class='btn connect-btn' href='#' data-slug='" + app.slug + "'>" + label + "</a></div>" + detailHtml + "</article>";
-      }}
+
       async function apiJson(url, options) {{
         const response = await fetch(url, options || {{ cache: 'no-store' }});
         const payload = await response.json().catch(() => ({{}}));
@@ -1335,243 +1248,142 @@ def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_co
         }}
         return payload;
       }}
-      async function disconnectOne(id) {{
-        await apiJson('/api/links/composio/disconnect?token=' + encodeURIComponent(token) + '&connection_id=' + encodeURIComponent(id), {{ method: 'POST' }});
+
+      function renderConnected() {{
+        if (!connectedApps.length) {{
+          connectedSection.classList.add('hide');
+          connectedStrip.innerHTML = '';
+          return;
+        }}
+        connectedSection.classList.remove('hide');
+        connectedStrip.innerHTML = connectedApps
+          .map(app => "<span class='connected-chip'><span class='mark'></span><span>" + escapeHtml(app.name || app.slug) + "</span></span>")
+          .join('');
       }}
-      let allOffset = 0;
-      let allLimit = 24;
-      let allHasMore = false;
-      let allQuery = '';
-      let allLoaded = false;
-      let allLoading = false;
-      let searchTimer = null;
-      async function loadMy() {{
-        const t0 = Date.now();
+
+      function renderList(query) {{
+        const needle = String(query || '').trim().toLowerCase();
+        const filtered = needle
+          ? allApps.filter(app => String(app.name || '').toLowerCase().includes(needle) || String(app.slug || '').toLowerCase().includes(needle))
+          : allApps;
+        count.textContent = filtered.length ? String(filtered.length) : '';
+        if (!filtered.length) {{
+          appList.innerHTML = "<div class='empty'>No apps match your search.</div>";
+          return;
+        }}
+        appList.innerHTML = filtered.map(app => {{
+          const active = connectedSlugs.has(String(app.slug || ''));
+          return "<button class='app-row' type='button' data-slug='" + escapeHtml(app.slug || '') + "'>" +
+            "<span class='app-name'>" + escapeHtml(app.name || app.slug || '') + "</span>" +
+            "<span class='status-mark" + (active ? " mark" : "") + "'></span>" +
+          "</button>";
+        }}).join('');
+      }}
+
+      async function loadConnected() {{
         const payload = await apiJson('/api/links/composio/my-apps?token=' + encodeURIComponent(token));
         const list = Array.isArray(payload.apps) ? payload.apps : [];
-        myGrid.innerHTML = list.length ? list.map(item => cardHtml(item, true)).join('') : "<div class='empty'>No connected or interacted apps yet.</div>";
-        summary.textContent = 'My Apps loaded in ' + (Date.now() - t0) + 'ms. Connected ' + (payload.summary?.connected || 0) + ', needs attention ' + (payload.summary?.needs_attention || 0) + ', interacted ' + (payload.summary?.interacted || 0) + '.';
+        const active = [];
+        const seen = new Set();
+        for (const item of list) {{
+          const slug = String(item.slug || '').trim();
+          const counts = item && typeof item.counts === 'object' ? item.counts : {{}};
+          if (!slug || seen.has(slug) || Number(counts.active || 0) <= 0) continue;
+          seen.add(slug);
+          active.push({{ slug, name: item.name || slug }});
+        }}
+        connectedApps = active.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
+        connectedSlugs = new Set(connectedApps.map(app => app.slug));
+        renderConnected();
+        renderList(searchInput.value || '');
+        lastRefreshAt = Date.now();
       }}
-      async function loadDetails(card) {{
-        const slug = card.getAttribute('data-slug');
-        const details = card.querySelector('.details');
-        if (!slug || !details || details.getAttribute('data-loaded') === '1') return;
-        const payload = await apiJson('/api/links/composio/app-details?token=' + encodeURIComponent(token) + '&slug=' + encodeURIComponent(slug));
-        const list = Array.isArray(payload.details) ? payload.details : [];
-        details.innerHTML = detailBlock(list);
-        details.setAttribute('data-loaded', '1');
-      }}
-      async function loadAll(query, reset) {{
-        if (allLoading) return;
-        allLoading = true;
-        summary.textContent = 'Loading apps...';
-        const t0 = Date.now();
-        try {{
-          if (reset) {{
-            allOffset = 0;
-            allQuery = String(query || '');
-            allGrid.innerHTML = '';
-            allHasMore = false;
-          }}
-          const payload = await apiJson('/api/links/composio/all-apps?token=' + encodeURIComponent(token) + '&offset=' + allOffset + '&limit=' + allLimit + (allQuery ? '&q=' + encodeURIComponent(allQuery) : ''));
+
+      async function loadAllApps() {{
+        const found = [];
+        let offset = 0;
+        let hasMore = true;
+        let pages = 0;
+        while (hasMore && pages < 30) {{
+          const payload = await apiJson('/api/links/composio/all-apps?token=' + encodeURIComponent(token) + '&offset=' + offset + '&limit=100');
           const list = Array.isArray(payload.apps) ? payload.apps : [];
-          if (reset && !list.length) {{
-            allGrid.innerHTML = "<div class='empty'>No apps match your search.</div>";
-          }} else if (list.length) {{
-            allGrid.insertAdjacentHTML('beforeend', list.map(item => cardHtml(item, false)).join(''));
-          }}
-          allOffset += list.length;
-          allHasMore = !!payload.has_more;
-          allMore.classList.toggle('hide', !allHasMore);
-          allSentinel.classList.toggle('hide', !allHasMore);
-          allLoaded = true;
-          summary.textContent = 'All Apps loaded in ' + (Date.now() - t0) + 'ms. Showing ' + allOffset + ' / ' + (payload.total || allOffset) + '.';
-        }} finally {{
-          allLoading = false;
+          if (!list.length) break;
+          found.push(...list.map(item => ({{
+            slug: String(item.slug || '').trim(),
+            name: String(item.name || item.slug || '').trim(),
+          }})).filter(item => item.slug && item.name));
+          offset += list.length;
+          hasMore = !!payload.has_more;
+          pages += 1;
         }}
+        allApps = found.sort((a, b) => a.name.localeCompare(b.name));
+        renderList(searchInput.value || '');
       }}
-      function nearBottom() {{
-        const doc = document.documentElement;
-        return (window.innerHeight + window.scrollY) >= (doc.scrollHeight - 220);
+
+      async function connectApp(slug, button) {{
+        if (!slug) return;
+        const href = buildConnectHref(slug);
+        if (authMode === 'browser') {{
+          await window.Pucky.request({{ command: 'browser.open', args: {{ url: new URL(href, window.location.href).toString() }} }});
+          showMessage('Opened ' + slug + ' in the browser. Come back here when you are done.', 'ok');
+          return;
+        }}
+        window.location.assign(href);
       }}
-      async function maybeAutoLoadAll() {{
-        if (!tabAll.classList.contains('active') || !allHasMore || allLoading) return;
+
+      async function refreshConnectedSoon() {{
+        const age = Date.now() - lastRefreshAt;
+        if (age < 1200) return;
         try {{
-          await loadAll(allQuery, false);
-        }} catch (error) {{
-          showMessage(error.message || 'Load failed', 'error');
-        }}
+          await loadConnected();
+        }} catch (_err) {{}}
       }}
+
       document.body.addEventListener('click', async event => {{
-        const connect = event.target.closest('.connect-btn');
-        if (connect) {{
-          event.preventDefault();
-          hideMessage();
-          const slug = connect.getAttribute('data-slug');
-          if (!slug) return;
-          const href = buildConnectHref(slug);
-          if (authMode === 'browser') {{
-            try {{
-              await window.Pucky.request({{ command: 'browser.open', args: {{ url: new URL(href, window.location.href).toString() }} }});
-              showMessage('Opened ' + slug + ' in the browser. Return here after auth to refresh status.', 'ok');
-            }} catch (error) {{
-              showMessage(error.message || 'Could not open browser auth', 'error');
-            }}
-            return;
-          }}
-          window.location.assign(href);
-          return;
-        }}
-        const main = event.target.closest('.card-main');
-        if (main && !event.target.closest('.btn')) {{
-          const card = main.parentElement;
-          card.classList.toggle('open');
-          if (card.classList.contains('open') && myGrid.contains(card)) {{
-            try {{
-              await loadDetails(card);
-            }} catch (error) {{
-              showMessage(error.message || 'Failed loading details', 'error');
-            }}
-          }}
-          return;
-        }}
-        const del = event.target.closest('.del');
-        if (del) {{
-          event.preventDefault();
-          const id = del.getAttribute('data-id');
-          if (!id) return;
-          const prev = del.textContent;
-          del.textContent = 'Removing...';
-          del.disabled = true;
-          try {{
-            await disconnectOne(id);
-            await loadMy();
-            showMessage('Connection removed.', 'ok');
-          }} catch (error) {{
-            showMessage(error.message || 'Disconnect failed', 'error');
-          }} finally {{
-            del.textContent = prev;
-            del.disabled = false;
-          }}
-          return;
-        }}
-        const bulk = event.target.closest('.bulk');
-        if (bulk) {{
-          event.preventDefault();
-          const ids = String(bulk.getAttribute('data-ids') || '').split(',').map(value => value.trim()).filter(Boolean);
-          if (!ids.length) return;
-          const prev = bulk.textContent;
-          bulk.textContent = 'Updating...';
-          bulk.disabled = true;
-          let ok = 0;
-          try {{
-            for (const id of ids) {{
-              try {{
-                await disconnectOne(id);
-                ok += 1;
-              }} catch (_err) {{}}
-            }}
-            await loadMy();
-            showMessage('Updated ' + ok + '/' + ids.length + ' connection(s).', ok === ids.length ? 'ok' : 'error');
-          }} catch (error) {{
-            showMessage(error.message || 'Bulk update failed', 'error');
-          }} finally {{
-            bulk.textContent = prev;
-            bulk.disabled = false;
-          }}
-        }}
-      }});
-      function showMyTab() {{
-        tabMy.classList.add('active');
-        tabAll.classList.remove('active');
-        myGrid.classList.remove('hide');
-        allGrid.classList.add('hide');
-        search.classList.add('hide');
-        allMore.classList.add('hide');
-        allSentinel.classList.add('hide');
-      }}
-      function showAllTab() {{
-        tabAll.classList.add('active');
-        tabMy.classList.remove('active');
-        allGrid.classList.remove('hide');
-        myGrid.classList.add('hide');
-        search.classList.remove('hide');
-        allMore.classList.toggle('hide', !allHasMore);
-        allSentinel.classList.toggle('hide', !allHasMore);
-      }}
-      tabMy.addEventListener('click', async () => {{
-        showMyTab();
+        const row = event.target.closest('.app-row');
+        if (!row) return;
+        const slug = row.getAttribute('data-slug');
+        if (!slug) return;
         hideMessage();
+        row.disabled = true;
         try {{
-          await loadMy();
+          await connectApp(slug, row);
         }} catch (error) {{
-          showMessage(error.message || 'Load failed', 'error');
-        }}
-      }});
-      tabAll.addEventListener('click', async () => {{
-        showAllTab();
-        hideMessage();
-        try {{
-          if (!allLoaded) {{
-            await loadAll('', true);
-          }}
-        }} catch (error) {{
-          showMessage(error.message || 'Load failed', 'error');
-        }}
-      }});
-      refreshMy.addEventListener('click', async () => {{
-        hideMessage();
-        refreshMy.disabled = true;
-        const prev = refreshMy.textContent;
-        refreshMy.textContent = 'Refreshing...';
-        try {{
-          const payload = await apiJson('/api/links/composio/my-apps/refresh?token=' + encodeURIComponent(token), {{ method: 'POST' }});
-          await loadMy();
-          if (tabAll.classList.contains('active')) {{
-            allLoaded = false;
-            await loadAll(search.value || '', true);
-          }}
-          showMessage('My Apps refreshed. Connected count: ' + (payload.connected_count || 0) + '.', 'ok');
-        }} catch (error) {{
-          showMessage(error.message || 'Refresh failed', 'error');
+          showMessage(error.message || 'Could not open auth flow', 'error');
         }} finally {{
-          refreshMy.textContent = prev;
-          refreshMy.disabled = false;
+          row.disabled = false;
         }}
       }});
-      allMore.addEventListener('click', async () => {{
-        allMore.disabled = true;
-        const prev = allMore.textContent;
-        allMore.textContent = 'Loading...';
-        try {{
-          await loadAll(allQuery, false);
-        }} catch (error) {{
-          showMessage(error.message || 'Load failed', 'error');
-        }} finally {{
-          allMore.textContent = prev;
-          allMore.disabled = false;
+
+      searchInput.addEventListener('input', () => {{
+        renderList(searchInput.value || '');
+      }});
+
+      document.addEventListener('visibilitychange', () => {{
+        if (!document.hidden) {{
+          window.setTimeout(() => {{
+            refreshConnectedSoon();
+          }}, 280);
         }}
       }});
-      search.addEventListener('input', () => {{
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(async () => {{
-          try {{
-            await loadAll(search.value || '', true);
-          }} catch (error) {{
-            showMessage(error.message || 'Search failed', 'error');
-          }}
-        }}, 220);
+
+      window.addEventListener('focus', () => {{
+        window.setTimeout(() => {{
+          refreshConnectedSoon();
+        }}, 280);
       }});
-      modeWebview.addEventListener('click', () => setAuthMode('webview'));
-      modeBrowser.addEventListener('click', () => setAuthMode('browser'));
-      window.addEventListener('scroll', () => {{
-        if (nearBottom()) maybeAutoLoadAll();
-      }}, {{ passive: true }});
-      setAuthMode(initialAuthMode);
-      if (justConnected) {{
-        showMessage('Connection flow finished for ' + justConnected + '. Refreshing your app states...', 'ok');
+
+      async function boot() {{
+        if (justConnected) {{
+          showMessage('Connected ' + justConnected + '. Refreshing your list...', 'ok');
+        }}
+        await Promise.all([loadConnected(), loadAllApps()]);
       }}
-      loadMy().catch(error => showMessage(error.message || 'Failed loading My Apps', 'error'));
+
+      boot().catch(error => {{
+        showMessage(error.message || 'Failed loading apps', 'error');
+        appList.innerHTML = "<div class='empty'>Connections are temporarily unavailable.</div>";
+      }});
     </script>
   </body>
 </html>"""
