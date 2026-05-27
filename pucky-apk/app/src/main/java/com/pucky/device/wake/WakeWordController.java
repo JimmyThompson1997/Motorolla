@@ -62,7 +62,7 @@ public final class WakeWordController {
     private static final String SCOPE_ASSISTANT_RESERVED = "assistant_screen_off_reserved";
     private static final long PROOF_WINDOW_MS = 3000L;
     private static final int MAX_HISTORY = 10;
-    private static final int PREFS_SCHEMA_V2 = 2;
+    private static final int PREFS_SCHEMA_V3 = 3;
 
     private static final String[] LEGACY_WAKE_KEYS = new String[] {
             "last_candidate_json",
@@ -81,7 +81,27 @@ public final class WakeWordController {
             "last_wake_raw_duration_ms",
             "last_wake_shaped_duration_ms",
             "last_wake_padded_duration_ms",
-            "last_wake_recognizer_runtime_ms"
+            "last_wake_recognizer_runtime_ms",
+            "last_confirmation_confidences_json",
+            "last_confirmation_alternatives_json",
+            "last_confirmation_error_code",
+            "last_confirmation_error_message",
+            "last_event_at",
+            "android_stt_last_confidences_json",
+            "android_stt_last_error_code",
+            "android_stt_last_session_at",
+            "android_stt_last_error_message",
+            "android_stt_session_to_speech_begin_ms",
+            "android_stt_last_alternatives_json",
+            "android_stt_last_transcript",
+            "android_stt_session_to_first_partial_ms",
+            "android_stt_restart_count",
+            "android_stt_session_to_ready_ms",
+            "android_stt_session_to_final_or_error_ms",
+            "android_stt_last_restart_reason",
+            "android_stt_last_event",
+            "android_stt_last_state",
+            "wake_engine"
     };
 
     private static WakeWordController instance;
@@ -149,7 +169,7 @@ public final class WakeWordController {
             Json.put(out, "engine", ENGINE_ANDROID_STT_SENTINEL);
             Json.put(out, "requested_engine", ENGINE_ANDROID_STT_SENTINEL);
             Json.put(out, "effective_engine", running ? ENGINE_ANDROID_STT_SENTINEL : "stopped");
-            Json.put(out, "scope", prefs.getString(KEY_SCOPE, DEFAULT_SCOPE));
+            Json.put(out, "scope", stringPref(KEY_SCOPE, DEFAULT_SCOPE));
             Json.put(out, "supported_scopes", supportedScopesJson());
             Json.put(out, "suspended_reason", suspendedReason);
             Json.put(out, "audio_source", "VOICE_RECOGNITION");
@@ -157,22 +177,22 @@ public final class WakeWordController {
             Json.put(out, "restart_count", restartCount);
             Json.put(out, "last_restart_reason", lastRestartReason);
             Json.put(out, "debug_recognizer_mode", debugRecognizerModeLocked());
-            Json.put(out, "last_transcript", prefs.getString(KEY_LAST_TRANSCRIPT, ""));
+            Json.put(out, "last_transcript", stringPref(KEY_LAST_TRANSCRIPT, ""));
             Json.put(out, "last_alternatives", jsonArrayPref(KEY_LAST_ALTERNATIVES_JSON));
-            Json.put(out, "last_error_code", prefs.getString(KEY_LAST_ERROR_CODE, ""));
-            Json.put(out, "last_error_message", prefs.getString(KEY_LAST_ERROR_MESSAGE, ""));
-            Json.put(out, "last_error_at", prefs.getString(KEY_LAST_ERROR_AT, ""));
+            Json.put(out, "last_error_code", stringPref(KEY_LAST_ERROR_CODE, ""));
+            Json.put(out, "last_error_message", stringPref(KEY_LAST_ERROR_MESSAGE, ""));
+            Json.put(out, "last_error_at", stringPref(KEY_LAST_ERROR_AT, ""));
             Json.put(out, "transcript_history", jsonArrayPref(KEY_TRANSCRIPT_HISTORY_JSON));
             Json.put(out, "last_match", lastMatchJsonLocked());
             Json.put(out, "proof_indicator", proofIndicatorJsonLocked());
             Json.put(out, "assistant_status", PuckyAssistantController.status(context));
-            Json.put(out, "last_arm_at", prefs.getString(KEY_LAST_ARM_AT, ""));
-            Json.put(out, "last_disarm_at", prefs.getString(KEY_LAST_DISARM_AT, ""));
-            Json.put(out, "last_disarm_reason", prefs.getString(KEY_LAST_DISARM_REASON, ""));
-            Json.put(out, "last_config_set_at", prefs.getString(KEY_LAST_CONFIG_SET_AT, ""));
-            Json.put(out, "last_start_requested_at", prefs.getString(KEY_LAST_START_REQUESTED_AT, ""));
-            Json.put(out, "last_stop_requested_at", prefs.getString(KEY_LAST_STOP_REQUESTED_AT, ""));
-            Json.put(out, "last_simulate_requested_at", prefs.getString(KEY_LAST_SIMULATE_REQUESTED_AT, ""));
+            Json.put(out, "last_arm_at", stringPref(KEY_LAST_ARM_AT, ""));
+            Json.put(out, "last_disarm_at", stringPref(KEY_LAST_DISARM_AT, ""));
+            Json.put(out, "last_disarm_reason", stringPref(KEY_LAST_DISARM_REASON, ""));
+            Json.put(out, "last_config_set_at", stringPref(KEY_LAST_CONFIG_SET_AT, ""));
+            Json.put(out, "last_start_requested_at", stringPref(KEY_LAST_START_REQUESTED_AT, ""));
+            Json.put(out, "last_stop_requested_at", stringPref(KEY_LAST_STOP_REQUESTED_AT, ""));
+            Json.put(out, "last_simulate_requested_at", stringPref(KEY_LAST_SIMULATE_REQUESTED_AT, ""));
             return out;
         }
     }
@@ -320,7 +340,7 @@ public final class WakeWordController {
             } else if (!serviceStarted) {
                 action = stopForReasonLocked("service_not_started", true);
             } else {
-                String scope = prefs.getString(KEY_SCOPE, DEFAULT_SCOPE);
+                String scope = stringPref(KEY_SCOPE, DEFAULT_SCOPE);
                 if (SCOPE_ASSISTANT_RESERVED.equals(scope)) {
                     action = stopForReasonLocked("assistant_scope_reserved", true);
                 } else if (!isDeviceInteractiveLocked()) {
@@ -602,15 +622,32 @@ public final class WakeWordController {
     private void migratePrefs() {
         synchronized (lock) {
             int version = prefs.getInt(KEY_PREFS_SCHEMA, 0);
-            if (version >= PREFS_SCHEMA_V2) {
+            if (version >= PREFS_SCHEMA_V3) {
                 return;
             }
             SharedPreferences.Editor editor = prefs.edit();
             for (String key : LEGACY_WAKE_KEYS) {
                 editor.remove(key);
             }
-            editor.putInt(KEY_PREFS_SCHEMA, PREFS_SCHEMA_V2);
-            if (BuildConfig.DEBUG && prefs.getString(KEY_DEBUG_RECOGNIZER_MODE, "").trim().isEmpty()) {
+            coerceStringPref(editor, KEY_LAST_ERROR_CODE, "");
+            coerceStringPref(editor, KEY_LAST_ERROR_MESSAGE, "");
+            coerceStringPref(editor, KEY_LAST_ERROR_AT, "");
+            coerceStringPref(editor, KEY_LAST_TRANSCRIPT, "");
+            coerceStringPref(editor, KEY_LAST_ALTERNATIVES_JSON, "[]");
+            coerceStringPref(editor, KEY_LAST_MATCHED_PHRASE, "");
+            coerceStringPref(editor, KEY_LAST_MATCH_SOURCE, "");
+            coerceStringPref(editor, KEY_LAST_MATCH_AT, "");
+            coerceStringPref(editor, KEY_LAST_ARM_AT, "");
+            coerceStringPref(editor, KEY_LAST_DISARM_AT, "");
+            coerceStringPref(editor, KEY_LAST_DISARM_REASON, "");
+            coerceStringPref(editor, KEY_LAST_CONFIG_SET_AT, "");
+            coerceStringPref(editor, KEY_LAST_START_REQUESTED_AT, "");
+            coerceStringPref(editor, KEY_LAST_STOP_REQUESTED_AT, "");
+            coerceStringPref(editor, KEY_LAST_SIMULATE_REQUESTED_AT, "");
+            coerceStringPref(editor, KEY_SCOPE, DEFAULT_SCOPE);
+            coerceStringPref(editor, KEY_TRANSCRIPT_HISTORY_JSON, "[]");
+            editor.putInt(KEY_PREFS_SCHEMA, PREFS_SCHEMA_V3);
+            if (BuildConfig.DEBUG && stringPref(KEY_DEBUG_RECOGNIZER_MODE, "").trim().isEmpty()) {
                 editor.putString(KEY_DEBUG_RECOGNIZER_MODE, DEBUG_RECOGNIZER_MODE_ANDROID);
             }
             editor.apply();
@@ -694,9 +731,9 @@ public final class WakeWordController {
 
     private JSONObject lastMatchJsonLocked() {
         JSONObject out = new JSONObject();
-        Json.put(out, "matched_phrase", prefs.getString(KEY_LAST_MATCHED_PHRASE, ""));
-        Json.put(out, "match_source", prefs.getString(KEY_LAST_MATCH_SOURCE, ""));
-        Json.put(out, "matched_at", prefs.getString(KEY_LAST_MATCH_AT, ""));
+        Json.put(out, "matched_phrase", stringPref(KEY_LAST_MATCHED_PHRASE, ""));
+        Json.put(out, "match_source", stringPref(KEY_LAST_MATCH_SOURCE, ""));
+        Json.put(out, "matched_at", stringPref(KEY_LAST_MATCH_AT, ""));
         return out;
     }
 
@@ -717,7 +754,7 @@ public final class WakeWordController {
     }
 
     private JSONArray jsonArrayPref(String key) {
-        String raw = prefs.getString(key, "");
+        String raw = stringPref(key, "");
         if (raw == null || raw.trim().isEmpty()) {
             return new JSONArray();
         }
@@ -748,7 +785,7 @@ public final class WakeWordController {
     }
 
     private String debugRecognizerModeLocked() {
-        return normalizeDebugRecognizerMode(prefs.getString(KEY_DEBUG_RECOGNIZER_MODE, DEBUG_RECOGNIZER_MODE_ANDROID));
+        return normalizeDebugRecognizerMode(stringPref(KEY_DEBUG_RECOGNIZER_MODE, DEBUG_RECOGNIZER_MODE_ANDROID));
     }
 
     private boolean isDeviceInteractiveLocked() {
@@ -802,6 +839,21 @@ public final class WakeWordController {
         Json.add(out, DEFAULT_SCOPE);
         Json.add(out, SCOPE_ASSISTANT_RESERVED);
         return out;
+    }
+
+    private void coerceStringPref(SharedPreferences.Editor editor, String key, String fallback) {
+        editor.putString(key, stringPref(key, fallback));
+    }
+
+    private String stringPref(String key, String fallback) {
+        Object value = prefs.getAll().get(key);
+        if (value == null) {
+            return fallback;
+        }
+        if (value instanceof String) {
+            return (String) value;
+        }
+        return String.valueOf(value);
     }
 
     private static boolean isTerminalTurnState(String value) {
