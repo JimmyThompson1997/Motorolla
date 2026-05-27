@@ -154,6 +154,13 @@
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
+  const LINKS_AUTH_SCHEME_LABELS = {
+    OAUTH2: "OAuth",
+    API_KEY: "API key",
+    BASIC: "Basic",
+    BEARER_TOKEN: "Token",
+    NO_AUTH: "No auth"
+  };
 
   const MOCK_CARDS = [
     {
@@ -816,22 +823,32 @@
   }
 
   async function loadLinksPortal(options = {}) {
+    if (state.links.loading) {
+      return;
+    }
     state.links.loading = true;
     state.links.error = "";
+    state.links.message = "";
+    state.links.messageKind = "";
     if (options.render) {
       render();
     }
     try {
-      const payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
-      state.links.portal_url = payload.portal_url;
-      state.links.auth_mode = payload.auth_mode;
-      state.links.available = payload.available;
-      if (payload.portal_url && options.navigate !== false && window.location && typeof window.location.assign === "function") {
-        window.location.assign(payload.portal_url);
-        return;
+      let payload = null;
+      if (!state.links.token || options.force === true) {
+        payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+        state.links.portal_url = payload.portal_url;
+        state.links.token = payload.token;
+        state.links.auth_mode = payload.auth_mode;
+        state.links.available = payload.available;
       }
-      if (!payload.portal_url) {
+      if (!state.links.token) {
         state.links.error = payload.error || "Links portal unavailable";
+      } else {
+        await Promise.all([
+          loadLinksConnected({ render: false }),
+          state.links.apps.length ? Promise.resolve() : loadLinksAllApps({ render: false })
+        ]);
       }
     } catch (error) {
       state.links.available = false;
@@ -847,10 +864,171 @@
   function normalizeLinksPortalPayload(payload) {
     return {
       portal_url: String(payload && (payload.portal_url || payload.url) || ""),
-      auth_mode: String(payload && payload.auth_mode || "webview"),
+      token: String(payload && payload.token || ""),
+      auth_mode: String(payload && payload.auth_mode || "browser"),
       available: payload ? payload.ok !== false : false,
       error: String(payload && payload.error || "")
     };
+  }
+
+  function normalizeLinksApp(item) {
+    const authSchemes = Array.isArray(item && item.auth_schemes) ? item.auth_schemes : [];
+    const managedAuthSchemes = Array.isArray(item && item.managed_auth_schemes) ? item.managed_auth_schemes : [];
+    return {
+      slug: String(item && item.slug || "").trim(),
+      name: String(item && (item.name || item.slug) || "").trim(),
+      logo: String(item && item.logo || "").trim(),
+      auth_schemes: authSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
+      managed_auth_schemes: managedAuthSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
+      auth_label: String(item && item.auth_label || "").trim(),
+      state: String(item && item.state || "not-connected").trim(),
+      counts: item && typeof item.counts === "object" ? item.counts : { total: 0, active: 0, pending: 0, expired: 0 }
+    };
+  }
+
+  function linksAuthLabelForApp(app) {
+    const fromPayload = String(app && app.auth_label || "").trim();
+    if (fromPayload) {
+      return fromPayload;
+    }
+    const labels = [];
+    const seen = new Set();
+    [app && app.managed_auth_schemes, app && app.auth_schemes].forEach(source => {
+      (Array.isArray(source) ? source : []).forEach(raw => {
+        const key = String(raw || "").trim().toUpperCase();
+        if (!key || seen.has(key)) {
+          return;
+        }
+        const label = LINKS_AUTH_SCHEME_LABELS[key];
+        if (!label) {
+          return;
+        }
+        seen.add(key);
+        labels.push(label);
+      });
+    });
+    return labels.join(" + ");
+  }
+
+  async function loadLinksConnected(options = {}) {
+    if (!state.links.token) {
+      return;
+    }
+    const payload = await linksApiRequest(`/api/links/composio/my-apps?token=${encodeURIComponent(state.links.token)}`);
+    const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
+    const active = [];
+    const slugs = new Set();
+    list.forEach(item => {
+      const slug = String(item && item.slug || "").trim();
+      const counts = item && typeof item.counts === "object" ? item.counts : {};
+      if (!slug || Number(counts.active || 0) <= 0) {
+        return;
+      }
+      slugs.add(slug);
+      active.push({
+        slug,
+        name: String(item && (item.name || item.slug) || slug).trim()
+      });
+    });
+    active.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
+    state.links.connectedApps = active;
+    state.links.connectedSlugs = slugs;
+    state.links.lastRefreshAt = Date.now();
+    if (options.render) {
+      render();
+    }
+  }
+
+  async function loadLinksAllApps(options = {}) {
+    if (!state.links.token) {
+      return;
+    }
+    const found = [];
+    let offset = 0;
+    let hasMore = true;
+    let pages = 0;
+    while (hasMore && pages < 30) {
+      const payload = await linksApiRequest(
+        `/api/links/composio/all-apps?token=${encodeURIComponent(state.links.token)}&offset=${offset}&limit=100`
+      );
+      const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
+      if (!list.length) {
+        break;
+      }
+      found.push(...list.map(normalizeLinksApp).filter(item => item.slug && item.name));
+      offset += list.length;
+      hasMore = Boolean(payload && payload.has_more);
+      pages += 1;
+    }
+    found.sort((a, b) => {
+      const aConnected = state.links.connectedSlugs.has(a.slug) ? 0 : 1;
+      const bConnected = state.links.connectedSlugs.has(b.slug) ? 0 : 1;
+      if (aConnected !== bConnected) {
+        return aConnected - bConnected;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    state.links.apps = found;
+    if (options.render) {
+      render();
+    }
+  }
+
+  async function refreshLinksConnectedSoon(options = {}) {
+    if (!state.links.token) {
+      return;
+    }
+    const age = Date.now() - safeNumber(state.links.lastRefreshAt);
+    if (!options.force && age < 1200) {
+      return;
+    }
+    try {
+      await loadLinksConnected({ render: Boolean(options.render) });
+    } catch (_) {
+      // Keep the last known connected badges if refresh fails.
+    }
+  }
+
+  async function openLinksAuthFlow(app) {
+    const slug = String(app && app.slug || "").trim();
+    if (!slug || !state.links.token) {
+      return;
+    }
+    state.links.openingSlug = slug;
+    state.links.error = "";
+    state.links.message = "";
+    state.links.messageKind = "";
+    render();
+    try {
+      const payload = await linksApiRequest(
+        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`
+      );
+      const authUrl = String(payload && payload.auth_url || "").trim();
+      if (!authUrl) {
+        throw new Error("Links did not return a valid auth URL.");
+      }
+      if (String(payload && payload.auth_mode || state.links.auth_mode) === "browser") {
+        await Pucky.request({ command: "browser.open", args: { url: authUrl } });
+        state.links.message = `Opened ${app.name || slug} in your browser. Come back here when you are done.`;
+        state.links.messageKind = "ok";
+      } else if (window.location && typeof window.location.assign === "function") {
+        window.location.assign(authUrl);
+        return;
+      } else {
+        throw new Error("This surface cannot open the auth flow.");
+      }
+    } catch (error) {
+      const detail = String(error && error.message ? error.message : error || "");
+      const bridgeLikelyPresent = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+      if (bridgeLikelyPresent && /browser\.open|timed out|Native command failed/i.test(detail)) {
+        state.links.error = "Browser handoff failed. Pucky needs the current APK shell before Google and other OAuth apps can open safely.";
+      } else {
+        state.links.error = detail || "Could not open the auth flow.";
+      }
+    } finally {
+      state.links.openingSlug = "";
+      render();
+    }
   }
 
   function linksApiBaseUrl() {
@@ -1027,7 +1205,16 @@
       loading: false,
       error: "",
       portal_url: "",
-      auth_mode: "webview"
+      token: "",
+      auth_mode: "browser",
+      apps: [],
+      connectedApps: [],
+      connectedSlugs: new Set(),
+      search: "",
+      openingSlug: "",
+      message: "",
+      messageKind: "",
+      lastRefreshAt: 0
     };
   }
 
@@ -1569,55 +1756,160 @@
 
   function linksPageView() {
     const page = el("section", "links-page");
-    const hero = el("article", "links-shell");
+    const shell = el("article", "links-shell");
     const copy = el("div", "links-shell-copy");
     copy.append(
       el("h1", "links-title", "Links"),
-      el("p", "links-subtitle", "Opening your signed Connect Apps portal...")
+      el("p", "links-subtitle", "Quick search. Tap an app to open the Composio connect flow.")
     );
-    const status = el("div", "links-shell-status", state.links.loading ? "Opening portal..." : "Portal ready");
-    hero.append(copy, status);
-    page.append(hero);
-
-    const body = el("div", "links-empty", "");
     if (state.links.loading) {
-      body.append(
-        el("strong", "", "Opening Connect Apps..."),
-        el("p", "", "Pucky is minting a signed portal URL and loading the first-party apps page.")
+      copy.append(el("div", "links-shell-status", "Refreshing apps..."));
+    }
+    shell.append(copy);
+    page.append(shell);
+
+    if (state.links.error || state.links.message) {
+      const message = el(
+        "div",
+        `links-message${state.links.messageKind === "ok" ? " is-ok" : state.links.error ? " is-error" : ""}`,
+        state.links.error || state.links.message
       );
-      page.append(body);
+      page.append(message);
+    }
+
+    if (!state.links.token && state.links.loading) {
+      const empty = el("div", "links-empty", "");
+      empty.append(
+        el("strong", "", "Loading Links..."),
+        el("p", "", "Pucky is fetching your connectable apps.")
+      );
+      page.append(empty);
       return page;
     }
 
-    if (state.links.error || !state.links.portal_url) {
-      body.append(
-        el("strong", "", "Could not open Links right now."),
-        el("p", "", state.links.error || "The Connect Apps portal did not return a valid URL.")
+    if (state.links.error && !state.links.apps.length) {
+      const empty = el("div", "links-empty", "");
+      empty.append(
+        el("strong", "", "Could not load Links right now."),
+        el("p", "", state.links.error)
       );
       const retry = el("button", "links-open-button", "Retry");
       retry.type = "button";
       retry.addEventListener("click", () => {
-        loadLinksPortal({ render: true });
+        loadLinksPortal({ render: true, force: true });
       });
-      body.append(retry);
-      page.append(body);
+      empty.append(retry);
+      page.append(empty);
       return page;
     }
 
-    body.append(
-      el("strong", "", "Portal URL ready."),
-      el("p", "", "If the portal does not open automatically, use the button below.")
-    );
-    const openButton = el("button", "links-open-button", "Open Connect Apps");
-    openButton.type = "button";
-    openButton.addEventListener("click", () => {
-      if (window.location && typeof window.location.assign === "function") {
-        window.location.assign(state.links.portal_url);
+    if (state.links.connectedApps.length) {
+      const connected = el("section", "links-connected");
+      connected.append(el("div", "links-connected-label", "Connected"));
+      const strip = el("div", "links-connected-strip");
+      state.links.connectedApps.forEach(app => {
+        const chip = el("span", "links-connected-chip", app.name || app.slug);
+        strip.append(chip);
+      });
+      connected.append(strip);
+      page.append(connected);
+    }
+
+    const searchWrap = el("label", "links-search-wrap");
+    searchWrap.setAttribute("for", "linksSearch");
+    const search = el("input", "links-search");
+    search.id = "linksSearch";
+    search.type = "search";
+    search.placeholder = "Search apps";
+    search.autocomplete = "off";
+    search.spellcheck = false;
+    search.value = state.links.search;
+    searchWrap.append(search);
+    page.append(searchWrap);
+
+    const listCard = el("section", "links-list-card");
+    const listHead = el("div", "links-list-head");
+    const listLabel = el("span", "links-list-label", "All Apps");
+    const listCount = el("span", "links-list-count", "");
+    listHead.append(listLabel, listCount);
+    listCard.append(listHead);
+    const list = el("div", "links-list");
+    listCard.append(list);
+    page.append(listCard);
+
+    const renderList = () => {
+      const filtered = linksFilteredApps();
+      listCount.textContent = filtered.length ? String(filtered.length) : "";
+      list.replaceChildren();
+      if (!filtered.length) {
+        list.append(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
+        return;
       }
+      filtered.forEach(app => {
+        const row = el("button", "links-app-row");
+        row.type = "button";
+        row.disabled = state.links.openingSlug === app.slug;
+
+        const icon = el("span", "links-app-icon");
+        const fallback = el("span", "links-app-fallback", linksAppInitial(app));
+        if (app.logo) {
+          const img = document.createElement("img");
+          img.className = "links-app-logo";
+          img.src = app.logo;
+          img.alt = "";
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.addEventListener("load", () => {
+            icon.classList.add("has-image");
+          });
+          img.addEventListener("error", () => {
+            img.remove();
+          });
+          icon.append(img);
+        }
+        icon.append(fallback);
+
+        const name = el("span", "links-app-name", app.name || app.slug);
+        const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
+        const mark = el("span", state.links.connectedSlugs.has(app.slug) ? "links-app-mark is-connected" : "links-app-mark");
+
+        row.append(icon, name, auth, mark);
+        row.addEventListener("click", () => {
+          openLinksAuthFlow(app);
+        });
+        list.append(row);
+      });
+    };
+    search.addEventListener("input", () => {
+      state.links.search = search.value;
+      renderList();
     });
-    body.append(openButton);
-    page.append(body);
+    renderList();
     return page;
+  }
+
+  function linksFilteredApps() {
+    const needle = String(state.links.search || "").trim().toLowerCase();
+    const apps = (Array.isArray(state.links.apps) ? state.links.apps : []).filter(app =>
+      !needle || (
+      String(app.name || "").toLowerCase().includes(needle) ||
+      String(app.slug || "").toLowerCase().includes(needle)
+      )
+    );
+    apps.sort((a, b) => {
+      const aConnected = state.links.connectedSlugs.has(a.slug) ? 0 : 1;
+      const bConnected = state.links.connectedSlugs.has(b.slug) ? 0 : 1;
+      if (aConnected !== bConnected) {
+        return aConnected - bConnected;
+      }
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+    return apps;
+  }
+
+  function linksAppInitial(app) {
+    const name = String(app && (app.name || app.slug) || "").trim();
+    return name ? name.slice(0, 1).toUpperCase() : "?";
   }
 
   function replyModeSettingsCard() {
@@ -5768,6 +6060,10 @@
     }
     if (state.route === "feed") {
       syncFeedCards({ reason: "visibility_visible", silent: true, render: true });
+      return;
+    }
+    if (state.route === "links") {
+      refreshLinksConnectedSoon({ render: true, force: true });
       return;
     }
     if (state.route === "settings") {

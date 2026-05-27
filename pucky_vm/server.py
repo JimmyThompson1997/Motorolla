@@ -40,6 +40,13 @@ REPLY_MODE_CARD_ONLY = "card_only"
 REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
 MAX_CARD_TITLE_CHARS = 64
 BROKER_MODULE_PATH = Path(__file__).resolve().parents[1] / "pucky-apk" / "fly-broker" / "pucky_fly_broker.py"
+LINKS_AUTH_SCHEME_LABELS = {
+    "OAUTH2": "OAuth",
+    "API_KEY": "API key",
+    "BASIC": "Basic",
+    "BEARER_TOKEN": "Token",
+    "NO_AUTH": "No auth",
+}
 
 _BROKER_MODULE = None
 _BROKER_DB_PATH: str | None = None
@@ -248,6 +255,22 @@ def _decode_signed_token(token: str, secret: str) -> dict[str, object] | None:
     return payload
 
 
+def _links_auth_label(managed_auth_schemes: list[str] | None, auth_schemes: list[str] | None) -> str:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for source in (list(managed_auth_schemes or []), list(auth_schemes or [])):
+        for raw in source:
+            key = str(raw or "").strip().upper()
+            if not key or key in seen:
+                continue
+            label = LINKS_AUTH_SCHEME_LABELS.get(key)
+            if not label:
+                continue
+            seen.add(key)
+            labels.append(label)
+    return " + ".join(labels)
+
+
 class PuckyVoiceService:
     def __init__(
         self,
@@ -362,6 +385,7 @@ class PuckyVoiceService:
             "schema": "pucky.links_portal_url.v1",
             "url": url,
             "portal_url": url,
+            "token": token,
             "auth_mode": mode,
             "user_id": self.composio_user_id(),
         }
@@ -475,12 +499,21 @@ class PuckyVoiceService:
             current = my_counts.get(slug.lower(), {})
             state = str(current.get("state") or "not-connected")
             counts = current.get("counts") if isinstance(current.get("counts"), dict) else {"total": 0, "active": 0, "pending": 0, "expired": 0}
+            auth_schemes = [str(value).strip().upper() for value in list(item.get("auth_schemes") or []) if str(value).strip()]
+            managed_auth_schemes = [
+                str(value).strip().upper()
+                for value in list(item.get("managed_auth_schemes") or [])
+                if str(value).strip()
+            ]
             rows.append(
                 {
                     "slug": slug,
                     "name": name,
                     "logo": str(item.get("logo") or ""),
                     "description": str(item.get("description") or ""),
+                    "auth_schemes": auth_schemes,
+                    "managed_auth_schemes": managed_auth_schemes,
+                    "auth_label": _links_auth_label(managed_auth_schemes, auth_schemes),
                     "state": state,
                     "counts": counts,
                 }

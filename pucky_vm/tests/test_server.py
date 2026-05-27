@@ -108,6 +108,16 @@ class FakeComposio:
                 "managed_auth_schemes": ["OAUTH2"],
             },
             {
+                "slug": "googlecalendar",
+                "name": "Google Calendar",
+                "logo": "https://logos.example.invalid/googlecalendar.png",
+                "description": "Manage your calendar.",
+                "tools_count": 18,
+                "connectable": True,
+                "auth_schemes": ["OAUTH2"],
+                "managed_auth_schemes": ["OAUTH2"],
+            },
+            {
                 "slug": "linkedin",
                 "name": "LinkedIn",
                 "logo": "https://logos.example.invalid/linkedin.png",
@@ -124,7 +134,7 @@ class FakeComposio:
                 "description": "Read and write workspace pages.",
                 "tools_count": 12,
                 "connectable": True,
-                "auth_schemes": ["OAUTH2"],
+                "auth_schemes": ["OAUTH2", "API_KEY"],
                 "managed_auth_schemes": ["OAUTH2"],
             },
             {
@@ -318,8 +328,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["schema"], "pucky.links_portal_url.v1")
         self.assertEqual(payload["auth_mode"], "browser")
         self.assertEqual(payload["user_id"], "jimmythompson323")
+        self.assertTrue(payload["token"])
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
-        token = self.portal_token(payload["portal_url"])
+        token = str(payload["token"])
         verified = self.service._verify_links_portal_token(token)
         self.assertIsNotNone(verified)
         self.assertEqual(verified["user_id"], "jimmythompson323")
@@ -372,8 +383,16 @@ class ServerTests(unittest.TestCase):
         payload = self.get_json(f"/api/links/composio/all-apps?token={token}&offset=0&limit=20")
         slugs = [item["slug"] for item in payload["apps"]]
         self.assertIn("gmail", slugs)
+        self.assertIn("googlecalendar", slugs)
         self.assertIn("linkedin", slugs)
         self.assertNotIn("composio", slugs)
+        gmail = next(item for item in payload["apps"] if item["slug"] == "gmail")
+        googlecalendar = next(item for item in payload["apps"] if item["slug"] == "googlecalendar")
+        notion = next(item for item in payload["apps"] if item["slug"] == "notion")
+        self.assertEqual(gmail["logo"], "https://logos.example.invalid/gmail.png")
+        self.assertEqual(gmail["auth_label"], "OAuth")
+        self.assertEqual(googlecalendar["auth_label"], "OAuth")
+        self.assertEqual(notion["auth_label"], "OAuth + API key")
 
     def test_links_oauth_start_uses_token_user_and_webview_callback(self) -> None:
         token = self.issue_portal_token()
