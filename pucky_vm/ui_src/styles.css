@@ -747,18 +747,18 @@ button {
 .links-search-wrap {
   display: flex;
   align-items: center;
-  min-height: 46px;
-  padding: 0 14px;
+  min-height: 52px;
+  padding: 0 16px;
 }
 
 .links-search {
   width: 100%;
-  min-height: 44px;
+  min-height: 50px;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--text);
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .links-search::placeholder {
@@ -774,7 +774,7 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 11px 14px 9px;
+  padding: 13px 16px 11px;
 }
 
 .links-list-count {
@@ -789,10 +789,10 @@ button {
 
 .links-app-row {
   width: 100%;
-  min-height: 54px;
-  padding: 0 14px;
+  min-height: 62px;
+  padding: 0 16px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto 16px;
+  grid-template-columns: 30px minmax(0, 1fr) auto 18px;
   align-items: center;
   gap: 12px;
   border-top: 1px solid rgba(245, 249, 255, 0.06);
@@ -809,9 +809,9 @@ button {
 }
 
 .links-app-icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   overflow: hidden;
   display: grid;
   place-items: center;
@@ -833,7 +833,7 @@ button {
 }
 
 .links-app-fallback {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1;
 }
@@ -847,27 +847,27 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 720;
 }
 
 .links-app-auth {
   color: rgba(245, 249, 255, 0.52);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 720;
   white-space: nowrap;
 }
 
 .links-app-mark {
-  min-width: 16px;
-  min-height: 16px;
+  min-width: 18px;
+  min-height: 18px;
   text-align: right;
 }
 
 .links-app-mark.is-connected::before {
   content: "✓";
   color: #76c6ff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 

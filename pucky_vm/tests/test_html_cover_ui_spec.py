@@ -103,9 +103,25 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-search" in styles
     assert ".links-filter" not in styles
     assert ".links-app-row" in styles
-    assert "min-height: 46px" in styles
-    assert "min-height: 54px" in styles
-    assert "font-size: 15px" in styles
+    assert "min-height: 52px" in styles
+    assert "min-height: 62px" in styles
+    assert "font-size: 17px" in styles
+    search_wrap = css_block(styles, ".links-search-wrap")
+    assert "padding: 0 16px;" in search_wrap
+    search_input = css_block(styles, ".links-search")
+    assert "min-height: 50px;" in search_input
+    assert "font-size: 17px;" in search_input
+    app_row = css_block(styles, ".links-app-row")
+    assert "grid-template-columns: 30px minmax(0, 1fr) auto 18px;" in app_row
+    assert "padding: 0 16px;" in app_row
+    icon_block = css_block(styles, ".links-app-icon")
+    assert "width: 28px;" in icon_block
+    assert "height: 28px;" in icon_block
+    assert "border-radius: 8px;" in icon_block
+    name_block = css_block(styles, ".links-app-name")
+    assert "font-size: 16px;" in name_block
+    auth_block = css_block(styles, ".links-app-auth")
+    assert "font-size: 12px;" in auth_block
     assert 'src="./pucky-config.js"' in html
 
 

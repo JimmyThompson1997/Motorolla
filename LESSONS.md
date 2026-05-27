@@ -1,0 +1,1 @@
+- 2026-05-26 - A successful `ui.bundle.refresh` updates the phone bundle on disk, but the active cover WebView may keep rendering the old UI until `CoverHomeActivity` is relaunched; verify both `ui.bundle.status` and a fresh `ui.surface.get loaded_at` or a post-restart screenshot.
