@@ -9,6 +9,7 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.Voice;
 import android.util.Log;
 
+import com.pucky.device.BuildConfig;
 import com.pucky.device.audio.AudioRouteDetector;
 import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandErrorCodes;
@@ -64,13 +65,14 @@ public final class PuckyTurnKeywordInterceptor {
         this.main = new Handler(Looper.getMainLooper());
     }
 
-    public JSONObject intercept(byte[] wavBytes, String localSessionId, String turnId, JSONObject speechGate) {
+    public JSONObject intercept(byte[] wavBytes, String localSessionId, String turnId, JSONObject speechGate, JSONObject capture) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_keyword_intercept.v1");
         Json.put(out, "local_session_id", localSessionId);
         Json.put(out, "turn_id", turnId);
         Json.put(out, "source", "volume_up_walkie");
         Json.put(out, "speech_gate", speechGate == null ? JSONObject.NULL : speechGate);
+        Json.put(out, "capture", capture == null ? JSONObject.NULL : capture);
         String storedRaw = storedRecipeBundleRaw();
         Json.put(out, "stored_recipe_bundle_present", !storedRaw.trim().isEmpty());
         if (storedRaw.trim().isEmpty()) {
@@ -87,7 +89,16 @@ public final class PuckyTurnKeywordInterceptor {
             Json.put(out, "matched", false);
             return out;
         }
-        OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognition = injectedRecognizer.recognize(samples, 8000L);
+        OnDeviceInjectedAudioRecognizer.RecognitionOutcome recognition;
+        String debugTranscript = debugFixtureTranscript(capture);
+        if (!debugTranscript.isEmpty()) {
+            recognition = OnDeviceInjectedAudioRecognizer.RecognitionOutcome.manual(
+                    debugTranscript,
+                    alternativesFrom(debugTranscript),
+                    new org.json.JSONArray());
+        } else {
+            recognition = injectedRecognizer.recognize(samples, 8000L);
+        }
         Json.put(out, "classifier_status", recognition.status);
         Json.put(out, "final_transcript", recognition.transcript);
         Json.put(out, "alternatives", recognition.alternatives);
@@ -211,6 +222,24 @@ public final class PuckyTurnKeywordInterceptor {
                 + " matched=" + recipe.id
                 + " action_status=" + actionStatus
                 + " transcript=" + recipe.normalizedTranscript);
+        return out;
+    }
+
+    private static String debugFixtureTranscript(JSONObject capture) {
+        if (!BuildConfig.DEBUG || capture == null) {
+            return "";
+        }
+        if (!"fixture".equals(capture.optString("capture_source", ""))) {
+            return "";
+        }
+        return capture.optString("debug_fixture_transcript", "").trim();
+    }
+
+    private static org.json.JSONArray alternativesFrom(String transcript) {
+        org.json.JSONArray out = new org.json.JSONArray();
+        if (transcript != null && !transcript.trim().isEmpty()) {
+            out.put(transcript.trim());
+        }
         return out;
     }
 

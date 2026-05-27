@@ -147,10 +147,25 @@ public final class PuckyTurnSourceTest {
 
         assertTrue(source.contains("WakeWordController.shared(context).onTurnStarting(clientTurnId, triggerSource)"));
         assertTrue(source.contains("Json.put(startArgs, \"trigger_source\", triggerSource)"));
+        assertTrue(source.contains("Json.put(startArgs, \"auto_endpoint\", autoEndpoint)"));
+        assertTrue(source.contains("Json.put(startArgs, \"speech_start_timeout_ms\", speechStartTimeoutMs)"));
+        assertTrue(source.contains("Json.put(startArgs, \"trailing_silence_ms\", trailingSilenceMs)"));
+        assertTrue(source.contains("Json.put(startArgs, \"min_speech_ms\", minSpeechMs)"));
+        assertTrue(source.contains("startAutoEndpointMonitor("));
         assertTrue(source.contains("Json.put(startArgs, \"wake_phrase_family\""));
         assertTrue(source.contains("Json.put(startArgs, \"wake_phrase_detected\""));
         assertTrue(source.contains("WakeWordController.shared(context).onTurnStatusChanged("));
+        assertTrue(source.contains("playFailureChime(\"pucky.wake_turn_no_speech_chime.v1\")"));
+        assertTrue(source.contains("intercept(audioBytes, localSessionId, clientTurnId, speechGate, capture)"));
+        assertTrue(source.contains("copyIfPresent(target, capture, \"capture_source\")"));
+        assertTrue(source.contains("copyIfPresent(target, capture, \"fixture_name\")"));
         assertTrue(capture.contains("capture.triggerSource"));
+        assertTrue(capture.contains("capture.autoEndpoint"));
+        assertTrue(capture.contains("capture.captureSource"));
+        assertTrue(capture.contains("capture.fixtureStartDelayMs"));
+        assertTrue(capture.contains("startFixtureFeed(capture)"));
+        assertTrue(capture.contains("Json.put(out, \"capture_source\", capture.captureSource)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_start_delay_ms\", capture.fixtureStartDelayMs)"));
         assertTrue(capture.contains("capture.wakePhraseFamily"));
         assertTrue(capture.contains("capture.wakePhraseDetected"));
         assertTrue(capture.contains("Json.put(out, \"trigger_source\", capture.triggerSource)"));

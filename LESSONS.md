@@ -1,2 +1,4 @@
 - 2026-05-26 - A successful `ui.bundle.refresh` updates the phone bundle on disk, but the active cover WebView may keep rendering the old UI until `CoverHomeActivity` is relaunched; verify both `ui.bundle.status` and a fresh `ui.surface.get loaded_at` or a post-restart screenshot.
 - 2026-05-27 - `prove-displayable-reply-files --skip-refresh` can only validate the local UI bundle; if the VM-side attachment or icon endpoints have changed, live prompt proof must wait until the server code is pushed and the VM is updated.
+- 2026-05-27 - For wake-turn emulator proof, assert progression from `pucky.turn.history` instead of a single live indicator snapshot; the blue/red/yellow states can advance faster than harness polling.
+- 2026-05-27 - The emulator `flashlight` recipe path needs `android.permission.CAMERA`; without that grant, `wake-handoff-local` fails for environment reasons rather than wake routing.

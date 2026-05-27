@@ -55,12 +55,15 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(source.contains("playWakeListeningChime(\"pucky.wake_stt_sentinel_match_chime.v1\")"));
         assertTrue(source.contains("Json.put(out, \"proof_indicator\""));
         assertTrue(source.contains("new FakeWakeRecognizer.Factory().create()"));
+        assertTrue(source.contains("LATCHED_WAKE_DEBOUNCE_MS = 250L"));
+        assertTrue(source.contains("buildWakeTurnStartArgsLocked("));
+        assertTrue(source.contains("PuckyTurnController.shared(context).start(action.startTurnArgs)"));
+        assertTrue(source.contains("Json.put(out, \"last_handoff_result\""));
         assertFalse(source.contains("AudioFrameBus"));
         assertFalse(source.contains("SileroVadEngine"));
         assertFalse(source.contains("OnDeviceInjectedAudioRecognizer"));
         assertFalse(source.contains("WakeCandidateEndpointPolicy"));
         assertFalse(source.contains("fixtureRun("));
-        assertFalse(source.contains("PuckyTurnController.shared(context).start(args)"));
         assertFalse(source.contains("SpeechRecognizer.createOnDeviceSpeechRecognizer(context)"));
         assertTrue(recognizer.contains("SpeechRecognizer.createSpeechRecognizer(context)"));
         assertTrue(recognizer.contains("RecognizerIntent.EXTRA_PARTIAL_RESULTS"));
@@ -131,6 +134,7 @@ public final class PuckyWakeLabSourceTest {
         assertFalse(executor.contains("\"wake.fixture.run\""));
         assertTrue(capability.contains("cap(\"pucky.recipes\""));
         assertTrue(capability.contains("wake.status/wake.config.set/wake.start/wake.stop/wake.simulate"));
+        assertTrue(capability.contains("hands accepted wake into a real auto-ended Pucky turn"));
         assertFalse(capability.contains("wake.fixture.run"));
         assertFalse(capability.contains(removedWakeDebugCommand()));
         assertFalse(capability.contains("speech.echo.lab.config.get"));

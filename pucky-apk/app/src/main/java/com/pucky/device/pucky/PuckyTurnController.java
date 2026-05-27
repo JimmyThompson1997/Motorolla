@@ -3,6 +3,7 @@ package com.pucky.device.pucky;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
@@ -265,19 +266,35 @@ public final class PuckyTurnController {
         String localSessionId = clientTurnId;
         final boolean feedback = args.optBoolean("feedback", true);
         String triggerSource = args.optString("trigger_source", args.optString("source", "volume_up_hold"));
+        final boolean autoEndpoint = args.optBoolean("auto_endpoint", false);
+        final int speechStartTimeoutMs = args.optInt("speech_start_timeout_ms", 3000);
+        final int trailingSilenceMs = args.optInt("trailing_silence_ms", 800);
+        final int minSpeechMs = args.optInt("min_speech_ms", 180);
+        final int maxDurationMs = args.optInt("max_duration_ms", 60000);
         JSONObject startArgs = new JSONObject();
         Json.put(startArgs, "format", "wav");
         Json.put(startArgs, "session_id", localSessionId);
         Json.put(startArgs, "turn_id", clientTurnId);
-        Json.put(startArgs, "max_duration_ms", args.optInt("max_duration_ms", 60000));
+        Json.put(startArgs, "max_duration_ms", maxDurationMs);
         Json.put(startArgs, "sample_tag", "pucky_turn");
         Json.put(startArgs, "feedback", false);
         Json.put(startArgs, "trigger_source", triggerSource);
+        Json.put(startArgs, "auto_endpoint", autoEndpoint);
+        Json.put(startArgs, "speech_start_timeout_ms", speechStartTimeoutMs);
+        Json.put(startArgs, "trailing_silence_ms", trailingSilenceMs);
+        Json.put(startArgs, "min_speech_ms", minSpeechMs);
         if (args.has("wake_phrase_family")) {
             Json.put(startArgs, "wake_phrase_family", args.optString("wake_phrase_family", ""));
         }
         if (args.has("wake_phrase_detected")) {
             Json.put(startArgs, "wake_phrase_detected", args.optString("wake_phrase_detected", ""));
+        }
+        if (BuildConfig.DEBUG) {
+            copyIfPresent(startArgs, args, "capture_source");
+            copyIfPresent(startArgs, args, "fixture_name");
+            copyIfPresent(startArgs, args, "fixture_path");
+            copyIfPresent(startArgs, args, "debug_fixture_transcript");
+            copyIfPresent(startArgs, args, "fixture_start_delay_ms");
         }
         WakeWordController.shared(context).onTurnStarting(clientTurnId, triggerSource);
         JSONObject out;
@@ -324,6 +341,10 @@ public final class PuckyTurnController {
         Json.put(out, "upload_configured", isUploadConfigured());
         Json.put(out, "local_capture_ready", true);
         markStatus("armed", out, null);
+        if (autoEndpoint) {
+            startAutoEndpointMonitor(clientTurnId, localSessionId, triggerSource,
+                    speechStartTimeoutMs, trailingSilenceMs, minSpeechMs, maxDurationMs);
+        }
         return out;
     }
 
@@ -353,14 +374,16 @@ public final class PuckyTurnController {
             playRecordingStopHaptic();
         }
         if (!speechDetected) {
+            boolean wakeNoSpeechTimeout = "wake_no_speech_timeout".equals(reason)
+                    || "auto_endpoint_no_speech".equals(reason);
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", false);
             JSONObject discarded = WalkieAudioCaptureController.shared(context).discard(stopArgs);
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.turn_stop.v1");
             Json.put(out, "state", "discarded_silence");
-            Json.put(out, "phase", "silence_discarded");
-            Json.put(out, "result", "discarded_silence");
+            Json.put(out, "phase", wakeNoSpeechTimeout ? "no_speech_timeout" : "silence_discarded");
+            Json.put(out, "result", wakeNoSpeechTimeout ? "no_speech_timeout" : "discarded_silence");
             Json.put(out, "local_session_id", localSessionId);
             Json.put(out, "turn_id", clientTurnId);
             Json.put(out, "trigger_source", triggerSource);
@@ -372,6 +395,10 @@ public final class PuckyTurnController {
             Json.put(out, "vad_engine", speechGate.optString("vad_engine", ""));
             Json.put(out, "vad_available", speechGate.optBoolean("vad_available", false));
             Json.put(out, "voice_capture", discarded);
+            if (wakeNoSpeechTimeout && "wake_word".equals(triggerSource)) {
+                Json.put(out, "failure_chime",
+                        new RecipeDevicePrimitiveExecutor(context).playFailureChime("pucky.wake_turn_no_speech_chime.v1"));
+            }
             markStatus("discarded_silence", out, null);
             return out;
         }
@@ -452,7 +479,7 @@ public final class PuckyTurnController {
             copyCaptureMetadata(uploading, capture);
             markStatus("uploading", uploading, null);
             JSONObject keywordIntercept = PuckyTurnKeywordInterceptor.shared(context)
-                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate);
+                    .intercept(audioBytes, localSessionId, clientTurnId, speechGate, capture);
             Json.put(uploading, "local_keyword_intercept", keywordIntercept);
             Json.put(uploading, "local_classifier_status", keywordIntercept.optString("classifier_status", ""));
             Json.put(uploading, "local_classifier_transcript", keywordIntercept.optString("final_transcript", ""));
@@ -481,13 +508,18 @@ public final class PuckyTurnController {
                 Json.put(handled, "keyword_action_result", keywordIntercept.opt("execution"));
                 copyIfPresent(handled, keywordIntercept, "pucky_clipboard_entry_id");
                 Json.put(handled, "deleted_file", deleted);
+                Object errorCode = keywordIntercept.opt("error_code");
+                Object errorMessage = keywordIntercept.opt("error_message");
+                String errorCodeValue = errorCode == null || JSONObject.NULL.equals(errorCode) ? "" : String.valueOf(errorCode);
+                String errorMessageValue = errorMessage == null || JSONObject.NULL.equals(errorMessage) ? "" : String.valueOf(errorMessage);
                 boolean failed = "failed".equals(keywordIntercept.optString("execution_status", ""))
-                        || !"".equals(keywordIntercept.optString("error_code", ""));
+                        || !errorCodeValue.isEmpty();
                 Json.put(handled, "state", failed ? "failed" : "completed");
                 Json.put(handled, "phase", failed ? "local_keyword_failed" : "local_keyword_handled");
                 if (failed) {
-                    String error = keywordIntercept.optString("error_message",
-                            keywordIntercept.optString("error_code", "keyword_action_failed"));
+                    String error = errorMessageValue.isEmpty()
+                            ? (errorCodeValue.isEmpty() ? "keyword_action_failed" : errorCodeValue)
+                            : errorMessageValue;
                     markStatus("failed", handled, error);
                 } else {
                     markStatus("completed", handled, null);
@@ -1466,9 +1498,83 @@ public final class PuckyTurnController {
             return;
         }
         copyIfPresent(target, capture, "trigger_source");
-        copyIfPresent(target, capture, "fixture_start_delay_ms");
+        copyIfPresent(target, capture, "capture_source");
+        copyIfPresent(target, capture, "auto_endpoint");
+        copyIfPresent(target, capture, "speech_start_timeout_ms");
+        copyIfPresent(target, capture, "trailing_silence_ms");
+        copyIfPresent(target, capture, "min_speech_ms");
         copyIfPresent(target, capture, "wake_phrase_family");
         copyIfPresent(target, capture, "wake_phrase_detected");
+        copyIfPresent(target, capture, "fixture_name");
+        copyIfPresent(target, capture, "fixture_start_delay_ms");
+        copyIfPresent(target, capture, "debug_fixture_transcript");
+    }
+
+    private void startAutoEndpointMonitor(
+            String clientTurnId,
+            String localSessionId,
+            String triggerSource,
+            int speechStartTimeoutMs,
+            int trailingSilenceMs,
+            int minSpeechMs,
+            int maxDurationMs) {
+        Thread worker = new Thread(() -> {
+            long startedElapsedMs = SystemClock.elapsedRealtime();
+            while (true) {
+                try {
+                    Thread.sleep(75L);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                JSONObject voice = WalkieAudioCaptureController.shared(context).status();
+                JSONObject active = voice.optJSONObject("active_session");
+                if (active == null || !localSessionId.equals(active.optString("session_id", ""))) {
+                    return;
+                }
+                JSONObject gate = voice.optJSONObject("speech_gate");
+                if (gate == null) {
+                    gate = new JSONObject();
+                }
+                boolean speechDetected = gate.optBoolean("speech_detected", false);
+                long elapsedMs = voice.optLong("elapsed_ms",
+                        Math.max(0L, SystemClock.elapsedRealtime() - startedElapsedMs));
+                if (!speechDetected && elapsedMs >= Math.max(250L, speechStartTimeoutMs)) {
+                    try {
+                        JSONObject stopArgs = reasonArgs("wake_no_speech_timeout");
+                        Json.put(stopArgs, "feedback", false);
+                        stop(stopArgs);
+                    } catch (CommandException ignored) {
+                    }
+                    return;
+                }
+                if (speechDetected) {
+                    long speechDurationMs = gate.optLong("speech_duration_ms", 0L);
+                    long trailingSilence = gate.optLong("trailing_silence_ms", 0L);
+                    if (speechDurationMs >= Math.max(0L, minSpeechMs)
+                            && trailingSilence >= Math.max(100L, trailingSilenceMs)) {
+                        try {
+                            JSONObject stopArgs = reasonArgs("auto_endpoint_silence");
+                            Json.put(stopArgs, "feedback", false);
+                            stop(stopArgs);
+                        } catch (CommandException ignored) {
+                        }
+                        return;
+                    }
+                }
+                if (elapsedMs >= Math.max(1000L, maxDurationMs) + 250L) {
+                    try {
+                        JSONObject stopArgs = reasonArgs("auto_endpoint_max_duration");
+                        Json.put(stopArgs, "feedback", false);
+                        stop(stopArgs);
+                    } catch (CommandException ignored) {
+                    }
+                    return;
+                }
+            }
+        }, "PuckyTurnAutoEndpoint-" + clientTurnId);
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private static JSONObject reasonArgs(String reason) {
