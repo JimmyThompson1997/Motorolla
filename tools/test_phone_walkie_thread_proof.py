@@ -229,6 +229,61 @@ def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_pa
         )
 
 
+def test_visible_thread_index_finds_matching_slot() -> None:
+    surface = {
+        "final_surface": {
+            "visible_cards": [
+                {"thread_id": "thread-a", "kind": "reply"},
+                {"thread_id": "thread-b", "kind": "pending_outbound"},
+            ]
+        }
+    }
+
+    assert proof.visible_thread_index(surface, "thread-a") == 0
+    assert proof.visible_thread_index(surface, "thread-b") == 1
+    assert proof.visible_thread_index(surface, "missing") == -1
+
+
+def test_scenario_checks_reports_overall_pass() -> None:
+    passing = proof.scenario_checks({"one": True, "two": True})
+    failing = proof.scenario_checks({"one": True, "two": False})
+
+    assert passing == {"passed": True, "checks": {"one": True, "two": True}}
+    assert failing == {"passed": False, "checks": {"one": True, "two": False}}
+
+
+def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+    local_git = {"head": "abc123", "upstream": "abc123"}
+    bundle = {"installed": True, "ui_version": "git-abc123"}
+    surface = {"ui_version": "git-abc123"}
+    installed = {"version_name": "0.1", "version_code": "42"}
+    identity = {"git_commit": "abc123", "git_dirty": False, "version_name": "0.1", "version_code": 42}
+
+    result = proof.verify_target_identity(
+        args,
+        local_git=local_git,
+        remote_manifest=None,
+        bundle=bundle,
+        surface=surface,
+        installed_package=installed,
+        identity=identity,
+    )
+
+    assert result["passed"] is True
+
+    with pytest.raises(proof.PhoneProofError, match="target identity mismatch"):
+        proof.verify_target_identity(
+            args,
+            local_git=local_git,
+            remote_manifest=None,
+            bundle=bundle,
+            surface=surface,
+            installed_package=installed,
+            identity={"git_commit": "other", "git_dirty": False, "version_name": "0.1", "version_code": 42},
+        )
+
+
 def test_require_official_local_repo_rejects_noncanonical(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     other = tmp_path / "other"
     canonical = tmp_path / "canon"

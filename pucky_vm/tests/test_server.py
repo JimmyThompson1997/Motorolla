@@ -407,7 +407,6 @@ class OutOfOrderCodex(FakeCodex):
                 "fallback_reason": "",
             },
         )()
-
 def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: bool = False) -> Config:
     return Config(
         host="127.0.0.1",
@@ -970,6 +969,47 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(fallback["telemetry"]["thread_mode"], "new")
         self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
         self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
+    def test_text_turn_proof_reply_delay_is_guarded_and_telemetry_visible(self) -> None:
+        delayed_service = PuckyVoiceService(
+            make_config(proof_reply_delay_enabled=True),
+            stt=self.stt,
+            tts=self.tts,
+            codex=self.codex,
+            composio=self.composio,
+        )
+        delayed_server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(delayed_service))
+        delayed_thread = threading.Thread(target=delayed_server.serve_forever, daemon=True)
+        delayed_thread.start()
+        delayed_base_url = f"http://127.0.0.1:{delayed_server.server_port}"
+        try:
+            sleep_calls: list[float] = []
+            with patch("pucky_vm.server.time.sleep", side_effect=lambda seconds: sleep_calls.append(seconds)):
+                body = self.post_json(
+                    "/api/turn/text",
+                    {"text": "delay this turn", "turn_id": "delay-proof-1"},
+                    headers={"X-Pucky-Proof-Reply-Delay-Ms": "1500"},
+                    base_url=delayed_base_url,
+                )
+            self.assertEqual(sleep_calls, [1.5])
+            self.assertEqual(body["telemetry"]["proof_reply_delay_enabled"], True)
+            self.assertEqual(body["telemetry"]["proof_reply_delay_ms_requested"], 1500)
+            self.assertEqual(body["telemetry"]["proof_reply_delay_ms_applied"], 1500)
+
+            body_disabled = self.post_json(
+                "/api/turn/text",
+                {"text": "delay ignored", "turn_id": "delay-proof-2"},
+                headers={"X-Pucky-Proof-Reply-Delay-Ms": "1200"},
+            )
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_enabled"], False)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ms_requested"], 1200)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ms_applied"], 0)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ignored"], "disabled")
+        finally:
+            delayed_server.shutdown()
+            delayed_server.server_close()
+            delayed_thread.join(timeout=5)
+            delayed_service.feed.close()
+
     def test_text_turn_proof_reply_delay_is_guarded_and_telemetry_visible(self) -> None:
         delayed_service = PuckyVoiceService(
             make_config(proof_reply_delay_enabled=True),

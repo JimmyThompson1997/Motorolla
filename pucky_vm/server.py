@@ -1573,6 +1573,19 @@ def _normalize_proof_reply_delay_ms(value: object) -> int:
     return max(0, min(60_000, parsed))
 
 
+def _normalize_proof_reply_delay_ms(value: object) -> int:
+    if value is None:
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    try:
+        parsed = int(text, 10)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("proof_reply_delay_ms must be an integer") from exc
+    return max(0, min(60_000, parsed))
+
+
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
