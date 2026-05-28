@@ -188,7 +188,12 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "state.links.catalogVersion = \"\";" in app
     assert "state.links.catalogGeneratedAt = \"\";" in app
     assert "const onSearchInput = () => {" in app
+    assert "const feed = linksFeedElement();" in app
+    assert "feed.scrollTop = 0;" in app
     assert "noteLinksScrollActivity();" in app
+    assert "const unclampedStartIndex =" in app
+    assert "const maxStartIndex = Math.max(0, totalCount - 1);" in app
+    assert "const startIndex = Math.min(unclampedStartIndex, maxStartIndex);" in app
     assert "const { startIndex, endIndex } = linksVisibleRange(filtered.length);" in app
     assert "refs.topSpacer.style.height =" in app
     assert "refs.bottomSpacer.style.height =" in app

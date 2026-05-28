@@ -1261,7 +1261,9 @@
     const feed = linksFeedElement();
     const scrollTop = Math.max(0, safeNumber(feed && feed.scrollTop));
     const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(feed && feed.clientHeight));
-    const startIndex = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_WINDOW_OVERSCAN);
+    const unclampedStartIndex = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_WINDOW_OVERSCAN);
+    const maxStartIndex = Math.max(0, totalCount - 1);
+    const startIndex = Math.min(unclampedStartIndex, maxStartIndex);
     const endIndex = Math.min(
       totalCount,
       Math.max(
@@ -2283,6 +2285,10 @@
       search.value = state.links.search;
       const onSearchInput = () => {
         state.links.search = search.value;
+        const feed = linksFeedElement();
+        if (feed && safeNumber(feed.scrollTop) > 0) {
+          feed.scrollTop = 0;
+        }
         linksDebugRecord("search_input", { search_value: state.links.search }, "route");
         syncLinksPage();
       };
