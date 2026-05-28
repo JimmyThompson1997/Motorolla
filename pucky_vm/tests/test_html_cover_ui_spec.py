@@ -1515,6 +1515,10 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     assert '"thread_page"' in app
     assert '"thread_attachment"' in app
     assert '"Talk to continue..."' in app
+    assert '"data-thread-scope-active"' in app
+    assert '"data-thread-scope-mode"' in app
+    assert '"data-thread-id"' in app
+    assert '"data-source-surface"' in app
     assert 'void syncVoiceThreadScope({ reason: "tab_click", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true });' in app
@@ -1527,6 +1531,41 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     badge = css_block(styles, ".thread-scope-status")
     assert "font-size: 11px;" in badge
     assert "text-overflow: ellipsis;" in badge
+
+
+def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:
+    app = read("app.js")
+
+    assert "function applyCardDataAttributes(node, card, kind)" in app
+    assert "function applyCardActionData(node, action, card, kind = \"\")" in app
+    assert "function applyDetailDataAttributes(panel, detailType, card, extra = {})" in app
+    assert "function clearDetailDataAttributes(panel)" in app
+    assert '"data-card-kind"' in app
+    assert '"data-card-id"' in app
+    assert '"data-card-session-id"' in app
+    assert '"data-card-thread-id"' in app
+    assert '"data-card-pending-state"' in app
+    assert '"data-card-action"' in app
+    assert '"data-detail-type"' in app
+    assert '"data-detail-card-id"' in app
+    assert '"data-detail-session-id"' in app
+    assert '"data-detail-thread-id"' in app
+    assert '"data-detail-viewer"' in app
+    assert 'applyCardDataAttributes(cardEl, card, "reply");' in app
+    assert 'applyCardActionData(identity, "mark_read", card, "reply");' in app
+    assert 'applyCardActionData(body, "transcript", card, "reply");' in app
+    assert 'applyCardActionData(audio, "audio", card, "reply");' in app
+    assert 'applyCardActionData(page, "page", card, "reply");' in app
+    assert 'applyCardActionData(file, "attachment", card, "reply");' in app
+    assert 'applyCardDataAttributes(cardEl, card, "pending_outbound");' in app
+    assert 'applyDetailDataAttributes(panel, "transcript", card);' in app
+    assert 'applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });' in app
+    assert 'applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });' in app
+    assert 'applyDetailDataAttributes(panel, "audio", card, { viewer: "audio_player" });' in app
+    assert 'applyDetailDataAttributes(panel, "attachment", card, { viewer: "video_player" });' in app
+    assert 'applyDetailDataAttributes(panel, "attachment", card, { viewer: "audio_player" });' in app
+    assert 'applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });' in app
+    assert "clearDetailDataAttributes(panel);" in app
 
 
 def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_prior_artifacts() -> None:

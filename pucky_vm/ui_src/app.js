@@ -1708,6 +1708,10 @@
     if (!node) {
       return;
     }
+    node.setAttribute("data-thread-scope-active", state.threadScope.active ? "true" : "false");
+    node.setAttribute("data-thread-scope-mode", state.threadScope.mode || "new_thread");
+    node.setAttribute("data-thread-id", state.threadScope.thread_id || "");
+    node.setAttribute("data-source-surface", state.threadScope.source_surface || "");
     if (!state.threadScope.active) {
       node.hidden = true;
       node.textContent = "";
@@ -2794,11 +2798,13 @@
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
+    applyCardDataAttributes(cardEl, card, "reply");
     const cardStamp = cardTimestamp(card);
 
     const identity = el("button", `identity ${cardStateClass(card)}`);
     identity.type = "button";
     identity.disabled = menuOpen;
+    applyCardActionData(identity, "mark_read", card, "reply");
     identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
@@ -2813,6 +2819,7 @@
     body.setAttribute("role", "button");
     body.tabIndex = menuOpen ? -1 : 0;
     body.setAttribute("aria-disabled", menuOpen ? "true" : "false");
+    applyCardActionData(body, "transcript", card, "reply");
     body.addEventListener("click", () => {
       if (!menuOpen && !shouldSuppressCardActivation()) {
         showTranscript(card);
@@ -2842,6 +2849,7 @@
         : "action action-audio");
       audio.type = "button";
       audio.disabled = menuOpen;
+      applyCardActionData(audio, "audio", card, "reply");
       audio.innerHTML = iconSvg("mic", { filled: true });
       audio.setAttribute("aria-label", `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
@@ -2858,6 +2866,7 @@
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
       page.disabled = menuOpen;
+      applyCardActionData(page, "page", card, "reply");
       page.innerHTML = iconSvg("attachment", { filled: true });
       page.setAttribute("aria-label", `Open page for ${card.title}`);
       page.addEventListener("click", (event) => {
@@ -2872,6 +2881,7 @@
       const file = el("button", `action ${actionStateClass(card, "attachment")}`);
       file.type = "button";
       file.disabled = menuOpen;
+      applyCardActionData(file, "attachment", card, "reply");
       file.innerHTML = iconSvg("attachment", { filled: true });
       file.setAttribute("aria-label", `Open file for ${card.title}`);
       file.addEventListener("click", (event) => {
@@ -2906,6 +2916,7 @@
     const cardEl = el("article", isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound");
+    applyCardDataAttributes(cardEl, card, "pending_outbound");
     const copy = el("div", "card-outbound-copy");
     const preview = el("p", card?.pending_placeholder ? "card-outbound-preview is-placeholder" : "card-outbound-preview", pendingOutboundSummary(card));
     copy.append(preview);
@@ -3027,6 +3038,7 @@
       stack.append(bubble);
     });
     content.append(stack);
+    applyDetailDataAttributes(panel, "transcript", card);
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
@@ -3172,6 +3184,7 @@
         content.append(el("p", "preview", `Page unavailable: ${error.message}`));
       }
     }
+    applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
@@ -3293,6 +3306,7 @@
         }
       });
     }
+    applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });
     openSideDetail(panel, card.title || "Images", content, dismissGallery);
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
@@ -3437,6 +3451,7 @@
     shell.append(video, play, controls);
     frame.append(shell);
     content.append(frame);
+    applyDetailDataAttributes(panel, "attachment", card, { viewer: "video_player" });
     openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
@@ -3471,6 +3486,7 @@
     audio.preload = "metadata";
     wrap.append(audio);
     content.append(wrap);
+    applyDetailDataAttributes(panel, "attachment", card, { viewer: "audio_player" });
     openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
@@ -3489,6 +3505,7 @@
     const content = el("div", `detail-content attachment-detail document-detail document-${kind}`);
     const viewer = await documentViewer(item);
     content.append(viewer);
+    applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });
     openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
@@ -4097,6 +4114,7 @@
     panel.style.transform = "";
     panel.classList.remove("is-open", "is-dragging");
     panel.setAttribute("aria-hidden", "true");
+    clearDetailDataAttributes(panel);
     panel.replaceChildren();
     void syncVoiceThreadScope({ reason: "detail_dismiss", render: true });
   }
@@ -4147,6 +4165,7 @@
     state.audioCard = card;
     const panel = document.getElementById("detail");
     const content = audioDetailContent(card);
+    applyDetailDataAttributes(panel, "audio", card, { viewer: "audio_player" });
     openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail);
     rememberNavDetail("audio", card, options);
     installDetailScrollPersistence(content, "audio");
@@ -6108,6 +6127,66 @@
 
   function cardSessionId(card) {
     return String(card?.session_id || card?.local_session_id || card?.turn_id || "");
+  }
+
+  function cardThreadId(card) {
+    return String(cardOrigin(card).thread_id || "").trim();
+  }
+
+  function setDataAttribute(node, name, value) {
+    if (!node) {
+      return;
+    }
+    const clean = String(value || "").trim();
+    if (clean) {
+      node.setAttribute(name, clean);
+      return;
+    }
+    node.removeAttribute(name);
+  }
+
+  function applyCardDataAttributes(node, card, kind) {
+    if (!node) {
+      return;
+    }
+    setDataAttribute(node, "data-card-kind", kind || "reply");
+    setDataAttribute(node, "data-card-id", card?.card_id || "");
+    setDataAttribute(node, "data-card-session-id", cardSessionId(card));
+    setDataAttribute(node, "data-card-thread-id", cardThreadId(card));
+    if (card?.pending_outbound) {
+      setDataAttribute(node, "data-card-pending-state", card?.pending_state || "sending");
+      return;
+    }
+    node.removeAttribute("data-card-pending-state");
+  }
+
+  function applyCardActionData(node, action, card, kind = "") {
+    applyCardDataAttributes(node, card, kind || (card?.pending_outbound ? "pending_outbound" : "reply"));
+    setDataAttribute(node, "data-card-action", action);
+  }
+
+  function applyDetailDataAttributes(panel, detailType, card, extra = {}) {
+    if (!panel) {
+      return;
+    }
+    setDataAttribute(panel, "data-detail-type", detailType || "");
+    setDataAttribute(panel, "data-detail-card-id", card?.card_id || "");
+    setDataAttribute(panel, "data-detail-session-id", cardSessionId(card));
+    setDataAttribute(panel, "data-detail-thread-id", cardThreadId(card));
+    setDataAttribute(panel, "data-detail-viewer", extra.viewer || "");
+  }
+
+  function clearDetailDataAttributes(panel) {
+    if (!panel) {
+      return;
+    }
+    [
+      "data-detail-type",
+      "data-detail-card-id",
+      "data-detail-session-id",
+      "data-detail-thread-id",
+      "data-detail-viewer"
+    ].forEach(name => panel.removeAttribute(name));
   }
 
   function threadScopeForCard(card, sourceSurface) {

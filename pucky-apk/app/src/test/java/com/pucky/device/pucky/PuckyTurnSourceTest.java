@@ -139,6 +139,10 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("hasMatchingReplyCard(persistedCards, record)"));
         assertTrue(feed.contains("shouldSynthesizePendingCard(state)"));
         assertTrue(feed.contains("pendingLabelFor(state, placeholder)"));
+        assertTrue(feed.contains("Json.put(origin, \"thread_id\", threadId);"));
+        assertTrue(feed.contains("merged = collapseCardsByThread(merged);"));
+        assertTrue(feed.contains("if (latest.optBoolean(\"pending_outbound\", false) && !older.optBoolean(\"pending_outbound\", false)) {"));
+        assertTrue(feed.contains("Json.put(latest, \"origin\", older.opt(\"origin\"));"));
         assertTrue(feed.contains("\"uploading\".equals(state)"));
         assertTrue(feed.contains("\"codex_running\".equals(state)"));
         assertTrue(feed.contains("\"upload_blocked\".equals(state)"));
