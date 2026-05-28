@@ -88,6 +88,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("\"pucky.turn.history\""));
         assertTrue(source.contains("\"pucky.turn.read\""));
         assertTrue(source.contains("\"pucky.turn.debug.inject_history\""));
+        assertTrue(source.contains("\"pucky.turn.debug.response_fault\""));
         assertTrue(source.contains("return puckyTurnController.status()"));
         assertTrue(source.contains("return puckyTurnController.start(command.args())"));
         assertTrue(source.contains("return puckyTurnController.stop(command.args())"));
@@ -100,6 +101,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("return puckyTurnController.history(command.args())"));
         assertTrue(source.contains("return puckyTurnController.read(command.args())"));
         assertTrue(source.contains("return puckyTurnController.debugInjectHistory(command.args())"));
+        assertTrue(source.contains("return puckyTurnController.debugResponseFault(command.args())"));
         assertTrue(service.contains("PuckyTurnController.shared(this)"));
     }
 
@@ -118,7 +120,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(turn.contains("synchronized JSONArray historySnapshotArray()"));
         assertTrue(turn.contains("synchronized boolean archiveHistoryRecord(String turnId, String localSessionId)"));
         assertTrue(turn.contains("public JSONObject debugInjectHistory(JSONObject args) throws CommandException"));
+        assertTrue(turn.contains("public JSONObject debugResponseFault(JSONObject args) throws CommandException"));
         assertTrue(turn.contains("pucky.turn.debug.inject_history is only available on debug builds"));
+        assertTrue(turn.contains("pucky.turn.debug.response_fault is only available on debug builds"));
 
         assertTrue(feed.contains("return mergedSnapshot();"));
         assertTrue(feed.contains("private JSONObject mergedSnapshot()"));
@@ -450,7 +454,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(remoteStatusBody.contains("Json.put(status, \"sent_cue\", arrivalCue)"));
         assertTrue(remoteStatusBody.contains("Json.put(status, \"arrival_cue\", arrivalCue)"));
         assertTrue(remoteStatusBody.contains("Json.put(status, \"accepted_chime\", arrivalCue)"));
-        assertTrue(source.contains("private static boolean isAcceptedRemoteStage(String stage)"));
+        assertTrue(source.contains("static boolean isAcceptedRemoteStage(String stage)"));
         assertTrue(source.contains("private JSONObject playArrivalCueOnce(String turnId, String trigger)"));
         assertTrue(source.contains("private JSONObject playReplyReceivedCueOnce(String turnId, String trigger)"));
         assertTrue(source.contains("private JSONObject playReplyReceivedCue(String trigger)"));
@@ -483,8 +487,23 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("private final ReplyCardStore replyCards;"));
         assertTrue(source.contains("JSONObject last = maybeRecoverLastStatus(lastStatus(), \"status_lookup\");"));
         assertTrue(source.contains("public void onReplyRecovered(JSONObject card, String recoverySource)"));
+        assertTrue(source.contains("PuckyFeedController.shared(context).syncAsync(\"accepted_transport_failure\")"));
+        assertTrue(source.contains("PuckyFeedController.shared(context).syncAsync(\"remote_completed\")"));
+        assertTrue(source.contains("private final HashSet<String> remoteAcceptedTurnIds = new HashSet<>()"));
+        assertTrue(source.contains("private void noteRemoteAccepted(String clientTurnId)"));
+        assertTrue(source.contains("private boolean hasRemoteAccepted(String clientTurnId)"));
+        assertTrue(source.contains("private void clearRemoteAccepted(String clientTurnId)"));
+        assertTrue(source.contains("static boolean shouldRetainPendingAfterLocalTransportFailure(JSONObject status)"));
+        assertTrue(source.contains("static String preservedPendingStateAfterLocalTransportFailure(JSONObject status)"));
+        assertTrue(source.contains("if (hasRemoteAccepted(clientTurnId)) {\n            Json.put(status, \"remote_accepted\", true);\n        }"));
+        assertTrue(source.contains("Json.put(status, \"reply_recovery_pending\", true)"));
+        assertTrue(source.contains("Json.put(status, \"response_transport_error\""));
+        assertTrue(source.contains("Json.put(status, \"response_transport_error_at\""));
+        assertTrue(source.contains("Json.put(status, \"remote_accepted\", true)"));
+        assertTrue(source.contains("clearRemoteAccepted(clientTurnId);"));
         assertTrue(source.contains("Json.put(recovered, \"reply_card_saved\", true)"));
         assertTrue(source.contains("Json.put(recovered, \"recovery_source\", recoverySource)"));
+        assertTrue(source.contains("clearTransportRecoveryFields(recovered);"));
         assertTrue(source.contains("recovered.remove(\"remote_stage\")"));
         assertTrue(source.contains("recovered.remove(\"server_turn_status\")"));
         assertTrue(source.contains("markStatus(nextState, recovered, null)"));
@@ -513,7 +532,17 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("Json.put(record, \"events\""));
         assertTrue(source.contains("copyIfPresent(record, detail, \"card_id\")"));
         assertTrue(source.contains("copyIfPresent(record, detail, \"reply_card_saved\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"phase\")"));
         assertTrue(source.contains("copyIfPresent(record, detail, \"recovery_source\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"reply_recovery_pending\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"response_transport_error\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"response_transport_error_at\")"));
+        assertTrue(source.contains("copyIfPresent(record, detail, \"remote_accepted\")"));
+        assertTrue(source.contains("removeIfMissing(record, detail, \"phase\")"));
+        assertTrue(source.contains("removeIfMissing(record, detail, \"reply_recovery_pending\")"));
+        assertTrue(source.contains("removeIfMissing(record, detail, \"response_transport_error\")"));
+        assertTrue(source.contains("removeIfMissing(record, detail, \"response_transport_error_at\")"));
+        assertTrue(source.contains("removeIfMissing(record, detail, \"remote_accepted\")"));
         assertFalse(source.contains("Json.put(record, \"transcript\""));
     }
 

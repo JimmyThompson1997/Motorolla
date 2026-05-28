@@ -223,6 +223,17 @@ def test_parser_includes_pending_outbound_proof_command() -> None:
     assert args.long_press_ms == 360
 
 
+def test_parser_includes_accepted_timeout_recovery_proof_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["prove-accepted-timeout-recovery", "--slot", "4", "--dry-run"])
+
+    assert args.command == "prove-accepted-timeout-recovery"
+    assert args.slot == 4
+    assert args.turn_url == suite.DEFAULT_TURN_URL
+    assert args.turn_timeout_seconds == 180
+
+
 def test_parser_includes_displayable_reply_files_proof_command() -> None:
     parser = suite.build_parser()
 
@@ -383,6 +394,32 @@ def test_turn_history_helpers_filter_and_extract_states(tmp_path: Path) -> None:
     assert record is not None
     assert record["turn_id"] == "new"
     assert suite.turn_event_states(record) == ["armed", "recording", "uploading"]
+
+
+def test_history_record_by_turn_id_matches_turn_and_local_session() -> None:
+    history = {
+        "turns": [
+            {"turn_id": "older", "local_session_id": "older-local"},
+            {"turn_id": "turn-123", "local_session_id": "turn-local-123"},
+        ]
+    }
+
+    assert suite.history_record_by_turn_id(history, "turn-123") == history["turns"][1]
+    assert suite.history_record_by_turn_id(history, "turn-local-123") == history["turns"][1]
+    assert suite.history_record_by_turn_id(history, "missing") is None
+
+
+def test_snapshot_card_by_turn_id_matches_turn_and_session() -> None:
+    snapshot = {
+        "cards": [
+            {"card_id": "one", "turn_id": "turn-1", "session_id": "session-1"},
+            {"card_id": "two", "turn_id": "turn-2", "session_id": "session-2"},
+        ]
+    }
+
+    assert suite.snapshot_card_by_turn_id(snapshot, "turn-2") == snapshot["cards"][1]
+    assert suite.snapshot_card_by_turn_id(snapshot, "session-2") == snapshot["cards"][1]
+    assert suite.snapshot_card_by_turn_id(snapshot, "missing") is None
 
 
 def test_wait_for_turn_history_record_retries_until_match(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

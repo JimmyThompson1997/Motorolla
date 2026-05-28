@@ -28,6 +28,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.UUID;
 
 import okhttp3.Call;
@@ -62,6 +64,14 @@ public final class PuckyTurnController {
     private volatile boolean pollActive = false;
     private volatile String acceptedChimedTurnId = "";
     private volatile String replyReceivedCuedTurnId = "";
+    private final Object responseCallLock = new Object();
+    private final HashMap<String, Call> activeResponseCalls = new HashMap<>();
+    private final Object remoteAcceptanceLock = new Object();
+    private final HashSet<String> remoteAcceptedTurnIds = new HashSet<>();
+    private final Object debugResponseFaultLock = new Object();
+    private boolean debugFailAfterAcceptArmed = false;
+    private String debugFailAfterAcceptTurnId = "";
+    private String debugFailAfterAcceptError = "debug_forced_transport_timeout";
 
     public static synchronized PuckyTurnController shared(Context context) {
         if (shared == null) {
@@ -122,6 +132,10 @@ public final class PuckyTurnController {
         Json.put(out, "failed", indicator.optBoolean("failed", false));
         Json.put(out, "remote_stage", indicator.optString("remote_stage", ""));
         Json.put(out, "user_transcript", last.optString("user_transcript", ""));
+        Json.put(out, "reply_recovery_pending", last.optBoolean("reply_recovery_pending", false));
+        Json.put(out, "response_transport_error", last.optString("response_transport_error", ""));
+        Json.put(out, "response_transport_error_at", last.optString("response_transport_error_at", ""));
+        Json.put(out, "remote_accepted", statusHasRemoteAcceptance(last));
         return out;
     }
 
@@ -258,6 +272,35 @@ public final class PuckyTurnController {
         Json.put(out, "ok", true);
         Json.put(out, "removed", removed);
         Json.put(out, "history", history(new JSONObject()));
+        return out;
+    }
+
+    public JSONObject debugResponseFault(JSONObject args) throws CommandException {
+        if (!BuildConfig.DEBUG) {
+            throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
+                    "pucky.turn.debug.response_fault is only available on debug builds");
+        }
+        boolean clear = args.optBoolean("clear", false);
+        synchronized (debugResponseFaultLock) {
+            if (clear) {
+                debugFailAfterAcceptArmed = false;
+                debugFailAfterAcceptTurnId = "";
+                debugFailAfterAcceptError = "debug_forced_transport_timeout";
+            } else {
+                debugFailAfterAcceptArmed = args.optBoolean("after_remote_accept", true);
+                debugFailAfterAcceptTurnId = args.optString("turn_id", "").trim();
+                String requestedError = args.optString("error", "debug_forced_transport_timeout").trim();
+                debugFailAfterAcceptError = requestedError.isEmpty()
+                        ? "debug_forced_transport_timeout"
+                        : requestedError;
+            }
+        }
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.turn_debug_response_fault.v1");
+        Json.put(out, "ok", true);
+        Json.put(out, "armed", debugFailAfterAcceptArmed);
+        Json.put(out, "turn_id", debugFailAfterAcceptTurnId);
+        Json.put(out, "error", debugFailAfterAcceptError);
         return out;
     }
 
@@ -559,24 +602,46 @@ public final class PuckyTurnController {
                 .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
-        http.newCall(request).enqueue(new Callback() {
+        Call responseCall = http.newCall(request);
+        registerActiveResponseCall(clientTurnId, responseCall);
+        responseCall.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
+                clearActiveResponseCall(clientTurnId, call);
+                String transportError = e.getClass().getSimpleName() + ": " + e.getMessage();
+                if (handleLocalTransportFailure(
+                        clientTurnId,
+                        localSessionId,
+                        startedMs,
+                        audioBytes.length,
+                        transportError,
+                        "response_transport_failure")) {
+                    return;
+                }
                 stopTurnStatusPoll(clientTurnId);
                 JSONObject failed = baseStatus(localSessionId, startedMs, audioBytes.length);
                 Json.put(failed, "turn_id", clientTurnId);
-                markStatus("failed", failed,
-                        e.getClass().getSimpleName() + ": " + e.getMessage());
+                markStatus("failed", failed, transportError);
             }
 
             @Override
             public void onResponse(Call call, Response response) {
+                clearActiveResponseCall(clientTurnId, call);
                 try (Response ignored = response) {
                     String responseText = response.body() == null ? "" : response.body().string();
                     JSONObject status = baseStatus(localSessionId, startedMs, audioBytes.length);
                     Json.put(status, "turn_id", clientTurnId);
                     Json.put(status, "http_status", response.code());
                     if (!response.isSuccessful()) {
+                        if (handleLocalTransportFailure(
+                                clientTurnId,
+                                localSessionId,
+                                startedMs,
+                                audioBytes.length,
+                                "http_" + response.code(),
+                                "response_http_failure")) {
+                            return;
+                        }
                         stopTurnStatusPoll(clientTurnId);
                         markStatus("failed", status, "http_" + response.code());
                         return;
@@ -613,6 +678,8 @@ public final class PuckyTurnController {
                         Json.put(status, "has_html", parsed.hasHtml());
                         Json.put(status, "server_telemetry", parsed.telemetry());
                         Json.put(status, "latency_server_total_ms", parsed.telemetry().optInt("total_ms", -1));
+                        clearTransportRecoveryFields(status);
+                        clearRemoteAccepted(clientTurnId);
                         stopTurnStatusPoll(clientTurnId);
                         if (spokenReplyEnabledAtUpload) {
                             if (parsed.hasAudio()) {
@@ -627,10 +694,28 @@ public final class PuckyTurnController {
                             markStatus("completed", status, null);
                         }
                     } catch (Exception exc) {
+                        if (handleLocalTransportFailure(
+                                clientTurnId,
+                                localSessionId,
+                                startedMs,
+                                audioBytes.length,
+                                exc.getClass().getSimpleName() + ": " + exc.getMessage(),
+                                "response_parse_failure")) {
+                            return;
+                        }
                         stopTurnStatusPoll(clientTurnId);
                         markStatus("failed", status, exc.getClass().getSimpleName() + ": " + exc.getMessage());
                     }
                 } catch (IOException exc) {
+                    if (handleLocalTransportFailure(
+                            clientTurnId,
+                            localSessionId,
+                            startedMs,
+                            audioBytes.length,
+                            "response_read_failed: " + exc.getMessage(),
+                            "response_read_failure")) {
+                        return;
+                    }
                     stopTurnStatusPoll(clientTurnId);
                     JSONObject failed = baseStatus(localSessionId, startedMs, audioBytes.length);
                     Json.put(failed, "turn_id", clientTurnId);
@@ -682,6 +767,59 @@ public final class PuckyTurnController {
         }
     }
 
+    private void registerActiveResponseCall(String clientTurnId, Call call) {
+        if (clientTurnId == null || clientTurnId.isEmpty() || call == null) {
+            return;
+        }
+        synchronized (responseCallLock) {
+            activeResponseCalls.put(clientTurnId, call);
+        }
+    }
+
+    private void clearActiveResponseCall(String clientTurnId, Call call) {
+        if (clientTurnId == null || clientTurnId.isEmpty()) {
+            return;
+        }
+        synchronized (responseCallLock) {
+            if (call == null || activeResponseCalls.get(clientTurnId) == call) {
+                activeResponseCalls.remove(clientTurnId);
+            }
+        }
+    }
+
+    private Call activeResponseCall(String clientTurnId) {
+        synchronized (responseCallLock) {
+            return activeResponseCalls.get(clientTurnId);
+        }
+    }
+
+    private void noteRemoteAccepted(String clientTurnId) {
+        if (clientTurnId == null || clientTurnId.isEmpty()) {
+            return;
+        }
+        synchronized (remoteAcceptanceLock) {
+            remoteAcceptedTurnIds.add(clientTurnId);
+        }
+    }
+
+    private boolean hasRemoteAccepted(String clientTurnId) {
+        if (clientTurnId == null || clientTurnId.isEmpty()) {
+            return false;
+        }
+        synchronized (remoteAcceptanceLock) {
+            return remoteAcceptedTurnIds.contains(clientTurnId);
+        }
+    }
+
+    private void clearRemoteAccepted(String clientTurnId) {
+        if (clientTurnId == null || clientTurnId.isEmpty()) {
+            return;
+        }
+        synchronized (remoteAcceptanceLock) {
+            remoteAcceptedTurnIds.remove(clientTurnId);
+        }
+    }
+
     private void pollTurnStatus(String clientTurnId) {
         Request request = new Request.Builder()
                 .url(turnStatusUrl(clientTurnId))
@@ -705,7 +843,7 @@ public final class PuckyTurnController {
 
     private void applyRemoteTurnStatus(String clientTurnId, JSONObject remote) {
         String remoteStage = remote.optString("stage", "");
-        if (remoteStage.isEmpty() || "completed".equals(remoteStage)) {
+        if (remoteStage.isEmpty()) {
             return;
         }
         JSONObject status = lastStatus();
@@ -727,22 +865,37 @@ public final class PuckyTurnController {
         }
         Json.put(status, "codex_running", "codex_running".equals(remoteStage));
         if (isAcceptedRemoteStage(remoteStage)) {
+            noteRemoteAccepted(clientTurnId);
+            Json.put(status, "remote_accepted", true);
             JSONObject arrivalCue = playArrivalCueOnce(clientTurnId, remoteStage);
             Json.put(status, "sent_cue", arrivalCue);
             Json.put(status, "arrival_cue", arrivalCue);
             Json.put(status, "accepted_chime", arrivalCue);
             mergeArrivalCue(status, arrivalCue);
         }
+        if ("completed".equals(remoteStage)) {
+            stopTurnStatusPoll(clientTurnId);
+            if (!isLocallyRecovered(status)) {
+                Json.put(status, "reply_recovery_pending", true);
+                markStatus(preservedPendingStateAfterLocalTransportFailure(status), status, null);
+                PuckyFeedController.shared(context).syncAsync("remote_completed");
+            }
+            return;
+        }
         if ("failed".equals(remoteStage)) {
+            clearRemoteAccepted(clientTurnId);
+            clearTransportRecoveryFields(status);
             markStatus("failed", status, remote.optString("error_type", "remote_failed"));
             return;
         }
         if ("codex_running".equals(remoteStage)) {
             markStatus("codex_running", status, null);
+            maybeTriggerDebugFailAfterAccept(clientTurnId);
             return;
         }
         if ("stt_running".equals(remoteStage) || "tts_running".equals(remoteStage) || "upload_received".equals(remoteStage)) {
             markStatus(remoteStage, status, null);
+            maybeTriggerDebugFailAfterAccept(clientTurnId);
         }
     }
 
@@ -764,11 +917,30 @@ public final class PuckyTurnController {
         return base + "?turn_id=" + clientTurnId;
     }
 
+    private void maybeTriggerDebugFailAfterAccept(String clientTurnId) {
+        Call call = activeResponseCall(clientTurnId);
+        if (call == null) {
+            return;
+        }
+        synchronized (debugResponseFaultLock) {
+            if (!debugFailAfterAcceptArmed) {
+                return;
+            }
+            if (!debugFailAfterAcceptTurnId.isEmpty() && !debugFailAfterAcceptTurnId.equals(clientTurnId)) {
+                return;
+            }
+            debugFailAfterAcceptArmed = false;
+            debugFailAfterAcceptTurnId = clientTurnId;
+        }
+        Log.d(TAG, "Cancelling inline response for accepted turn " + clientTurnId + " via debug response fault");
+        call.cancel();
+    }
+
     private static boolean isRemoteTerminalStage(String stage) {
         return "completed".equals(stage) || "failed".equals(stage);
     }
 
-    private static boolean isAcceptedRemoteStage(String stage) {
+    static boolean isAcceptedRemoteStage(String stage) {
         return "upload_received".equals(stage)
                 || "stt_running".equals(stage)
                 || "codex_running".equals(stage)
@@ -794,6 +966,57 @@ public final class PuckyTurnController {
         Json.put(out, "request_audio_bytes", audioBytes);
         Json.put(out, "latency_total_ms", Math.max(0L, System.currentTimeMillis() - startedMs));
         return out;
+    }
+
+    private boolean handleLocalTransportFailure(
+            String clientTurnId,
+            String localSessionId,
+            long startedMs,
+            int audioBytes,
+            String transportError,
+            String phase) {
+        JSONObject status = statusSnapshotForTurn(clientTurnId, localSessionId);
+        if (hasRemoteAccepted(clientTurnId)) {
+            Json.put(status, "remote_accepted", true);
+        }
+        if (!shouldRetainPendingAfterLocalTransportFailure(status)) {
+            return false;
+        }
+        Json.put(status, "schema", "pucky.turn_status_item.v1");
+        Json.put(status, "turn_id", clientTurnId);
+        Json.put(status, "local_session_id", localSessionId);
+        Json.put(status, "request_audio_bytes", audioBytes);
+        Json.put(status, "latency_total_ms", Math.max(0L, System.currentTimeMillis() - startedMs));
+        Json.put(status, "remote_accepted", true);
+        Json.put(status, "reply_recovery_pending", true);
+        Json.put(status, "response_transport_error", transportError);
+        Json.put(status, "response_transport_error_at", Instant.now().toString());
+        Json.put(status, "phase", phase);
+        status.remove("error");
+        markStatus(preservedPendingStateAfterLocalTransportFailure(status), status, null);
+        PuckyFeedController.shared(context).syncAsync("accepted_transport_failure");
+        return true;
+    }
+
+    private synchronized JSONObject statusSnapshotForTurn(String turnId, String localSessionId) {
+        JSONObject last = lastStatus();
+        if (matchesTurnIdentity(last, turnId, localSessionId)) {
+            return copyJsonObject(last);
+        }
+        JSONObject record = findHistoryRecord(turnHistoryArray(), turnId, localSessionId);
+        if (record == null) {
+            JSONObject empty = new JSONObject();
+            Json.put(empty, "turn_id", turnId);
+            Json.put(empty, "local_session_id", localSessionId);
+            return empty;
+        }
+        JSONObject status = copyJsonObject(record);
+        String state = normalizedStatusState(record);
+        if (!state.isEmpty()) {
+            Json.put(status, "state", state);
+        }
+        Json.put(status, "visual_state", record.optString("latest_visual_state", visualStateFor(state)));
+        return status;
     }
 
     private void markStatus(String state, JSONObject detail, String error) {
@@ -882,7 +1105,17 @@ public final class PuckyTurnController {
         copyIfPresent(record, detail, "reply_text_chars");
         copyIfPresent(record, detail, "reply_audio_bytes");
         copyIfPresent(record, detail, "reply_audio_path");
+        copyIfPresent(record, detail, "phase");
         copyIfPresent(record, detail, "recovery_source");
+        copyIfPresent(record, detail, "reply_recovery_pending");
+        copyIfPresent(record, detail, "response_transport_error");
+        copyIfPresent(record, detail, "response_transport_error_at");
+        copyIfPresent(record, detail, "remote_accepted");
+        removeIfMissing(record, detail, "phase");
+        removeIfMissing(record, detail, "reply_recovery_pending");
+        removeIfMissing(record, detail, "response_transport_error");
+        removeIfMissing(record, detail, "response_transport_error_at");
+        removeIfMissing(record, detail, "remote_accepted");
         copyIfPresent(record, detail, "local_classifier_status");
         copyIfPresent(record, detail, "local_classifier_transcript");
         copyIfPresent(record, detail, "local_recipe_matched");
@@ -933,6 +1166,10 @@ public final class PuckyTurnController {
         copyIfPresent(event, detail, "card_id");
         copyIfPresent(event, detail, "reply_card_saved");
         copyIfPresent(event, detail, "recovery_source");
+        copyIfPresent(event, detail, "reply_recovery_pending");
+        copyIfPresent(event, detail, "response_transport_error");
+        copyIfPresent(event, detail, "response_transport_error_at");
+        copyIfPresent(event, detail, "remote_accepted");
         copyIfPresent(event, detail, "error");
         copyIfPresent(event, detail, "http_status");
         copyIfPresent(event, detail, "sent_cue");
@@ -1060,6 +1297,94 @@ public final class PuckyTurnController {
         }
     }
 
+    private static void removeIfMissing(JSONObject target, JSONObject source, String key) {
+        if (!source.has(key)) {
+            target.remove(key);
+        }
+    }
+
+    private static JSONObject copyJsonObject(JSONObject input) {
+        try {
+            return new JSONObject(input == null ? "{}" : input.toString());
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private static boolean matchesTurnIdentity(JSONObject status, String turnId, String localSessionId) {
+        if (status == null) {
+            return false;
+        }
+        String cleanTurnId = turnId == null ? "" : turnId.trim();
+        String cleanLocalSessionId = localSessionId == null ? "" : localSessionId.trim();
+        if (!cleanTurnId.isEmpty() && cleanTurnId.equals(status.optString("turn_id", "").trim())) {
+            return true;
+        }
+        if (!cleanLocalSessionId.isEmpty()) {
+            String statusSessionId = status.optString("local_session_id", status.optString("session_id", "")).trim();
+            return cleanLocalSessionId.equals(statusSessionId);
+        }
+        return false;
+    }
+
+    private static String normalizedStatusState(JSONObject status) {
+        if (status == null) {
+            return "";
+        }
+        String state = status.optString("state", "").trim();
+        if (!state.isEmpty()) {
+            return state;
+        }
+        return status.optString("latest_state", "").trim();
+    }
+
+    static boolean statusHasRemoteAcceptance(JSONObject status) {
+        if (status == null) {
+            return false;
+        }
+        if (status.optBoolean("remote_accepted", false)) {
+            return true;
+        }
+        if (isAcceptedRemoteStage(status.optString("remote_stage", "").trim())) {
+            return true;
+        }
+        return isAcceptedRemoteStage(normalizedStatusState(status));
+    }
+
+    static boolean shouldRetainPendingAfterLocalTransportFailure(JSONObject status) {
+        if (status == null || isLocallyRecovered(status)) {
+            return false;
+        }
+        String state = normalizedStatusState(status);
+        if ("failed".equals(state) || "completed".equals(state) || "speaking".equals(state)) {
+            return false;
+        }
+        return statusHasRemoteAcceptance(status);
+    }
+
+    static String preservedPendingStateAfterLocalTransportFailure(JSONObject status) {
+        String remoteStage = status == null ? "" : status.optString("remote_stage", "").trim();
+        if (isAcceptedRemoteStage(remoteStage)) {
+            return remoteStage;
+        }
+        String state = normalizedStatusState(status);
+        if (isAcceptedRemoteStage(state)) {
+            return state;
+        }
+        boolean hasTranscript = status != null && !status.optString("user_transcript", "").trim().isEmpty();
+        return hasTranscript ? "codex_running" : "upload_received";
+    }
+
+    private static void clearTransportRecoveryFields(JSONObject status) {
+        if (status == null) {
+            return;
+        }
+        status.remove("reply_recovery_pending");
+        status.remove("response_transport_error");
+        status.remove("response_transport_error_at");
+        status.remove("remote_accepted");
+    }
+
     private JSONObject lastStatus() {
         try {
             return new JSONObject(prefs.getString(LAST_STATUS, "{}"));
@@ -1124,6 +1449,8 @@ public final class PuckyTurnController {
         Json.put(recovered, "codex_running", false);
         Json.put(recovered, "tts_running", false);
         Json.put(recovered, "failed", false);
+        clearTransportRecoveryFields(recovered);
+        clearRemoteAccepted(turnId);
         recovered.remove("error");
         recovered.remove("remote_stage");
         recovered.remove("server_turn_status");
@@ -1177,6 +1504,9 @@ public final class PuckyTurnController {
         if (status == null) {
             return false;
         }
+        if (status.optBoolean("reply_recovery_pending", false)) {
+            return true;
+        }
         if (isLocallyRecovered(status)) {
             return status.optBoolean("uploading", false)
                     || status.optBoolean("stt_running", false)
@@ -1187,6 +1517,7 @@ public final class PuckyTurnController {
         }
         String state = status.optString("state", "");
         return "uploading".equals(state)
+                || "upload_received".equals(state)
                 || "stt_running".equals(state)
                 || "codex_running".equals(state)
                 || "tts_running".equals(state)

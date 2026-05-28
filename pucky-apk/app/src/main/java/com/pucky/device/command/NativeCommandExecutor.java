@@ -79,6 +79,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.turn.arrival_cue.test", "pucky.turn.sent_cue.test",
             "pucky.turn.received_cue.test", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read", "pucky.turn.debug.inject_history",
+            "pucky.turn.debug.response_fault",
             "pucky.feed.sync", "pucky.feed.action",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
@@ -427,6 +428,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.read(command.args());
             case "pucky.turn.debug.inject_history":
                 return puckyTurnController.debugInjectHistory(command.args());
+            case "pucky.turn.debug.response_fault":
+                return puckyTurnController.debugResponseFault(command.args());
             case "pucky.feed.sync":
                 return PuckyFeedController.shared(settingsStore.context()).sync(command.args());
             case "pucky.feed.action":

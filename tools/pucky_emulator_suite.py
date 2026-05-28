@@ -1103,6 +1103,21 @@ def snapshot_card_by_card_id(snapshot: dict[str, Any], card_id: str) -> dict[str
     return None
 
 
+def snapshot_card_by_turn_id(snapshot: dict[str, Any], turn_id: str) -> dict[str, Any] | None:
+    cards = snapshot.get("cards")
+    if not isinstance(cards, list):
+        return None
+    target = str(turn_id or "")
+    for item in cards:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("turn_id") or "") == target:
+            return item
+        if str(item.get("session_id") or "") == target:
+            return item
+    return None
+
+
 def dump_ui_hierarchy(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
     remote_path = "/sdcard/pucky_window_dump.xml"
     runner.run(adb_command(args, config.serial, ["shell", "uiautomator", "dump", remote_path]), timeout=30, check=False)
@@ -1814,6 +1829,19 @@ def latest_turn_record(
     return None
 
 
+def history_record_by_turn_id(history_payload: dict[str, Any] | None, turn_id: str) -> dict[str, Any] | None:
+    target = str(turn_id or "")
+    turns = history_payload.get("turns", []) if isinstance(history_payload, dict) else []
+    for item in turns:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("turn_id") or "") == target:
+            return item
+        if str(item.get("local_session_id") or "") == target:
+            return item
+    return None
+
+
 def wait_for_turn_history_record(
     args: argparse.Namespace,
     runner: Runner,
@@ -1893,6 +1921,7 @@ def configure_turn_lab_runtime(
     *,
     fake_turn: FakeTurnEndpoint | None,
     reply_mode: str,
+    relaunch: bool = True,
 ) -> dict[str, Any]:
     original_turn_url = getattr(args, "turn_url", "")
     original_turn_token = getattr(args, "turn_token", "")
@@ -1903,19 +1932,23 @@ def configure_turn_lab_runtime(
     if fake_turn is not None and fake_turn.base_url:
         port = int(fake_turn.base_url.split(":")[2].split("/")[0])
         runner.run(adb_command(args, config.serial, ["reverse", f"tcp:{port}", f"tcp:{port}"]), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
-    time.sleep(1.0 if not runner.dry_run else 0.0)
-    runner.run(launch_command(args, config), timeout=30)
-    ensure_broker_command_channel(args, runner, config, stage="turn_lab_relaunch", timeout_seconds=90)
+    if relaunch:
+        runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
+        time.sleep(1.0 if not runner.dry_run else 0.0)
+        runner.run(launch_command(args, config), timeout=30)
+        ensure_broker_command_channel(args, runner, config, stage="turn_lab_relaunch", timeout_seconds=90)
+    else:
+        ensure_broker_command_channel(args, runner, config, stage="turn_lab_existing", timeout_seconds=90)
     settings = command_result(command_json(
         runner,
         puckyctl_command(args, config, "pucky.turn.settings.set", {"reply_mode": reply_mode, "arrival_cue_mode": "chime"}),
         timeout=120,
     ))
     recipe_sync = sync_default_recipe_bundle(args, runner, config)
+    configured_turn_url = fake_turn.base_url if fake_turn is not None else str(original_turn_url or "")
     setattr(args, "turn_url", original_turn_url)
     setattr(args, "turn_token", original_turn_token)
-    return {"turn_settings": settings, "recipe_sync": recipe_sync, "turn_url": fake_turn.base_url if fake_turn is not None else ""}
+    return {"turn_settings": settings, "recipe_sync": recipe_sync, "turn_url": configured_turn_url}
 
 
 def arm_wake_turn_lab(
@@ -2518,6 +2551,254 @@ def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
         "schema": "pucky.emulator_pending_outbound_proof_result.v1",
         "ok": True,
         "config": asdict(config),
+        "evidence_path": str(evidence_path),
+        "screenshots": evidence["screenshots"],
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+
+
+def cmd_prove_accepted_timeout_recovery(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    bundle_refresh = {"ok": True, "skipped": True}
+    if not args.skip_refresh:
+        bundle_refresh = run_official_refresh(args, runner, config)
+    bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+
+    runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=None, reply_mode="card_only", relaunch=False)
+    fixtures = prepare_turn_fixtures(config)
+    remote_fixture = push_turn_fixture(args, runner, config, fixtures["wake_weather"], "accepted_timeout_recovery")
+    command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.debug.response_fault", {"clear": True}), timeout=120))
+    command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120))
+    runner.run(launch_home_command(args, config), timeout=30)
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+
+    debug_fault = command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "pucky.turn.debug.response_fault",
+                {"after_remote_accept": True, "error": "debug_forced_transport_timeout"},
+            ),
+            timeout=120,
+        )
+    )
+    started = command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "pucky.turn.start",
+                {
+                    "trigger_source": "volume_up_hold",
+                    "source": "volume_up_hold",
+                    "feedback": False,
+                    "capture_source": "fixture",
+                    "fixture_name": "accepted_timeout_recovery",
+                    "fixture_path": remote_fixture,
+                    "debug_fixture_transcript": "summarize three calm priorities for today",
+                    "fixture_start_delay_ms": 400,
+                },
+            ),
+            timeout=120,
+        )
+    )
+    turn_id = str(
+        started.get("turn_id")
+        or started.get("local_session_id")
+        or ((started.get("last_status") or {}).get("turn_id") if isinstance(started.get("last_status"), dict) else "")
+        or ""
+    ).strip()
+    if not turn_id:
+        raise SuiteError(f"Accepted-timeout proof did not return a turn id: {started}")
+    pending_card_id = f"pending_turn_{turn_id}"
+
+    wait_for_turn_status(
+        args,
+        runner,
+        config,
+        lambda status: str((status.get("last_status") or {}).get("turn_id") or "") == turn_id
+        and status.get("visual_state") == "recording",
+        timeout_seconds=10.0,
+        sleep_seconds=0.1,
+        description="accepted-timeout proof recording state",
+    )
+    stopped = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.stop", {"reason": "button_release", "feedback": False}),
+            timeout=120,
+        )
+    )
+
+    pending_history = wait_for_turn_history_record(
+        args,
+        runner,
+        config,
+        lambda _record, history_payload: (
+            isinstance(history_record_by_turn_id(history_payload, turn_id), dict)
+            and bool(history_record_by_turn_id(history_payload, turn_id).get("reply_recovery_pending"))
+            and str(history_record_by_turn_id(history_payload, turn_id).get("latest_state") or "") != "failed"
+            and "failed" not in turn_event_states(history_record_by_turn_id(history_payload, turn_id))
+        ),
+        timeout_seconds=float(args.turn_timeout_seconds),
+        sleep_seconds=0.2,
+        description="accepted turn transport recovery pending state",
+    )
+    pending_status = wait_for_turn_status(
+        args,
+        runner,
+        config,
+        lambda status: (
+            str((status.get("last_status") or {}).get("turn_id") or "") == turn_id
+            and not bool(status.get("failed"))
+            and str((status.get("last_status") or {}).get("state") or "") != "failed"
+            and (
+                bool((status.get("last_status") or {}).get("reply_recovery_pending"))
+                or str((status.get("last_status") or {}).get("phase") or "") == "reply_recovered"
+            )
+        ),
+        timeout_seconds=float(args.turn_timeout_seconds),
+        sleep_seconds=0.2,
+        description="accepted turn live status without visible failed",
+    )
+    pending_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="accepted turn pending card never appeared",
+        predicate=lambda snapshot: (
+            (
+                isinstance(snapshot_card_by_card_id(snapshot, pending_card_id), dict)
+                and snapshot_card_by_card_id(snapshot, pending_card_id).get("pending_outbound") is True
+                and str(snapshot_card_by_card_id(snapshot, pending_card_id).get("pending_label") or "") in {"Sending", "Thinking"}
+                and str(snapshot_card_by_card_id(snapshot, pending_card_id).get("pending_label") or "") != "Failed"
+            ) or (
+                isinstance(snapshot_card_by_turn_id(snapshot, turn_id), dict)
+                and not bool(snapshot_card_by_turn_id(snapshot, turn_id).get("pending_outbound"))
+            )
+        ),
+        timeout=120,
+    )
+    pending_card = snapshot_card_by_card_id(pending_snapshot, pending_card_id)
+    pending_read = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": turn_id}),
+            timeout=120,
+        )
+    )
+    pending_screenshot = Path(config.evidence_dir) / "accepted-timeout-pending.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, pending_screenshot)
+
+    recovered_history = wait_for_turn_history_record(
+        args,
+        runner,
+        config,
+        lambda _record, history_payload: (
+            isinstance(history_record_by_turn_id(history_payload, turn_id), dict)
+            and bool(history_record_by_turn_id(history_payload, turn_id).get("reply_card_saved"))
+            and str(history_record_by_turn_id(history_payload, turn_id).get("latest_state") or "") in {"completed", "speaking"}
+            and str(history_record_by_turn_id(history_payload, turn_id).get("phase") or "") == "reply_recovered"
+            and "failed" not in turn_event_states(history_record_by_turn_id(history_payload, turn_id))
+        ),
+        timeout_seconds=float(args.turn_timeout_seconds),
+        sleep_seconds=0.5,
+        description="accepted turn reply recovery completion",
+    )
+    recovered_snapshot = wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="accepted turn pending card was not replaced by the recovered reply card",
+        predicate=lambda snapshot: (
+            snapshot_card_by_card_id(snapshot, pending_card_id) is None
+            and isinstance(snapshot_card_by_turn_id(snapshot, turn_id), dict)
+            and not bool(snapshot_card_by_turn_id(snapshot, turn_id).get("pending_outbound"))
+        ),
+        timeout=120,
+    )
+    recovered_status = wait_for_turn_status(
+        args,
+        runner,
+        config,
+        lambda status: (
+            str((status.get("last_status") or {}).get("turn_id") or "") == turn_id
+            and str((status.get("last_status") or {}).get("phase") or "") == "reply_recovered"
+            and str((status.get("last_status") or {}).get("state") or "") in {"completed", "speaking"}
+        ),
+        timeout_seconds=float(args.turn_timeout_seconds),
+        sleep_seconds=0.5,
+        description="accepted turn recovered status",
+    )
+    recovered_read = command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": turn_id}),
+            timeout=120,
+        )
+    )
+    recovered_screenshot = Path(config.evidence_dir) / "accepted-timeout-recovered.png"
+    if not args.dry_run:
+        time.sleep(args.ui_dwell_seconds)
+        capture_screenshot(args, runner, config, recovered_screenshot)
+
+    command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.debug.response_fault", {"clear": True}), timeout=120))
+    history_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.history", {}), timeout=120))
+    final_snapshot = command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=120))
+    final_status = command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.status", {}), timeout=120))
+    evidence = {
+        "schema": "pucky.emulator_accepted_timeout_recovery_proof.v1",
+        "created_at": now_iso(),
+        "config": asdict(config),
+        "bundle_refresh": bundle_refresh,
+        "bundle_status": bundle_status,
+        "runtime": runtime,
+        "fixture_path": remote_fixture,
+        "debug_fault": debug_fault,
+        "started": started,
+        "stopped": stopped,
+        "pending": {
+            "history": pending_history,
+            "status": pending_status,
+            "read": pending_read,
+            "snapshot": pending_snapshot,
+            "pending_card_observed": isinstance(pending_card, dict),
+        },
+        "recovered": {
+            "history": recovered_history,
+            "status": recovered_status,
+            "read": recovered_read,
+            "snapshot": recovered_snapshot,
+        },
+        "history": history_snapshot,
+        "final_status": final_status,
+        "final_snapshot": final_snapshot,
+        "screenshots": {
+            "pending": str(pending_screenshot),
+            "recovered": str(recovered_screenshot),
+        },
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
+    evidence_path = write_evidence(config, "accepted-timeout-recovery-proof.json", evidence)
+    return {
+        "schema": "pucky.emulator_accepted_timeout_recovery_proof_result.v1",
+        "ok": True,
+        "config": asdict(config),
+        "turn_id": turn_id,
         "evidence_path": str(evidence_path),
         "screenshots": evidence["screenshots"],
         "commands": runner.planned,
@@ -3640,7 +3921,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-displayable-reply-files"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-accepted-timeout-recovery", "prove-displayable-reply-files"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -3693,6 +3974,15 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--failed-card-tap", default="528,230")
             item.add_argument("--long-press-ms", type=int, default=360)
             item.add_argument("--skip-refresh", action="store_true")
+        if name == "prove-accepted-timeout-recovery":
+            item.add_argument("--turn-url", default=os.environ.get("PUCKY_TURN_URL", DEFAULT_TURN_URL))
+            item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
+            item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
+            item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--turn-timeout-seconds", type=int, default=180)
+            item.add_argument("--refresh-timeout-seconds", type=int, default=180)
+            item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--skip-refresh", action="store_true")
         if name == "prove-displayable-reply-files":
             item.add_argument("--turn-url", default=os.environ.get("PUCKY_TURN_URL", DEFAULT_TURN_URL))
             item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
@@ -3730,6 +4020,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_prove_thread_origin(args)
     if args.command == "prove-pending-outbound-feed":
         return cmd_prove_pending_outbound_feed(args)
+    if args.command == "prove-accepted-timeout-recovery":
+        return cmd_prove_accepted_timeout_recovery(args)
     if args.command == "prove-displayable-reply-files":
         return cmd_prove_displayable_reply_files(args)
     raise SuiteError(f"Unknown command: {args.command}")
