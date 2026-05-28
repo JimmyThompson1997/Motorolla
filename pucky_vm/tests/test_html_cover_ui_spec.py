@@ -1627,6 +1627,31 @@ def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surf
     assert "clearDetailDataAttributes(panel);" in app
 
 
+def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navigation() -> None:
+    app = read("app.js")
+
+    assert 'command === "ui.surface.get"' in app
+    assert 'command === "ui.debug.goto_home"' in app
+    assert 'command === "ui.debug.back"' in app
+    assert 'command === "ui.debug.open_card_action"' in app
+    assert "function describeUiSurface()" in app
+    assert "function uiDebugDispatch(action, rawArgs = {})" in app
+    assert "function uiDebugOpenCardAction(rawArgs = {})" in app
+    assert "window.PuckyUiDebug = {" in app
+    assert "describe: describeUiSurface" in app
+    assert "dispatch: uiDebugDispatch" in app
+    assert 'route: shell?.getAttribute("data-view") || ""' in app
+    assert "detail: {" in app
+    assert "thread_scope: {" in app
+    assert "visible_cards: cards" in app
+    assert 'pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound"' in app
+    assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
+    assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app
+    assert "handleAndroidBack()" in app
+    assert '[data-route="feed"]' in app
+    assert '[data-card-action="${cssEscape(action)}"]' in app
+
+
 def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_prior_artifacts() -> None:
     app = read("app.js")
     styles = read("styles.css")
