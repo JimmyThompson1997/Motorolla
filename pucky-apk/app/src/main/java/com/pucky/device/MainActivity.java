@@ -157,6 +157,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         mainHandler.removeCallbacksAndMessages(null);
+        com.pucky.device.ui.UiAutomationController.detach(webShell);
         super.onDestroy();
     }
 
@@ -364,6 +365,7 @@ public class MainActivity extends Activity {
         webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController));
         webBridge = new PuckyWebBridge(this, webShell, replyCardStore, uiBundleController, settingsStore);
         webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
+        com.pucky.device.ui.UiAutomationController.attach(webShell);
         root.addView(webShell, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));

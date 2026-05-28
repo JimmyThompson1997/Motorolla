@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import textwrap
 import threading
@@ -23,7 +24,7 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 import wave
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from io import BytesIO
@@ -36,6 +37,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pucky_vm.attachment_manifest import normalize_attachments
+from pucky_vm.server import Config, PuckyVoiceService, make_handler, reset_broker_for_tests
 
 ANDROID_TOOLS = Path(r"C:\Users\jimmy\Desktop\Android\tools")
 DEFAULT_ANDROID_HOME = ANDROID_TOOLS / "android-sdk"
@@ -62,6 +64,32 @@ INSTALL_SERVICES_SETTLE_SECONDS = 45.0
 DISPLAYABLE_VIEWER_TYPES = {"html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"}
 NODE_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 WAKE_TURN_FIXTURE_START_DELAY_MS = 1200
+WALKIE_THREAD_LAB_RESULT_SCHEMA = "pucky.walkie_thread_lab.v1"
+WALKIE_THREAD_LAB_SCENARIOS = (
+    "transcript-continuation",
+    "page-continuation",
+    "attachment-continuation",
+    "negative-home",
+    "history-retention",
+    "final-boss-overlap",
+    "all",
+)
+WALKIE_THREAD_LAB_EVIDENCE_FILES = (
+    "home-before.png",
+    "before-send.png",
+    "pending.png",
+    "transcript-known.png",
+    "reply-complete.png",
+    "ui.surface.before.json",
+    "ui.surface.pending.json",
+    "ui.surface.transcript.json",
+    "ui.surface.final.json",
+    "voice.thread_scope.before.json",
+    "pucky.turn.history.json",
+    "ui.reply_cards.before.json",
+    "ui.reply_cards.final.json",
+    "proof.json",
+)
 
 
 class SuiteError(RuntimeError):
@@ -165,6 +193,216 @@ class FakeTurnEndpoint:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+
+
+class FixtureAwareSTT:
+    def __init__(self) -> None:
+        self.transcripts_by_hash: dict[str, str] = {}
+
+    def register(self, audio_path: Path, transcript: str) -> None:
+        self.transcripts_by_hash[file_sha256(audio_path)] = str(transcript)
+
+    def transcribe(self, audio: bytes, content_type: str) -> str:
+        digest = hashlib.sha256(audio).hexdigest()
+        return self.transcripts_by_hash.get(digest, "Unmapped fixture transcript")
+
+
+class HarnessTTS:
+    def synthesize(self, text: str) -> tuple[bytes, str]:
+        return wav_bytes(1200), "audio/wav"
+
+
+class WalkieThreadScriptedCodex:
+    ready = True
+
+    def __init__(self, *, invalid_thread_ids: set[str] | None = None) -> None:
+        self.invalid_thread_ids = set(invalid_thread_ids or set())
+        self.turn_requests: list[dict[str, Any]] = []
+        self.renamed_titles: list[dict[str, str]] = []
+        self.next_thread_number = 100
+        self.thread_id = "thread-bootstrap"
+        self.last_turn_routing = {
+            "requested_thread_id": "",
+            "used_thread_id": self.thread_id,
+            "thread_mode": "new",
+            "reused_existing_thread": False,
+            "fallback_reason": "",
+        }
+
+    def start(self) -> None:
+        return None
+
+    def send_turn(self, text: str, *, thread_id: str | None = None):
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or f"thread-{self.next_thread_number}"
+        fallback_reason = ""
+        thread_mode = "existing" if requested_thread_id else "new"
+        if requested_thread_id in self.invalid_thread_ids:
+            fallback_reason = "thread_not_found"
+            used_thread_id = f"thread-{self.next_thread_number}"
+            thread_mode = "new"
+            self.next_thread_number += 1
+        elif not requested_thread_id:
+            self.next_thread_number += 1
+        self.thread_id = used_thread_id
+        title = self._title_for(text, requested_thread_id)
+        icon = self._icon_for(text, requested_thread_id)
+        reply_text = self._reply_text_for(text, requested_thread_id, used_thread_id)
+        self.turn_requests.append(
+            {
+                "text": text,
+                "requested_thread_id": requested_thread_id,
+                "used_thread_id": used_thread_id,
+                "thread_mode": thread_mode,
+                "fallback_reason": fallback_reason,
+                "title": title,
+                "icon": icon,
+            }
+        )
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": thread_mode,
+            "reused_existing_thread": bool(requested_thread_id and thread_mode == "existing"),
+            "fallback_reason": fallback_reason,
+        }
+        return type(
+            "HarnessTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": reply_text,
+                        "card_title": title,
+                        "card_icon": icon,
+                        "html": None,
+                    }
+                ),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": thread_mode,
+                "reused_existing_thread": bool(requested_thread_id and thread_mode == "existing"),
+                "fallback_reason": fallback_reason,
+            },
+        )()
+
+    def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
+        self.renamed_titles.append({"title": title, "thread_id": str(thread_id or self.thread_id)})
+        if thread_id:
+            self.thread_id = str(thread_id)
+
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        resolved_thread_id = str(thread_id or self.thread_id)
+        title = next(
+            (item["title"] for item in reversed(self.renamed_titles) if item["thread_id"] == resolved_thread_id),
+            resolved_thread_id,
+        )
+        return {
+            "runtime": "codex",
+            "thread_id": resolved_thread_id,
+            "thread_title": title,
+            "rollout_path": f"/data/home/codex/sessions/{resolved_thread_id}.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+        }
+
+    @staticmethod
+    def _title_for(text: str, requested_thread_id: str) -> str:
+        lowered = text.lower()
+        if "alpha" in lowered:
+            return "Thread A"
+        if "bravo" in lowered or "thread b" in lowered:
+            return "Thread B"
+        if "fresh" in lowered or not requested_thread_id:
+            return "Fresh Thread"
+        if "file" in lowered:
+            return "File Revision"
+        return "Thread Continue"
+
+    @staticmethod
+    def _icon_for(text: str, requested_thread_id: str) -> str:
+        lowered = text.lower()
+        if "file" in lowered or "bravo" in lowered:
+            return "calendar"
+        if "fresh" in lowered or not requested_thread_id:
+            return "bolt"
+        return "attachment"
+
+    @staticmethod
+    def _reply_text_for(text: str, requested_thread_id: str, used_thread_id: str) -> str:
+        if requested_thread_id:
+            return f"Continued {used_thread_id}: {text}"
+        return f"Started {used_thread_id}: {text}"
+
+
+class LocalProofTurnServer:
+    def __init__(self, *, proof_reply_delay_enabled: bool = True) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="pucky-emulator-proof-")
+        self.broker = reset_broker_for_tests(str(Path(self.tmp.name) / "broker.sqlite3"))
+        self.stt = FixtureAwareSTT()
+        self.tts = HarnessTTS()
+        self.codex = WalkieThreadScriptedCodex()
+        self.service = PuckyVoiceService(
+            Config(
+                host="127.0.0.1",
+                port=0,
+                pucky_api_token="dev-token",
+                deepgram_api_key="dg",
+                deepinfra_api_key="di",
+                max_audio_bytes=1024 * 1024,
+                max_html_bytes=512 * 1024,
+                max_attachment_count=6,
+                max_attachment_bytes=8 * 1024 * 1024,
+                max_attachment_viewer_bytes=16 * 1024 * 1024,
+                tts_voice="af_heart",
+                tts_response_format="wav",
+                tts_speed=1.0,
+                codex_command=["codex", "app-server", "--listen", "stdio://"],
+                codex_cwd=None,
+                codex_startup_timeout=1.0,
+                codex_turn_timeout=1.0,
+                developer_instructions="emulator gauntlet",
+                feed_db_path=str(Path(self.tmp.name) / "feed.sqlite3"),
+                codex_sandbox="danger-full-access",
+                codex_approval_policy="never",
+                codex_model="gpt-5.5",
+                codex_reasoning_effort="high",
+                composio_api_key="",
+                composio_base_url="",
+                composio_default_user_id="",
+                connect_portal_secret="",
+                connect_portal_ttl_seconds=3600,
+                composio_default_auth_mode="browser",
+                proof_reply_delay_enabled=proof_reply_delay_enabled,
+            ),
+            stt=self.stt,
+            tts=self.tts,
+            codex=self.codex,
+        )
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}/api/turn"
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def register_fixture(self, audio_path: Path, transcript: str) -> None:
+        self.stt.register(audio_path, transcript)
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        self.service.feed.close()
+        if getattr(self.broker, "DB", None) is not None:
+            self.broker.DB.close()
+            self.broker.DB = None
+        self.broker.DEVICES.clear()
+        self.tmp.cleanup()
 
 
 def now_iso() -> str:
@@ -1413,6 +1651,10 @@ def screenshot_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def normalize_vm_sandbox(value: object) -> str:
     clean = str(value or "").strip()
     if not clean:
@@ -2046,6 +2288,146 @@ def wait_for_turn_history_record(
     raise SuiteError(f"Timed out waiting for {description}: {last}")
 
 
+def ui_surface(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, Any]:
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "ui.surface.get", {}),
+            timeout=120,
+        )
+    )
+
+
+def voice_thread_scope_status(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, Any]:
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "voice.thread_scope.get", {}),
+            timeout=120,
+        )
+    )
+
+
+def reply_cards_snapshot(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, Any]:
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "ui.reply_cards.get", {}),
+            timeout=120,
+        )
+    )
+
+
+def ui_debug_command(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    command_name: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, command_name, payload or {}),
+            timeout=120,
+        )
+    )
+
+
+def write_json_file(path: Path, payload: Any) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def visible_cards(surface: dict[str, Any] | None) -> list[dict[str, Any]]:
+    raw = surface.get("visible_cards") if isinstance(surface, dict) else []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def visible_thread_cards(surface: dict[str, Any] | None, thread_id: str) -> list[dict[str, Any]]:
+    target = str(thread_id or "")
+    return [item for item in visible_cards(surface) if str(item.get("thread_id") or "") == target]
+
+
+def visible_thread_index(surface: dict[str, Any] | None, thread_id: str) -> int:
+    target = str(thread_id or "")
+    for index, item in enumerate(visible_cards(surface)):
+        if str(item.get("thread_id") or "") == target:
+            return index
+    return -1
+
+
+def wait_for_ui_surface(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    predicate,
+    *,
+    timeout_seconds: float = 20.0,
+    sleep_seconds: float = 0.25,
+    description: str,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        last = ui_surface(args, runner, config)
+        if predicate(last):
+            return last
+        time.sleep(sleep_seconds)
+    raise SuiteError(f"Timed out waiting for {description}: {last}")
+
+
+def wait_for_turn_record(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    turn_id: str,
+    predicate,
+    *,
+    timeout_seconds: float = 30.0,
+    sleep_seconds: float = 0.25,
+    description: str,
+    limit: int = 30,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_record: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        history_payload = turn_history(args, runner, config, limit=limit)
+        last_record = history_record_by_turn_id(history_payload, turn_id)
+        if predicate(last_record, history_payload):
+            return {"record": last_record, "history": history_payload}
+        time.sleep(sleep_seconds)
+    raise SuiteError(f"Timed out waiting for {description}: {last_record}")
+
+
+def read_turn_record(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    turn_id: str,
+) -> dict[str, Any]:
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": turn_id}),
+            timeout=120,
+        )
+    )
+
+
 def turn_event_states(record: dict[str, Any] | None) -> list[str]:
     if not isinstance(record, dict):
         return []
@@ -2064,15 +2446,35 @@ def prepare_turn_fixtures(config: SlotConfig) -> dict[str, Path]:
     wake_flashlight = fixture_dir / "wake_flashlight.wav"
     wake_weather = fixture_dir / "wake_weather.wav"
     wake_silence = fixture_dir / "wake_silence.wav"
+    thread_continue = fixture_dir / "thread_continue.wav"
+    file_revise = fixture_dir / "file_revise.wav"
+    fresh_thread = fixture_dir / "fresh_thread.wav"
+    thread_bravo = fixture_dir / "thread_bravo.wav"
+    thread_alpha = fixture_dir / "thread_alpha.wav"
     if not synthesize_speech_wav(wake_flashlight, "Turn on the flashlight"):
         wake_flashlight.write_bytes(wav_bytes(1800))
     if not synthesize_speech_wav(wake_weather, "What is the weather today"):
         wake_weather.write_bytes(wav_bytes(2200))
+    if not synthesize_speech_wav(thread_continue, "Should we change these goals?"):
+        thread_continue.write_bytes(wav_bytes(2400))
+    if not synthesize_speech_wav(file_revise, "Can you revise this file?"):
+        file_revise.write_bytes(wav_bytes(2400))
+    if not synthesize_speech_wav(fresh_thread, "Fresh thread follow up"):
+        fresh_thread.write_bytes(wav_bytes(2400))
+    if not synthesize_speech_wav(thread_bravo, "Bravo thread follow up"):
+        thread_bravo.write_bytes(wav_bytes(2400))
+    if not synthesize_speech_wav(thread_alpha, "Alpha thread continue"):
+        thread_alpha.write_bytes(wav_bytes(2400))
     wake_silence.write_bytes(wav_bytes(5000, silence=True))
     return {
         "wake_flashlight": wake_flashlight,
         "wake_weather": wake_weather,
         "wake_silence": wake_silence,
+        "thread_continue": thread_continue,
+        "file_revise": file_revise,
+        "fresh_thread": fresh_thread,
+        "thread_bravo": thread_bravo,
+        "thread_alpha": thread_alpha,
     }
 
 
@@ -2135,6 +2537,140 @@ def configure_turn_lab_runtime(
     setattr(args, "turn_url", original_turn_url)
     setattr(args, "turn_token", original_turn_token)
     return {"turn_settings": settings, "recipe_sync": recipe_sync, "turn_url": configured_turn_url}
+
+
+def walkie_thread_seed_cards() -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    card_a = {
+        "turn_id": "proof-thread-a-base",
+        "session_id": "proof-thread-a-session",
+        "card_id": "pucky_card_proof_thread_a",
+        "title": "Proof HTML Dashboard",
+        "summary": "Existing dashboard thread with an older artifact-rich transcript.",
+        "icon": "bolt",
+        "accent": "#72c2ff",
+        "created_at": "2026-05-27T18:10:00Z",
+        "html_path": "/mock/pocket-computers.html",
+        "origin": {
+            "runtime": "codex",
+            "thread_id": "thread-A",
+            "thread_title": "Proof HTML Dashboard",
+            "rollout_path": "/data/home/codex/sessions/thread-A.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+        },
+        "transcript_messages": [
+            {"role": "user", "text": "Show me the latest dashboard.", "created_at": "2026-05-27T18:08:00Z"},
+            {
+                "role": "assistant",
+                "text": "Here is the current dashboard and the notes that came with it.",
+                "created_at": "2026-05-27T18:09:00Z",
+                "attachments": [
+                    {
+                        "artifact": "morning-notes.txt",
+                        "mime_type": "text/plain",
+                        "title": "Morning notes TXT",
+                        "alt": "Older assistant artifact for retention checks"
+                    }
+                ]
+            }
+        ]
+    }
+    card_b = {
+        "turn_id": "proof-thread-b-base",
+        "session_id": "proof-thread-b-session",
+        "card_id": "pucky_card_proof_thread_b",
+        "title": "Proof CSV Table",
+        "summary": "Existing file thread with a displayable attachment surface.",
+        "icon": "calendar",
+        "accent": "#50d86a",
+        "created_at": "2026-05-27T18:12:00Z",
+        "origin": {
+            "runtime": "codex",
+            "thread_id": "thread-B",
+            "thread_title": "Proof CSV Table",
+            "rollout_path": "/data/home/codex/sessions/thread-B.jsonl",
+            "source": "vscode",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+        },
+        "transcript_messages": [
+            {"role": "user", "text": "Open the table.", "created_at": "2026-05-27T18:11:00Z"},
+            {
+                "role": "assistant",
+                "text": "I attached the CSV and the rendered document preview.",
+                "created_at": "2026-05-27T18:12:00Z",
+                "attachments": [
+                    {
+                        "artifact": "morning-checklist.csv",
+                        "mime_type": "text/csv",
+                        "title": "Morning checklist CSV",
+                        "alt": "Attachment viewer proof fixture"
+                    },
+                    {
+                        "artifact": "real-master-through-chapter-8.pdf",
+                        "viewer_artifact": "real-master-through-chapter-8-pdf.html",
+                        "preview_artifact": "real-master-through-chapter-8-pdf-page-1.png",
+                        "mime_type": "application/pdf",
+                        "title": "Chapter 8 PDF",
+                        "alt": "Document viewer proof fixture"
+                    }
+                ]
+            }
+        ]
+    }
+    cards = [card_a, card_b]
+    return cards, {"thread_a": card_a, "thread_b": card_b}
+
+
+def seed_walkie_thread_cards(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, dict[str, Any]]:
+    cards, catalog = walkie_thread_seed_cards()
+    command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "ui.reply_cards.set", {"cards": cards}),
+            timeout=120,
+        )
+    )
+    return catalog
+
+
+def start_fixture_turn(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    fixture_name: str,
+    fixture_path: str,
+    proof_reply_delay_ms: int = 0,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "trigger_source": "volume_up_hold",
+        "capture_source": "fixture",
+        "fixture_name": fixture_name,
+        "fixture_path": fixture_path,
+        "auto_endpoint": True,
+        "speech_start_timeout_ms": 3000,
+        "trailing_silence_ms": 800,
+        "min_speech_ms": 180,
+        "max_duration_ms": 15000,
+        "feedback": False,
+    }
+    if proof_reply_delay_ms > 0:
+        payload["proof_reply_delay_ms"] = proof_reply_delay_ms
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.turn.start", payload),
+            timeout=120,
+        )
+    )
 
 
 def arm_wake_turn_lab(
@@ -4528,6 +5064,402 @@ def cmd_wake_lab(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def card_thread_ids(snapshot: dict[str, Any]) -> set[str]:
+    cards = snapshot.get("cards") if isinstance(snapshot.get("cards"), list) else []
+    out: set[str] = set()
+    for item in cards:
+        if not isinstance(item, dict):
+            continue
+        thread_id = str((item.get("origin") or {}).get("thread_id") or "")
+        if thread_id:
+            out.add(thread_id)
+    return out
+
+
+def capture_walkie_stage(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    scenario_dir: Path,
+    *,
+    screenshot_name: str,
+    surface_name: str,
+) -> dict[str, Any]:
+    surface = ui_surface(args, runner, config)
+    write_json_file(scenario_dir / surface_name, surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / screenshot_name)
+    return surface
+
+
+def wait_for_turn_completion_order(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    turn_ids: list[str],
+    *,
+    timeout_seconds: float = 30.0,
+    sleep_seconds: float = 0.2,
+) -> list[str]:
+    pending = list(turn_ids)
+    completed: list[str] = []
+    deadline = time.monotonic() + timeout_seconds
+    while pending and time.monotonic() < deadline:
+        history_payload = turn_history(args, runner, config, limit=40)
+        for turn_id in list(pending):
+            record = history_record_by_turn_id(history_payload, turn_id)
+            if isinstance(record, dict) and str(record.get("latest_state") or "") in {"completed", "speaking"}:
+                completed.append(turn_id)
+                pending.remove(turn_id)
+        if pending:
+            time.sleep(sleep_seconds)
+    if pending:
+        raise SuiteError(f"Timed out waiting for completion order: remaining={pending} completed={completed}")
+    return completed
+
+
+def run_continuation_scenario(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    scenario_name: str,
+    card: dict[str, Any],
+    open_action: str,
+    expected_detail_type: str,
+    expected_source_surface: str,
+    remote_fixture_path: str,
+    transcript_text: str,
+    proof_reply_delay_ms: int = 2000,
+) -> dict[str, Any]:
+    scenario_dir = Path(config.evidence_dir) / scenario_name
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    before_cards = reply_cards_snapshot(args, runner, config)
+    write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    home_before = capture_walkie_stage(
+        args, runner, config, scenario_dir,
+        screenshot_name="home-before.png",
+        surface_name="ui.surface.home-before.json",
+    )
+    ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card["session_id"], "action": open_action})
+    before_send_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: bool(surface.get("detail", {}).get("open"))
+        and str(surface.get("detail", {}).get("type") or "") == expected_detail_type,
+        description=f"{scenario_name} detail open",
+    )
+    write_json_file(scenario_dir / "ui.surface.before.json", before_send_surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
+    scope_before = voice_thread_scope_status(args, runner, config)
+    write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
+
+    started = start_fixture_turn(
+        args, runner, config,
+        fixture_name=scenario_name,
+        fixture_path=remote_fixture_path,
+        proof_reply_delay_ms=proof_reply_delay_ms,
+    )
+    turn_id = str(started.get("turn_id") or "")
+    if not turn_id:
+        raise SuiteError(f"{scenario_name} did not return a turn id")
+
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    pending_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: len(visible_thread_cards(surface, str(card["origin"]["thread_id"]))) == 1
+        and str(visible_thread_cards(surface, str(card["origin"]["thread_id"]))[0].get("kind") or "") == "pending_outbound",
+        timeout_seconds=20.0,
+        description=f"{scenario_name} pending tile",
+    )
+    write_json_file(scenario_dir / "ui.surface.pending.json", pending_surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "pending.png")
+
+    transcript_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: len(visible_thread_cards(surface, str(card["origin"]["thread_id"]))) == 1
+        and transcript_text in str(visible_thread_cards(surface, str(card["origin"]["thread_id"]))[0].get("preview") or ""),
+        timeout_seconds=20.0,
+        description=f"{scenario_name} transcript preview",
+    )
+    write_json_file(scenario_dir / "ui.surface.transcript.json", transcript_surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "transcript-known.png")
+
+    final_snapshot, final_card = wait_for_snapshot_card(args, runner, config, card_id="", turn_id=turn_id, timeout=float(args.turn_timeout_seconds))
+    write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    final_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: len(visible_thread_cards(surface, str(card["origin"]["thread_id"]))) == 1
+        and str(visible_thread_cards(surface, str(card["origin"]["thread_id"]))[0].get("kind") or "") != "pending_outbound",
+        timeout_seconds=20.0,
+        description=f"{scenario_name} final tile",
+    )
+    write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
+    write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
+    write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
+
+    thread_id = str((final_card.get("origin") or {}).get("thread_id") or "")
+    pending_card = visible_thread_cards(pending_surface, str(card["origin"]["thread_id"]))[0]
+    proof = {
+        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+        "scenario": scenario_name,
+        "passes": {
+            "scope_existing_thread": scope_before.get("mode") == "existing_thread",
+            "scope_source_surface": scope_before.get("source_surface") == expected_source_surface,
+            "thread_reused": thread_id == str(card["origin"]["thread_id"]),
+            "pending_kind": str(pending_card.get("kind") or "") == "pending_outbound",
+            "pending_placeholder": "Sending your message..." in str(pending_card.get("preview") or ""),
+            "transcript_preview": transcript_text in str(visible_thread_cards(transcript_surface, str(card["origin"]["thread_id"]))[0].get("preview") or ""),
+            "slot_preserved": visible_thread_index(home_before, str(card["origin"]["thread_id"])) == visible_thread_index(final_surface, str(card["origin"]["thread_id"])),
+            "single_visible_tile": len(visible_thread_cards(final_surface, str(card["origin"]["thread_id"]))) == 1,
+        },
+    }
+    write_json_file(scenario_dir / "proof.json", proof)
+    return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": thread_id, "proof": proof}
+
+
+def run_negative_home_scenario(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    remote_fixture_path: str,
+) -> dict[str, Any]:
+    scenario_name = "negative-home"
+    scenario_dir = Path(config.evidence_dir) / scenario_name
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    before_cards = reply_cards_snapshot(args, runner, config)
+    before_threads = card_thread_ids(before_cards)
+    write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    before_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="before-send.png", surface_name="ui.surface.before.json")
+    scope_before = voice_thread_scope_status(args, runner, config)
+    write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
+    started = start_fixture_turn(args, runner, config, fixture_name=scenario_name, fixture_path=remote_fixture_path, proof_reply_delay_ms=1000)
+    turn_id = str(started.get("turn_id") or "")
+    final_snapshot, final_card = wait_for_snapshot_card(args, runner, config, card_id="", turn_id=turn_id, timeout=float(args.turn_timeout_seconds))
+    write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
+    final_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="reply-complete.png", surface_name="ui.surface.final.json")
+    write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
+    write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    new_thread_id = str((final_card.get("origin") or {}).get("thread_id") or "")
+    proof = {
+        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+        "scenario": scenario_name,
+        "passes": {
+            "scope_new_thread": scope_before.get("mode") == "new_thread",
+            "scope_empty_thread_id": not bool(scope_before.get("thread_id")),
+            "created_fresh_thread": bool(new_thread_id) and new_thread_id not in before_threads,
+            "home_route": before_surface.get("route") == "feed",
+            "final_visible": bool(final_surface.get("visible_cards")),
+        },
+    }
+    write_json_file(scenario_dir / "proof.json", proof)
+    return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": new_thread_id, "proof": proof}
+
+
+def run_history_retention_scenario(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    card: dict[str, Any],
+    remote_fixture_path: str,
+    transcript_text: str,
+) -> dict[str, Any]:
+    scenario_name = "history-retention"
+    scenario_dir = Path(config.evidence_dir) / scenario_name
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    result = run_continuation_scenario(
+        args, runner, config,
+        scenario_name=scenario_name,
+        card=card,
+        open_action="transcript",
+        expected_detail_type="transcript",
+        expected_source_surface="thread_transcript",
+        remote_fixture_path=remote_fixture_path,
+        transcript_text=transcript_text,
+        proof_reply_delay_ms=1800,
+    )
+    final_snapshot = reply_cards_snapshot(args, runner, config)
+    final_card = snapshot_card_by_turn_id(final_snapshot, result["turn_id"])
+    if not isinstance(final_card, dict):
+        raise SuiteError("history-retention could not find final card in snapshot")
+    messages = final_card.get("transcript_messages") if isinstance(final_card.get("transcript_messages"), list) else []
+    user_message = next((item for item in reversed(messages) if isinstance(item, dict) and item.get("role") == "user"), {})
+    assistant_with_attachments = next((item for item in messages if isinstance(item, dict) and item.get("role") == "assistant" and item.get("attachments")), {})
+    ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": final_card.get("session_id") or result["turn_id"], "action": "transcript"})
+    wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="history transcript reopened")
+    ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": final_card.get("session_id") or result["turn_id"], "action": "attachment"})
+    attachment_surface = wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "attachment", description="history attachment viewer")
+    write_json_file(scenario_dir / "ui.surface.attachment.json", attachment_surface)
+    proof_path = scenario_dir / "proof.json"
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    proof["passes"].update({
+        "user_audio_chip_present": bool(user_message.get("attachments")),
+        "older_assistant_artifact_present": bool(assistant_with_attachments.get("attachments")),
+        "attachment_scope_preserved": str(attachment_surface.get("detail", {}).get("thread_id") or "") == "thread-A",
+    })
+    write_json_file(proof_path, proof)
+    result["proof"] = proof
+    return result
+
+
+def run_final_boss_overlap_scenario(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    card_a: dict[str, Any],
+    card_b: dict[str, Any],
+    remote_paths: dict[str, str],
+) -> dict[str, Any]:
+    scenario_name = "final-boss-overlap"
+    scenario_dir = Path(config.evidence_dir) / scenario_name
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="home-before.png", surface_name="ui.surface.before.json")
+
+    ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_a["session_id"], "action": "transcript"})
+    wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread A detail")
+    turn_a_id = str(start_fixture_turn(args, runner, config, fixture_name="final-boss-overlap-a", fixture_path=remote_paths["thread_alpha"], proof_reply_delay_ms=args.final_boss_delay_ms_a).get("turn_id") or "")
+
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    turn_b_id = str(start_fixture_turn(args, runner, config, fixture_name="final-boss-overlap-new", fixture_path=remote_paths["fresh_thread"], proof_reply_delay_ms=args.final_boss_delay_ms_new).get("turn_id") or "")
+
+    ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_b["session_id"], "action": "transcript"})
+    wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread B detail")
+    turn_c_id = str(start_fixture_turn(args, runner, config, fixture_name="final-boss-overlap-b", fixture_path=remote_paths["thread_bravo"], proof_reply_delay_ms=args.final_boss_delay_ms_b).get("turn_id") or "")
+
+    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    pending_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: len(visible_thread_cards(surface, "thread-A")) == 1
+        and len(visible_thread_cards(surface, "thread-B")) == 1
+        and sum(1 for item in visible_cards(surface) if str(item.get("kind") or "") == "pending_outbound") >= 3,
+        timeout_seconds=20.0,
+        description="final boss pending surfaces",
+    )
+    write_json_file(scenario_dir / "ui.surface.pending.json", pending_surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "pending.png")
+    completion_order = wait_for_turn_completion_order(args, runner, config, [turn_c_id, turn_b_id, turn_a_id], timeout_seconds=float(args.turn_timeout_seconds))
+    final_snapshot = reply_cards_snapshot(args, runner, config)
+    write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
+    final_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="reply-complete.png", surface_name="ui.surface.final.json")
+    write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=40))
+    for turn_id in (turn_a_id, turn_b_id, turn_c_id):
+        write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    card_a_final = snapshot_card_by_turn_id(final_snapshot, turn_a_id) or {}
+    card_b_final = snapshot_card_by_turn_id(final_snapshot, turn_b_id) or {}
+    card_c_final = snapshot_card_by_turn_id(final_snapshot, turn_c_id) or {}
+    proof = {
+        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+        "scenario": scenario_name,
+        "passes": {
+            "turn_a_thread": str((card_a_final.get("origin") or {}).get("thread_id") or "") == "thread-A",
+            "turn_b_new_thread": str((card_b_final.get("origin") or {}).get("thread_id") or "") not in {"", "thread-A", "thread-B"},
+            "turn_c_thread": str((card_c_final.get("origin") or {}).get("thread_id") or "") == "thread-B",
+            "pending_thread_a": len(visible_thread_cards(pending_surface, "thread-A")) == 1,
+            "pending_thread_b": len(visible_thread_cards(pending_surface, "thread-B")) == 1,
+            "pending_new_thread_present": sum(1 for item in visible_cards(pending_surface) if str(item.get("kind") or "") == "pending_outbound") >= 3,
+            "completion_order": completion_order == [turn_c_id, turn_b_id, turn_a_id],
+            "final_tiles_isolated": len(visible_thread_cards(final_surface, "thread-A")) == 1 and len(visible_thread_cards(final_surface, "thread-B")) == 1,
+        },
+        "completion_order": completion_order,
+    }
+    write_json_file(scenario_dir / "proof.json", proof)
+    return {"scenario": scenario_name, "turn_ids": {"a": turn_a_id, "b": turn_b_id, "c": turn_c_id}, "proof": proof}
+
+
+def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    if args.dry_run:
+        scenarios = list(WALKIE_THREAD_LAB_SCENARIOS[:-1]) if args.scenario == "all" else [args.scenario]
+        return {
+            "ok": True,
+            "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+            "scenario": args.scenario,
+            "config": asdict(config),
+            "results": [{"scenario": name, "planned": True, "evidence_files": WALKIE_THREAD_LAB_EVIDENCE_FILES} for name in scenarios],
+            "commands": runner.planned,
+            "dry_run": True,
+        }
+    if not args.skip_refresh:
+        run_official_refresh(args, runner, config)
+    runner.run(launch_command(args, config), timeout=30)
+    ensure_broker_command_channel(args, runner, config, stage="walkie_thread_lab", timeout_seconds=max(90, args.refresh_timeout_seconds))
+
+    proof_server = LocalProofTurnServer(proof_reply_delay_enabled=True)
+    proof_server.start()
+    fixtures = prepare_turn_fixtures(config)
+    fixture_transcripts = {
+        "thread_continue": "Should we change these goals?",
+        "file_revise": "Can you revise this file?",
+        "fresh_thread": "Fresh thread follow up",
+        "thread_bravo": "Bravo thread follow up",
+        "thread_alpha": "Alpha thread continue",
+    }
+    remote_paths: dict[str, str] = {}
+    try:
+        for name, transcript in fixture_transcripts.items():
+            proof_server.register_fixture(fixtures[name], transcript)
+            remote_paths[name] = push_turn_fixture(args, runner, config, fixtures[name], name)
+        runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=proof_server, reply_mode="card_only", relaunch=False)
+        catalog = seed_walkie_thread_cards(args, runner, config)
+        scenarios = list(WALKIE_THREAD_LAB_SCENARIOS[:-1]) if args.scenario == "all" else [args.scenario]
+        results: list[dict[str, Any]] = []
+        for scenario in scenarios:
+            if scenario == "transcript-continuation":
+                results.append(run_continuation_scenario(args, runner, config, scenario_name=scenario, card=catalog["thread_a"], open_action="transcript", expected_detail_type="transcript", expected_source_surface="thread_transcript", remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"]))
+            elif scenario == "page-continuation":
+                results.append(run_continuation_scenario(args, runner, config, scenario_name=scenario, card=catalog["thread_a"], open_action="page", expected_detail_type="page", expected_source_surface="thread_page", remote_fixture_path=remote_paths["file_revise"], transcript_text=fixture_transcripts["file_revise"]))
+            elif scenario == "attachment-continuation":
+                results.append(run_continuation_scenario(args, runner, config, scenario_name=scenario, card=catalog["thread_b"], open_action="attachment", expected_detail_type="attachment", expected_source_surface="thread_attachment", remote_fixture_path=remote_paths["file_revise"], transcript_text=fixture_transcripts["file_revise"]))
+            elif scenario == "negative-home":
+                results.append(run_negative_home_scenario(args, runner, config, remote_fixture_path=remote_paths["fresh_thread"]))
+            elif scenario == "history-retention":
+                results.append(run_history_retention_scenario(args, runner, config, card=catalog["thread_a"], remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"]))
+            elif scenario == "final-boss-overlap":
+                results.append(run_final_boss_overlap_scenario(args, runner, config, card_a=catalog["thread_a"], card_b=catalog["thread_b"], remote_paths=remote_paths))
+            else:
+                raise SuiteError(f"Unsupported scenario: {scenario}")
+        return {
+            "ok": True,
+            "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+            "scenario": args.scenario,
+            "config": asdict(config),
+            "runtime": runtime,
+            "results": results,
+            "commands": runner.planned,
+            "dry_run": args.dry_run,
+        }
+    finally:
+        proof_server.stop()
+
+
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -4589,7 +5521,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-accepted-timeout-recovery", "prove-displayable-reply-files", "prove-apk-actions"):
+    for name in (
+        "create",
+        "start",
+        "provision",
+        "seed-ui",
+        "smoke",
+        "wake-lab",
+        "stop",
+        "clean",
+        "prove-thread-origin",
+        "prove-pending-outbound-feed",
+        "prove-accepted-timeout-recovery",
+        "prove-displayable-reply-files",
+        "prove-apk-actions",
+        "walkie-thread-lab",
+    ):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -4667,6 +5614,20 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "prove-apk-actions":
             item.add_argument("--location-lat", type=float, default=37.4220)
             item.add_argument("--location-lon", type=float, default=-122.0841)
+        if name == "walkie-thread-lab":
+            item.add_argument("--scenario", choices=WALKIE_THREAD_LAB_SCENARIOS, required=True)
+            item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
+            item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--turn-timeout-seconds", type=int, default=180)
+            item.add_argument("--refresh-timeout-seconds", type=int, default=180)
+            item.add_argument("--snapshot-timeout-seconds", type=int, default=120)
+            item.add_argument("--viewer-timeout-seconds", type=int, default=30)
+            item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--final-boss-delay-ms-a", type=int, default=6000)
+            item.add_argument("--final-boss-delay-ms-new", type=int, default=3000)
+            item.add_argument("--final-boss-delay-ms-b", type=int, default=0)
+            item.add_argument("--page-surface", choices=("page", "attachment", "auto"), default="auto")
+            item.add_argument("--skip-refresh", action="store_true")
     return parser
 
 
@@ -4699,6 +5660,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_prove_displayable_reply_files(args)
     if args.command == "prove-apk-actions":
         return cmd_prove_apk_actions(args)
+    if args.command == "walkie-thread-lab":
+        return cmd_walkie_thread_lab(args)
     raise SuiteError(f"Unknown command: {args.command}")
 
 

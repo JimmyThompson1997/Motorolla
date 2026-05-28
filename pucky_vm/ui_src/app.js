@@ -597,7 +597,16 @@
       return state.wakeStatus;
     }
     if (command === "ui.surface.get") {
-      return state.uiSurface;
+      return describeUiSurface();
+    }
+    if (command === "ui.debug.goto_home") {
+      return uiDebugDispatch("goto_home", args);
+    }
+    if (command === "ui.debug.back") {
+      return uiDebugDispatch("back", args);
+    }
+    if (command === "ui.debug.open_card_action") {
+      return uiDebugDispatch("open_card_action", args);
     }
     if (command === "browser.open") {
       const url = String(args.url || "").trim();
@@ -1733,6 +1742,149 @@
       ui_version: "browser_preview",
       source_kind: "bundle_current",
       bridge_connected: Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")
+    };
+  }
+
+  function cssEscape(value) {
+    const raw = String(value || "");
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(raw);
+    }
+    return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function describeUiSurface() {
+    const shell = document.querySelector(".app-shell");
+    const threadScope = document.getElementById("threadScopeStatus");
+    const detail = document.getElementById("detail");
+    const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
+      kind: node.getAttribute("data-card-kind") || "",
+      card_id: node.getAttribute("data-card-id") || "",
+      session_id: node.getAttribute("data-card-session-id") || "",
+      thread_id: node.getAttribute("data-card-thread-id") || "",
+      pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound",
+      pending_state: node.getAttribute("data-card-pending-state") || "",
+      preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
+    }));
+    return {
+      ...state.uiSurface,
+      route: shell?.getAttribute("data-view") || "",
+      detail: {
+        open: Boolean(detail?.classList.contains("is-open")),
+        type: detail?.getAttribute("data-detail-type") || "",
+        card_id: detail?.getAttribute("data-detail-card-id") || "",
+        session_id: detail?.getAttribute("data-detail-session-id") || "",
+        thread_id: detail?.getAttribute("data-detail-thread-id") || "",
+        viewer: detail?.getAttribute("data-detail-viewer") || ""
+      },
+      thread_scope: {
+        visible: Boolean(threadScope && !threadScope.hidden),
+        active: threadScope?.getAttribute("data-thread-scope-active") || "false",
+        mode: threadScope?.getAttribute("data-thread-scope-mode") || "",
+        thread_id: threadScope?.getAttribute("data-thread-id") || "",
+        source_surface: threadScope?.getAttribute("data-source-surface") || "",
+        label: (threadScope?.textContent || "").trim()
+      },
+      visible_cards: cards,
+      ui_debug_available: true
+    };
+  }
+
+  function uiDebugDispatch(action, rawArgs = {}) {
+    if (action === "goto_home") {
+      return uiDebugGotoHome();
+    }
+    if (action === "back") {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: true,
+        action,
+        handled: handleAndroidBack(),
+        surface: describeUiSurface()
+      };
+    }
+    if (action === "open_card_action") {
+      return uiDebugOpenCardAction(rawArgs);
+    }
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: false,
+      action,
+      handled: false,
+      error: `Unsupported ui.debug action: ${action}`,
+      surface: describeUiSurface()
+    };
+  }
+
+  function uiDebugGotoHome() {
+    let handled = false;
+    for (let attempts = 0; attempts < 8; attempts += 1) {
+      const changed = handleAndroidBack();
+      handled = handled || changed;
+      if (!changed) {
+        break;
+      }
+    }
+    const tab = document.querySelector('[data-route="feed"]');
+    if (tab && state.route !== "feed") {
+      tab.click();
+      handled = true;
+    }
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: true,
+      action: "goto_home",
+      handled,
+      surface: describeUiSurface()
+    };
+  }
+
+  function uiDebugOpenCardAction(rawArgs = {}) {
+    const action = String(rawArgs.action || "transcript").trim() || "transcript";
+    const sessionId = String(rawArgs.session_id || "").trim();
+    const cardId = String(rawArgs.card_id || "").trim();
+    if (!sessionId && !cardId) {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: false,
+        action: "open_card_action",
+        handled: false,
+        error: "session_id or card_id is required",
+        surface: describeUiSurface()
+      };
+    }
+    const selector = sessionId
+      ? `[data-card-session-id="${cssEscape(sessionId)}"][data-card-action="${cssEscape(action)}"]`
+      : `[data-card-id="${cssEscape(cardId)}"][data-card-action="${cssEscape(action)}"]`;
+    let target = document.querySelector(selector);
+    if (!target && action === "attachment") {
+      const detail = document.getElementById("detail");
+      const detailSessionId = detail?.getAttribute("data-detail-session-id") || "";
+      const detailCardId = detail?.getAttribute("data-detail-card-id") || "";
+      const sameDetail = (sessionId && detailSessionId === sessionId) || (cardId && detailCardId === cardId);
+      if (sameDetail) {
+        target = detail?.querySelector(".bubble-attachment-chip");
+      }
+    }
+    if (!target || typeof target.click !== "function") {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: false,
+        action: "open_card_action",
+        handled: false,
+        selector,
+        error: `Could not find card action target for ${action}`,
+        surface: describeUiSurface()
+      };
+    }
+    target.click();
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: true,
+      action: "open_card_action",
+      handled: true,
+      selector,
+      surface: describeUiSurface()
     };
   }
 
@@ -6943,6 +7095,10 @@
   });
 
   window.PuckyHandleAndroidBack = handleAndroidBack;
+  window.PuckyUiDebug = {
+    describe: describeUiSurface,
+    dispatch: uiDebugDispatch
+  };
   installFeedRubberBand();
   installFeedScrollPersistence();
   installFeedSyncLoop();

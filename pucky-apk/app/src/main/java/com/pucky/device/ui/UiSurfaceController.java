@@ -38,6 +38,7 @@ public final class UiSurfaceController {
 
     public JSONObject status(UiBundleController bundles) {
         JSONObject bundle = bundles.status();
+        JSONObject live = UiAutomationController.describe();
         String requestedUrl = prefs.getString(REQUESTED_URL, "");
         String activeUrl = prefs.getString(ACTIVE_URL, "");
         String entrypointUrl = bundle.optString("entrypoint_url", "");
@@ -53,6 +54,12 @@ public final class UiSurfaceController {
         Json.put(out, "requested_at", prefs.getString(REQUESTED_AT, ""));
         Json.put(out, "loaded_at", prefs.getString(LOADED_AT, ""));
         Json.put(out, "bridge_connected", true);
+        Json.put(out, "route", live.optString("route", ""));
+        Json.put(out, "detail", live.optJSONObject("detail") == null ? new JSONObject() : live.optJSONObject("detail"));
+        Json.put(out, "thread_scope", live.optJSONObject("thread_scope") == null ? new JSONObject() : live.optJSONObject("thread_scope"));
+        Json.put(out, "visible_cards", live.optJSONArray("visible_cards") == null ? new org.json.JSONArray() : live.optJSONArray("visible_cards"));
+        Json.put(out, "ui_debug_available", live.optBoolean("ui_debug_available", false));
+        Json.put(out, "ui_debug_error", live.optString("error", ""));
         return out;
     }
 

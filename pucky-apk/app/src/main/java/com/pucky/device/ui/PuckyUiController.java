@@ -72,6 +72,22 @@ public final class PuckyUiController {
         return out;
     }
 
+    public JSONObject surfaceGet(UiBundleController bundles) {
+        return new UiSurfaceController(context).status(bundles);
+    }
+
+    public JSONObject debugGotoHome(JSONObject args) {
+        return UiAutomationController.dispatch("goto_home", args);
+    }
+
+    public JSONObject debugBack(JSONObject args) {
+        return UiAutomationController.dispatch("back", args);
+    }
+
+    public JSONObject debugOpenCardAction(JSONObject args) {
+        return UiAutomationController.dispatch("open_card_action", args);
+    }
+
     public JSONObject launcherCapability() {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.launcher_capability.v1");

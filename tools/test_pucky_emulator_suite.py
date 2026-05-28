@@ -404,6 +404,50 @@ def test_apk_action_recipe_bundle_includes_notification_and_location_cases() -> 
     assert "pin my location" in phrases
 
 
+def test_parser_includes_walkie_thread_lab_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "2", "--scenario", "final-boss-overlap", "--dry-run"])
+
+    assert args.command == "walkie-thread-lab"
+    assert args.slot == 2
+    assert args.scenario == "final-boss-overlap"
+    assert args.final_boss_delay_ms_a == 6000
+    assert args.final_boss_delay_ms_new == 3000
+    assert args.final_boss_delay_ms_b == 0
+    assert args.page_surface == "auto"
+    assert args.skip_refresh is False
+
+
+def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
+    assert suite.WALKIE_THREAD_LAB_RESULT_SCHEMA == "pucky.walkie_thread_lab.v1"
+    assert suite.WALKIE_THREAD_LAB_SCENARIOS == (
+        "transcript-continuation",
+        "page-continuation",
+        "attachment-continuation",
+        "negative-home",
+        "history-retention",
+        "final-boss-overlap",
+        "all",
+    )
+    assert suite.WALKIE_THREAD_LAB_EVIDENCE_FILES == (
+        "home-before.png",
+        "before-send.png",
+        "pending.png",
+        "transcript-known.png",
+        "reply-complete.png",
+        "ui.surface.before.json",
+        "ui.surface.pending.json",
+        "ui.surface.transcript.json",
+        "ui.surface.final.json",
+        "voice.thread_scope.before.json",
+        "pucky.turn.history.json",
+        "ui.reply_cards.before.json",
+        "ui.reply_cards.final.json",
+        "proof.json",
+    )
+
+
 def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
     xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">

@@ -188,8 +188,11 @@ public final class MainActivityWebViewShellTest {
         String activity = read("src/main/java/com/pucky/device/MainActivity.java");
         String client = read("src/main/java/com/pucky/device/ui/PuckyWebResourceClient.java");
         String surface = read("src/main/java/com/pucky/device/ui/UiSurfaceController.java");
+        String automation = read("src/main/java/com/pucky/device/ui/UiAutomationController.java");
 
         assertTrue(activity.contains("new UiSurfaceController(this)"));
+        assertTrue(activity.contains("UiAutomationController.attach(webShell);"));
+        assertTrue(activity.contains("UiAutomationController.detach(webShell);"));
         assertTrue(activity.contains("uiSurfaceController.recordRequested(url, uiBundleController);"));
         assertTrue(client.contains("public void onPageFinished(WebView view, String url)"));
         assertTrue(client.contains("uiSurface.recordLoaded(url, uiBundles);"));
@@ -197,6 +200,14 @@ public final class MainActivityWebViewShellTest {
         assertTrue(surface.contains("\"bundle_current\""));
         assertTrue(surface.contains("\"fallback_asset\""));
         assertTrue(surface.contains("\"legacy_placeholder\""));
+        assertTrue(surface.contains("\"route\""));
+        assertTrue(surface.contains("\"detail\""));
+        assertTrue(surface.contains("\"thread_scope\""));
+        assertTrue(surface.contains("\"visible_cards\""));
+        assertTrue(surface.contains("UiAutomationController.describe()"));
+        assertTrue(automation.contains("evaluateJavascript"));
+        assertTrue(automation.contains("window.PuckyUiDebug&&window.PuckyUiDebug.describe"));
+        assertTrue(automation.contains("window.PuckyUiDebug&&window.PuckyUiDebug.dispatch"));
     }
 
     @Test
@@ -310,14 +321,25 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
         assertTrue(source.contains("\"ui.bundle.refresh\""));
         assertTrue(source.contains("\"ui.surface.get\""));
+        assertTrue(source.contains("\"ui.debug.goto_home\""));
+        assertTrue(source.contains("\"ui.debug.back\""));
+        assertTrue(source.contains("\"ui.debug.open_card_action\""));
         assertTrue(source.contains("\"ui.shell.mode.get\""));
         assertTrue(source.contains("\"ui.shell.mode.set\""));
+        assertTrue(source.contains("uiController.surfaceGet(uiBundleController)"));
+        assertTrue(source.contains("uiController.debugGotoHome(command.args())"));
+        assertTrue(source.contains("uiController.debugBack(command.args())"));
+        assertTrue(source.contains("uiController.debugOpenCardAction(command.args())"));
         assertTrue(source.contains("uiBundleController.status()"));
         assertTrue(source.contains("uiBundleController.installDownloaded"));
         assertTrue(source.contains("uiBundleController.refresh"));
         assertTrue(source.contains("settingsStore.setUiShellMode"));
         assertTrue(intentController.contains("Intent.CATEGORY_BROWSABLE"));
         assertTrue(intentController.contains("args.optBoolean(\"require_resolvable\", false)"));
+        assertTrue(uiController.contains("public JSONObject surfaceGet(UiBundleController bundles)"));
+        assertTrue(uiController.contains("public JSONObject debugGotoHome(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject debugBack(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject debugOpenCardAction(JSONObject args)"));
     }
 
     @Test
