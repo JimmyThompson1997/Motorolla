@@ -362,6 +362,7 @@ class PuckyVoiceService:
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
         self._links_interactions: dict[str, set[str]] = {}
+        self._links_catalog_cache: tuple[str, dict[str, object]] | None = None
         self._card_icon_lock = threading.Lock()
         self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
 
@@ -531,31 +532,23 @@ class PuckyVoiceService:
             },
         }
 
-    def links_all_apps(self, token: str, *, query: str = "", offset: int = 0, limit: int = 60) -> dict[str, object]:
-        if not self.composio.configured:
-            return {"ok": False, "error": "composio_not_configured"}
-        user_id = self._resolve_links_portal_user(token)
+    def _links_catalog_snapshot(self) -> tuple[dict[str, object], str]:
         apps_payload = self.composio.list_apps()
-        my_payload = self.links_my_apps(token)
-        rows = []
-        my_counts = {
-            str(item.get("slug") or "").strip().lower(): item
-            for item in list(my_payload.get("apps") or [])
-            if isinstance(item, dict) and str(item.get("slug") or "").strip()
-        }
-        needle = str(query or "").strip().lower()
-        for item in list(apps_payload.get("apps") or []):
+        source_apps = list(apps_payload.get("apps") or [])
+        digest = hashlib.sha1(
+            json.dumps(source_apps, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:16]
+        if self._links_catalog_cache and self._links_catalog_cache[0] == digest:
+            return self._links_catalog_cache[1], f'W/"{digest}"'
+
+        rows: list[dict[str, object]] = []
+        for item in source_apps:
             if not isinstance(item, dict) or not bool(item.get("connectable")):
                 continue
             slug = str(item.get("slug") or "").strip()
             name = str(item.get("name") or slug).strip()
             if not slug:
                 continue
-            if needle and needle not in slug.lower() and needle not in name.lower():
-                continue
-            current = my_counts.get(slug.lower(), {})
-            state = str(current.get("state") or "not-connected")
-            counts = current.get("counts") if isinstance(current.get("counts"), dict) else {"total": 0, "active": 0, "pending": 0, "expired": 0}
             auth_schemes = [str(value).strip().upper() for value in list(item.get("auth_schemes") or []) if str(value).strip()]
             managed_auth_schemes = [
                 str(value).strip().upper()
@@ -567,10 +560,68 @@ class PuckyVoiceService:
                     "slug": slug,
                     "name": name,
                     "logo": str(item.get("logo") or ""),
-                    "description": str(item.get("description") or ""),
                     "auth_schemes": auth_schemes,
                     "managed_auth_schemes": managed_auth_schemes,
                     "auth_label": _links_auth_label(managed_auth_schemes, auth_schemes),
+                }
+            )
+        rows.sort(key=lambda row: str(row["name"]).lower())
+        generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        payload = {
+            "ok": True,
+            "schema": "pucky.links_catalog.v1",
+            "apps": rows,
+            "total": len(rows),
+            "generated_at": generated_at,
+            "catalog_version": digest,
+        }
+        self._links_catalog_cache = (digest, payload)
+        return payload, f'W/"{digest}"'
+
+    def links_catalog(self, token: str) -> tuple[dict[str, object], dict[str, str]]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}, {}
+        self._resolve_links_portal_user(token)
+        payload, etag = self._links_catalog_snapshot()
+        return payload, {
+            "Cache-Control": "private, max-age=600",
+            "ETag": etag,
+        }
+
+    def links_all_apps(self, token: str, *, query: str = "", offset: int = 0, limit: int = 60) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        user_id = self._resolve_links_portal_user(token)
+        catalog_payload, _ = self._links_catalog_snapshot()
+        my_payload = self.links_my_apps(token)
+        rows = []
+        my_counts = {
+            str(item.get("slug") or "").strip().lower(): item
+            for item in list(my_payload.get("apps") or [])
+            if isinstance(item, dict) and str(item.get("slug") or "").strip()
+        }
+        needle = str(query or "").strip().lower()
+        for item in list(catalog_payload.get("apps") or []):
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug") or "").strip()
+            name = str(item.get("name") or slug).strip()
+            if not slug:
+                continue
+            if needle and needle not in slug.lower() and needle not in name.lower():
+                continue
+            current = my_counts.get(slug.lower(), {})
+            state = str(current.get("state") or "not-connected")
+            counts = current.get("counts") if isinstance(current.get("counts"), dict) else {"total": 0, "active": 0, "pending": 0, "expired": 0}
+            rows.append(
+                {
+                    "slug": slug,
+                    "name": name,
+                    "logo": str(item.get("logo") or ""),
+                    "description": str(item.get("description") or ""),
+                    "auth_schemes": list(item.get("auth_schemes") or []),
+                    "managed_auth_schemes": list(item.get("managed_auth_schemes") or []),
+                    "auth_label": str(item.get("auth_label") or ""),
                     "state": state,
                     "counts": counts,
                 }
@@ -2032,6 +2083,26 @@ def make_handler(service: PuckyVoiceService):
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
                 self._json(status, payload)
                 return
+            if path == "/api/links/composio/catalog":
+                query = parse_qs(parsed.query)
+                try:
+                    payload, headers = service.links_catalog(query.get("token", [""])[0])
+                except ValueError as exc:
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
+                    return
+                etag = str(headers.get("ETag") or "")
+                if etag and self.headers.get("If-None-Match", "").strip() == etag:
+                    self.send_response(int(HTTPStatus.NOT_MODIFIED))
+                    self._cors_headers()
+                    for key, value in headers.items():
+                        if value:
+                            self.send_header(key, value)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload, headers=headers)
+                return
             if path == "/api/links/composio/all-apps":
                 query = parse_qs(parsed.query)
                 try:
@@ -2276,11 +2347,14 @@ def make_handler(service: PuckyVoiceService):
         def _is_authorized(self) -> bool:
             return bool(service.config.pucky_api_token) and self.headers.get("Authorization", "") == f"Bearer {service.config.pucky_api_token}"
 
-        def _json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+        def _json(self, status: HTTPStatus, payload: dict[str, object], *, headers: dict[str, str] | None = None) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             self.send_response(int(status))
             self._cors_headers()
             self.send_header("Content-Type", "application/json")
+            for key, value in (headers or {}).items():
+                if value:
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

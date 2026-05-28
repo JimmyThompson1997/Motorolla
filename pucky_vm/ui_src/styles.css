@@ -826,6 +826,16 @@ button {
   flex-direction: column;
 }
 
+.links-list-spacer {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.links-list-rows {
+  display: flex;
+  flex-direction: column;
+}
+
 .links-app-row {
   width: 100%;
   min-height: 62px;

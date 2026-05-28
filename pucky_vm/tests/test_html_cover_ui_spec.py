@@ -74,19 +74,17 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "linksPageView()" in app
     assert "function linksPageView()" in app
     assert 'if (state.route === "links")' in app
-    assert 'feed.replaceChildren(linksPageView());' in app
+    assert 'const page = linksPageView();' in app
+    assert 'if (feed.firstElementChild !== page || feed.childElementCount !== 1) {' in app
     assert "links-portal-frame" not in app
     assert "loadLinksPortal({ render: true });" in app
     assert '"/api/links/composio/portal-url"' in app
     assert 'state.links.token = payload.token;' in app
-    assert "const LINKS_INITIAL_PAGE_SIZE = 24;" in app
-    assert "const LINKS_REMOTE_SEARCH_MIN = 2;" in app
-    assert "const LINKS_SEARCH_DEBOUNCE_MS = 180;" in app
-    assert "const LINKS_BACKGROUND_PAGE_SIZE = 100;" not in app
-    assert "async function ensureLinksBackgroundPreload()" in app
-    assert "queueLinksPendingApps(result.appended);" in app
-    assert "Scroll for more apps." not in app
-    assert "Loading more results..." in app
+    assert "const LINKS_ROW_HEIGHT = 62;" in app
+    assert "const LINKS_WINDOW_OVERSCAN = 8;" in app
+    assert "async function loadLinksCatalog(options = {})" in app
+    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' in app
+    assert "window.location.assign(href);" not in app
     assert "Links did not return a valid auth URL." in app
     assert "Opened " not in app
     assert "linksHandoffLocked()" in app
@@ -131,6 +129,8 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "min-height: 52px" in styles
     assert "min-height: 62px" in styles
     assert "font-size: 17px" in styles
+    assert ".links-list-spacer" in styles
+    assert ".links-list-rows" in styles
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
     assert "position: sticky;" in search_wrap
@@ -167,9 +167,10 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "const queryRoute = routeQueryParam();" in app
     assert "return queryRoute;" in app
     assert '"/api/links/composio/portal-url"' in app
+    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' in app
     assert '/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}' in app
-    assert '"all_apps_page_start"' in app
-    assert '"all_apps_page_end"' in app
+    assert '"catalog_start"' in app
+    assert '"catalog_end"' in app
     assert '"full_catalog_hydrated"' not in app
     assert '"oauth_start_start"' in app
     assert '"oauth_start_end"' in app
@@ -178,23 +179,21 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert 'command: "browser.open"' in app
     assert "Browser handoff failed." in app
     assert "button.disabled = linksHandoffLocked();" in app
-    assert "search.disabled = handoffLocked;" in app
+    assert "refs.search.disabled = handoffLocked;" in app
     assert "row.disabled = handoffLocked;" in app
     assert "const connectedPromise = loadLinksConnected({ render: false })" in app
-    assert "await loadLinksAllApps({ render: false, query: state.links.catalogQuery });" in app
+    assert "await loadLinksCatalog({ render: false });" in app
     assert "if (!state.links.firstPageReady || !state.links.apps.length)" in app
     assert "state.links.totalAvailable = 0;" in app
-    assert "state.links.catalogFetchedAll = false;" in app
-    assert "state.links.loadingPage = false;" in app
-    assert "state.links.catalogQuery = String(options.query || \"\");" in app
-    assert "scheduleLinksSearchRefresh();" in app
-    assert "async function ensureLinksBackgroundPreload()" in app
+    assert "state.links.catalogVersion = \"\";" in app
+    assert "state.links.catalogGeneratedAt = \"\";" in app
+    assert "const onSearchInput = () => {" in app
     assert "noteLinksScrollActivity();" in app
-    assert "state.links.prefetching = true;" in app
-    assert "state.links.pendingApps = state.links.pendingApps.concat(items);" in app
-    assert "scheduleLinksPendingFlush();" in app
+    assert "const { startIndex, endIndex } = linksVisibleRange(filtered.length);" in app
+    assert "refs.topSpacer.style.height =" in app
+    assert "refs.bottomSpacer.style.height =" in app
     assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' in app
-    assert 'page.classList.toggle("is-handoff-lock", handoffLocked);' in app
+    assert 'linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
     assert "window.location.assign(payload.portal_url);" not in app
     assert '"/api/links/apps"' not in app
     assert '"/api/links/status"' not in app

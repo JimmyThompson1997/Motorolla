@@ -155,12 +155,9 @@
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
-  const LINKS_INITIAL_PAGE_SIZE = 24;
-  const LINKS_REMOTE_SEARCH_MIN = 2;
-  const LINKS_SEARCH_DEBOUNCE_MS = 180;
-  const LINKS_APPEND_BATCH_SIZE = 12;
-  const LINKS_APPEND_BATCH_DELAY_MS = 36;
-  const LINKS_SCROLL_SETTLE_MS = 140;
+  const LINKS_ROW_HEIGHT = 62;
+  const LINKS_WINDOW_OVERSCAN = 8;
+  const LINKS_SCROLL_SETTLE_MS = 80;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -879,7 +876,7 @@
             // Keep the list usable even if connection badges arrive later.
           });
         if (!state.links.firstPageReady || !state.links.apps.length) {
-          await loadLinksAllApps({ render: false, query: state.links.catalogQuery });
+          await loadLinksCatalog({ render: false });
         }
         void connectedPromise;
       }
@@ -889,10 +886,6 @@
       linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
     } finally {
       state.links.loading = false;
-      if (state.links.firstPageReady) {
-        void ensureLinksBackgroundPreload();
-        scheduleLinksPendingFlush();
-      }
       if (options.render !== false) {
         render();
       }
@@ -906,6 +899,15 @@
       auth_mode: String(payload && payload.auth_mode || "browser"),
       available: payload ? payload.ok !== false : false,
       error: String(payload && payload.error || "")
+    };
+  }
+
+  function normalizeLinksCatalogPayload(payload) {
+    return {
+      apps: Array.isArray(payload && payload.apps) ? payload.apps : [],
+      total: safeNumber(payload && payload.total),
+      generated_at: String(payload && payload.generated_at || ""),
+      catalog_version: String(payload && payload.catalog_version || "")
     };
   }
 
@@ -925,48 +927,34 @@
   }
 
   function resetLinksCatalogState(options = {}) {
-    clearLinksAppendTimer();
     clearLinksScrollSettleTimer();
     state.links.apps = [];
-    state.links.pendingApps = [];
-    state.links.catalogSlugs = new Set();
     if (options.clearConnected === true) {
       state.links.connectedApps = [];
       state.links.connectedSlugs = new Set();
     }
     state.links.totalAvailable = 0;
-    state.links.catalogHasMore = false;
-    state.links.catalogFetchedAll = false;
-    state.links.loadingPage = false;
-    state.links.prefetching = false;
     state.links.scrolling = false;
-    state.links.nextOffset = 0;
     state.links.lastRefreshAt = 0;
     state.links.firstPageReady = false;
-    state.links.catalogQuery = String(options.query || "");
+    state.links.catalogVersion = "";
+    state.links.catalogGeneratedAt = "";
     if (options.keepSearch !== true) {
       state.links.search = "";
     }
-    state.links.catalogRequestId += 1;
   }
 
   function linksCountLabel(filtered) {
-    const totalLoaded = Array.isArray(state.links.apps) ? state.links.apps.length : 0;
     const totalAvailable = safeNumber(state.links.totalAvailable);
-    if (totalAvailable > totalLoaded) {
-      return `${totalLoaded}/${totalAvailable}`;
+    if (totalAvailable > 0 && filtered.length !== totalAvailable) {
+      return `${filtered.length}/${totalAvailable}`;
     }
-    return filtered.length ? String(filtered.length) : "";
+    return filtered.length || totalAvailable ? String(filtered.length || totalAvailable) : "";
   }
 
   function linksFooterText(filtered) {
     if (!state.links.firstPageReady && state.links.loading) {
       return "";
-    }
-    if (state.links.loadingPage || state.links.prefetching || state.links.pendingApps.length) {
-      return state.links.catalogQuery
-        ? "Loading more results..."
-        : "Loading more apps...";
     }
     if (state.links.search && !filtered.length) {
       return "";
@@ -1208,103 +1196,14 @@
     }
   }
 
-  async function fetchLinksAllAppsPage(offset, limit, query = "") {
-    const trimmedQuery = String(query || "").trim();
-    linksDebugRecord(
-      "all_apps_page_start",
-      { offset, limit, page_index: Math.floor(offset / Math.max(1, limit)), query: trimmedQuery },
-      "route"
-    );
-    const suffix = trimmedQuery ? `&q=${encodeURIComponent(trimmedQuery)}` : "";
-    const payload = await linksApiRequest(
-      `/api/links/composio/all-apps?token=${encodeURIComponent(state.links.token)}&offset=${offset}&limit=${limit}${suffix}`
-    );
-    const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
-    linksDebugRecord(
-      "all_apps_page_end",
-      {
-        offset,
-        limit,
-        page_index: Math.floor(offset / Math.max(1, limit)),
-        count: list.length,
-        has_more: Boolean(payload && payload.has_more),
-        total_count: safeNumber(payload && payload.total),
-        query: trimmedQuery,
-        server_timing: String(payload && payload._server_timing || "")
-      },
-      "route"
-    );
-    return {
-      payload,
-      list: list.map(normalizeLinksApp).filter(item => item.slug && item.name)
-    };
-  }
-
-  function applyLinksAllAppsPage(items, payload, options = {}) {
-    const seen = state.links.catalogSlugs instanceof Set ? state.links.catalogSlugs : new Set();
-    const next = [];
-    items.forEach(app => {
-      if (!app.slug || seen.has(app.slug)) {
-        return;
-      }
-      seen.add(app.slug);
-      next.push(app);
-    });
-    state.links.catalogSlugs = seen;
-    if (next.length && options.commitVisible !== false) {
-      state.links.apps = state.links.apps.concat(next);
-    }
-    state.links.totalAvailable = Math.max(
-      safeNumber(state.links.totalAvailable),
-      safeNumber(payload && payload.total),
-      state.links.apps.length + state.links.pendingApps.length
-    );
-    state.links.catalogHasMore = Boolean(payload && payload.has_more);
-    state.links.catalogFetchedAll = !state.links.catalogHasMore;
-    state.links.nextOffset = safeNumber(payload && payload.offset) + items.length;
-    state.links.firstPageReady = state.links.firstPageReady || Boolean(options.firstPage);
-    state.links.catalogQuery = String(options.query ?? state.links.catalogQuery ?? "");
-    return next;
-  }
-
   function optionsShouldRenderLinksPage() {
     return state.route === "links";
   }
 
-  function currentLinksListElements() {
-    if (!optionsShouldRenderLinksPage()) {
-      return null;
-    }
-    const page = document.querySelector(".links-page");
-    const list = page ? page.querySelector(".links-list") : null;
-    const listCount = page ? page.querySelector(".links-list-count") : null;
-    const footer = page ? page.querySelector(".links-loading-footer") : null;
-    if (!page || !list || !listCount || !footer) {
-      return null;
-    }
-    return { page, list, listCount, footer };
-  }
-
-  function updateLinksListChrome() {
-    const refs = currentLinksListElements();
-    if (!refs) {
-      return;
-    }
-    const filtered = linksFilteredApps();
-    refs.listCount.textContent = linksCountLabel(filtered);
-    refs.footer.textContent = linksFooterText(filtered);
-    refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
-  }
-
-  let linksAppendTimer = 0;
+  let linksPageNode = null;
+  let linksPageRefs = null;
   let linksScrollSettleTimer = 0;
-
-  function clearLinksAppendTimer() {
-    if (linksAppendTimer) {
-      clearTimeout(linksAppendTimer);
-      linksAppendTimer = 0;
-    }
-  }
+  let linksScrollRaf = 0;
 
   function clearLinksScrollSettleTimer() {
     if (linksScrollSettleTimer) {
@@ -1313,226 +1212,154 @@
     }
   }
 
+  async function loadLinksCatalog(options = {}) {
+    if (!state.links.token) {
+      return;
+    }
+    linksDebugRecord("catalog_start", {}, "route");
+    const payload = normalizeLinksCatalogPayload(
+      await linksApiRequest(`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`, { cache: "default" })
+    );
+    state.links.apps = payload.apps.map(normalizeLinksApp).filter(item => item.slug && item.name);
+    state.links.totalAvailable = Math.max(payload.total, state.links.apps.length);
+    state.links.catalogVersion = payload.catalog_version;
+    state.links.catalogGeneratedAt = payload.generated_at;
+    state.links.firstPageReady = state.links.apps.length > 0 || state.links.totalAvailable === 0;
+    linksDebugRecord(
+      "catalog_end",
+      {
+        total_count: state.links.totalAvailable,
+        catalog_version: state.links.catalogVersion,
+        generated_at: state.links.catalogGeneratedAt
+      },
+      "route"
+    );
+    if (options.render) {
+      render();
+    }
+  }
+
+  function linksFeedElement() {
+    return document.getElementById("feed");
+  }
+
   function linksMatchesSearch(app, needle) {
     return String(app && app.name || "").toLowerCase().includes(needle)
       || String(app && app.slug || "").toLowerCase().includes(needle);
   }
 
-  function appendLinksRowsToActiveList(items) {
-    if (!items.length) {
-      updateLinksListChrome();
-      return;
+  function linksFilteredApps() {
+    const needle = String(state.links.search || "").trim().toLowerCase();
+    const apps = Array.isArray(state.links.apps) ? state.links.apps : [];
+    if (!needle) {
+      return apps;
     }
-    const refs = currentLinksListElements();
-    if (!refs) {
-      if (optionsShouldRenderLinksPage()) {
-        render();
-      }
-      return;
+    return apps.filter(app => linksMatchesSearch(app, needle));
+  }
+
+  function linksVisibleRange(totalCount) {
+    const feed = linksFeedElement();
+    const scrollTop = Math.max(0, safeNumber(feed && feed.scrollTop));
+    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(feed && feed.clientHeight));
+    const startIndex = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_WINDOW_OVERSCAN);
+    const endIndex = Math.min(
+      totalCount,
+      Math.max(
+        startIndex + 1,
+        Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_WINDOW_OVERSCAN
+      )
+    );
+    return { startIndex, endIndex };
+  }
+
+  function syncLinksMessage(refs) {
+    const text = state.links.error || state.links.message;
+    refs.message.hidden = !text;
+    refs.message.textContent = text;
+    refs.message.className = `links-message${state.links.messageKind === "ok" ? " is-ok" : state.links.error ? " is-error" : ""}`;
+  }
+
+  function syncLinksConnected(refs) {
+    refs.connected.hidden = !state.links.connectedApps.length;
+    refs.connectedStrip.replaceChildren(
+      ...state.links.connectedApps.map(app => el("span", "links-connected-chip", app.name || app.slug))
+    );
+  }
+
+  function syncLinksEmptyState(refs) {
+    if (state.links.loading && !state.links.firstPageReady && !state.links.apps.length) {
+      refs.empty.hidden = false;
+      refs.emptyTitle.textContent = "Loading Links...";
+      refs.emptyBody.textContent = "Pucky is fetching your connectable apps.";
+      refs.retry.hidden = true;
+      refs.searchWrap.hidden = true;
+      refs.listCard.hidden = true;
+      refs.connected.hidden = true;
+      return true;
     }
-    const filtered = linksFilteredApps();
+    if (state.links.error && !state.links.apps.length) {
+      refs.empty.hidden = false;
+      refs.emptyTitle.textContent = "Could not load Links right now.";
+      refs.emptyBody.textContent = state.links.error;
+      refs.retry.hidden = false;
+      refs.searchWrap.hidden = true;
+      refs.listCard.hidden = true;
+      refs.connected.hidden = true;
+      return true;
+    }
+    refs.empty.hidden = true;
+    refs.retry.hidden = true;
+    refs.searchWrap.hidden = false;
+    refs.listCard.hidden = false;
+    return false;
+  }
+
+  function syncLinksSearchInput(refs) {
     const handoffLocked = linksHandoffLocked();
+    refs.search.disabled = handoffLocked;
+    if (document.activeElement !== refs.search && refs.search.value !== state.links.search) {
+      refs.search.value = state.links.search;
+    }
+  }
+
+  function syncLinksListContents(refs) {
+    const filtered = linksFilteredApps();
     refs.listCount.textContent = linksCountLabel(filtered);
     refs.footer.textContent = linksFooterText(filtered);
     refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
-    if (!filtered.length || !refs.list.querySelector(".links-app-row")) {
-      renderLinksListContents(refs.list, refs.listCount, refs.footer, handoffLocked);
+    if (!filtered.length) {
+      refs.topSpacer.style.height = "0px";
+      refs.bottomSpacer.style.height = "0px";
+      refs.rows.replaceChildren(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
       return;
     }
-    const needle = String(state.links.search || "").trim().toLowerCase();
-    const remoteQueryActive = Boolean(state.links.catalogQuery) && state.links.catalogQuery === linksRequestedCatalogQuery();
-    const toAppend = items.filter(app => !needle || remoteQueryActive || linksMatchesSearch(app, needle));
-    if (!toAppend.length) {
-      return;
-    }
+    const { startIndex, endIndex } = linksVisibleRange(filtered.length);
+    refs.topSpacer.style.height = `${startIndex * LINKS_ROW_HEIGHT}px`;
+    refs.bottomSpacer.style.height = `${Math.max(0, (filtered.length - endIndex) * LINKS_ROW_HEIGHT)}px`;
+    const handoffLocked = linksHandoffLocked();
     const fragment = document.createDocumentFragment();
-    toAppend.forEach(app => {
+    filtered.slice(startIndex, endIndex).forEach(app => {
       fragment.append(createLinksRow(app, handoffLocked));
     });
-    refs.list.append(fragment);
+    refs.rows.replaceChildren(fragment);
+    if (!state.links.firstRowsTelemetrySent && (endIndex - startIndex) > 0) {
+      state.links.firstRowsTelemetrySent = true;
+      linksDebugRecord("first_rows_rendered", { rendered_rows: endIndex - startIndex }, "route");
+    }
   }
 
-  function queueLinksPendingApps(items) {
-    if (!items.length) {
-      updateLinksListChrome();
+  function syncLinksPage() {
+    if (!linksPageRefs) {
       return;
     }
-    state.links.pendingApps = state.links.pendingApps.concat(items);
-    updateLinksListChrome();
-    scheduleLinksPendingFlush();
-  }
-
-  function flushLinksPendingApps() {
-    if (!state.links.pendingApps.length || state.links.scrolling || state.route !== "links") {
-      updateLinksListChrome();
+    linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());
+    syncLinksMessage(linksPageRefs);
+    if (syncLinksEmptyState(linksPageRefs)) {
       return;
     }
-    const batch = state.links.pendingApps.splice(0, LINKS_APPEND_BATCH_SIZE);
-    if (!batch.length) {
-      updateLinksListChrome();
-      return;
-    }
-    state.links.apps = state.links.apps.concat(batch);
-    appendLinksRowsToActiveList(batch);
-    updateLinksListChrome();
-    if (state.links.pendingApps.length) {
-      scheduleLinksPendingFlush();
-    }
-  }
-
-  function scheduleLinksPendingFlush() {
-    if (linksAppendTimer || state.links.scrolling || !state.links.pendingApps.length || state.route !== "links") {
-      updateLinksListChrome();
-      return;
-    }
-    linksAppendTimer = window.setTimeout(() => {
-      linksAppendTimer = 0;
-      flushLinksPendingApps();
-    }, LINKS_APPEND_BATCH_DELAY_MS);
-  }
-
-  function suspendLinksCatalogStreaming() {
-    state.links.catalogRequestId += 1;
-    state.links.pendingApps = [];
-    state.links.loadingPage = false;
-    state.links.prefetching = false;
-    clearLinksAppendTimer();
-    updateLinksListChrome();
-  }
-
-  function linksRequestedCatalogQuery() {
-    const query = String(state.links.search || "").trim();
-    return query.length >= LINKS_REMOTE_SEARCH_MIN ? query : "";
-  }
-
-  async function loadLinksAllApps(options = {}) {
-    if (!state.links.token) {
-      return { accepted: false, appended: [] };
-    }
-    const requestId = state.links.catalogRequestId;
-    const query = String(options.query ?? state.links.catalogQuery ?? "");
-    const offset = safeNumber(options.offset);
-    const firstPage = offset <= 0;
-    const limit = safeNumber(options.limit) || LINKS_INITIAL_PAGE_SIZE;
-    const { payload, list } = await fetchLinksAllAppsPage(offset, limit, query);
-    if (state.links.catalogRequestId !== requestId) {
-      return { accepted: false, appended: [] };
-    }
-    const appended = applyLinksAllAppsPage(list, payload, {
-      firstPage,
-      query,
-      commitVisible: options.commitVisible !== false
-    });
-    if (options.render) {
-      render();
-    }
-    if (!firstPage && options.commitVisible !== false && options.appendDom !== false) {
-      appendLinksRowsToActiveList(appended);
-    }
-    return { accepted: true, appended, firstPage };
-  }
-
-  async function ensureLinksBackgroundPreload() {
-    if (!state.links.token || state.links.prefetching || !state.links.firstPageReady || !state.links.catalogHasMore || state.route !== "links") {
-      return;
-    }
-    const requestId = state.links.catalogRequestId;
-    const query = String(state.links.catalogQuery || "");
-    state.links.prefetching = true;
-    updateLinksListChrome();
-    try {
-      while (state.links.catalogRequestId === requestId && state.links.catalogQuery === query && state.links.catalogHasMore && state.route === "links") {
-        state.links.loadingPage = true;
-        updateLinksListChrome();
-        const result = await loadLinksAllApps({
-          offset: safeNumber(state.links.nextOffset),
-          limit: LINKS_INITIAL_PAGE_SIZE,
-          query,
-          commitVisible: false,
-          appendDom: false,
-          render: false
-        });
-        if (!result || result.accepted !== true) {
-          break;
-        }
-        queueLinksPendingApps(result.appended);
-      }
-    } catch (error) {
-      if (state.links.catalogRequestId !== requestId) {
-        return;
-      }
-      state.links.message = String(error && error.message ? error.message : "Could not load more apps.");
-      state.links.messageKind = "";
-    } finally {
-      if (state.links.catalogRequestId === requestId) {
-        state.links.loadingPage = false;
-        state.links.prefetching = false;
-        updateLinksListChrome();
-        if (state.links.message && optionsShouldRenderLinksPage()) {
-          render();
-        }
-        scheduleLinksPendingFlush();
-      }
-    }
-  }
-
-  let linksSearchTimer = 0;
-
-  function clearLinksSearchTimer() {
-    if (linksSearchTimer) {
-      clearTimeout(linksSearchTimer);
-      linksSearchTimer = 0;
-    }
-  }
-
-  async function refreshLinksSearchResults() {
-    if (!state.links.token || !optionsShouldRenderLinksPage()) {
-      return;
-    }
-    const requestedQuery = linksRequestedCatalogQuery();
-    if (!requestedQuery && !state.links.catalogQuery) {
-      if (optionsShouldRenderLinksPage()) {
-        render();
-      }
-      return;
-    }
-    if (requestedQuery === state.links.catalogQuery) {
-      if (optionsShouldRenderLinksPage()) {
-        render();
-      }
-      return;
-    }
-    resetLinksCatalogState({ keepSearch: true, query: requestedQuery });
-    state.links.loading = true;
-    state.links.error = "";
-    state.links.message = "";
-    state.links.messageKind = "";
-    if (optionsShouldRenderLinksPage()) {
-      render();
-    }
-    try {
-      await loadLinksAllApps({ render: false, query: requestedQuery });
-    } catch (error) {
-      state.links.error = String(error && error.message ? error.message : "Unable to search Links");
-      linksDebugRecord("handoff_error", { stage: "search", detail: state.links.error }, "route");
-    } finally {
-      state.links.loading = false;
-      if (state.links.firstPageReady) {
-        void ensureLinksBackgroundPreload();
-        scheduleLinksPendingFlush();
-      }
-      if (optionsShouldRenderLinksPage()) {
-        render();
-      }
-    }
-  }
-
-  function scheduleLinksSearchRefresh() {
-    clearLinksSearchTimer();
-    linksSearchTimer = window.setTimeout(() => {
-      linksSearchTimer = 0;
-      void refreshLinksSearchResults();
-    }, LINKS_SEARCH_DEBOUNCE_MS);
+    syncLinksConnected(linksPageRefs);
+    syncLinksSearchInput(linksPageRefs);
+    syncLinksListContents(linksPageRefs);
   }
 
   function noteLinksScrollActivity() {
@@ -1540,12 +1367,17 @@
       return;
     }
     state.links.scrolling = true;
-    clearLinksAppendTimer();
     clearLinksScrollSettleTimer();
+    if (!linksScrollRaf) {
+      linksScrollRaf = requestAnimationFrame(() => {
+        linksScrollRaf = 0;
+        syncLinksPage();
+      });
+    }
     linksScrollSettleTimer = window.setTimeout(() => {
       linksScrollSettleTimer = 0;
       state.links.scrolling = false;
-      scheduleLinksPendingFlush();
+      syncLinksPage();
     }, LINKS_SCROLL_SETTLE_MS);
   }
 
@@ -1674,7 +1506,7 @@
     const method = String(options.method || "GET").toUpperCase();
     const init = {
       method,
-      cache: "no-store",
+      cache: String(options.cache || "no-store"),
       headers: {}
     };
     if (options.body !== undefined) {
@@ -1844,24 +1676,17 @@
       token: "",
       auth_mode: "browser",
       apps: [],
-      pendingApps: [],
-      catalogSlugs: new Set(),
       connectedApps: [],
       connectedSlugs: new Set(),
       search: "",
-      catalogQuery: "",
       openingSlug: "",
       handoffLocked: false,
       handoffDeadlineAt: 0,
       firstPageReady: false,
       totalAvailable: 0,
-      catalogHasMore: false,
-      catalogFetchedAll: false,
-      loadingPage: false,
-      prefetching: false,
       scrolling: false,
-      nextOffset: 0,
-      catalogRequestId: 0,
+      catalogVersion: "",
+      catalogGeneratedAt: "",
       debugRouteSessionId: "",
       debugClickSessionId: "",
       firstRowsTelemetrySent: false,
@@ -2252,7 +2077,11 @@
       return;
     }
     if (state.route === "links") {
-      feed.replaceChildren(linksPageView());
+      const page = linksPageView();
+      if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
+        feed.replaceChildren(page);
+      }
+      syncLinksPage();
       return;
     }
     if (state.route !== "feed") {
@@ -2417,130 +2246,90 @@
   }
 
   function linksPageView() {
-    const page = el("section", "links-page");
-    const handoffLocked = linksHandoffLocked();
-    page.classList.toggle("is-handoff-lock", handoffLocked);
-
-    if (state.links.error || state.links.message) {
-      const message = el(
-        "div",
-        `links-message${state.links.messageKind === "ok" ? " is-ok" : state.links.error ? " is-error" : ""}`,
-        state.links.error || state.links.message
-      );
+    if (!linksPageRefs) {
+      const page = el("section", "links-page");
+      const message = el("div", "links-message", "");
+      message.hidden = true;
       page.append(message);
-    }
 
-    if (state.links.loading && !state.links.firstPageReady && !state.links.apps.length) {
       const empty = el("div", "links-empty", "");
-      empty.append(
-        el("strong", "", "Loading Links..."),
-        el("p", "", "Pucky is fetching your connectable apps.")
-      );
-      page.append(empty);
-      return page;
-    }
-
-    if (state.links.error && !state.links.apps.length) {
-      const empty = el("div", "links-empty", "");
-      empty.append(
-        el("strong", "", "Could not load Links right now."),
-        el("p", "", state.links.error)
-      );
+      const emptyTitle = el("strong", "", "");
+      const emptyBody = el("p", "", "");
       const retry = el("button", "links-open-button", "Retry");
       retry.type = "button";
+      retry.hidden = true;
       retry.addEventListener("click", () => {
         linksDebugStartSession("route", { reason: "force_reload" });
         linksDebugRecord("links_route_enter", { reason: "force_reload" }, "route");
         loadLinksPortal({ render: true, force: true });
       });
-      empty.append(retry);
+      empty.append(emptyTitle, emptyBody, retry);
       page.append(empty);
-      return page;
-    }
 
-    if (state.links.connectedApps.length) {
       const connected = el("section", "links-connected");
       connected.append(el("div", "links-connected-label", "Connected"));
-      const strip = el("div", "links-connected-strip");
-      state.links.connectedApps.forEach(app => {
-        const chip = el("span", "links-connected-chip", app.name || app.slug);
-        strip.append(chip);
-      });
-      connected.append(strip);
+      const connectedStrip = el("div", "links-connected-strip");
+      connected.append(connectedStrip);
       page.append(connected);
+
+      const searchWrap = el("label", "links-search-wrap");
+      searchWrap.setAttribute("for", "linksSearch");
+      const search = el("input", "links-search");
+      search.id = "linksSearch";
+      search.type = "search";
+      search.placeholder = "Search apps";
+      search.autocomplete = "off";
+      search.spellcheck = false;
+      search.value = state.links.search;
+      const onSearchInput = () => {
+        state.links.search = search.value;
+        linksDebugRecord("search_input", { search_value: state.links.search }, "route");
+        syncLinksPage();
+      };
+      search.addEventListener("input", onSearchInput);
+      search.addEventListener("search", onSearchInput);
+      searchWrap.append(search);
+      page.append(searchWrap);
+
+      const listCard = el("section", "links-list-card");
+      const listHead = el("div", "links-list-head");
+      const listLabel = el("span", "links-list-label", "All Apps");
+      const listCount = el("span", "links-list-count", "");
+      listHead.append(listLabel, listCount);
+      listCard.append(listHead);
+      const list = el("div", "links-list");
+      const topSpacer = el("div", "links-list-spacer");
+      const rows = el("div", "links-list-rows");
+      const bottomSpacer = el("div", "links-list-spacer");
+      list.append(topSpacer, rows, bottomSpacer);
+      listCard.append(list);
+      const footer = el("div", "links-loading-footer", "");
+      listCard.append(footer);
+      page.append(listCard);
+
+      linksPageRefs = {
+        page,
+        message,
+        empty,
+        emptyTitle,
+        emptyBody,
+        retry,
+        connected,
+        connectedStrip,
+        searchWrap,
+        search,
+        listCard,
+        list,
+        listCount,
+        footer,
+        topSpacer,
+        rows,
+        bottomSpacer
+      };
+      linksPageNode = page;
     }
-
-    const searchWrap = el("label", "links-search-wrap");
-    searchWrap.setAttribute("for", "linksSearch");
-    const search = el("input", "links-search");
-    search.id = "linksSearch";
-    search.type = "search";
-    search.placeholder = "Search apps";
-    search.autocomplete = "off";
-    search.spellcheck = false;
-    search.disabled = handoffLocked;
-    search.value = state.links.search;
-    searchWrap.append(search);
-    page.append(searchWrap);
-
-    const listCard = el("section", "links-list-card");
-    const listHead = el("div", "links-list-head");
-    const listLabel = el("span", "links-list-label", "All Apps");
-    const listCount = el("span", "links-list-count", "");
-    listHead.append(listLabel, listCount);
-    listCard.append(listHead);
-    const list = el("div", "links-list");
-    listCard.append(list);
-    const footer = el("div", "links-loading-footer", "");
-    listCard.append(footer);
-    page.append(listCard);
-
-    const renderList = () => {
-      renderLinksListContents(list, listCount, footer, handoffLocked);
-    };
-    search.addEventListener("input", () => {
-      state.links.search = search.value;
-      linksDebugRecord("search_input", { search_value: state.links.search }, "route");
-      const requestedQuery = linksRequestedCatalogQuery();
-      if (requestedQuery !== state.links.catalogQuery) {
-        suspendLinksCatalogStreaming();
-      }
-      if (!requestedQuery && !state.links.catalogQuery) {
-        renderList();
-        return;
-      }
-      renderList();
-      scheduleLinksSearchRefresh();
-    });
-    search.addEventListener("search", () => {
-      state.links.search = search.value;
-      linksDebugRecord("search_input", { search_value: state.links.search }, "route");
-      const requestedQuery = linksRequestedCatalogQuery();
-      if (requestedQuery !== state.links.catalogQuery) {
-        suspendLinksCatalogStreaming();
-      }
-      if (!requestedQuery && !state.links.catalogQuery) {
-        renderList();
-        return;
-      }
-      renderList();
-      scheduleLinksSearchRefresh();
-    });
-    renderList();
-    return page;
-  }
-
-  function linksFilteredApps() {
-    const needle = String(state.links.search || "").trim().toLowerCase();
-    const apps = Array.isArray(state.links.apps) ? state.links.apps : [];
-    if (!needle) {
-      return apps;
-    }
-    const remoteQueryActive = Boolean(state.links.catalogQuery) && state.links.catalogQuery === linksRequestedCatalogQuery();
-    if (remoteQueryActive) {
-      return apps;
-    }
-    return apps.filter(app => linksMatchesSearch(app, needle));
+    syncLinksPage();
+    return linksPageNode;
   }
 
   function linksAppInitial(app) {

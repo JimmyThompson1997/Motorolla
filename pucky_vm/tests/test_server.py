@@ -104,6 +104,8 @@ class FakeComposio:
         self.starts: list[dict[str, object]] = []
         self.deleted: list[tuple[str, str]] = []
         self.invalidated: list[str] = []
+        self.list_apps_calls = 0
+        self.list_connected_calls = 0
         self.apps = [
             {
                 "slug": "gmail",
@@ -184,9 +186,11 @@ class FakeComposio:
         ]
 
     def list_apps(self) -> dict[str, object]:
+        self.list_apps_calls += 1
         return {"ok": True, "apps": list(self.apps)}
 
     def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, object]:
+        self.list_connected_calls += 1
         return {"connected_apps": list(self.connected), "user_id": user_id, "force": force}
 
     def invalidate_connected_cache(self, user_id: str) -> None:
@@ -379,6 +383,32 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(linkedin["counts"]["pending"], 1)
         self.assertEqual(linkedin["counts"]["expired"], 1)
         self.assertEqual(len(linkedin["details"]), 2)
+
+    def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
+        token = self.issue_portal_token()
+        payload, headers = self.get_json_response(f"/api/links/composio/catalog?token={token}")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.links_catalog.v1")
+        self.assertEqual(payload["total"], len(payload["apps"]))
+        self.assertTrue(payload["generated_at"].endswith("Z"))
+        self.assertTrue(payload["catalog_version"])
+        self.assertEqual(headers["Cache-Control"], "private, max-age=600")
+        self.assertTrue(headers["ETag"].startswith('W/"'))
+        self.assertGreaterEqual(len(payload["apps"]), 4)
+        self.assertIn("auth_label", payload["apps"][0])
+        self.assertNotIn("state", payload["apps"][0])
+        self.assertNotIn("counts", payload["apps"][0])
+        self.assertEqual(self.composio.list_connected_calls, 0)
+
+        request = urllib.request.Request(
+            self.base_url + f"/api/links/composio/catalog?token={token}",
+            headers={"If-None-Match": headers["ETag"]},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(exc.exception.code, 304)
+        self.assertEqual(exc.exception.headers["ETag"], headers["ETag"])
 
     def test_links_all_apps_filters_search_and_hides_nonconnectable(self) -> None:
         token = self.issue_portal_token()
@@ -933,6 +963,11 @@ class ServerTests(unittest.TestCase):
         request = urllib.request.Request(self.base_url + path, headers=headers or {})
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def get_json_response(self, path: str, headers: dict[str, str] | None = None) -> tuple[dict, dict[str, str]]:
+        request = urllib.request.Request(self.base_url + path, headers=headers or {})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8")), dict(response.headers.items())
 
     def get_text(self, path: str, headers: dict[str, str] | None = None) -> str:
         request = urllib.request.Request(self.base_url + path, headers=headers or {})
