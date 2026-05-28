@@ -1560,7 +1560,6 @@ def _normalize_thread_request(
         "thread_scope_card_id": str(card_id or "").strip(),
     }
 
-
 def _normalize_proof_reply_delay_ms(value: object) -> int:
     if value is None:
         return 0

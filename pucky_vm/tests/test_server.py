@@ -408,7 +408,6 @@ class OutOfOrderCodex(FakeCodex):
             },
         )()
 
-
 def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: bool = False) -> Config:
     return Config(
         host="127.0.0.1",
@@ -971,7 +970,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(fallback["telemetry"]["thread_mode"], "new")
         self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
         self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
-
     def test_text_turn_proof_reply_delay_is_guarded_and_telemetry_visible(self) -> None:
         delayed_service = PuckyVoiceService(
             make_config(proof_reply_delay_enabled=True),

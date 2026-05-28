@@ -1532,7 +1532,6 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     assert "font-size: 11px;" in badge
     assert "text-overflow: ellipsis;" in badge
 
-
 def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:
     app = read("app.js")
 
