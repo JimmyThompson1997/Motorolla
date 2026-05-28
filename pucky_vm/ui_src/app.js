@@ -157,8 +157,10 @@
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_INITIAL_PAGE_SIZE = 24;
   const LINKS_REMOTE_SEARCH_MIN = 2;
-  const LINKS_SCROLL_LOAD_THRESHOLD_PX = 160;
   const LINKS_SEARCH_DEBOUNCE_MS = 180;
+  const LINKS_APPEND_BATCH_SIZE = 12;
+  const LINKS_APPEND_BATCH_DELAY_MS = 36;
+  const LINKS_SCROLL_SETTLE_MS = 140;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -887,6 +889,10 @@
       linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
     } finally {
       state.links.loading = false;
+      if (state.links.firstPageReady) {
+        void ensureLinksBackgroundPreload();
+        scheduleLinksPendingFlush();
+      }
       if (options.render !== false) {
         render();
       }
@@ -919,7 +925,11 @@
   }
 
   function resetLinksCatalogState(options = {}) {
+    clearLinksAppendTimer();
+    clearLinksScrollSettleTimer();
     state.links.apps = [];
+    state.links.pendingApps = [];
+    state.links.catalogSlugs = new Set();
     if (options.clearConnected === true) {
       state.links.connectedApps = [];
       state.links.connectedSlugs = new Set();
@@ -928,6 +938,8 @@
     state.links.catalogHasMore = false;
     state.links.catalogFetchedAll = false;
     state.links.loadingPage = false;
+    state.links.prefetching = false;
+    state.links.scrolling = false;
     state.links.nextOffset = 0;
     state.links.lastRefreshAt = 0;
     state.links.firstPageReady = false;
@@ -951,15 +963,10 @@
     if (!state.links.firstPageReady && state.links.loading) {
       return "";
     }
-    if (state.links.loadingPage) {
+    if (state.links.loadingPage || state.links.prefetching || state.links.pendingApps.length) {
       return state.links.catalogQuery
         ? "Loading more results..."
         : "Loading more apps...";
-    }
-    if (state.links.catalogHasMore) {
-      return state.links.catalogQuery
-        ? "Scroll for more results."
-        : "Scroll for more apps.";
     }
     if (state.links.search && !filtered.length) {
       return "";
@@ -1234,15 +1241,23 @@
   }
 
   function applyLinksAllAppsPage(items, payload, options = {}) {
-    const existing = new Set((Array.isArray(state.links.apps) ? state.links.apps : []).map(app => app.slug));
-    const next = items.filter(app => !existing.has(app.slug));
-    if (next.length) {
+    const seen = state.links.catalogSlugs instanceof Set ? state.links.catalogSlugs : new Set();
+    const next = [];
+    items.forEach(app => {
+      if (!app.slug || seen.has(app.slug)) {
+        return;
+      }
+      seen.add(app.slug);
+      next.push(app);
+    });
+    state.links.catalogSlugs = seen;
+    if (next.length && options.commitVisible !== false) {
       state.links.apps = state.links.apps.concat(next);
     }
     state.links.totalAvailable = Math.max(
       safeNumber(state.links.totalAvailable),
       safeNumber(payload && payload.total),
-      state.links.apps.length
+      state.links.apps.length + state.links.pendingApps.length
     );
     state.links.catalogHasMore = Boolean(payload && payload.has_more);
     state.links.catalogFetchedAll = !state.links.catalogHasMore;
@@ -1279,6 +1294,23 @@
     refs.listCount.textContent = linksCountLabel(filtered);
     refs.footer.textContent = linksFooterText(filtered);
     refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
+  }
+
+  let linksAppendTimer = 0;
+  let linksScrollSettleTimer = 0;
+
+  function clearLinksAppendTimer() {
+    if (linksAppendTimer) {
+      clearTimeout(linksAppendTimer);
+      linksAppendTimer = 0;
+    }
+  }
+
+  function clearLinksScrollSettleTimer() {
+    if (linksScrollSettleTimer) {
+      clearTimeout(linksScrollSettleTimer);
+      linksScrollSettleTimer = 0;
+    }
   }
 
   function linksMatchesSearch(app, needle) {
@@ -1320,6 +1352,54 @@
     refs.list.append(fragment);
   }
 
+  function queueLinksPendingApps(items) {
+    if (!items.length) {
+      updateLinksListChrome();
+      return;
+    }
+    state.links.pendingApps = state.links.pendingApps.concat(items);
+    updateLinksListChrome();
+    scheduleLinksPendingFlush();
+  }
+
+  function flushLinksPendingApps() {
+    if (!state.links.pendingApps.length || state.links.scrolling || state.route !== "links") {
+      updateLinksListChrome();
+      return;
+    }
+    const batch = state.links.pendingApps.splice(0, LINKS_APPEND_BATCH_SIZE);
+    if (!batch.length) {
+      updateLinksListChrome();
+      return;
+    }
+    state.links.apps = state.links.apps.concat(batch);
+    appendLinksRowsToActiveList(batch);
+    updateLinksListChrome();
+    if (state.links.pendingApps.length) {
+      scheduleLinksPendingFlush();
+    }
+  }
+
+  function scheduleLinksPendingFlush() {
+    if (linksAppendTimer || state.links.scrolling || !state.links.pendingApps.length || state.route !== "links") {
+      updateLinksListChrome();
+      return;
+    }
+    linksAppendTimer = window.setTimeout(() => {
+      linksAppendTimer = 0;
+      flushLinksPendingApps();
+    }, LINKS_APPEND_BATCH_DELAY_MS);
+  }
+
+  function suspendLinksCatalogStreaming() {
+    state.links.catalogRequestId += 1;
+    state.links.pendingApps = [];
+    state.links.loadingPage = false;
+    state.links.prefetching = false;
+    clearLinksAppendTimer();
+    updateLinksListChrome();
+  }
+
   function linksRequestedCatalogQuery() {
     const query = String(state.links.search || "").trim();
     return query.length >= LINKS_REMOTE_SEARCH_MIN ? query : "";
@@ -1327,7 +1407,7 @@
 
   async function loadLinksAllApps(options = {}) {
     if (!state.links.token) {
-      return;
+      return { accepted: false, appended: [] };
     }
     const requestId = state.links.catalogRequestId;
     const query = String(options.query ?? state.links.catalogQuery ?? "");
@@ -1336,32 +1416,47 @@
     const limit = safeNumber(options.limit) || LINKS_INITIAL_PAGE_SIZE;
     const { payload, list } = await fetchLinksAllAppsPage(offset, limit, query);
     if (state.links.catalogRequestId !== requestId) {
-      return;
+      return { accepted: false, appended: [] };
     }
-    const appended = applyLinksAllAppsPage(list, payload, { firstPage, query });
+    const appended = applyLinksAllAppsPage(list, payload, {
+      firstPage,
+      query,
+      commitVisible: options.commitVisible !== false
+    });
     if (options.render) {
       render();
     }
-    if (!firstPage && options.appendDom !== false) {
+    if (!firstPage && options.commitVisible !== false && options.appendDom !== false) {
       appendLinksRowsToActiveList(appended);
     }
+    return { accepted: true, appended, firstPage };
   }
 
-  async function loadMoreLinksApps() {
-    if (!state.links.token || state.links.loading || state.links.loadingPage || !state.links.catalogHasMore) {
+  async function ensureLinksBackgroundPreload() {
+    if (!state.links.token || state.links.prefetching || !state.links.firstPageReady || !state.links.catalogHasMore || state.route !== "links") {
       return;
     }
     const requestId = state.links.catalogRequestId;
-    state.links.loadingPage = true;
+    const query = String(state.links.catalogQuery || "");
+    state.links.prefetching = true;
     updateLinksListChrome();
     try {
-      await loadLinksAllApps({
-        offset: safeNumber(state.links.nextOffset),
-        limit: LINKS_INITIAL_PAGE_SIZE,
-        query: state.links.catalogQuery,
-        appendDom: true,
-        render: false
-      });
+      while (state.links.catalogRequestId === requestId && state.links.catalogQuery === query && state.links.catalogHasMore && state.route === "links") {
+        state.links.loadingPage = true;
+        updateLinksListChrome();
+        const result = await loadLinksAllApps({
+          offset: safeNumber(state.links.nextOffset),
+          limit: LINKS_INITIAL_PAGE_SIZE,
+          query,
+          commitVisible: false,
+          appendDom: false,
+          render: false
+        });
+        if (!result || result.accepted !== true) {
+          break;
+        }
+        queueLinksPendingApps(result.appended);
+      }
     } catch (error) {
       if (state.links.catalogRequestId !== requestId) {
         return;
@@ -1371,10 +1466,12 @@
     } finally {
       if (state.links.catalogRequestId === requestId) {
         state.links.loadingPage = false;
+        state.links.prefetching = false;
         updateLinksListChrome();
         if (state.links.message && optionsShouldRenderLinksPage()) {
           render();
         }
+        scheduleLinksPendingFlush();
       }
     }
   }
@@ -1420,6 +1517,10 @@
       linksDebugRecord("handoff_error", { stage: "search", detail: state.links.error }, "route");
     } finally {
       state.links.loading = false;
+      if (state.links.firstPageReady) {
+        void ensureLinksBackgroundPreload();
+        scheduleLinksPendingFlush();
+      }
       if (optionsShouldRenderLinksPage()) {
         render();
       }
@@ -1434,20 +1535,18 @@
     }, LINKS_SEARCH_DEBOUNCE_MS);
   }
 
-  function maybeLoadMoreLinksOnScroll(feed) {
-    if (!feed || state.route !== "links" || state.links.loading || state.links.loadingPage || linksHandoffLocked()) {
+  function noteLinksScrollActivity() {
+    if (state.route !== "links") {
       return;
     }
-    if (linksRequestedCatalogQuery() !== state.links.catalogQuery) {
-      return;
-    }
-    if (!state.links.firstPageReady || !state.links.catalogHasMore) {
-      return;
-    }
-    if (feed.scrollTop + feed.clientHeight < feed.scrollHeight - LINKS_SCROLL_LOAD_THRESHOLD_PX) {
-      return;
-    }
-    void loadMoreLinksApps();
+    state.links.scrolling = true;
+    clearLinksAppendTimer();
+    clearLinksScrollSettleTimer();
+    linksScrollSettleTimer = window.setTimeout(() => {
+      linksScrollSettleTimer = 0;
+      state.links.scrolling = false;
+      scheduleLinksPendingFlush();
+    }, LINKS_SCROLL_SETTLE_MS);
   }
 
   async function refreshLinksConnectedSoon(options = {}) {
@@ -1745,6 +1844,8 @@
       token: "",
       auth_mode: "browser",
       apps: [],
+      pendingApps: [],
+      catalogSlugs: new Set(),
       connectedApps: [],
       connectedSlugs: new Set(),
       search: "",
@@ -1757,6 +1858,8 @@
       catalogHasMore: false,
       catalogFetchedAll: false,
       loadingPage: false,
+      prefetching: false,
+      scrolling: false,
       nextOffset: 0,
       catalogRequestId: 0,
       debugRouteSessionId: "",
@@ -2041,7 +2144,7 @@
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
-    button.innerHTML = iconSvg(tab.icon, { filled: tab.route === state.route });
+    button.innerHTML = iconSvg(tab.icon, { filled: false });
     button.addEventListener("click", () => {
       if (linksHandoffLocked()) {
         return;
@@ -2399,6 +2502,9 @@
       state.links.search = search.value;
       linksDebugRecord("search_input", { search_value: state.links.search }, "route");
       const requestedQuery = linksRequestedCatalogQuery();
+      if (requestedQuery !== state.links.catalogQuery) {
+        suspendLinksCatalogStreaming();
+      }
       if (!requestedQuery && !state.links.catalogQuery) {
         renderList();
         return;
@@ -2409,7 +2515,11 @@
     search.addEventListener("search", () => {
       state.links.search = search.value;
       linksDebugRecord("search_input", { search_value: state.links.search }, "route");
-      if (!linksRequestedCatalogQuery() && !state.links.catalogQuery) {
+      const requestedQuery = linksRequestedCatalogQuery();
+      if (requestedQuery !== state.links.catalogQuery) {
+        suspendLinksCatalogStreaming();
+      }
+      if (!requestedQuery && !state.links.catalogQuery) {
         renderList();
         return;
       }
@@ -6156,7 +6266,7 @@
     feed.addEventListener("scroll", debounce(() => {
       rememberFeedScroll();
       persistNavState();
-      maybeLoadMoreLinksOnScroll(feed);
+      noteLinksScrollActivity();
     }, 120), { passive: true });
   }
 

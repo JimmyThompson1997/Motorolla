@@ -49,7 +49,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "function topIconSvg(" not in app
     assert "const PAGE_TABS" in app
     assert "renderTabs()" in app
-    assert "button.innerHTML = iconSvg(tab.icon" in app
+    assert 'button.innerHTML = iconSvg(tab.icon, { filled: false });' in app
     assert 'route: "feed"' in app
     assert 'icon: "mailbox"' not in app
     assert 'icon: "mail"' in app
@@ -83,8 +83,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "const LINKS_REMOTE_SEARCH_MIN = 2;" in app
     assert "const LINKS_SEARCH_DEBOUNCE_MS = 180;" in app
     assert "const LINKS_BACKGROUND_PAGE_SIZE = 100;" not in app
-    assert "streamRemainingLinksApps" not in app
-    assert "Scroll for more apps." in app
+    assert "async function ensureLinksBackgroundPreload()" in app
+    assert "queueLinksPendingApps(result.appended);" in app
+    assert "Scroll for more apps." not in app
     assert "Loading more results..." in app
     assert "Links did not return a valid auth URL." in app
     assert "Opened " not in app
@@ -132,9 +133,14 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "font-size: 17px" in styles
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
+    assert "position: sticky;" in search_wrap
+    assert "top: 0;" in search_wrap
     search_input = css_block(styles, ".links-search")
     assert "min-height: 50px;" in search_input
     assert "font-size: 17px;" in search_input
+    active_tab_icon = css_block(styles, ".tab.is-active .material-icon")
+    assert "fill: none;" in active_tab_icon
+    assert "stroke: currentColor;" in active_tab_icon
     app_row = css_block(styles, ".links-app-row")
     assert "grid-template-columns: 30px minmax(0, 1fr) auto 18px;" in app_row
     assert "padding: 0 16px;" in app_row
@@ -182,7 +188,11 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "state.links.loadingPage = false;" in app
     assert "state.links.catalogQuery = String(options.query || \"\");" in app
     assert "scheduleLinksSearchRefresh();" in app
-    assert "maybeLoadMoreLinksOnScroll(feed);" in app
+    assert "async function ensureLinksBackgroundPreload()" in app
+    assert "noteLinksScrollActivity();" in app
+    assert "state.links.prefetching = true;" in app
+    assert "state.links.pendingApps = state.links.pendingApps.concat(items);" in app
+    assert "scheduleLinksPendingFlush();" in app
     assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' in app
     assert 'page.classList.toggle("is-handoff-lock", handoffLocked);' in app
     assert "window.location.assign(payload.portal_url);" not in app
