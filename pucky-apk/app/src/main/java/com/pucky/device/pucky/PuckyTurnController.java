@@ -1958,30 +1958,6 @@ public final class PuckyTurnController {
         Json.put(target, "thread_scope_source", sourceSurface);
     }
 
-    private JSONObject voiceThreadScopeSnapshot(String triggerSource) {
-        if (!"volume_up_hold".equals(triggerSource)) {
-            return new JSONObject();
-        }
-        JSONObject scope = VoiceThreadScopeController.shared(context).get();
-        return scope == null ? new JSONObject() : scope;
-    }
-
-    private static void applyVoiceThreadScope(JSONObject target, JSONObject scope) {
-        if (target == null || scope == null) {
-            return;
-        }
-        String mode = scope.optString("mode", "new_thread");
-        String threadId = scope.optString("thread_id", "").trim();
-        String cardId = scope.optString("card_id", "").trim();
-        String sessionId = scope.optString("session_id", "").trim();
-        String sourceSurface = scope.optString("source_surface", "").trim();
-        Json.put(target, "thread_mode", "existing_thread".equals(mode) && !threadId.isEmpty() ? "existing" : "new");
-        Json.put(target, "thread_id", "existing_thread".equals(mode) ? threadId : "");
-        Json.put(target, "thread_card_id", cardId);
-        Json.put(target, "thread_session_id", sessionId);
-        Json.put(target, "thread_scope_source", sourceSurface);
-    }
-
     private void startAutoEndpointMonitor(
             String clientTurnId,
             String localSessionId,

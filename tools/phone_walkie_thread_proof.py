@@ -903,11 +903,7 @@ def run_continuation_scenario(
             raise PhoneProofError(f"{name} produced multiple visible tiles for thread {source_thread_id}")
         return {"snapshot": snapshot, "card": card_now}
 
-    try:
-        pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description=f"{name} pending sent card")
-    except PhoneProofError:
-        pending = None
-    pending_observed = pending is not None
+    pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description=f"{name} pending sent card")
     turn_status_pending = turn_status(args)
     transcript_turn = wait_for_turn_transcript(args, turn_id)
     transcript_snapshot = snapshot_cards(args)
@@ -948,19 +944,15 @@ def run_continuation_scenario(
         {
             "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
             "scope_matches_surface": str(scope_before.get("source_surface") or "") == expected_surface,
-            "pending_tile_reused_thread": not pending_observed or origin_thread_id(pending["card"]) == source_thread_id,
-            "pending_tile_kind": not pending_observed or str(pending_card.get("kind") or "") == "pending_outbound",
-            "pending_placeholder_visible": not pending_observed or "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
-            "pending_same_visible_slot": before_index >= 0 and (not pending_observed or visible_thread_index(home_after_start, source_thread_id) == before_index),
-            "pending_single_visible_tile": not pending_observed or len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
-            "pending_or_fast_reply": pending_observed or (
-                origin_thread_id(final_card) == source_thread_id
-                and bool(final_turn.get("reply_card_saved"))
-            ),
-            "transcript_preview_matches_user": bool(str(transcript_turn.get("user_transcript") or "").strip()),
+            "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
+            "pending_tile_kind": str(pending_card.get("kind") or "") == "pending_outbound",
+            "pending_placeholder_visible": "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
+            "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
+            "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
+            "transcript_preview_matches_user": str(transcript_turn.get("user_transcript") or "").strip().lower() in str(transcript_card.get("preview") or "").strip().lower(),
             "final_thread_reused": origin_thread_id(final_card) == source_thread_id,
             "final_single_visible_tile": len(thread_cards(final_snapshot, source_thread_id)) == 1,
-            "final_same_visible_slot": visible_thread_index(home_after_reply, source_thread_id) >= 0,
+            "final_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_reply, source_thread_id) == before_index,
             "no_duplicate_visible_tile": sum(1 for item in cards_from_snapshot(final_snapshot) if origin_thread_id(item) == source_thread_id) == 1,
             "reply_home_is_not_pending": str(reply_card.get("kind") or "") != "pending_outbound",
         }
@@ -980,7 +972,6 @@ def run_continuation_scenario(
         "fixture": fixture,
         "turn_start": start,
         "pending": pending,
-        "pending_observed": pending_observed,
         "turn_status_pending": turn_status_pending,
         "turn_with_transcript": transcript_turn,
         "transcript_snapshot": transcript_snapshot,
@@ -1210,6 +1201,7 @@ def run_final_boss_scenario(
     middle_thread = origin_thread_id(card_result_b or {})
     if middle_thread in {thread_a, thread_b}:
         raise PhoneProofError("Final boss middle turn reused an existing thread unexpectedly")
+    expected_order = [turn_c, turn_b, turn_a]
     checks = scenario_checks(
         {
             "scope_a_matches": str(scope_a.get("thread_id") or "") == thread_a,
@@ -1218,10 +1210,10 @@ def run_final_boss_scenario(
             "turn_a_reused_thread_a": origin_thread_id(card_result_a or {}) == thread_a,
             "turn_b_created_new_thread": middle_thread not in {thread_a, thread_b} and bool(middle_thread),
             "turn_c_reused_thread_b": origin_thread_id(card_result_c or {}) == thread_b,
-            "completion_order_out_of_order": len(completion_order) == 3,
-            "delay_a_applied": True,
-            "delay_b_applied": True,
-            "delay_c_applied": True,
+            "completion_order_out_of_order": completion_order == expected_order,
+            "delay_a_applied": int((final_a.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_a,
+            "delay_b_applied": int((final_b.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_new,
+            "delay_c_applied": int((final_c.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_b,
             "home_has_thread_a": visible_thread_index(home_after_reply, thread_a) >= 0,
             "home_has_thread_b": visible_thread_index(home_after_reply, thread_b) >= 0,
         }
