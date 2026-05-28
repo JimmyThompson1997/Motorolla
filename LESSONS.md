@@ -9,3 +9,4 @@
 - 2026-05-28 - Links virtualization must clamp its start index and reset the feed scroll on search changes; otherwise a deep scroll plus a narrow local filter can render zero rows even though matching apps exist.
 - 2026-05-27 - Scratch `prove-displayable-reply-files --skip-refresh` must install a local bundle after APK reinstall when `ui.bundle.status.ui_version` is blank, or the emulator stays on the fallback asset page and visual tile proof is invalid.
 - 2026-05-27 - `api/feed` is cursor-paginated oldest-first in this stack, so proof harnesses must follow `next_cursor` to find recent turns instead of assuming the first page contains the newest card.
+- 2026-05-28 - On the Razr cover, `adb shell screencap -d <display_id>` needs the secondary `SurfaceFlinger` display (HWC display 3 here); the primary display capture can come back as a black frame even while the cover UI is healthy.
