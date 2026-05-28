@@ -116,6 +116,12 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).history(args);
             case "pucky.turn.read":
                 return PuckyTurnController.shared(context).read(args);
+            case "voice.thread_scope.get":
+                return VoiceThreadScopeController.shared(context).get();
+            case "voice.thread_scope.set":
+                return VoiceThreadScopeController.shared(context).set(args);
+            case "voice.thread_scope.clear":
+                return VoiceThreadScopeController.shared(context).clear(args);
             case "wake.status":
                 return WakeWordController.shared(context).status();
             case "wake.config.set":

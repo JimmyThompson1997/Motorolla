@@ -20,6 +20,7 @@ import sys
 thread_count = 0
 turn_count = 0
 capture_path = os.environ.get("CAPTURE_PATH", "")
+invalid_thread_id = os.environ.get("INVALID_THREAD_ID", "")
 
 def record(message):
     if not capture_path:
@@ -48,8 +49,11 @@ for line in sys.stdin:
     elif method == "thread/name/set":
         send({"id": request_id, "result": {"ok": True}})
     elif method == "turn/start":
-        turn_count += 1
         thread_id = message.get("params", {}).get("threadId", "")
+        if invalid_thread_id and thread_id == invalid_thread_id:
+            send({"id": request_id, "error": {"code": -32004, "message": "thread_not_found"}})
+            continue
+        turn_count += 1
         turn_id = "turn-" + str(turn_count)
         text = "Hello back " + str(turn_count)
         send({"id": request_id, "result": {"turn": {"id": turn_id}}})
@@ -93,10 +97,14 @@ class CodexAppServerClientTests(unittest.TestCase):
                 client.start()
                 self.assertTrue(client.ready)
                 self.assertIsNone(client.thread_id)
-                self.assertEqual(client.send_turn("Pucky test"), "Hello back 1")
+                first = client.send_turn("Pucky test")
+                self.assertEqual(first.reply_text, "Hello back 1")
+                self.assertEqual(first.used_thread_id, "thread-1")
                 self.assertEqual(client.thread_id, "thread-1")
-                client.set_thread_title("Quick Help")
-                self.assertEqual(client.send_turn("Pucky again"), "Hello back 2")
+                client.set_thread_title("Quick Help", thread_id=first.used_thread_id)
+                second = client.send_turn("Pucky again")
+                self.assertEqual(second.reply_text, "Hello back 2")
+                self.assertEqual(second.used_thread_id, "thread-2")
                 self.assertEqual(client.thread_id, "thread-2")
             finally:
                 client.close()
@@ -117,6 +125,49 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(turn_start["params"]["outputSchema"]["type"], "object")
             self.assertEqual(turn_start["params"]["input"][0]["text"], "Pucky test")
             self.assertEqual(rename["params"], {"threadId": "thread-1", "name": "Quick Help"})
+
+    def test_client_reuses_requested_thread_and_falls_back_once_on_rejected_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            env["INVALID_THREAD_ID"] = "thread-invalid"
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                reused = client.send_turn("Continue please", thread_id="thread-existing")
+                self.assertEqual(reused.reply_text, "Hello back 1")
+                self.assertEqual(reused.used_thread_id, "thread-existing")
+                self.assertEqual(reused.requested_thread_id, "thread-existing")
+                self.assertEqual(reused.thread_mode, "existing")
+                self.assertFalse(reused.fallback_reason)
+
+                fallback = client.send_turn("Try fallback", thread_id="thread-invalid")
+                self.assertEqual(fallback.reply_text, "Hello back 2")
+                self.assertEqual(fallback.requested_thread_id, "thread-invalid")
+                self.assertEqual(fallback.thread_mode, "new")
+                self.assertEqual(fallback.used_thread_id, "thread-1")
+                self.assertIn("thread_not_found", fallback.fallback_reason)
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            messages = capture_messages(capture)
+            methods = [str(msg.get("method")) for msg in messages if msg.get("method")]
+            self.assertEqual(methods.count("thread/start"), 1)
+            turn_starts = [msg for msg in messages if msg.get("method") == "turn/start"]
+            self.assertEqual(turn_starts[0]["params"]["threadId"], "thread-existing")
+            self.assertEqual(turn_starts[1]["params"]["threadId"], "thread-invalid")
+            self.assertEqual(turn_starts[2]["params"]["threadId"], "thread-1")
 
     def test_thread_origin_reads_metadata_from_local_codex_state_db(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

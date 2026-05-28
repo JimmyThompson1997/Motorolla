@@ -20,7 +20,7 @@ from typing import Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .attachment_manifest import normalize_attachment
-from .codex_app_server import CodexAppServerClient, command_from_env
+from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
 from .providers import DeepgramSTT, KokoroTTS
@@ -111,11 +111,14 @@ class CodexProvider(Protocol):
 
     def start(self) -> None: ...
 
-    def send_turn(self, text: str) -> str: ...
+    @property
+    def last_turn_routing(self) -> dict[str, str | bool]: ...
 
-    def set_thread_title(self, title: str) -> None: ...
+    def send_turn(self, text: str, *, thread_id: str | None = None) -> CodexTurnResult: ...
 
-    def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
+    def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None: ...
+
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
 
 
 class ComposioProvider(Protocol):
@@ -796,6 +799,11 @@ class PuckyVoiceService:
         content_type: str,
         turn_id: str | None = None,
         reply_mode: str | None = None,
+        *,
+        thread_mode: str | None = None,
+        thread_id: str | None = None,
+        thread_scope_source: str | None = None,
+        thread_card_id: str | None = None,
     ) -> dict[str, object]:
         if not audio:
             raise ValueError("audio body is empty")
@@ -820,41 +828,54 @@ class PuckyVoiceService:
             "tts_speed": getattr(self.tts, "speed", ""),
             "stage": "upload_received",
         }
+        thread_request = _normalize_thread_request(
+            mode=thread_mode,
+            thread_id=thread_id,
+            source=thread_scope_source,
+            card_id=thread_card_id,
+        )
+        telemetry.update(thread_request)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
-        with self._turn_lock:
-            try:
-                telemetry["stage"] = "stt_running"
-                telemetry["stt_start_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "stt_running", "running", telemetry)
-                start = time.perf_counter()
-                transcript = self.stt.transcribe(audio, content_type)
-                telemetry["stt_ms"] = _elapsed_ms(start)
-                telemetry["stt_end_ms"] = _elapsed_ms(total_start)
-                telemetry["transcript_chars"] = len(transcript)
-                telemetry["user_transcript"] = transcript
-                return self._handle_transcript_turn(
-                    turn_id=turn_id,
-                    session_id=session_id,
-                    reply_mode=reply_mode,
-                    transcript=transcript,
-                    telemetry=telemetry,
-                    total_start=total_start,
-                )
-            except Exception as exc:
-                telemetry["event"] = "pucky.turn.failed"
-                telemetry["status"] = "failed"
-                telemetry["stage"] = str(telemetry.get("stage") or "stt_running")
-                telemetry["error_type"] = exc.__class__.__name__
-                telemetry["total_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "failed", "failed", telemetry)
-                _log_json(telemetry)
-                raise
+        try:
+            telemetry["stage"] = "stt_running"
+            telemetry["stt_start_ms"] = _elapsed_ms(total_start)
+            self._update_turn_status(turn_id, "stt_running", "running", telemetry)
+            start = time.perf_counter()
+            transcript = self.stt.transcribe(audio, content_type)
+            telemetry["stt_ms"] = _elapsed_ms(start)
+            telemetry["stt_end_ms"] = _elapsed_ms(total_start)
+            telemetry["transcript_chars"] = len(transcript)
+            telemetry["user_transcript"] = transcript
+            return self._handle_transcript_turn(
+                turn_id=turn_id,
+                session_id=session_id,
+                reply_mode=reply_mode,
+                transcript=transcript,
+                telemetry=telemetry,
+                total_start=total_start,
+                request_audio_mime_type=content_type,
+                request_audio_base64=base64.b64encode(audio).decode("ascii"),
+            )
+        except Exception as exc:
+            telemetry["event"] = "pucky.turn.failed"
+            telemetry["status"] = "failed"
+            telemetry["stage"] = str(telemetry.get("stage") or "stt_running")
+            telemetry["error_type"] = exc.__class__.__name__
+            telemetry["total_ms"] = _elapsed_ms(total_start)
+            self._update_turn_status(turn_id, "failed", "failed", telemetry)
+            _log_json(telemetry)
+            raise
 
     def handle_text_turn(
         self,
         text: str,
         turn_id: str | None = None,
         reply_mode: str | None = None,
+        *,
+        thread_mode: str | None = None,
+        thread_id: str | None = None,
+        thread_scope_source: str | None = None,
+        thread_card_id: str | None = None,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -879,26 +900,34 @@ class PuckyVoiceService:
             "tts_speed": getattr(self.tts, "speed", ""),
             "stage": "codex_running",
         }
+        thread_request = _normalize_thread_request(
+            mode=thread_mode,
+            thread_id=thread_id,
+            source=thread_scope_source,
+            card_id=thread_card_id,
+        )
+        telemetry.update(thread_request)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
-        with self._turn_lock:
-            try:
-                return self._handle_transcript_turn(
-                    turn_id=turn_id,
-                    session_id=session_id,
-                    reply_mode=reply_mode,
-                    transcript=transcript,
-                    telemetry=telemetry,
-                    total_start=total_start,
-                )
-            except Exception as exc:
-                telemetry["event"] = "pucky.turn.failed"
-                telemetry["status"] = "failed"
-                telemetry["stage"] = str(telemetry.get("stage") or "codex_running")
-                telemetry["error_type"] = exc.__class__.__name__
-                telemetry["total_ms"] = _elapsed_ms(total_start)
-                self._update_turn_status(turn_id, "failed", "failed", telemetry)
-                _log_json(telemetry)
-                raise
+        try:
+            return self._handle_transcript_turn(
+                turn_id=turn_id,
+                session_id=session_id,
+                reply_mode=reply_mode,
+                transcript=transcript,
+                telemetry=telemetry,
+                total_start=total_start,
+                request_audio_mime_type="",
+                request_audio_base64="",
+            )
+        except Exception as exc:
+            telemetry["event"] = "pucky.turn.failed"
+            telemetry["status"] = "failed"
+            telemetry["stage"] = str(telemetry.get("stage") or "codex_running")
+            telemetry["error_type"] = exc.__class__.__name__
+            telemetry["total_ms"] = _elapsed_ms(total_start)
+            self._update_turn_status(turn_id, "failed", "failed", telemetry)
+            _log_json(telemetry)
+            raise
 
     def _handle_transcript_turn(
         self,
@@ -909,15 +938,34 @@ class PuckyVoiceService:
         transcript: str,
         telemetry: dict[str, object],
         total_start: float,
+        request_audio_mime_type: str,
+        request_audio_base64: str,
     ) -> dict[str, object]:
         telemetry["stage"] = "codex_running"
         telemetry["codex_start_ms"] = _elapsed_ms(total_start)
         self._update_turn_status(turn_id, "codex_running", "running", telemetry)
         start = time.perf_counter()
-        raw_reply = self.codex.send_turn(transcript)
+        requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
+        try:
+            codex_result = self.codex.send_turn(transcript, thread_id=requested_thread_id or None)
+        except TypeError as exc:
+            if "thread_id" not in str(exc):
+                raise
+            codex_result = self.codex.send_turn(transcript)  # type: ignore[call-arg]
+        if isinstance(codex_result, str):
+            codex_result = CodexTurnResult(
+                reply_text=codex_result,
+                used_thread_id=str(self.codex.thread_id or requested_thread_id or ""),
+                requested_thread_id=requested_thread_id,
+                thread_mode="existing" if requested_thread_id else "new",
+            )
+        raw_reply = codex_result.reply_text
         telemetry["codex_ms"] = _elapsed_ms(start)
         telemetry["codex_end_ms"] = _elapsed_ms(total_start)
-        telemetry["codex_thread_id"] = self.codex.thread_id or ""
+        telemetry["codex_thread_id"] = codex_result.used_thread_id
+        telemetry["thread_mode"] = codex_result.thread_mode
+        telemetry["thread_reused"] = codex_result.reused_existing_thread
+        telemetry["thread_fallback_reason"] = codex_result.fallback_reason
         telemetry["raw_reply_chars"] = len(raw_reply)
 
         telemetry["stage"] = "envelope"
@@ -927,12 +975,12 @@ class PuckyVoiceService:
         telemetry["card_icon"] = envelope.card_icon
         telemetry["has_html"] = bool(envelope.html_content)
         try:
-            self.codex.set_thread_title(envelope.card_title)
+            self.codex.set_thread_title(envelope.card_title, thread_id=codex_result.used_thread_id)
             telemetry["codex_thread_title_synced"] = True
         except Exception:
             telemetry["codex_thread_title_synced"] = False
         try:
-            origin = self.codex.thread_origin()
+            origin = self.codex.thread_origin(codex_result.used_thread_id)
         except Exception:
             origin = {}
         if not isinstance(origin, dict):
@@ -962,6 +1010,13 @@ class PuckyVoiceService:
         telemetry["audio_mime_type"] = audio_mime_type
 
         transcript_messages = [
+            _user_transcript_message(
+                text=transcript,
+                created_at=_iso_time(time.time()),
+                turn_id=turn_id,
+                request_audio_mime_type=request_audio_mime_type,
+                has_request_audio=bool(request_audio_base64),
+            ),
             _assistant_transcript_message(
                 text=envelope.reply_text,
                 created_at=_iso_time(time.time()),
@@ -998,6 +1053,8 @@ class PuckyVoiceService:
             origin=origin,
             telemetry=_public_turn_telemetry(telemetry),
             transcript_messages=transcript_messages,
+            request_audio_mime_type=request_audio_mime_type,
+            request_audio_base64=request_audio_base64,
             audio_mime_type=audio_mime_type,
             audio_base64=audio_base64,
             html_mime_type=html_mime_type,
@@ -1291,6 +1348,34 @@ def _assistant_transcript_message(
     return message
 
 
+def _user_transcript_message(
+    *,
+    text: str,
+    created_at: str,
+    turn_id: str,
+    request_audio_mime_type: str,
+    has_request_audio: bool,
+) -> dict[str, object]:
+    message: dict[str, object] = {
+        "role": "user",
+        "text": text,
+        "created_at": created_at,
+    }
+    if has_request_audio:
+        message["attachments"] = [
+            normalize_attachment(
+                {
+                    "id": f"{turn_id}:request_audio",
+                    "artifact": f"pucky_card_{turn_id}:request_audio",
+                    "mime_type": request_audio_mime_type or "audio/wav",
+                    "title": "Your audio",
+                    "kind": "audio",
+                }
+            )
+        ]
+    return message
+
+
 def _resolve_codex_path(codex_cwd: str | None, raw: object) -> str:
     clean = str(raw or "").strip()
     if not clean:
@@ -1431,6 +1516,24 @@ def _normalize_reply_mode(raw: str | None) -> str:
     return REPLY_MODE_CARD_ONLY
 
 
+def _normalize_thread_request(
+    *,
+    mode: str | None,
+    thread_id: str | None,
+    source: str | None,
+    card_id: str | None,
+) -> dict[str, object]:
+    clean_thread_id = str(thread_id or "").strip()
+    clean_mode = str(mode or "").strip().lower()
+    requested_mode = "existing" if clean_mode == "existing" and clean_thread_id else "new"
+    return {
+        "requested_thread_mode": requested_mode,
+        "requested_thread_id": clean_thread_id if requested_mode == "existing" else "",
+        "thread_scope_source": str(source or "").strip(),
+        "thread_scope_card_id": str(card_id or "").strip(),
+    }
+
+
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
@@ -1442,6 +1545,13 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "request_audio_bytes",
         "input_text_chars",
         "reply_mode",
+        "requested_thread_mode",
+        "requested_thread_id",
+        "thread_scope_source",
+        "thread_scope_card_id",
+        "thread_mode",
+        "thread_reused",
+        "thread_fallback_reason",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -1481,6 +1591,13 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "content_type",
         "request_audio_bytes",
         "reply_mode",
+        "requested_thread_mode",
+        "requested_thread_id",
+        "thread_scope_source",
+        "thread_scope_card_id",
+        "thread_mode",
+        "thread_reused",
+        "thread_fallback_reason",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -2293,6 +2410,18 @@ def make_handler(service: PuckyVoiceService):
                         str(payload.get("text") or ""),
                         str(payload.get("turn_id") or self.headers.get("X-Pucky-Turn-Id", "") or ""),
                         str(payload.get("reply_mode") or self.headers.get("X-Pucky-Reply-Mode", "") or ""),
+                        thread_mode=str(payload.get("thread_mode") or self.headers.get("X-Pucky-Thread-Mode", "") or ""),
+                        thread_id=str(payload.get("thread_id") or self.headers.get("X-Pucky-Thread-Id", "") or ""),
+                        thread_scope_source=str(
+                            payload.get("thread_scope_source")
+                            or self.headers.get("X-Pucky-Thread-Scope-Source", "")
+                            or ""
+                        ),
+                        thread_card_id=str(
+                            payload.get("thread_card_id")
+                            or self.headers.get("X-Pucky-Thread-Card-Id", "")
+                            or ""
+                        ),
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -2319,6 +2448,10 @@ def make_handler(service: PuckyVoiceService):
                     content_type,
                     self.headers.get("X-Pucky-Turn-Id", ""),
                     self.headers.get("X-Pucky-Reply-Mode", ""),
+                    thread_mode=self.headers.get("X-Pucky-Thread-Mode", ""),
+                    thread_id=self.headers.get("X-Pucky-Thread-Id", ""),
+                    thread_scope_source=self.headers.get("X-Pucky-Thread-Scope-Source", ""),
+                    thread_card_id=self.headers.get("X-Pucky-Thread-Card-Id", ""),
                 )
             except ValueError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

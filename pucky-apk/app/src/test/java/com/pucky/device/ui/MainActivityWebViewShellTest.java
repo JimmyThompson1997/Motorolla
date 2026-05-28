@@ -76,6 +76,9 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"pucky.turn.sent_cue.test\"")
                         && bridge.contains("case \"pucky.turn.received_cue.test\"")
                         && bridge.contains("case \"pucky.turn.chime.test\"")
+                        && bridge.contains("case \"voice.thread_scope.get\"")
+                        && bridge.contains("case \"voice.thread_scope.set\"")
+                        && bridge.contains("case \"voice.thread_scope.clear\"")
                         && bridge.contains("case \"wake.status\"")
                         && bridge.contains("case \"wake.start\"")
                         && bridge.contains("case \"wake.stop\"")
@@ -134,6 +137,12 @@ public final class MainActivityWebViewShellTest {
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).receivedCueTest(args);"));
         assertTrue(bridge.contains("case \"pucky.turn.chime.test\":"));
         assertTrue(bridge.contains("return PuckyTurnController.shared(context).chimeTest(args);"));
+        assertTrue(bridge.contains("case \"voice.thread_scope.get\":"));
+        assertTrue(bridge.contains("return VoiceThreadScopeController.shared(context).get();"));
+        assertTrue(bridge.contains("case \"voice.thread_scope.set\":"));
+        assertTrue(bridge.contains("return VoiceThreadScopeController.shared(context).set(args);"));
+        assertTrue(bridge.contains("case \"voice.thread_scope.clear\":"));
+        assertTrue(bridge.contains("return VoiceThreadScopeController.shared(context).clear(args);"));
         assertTrue(bridge.contains("case \"wake.status\":"));
         assertTrue(bridge.contains("case \"wake.start\":"));
         assertTrue(bridge.contains("case \"wake.stop\":"));

@@ -57,6 +57,8 @@ class FeedStore:
         origin: dict[str, object],
         telemetry: dict[str, object],
         transcript_messages: list[dict[str, object]],
+        request_audio_mime_type: str,
+        request_audio_base64: str,
         audio_mime_type: str,
         audio_base64: str,
         html_mime_type: str,
@@ -66,6 +68,7 @@ class FeedStore:
         now_ms = round(now * 1000)
         now_iso = _iso_time(now)
         card_id = "pucky_card_" + turn_id
+        request_audio_artifact_id = f"{card_id}:request_audio"
         audio_artifact_id = f"{card_id}:audio"
         html_artifact_id = f"{card_id}:html" if html_base64 else ""
         origin_json = json.dumps(origin or {}, separators=(",", ":"))
@@ -102,6 +105,19 @@ class FeedStore:
                         now_ms,
                     ),
                 )
+                if request_audio_base64:
+                    self._upsert_artifact(
+                        artifact_id=request_audio_artifact_id,
+                        card_id=card_id,
+                        kind="audio",
+                        mime_type=request_audio_mime_type or "audio/wav",
+                        content_base64=request_audio_base64,
+                        created_at=created_at,
+                        updated_at=now_iso,
+                        updated_at_ms=now_ms,
+                    )
+                else:
+                    self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (request_audio_artifact_id,))
                 self._upsert_artifact(
                     artifact_id=audio_artifact_id,
                     card_id=card_id,
@@ -192,7 +208,15 @@ class FeedStore:
             ).fetchall()
             has_more = len(rows) > safe_limit
             rows = rows[:safe_limit]
-            items = [self._build_item(row["card_id"]) for row in rows]
+            group_keys: list[str] = []
+            seen_group_keys: set[str] = set()
+            for row in rows:
+                group_key = self._group_key_for_card_id(str(row["card_id"]))
+                if group_key in seen_group_keys:
+                    continue
+                seen_group_keys.add(group_key)
+                group_keys.append(group_key)
+            items = [self._build_group_item(group_key) for group_key in group_keys]
             next_cursor = ""
             if rows:
                 last = self._fetch_card_row(rows[-1]["card_id"])
@@ -492,6 +516,78 @@ class FeedStore:
             """,
             (clean,),
         ).fetchone()
+
+    def _thread_group_key(self, origin: dict[str, object], card_id: str) -> str:
+        thread_id = str((origin or {}).get("thread_id") or "").strip()
+        return f"thread:{thread_id}" if thread_id else f"card:{card_id}"
+
+    def _group_key_for_card_id(self, card_id: str) -> str:
+        row = self._fetch_card_row(card_id)
+        if row is None:
+            return f"card:{card_id}"
+        try:
+            origin = json.loads(str(row["origin_json"] or "") or "{}")
+        except Exception:
+            origin = {}
+        if not isinstance(origin, dict):
+            origin = {}
+        return self._thread_group_key(origin, str(row["card_id"]))
+
+    def _card_rows_for_group(self, group_key: str) -> list[sqlite3.Row]:
+        if group_key.startswith("thread:"):
+            thread_id = group_key.split(":", 1)[1]
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM feed_cards
+                ORDER BY updated_at_ms ASC, card_id ASC
+                """
+            ).fetchall()
+            matches: list[sqlite3.Row] = []
+            for row in rows:
+                try:
+                    origin = json.loads(str(row["origin_json"] or "") or "{}")
+                except Exception:
+                    origin = {}
+                if not isinstance(origin, dict):
+                    origin = {}
+                if str(origin.get("thread_id") or "").strip() == thread_id:
+                    matches.append(row)
+            return matches
+        row = self._fetch_card_row(group_key.split(":", 1)[1])
+        return [row] if row is not None else []
+
+    def _build_group_item(self, group_key: str) -> dict[str, object]:
+        rows = self._card_rows_for_group(group_key)
+        if not rows:
+            raise KeyError("card_not_found")
+        rows.sort(key=lambda row: (int(row["updated_at_ms"]), str(row["card_id"])))
+        latest = rows[-1]
+        latest_item = self._build_item(str(latest["card_id"]))
+        transcript_messages: list[object] = []
+        for row in rows:
+            turn = self._conn.execute(
+                """
+                SELECT transcript_messages_json
+                FROM turns
+                WHERE turn_id = ?
+                """,
+                (str(row["turn_id"]),),
+            ).fetchone()
+            if turn is None:
+                continue
+            try:
+                messages = json.loads(str(turn["transcript_messages_json"] or "[]") or "[]")
+            except Exception:
+                messages = []
+            if isinstance(messages, list):
+                transcript_messages.extend(messages)
+        latest_item["transcript_messages"] = transcript_messages
+        latest_item["thread_history_count"] = len(rows)
+        card = latest_item.get("card")
+        if isinstance(card, dict):
+            card["thread_history_count"] = len(rows)
+        return latest_item
 
     def _build_item(self, card_id: str) -> dict[str, object]:
         row = self._fetch_card_row(card_id)

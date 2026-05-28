@@ -1490,3 +1490,59 @@ def test_document_html_detection_accepts_local_viewer_paths_and_xlsx_is_not_raw_
     assert 'mime.includes("spreadsheetml")) return "table"' not in kind_block
     assert 'mime.includes("spreadsheetml")) return "document"' in kind_block
     assert '["text/plain", "text/markdown", "application/json", "text/xml", "application/xml"].includes(mime)' in kind_block
+
+
+def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -> None:
+    app = read("app.js")
+    html = read("index.html")
+    styles = read("styles.css")
+
+    assert 'id="threadScopeStatus"' in html
+    assert "thread-scope-status" in html
+    assert "threadScope: initialThreadScope()" in app
+    assert 'command === "voice.thread_scope.get"' in app
+    assert 'command === "voice.thread_scope.set"' in app
+    assert 'command === "voice.thread_scope.clear"' in app
+    assert "renderThreadScopeBadge()" in app
+    assert "function initialThreadScope()" in app
+    assert "function normalizeThreadScope(input)" in app
+    assert "function threadScopeForCard(card, sourceSurface)" in app
+    assert "function desiredThreadScope()" in app
+    assert "function sameThreadScope(left, right)" in app
+    assert "async function syncVoiceThreadScope(options = {})" in app
+    assert '"feed_tile_selected"' in app
+    assert '"thread_transcript"' in app
+    assert '"thread_page"' in app
+    assert '"thread_attachment"' in app
+    assert '"Talk to continue..."' in app
+    assert 'void syncVoiceThreadScope({ reason: "tab_click", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "show_transcript", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "show_page", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "show_audio_detail", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "detail_dismiss", render: true });' in app
+    assert ".thread-scope-status" in styles
+    badge = css_block(styles, ".thread-scope-status")
+    assert "font-size: 11px;" in badge
+    assert "text-overflow: ellipsis;" in badge
+
+
+def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_prior_artifacts() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "const attachments = messageAttachmentRow(card, message, index);" in app
+    assert "function messageAttachmentRow(card, message, index)" in app
+    assert "function attachmentChipIcon(item)" in app
+    assert "function attachmentChipLabel(item)" in app
+    assert 'showAttachmentViewer(card, attachments, { initialIndex, onDismiss: () => showTranscript(card) });' in app
+    assert 'if (String(message?.role || "").toLowerCase() === "user") {' in app
+    assert 'return attachmentViewerType(item) !== "image_gallery";' in app
+    assert '".bubble-attachment-row"' not in app
+    assert ".bubble-attachment-row" in styles
+    assert ".bubble-attachment-chip" in styles
+    chip = css_block(styles, ".bubble-attachment-chip")
+    assert "border-radius: 999px;" in chip
+    assert "display: inline-flex;" in chip

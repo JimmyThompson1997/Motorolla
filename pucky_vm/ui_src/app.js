@@ -272,6 +272,7 @@
     excludedFeedIcons: loadFeedIconExcludes(),
     readOverrides: loadReadOverrides(),
     turn: initialTurnStatus(),
+    threadScope: initialThreadScope(),
     turnSettings: initialTurnSettings(),
     wakeStatus: initialWakeStatus(),
     uiSurface: initialUiSurfaceStatus(),
@@ -374,6 +375,17 @@
     }
     if (command === "pucky.feed.sync") {
       return { schema: "pucky.feed_sync_result.v1", configured: true, reason: args.reason || "browser_mock", snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards } };
+    }
+    if (command === "voice.thread_scope.get") {
+      return normalizeThreadScope(state.threadScope);
+    }
+    if (command === "voice.thread_scope.set") {
+      state.threadScope = normalizeThreadScope(args);
+      return state.threadScope;
+    }
+    if (command === "voice.thread_scope.clear") {
+      state.threadScope = initialThreadScope();
+      return state.threadScope;
     }
     if (command === "pucky.feed.action") {
       const action = String(args.action || "").trim();
@@ -743,6 +755,7 @@
       if (options.render !== false) {
         render();
       }
+      await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return snapshot;
     } catch (error) {
       if (!options.silent) {
@@ -762,6 +775,7 @@
     clearMissingFeedIconFilter();
     render();
     restoreNavStateAfterCards();
+    void syncVoiceThreadScope({ reason: "load_cards", render: true });
     if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       syncFeedCards({ reason: "load_cards", silent: true, render: true });
     }
@@ -1557,6 +1571,7 @@
   function render() {
     renderTabs();
     renderVoiceStatus();
+    renderThreadScopeBadge();
     renderRouteTray();
     renderFeed();
     renderAudioDetail();
@@ -1608,6 +1623,20 @@
     };
   }
 
+  function initialThreadScope() {
+    return {
+      schema: "pucky.voice_thread_scope.v1",
+      mode: "new_thread",
+      thread_id: "",
+      card_id: "",
+      session_id: "",
+      source_surface: "",
+      label: "",
+      updated_at: "",
+      active: false
+    };
+  }
+
   function initialTurnSettings() {
     return {
       schema: "pucky.turn_settings.v1",
@@ -1654,6 +1683,40 @@
         remaining_ms: 0
       }
     };
+  }
+
+  function normalizeThreadScope(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    const mode = String(raw.mode || "");
+    const threadId = String(raw.thread_id || "");
+    const active = mode === "existing_thread" && !!threadId;
+    return {
+      schema: raw.schema || "pucky.voice_thread_scope.v1",
+      mode: active ? "existing_thread" : "new_thread",
+      thread_id: active ? threadId : "",
+      card_id: active ? String(raw.card_id || "") : "",
+      session_id: active ? String(raw.session_id || "") : "",
+      source_surface: active ? String(raw.source_surface || "") : "",
+      label: active ? "Talk to continue..." : "",
+      updated_at: String(raw.updated_at || ""),
+      active
+    };
+  }
+
+  function renderThreadScopeBadge() {
+    const node = document.getElementById("threadScopeStatus");
+    if (!node) {
+      return;
+    }
+    if (!state.threadScope.active) {
+      node.hidden = true;
+      node.textContent = "";
+      node.setAttribute("aria-hidden", "true");
+      return;
+    }
+    node.hidden = false;
+    node.textContent = state.threadScope.label || "Talk to continue...";
+    node.setAttribute("aria-hidden", "false");
   }
 
   function initialUiSurfaceStatus() {
@@ -1986,6 +2049,7 @@
       }
       persistNavState();
       render();
+      void syncVoiceThreadScope({ reason: "tab_click", render: true });
       if (state.route === "feed") {
         restoreFeedScroll();
         syncFeedCards({ reason: "route_feed", silent: true, render: true });
@@ -2930,6 +2994,10 @@
         stack.append(chatMediaBubble(card, images));
       }
       const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
+      const attachments = messageAttachmentRow(card, message, index);
+      if (attachments) {
+        bubble.append(attachments);
+      }
       bubble.append(document.createTextNode(message.text || ""));
       if (message.role !== "user") {
         const actions = el("div", "bubble-actions");
@@ -2962,6 +3030,7 @@
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
+    void syncVoiceThreadScope({ reason: "show_transcript", render: true });
     if (options.restoring) {
       restoreScrollPosition(content, options.scrollTop);
     } else {
@@ -3017,6 +3086,63 @@
     return media;
   }
 
+  function attachmentChipIcon(item) {
+    const kind = attachmentKind(item);
+    if (kind === "audio") return "mic";
+    if (kind === "image") return "image";
+    if (kind === "video") return "play_arrow";
+    if (kind === "text" || kind === "html" || kind === "table") return "text";
+    return "attachment";
+  }
+
+  function attachmentChipLabel(item) {
+    const title = String(item?.title || "").trim();
+    if (title) {
+      return title;
+    }
+    const kind = attachmentKind(item);
+    if (kind === "audio") return "Audio";
+    if (kind === "image") return "Image";
+    if (kind === "video") return "Video";
+    if (kind === "html") return "HTML";
+    if (kind === "text") return "Text";
+    if (kind === "table") return "Table";
+    if (kind === "document") return "Document";
+    if (kind === "archive") return "Archive";
+    return "Attachment";
+  }
+
+  function messageAttachmentRow(card, message, index) {
+    const attachments = normalizedAttachments(message?.attachments);
+    const chips = attachments.filter(item => {
+      if (String(message?.role || "").toLowerCase() === "user") {
+        return true;
+      }
+      return attachmentViewerType(item) !== "image_gallery";
+    });
+    if (!chips.length) {
+      return null;
+    }
+    const row = el("div", "bubble-attachment-row");
+    chips.forEach(item => {
+      const initialIndex = attachments.indexOf(item);
+      if (initialIndex < 0) {
+        return;
+      }
+      const chip = el("button", "bubble-attachment-chip");
+      chip.type = "button";
+      chip.dataset.dragIgnore = "true";
+      chip.innerHTML = `${iconSvg(attachmentChipIcon(item), { filled: false })}<span>${escapeHtml(attachmentChipLabel(item))}</span>`;
+      chip.setAttribute("aria-label", `Open ${attachmentChipLabel(item)}`);
+      chip.addEventListener("click", event => {
+        event.stopPropagation();
+        showAttachmentViewer(card, attachments, { initialIndex, onDismiss: () => showTranscript(card) });
+      });
+      row.append(chip);
+    });
+    return row.childElementCount ? row : null;
+  }
+
   async function showRichPage(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
@@ -3049,6 +3175,7 @@
     openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
+    void syncVoiceThreadScope({ reason: "show_page", render: true });
     restoreScrollPosition(content, options.scrollTop);
     const edge = content.querySelector(".rich-swipe-edge");
     if (edge) {
@@ -3169,6 +3296,7 @@
     openSideDetail(panel, card.title || "Images", content, dismissGallery);
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
+    void syncVoiceThreadScope({ reason: "show_images", render: true });
     restoreScrollPosition(content, restoreOptions.scrollTop);
   }
 
@@ -3312,6 +3440,7 @@
     openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
+    void syncVoiceThreadScope({ reason: "show_video_attachment", render: true });
     restoreScrollPosition(content, options.scrollTop);
     try {
       video.src = await resolveMediaSrc(item, {
@@ -3344,6 +3473,7 @@
     content.append(wrap);
     openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
+    void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
     try {
       audio.src = await resolveArtifactUrl(item, { maxBytes: 32 * 1024 * 1024 });
     } catch (error) {
@@ -3362,6 +3492,7 @@
     openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
+    void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });
     restoreScrollPosition(content, options.scrollTop);
   }
 
@@ -3967,6 +4098,7 @@
     panel.classList.remove("is-open", "is-dragging");
     panel.setAttribute("aria-hidden", "true");
     panel.replaceChildren();
+    void syncVoiceThreadScope({ reason: "detail_dismiss", render: true });
   }
 
   function handleAndroidBack() {
@@ -4018,6 +4150,7 @@
     openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail);
     rememberNavDetail("audio", card, options);
     installDetailScrollPersistence(content, "audio");
+    void syncVoiceThreadScope({ reason: "show_audio_detail", render: true });
     restoreScrollPosition(content, options.scrollTop);
     restoreTimestampScroll(content, options.timestampScrollTop);
   }
@@ -4580,6 +4713,7 @@
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
     }
     renderFeed();
+    void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true });
     return true;
   }
 
@@ -4678,6 +4812,7 @@
         state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
         state.openCardMenuSessionId = state.openCardMenuSessionId === sessionId ? "" : sessionId;
         renderFeed();
+        void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });
       }, CARD_MENU_LONG_PRESS_MS);
     };
     const move = (x, y) => {
@@ -5975,6 +6110,78 @@
     return String(card?.session_id || card?.local_session_id || card?.turn_id || "");
   }
 
+  function threadScopeForCard(card, sourceSurface) {
+    const origin = cardOrigin(card);
+    const threadId = String(origin.thread_id || "").trim();
+    if (!threadId) {
+      return null;
+    }
+    return normalizeThreadScope({
+      mode: "existing_thread",
+      thread_id: threadId,
+      card_id: String(card?.card_id || ""),
+      session_id: cardSessionId(card),
+      source_surface: sourceSurface,
+      label: "Talk to continue..."
+    });
+  }
+
+  function desiredThreadScope() {
+    if (state.route !== "feed") {
+      return initialThreadScope();
+    }
+    const detail = normalizeNavDetail(state.navDetail);
+    if (detail) {
+      const card = findCardBySessionId(detail.session_id);
+      if (card) {
+        if (detail.type === "transcript") {
+          return threadScopeForCard(card, "thread_transcript") || initialThreadScope();
+        }
+        if (detail.type === "page") {
+          return threadScopeForCard(card, "thread_page") || initialThreadScope();
+        }
+        if (["attachment", "images", "audio"].includes(detail.type)) {
+          return threadScopeForCard(card, "thread_attachment") || initialThreadScope();
+        }
+      }
+    }
+    const selected = findCardBySessionId(state.openCardMenuSessionId);
+    if (selected) {
+      return threadScopeForCard(selected, "feed_tile_selected") || initialThreadScope();
+    }
+    return initialThreadScope();
+  }
+
+  function sameThreadScope(left, right) {
+    return String(left?.mode || "") === String(right?.mode || "")
+      && String(left?.thread_id || "") === String(right?.thread_id || "")
+      && String(left?.card_id || "") === String(right?.card_id || "")
+      && String(left?.session_id || "") === String(right?.session_id || "")
+      && String(left?.source_surface || "") === String(right?.source_surface || "");
+  }
+
+  async function syncVoiceThreadScope(options = {}) {
+    const desired = desiredThreadScope();
+    if (sameThreadScope(state.threadScope, desired)) {
+      if (options.render !== false) {
+        renderThreadScopeBadge();
+      }
+      return;
+    }
+    try {
+      state.threadScope = normalizeThreadScope(
+        desired.active
+          ? await Pucky.request({ command: "voice.thread_scope.set", args: desired })
+          : await Pucky.request({ command: "voice.thread_scope.clear", args: { reason: String(options.reason || "") } })
+      );
+    } catch (_) {
+      state.threadScope = desired;
+    }
+    if (options.render !== false) {
+      renderThreadScopeBadge();
+    }
+  }
+
   function findCardBySessionId(sessionId) {
     const target = String(sessionId || "");
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
@@ -6280,17 +6487,20 @@
     if (state.route !== "feed") {
       state.navDetail = null;
       persistNavState();
+      void syncVoiceThreadScope({ reason: "restore_nav_non_feed", render: true });
       return;
     }
     const detail = normalizeNavDetail(state.navDetail);
     if (!detail) {
       persistNavState();
+      void syncVoiceThreadScope({ reason: "restore_nav_empty", render: true });
       return;
     }
     const card = findCardBySessionId(detail.session_id);
     if (!card) {
       state.navDetail = null;
       persistNavState();
+      void syncVoiceThreadScope({ reason: "restore_nav_missing_card", render: true });
       return;
     }
     if (detail.type === "audio" && hasAudio(card)) {
@@ -6315,6 +6525,7 @@
     }
     state.navDetail = null;
     persistNavState();
+    void syncVoiceThreadScope({ reason: "restore_nav_fallback", render: true });
   }
 
   function debounce(callback, waitMs) {
@@ -6657,6 +6868,7 @@
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
+  void syncVoiceThreadScope({ reason: "boot", render: true });
   loadTurnStatus({ render: false });
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCardIconRegistry({ render: false });

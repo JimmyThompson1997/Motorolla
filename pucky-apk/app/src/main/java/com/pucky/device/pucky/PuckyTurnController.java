@@ -18,6 +18,7 @@ import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.speech.RecipeDevicePrimitiveExecutor;
 import com.pucky.device.ui.ReplyCardStore;
+import com.pucky.device.ui.VoiceThreadScopeController;
 import com.pucky.device.util.Json;
 import com.pucky.device.wake.WakeWordController;
 
@@ -314,6 +315,7 @@ public final class PuckyTurnController {
         final int trailingSilenceMs = args.optInt("trailing_silence_ms", 800);
         final int minSpeechMs = args.optInt("min_speech_ms", 180);
         final int maxDurationMs = args.optInt("max_duration_ms", 60000);
+        JSONObject threadScope = voiceThreadScopeSnapshot(triggerSource);
         JSONObject startArgs = new JSONObject();
         Json.put(startArgs, "format", "wav");
         Json.put(startArgs, "session_id", localSessionId);
@@ -322,6 +324,7 @@ public final class PuckyTurnController {
         Json.put(startArgs, "sample_tag", "pucky_turn");
         Json.put(startArgs, "feedback", false);
         Json.put(startArgs, "trigger_source", triggerSource);
+        applyVoiceThreadScope(startArgs, threadScope);
         Json.put(startArgs, "auto_endpoint", autoEndpoint);
         Json.put(startArgs, "speech_start_timeout_ms", speechStartTimeoutMs);
         Json.put(startArgs, "trailing_silence_ms", trailingSilenceMs);
@@ -350,6 +353,7 @@ public final class PuckyTurnController {
                 Json.put(status, "local_session_id", localSessionId);
                 Json.put(status, "turn_id", clientTurnId);
                 Json.put(status, "trigger_source", triggerSource);
+                applyVoiceThreadScope(status, threadScope);
                 if (args.has("wake_phrase_family")) {
                     Json.put(status, "wake_phrase_family", args.optString("wake_phrase_family", ""));
                 }
@@ -370,6 +374,7 @@ public final class PuckyTurnController {
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "local_session_id", localSessionId);
         Json.put(out, "trigger_source", triggerSource);
+        applyVoiceThreadScope(out, threadScope);
         if (args.has("wake_phrase_family")) {
             Json.put(out, "wake_phrase_family", args.optString("wake_phrase_family", ""));
         }
@@ -571,7 +576,7 @@ public final class PuckyTurnController {
             }
             Json.put(uploading, "phase", "upload_started");
             markStatus("uploading", uploading, null);
-            submitAsync(localSessionId, clientTurnId, audioBytes);
+            submitAsync(localSessionId, clientTurnId, audioBytes, capture);
         } catch (CommandException exc) {
             JSONObject failed = baseStatus(fallbackLocalSessionId, finalizeStartedMs, 0);
             Json.put(failed, "turn_id", clientTurnId);
@@ -589,16 +594,21 @@ public final class PuckyTurnController {
         }
     }
 
-    private void submitAsync(String localSessionId, String clientTurnId, byte[] audioBytes) {
+    private void submitAsync(String localSessionId, String clientTurnId, byte[] audioBytes, JSONObject capture) {
         long startedMs = System.currentTimeMillis();
         final String replyModeAtUpload = settings.getPuckyTurnReplyMode();
         final boolean spokenReplyEnabledAtUpload =
                 SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN.equals(replyModeAtUpload);
+        final JSONObject threadScope = capture == null ? new JSONObject() : capture;
         Request request = new Request.Builder()
                 .url(settings.getPuckyTurnUrl())
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
                 .header("X-Pucky-Turn-Id", clientTurnId)
                 .header("X-Pucky-Reply-Mode", replyModeAtUpload)
+                .header("X-Pucky-Thread-Mode", threadScope.optString("thread_mode", "new"))
+                .header("X-Pucky-Thread-Id", threadScope.optString("thread_id", ""))
+                .header("X-Pucky-Thread-Scope-Source", threadScope.optString("thread_scope_source", ""))
+                .header("X-Pucky-Thread-Card-Id", threadScope.optString("thread_card_id", ""))
                 .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
@@ -1096,6 +1106,11 @@ public final class PuckyTurnController {
         }
         copyIfPresent(record, detail, "request_audio_bytes");
         copyIfPresent(record, detail, "trigger_source");
+        copyIfPresent(record, detail, "thread_mode");
+        copyIfPresent(record, detail, "thread_id");
+        copyIfPresent(record, detail, "thread_card_id");
+        copyIfPresent(record, detail, "thread_session_id");
+        copyIfPresent(record, detail, "thread_scope_source");
         copyIfPresent(record, detail, "user_transcript");
         copyIfPresent(record, detail, "wake_phrase_family");
         copyIfPresent(record, detail, "wake_phrase_detected");
@@ -1161,6 +1176,11 @@ public final class PuckyTurnController {
         Json.put(event, "updated_at", updatedAt);
         copyIfPresent(event, detail, "phase");
         copyIfPresent(event, detail, "trigger_source");
+        copyIfPresent(event, detail, "thread_mode");
+        copyIfPresent(event, detail, "thread_id");
+        copyIfPresent(event, detail, "thread_card_id");
+        copyIfPresent(event, detail, "thread_session_id");
+        copyIfPresent(event, detail, "thread_scope_source");
         copyIfPresent(event, detail, "user_transcript");
         copyIfPresent(event, detail, "remote_stage");
         copyIfPresent(event, detail, "card_id");
@@ -1829,6 +1849,11 @@ public final class PuckyTurnController {
             return;
         }
         copyIfPresent(target, capture, "trigger_source");
+        copyIfPresent(target, capture, "thread_mode");
+        copyIfPresent(target, capture, "thread_id");
+        copyIfPresent(target, capture, "thread_card_id");
+        copyIfPresent(target, capture, "thread_session_id");
+        copyIfPresent(target, capture, "thread_scope_source");
         copyIfPresent(target, capture, "capture_source");
         copyIfPresent(target, capture, "auto_endpoint");
         copyIfPresent(target, capture, "speech_start_timeout_ms");
@@ -1839,6 +1864,30 @@ public final class PuckyTurnController {
         copyIfPresent(target, capture, "fixture_name");
         copyIfPresent(target, capture, "fixture_start_delay_ms");
         copyIfPresent(target, capture, "debug_fixture_transcript");
+    }
+
+    private JSONObject voiceThreadScopeSnapshot(String triggerSource) {
+        if (!"volume_up_hold".equals(triggerSource)) {
+            return new JSONObject();
+        }
+        JSONObject scope = VoiceThreadScopeController.shared(context).get();
+        return scope == null ? new JSONObject() : scope;
+    }
+
+    private static void applyVoiceThreadScope(JSONObject target, JSONObject scope) {
+        if (target == null || scope == null) {
+            return;
+        }
+        String mode = scope.optString("mode", "new_thread");
+        String threadId = scope.optString("thread_id", "").trim();
+        String cardId = scope.optString("card_id", "").trim();
+        String sessionId = scope.optString("session_id", "").trim();
+        String sourceSurface = scope.optString("source_surface", "").trim();
+        Json.put(target, "thread_mode", "existing_thread".equals(mode) && !threadId.isEmpty() ? "existing" : "new");
+        Json.put(target, "thread_id", "existing_thread".equals(mode) ? threadId : "");
+        Json.put(target, "thread_card_id", cardId);
+        Json.put(target, "thread_session_id", sessionId);
+        Json.put(target, "thread_scope_source", sourceSurface);
     }
 
     private void startAutoEndpointMonitor(

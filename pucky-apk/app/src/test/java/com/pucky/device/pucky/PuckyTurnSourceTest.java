@@ -174,6 +174,12 @@ public final class PuckyTurnSourceTest {
         assertTrue(capture.contains("capture.wakePhraseDetected"));
         assertTrue(capture.contains("Json.put(out, \"trigger_source\", capture.triggerSource)"));
         assertTrue(source.contains("copyIfPresent(target, capture, \"fixture_start_delay_ms\")"));
+        assertTrue(source.contains("JSONObject threadScope = voiceThreadScopeSnapshot(triggerSource)"));
+        assertTrue(source.contains("applyVoiceThreadScope(startArgs, threadScope)"));
+        assertTrue(source.contains("applyVoiceThreadScope(status, threadScope)"));
+        assertTrue(source.contains("applyVoiceThreadScope(out, threadScope)"));
+        assertTrue(source.contains("if (!\"volume_up_hold\".equals(triggerSource))"));
+        assertFalse(source.contains("&& !\"wake_word\".equals(triggerSource)"));
     }
 
     @Test
@@ -251,7 +257,11 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("PuckyTurnKeywordInterceptor.shared(context)"));
         assertTrue(source.contains("keywordIntercept.optBoolean(\"handled\", false)"));
         assertTrue(source.contains("Json.put(uploading, \"local_keyword_intercept\", keywordIntercept)"));
-        assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes)"));
+        assertTrue(source.contains("submitAsync(localSessionId, clientTurnId, audioBytes, capture)"));
+        assertTrue(source.contains(".header(\"X-Pucky-Thread-Mode\", threadScope.optString(\"thread_mode\", \"new\"))"));
+        assertTrue(source.contains(".header(\"X-Pucky-Thread-Id\", threadScope.optString(\"thread_id\", \"\"))"));
+        assertTrue(source.contains(".header(\"X-Pucky-Thread-Scope-Source\", threadScope.optString(\"thread_scope_source\", \"\"))"));
+        assertTrue(source.contains(".header(\"X-Pucky-Thread-Card-Id\", threadScope.optString(\"thread_card_id\", \"\"))"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("Json.put(out, \"vad_engine\""));
         assertTrue(source.contains("Json.put(out, \"vad_available\""));

@@ -42,34 +42,73 @@ class FakeCodex:
 
     def __init__(self) -> None:
         self.turns: list[str] = []
+        self.turn_requests: list[dict[str, str]] = []
         self.renamed_titles: list[str] = []
+        self.last_turn_routing = {
+            "requested_thread_id": "",
+            "used_thread_id": self.thread_id,
+            "thread_mode": "new",
+            "reused_existing_thread": False,
+            "fallback_reason": "",
+        }
 
     def start(self) -> None:
         self.started = True
 
-    def send_turn(self, text: str) -> str:
+    def send_turn(self, text: str, *, thread_id: str | None = None):
         self.turns.append(text)
-        return json.dumps(
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or self.thread_id
+        self.thread_id = used_thread_id
+        self.turn_requests.append(
             {
-                "reply_text": "Sure, I can help.",
-                "card_title": "Quick Help",
-                "card_icon": "bolt",
-                "html": {
-                    "title": "Mini Page",
-                    "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
-                },
+                "text": text,
+                "requested_thread_id": requested_thread_id,
+                "used_thread_id": used_thread_id,
             }
         )
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": "existing" if requested_thread_id else "new",
+            "reused_existing_thread": bool(requested_thread_id),
+            "fallback_reason": "",
+        }
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": "Sure, I can help.",
+                        "card_title": "Quick Help",
+                        "card_icon": "bolt",
+                        "html": {
+                            "title": "Mini Page",
+                            "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
+                        },
+                    }
+                ),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": "existing" if requested_thread_id else "new",
+                "reused_existing_thread": bool(requested_thread_id),
+                "fallback_reason": "",
+            },
+        )()
 
-    def set_thread_title(self, title: str) -> None:
+    def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
         self.renamed_titles.append(title)
+        if thread_id:
+            self.thread_id = str(thread_id)
 
-    def thread_origin(self, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        resolved_thread_id = str(thread_id or self.thread_id)
         return {
             "runtime": "codex",
-            "thread_id": self.thread_id,
+            "thread_id": resolved_thread_id,
             "thread_title": self.renamed_titles[-1] if self.renamed_titles else "thread-1",
-            "rollout_path": "/data/home/codex/sessions/fake-thread-1.jsonl",
+            "rollout_path": f"/data/home/codex/sessions/{resolved_thread_id}.jsonl",
             "source": "vscode",
             "model": "gpt-5.5",
             "model_provider": "openai",
@@ -85,19 +124,40 @@ class BlockingCodex(FakeCodex):
         self.codex_started = threading.Event()
         self.release_codex = threading.Event()
 
-    def send_turn(self, text: str) -> str:
+    def send_turn(self, text: str, *, thread_id: str | None = None):
         self.turns.append(text)
         self.codex_started.set()
         if not self.release_codex.wait(timeout=5):
             raise TimeoutError("test did not release codex")
-        return json.dumps(
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or self.thread_id
+        self.thread_id = used_thread_id
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": "existing" if requested_thread_id else "new",
+            "reused_existing_thread": bool(requested_thread_id),
+            "fallback_reason": "",
+        }
+        return type(
+            "FakeTurnResult",
+            (),
             {
-                "reply_text": "Codex status observed.",
-                "card_title": "Status",
-                "card_icon": "bolt",
-                "html": None,
-            }
-        )
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": "Codex status observed.",
+                        "card_title": "Status",
+                        "card_icon": "bolt",
+                        "html": None,
+                    }
+                ),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": "existing" if requested_thread_id else "new",
+                "reused_existing_thread": bool(requested_thread_id),
+                "fallback_reason": "",
+            },
+        )()
 
 class FakeComposio:
     def __init__(self) -> None:
@@ -229,6 +289,123 @@ class BlockingSTT(FakeSTT):
         if not self.release_stt.wait(timeout=5):
             raise TimeoutError("test did not release stt")
         return "Pucky test turn"
+
+
+class ScriptedCodex(FakeCodex):
+    def __init__(self, *, invalid_thread_ids: set[str] | None = None) -> None:
+        super().__init__()
+        self.invalid_thread_ids = set(invalid_thread_ids or set())
+        self.next_thread_number = 100
+
+    def send_turn(self, text: str, *, thread_id: str | None = None):
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or f"thread-{self.next_thread_number}"
+        fallback_reason = ""
+        thread_mode = "existing" if requested_thread_id else "new"
+        if requested_thread_id in self.invalid_thread_ids:
+            fallback_reason = "thread_not_found"
+            used_thread_id = f"thread-{self.next_thread_number}"
+            thread_mode = "new"
+            self.next_thread_number += 1
+        elif not requested_thread_id:
+            self.next_thread_number += 1
+        self.thread_id = used_thread_id
+        self.turns.append(text)
+        self.turn_requests.append(
+            {
+                "text": text,
+                "requested_thread_id": requested_thread_id,
+                "used_thread_id": used_thread_id,
+                "thread_mode": thread_mode,
+                "fallback_reason": fallback_reason,
+            }
+        )
+        title = "Weather Plan" if "weather" in text.lower() else ("Thread Continue" if requested_thread_id else "Fresh Thread")
+        icon = "calendar" if "weather" in text.lower() else "bolt"
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": thread_mode,
+            "reused_existing_thread": bool(requested_thread_id and thread_mode == "existing"),
+            "fallback_reason": fallback_reason,
+        }
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": f"Reply for {text}",
+                        "card_title": title,
+                        "card_icon": icon,
+                        "html": None,
+                    }
+                ),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": thread_mode,
+                "reused_existing_thread": bool(requested_thread_id and thread_mode == "existing"),
+                "fallback_reason": fallback_reason,
+            },
+        )()
+
+
+class OutOfOrderCodex(FakeCodex):
+    def __init__(self) -> None:
+        super().__init__()
+        self.events = {
+            "turn-a": threading.Event(),
+            "turn-b": threading.Event(),
+            "turn-c": threading.Event(),
+        }
+
+    def release(self, key: str) -> None:
+        self.events[key].set()
+
+    def send_turn(self, text: str, *, thread_id: str | None = None):
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or f"thread-new-{len(self.turn_requests) + 1}"
+        key = "turn-a" if "alpha" in text.lower() else ("turn-b" if "fresh" in text.lower() else "turn-c")
+        self.turns.append(text)
+        self.turn_requests.append(
+            {
+                "text": text,
+                "requested_thread_id": requested_thread_id,
+                "used_thread_id": used_thread_id,
+                "key": key,
+            }
+        )
+        self.thread_id = used_thread_id
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": "existing" if requested_thread_id else "new",
+            "reused_existing_thread": bool(requested_thread_id),
+            "fallback_reason": "",
+        }
+        if not self.events[key].wait(timeout=5):
+            raise TimeoutError(f"test did not release {key}")
+        title = "Thread A" if key == "turn-a" else ("Fresh Thread" if key == "turn-b" else "Thread B")
+        icon = "bolt" if key != "turn-c" else "calendar"
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": f"Reply for {text}",
+                        "card_title": title,
+                        "card_icon": icon,
+                        "html": None,
+                    }
+                ),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": "existing" if requested_thread_id else "new",
+                "reused_existing_thread": bool(requested_thread_id),
+                "fallback_reason": "",
+            },
+        )()
 
 
 def make_config(max_html_bytes: int = 512 * 1024) -> Config:
@@ -584,7 +761,9 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(item["archived"])
         self.assertFalse(item["read"])
         self.assertFalse(item["deleted"])
-        self.assertNotIn("Pucky test turn", json.dumps(item))
+        self.assertEqual(item["transcript_messages"][0]["role"], "user")
+        self.assertEqual(item["transcript_messages"][0]["text"], "Pucky test turn")
+        self.assertEqual(item["transcript_messages"][1]["role"], "assistant")
         mark_read = self.post_json(
             "/api/feed/actions",
             {
@@ -753,6 +932,145 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("exc", error)
         self.assertIsInstance(result["body"], dict)
 
+    def test_text_turn_reuses_existing_thread_and_falls_back_on_invalid_thread(self) -> None:
+        scripted = ScriptedCodex(invalid_thread_ids={"thread-missing"})
+        self.service.codex = scripted
+
+        reused = self.post_json(
+            "/api/turn/text",
+            {"text": "Continue on this thread", "turn_id": "thread-reuse-1"},
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-keep",
+                "X-Pucky-Thread-Scope-Source": "thread_transcript",
+                "X-Pucky-Thread-Card-Id": "card-keep",
+            },
+        )
+
+        self.assertEqual(scripted.turn_requests[0]["requested_thread_id"], "thread-keep")
+        self.assertEqual(reused["origin"]["thread_id"], "thread-keep")
+        self.assertEqual(reused["telemetry"]["requested_thread_mode"], "existing")
+        self.assertTrue(reused["telemetry"]["thread_reused"])
+        self.assertEqual(reused["telemetry"]["thread_scope_source"], "thread_transcript")
+        self.assertEqual(reused["telemetry"]["thread_scope_card_id"], "card-keep")
+
+        fallback = self.post_json(
+            "/api/turn/text",
+            {"text": "Continue on missing thread", "turn_id": "thread-reuse-2"},
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-missing",
+                "X-Pucky-Thread-Scope-Source": "thread_page",
+            },
+        )
+
+        self.assertEqual(scripted.turn_requests[1]["requested_thread_id"], "thread-missing")
+        self.assertEqual(fallback["telemetry"]["requested_thread_id"], "thread-missing")
+        self.assertEqual(fallback["telemetry"]["thread_mode"], "new")
+        self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
+        self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
+
+    def test_audio_turn_keeps_user_transcript_audio_as_history_artifact(self) -> None:
+        body = self.post_audio(b"RIFFdemo", "audio/wav", turn_id="audio-history-1")
+
+        messages = body["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["text"], "Pucky test turn")
+        self.assertEqual(messages[1]["role"], "assistant")
+        user_attachments = messages[0]["attachments"]
+        self.assertEqual(user_attachments[0]["kind"], "audio")
+        artifact_id = user_attachments[0]["artifact"]
+        request = urllib.request.Request(
+            self.base_url + "/api/artifacts/" + urllib.parse.quote(artifact_id, safe=""),
+            headers={"Authorization": "Bearer secret"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.headers.get_content_type(), "audio/wav")
+            self.assertEqual(response.read(), b"RIFFdemo")
+
+    def test_feed_collapses_same_thread_to_latest_card_but_keeps_history(self) -> None:
+        scripted = ScriptedCodex()
+        self.service.codex = scripted
+
+        first = self.post_json(
+            "/api/turn/text",
+            {"text": "First thread turn", "turn_id": "thread-collapse-1"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread-collapse"},
+        )
+        second = self.post_json(
+            "/api/turn/text",
+            {"text": "weather follow up", "turn_id": "thread-collapse-2"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread-collapse"},
+        )
+
+        self.assertEqual(first["origin"]["thread_id"], "thread-collapse")
+        self.assertEqual(second["origin"]["thread_id"], "thread-collapse")
+        feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(feed["count"] if "count" in feed else len(feed["items"]), 1)
+        item = feed["items"][0]
+        self.assertEqual(item["origin"]["thread_id"], "thread-collapse")
+        self.assertEqual(item["title"], "Weather Plan")
+        self.assertEqual(item["icon"], "calendar")
+        self.assertEqual(item["thread_history_count"], 2)
+        self.assertEqual([message["role"] for message in item["transcript_messages"]], ["user", "assistant", "user", "assistant"])
+
+    def test_final_boss_overlapping_turns_keep_thread_routes_and_feed_tiles_isolated(self) -> None:
+        codex = OutOfOrderCodex()
+        self.service.codex = codex
+        results: dict[str, dict[str, object]] = {}
+        errors: dict[str, BaseException] = {}
+
+        def post_turn(name: str, text: str, headers: dict[str, str]) -> None:
+            try:
+                results[name] = self.post_json(
+                    "/api/turn/text",
+                    {"text": text, "turn_id": name},
+                    headers=headers,
+                )
+            except BaseException as exc:
+                errors[name] = exc
+
+        turn_a = threading.Thread(
+            target=post_turn,
+            args=("turn-a", "alpha request", {"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread-A"}),
+            daemon=True,
+        )
+        turn_b = threading.Thread(
+            target=post_turn,
+            args=("turn-b", "fresh request", {}),
+            daemon=True,
+        )
+        turn_c = threading.Thread(
+            target=post_turn,
+            args=("turn-c", "beta request", {"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread-B"}),
+            daemon=True,
+        )
+        turn_a.start()
+        turn_b.start()
+        turn_c.start()
+
+        codex.release("turn-c")
+        codex.release("turn-b")
+        codex.release("turn-a")
+        turn_a.join(timeout=5)
+        turn_b.join(timeout=5)
+        turn_c.join(timeout=5)
+
+        self.assertEqual(errors, {})
+        self.assertEqual(results["turn-a"]["origin"]["thread_id"], "thread-A")
+        self.assertEqual(results["turn-c"]["origin"]["thread_id"], "thread-B")
+        self.assertNotIn(results["turn-b"]["origin"]["thread_id"], {"thread-A", "thread-B"})
+
+        feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        thread_ids = [item["origin"].get("thread_id", "") for item in feed["items"]]
+        self.assertIn("thread-A", thread_ids)
+        self.assertIn("thread-B", thread_ids)
+        self.assertEqual(len(feed["items"]), 3)
+        summaries = {item["origin"].get("thread_id", item["card_id"]): item["summary"] for item in feed["items"]}
+        self.assertEqual(summaries["thread-A"], "Reply for alpha request")
+        self.assertEqual(summaries["thread-B"], "Reply for beta request")
+        self.assertTrue(any(summary == "Reply for fresh request" for summary in summaries.values()))
+
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post_audio(b"", "audio/mp4")
@@ -866,8 +1184,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(body["card_id"], "pucky_card_text-turn-files")
         self.assertEqual(body["icon"], "sunny")
         messages = body["transcript_messages"]
-        self.assertEqual(len(messages), 1)
-        attachments = messages[0]["attachments"]
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[1]["role"], "assistant")
+        attachments = messages[1]["attachments"]
         self.assertEqual(attachments[0]["viewer"]["type"], "table")
         self.assertEqual(attachments[1]["viewer"]["type"], "document_html")
         artifact_id = attachments[0]["artifact"]
@@ -879,7 +1199,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), "text/csv")
             self.assertIn("name,value", response.read().decode("utf-8"))
         feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
-        self.assertEqual(feed["items"][0]["transcript_messages"][0]["attachments"][0]["artifact"], artifact_id)
+        self.assertEqual(feed["items"][0]["transcript_messages"][1]["attachments"][0]["artifact"], artifact_id)
 
     def test_reply_text_path_fallback_promotes_displayable_file(self) -> None:
         html_path = Path(self.tmp.name) / "fallback.html"
@@ -896,7 +1216,7 @@ class ServerTests(unittest.TestCase):
 
         body = self.post_json("/api/turn/text", {"text": "Create an HTML page.", "turn_id": "text-turn-fallback"})
 
-        attachments = body["transcript_messages"][0]["attachments"]
+        attachments = body["transcript_messages"][1]["attachments"]
         self.assertEqual(len(attachments), 1)
         self.assertEqual(attachments[0]["kind"], "html")
         self.assertTrue(body["telemetry"]["attachment_fallback_from_reply_text"])
@@ -930,7 +1250,7 @@ class ServerTests(unittest.TestCase):
 
             body = self.post_json("/api/turn/text", {"text": "Create many files.", "turn_id": "text-turn-cap"})
 
-        attachments = body["transcript_messages"][0]["attachments"]
+        attachments = body["transcript_messages"][1]["attachments"]
         self.assertEqual([item["title"] for item in attachments], ["First", "Second"])
         self.assertEqual(len(attachments), 2)
         self.assertEqual(body["telemetry"]["attachment_count"], 2)
@@ -957,7 +1277,7 @@ class ServerTests(unittest.TestCase):
 
         body = self.post_json("/api/turn/text", {"text": "Create a zip archive.", "turn_id": "text-turn-zip"})
 
-        attachment = body["transcript_messages"][0]["attachments"][0]
+        attachment = body["transcript_messages"][1]["attachments"][0]
         self.assertEqual(attachment["kind"], "archive")
         self.assertEqual(attachment["viewer"]["type"], "download_only")
 
@@ -993,20 +1313,29 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8")
 
-    def post_audio(self, audio: bytes, content_type: str, turn_id: str = "", reply_mode: str = "") -> dict:
-        headers = {
+    def post_audio(
+        self,
+        audio: bytes,
+        content_type: str,
+        turn_id: str = "",
+        reply_mode: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        request_headers = {
             "Authorization": "Bearer secret",
             "Content-Type": content_type,
         }
         if turn_id:
-            headers["X-Pucky-Turn-Id"] = turn_id
+            request_headers["X-Pucky-Turn-Id"] = turn_id
         if reply_mode:
-            headers["X-Pucky-Reply-Mode"] = reply_mode
+            request_headers["X-Pucky-Reply-Mode"] = reply_mode
+        if headers is not None:
+            request_headers.update(headers)
         request = urllib.request.Request(
             self.base_url + "/api/turn",
             data=audio,
             method="POST",
-            headers=headers,
+            headers=request_headers,
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))

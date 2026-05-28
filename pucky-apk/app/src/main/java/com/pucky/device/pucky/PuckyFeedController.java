@@ -278,6 +278,7 @@ public final class PuckyFeedController {
                 .comparingLong(PuckyFeedController::snapshotSortTimestamp)
                 .reversed()
                 .thenComparing(card -> card.optString("summary", ""), String.CASE_INSENSITIVE_ORDER));
+        merged = collapseCardsByThread(merged);
         JSONArray visible = new JSONArray();
         int count = 0;
         for (JSONObject card : merged) {
@@ -337,9 +338,97 @@ public final class PuckyFeedController {
             Json.put(card, "pending_label", pendingLabelFor(state, placeholder));
             Json.put(card, "pending_error", record.optString("error", ""));
             Json.put(card, "pending_placeholder", placeholder);
+            String threadId = safe(record.optString("thread_id", ""));
+            if (!threadId.isEmpty()) {
+                JSONObject origin = new JSONObject();
+                Json.put(origin, "thread_id", threadId);
+                Json.put(card, "origin", origin);
+            }
             Json.add(cards, card);
         }
         return cards;
+    }
+
+    private static List<JSONObject> collapseCardsByThread(List<JSONObject> cards) {
+        List<JSONObject> collapsed = new ArrayList<>();
+        List<String> keys = new ArrayList<>();
+        for (JSONObject card : cards) {
+            if (card == null) {
+                continue;
+            }
+            String key = cardThreadGroupKey(card);
+            int existingIndex = keys.indexOf(key);
+            if (existingIndex < 0) {
+                collapsed.add(copyJson(card));
+                keys.add(key);
+                continue;
+            }
+            JSONObject current = collapsed.get(existingIndex);
+            if (current == null) {
+                collapsed.set(existingIndex, copyJson(card));
+                continue;
+            }
+            mergeThreadHistory(current, card);
+        }
+        return collapsed;
+    }
+
+    private static void mergeThreadHistory(JSONObject latest, JSONObject older) {
+        if (latest == null || older == null) {
+            return;
+        }
+        if (latest.optBoolean("pending_outbound", false) && !older.optBoolean("pending_outbound", false)) {
+            if (safe(latest.optString("title", "")).isEmpty() || "Sent message".equals(latest.optString("title", ""))) {
+                Json.put(latest, "title", older.optString("title", ""));
+            }
+            if (safe(latest.optString("icon", "")).isEmpty()) {
+                Json.put(latest, "icon", older.optString("icon", ""));
+            } else if (!safe(older.optString("icon", "")).isEmpty()) {
+                Json.put(latest, "icon", older.optString("icon", ""));
+            }
+            if (!latest.has("origin") && older.has("origin")) {
+                Json.put(latest, "origin", older.opt("origin"));
+            }
+        }
+        JSONArray mergedMessages = new JSONArray();
+        JSONArray olderMessages = older.optJSONArray("transcript_messages");
+        if (olderMessages != null) {
+            for (int i = 0; i < olderMessages.length(); i++) {
+                JSONObject message = olderMessages.optJSONObject(i);
+                if (message != null) {
+                    Json.add(mergedMessages, message);
+                }
+            }
+        }
+        JSONArray latestMessages = latest.optJSONArray("transcript_messages");
+        if (latestMessages != null) {
+            for (int i = 0; i < latestMessages.length(); i++) {
+                JSONObject message = latestMessages.optJSONObject(i);
+                if (message != null) {
+                    Json.add(mergedMessages, message);
+                }
+            }
+        }
+        if (mergedMessages.length() > 0) {
+            Json.put(latest, "transcript_messages", mergedMessages);
+        }
+    }
+
+    private static String cardThreadGroupKey(JSONObject card) {
+        JSONObject origin = card == null ? null : card.optJSONObject("origin");
+        String threadId = origin == null ? "" : safe(origin.optString("thread_id", ""));
+        if (!threadId.isEmpty()) {
+            return "thread:" + threadId;
+        }
+        return "card:" + safe(card == null ? "" : card.optString("card_id", ""));
+    }
+
+    private static JSONObject copyJson(JSONObject input) {
+        try {
+            return new JSONObject(input == null ? "{}" : input.toString());
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
     }
 
     private static void appendSnapshotCards(List<JSONObject> target, JSONArray cards) {
