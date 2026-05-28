@@ -95,7 +95,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
-            "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.get",
+            "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.merge", "ui.reply_cards.get",
             "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
             "ui.bundle.refresh", "ui.surface.get", "ui.shell.mode.get", "ui.shell.mode.set",
             "launcher.capability.get", "android.substrate"
@@ -516,6 +516,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.showDashboard(command.args());
             case "ui.reply_cards.set":
                 return uiController.replyCardsSet(command.args());
+            case "ui.reply_cards.merge":
+                return uiController.replyCardsMerge(command.args());
             case "ui.reply_cards.get":
                 return uiController.replyCardsGet();
             case "ui.reply_cards.clear":

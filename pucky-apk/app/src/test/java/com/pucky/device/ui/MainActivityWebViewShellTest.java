@@ -288,9 +288,11 @@ public final class MainActivityWebViewShellTest {
         String intentController = read("src/main/java/com/pucky/device/intents/IntentController.java");
 
         assertTrue(source.contains("\"ui.reply_cards.set\""));
+        assertTrue(source.contains("\"ui.reply_cards.merge\""));
         assertTrue(source.contains("\"ui.reply_cards.get\""));
         assertTrue(source.contains("\"ui.reply_cards.clear\""));
         assertTrue(source.contains("uiController.replyCardsSet"));
+        assertTrue(source.contains("uiController.replyCardsMerge"));
         assertTrue(source.contains("uiController.replyCardsGet"));
         assertTrue(source.contains("uiController.replyCardsClear"));
         assertTrue(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));

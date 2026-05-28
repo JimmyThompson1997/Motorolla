@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from pucky_vm.server import (
     Config,
@@ -299,6 +300,24 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["feed_items_count"], 0)
         self.assertEqual(payload["deepgram_key"], "present")
         self.assertNotIn("secret", json.dumps(payload))
+
+    def test_config_defaults_codex_model_to_spark_medium(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            config = Config.from_env()
+
+        self.assertEqual(config.codex_model, "gpt-5.3-codex-spark")
+        self.assertEqual(config.codex_reasoning_effort, "medium")
+
+    def test_config_env_overrides_codex_defaults(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"PUCKY_CODEX_MODEL": "custom-model", "PUCKY_CODEX_REASONING_EFFORT": "high"},
+            clear=True,
+        ):
+            config = Config.from_env()
+
+        self.assertEqual(config.codex_model, "custom-model")
+        self.assertEqual(config.codex_reasoning_effort, "high")
 
     def test_ui_bundle_endpoints_serve_manifest_bundle_and_browser_app(self) -> None:
         manifest = self.get_json("/ui/pucky/latest/manifest.json")

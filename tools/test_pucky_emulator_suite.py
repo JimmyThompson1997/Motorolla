@@ -213,6 +213,40 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "--device-id" in command and config.device_id in command
 
 
+def test_reply_cards_write_command_uses_set_for_emulator(tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    command = suite.reply_cards_write_command(args, config, {"cards": [{"title": "One"}]})
+
+    assert "ui.reply_cards.set" in command
+    assert "ui.reply_cards.merge" not in command
+
+
+def test_reply_cards_write_command_uses_merge_for_physical_targets(tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.SlotConfig(
+        slot=0,
+        avd_name="unused",
+        serial="ZY22JZ26LK",
+        emulator_port=0,
+        device_id="pucky-cover-settings-phone",
+        broker_port=18081,
+        ui_port=18181,
+        avd_home=str(tmp_path / ".tmp" / "avd-home"),
+        run_id="physical",
+        run_dir=str(tmp_path / ".tmp" / "run"),
+        evidence_dir=str(tmp_path / ".tmp" / "evidence"),
+        state_path=str(tmp_path / ".tmp" / "state.json"),
+        bundle_version="physical-proof",
+    )
+
+    command = suite.reply_cards_write_command(args, config, {"cards": [{"title": "One"}]})
+
+    assert "ui.reply_cards.merge" in command
+    assert "ui.reply_cards.set" not in command
+
+
 def test_launch_home_command_reuses_provisioning_payload_when_turn_config_present(tmp_path: Path) -> None:
     args = ns(tmp_path, turn_url="https://pucky.fly.dev/api/turn", turn_token="token-123")
     config = suite.slot_config(tmp_path, 1, run_id="fixed")

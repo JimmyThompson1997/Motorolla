@@ -67,13 +67,17 @@ public final class PuckyFeedController {
     }
 
     public JSONObject sync(JSONObject args) throws CommandException {
-        return syncInternal(args.optString("reason", "manual"), args.optInt("limit", 20), true);
+        return syncInternal(
+                args.optString("reason", "manual"),
+                args.optInt("limit", 20),
+                true,
+                args.optBoolean("reset_cursor", false));
     }
 
     public void syncAsync(String reason) {
         Thread worker = new Thread(() -> {
             try {
-                syncInternal(reason, 20, true);
+                syncInternal(reason, 20, true, false);
             } catch (Exception exc) {
                 Log.d(TAG, "feed sync skipped: " + exc.getMessage());
             }
@@ -171,21 +175,23 @@ public final class PuckyFeedController {
         return card;
     }
 
-    private JSONObject syncInternal(String reason, int limit, boolean emitUpdate) throws CommandException {
+    private JSONObject syncInternal(String reason, int limit, boolean emitUpdate, boolean resetCursor) throws CommandException {
         JSONObject before = mergedSnapshot();
         if (!isConfigured()) {
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.feed_sync_result.v1");
             Json.put(out, "configured", false);
             Json.put(out, "reason", reason);
+            Json.put(out, "reset_cursor", resetCursor);
             Json.put(out, "snapshot", before);
             return out;
         }
-        String cursor = prefs.getString(KEY_CURSOR, "");
+        String cursor = resetCursor ? "" : prefs.getString(KEY_CURSOR, "");
         String nextCursor = cursor;
         boolean hasMore = false;
         int merged = 0;
         int pages = 0;
+        int pageLimit = resetCursor ? 200 : 5;
         do {
             JSONObject page;
             try {
@@ -220,7 +226,7 @@ public final class PuckyFeedController {
                 nextCursor = candidate;
             }
             pages++;
-        } while (hasMore && pages < 5);
+        } while (hasMore && pages < pageLimit);
         prefs.edit().putString(KEY_CURSOR, nextCursor).apply();
         JSONObject snapshot = mergedSnapshot();
         if (emitUpdate && merged > 0) {
@@ -232,6 +238,7 @@ public final class PuckyFeedController {
         Json.put(out, "reason", reason);
         Json.put(out, "merged", merged);
         Json.put(out, "cursor", nextCursor);
+        Json.put(out, "reset_cursor", resetCursor);
         Json.put(out, "snapshot", snapshot);
         return out;
     }

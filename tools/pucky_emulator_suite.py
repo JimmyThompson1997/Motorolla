@@ -559,6 +559,15 @@ def puckyctl_command(
     ]
 
 
+def reply_cards_write_command(
+    args: argparse.Namespace,
+    config: SlotConfig,
+    payload: dict[str, Any],
+) -> list[str]:
+    command_type = "ui.reply_cards.set" if is_emulator_serial(config.serial) else "ui.reply_cards.merge"
+    return puckyctl_command(args, config, command_type, payload)
+
+
 def port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
@@ -1736,7 +1745,7 @@ def cmd_seed_ui(args: argparse.Namespace) -> dict[str, Any]:
         timeout=300,
     )
     cards_payload = cards_payload_from_args(args, config)
-    cards_status = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.set", cards_payload), timeout=300)
+    cards_status = command_json(runner, reply_cards_write_command(args, config, cards_payload), timeout=300)
     if not args.dry_run:
         state = load_state(ROOT, args.slot)
         pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
@@ -2573,7 +2582,7 @@ def cmd_prove_pending_outbound_feed(args: argparse.Namespace) -> dict[str, Any]:
     reply_set = command_result(
         command_json(
             runner,
-            puckyctl_command(args, config, "ui.reply_cards.set", reply_payload),
+            reply_cards_write_command(args, config, reply_payload),
             timeout=120,
         )
     )
@@ -3188,7 +3197,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             materialized_snapshot = command_result(
                 command_json(
                     runner,
-                    puckyctl_command(args, config, "ui.reply_cards.set", {"cards": [replay_card]}),
+                    reply_cards_write_command(args, config, {"cards": [replay_card]}),
                     timeout=180,
                 )
             )
@@ -3220,7 +3229,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             materialized_snapshot = command_result(
                 command_json(
                     runner,
-                    puckyctl_command(args, config, "ui.reply_cards.set", {"cards": [local_card]}),
+                    reply_cards_write_command(args, config, {"cards": [local_card]}),
                     timeout=180,
                 )
             )

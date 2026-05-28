@@ -53,6 +53,14 @@ public final class PuckyUiController {
         return out;
     }
 
+    public JSONObject replyCardsMerge(JSONObject args) throws com.pucky.device.command.CommandException {
+        JSONArray cards = args.optJSONArray("cards");
+        JSONObject out = replyCards.merge(cards);
+        PuckyState.get().setLifecycleEvent("reply_cards.updated");
+        PuckyState.get().broadcast(context);
+        return out;
+    }
+
     public JSONObject replyCardsGet() {
         return PuckyFeedController.shared(context).snapshot();
     }
