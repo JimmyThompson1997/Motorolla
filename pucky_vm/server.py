@@ -179,6 +179,7 @@ class Config:
     connect_portal_secret: str = ""
     connect_portal_ttl_seconds: int = 12 * 60 * 60
     composio_default_auth_mode: str = "browser"
+    proof_reply_delay_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -222,6 +223,9 @@ class Config:
             ),
             connect_portal_ttl_seconds=max(300, int(os.environ.get("PUCKY_CONNECT_PORTAL_TTL_SECONDS", str(12 * 60 * 60)))),
             composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "browser").strip().lower() or "browser",
+            proof_reply_delay_enabled=(
+                os.environ.get("PUCKY_PROOF_REPLY_DELAY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
         )
 
 
@@ -804,6 +808,7 @@ class PuckyVoiceService:
         thread_id: str | None = None,
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
+        proof_reply_delay_ms: str | int | None = None,
     ) -> dict[str, object]:
         if not audio:
             raise ValueError("audio body is empty")
@@ -835,6 +840,8 @@ class PuckyVoiceService:
             card_id=thread_card_id,
         )
         telemetry.update(thread_request)
+        telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
+        telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
             telemetry["stage"] = "stt_running"
@@ -876,6 +883,7 @@ class PuckyVoiceService:
         thread_id: str | None = None,
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
+        proof_reply_delay_ms: str | int | None = None,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -907,6 +915,8 @@ class PuckyVoiceService:
             card_id=thread_card_id,
         )
         telemetry.update(thread_request)
+        telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
+        telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
             return self._handle_transcript_turn(
@@ -1075,11 +1085,28 @@ class PuckyVoiceService:
         result = verified
         result["card"] = card
         result["telemetry"] = _public_turn_telemetry(telemetry)
+        self._apply_proof_reply_delay(telemetry)
+        telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["response_bytes"] = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._update_turn_status(turn_id, "completed", "ok", telemetry)
         _log_json(telemetry)
         return result
+
+    def _apply_proof_reply_delay(self, telemetry: dict[str, object]) -> None:
+        requested_ms = _normalize_proof_reply_delay_ms(telemetry.get("proof_reply_delay_ms_requested"))
+        telemetry["proof_reply_delay_ms_requested"] = requested_ms
+        telemetry["proof_reply_delay_ms_applied"] = 0
+        telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
+        if requested_ms <= 0:
+            return
+        if not self.config.proof_reply_delay_enabled:
+            telemetry["proof_reply_delay_ignored"] = "disabled"
+            return
+        start = time.perf_counter()
+        time.sleep(requested_ms / 1000.0)
+        telemetry["proof_reply_delay_ms_applied"] = requested_ms
+        telemetry["proof_reply_delay_elapsed_ms"] = _elapsed_ms(start)
 
     def _prepare_reply_attachments(
         self,
@@ -1534,6 +1561,19 @@ def _normalize_thread_request(
     }
 
 
+def _normalize_proof_reply_delay_ms(value: object) -> int:
+    if value is None:
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    try:
+        parsed = int(text, 10)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("proof_reply_delay_ms must be an integer") from exc
+    return max(0, min(60_000, parsed))
+
+
 def _log_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
@@ -1549,6 +1589,11 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
+        "proof_reply_delay_enabled",
+        "proof_reply_delay_ms_requested",
+        "proof_reply_delay_ms_applied",
+        "proof_reply_delay_elapsed_ms",
+        "proof_reply_delay_ignored",
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
@@ -1595,6 +1640,11 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
+        "proof_reply_delay_enabled",
+        "proof_reply_delay_ms_requested",
+        "proof_reply_delay_ms_applied",
+        "proof_reply_delay_elapsed_ms",
+        "proof_reply_delay_ignored",
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
@@ -2422,6 +2472,11 @@ def make_handler(service: PuckyVoiceService):
                             or self.headers.get("X-Pucky-Thread-Card-Id", "")
                             or ""
                         ),
+                        proof_reply_delay_ms=(
+                            payload.get("proof_reply_delay_ms")
+                            or self.headers.get("X-Pucky-Proof-Reply-Delay-Ms", "")
+                            or ""
+                        ),
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -2452,6 +2507,7 @@ def make_handler(service: PuckyVoiceService):
                     thread_id=self.headers.get("X-Pucky-Thread-Id", ""),
                     thread_scope_source=self.headers.get("X-Pucky-Thread-Scope-Source", ""),
                     thread_card_id=self.headers.get("X-Pucky-Thread-Card-Id", ""),
+                    proof_reply_delay_ms=self.headers.get("X-Pucky-Proof-Reply-Delay-Ms", ""),
                 )
             except ValueError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.request import urlopen
 
+import tools.refresh_pucky_html_official as official_html
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
@@ -50,6 +52,23 @@ def run_subprocess(
         argv,
         cwd=str(cwd or ROOT),
         text=True,
+        capture_output=True,
+        env=env,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def run_subprocess_bytes(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: int | float | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        argv,
+        cwd=str(cwd or ROOT),
         capture_output=True,
         env=env,
         timeout=timeout,
@@ -202,6 +221,21 @@ def run_adb(args: argparse.Namespace, serial: str, adb_args: list[str], *, timeo
             f"adb {' '.join(adb_args)} failed for {serial}: {(completed.stderr or completed.stdout).strip()}"
         )
     return completed.stdout.strip()
+
+
+def run_adb_bytes(
+    args: argparse.Namespace,
+    serial: str,
+    adb_args: list[str],
+    *,
+    timeout_seconds: int | float = 30,
+) -> bytes:
+    completed = run_subprocess_bytes(adb_command(args, serial, adb_args), cwd=args.repo_root, timeout=timeout_seconds)
+    if completed.returncode != 0:
+        stderr = (completed.stderr or b"").decode("utf-8", errors="replace").strip()
+        stdout = (completed.stdout or b"").decode("utf-8", errors="replace").strip()
+        raise PhoneProofError(f"adb {' '.join(adb_args)} failed for {serial}: {stderr or stdout}")
+    return completed.stdout or b""
 
 
 def list_adb_devices(args: argparse.Namespace) -> list[str]:
@@ -388,6 +422,10 @@ def bundle_status(args: argparse.Namespace) -> dict[str, Any]:
     return run_pucky_command(args, "ui.bundle.status", {})
 
 
+def status_get(args: argparse.Namespace) -> dict[str, Any]:
+    return run_pucky_command(args, "status.get", {})
+
+
 def turn_status(args: argparse.Namespace) -> dict[str, Any]:
     return run_pucky_command(args, "pucky.turn.status", {})
 
@@ -507,8 +545,13 @@ def wait_for(
     raise PhoneProofError(f"Timed out waiting for {description}")
 
 
-def walkie_start_payload(fixture_path: str, transcript_hint: str) -> dict[str, Any]:
-    return {
+def walkie_start_payload(
+    fixture_path: str,
+    transcript_hint: str,
+    *,
+    proof_reply_delay_ms: int = 0,
+) -> dict[str, Any]:
+    payload = {
         "trigger_source": "volume_up_hold",
         "capture_source": "fixture",
         "fixture_path": fixture_path,
@@ -521,6 +564,9 @@ def walkie_start_payload(fixture_path: str, transcript_hint: str) -> dict[str, A
         "max_duration_ms": 20000,
         "feedback": False,
     }
+    if int(proof_reply_delay_ms or 0) > 0:
+        payload["proof_reply_delay_ms"] = int(proof_reply_delay_ms)
+    return payload
 
 
 def put_fixture_for_text(args: argparse.Namespace, text: str, label: str) -> dict[str, Any]:
@@ -534,8 +580,19 @@ def put_fixture_for_text(args: argparse.Namespace, text: str, label: str) -> dic
     }
 
 
-def start_fixture_turn(args: argparse.Namespace, fixture_path: str, transcript_hint: str) -> dict[str, Any]:
-    return run_pucky_command(args, "pucky.turn.start", walkie_start_payload(fixture_path, transcript_hint), timeout_seconds=120)
+def start_fixture_turn(
+    args: argparse.Namespace,
+    fixture_path: str,
+    transcript_hint: str,
+    *,
+    proof_reply_delay_ms: int = 0,
+) -> dict[str, Any]:
+    return run_pucky_command(
+        args,
+        "pucky.turn.start",
+        walkie_start_payload(fixture_path, transcript_hint, proof_reply_delay_ms=proof_reply_delay_ms),
+        timeout_seconds=120,
+    )
 
 
 def wait_for_scope(args: argparse.Namespace, thread_id: str, source_surface: str) -> dict[str, Any]:
@@ -614,9 +671,122 @@ def installed_package_info(args: argparse.Namespace, serial: str) -> dict[str, s
     }
 
 
+def apk_identity(args: argparse.Namespace) -> dict[str, Any]:
+    status = status_get(args)
+    identity = status.get("apk_identity")
+    return identity if isinstance(identity, dict) else {}
+
+
+def capture_device_screenshot(args: argparse.Namespace, serial: str, path: Path) -> Path:
+    body = run_adb_bytes(args, serial, ["exec-out", "screencap", "-p"], timeout_seconds=30)
+    if not body.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise PhoneProofError("device screenshot did not return a PNG")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    return path
+
+
+def visible_cards(surface_result: dict[str, Any]) -> list[dict[str, Any]]:
+    final_surface = surface_result.get("final_surface") if isinstance(surface_result, dict) else {}
+    cards = final_surface.get("visible_cards") if isinstance(final_surface, dict) else []
+    return [card for card in cards if isinstance(card, dict)]
+
+
+def visible_thread_index(surface_result: dict[str, Any], thread_id: str) -> int:
+    for index, card in enumerate(visible_cards(surface_result)):
+        if str(card.get("thread_id") or "").strip() == str(thread_id or "").strip():
+            return index
+    return -1
+
+
+def visible_thread_card(surface_result: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
+    for card in visible_cards(surface_result):
+        if str(card.get("thread_id") or "").strip() == str(thread_id or "").strip():
+            return card
+    return None
+
+
+def scenario_checks(checks: dict[str, bool]) -> dict[str, Any]:
+    normalized = {key: bool(value) for key, value in checks.items()}
+    return {"passed": all(normalized.values()), "checks": normalized}
+
+
+def expected_ui_manifest(args: argparse.Namespace, local_git: dict[str, object]) -> dict[str, Any] | None:
+    if args.skip_official_preproof_check:
+        return None
+    manifest_url = official_html.cache_busted_url(args.manifest_url, local_git["head_short"])
+    remote_manifest = official_html.fetch_json(manifest_url)
+    return official_html.validate_remote_manifest(remote_manifest, local_git)
+
+
+def verify_target_identity(
+    args: argparse.Namespace,
+    *,
+    local_git: dict[str, object],
+    remote_manifest: dict[str, Any] | None,
+    bundle: dict[str, Any],
+    surface: dict[str, Any],
+    installed_package: dict[str, str],
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "local_head_matches_upstream": str(local_git.get("head") or "") == str(local_git.get("upstream") or ""),
+        "bundle_installed": bool(bundle.get("installed")),
+        "apk_git_commit_matches": str(identity.get("git_commit") or "") == str(local_git.get("head") or ""),
+        "apk_git_dirty_false": bool(identity.get("git_dirty")) is False,
+        "package_version_name_matches_identity": str(installed_package.get("version_name") or "") == str(identity.get("version_name") or ""),
+        "package_version_code_matches_identity": str(installed_package.get("version_code") or "") == str(identity.get("version_code") or ""),
+    }
+    if remote_manifest is not None:
+        official_html.verify_bundle_status(bundle, remote_manifest, local_git)
+        checks["bundle_ui_version_matches_manifest"] = str(bundle.get("ui_version") or "") == str(remote_manifest.get("ui_version") or "")
+        checks["surface_ui_version_matches_manifest"] = str(surface.get("ui_version") or "") == str(remote_manifest.get("ui_version") or "")
+    result = scenario_checks(checks)
+    if not result["passed"]:
+        raise PhoneProofError(f"target identity mismatch: {json.dumps(result['checks'], sort_keys=True)}")
+    return result
+
+
+def wait_for_turns_reply_saved(args: argparse.Namespace, turn_ids: list[str]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    pending = [turn_id for turn_id in turn_ids if turn_id]
+    completed: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    deadline = time.time() + 240
+    while pending and time.time() < deadline:
+        for turn_id in list(pending):
+            record = turn_read(args, turn_id)
+            if record.get("reply_card_saved"):
+                completed[turn_id] = record
+                order.append(turn_id)
+                pending.remove(turn_id)
+        if pending:
+            time.sleep(0.5)
+    if pending:
+        raise PhoneProofError(f"Timed out waiting for replies: {', '.join(pending)}")
+    return completed, order
+
+
+def capture_phase(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    operations: list[dict[str, Any]],
+    scenario_dir: Path,
+    browser_name: str,
+    device_name: str,
+    timeout_seconds: int | float,
+) -> dict[str, Any]:
+    result = run_browser_helper(args, cdp_url, operations, timeout_seconds=timeout_seconds)
+    save_json(scenario_dir / browser_name, result)
+    capture_device_screenshot(args, serial, scenario_dir / device_name)
+    return result
+
+
 def run_continuation_scenario(
     args: argparse.Namespace,
     *,
+    serial: str,
     name: str,
     cdp_url: str,
     card: dict[str, Any],
@@ -630,23 +800,45 @@ def run_continuation_scenario(
     source_thread_id = origin_thread_id(card)
     if not source_thread_id:
         raise PhoneProofError(f"{name} source card is missing origin.thread_id")
-    open_result = run_browser_helper(
+    home_before = capture_phase(
         args,
-        cdp_url,
-        browser_ops_for_card_open(card, action, "transcript" if action == "transcript" else ("page" if action == "page" else "attachment"))
-        + [screenshot_operation(scenario_dir / "before-send.png")],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="home-before.json",
+        device_name="home-before-device.png",
+        timeout_seconds=30,
+    )
+    open_result = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=browser_ops_for_card_open(
+            card,
+            action,
+            "transcript" if action == "transcript" else ("page" if action == "page" else "attachment"),
+        ) + [screenshot_operation(scenario_dir / "before-send.png")],
+        scenario_dir=scenario_dir,
+        browser_name="before-send.json",
+        device_name="before-send-device.png",
         timeout_seconds=60,
     )
     scope_before = wait_for_scope(args, source_thread_id, expected_surface)
+    turn_status_before = turn_status(args)
     fixture = put_fixture_for_text(args, text, name)
     start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
     turn_id = str(start.get("turn_id") or "")
     if not turn_id:
         raise PhoneProofError(f"{name} did not return a turn_id")
-    home_after_start = run_browser_helper(
+    home_after_start = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "pending.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "pending.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="pending.json",
+        device_name="pending-device.png",
         timeout_seconds=60,
     )
 
@@ -662,57 +854,111 @@ def run_continuation_scenario(
         return {"snapshot": snapshot, "card": card_now}
 
     pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description=f"{name} pending sent card")
+    turn_status_pending = turn_status(args)
     transcript_turn = wait_for_turn_transcript(args, turn_id)
     transcript_snapshot = snapshot_cards(args)
-    run_browser_helper(
+    home_with_transcript = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "goto_home"}, screenshot_operation(scenario_dir / "transcript-known.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "transcript-known.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="transcript-known.json",
+        device_name="transcript-known-device.png",
         timeout_seconds=45,
     )
+    turn_status_transcript = turn_status(args)
     final_turn = wait_for_turn_reply_saved(args, turn_id)
     final_snapshot = snapshot_cards(args)
-    run_browser_helper(
+    home_after_reply = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="reply-complete.json",
+        device_name="reply-complete-device.png",
         timeout_seconds=45,
     )
+    turn_status_final = turn_status(args)
     final_card = final_thread_card(final_snapshot, source_thread_id)
     if final_card is None:
         raise PhoneProofError(f"{name} did not leave a final visible tile on thread {source_thread_id}")
     if len(thread_cards(final_snapshot, source_thread_id)) != 1:
         raise PhoneProofError(f"{name} left multiple visible cards on thread {source_thread_id}")
+    before_index = visible_thread_index(home_before, source_thread_id)
+    pending_card = visible_thread_card(home_after_start, source_thread_id) or {}
+    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or {}
+    reply_card = visible_thread_card(home_after_reply, source_thread_id) or {}
+    checks = scenario_checks(
+        {
+            "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
+            "scope_matches_surface": str(scope_before.get("source_surface") or "") == expected_surface,
+            "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
+            "pending_tile_kind": str(pending_card.get("kind") or "") == "pending_outbound",
+            "pending_placeholder_visible": "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
+            "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
+            "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
+            "transcript_preview_matches_user": str(transcript_turn.get("user_transcript") or "").strip().lower() in str(transcript_card.get("preview") or "").strip().lower(),
+            "final_thread_reused": origin_thread_id(final_card) == source_thread_id,
+            "final_single_visible_tile": len(thread_cards(final_snapshot, source_thread_id)) == 1,
+            "final_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_reply, source_thread_id) == before_index,
+            "no_duplicate_visible_tile": sum(1 for item in cards_from_snapshot(final_snapshot) if origin_thread_id(item) == source_thread_id) == 1,
+            "reply_home_is_not_pending": str(reply_card.get("kind") or "") != "pending_outbound",
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"{name} checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
     return {
         "scenario": name,
         "source_card": card,
         "source_thread_id": source_thread_id,
         "before_surface": before_surface,
         "before_cards": before_cards,
+        "home_before": home_before,
         "open_result": open_result,
         "scope_before": scope_before,
+        "turn_status_before": turn_status_before,
         "fixture": fixture,
         "turn_start": start,
         "pending": pending,
+        "turn_status_pending": turn_status_pending,
         "turn_with_transcript": transcript_turn,
         "transcript_snapshot": transcript_snapshot,
+        "turn_status_transcript": turn_status_transcript,
         "turn_final": final_turn,
         "final_snapshot": final_snapshot,
+        "turn_status_final": turn_status_final,
         "final_card": final_card,
         "home_after_start": home_after_start,
+        "home_with_transcript": home_with_transcript,
+        "home_after_reply": home_after_reply,
+        "checks": checks,
     }
 
 
-def run_negative_scenario(args: argparse.Namespace, *, cdp_url: str, text: str, scenario_dir: Path) -> dict[str, Any]:
+def run_negative_scenario(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    text: str,
+    scenario_dir: Path,
+) -> dict[str, Any]:
     before_cards = snapshot_cards(args)
     before_thread_ids = {origin_thread_id(card) for card in cards_from_snapshot(before_cards) if origin_thread_id(card)}
-    run_browser_helper(
+    home_before = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "before-send.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "before-send.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="before-send.json",
+        device_name="before-send-device.png",
         timeout_seconds=45,
     )
     scope_before = wait_for_new_thread_scope(args)
+    turn_status_before = turn_status(args)
     fixture = put_fixture_for_text(args, text, "negative-home")
     start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
     turn_id = str(start.get("turn_id") or "")
@@ -731,25 +977,52 @@ def run_negative_scenario(args: argparse.Namespace, *, cdp_url: str, text: str, 
     final_thread_id = origin_thread_id(final_card)
     if final_thread_id and final_thread_id in before_thread_ids:
         raise PhoneProofError("negative scenario reused an existing thread instead of creating a new one")
-    run_browser_helper(
+    turn_status_final = turn_status(args)
+    home_after_reply = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="reply-complete.json",
+        device_name="reply-complete-device.png",
         timeout_seconds=45,
     )
+    checks = scenario_checks(
+        {
+            "scope_is_new_thread": str(scope_before.get("mode") or "") == "new_thread",
+            "scope_has_no_thread_id": not str(scope_before.get("thread_id") or "").strip(),
+            "final_card_exists": final_card is not None,
+            "result_thread_is_new": bool(final_thread_id) and final_thread_id not in before_thread_ids,
+            "home_has_visible_result_thread": visible_thread_index(home_after_reply, final_thread_id) >= 0 if final_thread_id else True,
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"negative scenario checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
     return {
         "scenario": "negative_home",
         "before_cards": before_cards,
+        "home_before": home_before,
         "scope_before": scope_before,
+        "turn_status_before": turn_status_before,
         "fixture": fixture,
         "turn_start": start,
         "turn_final": final_turn,
+        "turn_status_final": turn_status_final,
         "final_snapshot": final_snapshot,
         "final_card": final_card,
+        "home_after_reply": home_after_reply,
+        "checks": checks,
     }
 
 
-def run_final_boss_scenario(args: argparse.Namespace, *, cdp_url: str, scenario_dir: Path) -> dict[str, Any]:
+def run_final_boss_scenario(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    scenario_dir: Path,
+) -> dict[str, Any]:
     cards = cards_from_snapshot(snapshot_cards(args))
     card_a = select_card(cards, title_contains=args.final_boss_thread_a_title_contains, require_thread=True)
     card_b = select_card(
@@ -767,46 +1040,92 @@ def run_final_boss_scenario(args: argparse.Namespace, *, cdp_url: str, scenario_
     fixture_b = put_fixture_for_text(args, args.final_boss_text_new, "final-boss-new")
     fixture_c = put_fixture_for_text(args, args.final_boss_text_b, "final-boss-b")
 
-    run_browser_helper(
+    home_before = capture_phase(
         args,
-        cdp_url,
-        browser_ops_for_card_open(card_a, "transcript", "transcript") + [screenshot_operation(scenario_dir / "thread-a-before.png")],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="home-before.json",
+        device_name="home-before-device.png",
+        timeout_seconds=30,
+    )
+    open_a = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=browser_ops_for_card_open(card_a, "transcript", "transcript") + [screenshot_operation(scenario_dir / "thread-a-before.png")],
+        scenario_dir=scenario_dir,
+        browser_name="thread-a-before.json",
+        device_name="thread-a-before-device.png",
         timeout_seconds=60,
     )
     scope_a = wait_for_scope(args, thread_a, "thread_transcript")
-    start_a = start_fixture_turn(args, str(fixture_a["remote"]["path"]), args.final_boss_text_a)
+    turn_status_before_a = turn_status(args)
+    start_a = start_fixture_turn(
+        args,
+        str(fixture_a["remote"]["path"]),
+        args.final_boss_text_a,
+        proof_reply_delay_ms=args.final_boss_delay_ms_a,
+    )
     turn_a = str(start_a.get("turn_id") or "")
     wait_for_turn_not_recording(args, turn_a)
 
-    run_browser_helper(
+    open_new = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "new-thread-before.png")],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "back"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "new-thread-before.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="new-thread-before.json",
+        device_name="new-thread-before-device.png",
         timeout_seconds=45,
     )
     scope_new = wait_for_new_thread_scope(args)
-    start_b = start_fixture_turn(args, str(fixture_b["remote"]["path"]), args.final_boss_text_new)
+    turn_status_before_new = turn_status(args)
+    start_b = start_fixture_turn(
+        args,
+        str(fixture_b["remote"]["path"]),
+        args.final_boss_text_new,
+        proof_reply_delay_ms=args.final_boss_delay_ms_new,
+    )
     turn_b = str(start_b.get("turn_id") or "")
     wait_for_turn_not_recording(args, turn_b)
 
-    run_browser_helper(
+    open_b = capture_phase(
         args,
-        cdp_url,
-        browser_ops_for_card_open(card_b, "transcript", "transcript") + [screenshot_operation(scenario_dir / "thread-b-before.png")],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=browser_ops_for_card_open(card_b, "transcript", "transcript") + [screenshot_operation(scenario_dir / "thread-b-before.png")],
+        scenario_dir=scenario_dir,
+        browser_name="thread-b-before.json",
+        device_name="thread-b-before-device.png",
         timeout_seconds=60,
     )
     scope_b = wait_for_scope(args, thread_b, "thread_transcript")
-    start_c = start_fixture_turn(args, str(fixture_c["remote"]["path"]), args.final_boss_text_b)
+    turn_status_before_b = turn_status(args)
+    start_c = start_fixture_turn(
+        args,
+        str(fixture_c["remote"]["path"]),
+        args.final_boss_text_b,
+        proof_reply_delay_ms=args.final_boss_delay_ms_b,
+    )
     turn_c = str(start_c.get("turn_id") or "")
 
-    final_a = wait_for_turn_reply_saved(args, turn_a)
-    final_b = wait_for_turn_reply_saved(args, turn_b)
-    final_c = wait_for_turn_reply_saved(args, turn_c)
+    results_by_turn, completion_order = wait_for_turns_reply_saved(args, [turn_a, turn_b, turn_c])
+    final_a = results_by_turn[turn_a]
+    final_b = results_by_turn[turn_b]
+    final_c = results_by_turn[turn_c]
     final_snapshot = snapshot_cards(args)
-    run_browser_helper(
+    turn_status_final = turn_status(args)
+    home_after_reply = capture_phase(
         args,
-        cdp_url,
-        [{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="reply-complete.json",
+        device_name="reply-complete-device.png",
         timeout_seconds=45,
     )
 
@@ -826,12 +1145,39 @@ def run_final_boss_scenario(args: argparse.Namespace, *, cdp_url: str, scenario_
     middle_thread = origin_thread_id(card_result_b or {})
     if middle_thread in {thread_a, thread_b}:
         raise PhoneProofError("Final boss middle turn reused an existing thread unexpectedly")
+    expected_order = [turn_c, turn_b, turn_a]
+    checks = scenario_checks(
+        {
+            "scope_a_matches": str(scope_a.get("thread_id") or "") == thread_a,
+            "scope_new_is_unscoped": str(scope_new.get("mode") or "") == "new_thread",
+            "scope_b_matches": str(scope_b.get("thread_id") or "") == thread_b,
+            "turn_a_reused_thread_a": origin_thread_id(card_result_a or {}) == thread_a,
+            "turn_b_created_new_thread": middle_thread not in {thread_a, thread_b} and bool(middle_thread),
+            "turn_c_reused_thread_b": origin_thread_id(card_result_c or {}) == thread_b,
+            "completion_order_out_of_order": completion_order == expected_order,
+            "delay_a_applied": int((final_a.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_a,
+            "delay_b_applied": int((final_b.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_new,
+            "delay_c_applied": int((final_c.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_b,
+            "home_has_thread_a": visible_thread_index(home_after_reply, thread_a) >= 0,
+            "home_has_thread_b": visible_thread_index(home_after_reply, thread_b) >= 0,
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"final boss checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
     return {
         "scenario": "final_boss",
-        "thread_a": {"card": card_a, "scope": scope_a, "start": start_a, "final": final_a, "result_card": card_result_a},
-        "thread_new": {"scope": scope_new, "start": start_b, "final": final_b, "result_card": card_result_b},
-        "thread_b": {"card": card_b, "scope": scope_b, "start": start_c, "final": final_c, "result_card": card_result_c},
+        "home_before": home_before,
+        "thread_a_open": open_a,
+        "new_thread_open": open_new,
+        "thread_b_open": open_b,
+        "thread_a": {"card": card_a, "scope": scope_a, "turn_status_before": turn_status_before_a, "start": start_a, "final": final_a, "result_card": card_result_a},
+        "thread_new": {"scope": scope_new, "turn_status_before": turn_status_before_new, "start": start_b, "final": final_b, "result_card": card_result_b},
+        "thread_b": {"card": card_b, "scope": scope_b, "turn_status_before": turn_status_before_b, "start": start_c, "final": final_c, "result_card": card_result_c},
         "final_snapshot": final_snapshot,
+        "turn_status_final": turn_status_final,
+        "completion_order": completion_order,
+        "home_after_reply": home_after_reply,
+        "checks": checks,
     }
 
 
@@ -843,6 +1189,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", DEFAULT_BROKER_URL))
     parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
     parser.add_argument("--package-name", default=DEFAULT_PACKAGE_NAME)
+    parser.add_argument("--vm-base-url", default=official_html.DEFAULT_VM_BASE_URL)
+    parser.add_argument("--manifest-url", default="")
     parser.add_argument("--command-timeout-seconds", type=int, default=120)
     parser.add_argument("--browser-timeout-seconds", type=int, default=45)
     parser.add_argument("--devtools-port", type=int, default=9222)
@@ -857,6 +1205,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--final-boss-text-a", default="Continue thread A please.")
     parser.add_argument("--final-boss-text-new", default="Make this a fresh thread.")
     parser.add_argument("--final-boss-text-b", default="Continue thread B please.")
+    parser.add_argument("--final-boss-delay-ms-a", type=int, default=6000)
+    parser.add_argument("--final-boss-delay-ms-new", type=int, default=3000)
+    parser.add_argument("--final-boss-delay-ms-b", type=int, default=0)
     parser.add_argument("--tts-voice", default="")
     parser.add_argument("--tts-rate", type=int, default=0)
     parser.add_argument("--skip-official-preproof-check", action="store_true")
@@ -877,6 +1228,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.node = args.node.resolve() if args.node.exists() else args.node
     args.node_modules = args.node_modules.resolve()
     args.adb = args.adb.resolve() if isinstance(args.adb, Path) and args.adb.exists() else args.adb
+    args.vm_base_url = str(args.vm_base_url).rstrip("/")
+    args.manifest_url = str(args.manifest_url or official_html.urljoin(args.vm_base_url + "/", official_html.DEFAULT_MANIFEST_PATH.lstrip("/")))
     return args
 
 
@@ -892,6 +1245,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         cards_before = snapshot_cards(args)
         bundle = bundle_status(args)
         package = installed_package_info(args, serial)
+        identity = apk_identity(args)
+        remote_manifest = expected_ui_manifest(args, local_git)
+        identity_checks = verify_target_identity(
+            args,
+            local_git=local_git,
+            remote_manifest=remote_manifest,
+            bundle=bundle,
+            surface=surface_before,
+            installed_package=package,
+            identity=identity,
+        )
 
         scenarios: list[dict[str, Any]] = []
         cards = cards_from_snapshot(cards_before)
@@ -901,6 +1265,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             scenarios.append(
                 run_continuation_scenario(
                     args,
+                    serial=serial,
                     name="transcript_thread_continue",
                     cdp_url=cdp["cdp_url"],
                     card=transcript_card,
@@ -921,6 +1286,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             scenarios.append(
                 run_continuation_scenario(
                     args,
+                    serial=serial,
                     name="page_thread_continue",
                     cdp_url=cdp["cdp_url"],
                     card=page_card,
@@ -935,6 +1301,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             scenarios.append(
                 run_negative_scenario(
                     args,
+                    serial=serial,
                     cdp_url=cdp["cdp_url"],
                     text=args.negative_text,
                     scenario_dir=scenario_root / "negative-home",
@@ -942,27 +1309,43 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
 
         if args.scenario == "final_boss":
-            scenarios.append(run_final_boss_scenario(args, cdp_url=cdp["cdp_url"], scenario_dir=scenario_root / "final-boss"))
+            scenarios.append(
+                run_final_boss_scenario(
+                    args,
+                    serial=serial,
+                    cdp_url=cdp["cdp_url"],
+                    scenario_dir=scenario_root / "final-boss",
+                )
+            )
+
+        summary_checks = {str(item.get("scenario") or f"scenario_{index}"): bool((item.get("checks") or {}).get("passed")) for index, item in enumerate(scenarios)}
+        summary = scenario_checks(summary_checks)
 
         evidence = {
             "schema": RESULT_SCHEMA,
             "created_at": utc_stamp(),
             "repo_root": str(args.repo_root),
             "local_git": local_git,
+            "remote_manifest": remote_manifest or {},
             "adb": {
                 "serial": serial,
                 "package": package,
+                "apk_identity": identity,
             },
             "device_id": args.device_id,
             "cdp": cdp,
             "ui_surface_before": surface_before,
             "ui_bundle_status": bundle,
             "cards_before": cards_before,
+            "identity_checks": identity_checks,
             "scenarios": scenarios,
+            "summary": summary,
             "evidence_dir": str(scenario_root),
         }
         evidence_path = scenario_root / "proof.json"
         save_json(evidence_path, evidence)
+        if not summary["passed"]:
+            raise PhoneProofError(f"one or more scenarios failed: {json.dumps(summary['checks'], sort_keys=True)}")
         return {
             "ok": True,
             "schema": RESULT_SCHEMA,
@@ -970,6 +1353,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "scenario_count": len(scenarios),
             "serial": serial,
             "ui_version": str(bundle.get("ui_version") or surface_before.get("ui_version") or ""),
+            "passed": True,
         }
     finally:
         forward_port = str(cdp.get("forward_port") or "").strip()

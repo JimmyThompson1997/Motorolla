@@ -61,6 +61,13 @@ def test_walkie_start_payload_uses_fixture_volume_up_auto_endpoint_defaults() ->
     assert payload["max_duration_ms"] == 20000
     assert payload["feedback"] is False
 
+    delayed = proof.walkie_start_payload(
+        "/data/user/0/com.pucky/files/demo.wav",
+        "Should we change these goals?",
+        proof_reply_delay_ms=2400,
+    )
+    assert delayed["proof_reply_delay_ms"] == 2400
+
 
 def test_select_card_prefers_thread_backed_page_surface_and_excludes_threads() -> None:
     cards = [
@@ -136,6 +143,61 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert '[data-card-action="' in source
     assert "data-detail-type" in source
     assert "page.screenshot" in source
+
+
+def test_visible_thread_index_finds_matching_slot() -> None:
+    surface = {
+        "final_surface": {
+            "visible_cards": [
+                {"thread_id": "thread-a", "kind": "reply"},
+                {"thread_id": "thread-b", "kind": "pending_outbound"},
+            ]
+        }
+    }
+
+    assert proof.visible_thread_index(surface, "thread-a") == 0
+    assert proof.visible_thread_index(surface, "thread-b") == 1
+    assert proof.visible_thread_index(surface, "missing") == -1
+
+
+def test_scenario_checks_reports_overall_pass() -> None:
+    passing = proof.scenario_checks({"one": True, "two": True})
+    failing = proof.scenario_checks({"one": True, "two": False})
+
+    assert passing == {"passed": True, "checks": {"one": True, "two": True}}
+    assert failing == {"passed": False, "checks": {"one": True, "two": False}}
+
+
+def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+    local_git = {"head": "abc123", "upstream": "abc123"}
+    bundle = {"installed": True, "ui_version": "git-abc123"}
+    surface = {"ui_version": "git-abc123"}
+    installed = {"version_name": "0.1", "version_code": "42"}
+    identity = {"git_commit": "abc123", "git_dirty": False, "version_name": "0.1", "version_code": 42}
+
+    result = proof.verify_target_identity(
+        args,
+        local_git=local_git,
+        remote_manifest=None,
+        bundle=bundle,
+        surface=surface,
+        installed_package=installed,
+        identity=identity,
+    )
+
+    assert result["passed"] is True
+
+    with pytest.raises(proof.PhoneProofError, match="target identity mismatch"):
+        proof.verify_target_identity(
+            args,
+            local_git=local_git,
+            remote_manifest=None,
+            bundle=bundle,
+            surface=surface,
+            installed_package=installed,
+            identity={"git_commit": "other", "git_dirty": False, "version_name": "0.1", "version_code": 42},
+        )
 
 
 def test_require_official_local_repo_rejects_noncanonical(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

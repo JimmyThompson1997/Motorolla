@@ -12,6 +12,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
+from unittest.mock import patch
 
 from pucky_vm.server import (
     Config,
@@ -408,7 +409,7 @@ class OutOfOrderCodex(FakeCodex):
         )()
 
 
-def make_config(max_html_bytes: int = 512 * 1024) -> Config:
+def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: bool = False) -> Config:
     return Config(
         host="127.0.0.1",
         port=0,
@@ -439,6 +440,7 @@ def make_config(max_html_bytes: int = 512 * 1024) -> Config:
         connect_portal_secret="portal-secret",
         connect_portal_ttl_seconds=3600,
         composio_default_auth_mode="browser",
+        proof_reply_delay_enabled=proof_reply_delay_enabled,
     )
 
 
@@ -970,6 +972,47 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
         self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
 
+    def test_text_turn_proof_reply_delay_is_guarded_and_telemetry_visible(self) -> None:
+        delayed_service = PuckyVoiceService(
+            make_config(proof_reply_delay_enabled=True),
+            stt=self.stt,
+            tts=self.tts,
+            codex=self.codex,
+            composio=self.composio,
+        )
+        delayed_server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(delayed_service))
+        delayed_thread = threading.Thread(target=delayed_server.serve_forever, daemon=True)
+        delayed_thread.start()
+        delayed_base_url = f"http://127.0.0.1:{delayed_server.server_port}"
+        try:
+            sleep_calls: list[float] = []
+            with patch("pucky_vm.server.time.sleep", side_effect=lambda seconds: sleep_calls.append(seconds)):
+                body = self.post_json(
+                    "/api/turn/text",
+                    {"text": "delay this turn", "turn_id": "delay-proof-1"},
+                    headers={"X-Pucky-Proof-Reply-Delay-Ms": "1500"},
+                    base_url=delayed_base_url,
+                )
+            self.assertEqual(sleep_calls, [1.5])
+            self.assertEqual(body["telemetry"]["proof_reply_delay_enabled"], True)
+            self.assertEqual(body["telemetry"]["proof_reply_delay_ms_requested"], 1500)
+            self.assertEqual(body["telemetry"]["proof_reply_delay_ms_applied"], 1500)
+
+            body_disabled = self.post_json(
+                "/api/turn/text",
+                {"text": "delay ignored", "turn_id": "delay-proof-2"},
+                headers={"X-Pucky-Proof-Reply-Delay-Ms": "1200"},
+            )
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_enabled"], False)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ms_requested"], 1200)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ms_applied"], 0)
+            self.assertEqual(body_disabled["telemetry"]["proof_reply_delay_ignored"], "disabled")
+        finally:
+            delayed_server.shutdown()
+            delayed_server.server_close()
+            delayed_thread.join(timeout=5)
+            delayed_service.feed.close()
+
     def test_audio_turn_keeps_user_transcript_audio_as_history_artifact(self) -> None:
         body = self.post_audio(b"RIFFdemo", "audio/wav", turn_id="audio-history-1")
 
@@ -1340,7 +1383,14 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def post_json(self, path: str, body: dict, headers: dict[str, str] | None = None) -> dict:
+    def post_json(
+        self,
+        path: str,
+        body: dict,
+        headers: dict[str, str] | None = None,
+        *,
+        base_url: str | None = None,
+    ) -> dict:
         merged = {
             "Authorization": "Bearer secret",
             "Content-Type": "application/json",
@@ -1348,7 +1398,7 @@ class ServerTests(unittest.TestCase):
         if headers:
             merged.update(headers)
         request = urllib.request.Request(
-            self.base_url + path,
+            (base_url or self.base_url) + path,
             data=json.dumps(body).encode("utf-8"),
             method="POST",
             headers=merged,

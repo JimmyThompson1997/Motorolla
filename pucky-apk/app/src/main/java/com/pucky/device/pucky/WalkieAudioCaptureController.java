@@ -53,6 +53,7 @@ public final class WalkieAudioCaptureController {
         String fixturePath;
         String debugFixtureTranscript;
         int fixtureStartDelayMs;
+        int proofReplyDelayMs;
         AudioFrameBus bus;
         PcmCaptureConsumer pcm;
         WalkieSpeechGate gate;
@@ -124,6 +125,7 @@ public final class WalkieAudioCaptureController {
         capture.fixturePath = "";
         capture.debugFixtureTranscript = "";
         capture.fixtureStartDelayMs = 0;
+        capture.proofReplyDelayMs = 0;
         if (BuildConfig.DEBUG) {
             String requestedCaptureSource = safe(args.optString("capture_source", "mic")).toLowerCase(Locale.US);
             if ("fixture".equals(requestedCaptureSource)) {
@@ -133,6 +135,7 @@ public final class WalkieAudioCaptureController {
                 capture.debugFixtureTranscript = safe(args.optString("debug_fixture_transcript", ""));
                 capture.fixtureStartDelayMs = clamp(args.optInt("fixture_start_delay_ms", 0), 0, 10_000);
             }
+            capture.proofReplyDelayMs = clamp(args.optInt("proof_reply_delay_ms", 0), 0, 60_000);
         }
         int maxSamples = AudioFrameBus.SAMPLE_RATE * Math.max(1, (capture.maxDurationMs + 999) / 1_000);
         capture.pcm = new PcmCaptureConsumer(maxSamples);
@@ -269,6 +272,9 @@ public final class WalkieAudioCaptureController {
             if (BuildConfig.DEBUG && !capture.debugFixtureTranscript.isEmpty()) {
                 Json.put(out, "debug_fixture_transcript", capture.debugFixtureTranscript);
             }
+        }
+        if (BuildConfig.DEBUG && capture.proofReplyDelayMs > 0) {
+            Json.put(out, "proof_reply_delay_ms", capture.proofReplyDelayMs);
         }
         Json.put(out, "sample_rate", AudioFrameBus.SAMPLE_RATE);
         Json.put(out, "channels", 1);

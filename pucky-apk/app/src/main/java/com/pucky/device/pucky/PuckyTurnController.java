@@ -341,6 +341,7 @@ public final class PuckyTurnController {
             copyIfPresent(startArgs, args, "fixture_path");
             copyIfPresent(startArgs, args, "debug_fixture_transcript");
             copyIfPresent(startArgs, args, "fixture_start_delay_ms");
+            copyIfPresent(startArgs, args, "proof_reply_delay_ms");
         }
         WakeWordController.shared(context).onTurnStarting(clientTurnId, triggerSource);
         JSONObject out;
@@ -609,6 +610,10 @@ public final class PuckyTurnController {
                 .header("X-Pucky-Thread-Id", threadScope.optString("thread_id", ""))
                 .header("X-Pucky-Thread-Scope-Source", threadScope.optString("thread_scope_source", ""))
                 .header("X-Pucky-Thread-Card-Id", threadScope.optString("thread_card_id", ""))
+                .header("X-Pucky-Proof-Reply-Delay-Ms",
+                        threadScope.optInt("proof_reply_delay_ms", 0) > 0
+                                ? Integer.toString(threadScope.optInt("proof_reply_delay_ms", 0))
+                                : "")
                 .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
@@ -1864,6 +1869,7 @@ public final class PuckyTurnController {
         copyIfPresent(target, capture, "fixture_name");
         copyIfPresent(target, capture, "fixture_start_delay_ms");
         copyIfPresent(target, capture, "debug_fixture_transcript");
+        copyIfPresent(target, capture, "proof_reply_delay_ms");
     }
 
     private JSONObject voiceThreadScopeSnapshot(String triggerSource) {
