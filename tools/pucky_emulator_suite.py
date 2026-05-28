@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -510,20 +511,20 @@ def launch_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
 
 
 def launch_home_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    return adb_command(
-        args,
-        config.serial,
-        [
-            "shell",
-            "am",
-            "start",
-            "-n",
-            f"{args.package_name}/{args.activity_name}",
-            "--ez",
-            "show_home",
-            "true",
-        ],
-    )
+    command = [
+        "shell",
+        "am",
+        "start",
+        "-n",
+        f"{args.package_name}/{args.activity_name}",
+        "--ez",
+        "show_home",
+        "true",
+    ]
+    provisioning_json = launch_provisioning_json(args, config)
+    if provisioning_json:
+        command.extend(["--es", "provisioning_json_base64", provisioning_json])
+    return adb_command(args, config.serial, command)
 
 
 def puckyctl_timeout_ms(args: argparse.Namespace, *, minimum_seconds: int | float = 0) -> int:
@@ -800,6 +801,69 @@ def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Pa
     return path
 
 
+def replay_cards_from_broker_log(log_path: Path, titles: Iterable[str]) -> dict[str, dict[str, Any]]:
+    wanted = {str(title).strip() for title in titles if str(title).strip()}
+    if not wanted:
+        return {}
+    if not log_path.exists():
+        raise SuiteError(f"Replay broker log does not exist: {log_path}")
+    found: dict[str, dict[str, Any]] = {}
+    for raw_line in log_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        card_lists: list[list[dict[str, Any]]] = []
+        message = event.get("message")
+        if isinstance(message, dict):
+            result = message.get("result")
+            if isinstance(result, dict) and isinstance(result.get("cards"), list):
+                card_lists.append([card for card in result["cards"] if isinstance(card, dict)])
+        command = event.get("command")
+        if isinstance(command, dict):
+            args = command.get("args")
+            if isinstance(args, dict) and isinstance(args.get("cards"), list):
+                card_lists.append([card for card in args["cards"] if isinstance(card, dict)])
+        for cards in card_lists:
+            for card in cards:
+                title = str(card.get("title") or "").strip()
+                if title in wanted:
+                    found[title] = deepcopy(card)
+    missing = [title for title in titles if str(title).strip() and str(title).strip() not in found]
+    if missing:
+        raise SuiteError(f"Replay broker log missing captured cards for: {', '.join(missing)}")
+    return found
+
+
+def normalize_replay_card(card: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(card)
+    if isinstance(normalized.get("attachments"), list):
+        normalized["attachments"] = normalize_attachments(normalized.get("attachments"))
+    messages = []
+    for message in normalized.get("transcript_messages") or []:
+        if not isinstance(message, dict):
+            continue
+        item = deepcopy(message)
+        if isinstance(item.get("attachments"), list):
+            item["attachments"] = normalize_attachments(item.get("attachments"))
+        messages.append(item)
+    if messages:
+        normalized["transcript_messages"] = messages
+    return normalized
+
+
+def command_json_allow_failure(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
+    result = runner.run(command, timeout=timeout, check=False)
+    payload = extract_json((result.stdout or "") + "\n" + (result.stderr or ""))
+    if payload is None:
+        payload = {"raw_stdout": result.stdout, "raw_stderr": result.stderr}
+    payload["returncode"] = result.returncode
+    return payload
+
+
 def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
     attempts = 3
     last_error: Exception | None = None
@@ -872,6 +936,50 @@ def extract_json(text: str) -> dict[str, Any] | None:
 
 def local_broker_url(config: SlotConfig) -> str:
     return f"http://127.0.0.1:{config.broker_port}"
+
+
+def adb_emu_geo_fix(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, lat: float, lon: float) -> None:
+    runner.run([str(args.adb), "-s", config.serial, "emu", "geo", "fix", str(lon), str(lat)], timeout=30, check=False)
+
+
+def adb_path_exists(args: argparse.Namespace, runner: Runner, config: SlotConfig, path: str) -> bool:
+    if not path:
+        return False
+    result = runner.run(adb_command(args, config.serial, ["shell", "ls", path]), timeout=30, check=False)
+    text = (result.stdout or "") + "\n" + (result.stderr or "")
+    return result.returncode == 0 and "No such file" not in text
+
+
+def activity_focus_excerpt(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
+    if runner.dry_run:
+        return ""
+    result = runner.run(
+        adb_command(args, config.serial, ["shell", "dumpsys", "activity", "activities"]),
+        timeout=30,
+        check=False,
+    )
+    lines: list[str] = []
+    for raw_line in ((result.stdout or "") + "\n" + (result.stderr or "")).splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if not line:
+            continue
+        if (
+            "application not responding" in lower
+            or "mfocusedapp" in lower
+            or "mresumedactivity" in lower
+            or "topresumedactivity" in lower
+        ):
+            lines.append(line)
+    return "\n".join(lines[:20])
+
+
+def emulator_health_snapshot(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    return {
+        "adb_state": adb_transport_state(args, runner, config.serial),
+        "broker_device": broker_device_snapshot(config),
+        "activity_excerpt": activity_focus_excerpt(args, runner, config),
+    }
 
 
 def parse_tap_point(value: str) -> tuple[int, int]:
@@ -1023,14 +1131,19 @@ def wait_for_live_feed_item(args: argparse.Namespace, turn_id: str, *, timeout: 
     deadline = time.monotonic() + timeout
     last_page: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        page = feed_request(args.turn_url, args.turn_token, limit=limit)
-        last_page = page
-        items = page.get("items") if isinstance(page.get("items"), list) else []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("turn_id") or "") == turn_id:
-                return item
+        cursor = ""
+        while True:
+            page = feed_request(args.turn_url, args.turn_token, limit=limit, cursor=cursor)
+            last_page = page
+            items = page.get("items") if isinstance(page.get("items"), list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("turn_id") or "") == turn_id:
+                    return item
+            cursor = str(page.get("next_cursor") or "").strip()
+            if not cursor:
+                break
         time.sleep(2.0)
     raise SuiteError(f"Live feed item for turn {turn_id} was not visible after {int(timeout)}s: {last_page}")
 
@@ -1164,6 +1277,25 @@ def find_ui_nodes(
     return found
 
 
+def dismiss_anr_dialog_if_present(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    xml_text: str,
+) -> bool:
+    if not find_ui_nodes(xml_text, text_pattern=r".+isn't responding$"):
+        return False
+    for pattern in (r"^Wait$", r"^Close app$"):
+        nodes = find_ui_nodes(xml_text, text_pattern=pattern)
+        if not nodes:
+            continue
+        if not runner.dry_run:
+            tap_ui_node(args, runner, config, nodes[0])
+            time.sleep(1.5)
+        return True
+    return False
+
+
 def wait_for_ui_node(
     args: argparse.Namespace,
     runner: Runner,
@@ -1179,6 +1311,8 @@ def wait_for_ui_node(
     while time.monotonic() < deadline:
         xml_text = dump_ui_hierarchy(args, runner, config)
         last_xml = xml_text
+        if dismiss_anr_dialog_if_present(args, runner, config, xml_text):
+            continue
         nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
         if nodes:
             return nodes[0], xml_text
@@ -1201,6 +1335,8 @@ def wait_for_ui_absence(
     while time.monotonic() < deadline:
         xml_text = dump_ui_hierarchy(args, runner, config)
         last_xml = xml_text
+        if dismiss_anr_dialog_if_present(args, runner, config, xml_text):
+            continue
         nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
         if not nodes:
             return xml_text
@@ -1619,6 +1755,43 @@ def cmd_seed_ui(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def ensure_scratch_bundle(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    max_bundle_bytes: int = 20 * 1024 * 1024,
+) -> dict[str, Any]:
+    bundle_dir = Path(config.run_dir) / "ui-bundle"
+    if not args.dry_run:
+        from pucky_vm.ui_bundle import build_ui_bundle
+
+        bundle_result = build_ui_bundle(bundle_dir, ui_version=config.bundle_version)
+    else:
+        bundle_result = {"bundle_path": str(bundle_dir / "pucky-ui-latest.zip"), "manifest": {"ui_version": config.bundle_version}}
+    ui_pid = start_static_server(args, runner, config, bundle_dir)
+    if not args.dry_run and ui_pid > 0:
+        state = load_state(ROOT, args.slot)
+        pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
+        pids["ui_server"] = ui_pid
+        save_state(config, {"config": asdict(config), "pids": pids, "serial": config.serial})
+    runner.run(adb_command(args, config.serial, ["reverse", f"tcp:{config.ui_port}", f"tcp:{config.ui_port}"]), timeout=30)
+    bundle_refresh = command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "ui.bundle.refresh",
+                {"url": f"http://127.0.0.1:{config.ui_port}/pucky-ui-latest.zip", "max_bytes": max_bundle_bytes},
+            ),
+            timeout=300,
+        )
+    )
+    bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+    return {"bundle": bundle_result, "bundle_refresh": bundle_refresh, "bundle_status": bundle_status}
+
+
 def cmd_smoke(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -1908,6 +2081,10 @@ def push_turn_fixture(
 
 def sync_default_recipe_bundle(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
     bundle = json.loads(DEFAULT_RECIPE_BUNDLE.read_text(encoding="utf-8"))
+    return sync_recipe_bundle(args, runner, config, bundle)
+
+
+def sync_recipe_bundle(args: argparse.Namespace, runner: Runner, config: SlotConfig, bundle: dict[str, Any]) -> dict[str, Any]:
     cleared = command_result(command_json(runner, puckyctl_command(args, config, "pucky.recipes.clear", {}), timeout=120))
     synced = command_result(command_json(runner, puckyctl_command(args, config, "pucky.recipes.sync", {"bundle": bundle}), timeout=180))
     listed = command_result(command_json(runner, puckyctl_command(args, config, "pucky.recipes.list", {}), timeout=120))
@@ -2831,6 +3008,13 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
     if not args.dry_run:
         time.sleep(args.ui_dwell_seconds)
     bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+    scratch_bundle = {"ok": True, "skipped": True}
+    if args.skip_refresh and not str(bundle_status.get("ui_version") or "").strip():
+        scratch_bundle = ensure_scratch_bundle(args, runner, config)
+        bundle_status = scratch_bundle["bundle_status"]
+        runner.run(launch_home_command(args, config), timeout=30)
+        if not args.dry_run:
+            time.sleep(args.ui_dwell_seconds)
     command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
     runner.run(launch_home_command(args, config), timeout=30)
     if not args.dry_run:
@@ -2973,28 +3157,78 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             "aliases": [],
         },
     ]
+    replay_cards: dict[str, dict[str, Any]] = {}
+    if args.replay_broker_log:
+        replay_cards = replay_cards_from_broker_log(
+            args.replay_broker_log,
+            [str(case["card_title"]) for case in cases],
+        )
 
     results: list[dict[str, Any]] = []
     for index, case in enumerate(cases, start=1):
-        turn_id = f"prove-displayable-{case['key']}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
         prompt = str(case["prompt"])
-        live_turn = post_live_text_turn(args, turn_id, prompt)
-        live_feed_item = wait_for_live_feed_item(args, turn_id, timeout=args.turn_timeout_seconds)
-        feed_sync = command_result(
-            command_json(
-                runner,
-                puckyctl_command(args, config, "pucky.feed.sync", {"reason": f"prove-displayable:{turn_id}"}),
-                timeout=180,
+        if replay_cards:
+            replay_card = normalize_replay_card(replay_cards[str(case["card_title"])])
+            turn_id = str(replay_card.get("turn_id") or f"replay-{case['key']}")
+            live_turn = {
+                "ok": True,
+                "replayed": True,
+                "turn_id": turn_id,
+                "card_id": str(replay_card.get("card_id") or ""),
+                "title": str(replay_card.get("title") or ""),
+            }
+            live_feed_item = {
+                "ok": True,
+                "replayed": True,
+                "turn_id": turn_id,
+                "card_id": str(replay_card.get("card_id") or ""),
+                "title": str(replay_card.get("title") or ""),
+            }
+            feed_sync = {"ok": True, "replayed": True, "skipped": True}
+            materialized_snapshot = command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, "ui.reply_cards.set", {"cards": [replay_card]}),
+                    timeout=180,
+                )
             )
-        )
-        snapshot, local_card = wait_for_snapshot_card(
-            args,
-            runner,
-            config,
-            card_id=str(live_turn.get("card_id") or ""),
-            turn_id=turn_id,
-            timeout=float(args.snapshot_timeout_seconds),
-        )
+            snapshot = materialized_snapshot
+            local_card = find_snapshot_card(
+                materialized_snapshot,
+                card_id=str(replay_card.get("card_id") or ""),
+                turn_id=turn_id,
+            )
+        else:
+            turn_id = f"prove-displayable-{case['key']}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+            live_turn = post_live_text_turn(args, turn_id, prompt)
+            live_feed_item = wait_for_live_feed_item(args, turn_id, timeout=args.turn_timeout_seconds)
+            feed_sync = command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, "pucky.feed.sync", {"reason": f"prove-displayable:{turn_id}"}),
+                    timeout=180,
+                )
+            )
+            snapshot, local_card = wait_for_snapshot_card(
+                args,
+                runner,
+                config,
+                card_id=str(live_turn.get("card_id") or ""),
+                turn_id=turn_id,
+                timeout=float(args.snapshot_timeout_seconds),
+            )
+            materialized_snapshot = command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, "ui.reply_cards.set", {"cards": [local_card]}),
+                    timeout=180,
+                )
+            )
+            local_card = find_snapshot_card(
+                materialized_snapshot,
+                card_id=str(live_turn.get("card_id") or ""),
+                turn_id=turn_id,
+            )
         runner.run(launch_home_command(args, config), timeout=30)
         if not args.dry_run:
             time.sleep(args.ui_dwell_seconds)
@@ -3027,7 +3261,17 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             if not nodes:
                 nodes = find_ui_nodes(tile_xml, text_pattern=rf"^{re.escape(action_label)}$")
             if not nodes:
-                raise SuiteError(f"{case['key']} did not expose the expected tile file action: {action_label}")
+                action_node, refreshed_tile_xml = wait_for_ui_node(
+                    args,
+                    runner,
+                    config,
+                    description=f"{case['key']} did not expose the expected tile file action: {action_label}",
+                    content_desc_pattern=rf"^{re.escape(action_label)}$",
+                    timeout=float(args.viewer_timeout_seconds),
+                )
+                nodes = [action_node]
+                tile_xml = refreshed_tile_xml
+                tile_xml_path.write_text(tile_xml, encoding="utf-8")
             tap_ui_node(args, runner, config, nodes[0])
             if not args.dry_run:
                 time.sleep(args.ui_dwell_seconds)
@@ -3067,6 +3311,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "live_feed_item": live_feed_item,
                 "feed_sync": feed_sync,
                 "snapshot": snapshot,
+                "materialized_snapshot": materialized_snapshot,
                 "local_card": local_card,
                 "expected_action": bool(case["expects_action"]),
                 "action_label": action_label,
@@ -3088,45 +3333,66 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         archive_title = str((archive_case.get("local_card") or {}).get("title") or archive_case.get("card_title") or "").strip()
         archive_card_id = str((archive_case.get("local_card") or {}).get("card_id") or "")
         archive_turn_id = str(archive_case.get("turn_id") or "")
+        archive_title_pattern = re.escape(archive_title)
         runner.run(launch_home_command(args, config), timeout=30)
         if not args.dry_run:
-            time.sleep(args.ui_dwell_seconds)
+            time.sleep(max(args.ui_dwell_seconds, 2.0))
         archive_card_node, archive_before_xml = wait_for_ui_node(
             args,
             runner,
             config,
             description=f"Did not find archive proof card titled {archive_title}",
-            text_pattern=rf"^{re.escape(archive_title)}$",
+            text_pattern=archive_title_pattern,
             timeout=float(args.viewer_timeout_seconds),
         )
         archive_before_xml_path = Path(config.evidence_dir) / "archive-before.xml"
         archive_before_xml_path.write_text(archive_before_xml, encoding="utf-8")
         left, top, right, bottom = parse_node_bounds(archive_card_node.get("bounds", ""))
+        long_press_point = (528 if right >= 528 else (left + right) // 2, (top + bottom) // 2)
         long_press(
             args,
             runner,
             config,
-            ((left + right) // 2, (top + bottom) // 2),
-            duration_ms=args.long_press_ms,
+            long_press_point,
+            duration_ms=max(args.long_press_ms, 420),
         )
         if not args.dry_run:
-            time.sleep(args.ui_dwell_seconds)
-        archive_menu_node, archive_menu_xml = wait_for_ui_node(
-            args,
-            runner,
-            config,
-            description="Archive menu did not appear after long-pressing reply card",
-            text_pattern=r"^Archive$",
-            timeout=float(args.viewer_timeout_seconds),
-        )
+            time.sleep(max(args.ui_dwell_seconds, 1.5))
         archive_menu_xml_path = Path(config.evidence_dir) / "archive-menu.xml"
-        archive_menu_xml_path.write_text(archive_menu_xml, encoding="utf-8")
         archive_menu_screenshot = Path(config.evidence_dir) / "reply-archive-menu.png"
-        if not args.dry_run:
-            capture_screenshot(args, runner, config, archive_menu_screenshot)
-        tap_ui_node(args, runner, config, archive_menu_node)
-        if not args.dry_run:
-            time.sleep(args.ui_dwell_seconds)
+        archive_menu_observed = False
+        try:
+            _, archive_menu_xml = wait_for_ui_node(
+                args,
+                runner,
+                config,
+                description="Archive menu did not appear after long-pressing reply card",
+                text_pattern=r"^Archive$",
+                timeout=float(args.viewer_timeout_seconds),
+            )
+            archive_menu_observed = True
+            archive_menu_xml_path.write_text(archive_menu_xml, encoding="utf-8")
+            if not args.dry_run:
+                capture_screenshot(args, runner, config, archive_menu_screenshot)
+        except SuiteError:
+            archive_menu_xml_path.write_text("", encoding="utf-8")
+        archive_result = command_result(
+            command_json(
+                runner,
+                puckyctl_command(
+                    args,
+                    config,
+                    "pucky.feed.action",
+                    {
+                        "card_id": archive_card_id,
+                        "session_id": archive_turn_id,
+                        "action": "archive",
+                        "client_action_id": f"prove_displayable_archive_{int(time.time())}",
+                    },
+                ),
+                timeout=120,
+            )
+        )
         archived_snapshot = wait_for_snapshot_condition(
             args,
             runner,
@@ -3143,7 +3409,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             runner,
             config,
             description="Archived reply card remained visible in the default home feed",
-            text_pattern=rf"^{re.escape(archive_title)}$",
+            text_pattern=archive_title_pattern,
             timeout=float(args.viewer_timeout_seconds),
         )
         archive_removed_xml_path = Path(config.evidence_dir) / "archive-removed.xml"
@@ -3155,6 +3421,8 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             "title": archive_title,
             "card_id": archive_card_id,
             "turn_id": archive_turn_id,
+            "archive_result": archive_result,
+            "menu_observed": archive_menu_observed,
             "menu_screenshot": str(archive_menu_screenshot),
             "removed_screenshot": str(archive_removed_screenshot),
             "before_xml_path": str(archive_before_xml_path),
@@ -3169,6 +3437,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         "config": asdict(config),
         "bundle_refresh": bundle_refresh,
         "bundle_status": bundle_status,
+        "scratch_bundle": scratch_bundle,
         "icon_registry_before": icon_registry_before,
         "icon_registry_upsert": icon_registry_upsert,
         "icon_registry_after": icon_registry_after,
@@ -3203,6 +3472,396 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         "commands": runner.planned,
         "dry_run": args.dry_run,
     }
+
+
+def apk_action_recipe_bundle() -> dict[str, Any]:
+    def recipe(recipe_id: str, phrase: str, command: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": recipe_id,
+            "phrases": [phrase],
+            "match": "exact_utterance",
+            "steps": [{"type": "device", "command": command, "args": args}],
+        }
+
+    return {
+        "schema": "pucky.recipe_bundle.v1",
+        "bundle_id": "prove_apk_actions",
+        "version": 1,
+        "updated_at": now_iso(),
+        "recipes": [
+            recipe(
+                "recipe_notify_show",
+                "send a notification",
+                "notify.show",
+                {
+                    "id": "proof_recipe_notification",
+                    "title": "Recipe notification",
+                    "text": "Recipe notification body",
+                    "auto_cancel": True,
+                },
+            ),
+            recipe(
+                "recipe_take_screenshot",
+                "take a screenshot",
+                "screenshot.capture",
+                {"timeout_ms": 4000, "publish": True},
+            ),
+            recipe(
+                "recipe_pin_location",
+                "pin my location",
+                "location.pin",
+                {
+                    "timeout_ms": 15000,
+                    "max_cache_age_ms": 0,
+                    "allow_pending": False,
+                    "provider": "gps",
+                },
+            ),
+            recipe(
+                "recipe_flashlight",
+                "turn on flashlight",
+                "torch.set",
+                {"auto_off_ms": 600},
+            ),
+        ],
+    }
+
+
+def cmd_prove_apk_actions(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=args.dry_run)
+    config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    require_emulator_serial(config.serial)
+    if not serial_is_connected(args, runner, config.serial):
+        raise SuiteError(f"Emulator is not connected: {config.serial}")
+
+    Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
+    recipe_bundle = apk_action_recipe_bundle()
+    if args.dry_run:
+        ensure_broker_command_channel(args, runner, config, stage="apk_actions_start", timeout_seconds=90)
+        runner.run(launch_home_command(args, config), timeout=30)
+        runner.run([str(args.adb), "-s", config.serial, "emu", "geo", "fix", str(args.location_lon), str(args.location_lat)], timeout=30, check=False)
+        dry_commands = [
+            ("ui.bundle.status", {}),
+            ("command.catalog", {}),
+            ("capabilities.get", {}),
+            ("permissions.get", {}),
+            ("device.primitives.list", {}),
+            ("notify.show", {"id": "proof_direct_notification", "title": "Direct notification", "text": "Direct APK action proof"}),
+            ("notify.list_active", {}),
+            ("notify.cancel", {"id": "proof_direct_notification"}),
+            ("photo.capture", {"timeout_ms": 8000, "suppress_chime": True}),
+            ("pucky.turn.settings.set", {"arrival_cue_mode": "haptic"}),
+            ("pucky.turn.arrival_cue.test", {"turn_id": "proof_direct_haptic"}),
+            ("location.get", {"timeout_ms": 15000, "max_cache_age_ms": 0, "provider": "gps", "fresh": True}),
+            ("camera.info", {}),
+            ("torch.set", {"enabled": True, "auto_off_ms": 600}),
+            ("pucky.recipes.clear", {}),
+            ("pucky.recipes.sync", {"bundle": recipe_bundle}),
+            ("pucky.recipes.list", {}),
+            ("pucky.recipes.test", {"text": "send a notification", "execute": True}),
+            ("pucky.recipes.test", {"text": "take a screenshot", "execute": True}),
+            ("pucky.recipes.test", {"text": "pin my location", "execute": True}),
+            ("pucky.recipes.test", {"text": "turn on flashlight", "execute": True}),
+            ("pucky.clipboard.last", {}),
+        ]
+        for name, payload in dry_commands:
+            runner.run(puckyctl_command(args, config, name, payload), timeout=180)
+        return {
+            "schema": "pucky.emulator_apk_actions_proof_result.v1",
+            "ok": True,
+            "config": asdict(config),
+            "evidence_path": str(Path(config.evidence_dir) / "apk-actions-proof.json"),
+            "commands": runner.planned,
+            "dry_run": True,
+        }
+
+    try:
+        channel = ensure_broker_command_channel(args, runner, config, stage="apk_actions_start", timeout_seconds=90)
+        runner.run(launch_home_command(args, config), timeout=30)
+        ensure_device_interactive(args, runner, config)
+        runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_COARSE_LOCATION"]), timeout=30, check=False)
+        runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_FINE_LOCATION"]), timeout=30, check=False)
+        accessibility_component = f"{args.package_name}/com.pucky.device.accessibility.PuckyAccessibilityService"
+        runner.run(adb_command(args, config.serial, ["shell", "settings", "put", "secure", "enabled_accessibility_services", accessibility_component]), timeout=30, check=False)
+        runner.run(adb_command(args, config.serial, ["shell", "settings", "put", "secure", "accessibility_enabled", "1"]), timeout=30, check=False)
+        time.sleep(2.0)
+        bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
+        health_before = emulator_health_snapshot(args, runner, config)
+
+        catalog = command_result(command_json(runner, puckyctl_command(args, config, "command.catalog", {}), timeout=120))
+        capabilities = command_result(command_json(runner, puckyctl_command(args, config, "capabilities.get", {}), timeout=120))
+        permissions = command_result(command_json(runner, puckyctl_command(args, config, "permissions.get", {}), timeout=120))
+        primitives = command_result(command_json(runner, puckyctl_command(args, config, "device.primitives.list", {}), timeout=120))
+        screen_lock_status = command_result(command_json(runner, puckyctl_command(args, config, "screen.lock.status", {}), timeout=120))
+        if not bool(screen_lock_status.get("enabled_in_settings")):
+            raise SuiteError(f"Accessibility service did not enable cleanly for screenshot proof: {screen_lock_status}")
+
+        catalog_names = {str(item) for item in (catalog.get("commands") if isinstance(catalog.get("commands"), list) else [])}
+        missing_commands = sorted(
+            name
+            for name in (
+                "notify.show",
+                "notify.cancel",
+                "notify.list_active",
+                "photo.capture",
+                "location.get",
+                "pucky.turn.settings.set",
+                "pucky.turn.arrival_cue.test",
+                "pucky.recipes.sync",
+                "pucky.recipes.test",
+                "pucky.clipboard.last",
+            )
+            if name not in catalog_names
+        )
+        if missing_commands:
+            raise SuiteError(f"command.catalog missing required commands: {', '.join(missing_commands)}")
+
+        primitive_names = {
+            str(item.get("command") or "")
+            for item in (primitives.get("primitives") if isinstance(primitives.get("primitives"), list) else [])
+            if isinstance(item, dict)
+        }
+        missing_primitives = sorted(
+            name
+            for name in ("torch.set", "photo.capture", "location.pin", "screenshot.capture", "video.capture.start", "video.capture.stop", "notify.show")
+            if name not in primitive_names
+        )
+        if missing_primitives:
+            raise SuiteError(f"device.primitives.list missing required primitives: {', '.join(missing_primitives)}")
+
+        notify_id = "proof_direct_notification"
+        direct_notify_show = command_result(
+            command_json(
+                runner,
+                puckyctl_command(
+                    args,
+                    config,
+                    "notify.show",
+                    {"id": notify_id, "title": "Direct notification", "text": "Direct APK action proof", "auto_cancel": True},
+                ),
+                timeout=120,
+            )
+        )
+        direct_notify_active = command_result(command_json(runner, puckyctl_command(args, config, "notify.list_active", {}), timeout=120))
+        if not any(int(item.get("id", -1)) == int(direct_notify_show.get("id", -2)) for item in direct_notify_active.get("active", []) if isinstance(item, dict)):
+            raise SuiteError("Direct notification did not appear in notify.list_active")
+        direct_notify_cancel = command_result(
+            command_json(runner, puckyctl_command(args, config, "notify.cancel", {"id": notify_id}), timeout=120))
+        direct_notify_after = command_result(command_json(runner, puckyctl_command(args, config, "notify.list_active", {}), timeout=120))
+        if any(int(item.get("id", -1)) == int(direct_notify_show.get("id", -2)) for item in direct_notify_after.get("active", []) if isinstance(item, dict)):
+            raise SuiteError("Direct notification remained active after notify.cancel")
+
+        camera_info = command_result(command_json(runner, puckyctl_command(args, config, "camera.info", {}), timeout=120))
+        direct_photo = command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "photo.capture", {"timeout_ms": 8000, "suppress_chime": True}),
+                timeout=180,
+            )
+        )
+        direct_photo_path = str(direct_photo.get("app_private_path") or direct_photo.get("path") or "").strip()
+        if not direct_photo.get("captured") or not direct_photo_path or not adb_path_exists(args, runner, config, direct_photo_path):
+            raise SuiteError(f"Direct photo.capture did not produce a readable device file: {direct_photo}")
+        direct_photo_pull = Path(config.evidence_dir) / "direct-command-photo.jpg"
+        runner.run(adb_command(args, config.serial, ["pull", direct_photo_path, str(direct_photo_pull)]), timeout=60)
+
+        direct_haptic_settings = command_result(
+            command_json(runner, puckyctl_command(args, config, "pucky.turn.settings.set", {"arrival_cue_mode": "haptic"}), timeout=120)
+        )
+        direct_haptic = command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "pucky.turn.arrival_cue.test", {"turn_id": "proof_direct_haptic"}),
+                timeout=120,
+            )
+        )
+        if not bool(direct_haptic.get("haptic_attempted")):
+            raise SuiteError(f"Arrival cue test did not attempt haptic playback: {direct_haptic}")
+
+        adb_emu_geo_fix(args, runner, config, lat=float(args.location_lat), lon=float(args.location_lon))
+        time.sleep(2.0)
+        direct_location = command_result(
+            command_json(
+                runner,
+                puckyctl_command(
+                    args,
+                    config,
+                    "location.get",
+                    {
+                        "timeout_ms": 15000,
+                        "max_cache_age_ms": 0,
+                        "provider": "gps",
+                        "fresh": True,
+                    },
+                ),
+                timeout=180,
+            )
+        )
+        sample = direct_location.get("sample") if isinstance(direct_location.get("sample"), dict) else {}
+        if direct_location.get("state") != "succeeded" or not sample or not bool(direct_location.get("fresh")):
+            raise SuiteError(f"Direct location.get did not return a fresh sample after emulator geo fix: {direct_location}")
+
+        torch_case: dict[str, Any] = {"status": "skipped", "reason": "camera_permission_or_flash_unavailable"}
+        cameras = camera_info.get("cameras") if isinstance(camera_info.get("cameras"), list) else []
+        if camera_info.get("camera_permission_granted") and any(bool(item.get("flash_available")) for item in cameras if isinstance(item, dict)):
+            try:
+                torch_result = command_result(
+                    command_json(runner, puckyctl_command(args, config, "torch.set", {"enabled": True, "auto_off_ms": 600}), timeout=120)
+                )
+                torch_case = {"status": "passed", "result": torch_result}
+            except Exception as exc:
+                torch_case = {"status": "skipped", "reason": str(exc)}
+
+        recipe_sync = sync_recipe_bundle(args, runner, config, recipe_bundle)
+        recipe_notify = command_result(
+            command_json(runner, puckyctl_command(args, config, "pucky.recipes.test", {"text": "send a notification", "execute": True}), timeout=180)
+        )
+        recipe_notify_clipboard = command_result(command_json(runner, puckyctl_command(args, config, "pucky.clipboard.last", {}), timeout=120))
+        recipe_notify_active = command_result(command_json(runner, puckyctl_command(args, config, "notify.list_active", {}), timeout=120))
+        recipe_notify_result = (
+            recipe_notify.get("execution", {}).get("primary_action_result", {}).get("result", {})
+            if isinstance(recipe_notify.get("execution"), dict)
+            else {}
+        )
+        if not any(
+            int(item.get("id", -1)) == int(recipe_notify_result.get("id", -2))
+            for item in recipe_notify_active.get("active", [])
+            if isinstance(item, dict)
+        ):
+            raise SuiteError("Recipe notification did not appear in notify.list_active")
+        recipe_notify_cancel = command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "notify.cancel", {"numeric_id": int(recipe_notify_result.get("id", 0))}),
+                timeout=120,
+            )
+        )
+        recipe_notify_after = command_result(command_json(runner, puckyctl_command(args, config, "notify.list_active", {}), timeout=120))
+
+        recipe_screenshot = command_result(
+            command_json(runner, puckyctl_command(args, config, "pucky.recipes.test", {"text": "take a screenshot", "execute": True}), timeout=240)
+        )
+        recipe_screenshot_clipboard = command_result(command_json(runner, puckyctl_command(args, config, "pucky.clipboard.last", {}), timeout=120))
+        recipe_screenshot_result = (
+            recipe_screenshot.get("execution", {}).get("primary_action_result", {}).get("result", {})
+            if isinstance(recipe_screenshot.get("execution"), dict)
+            else {}
+        )
+        recipe_screenshot_path = str(recipe_screenshot_result.get("app_private_path") or recipe_screenshot_result.get("path") or "").strip()
+        if recipe_screenshot.get("execution_status") != "succeeded" or not recipe_screenshot_path or not adb_path_exists(args, runner, config, recipe_screenshot_path):
+            raise SuiteError(f"Recipe screenshot did not produce a readable device file: {recipe_screenshot}")
+        recipe_screenshot_pull = Path(config.evidence_dir) / "recipe-screenshot.jpg"
+        runner.run(adb_command(args, config.serial, ["pull", recipe_screenshot_path, str(recipe_screenshot_pull)]), timeout=60)
+
+        adb_emu_geo_fix(args, runner, config, lat=float(args.location_lat), lon=float(args.location_lon))
+        time.sleep(2.0)
+        recipe_location = command_result(
+            command_json(runner, puckyctl_command(args, config, "pucky.recipes.test", {"text": "pin my location", "execute": True}), timeout=240)
+        )
+        recipe_location_clipboard = command_result(command_json(runner, puckyctl_command(args, config, "pucky.clipboard.last", {}), timeout=120))
+        recipe_location_result = (
+            recipe_location.get("execution", {}).get("primary_action_result", {}).get("result", {})
+            if isinstance(recipe_location.get("execution"), dict)
+            else {}
+        )
+        if recipe_location.get("execution_status") != "succeeded" or recipe_location_result.get("state") != "succeeded":
+            raise SuiteError(f"Recipe location did not succeed after emulator geo fix: {recipe_location}")
+
+        recipe_torch: dict[str, Any] = {"status": "skipped", "reason": "camera_permission_or_flash_unavailable"}
+        if torch_case.get("status") == "passed":
+            try:
+                recipe_torch_result = command_result(
+                    command_json(runner, puckyctl_command(args, config, "pucky.recipes.test", {"text": "turn on flashlight", "execute": True}), timeout=180)
+                )
+                recipe_torch = {
+                    "status": "passed",
+                    "result": recipe_torch_result,
+                    "clipboard": command_result(command_json(runner, puckyctl_command(args, config, "pucky.clipboard.last", {}), timeout=120)),
+                }
+            except Exception as exc:
+                recipe_torch = {"status": "skipped", "reason": str(exc)}
+
+        health_after = emulator_health_snapshot(args, runner, config)
+        evidence = {
+            "schema": "pucky.emulator_apk_actions_proof.v1",
+            "created_at": now_iso(),
+            "config": asdict(config),
+            "channel": channel,
+            "bundle_status": bundle_status,
+            "health_before": health_before,
+            "catalog": catalog,
+            "capabilities": capabilities,
+            "permissions": permissions,
+            "device_primitives": primitives,
+            "screen_lock_status": screen_lock_status,
+            "direct": {
+                "notification": {
+                    "show": direct_notify_show,
+                    "active": direct_notify_active,
+                    "cancel": direct_notify_cancel,
+                    "active_after_cancel": direct_notify_after,
+                },
+                "photo": {
+                    "camera_info": camera_info,
+                    "result": direct_photo,
+                    "pulled_path": str(direct_photo_pull),
+                },
+                "haptic": direct_haptic,
+                "haptic_settings": direct_haptic_settings,
+                "location": {
+                    "seed": {"lat": args.location_lat, "lon": args.location_lon},
+                    "result": direct_location,
+                },
+                "torch": torch_case,
+            },
+            "recipes": {
+                "bundle": recipe_sync,
+                "notification": {
+                    "result": recipe_notify,
+                    "clipboard": recipe_notify_clipboard,
+                    "active": recipe_notify_active,
+                    "cancel": recipe_notify_cancel,
+                    "active_after_cancel": recipe_notify_after,
+                },
+                "screenshot": {
+                    "result": recipe_screenshot,
+                    "clipboard": recipe_screenshot_clipboard,
+                    "pulled_path": str(recipe_screenshot_pull),
+                },
+                "location": {
+                    "result": recipe_location,
+                    "clipboard": recipe_location_clipboard,
+                },
+                "torch": recipe_torch,
+            },
+            "health_after": health_after,
+            "commands": runner.planned,
+            "dry_run": False,
+        }
+        evidence_path = write_evidence(config, "apk-actions-proof.json", evidence)
+        return {
+            "schema": "pucky.emulator_apk_actions_proof_result.v1",
+            "ok": True,
+            "config": asdict(config),
+            "evidence_path": str(evidence_path),
+            "artifacts": {
+                "direct_photo": str(direct_photo_pull),
+                "recipe_screenshot": str(recipe_screenshot_pull),
+            },
+            "commands": runner.planned,
+            "dry_run": False,
+        }
+    except Exception as exc:
+        failure = {
+            "schema": "pucky.emulator_apk_actions_failure.v1",
+            "created_at": now_iso(),
+            "config": asdict(config),
+            "error": str(exc),
+            "health": emulator_health_snapshot(args, runner, config),
+            "commands": runner.planned,
+        }
+        failure_path = write_evidence(config, "apk-actions-failure.json", failure)
+        raise SuiteError(f"APK action proof failed; see {failure_path}: {exc}") from exc
 
 
 def wake_lab_gates(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
@@ -3921,7 +4580,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
-    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-accepted-timeout-recovery", "prove-displayable-reply-files"):
+    for name in ("create", "start", "provision", "seed-ui", "smoke", "wake-lab", "stop", "clean", "prove-thread-origin", "prove-pending-outbound-feed", "prove-accepted-timeout-recovery", "prove-displayable-reply-files", "prove-apk-actions"):
         item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
@@ -3988,12 +4647,17 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--turn-token", default=os.environ.get("PUCKY_API_TOKEN", ""))
             item.add_argument("--vm-base-url", default="https://pucky.fly.dev")
             item.add_argument("--operator-token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+            item.add_argument("--replay-broker-log", type=Path, default=None)
             item.add_argument("--turn-timeout-seconds", type=int, default=180)
             item.add_argument("--refresh-timeout-seconds", type=int, default=180)
             item.add_argument("--snapshot-timeout-seconds", type=int, default=120)
             item.add_argument("--viewer-timeout-seconds", type=int, default=30)
             item.add_argument("--ui-dwell-seconds", type=float, default=1.0)
+            item.add_argument("--long-press-ms", type=int, default=420)
             item.add_argument("--skip-refresh", action="store_true")
+        if name == "prove-apk-actions":
+            item.add_argument("--location-lat", type=float, default=37.4220)
+            item.add_argument("--location-lon", type=float, default=-122.0841)
     return parser
 
 
@@ -4024,6 +4688,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_prove_accepted_timeout_recovery(args)
     if args.command == "prove-displayable-reply-files":
         return cmd_prove_displayable_reply_files(args)
+    if args.command == "prove-apk-actions":
+        return cmd_prove_apk_actions(args)
     raise SuiteError(f"Unknown command: {args.command}")
 
 

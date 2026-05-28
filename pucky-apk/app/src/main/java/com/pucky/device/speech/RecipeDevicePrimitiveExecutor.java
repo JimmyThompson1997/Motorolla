@@ -15,6 +15,7 @@ import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.location.LocationController;
+import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.screenshot.ScreenshotController;
 import com.pucky.device.util.Json;
 
@@ -30,6 +31,7 @@ public final class RecipeDevicePrimitiveExecutor {
     public static final String COMMAND_SCREENSHOT_CAPTURE = "screenshot.capture";
     public static final String COMMAND_VIDEO_CAPTURE_START = "video.capture.start";
     public static final String COMMAND_VIDEO_CAPTURE_STOP = "video.capture.stop";
+    public static final String COMMAND_NOTIFY_SHOW = "notify.show";
     public static final int DEFAULT_TORCH_AUTO_OFF_MS = 600;
     public static final int MIN_TORCH_AUTO_OFF_MS = 100;
     public static final int MAX_TORCH_AUTO_OFF_MS = 1500;
@@ -51,6 +53,7 @@ public final class RecipeDevicePrimitiveExecutor {
     private final Context context;
     private final CameraController cameraController;
     private final LocationController locationController;
+    private final NotificationController notificationController;
     private final ScreenshotController screenshotController;
     private final VideoCaptureController videoCaptureController;
 
@@ -58,22 +61,25 @@ public final class RecipeDevicePrimitiveExecutor {
         this.context = context.getApplicationContext();
         this.cameraController = new CameraController(this.context);
         this.locationController = new LocationController(this.context);
+        this.notificationController = new NotificationController(this.context);
         this.screenshotController = new ScreenshotController(this.context);
         this.videoCaptureController = VideoCaptureController.shared(this.context);
     }
 
     RecipeDevicePrimitiveExecutor(CameraController cameraController) {
-        this(cameraController, null, null, null);
+        this(cameraController, null, null, null, null);
     }
 
     RecipeDevicePrimitiveExecutor(
             CameraController cameraController,
             LocationController locationController,
+            NotificationController notificationController,
             ScreenshotController screenshotController,
             VideoCaptureController videoCaptureController) {
         this.context = null;
         this.cameraController = cameraController;
         this.locationController = locationController;
+        this.notificationController = notificationController;
         this.screenshotController = screenshotController;
         this.videoCaptureController = videoCaptureController;
     }
@@ -117,6 +123,10 @@ public final class RecipeDevicePrimitiveExecutor {
             Json.put(out, "result", requireVideoCaptureController().stop(args == null ? new JSONObject() : args));
             return out;
         }
+        if (COMMAND_NOTIFY_SHOW.equals(command)) {
+            Json.put(out, "result", requireNotificationController().show(args == null ? new JSONObject() : args));
+            return out;
+        }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
                 "Unsupported recipe device primitive command: " + command);
     }
@@ -145,8 +155,11 @@ public final class RecipeDevicePrimitiveExecutor {
         if (COMMAND_VIDEO_CAPTURE_STOP.equals(command)) {
             return sanitizeVideoStop(action);
         }
+        if (COMMAND_NOTIFY_SHOW.equals(command)) {
+            return sanitizeNotify(action);
+        }
         throw new CommandException(CommandErrorCodes.COMMAND_NOT_ALLOWED,
-                "Only torch.set, photo.capture, location.pin, screenshot.capture, video.capture.start, and video.capture.stop recipe device primitives are supported");
+                "Only torch.set, photo.capture, location.pin, screenshot.capture, video.capture.start, video.capture.stop, and notify.show recipe device primitives are supported");
     }
 
     private static JSONObject sanitizeTorch(JSONObject action) throws CommandException {
@@ -210,8 +223,8 @@ public final class RecipeDevicePrimitiveExecutor {
         Json.put(args, "timeout_ms", timeoutMs);
         Json.put(args, "max_cache_age_ms", maxCacheAgeMs);
         Json.put(args, "fresh", true);
-        Json.put(args, "allow_pending", true);
-        Json.put(args, "publish", false);
+        Json.put(args, "allow_pending", rawArgs.optBoolean("allow_pending", true));
+        Json.put(args, "publish", rawArgs.optBoolean("publish", false));
         String clipboardEntryId = rawArgs.optString("pucky_clipboard_entry_id", "").trim();
         if (!clipboardEntryId.isEmpty()) {
             Json.put(args, "pucky_clipboard_entry_id", clipboardEntryId);
@@ -282,6 +295,23 @@ public final class RecipeDevicePrimitiveExecutor {
         return safe;
     }
 
+    private static JSONObject sanitizeNotify(JSONObject action) throws CommandException {
+        JSONObject rawArgs = actionArgsObject(action, COMMAND_NOTIFY_SHOW);
+        JSONObject args = new JSONObject();
+        Json.put(args, "title", rawArgs.optString("title", "Pucky"));
+        Json.put(args, "text", rawArgs.optString("text", "Pucky notification"));
+        Json.put(args, "id", rawArgs.optString("id", "pucky_recipe_notification"));
+        Json.put(args, "auto_cancel", rawArgs.optBoolean("auto_cancel", true));
+        Json.put(args, "audible", rawArgs.optBoolean("audible", false));
+        if (rawArgs.has("timeout_ms")) {
+            Json.put(args, "timeout_ms", Math.max(0L, rawArgs.optLong("timeout_ms", 0L)));
+        }
+        JSONObject safe = new JSONObject();
+        Json.put(safe, "command", COMMAND_NOTIFY_SHOW);
+        Json.put(safe, "args", args);
+        return safe;
+    }
+
     private static JSONObject actionArgsObject(JSONObject action, String command) throws CommandException {
         if (!action.has("args") || action.isNull("args")) {
             return new JSONObject();
@@ -313,6 +343,13 @@ public final class RecipeDevicePrimitiveExecutor {
             throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "video.capture controller unavailable");
         }
         return videoCaptureController;
+    }
+
+    private NotificationController requireNotificationController() throws CommandException {
+        if (notificationController == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "notify.show controller unavailable");
+        }
+        return notificationController;
     }
 
     public JSONObject playSuccessChime(String schema) {

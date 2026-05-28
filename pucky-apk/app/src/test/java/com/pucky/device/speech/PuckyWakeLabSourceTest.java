@@ -190,6 +190,7 @@ public final class PuckyWakeLabSourceTest {
         assertTrue(executor.contains("COMMAND_SCREENSHOT_CAPTURE = \"screenshot.capture\""));
         assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_START = \"video.capture.start\""));
         assertTrue(executor.contains("COMMAND_VIDEO_CAPTURE_STOP = \"video.capture.stop\""));
+        assertTrue(executor.contains("COMMAND_NOTIFY_SHOW = \"notify.show\""));
         assertFalse(executor.contains("LiveKit"));
         assertFalse(executor.contains("pucky.turn"));
         assertFalse(executor.contains("shell.exec"));

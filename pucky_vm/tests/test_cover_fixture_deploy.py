@@ -165,6 +165,22 @@ def test_vm_attachment_normalizer_file_type_matrix() -> None:
         assert normalized["viewer"]["type"] == "download_only"
 
 
+def test_vm_attachment_normalizer_prefers_displayable_mime_over_generic_document_kind() -> None:
+    from pucky_vm.attachment_manifest import normalize_attachment
+
+    normalized = normalize_attachment(
+        {
+            "artifact": "note.txt",
+            "mime_type": "text/plain",
+            "kind": "document",
+            "text": "hello",
+        }
+    )
+
+    assert normalized["kind"] == "text"
+    assert normalized["viewer"]["type"] == "text"
+
+
 def test_deploy_helper_uses_command_path_and_no_adb_shortcuts() -> None:
     source = (ROOT / "pucky_vm" / "tools" / "deploy_cover_fixture.py").read_text(encoding="utf-8")
 

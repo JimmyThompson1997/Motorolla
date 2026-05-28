@@ -87,6 +87,41 @@ public final class SpeechRecipeRegistryTest {
     }
 
     @Test
+    public void locationPrimitiveHonorsExplicitAllowPendingAndPublishFlags() throws Exception {
+        JSONObject safe = RecipeDevicePrimitiveExecutor.sanitize(new JSONObject()
+                .put("command", "location.pin")
+                .put("args", new JSONObject()
+                        .put("allow_pending", false)
+                        .put("publish", true)));
+        JSONObject args = safe.optJSONObject("args");
+
+        assertEquals("location.pin", safe.optString("command"));
+        assertFalse(args.optBoolean("allow_pending", true));
+        assertTrue(args.optBoolean("publish", false));
+    }
+
+    @Test
+    public void notificationRecipePrimitiveIsAllowlistedAndSanitized() throws Exception {
+        JSONObject normalized = SpeechRecipeRegistry.normalizeBundle(bundle(recipe("notify_me", phrases("send a notification"),
+                deviceStep("notify.show", new JSONObject()
+                        .put("title", "Proof title")
+                        .put("text", "Proof body")
+                        .put("id", "proof_notification")))), "vm_sync");
+        JSONObject step = normalized.optJSONArray("recipes")
+                .optJSONObject(0)
+                .optJSONArray("steps")
+                .optJSONObject(0);
+        JSONObject safe = RecipeDevicePrimitiveExecutor.sanitize(step);
+        JSONObject args = safe.optJSONObject("args");
+
+        assertEquals("notify.show", step.optString("command"));
+        assertEquals("notify.show", safe.optString("command"));
+        assertEquals("Proof title", args.optString("title"));
+        assertEquals("Proof body", args.optString("text"));
+        assertEquals("proof_notification", args.optString("id"));
+    }
+
+    @Test
     public void duplicatePhrasesInsideBundleAreRejected() throws Exception {
         CommandException exc = expectCommandException(() ->
                 SpeechRecipeRegistry.normalizeBundle(bundle(

@@ -213,6 +213,17 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "--device-id" in command and config.device_id in command
 
 
+def test_launch_home_command_reuses_provisioning_payload_when_turn_config_present(tmp_path: Path) -> None:
+    args = ns(tmp_path, turn_url="https://pucky.fly.dev/api/turn", turn_token="token-123")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    home = suite.launch_home_command(args, config)
+
+    assert home[:3] == [str(args.adb), "-s", config.serial]
+    assert "--ez" in home and "show_home" in home and "true" in home
+    assert "--es" in home and "provisioning_json_base64" in home
+
+
 def test_parser_includes_pending_outbound_proof_command() -> None:
     parser = suite.build_parser()
 
@@ -243,6 +254,120 @@ def test_parser_includes_displayable_reply_files_proof_command() -> None:
     assert args.slot == 3
     assert args.turn_url == suite.DEFAULT_TURN_URL
     assert args.snapshot_timeout_seconds == 120
+    assert args.long_press_ms == 420
+    assert args.replay_broker_log is None
+
+
+def test_replay_cards_from_broker_log_uses_latest_matching_card(tmp_path: Path) -> None:
+    log_path = tmp_path / "fake-broker.log"
+    lines = [
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {"title": "Proof HTML Dashboard", "turn_id": "older-turn", "card_id": "older-card"},
+                    ]
+                }
+            }
+        },
+        {
+            "command": {
+                "args": {
+                    "cards": [
+                        {"title": "Proof Runtime Icon", "turn_id": "icon-turn", "card_id": "icon-card"},
+                    ]
+                }
+            }
+        },
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {"title": "Proof HTML Dashboard", "turn_id": "newer-turn", "card_id": "newer-card"},
+                    ]
+                }
+            }
+        },
+    ]
+    log_path.write_text("\n".join(json.dumps(item) for item in lines), encoding="utf-8")
+
+    cards = suite.replay_cards_from_broker_log(
+        log_path,
+        ["Proof HTML Dashboard", "Proof Runtime Icon"],
+    )
+
+    assert cards["Proof HTML Dashboard"]["turn_id"] == "newer-turn"
+    assert cards["Proof Runtime Icon"]["card_id"] == "icon-card"
+
+
+def test_normalize_replay_card_renormalizes_attachment_kinds() -> None:
+    card = {
+        "title": "Proof Runtime Icon",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Proof Runtime Icon File",
+                        "kind": "document",
+                        "mime_type": "text/plain",
+                        "path": "/tmp/proof_runtime_icon_note.txt",
+                        "text": "hello",
+                    }
+                ],
+            }
+        ],
+    }
+
+    normalized = suite.normalize_replay_card(card)
+    attachment = normalized["transcript_messages"][0]["attachments"][0]
+
+    assert attachment["kind"] == "text"
+    assert attachment["viewer"]["type"] == "text"
+
+
+def test_wait_for_live_feed_item_pages_through_next_cursor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, turn_url="https://pucky.fly.dev/api/turn", turn_token="token-123")
+    pages = iter([
+        {"items": [{"turn_id": "older-turn"}], "next_cursor": "cursor-2"},
+        {"items": [{"turn_id": "target-turn", "card_id": "card-1"}], "next_cursor": ""},
+    ])
+
+    monkeypatch.setattr(suite, "feed_request", lambda *_args, **_kwargs: next(pages))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = suite.wait_for_live_feed_item(args, "target-turn", timeout=1.0, limit=1)
+
+    assert result["turn_id"] == "target-turn"
+
+
+def test_parser_includes_apk_actions_proof_command() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["prove-apk-actions", "--slot", "2", "--dry-run"])
+
+    assert args.command == "prove-apk-actions"
+    assert args.slot == 2
+    assert args.location_lat == 37.4220
+    assert args.location_lon == -122.0841
+
+
+def test_apk_action_recipe_bundle_includes_notification_and_location_cases() -> None:
+    bundle = suite.apk_action_recipe_bundle()
+    commands = [
+        step["command"]
+        for recipe in bundle["recipes"]
+        for step in recipe["steps"]
+    ]
+    phrases = {phrase for recipe in bundle["recipes"] for phrase in recipe["phrases"]}
+
+    assert "notify.show" in commands
+    assert "screenshot.capture" in commands
+    assert "location.pin" in commands
+    assert "torch.set" in commands
+    assert "send a notification" in phrases
+    assert "take a screenshot" in phrases
+    assert "pin my location" in phrases
 
 
 def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
@@ -264,6 +389,28 @@ def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
 
     title_nodes = suite.find_ui_nodes(xml, text_pattern=r"^Proof CSV Table File$")
     assert len(title_nodes) == 1
+
+
+def test_dismiss_anr_dialog_if_present_taps_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    tapped: list[str] = []
+
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="System UI isn't responding" bounds="[132,365][924,436]" />
+  <node index="1" text="Wait" bounds="[69,601][987,727]" />
+</hierarchy>
+"""
+
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: tapped.append(_args[3]["text"]))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    handled = suite.dismiss_anr_dialog_if_present(args, runner, config, xml)
+
+    assert handled is True
+    assert tapped == ["Wait"]
 
 
 def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message() -> None:
@@ -483,6 +630,29 @@ def test_sync_default_recipe_bundle_uses_clear_sync_and_list(monkeypatch: pytest
     assert result["cleared"]["name"] == "pucky.recipes.clear"
     assert result["synced"]["name"] == "pucky.recipes.sync"
     assert result["listed"]["name"] == "pucky.recipes.list"
+
+
+def test_prove_apk_actions_dry_run_plans_direct_and_recipe_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=2, dry_run=True, location_lat=37.4220, location_lon=-122.0841)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+
+    result = suite.cmd_prove_apk_actions(args)
+
+    planned = " ".join(" ".join(item["command"]) for item in result.get("commands", []))
+    assert result["ok"] is True
+    assert result["dry_run"] is True
+    assert "command.catalog" in planned
+    assert "notify.show" in planned
+    assert "photo.capture" in planned
+    assert "location.get" in planned
+    assert "screenshot.capture" in planned
+    assert "pucky.turn.arrival_cue.test" in planned
+    assert "pucky.recipes.sync" in planned
+    assert "send a notification" in planned
 
 
 def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:

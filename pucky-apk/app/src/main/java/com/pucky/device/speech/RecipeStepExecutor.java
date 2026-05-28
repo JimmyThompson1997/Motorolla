@@ -276,6 +276,8 @@ public final class RecipeStepExecutor {
                 "Start silent local video recording."));
         Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_VIDEO_CAPTURE_STOP,
                 "Stop active local video recording."));
+        Json.add(out, primitive(RecipeDevicePrimitiveExecutor.COMMAND_NOTIFY_SHOW,
+                "Show a local Pucky notification through the Android notification manager."));
         Json.add(out, primitive("vm_event.post",
                 "Post pucky.keyword_triggered.v1 to the configured VM broker."));
         return out;

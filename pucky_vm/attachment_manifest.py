@@ -66,16 +66,21 @@ def media_mime(item: dict[str, Any]) -> str:
 
 def normalized_kind(item: dict[str, Any], mime_type: str) -> str:
     explicit = str(item.get("kind") or "").strip().lower()
+    mime_kind = ""
+    if mime_type.startswith("image/"):
+        mime_kind = "image"
+    elif mime_type.startswith("video/"):
+        mime_kind = "video"
+    elif mime_type.startswith("audio/"):
+        mime_kind = "audio"
+    elif mime_type in KIND_BY_MIME:
+        mime_kind = KIND_BY_MIME[mime_type]
+    if explicit in {"document", "unknown"} and mime_kind in {"image", "video", "audio", "table", "html", "text"}:
+        return mime_kind
     if explicit in {"image", "video", "audio", "document", "table", "html", "text", "archive", "unknown"}:
         return explicit
-    if mime_type.startswith("image/"):
-        return "image"
-    if mime_type.startswith("video/"):
-        return "video"
-    if mime_type.startswith("audio/"):
-        return "audio"
-    if mime_type in KIND_BY_MIME:
-        return KIND_BY_MIME[mime_type]
+    if mime_kind:
+        return mime_kind
     suffix = Path(original_name(item)).suffix.lower()
     if suffix in {".zip", ".rar", ".7z", ".tar", ".gz"}:
         return "archive"
