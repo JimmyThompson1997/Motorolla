@@ -92,7 +92,7 @@ WAKE_TURN_FIXTURE_START_DELAY_MS = 1200
 WALKIE_THREAD_FIXTURE_START_DELAY_MS = 400
 FEED_FOCUS_FIXTURE_START_DELAY_MS = 2200
 PAGE_CONTINUATION_FIXTURE_START_DELAY_MS = 1200
-ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS = 2200
+ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS = 400
 HISTORY_RETENTION_FIXTURE_START_DELAY_MS = 2200
 FINAL_BOSS_FIXTURE_START_DELAY_MS = 1200
 FINAL_BOSS_SPEECH_START_TIMEOUT_MS = 6000
@@ -163,9 +163,9 @@ DOCUMENT_VIEWER_SOURCE_KEYS = (
 WALKIE_THREAD_TRANSPORT_FIXTURES = {
     "thread_continue": "wake_weather",
     "file_revise": "wake_weather",
-    "fresh_thread": "fresh_thread",
-    "thread_bravo": "thread_bravo",
-    "thread_alpha": "thread_alpha",
+    "fresh_thread": "wake_weather",
+    "thread_bravo": "wake_weather",
+    "thread_alpha": "wake_weather",
 }
 
 
@@ -5914,6 +5914,7 @@ def run_continuation_scenario(
         debug_fixture_transcript=transcript_text,
         proof_reply_delay_ms=proof_reply_delay_ms,
         fixture_start_delay_ms=continuation_fixture_start_delay_ms(expected_source_surface),
+        speech_start_timeout_ms=FINAL_BOSS_SPEECH_START_TIMEOUT_MS,
     )
     turn_id = str(started.get("turn_id") or "")
     if not turn_id:
@@ -5999,7 +6000,8 @@ def run_negative_home_scenario(
         fixture_path=remote_fixture_path,
         debug_fixture_transcript=transcript_text,
         proof_reply_delay_ms=1000,
-        fixture_start_delay_ms=1200,
+        fixture_start_delay_ms=WALKIE_THREAD_FIXTURE_START_DELAY_MS,
+        speech_start_timeout_ms=FINAL_BOSS_SPEECH_START_TIMEOUT_MS,
     )
     turn_id = str(started.get("turn_id") or "")
     terminal = wait_for_turn_record(
