@@ -511,6 +511,25 @@ def git_short(root: Path = ROOT) -> str:
         return "unknown"
 
 
+def run_git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+
+
+def local_git_state(root: Path = ROOT) -> dict[str, object]:
+    return {
+        "branch": run_git(root, "rev-parse", "--abbrev-ref", "HEAD"),
+        "head": run_git(root, "rev-parse", "HEAD"),
+        "upstream": run_git(root, "rev-parse", "@{u}"),
+        "dirty": bool(run_git(root, "status", "--short")),
+    }
+
+
 def wav_bytes(duration_ms: int, *, sample_rate: int = 16000, amplitude: int = 10000, frequency_hz: float = 440.0, silence: bool = False) -> bytes:
     frames = max(1, int(sample_rate * max(0, duration_ms) / 1000))
     raw = BytesIO()
@@ -1926,7 +1945,10 @@ def ensure_feed_card_visible(
     local_card: dict[str, Any] | None,
     timeout: float = 30.0,
 ) -> tuple[dict[str, str], str, dict[str, Any]]:
-    recovery = {"rematerialized": False}
+    recovery = {
+        "rematerialized": False,
+        "home_reset_before_wait": reset_home_surface_if_needed(args, runner, config),
+    }
     try:
         node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=timeout)
         return node, xml_text, recovery
@@ -1951,6 +1973,7 @@ def ensure_feed_card_visible(
         stage="displayable_feed_recovery",
         timeout_seconds=max(45, int(math.ceil(timeout))),
     )
+    recovery["home_reset_after_rematerialize"] = reset_home_surface_if_needed(args, runner, config)
     recovery_timeout = max(timeout * 2.0, 60.0)
     node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=recovery_timeout)
     return node, xml_text, recovery
@@ -2828,6 +2851,46 @@ def reset_walkie_thread_surface(
     ui_debug_command(args, runner, config, "ui.debug.clear_focus", {})
 
 
+def reset_home_surface_if_needed(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, Any]:
+    cleared_dialogs = clear_blocking_system_dialogs(args, runner, config)
+    surface = ui_surface(args, runner, config)
+    detail = surface.get("detail") if isinstance(surface.get("detail"), dict) else {}
+    thread_scope = surface.get("thread_scope") if isinstance(surface.get("thread_scope"), dict) else {}
+    focused = surface.get("focused_card") if isinstance(surface.get("focused_card"), dict) else {}
+    needs_reset = (
+        str(surface.get("route") or "") != "feed"
+        or bool(detail.get("open"))
+        or bool(thread_scope.get("visible"))
+        or str(thread_scope.get("active") or "").lower() == "true"
+        or bool(focused.get("active"))
+    )
+    result: dict[str, Any] = {
+        "cleared_dialogs": cleared_dialogs,
+        "needs_reset": needs_reset,
+        "used_ui_debug": False,
+        "used_back": False,
+    }
+    if not needs_reset:
+        return result
+    if bool(surface.get("ui_debug_available")):
+        try:
+            result["goto_home"] = ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+            result["clear_focus"] = ui_debug_command(args, runner, config, "ui.debug.clear_focus", {})
+            result["used_ui_debug"] = True
+            return result
+        except Exception as exc:
+            result["ui_debug_error"] = str(exc)
+    runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30, check=False)
+    if not runner.dry_run:
+        time.sleep(0.75)
+    result["used_back"] = True
+    return result
+
+
 def reset_walkie_thread_lab_state(
     args: argparse.Namespace,
     runner: Runner,
@@ -3225,9 +3288,13 @@ def configure_turn_lab_runtime(
             )
     else:
         ensure_broker_command_channel(args, runner, config, stage="turn_lab_existing", timeout_seconds=90)
+    settings_payload: dict[str, Any] = {"reply_mode": reply_mode, "arrival_cue_mode": "chime"}
+    if fake_turn is not None:
+        settings_payload["pucky_turn_url"] = fake_turn.base_url
+        settings_payload["pucky_api_token"] = "dev-token"
     settings = command_result(command_json(
         runner,
-        puckyctl_command(args, config, "pucky.turn.settings.set", {"reply_mode": reply_mode, "arrival_cue_mode": "chime"}),
+        puckyctl_command(args, config, "pucky.turn.settings.set", settings_payload),
         timeout=120,
     ))
     recipe_sync = sync_default_recipe_bundle(args, runner, config)
@@ -4421,7 +4488,28 @@ def card_icon_registry_contains(payload: dict[str, Any], name: str) -> bool:
     return any(isinstance(item, dict) and str(item.get("name") or "").strip() == target for item in icons)
 
 
+def bundle_matches_local_master(bundle_status: dict[str, Any], root: Path = ROOT) -> bool:
+    commit = str(bundle_status.get("source_commit_full") or "").strip()
+    if not commit:
+        return False
+    try:
+        state = local_git_state(root)
+    except Exception:
+        return False
+    return (
+        str(state.get("branch") or "") == "master"
+        and not bool(state.get("dirty"))
+        and str(state.get("head") or "") == str(state.get("upstream") or "")
+        and commit == str(state.get("head") or "")
+        and str(bundle_status.get("source_branch") or "") == "master"
+        and not bool(bundle_status.get("source_dirty", True))
+        and bool(str(bundle_status.get("ui_version") or "").strip())
+    )
+
+
 def scratch_bundle_needed(bundle_status: dict[str, Any], config: SlotConfig) -> bool:
+    if bundle_matches_local_master(bundle_status):
+        return False
     return str(bundle_status.get("ui_version") or "").strip() != str(config.bundle_version or "").strip()
 
 

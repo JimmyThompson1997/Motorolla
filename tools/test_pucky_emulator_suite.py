@@ -973,6 +973,100 @@ def test_scratch_bundle_needed_when_bundle_version_mismatches(tmp_path: Path) ->
     assert suite.scratch_bundle_needed({"ui_version": config.bundle_version}, config) is False
 
 
+def test_scratch_bundle_needed_skips_official_master_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    monkeypatch.setattr(
+        suite,
+        "local_git_state",
+        lambda *_args, **_kwargs: {
+            "branch": "master",
+            "head": "abc123",
+            "upstream": "abc123",
+            "dirty": False,
+        },
+    )
+
+    assert suite.scratch_bundle_needed(
+        {
+            "ui_version": "git-abc123",
+            "source_commit_full": "abc123",
+            "source_branch": "master",
+            "source_dirty": False,
+        },
+        config,
+    ) is False
+
+
+def test_cmd_prove_displayable_reply_files_preserves_official_bundle_on_skip_refresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(
+        tmp_path,
+        slot=1,
+        dry_run=False,
+        skip_refresh=True,
+        ui_dwell_seconds=0.0,
+        viewer_timeout_seconds=30,
+        refresh_timeout_seconds=60,
+        turn_timeout_seconds=60,
+        snapshot_timeout_seconds=60,
+        long_press_ms=420,
+        vm_base_url="https://pucky.fly.dev",
+        operator_token="operator-dev-token",
+        turn_token="dev-token",
+        replay_broker_log=None,
+    )
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "require_emulator_serial", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite.Runner, "run", lambda self, *_args, **_kwargs: suite.subprocess.CompletedProcess([], 0, stdout="", stderr=""))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "displayable_reply_file_cases", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        suite,
+        "http_json_request",
+        lambda *_args, **_kwargs: {"icons": [{"name": "proof_orbit"}]},
+    )
+    monkeypatch.setattr(suite, "launch_home_resilient", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        suite,
+        "write_evidence",
+        lambda _config, _name, payload: captured.__setitem__("payload", payload) or (Path(_config.evidence_dir) / _name),
+    )
+    monkeypatch.setattr(
+        suite,
+        "command_json",
+        lambda *_args, **_kwargs: {"result": {"ui_version": "git-abc123", "source_commit_full": "abc123", "source_branch": "master", "source_dirty": False}},
+    )
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload.get("result", payload))
+    monkeypatch.setattr(
+        suite,
+        "local_git_state",
+        lambda *_args, **_kwargs: {
+            "branch": "master",
+            "head": "abc123",
+            "upstream": "abc123",
+            "dirty": False,
+        },
+    )
+    monkeypatch.setattr(
+        suite,
+        "ensure_scratch_bundle",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("scratch bundle should not run")),
+    )
+
+    result = suite.cmd_prove_displayable_reply_files(args)
+
+    assert result["ok"] is True
+    assert captured["payload"]["scratch_bundle"]["skipped"] is True
+
+
 def test_proof_visible_card_unarchives_and_marks_unread() -> None:
     card = {
         "card_id": "card-runtime-icon",
@@ -2045,6 +2139,40 @@ def test_launch_home_resilient_falls_back_to_full_launch(monkeypatch: pytest.Mon
     assert any("connect true" in " ".join(command) for command in commands)
 
 
+def test_reset_home_surface_if_needed_uses_ui_debug_for_open_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[str] = []
+
+    monkeypatch.setattr(suite, "clear_blocking_system_dialogs", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        suite,
+        "ui_surface",
+        lambda *_args, **_kwargs: {
+            "route": "feed",
+            "ui_debug_available": True,
+            "detail": {"open": True},
+            "thread_scope": {"visible": True, "active": "true", "mode": "existing_thread"},
+            "focused_card": {"active": False},
+        },
+    )
+    monkeypatch.setattr(
+        suite,
+        "ui_debug_command",
+        lambda *_args, **_kwargs: commands.append(_args[3]) or {"ok": True, "handled": True},
+    )
+
+    result = suite.reset_home_surface_if_needed(args, runner, config)
+
+    assert result["cleared_dialogs"] is True
+    assert result["needs_reset"] is True
+    assert result["used_ui_debug"] is True
+    assert commands == ["ui.debug.goto_home", "ui.debug.clear_focus"]
+
+
 def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2052,13 +2180,21 @@ def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     runner = suite.Runner(dry_run=False)
     retries: list[str] = []
+    settings_payloads: list[dict[str, object]] = []
 
     runner.run = lambda *_args, **_kwargs: suite.subprocess.CompletedProcess([], 0, stdout="", stderr="")  # type: ignore[method-assign]
     monkeypatch.setattr(suite, "grant_runtime_permissions", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(suite, "dismiss_permission_controller", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
     monkeypatch.setattr(suite, "sync_default_recipe_bundle", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    def fake_command_json(_runner, command, **_kwargs):
+        name = command[command.index("command") + 1]
+        if name == "pucky.turn.settings.set":
+            settings_payloads.append(json.loads(command[command.index("--args-json") + 1]))
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
 
     def fake_ensure(_args, _runner, _config, *, stage: str, timeout_seconds: int) -> dict[str, object]:
         assert timeout_seconds == 90
@@ -2084,6 +2220,14 @@ def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(
 
     assert retries == ["turn_lab_relaunch_retry"]
     assert runtime["turn_url"] == "http://127.0.0.1:55123"
+    assert settings_payloads == [
+        {
+            "reply_mode": "card_only",
+            "arrival_cue_mode": "chime",
+            "pucky_turn_url": "http://127.0.0.1:55123",
+            "pucky_api_token": "dev-token",
+        }
+    ]
 
 
 def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -2188,6 +2332,7 @@ def test_ensure_feed_card_visible_rematerializes_single_card_on_retry(monkeypatc
         return {"result": {"cards": [target_card]}}
 
     monkeypatch.setattr(suite, "wait_for_feed_card_title", fake_wait)
+    monkeypatch.setattr(suite, "reset_home_surface_if_needed", lambda *_args, **_kwargs: {"needs_reset": False})
     monkeypatch.setattr(suite, "command_json", fake_command_json)
     monkeypatch.setattr(
         suite,
@@ -2224,6 +2369,7 @@ def test_ensure_feed_card_visible_expands_timeout_after_rematerialization(monkey
         return {"text": title, "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0' />"
 
     monkeypatch.setattr(suite, "wait_for_feed_card_title", fake_wait)
+    monkeypatch.setattr(suite, "reset_home_surface_if_needed", lambda *_args, **_kwargs: {"needs_reset": False})
     monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(suite, "command_result", lambda payload: payload)
     monkeypatch.setattr(suite, "reply_cards_write_command", lambda *_args, **_kwargs: ["ui.reply_cards.set"])
