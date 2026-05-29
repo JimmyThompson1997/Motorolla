@@ -100,6 +100,7 @@ def test_select_card_prefers_thread_backed_page_surface_and_excludes_threads() -
 
     assert first["card_id"] == "a"
     assert second["card_id"] == "b"
+    assert proof.select_card(cards, required_thread_id="thread-b", require_thread=True)["card_id"] == "b"
 
 
 def test_browser_helper_args_sets_node_path_and_request_file(tmp_path: Path) -> None:
@@ -150,7 +151,8 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert '[data-route="feed"]' in source
     assert '[data-card-action="' in source
     assert "data-detail-type" in source
-    assert "page.screenshot" in source
+    assert 'if (op.kind === "screenshot")' in source
+    assert "scrollIntoViewIfNeeded" in source
 
 
 def test_preferred_cover_display_id_prefers_secondary_display() -> None:

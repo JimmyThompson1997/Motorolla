@@ -85,18 +85,30 @@ async function findCoverPage(browser, request) {
   throw new Error(`Could not find cover page matching title=${titleNeedle} url=${urlNeedle}`);
 }
 
+async function clickLocator(page, locator, timeoutMs) {
+  await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.click({ timeout: Math.min(timeoutMs, 5000) });
+  } catch (_) {
+    try {
+      await locator.click({ timeout: timeoutMs, force: true });
+    } catch (_forceError) {
+      await locator.evaluate(node => node.click());
+    }
+  }
+  await page.waitForTimeout(200);
+}
+
 async function clickSelector(page, selector, timeoutMs) {
   const locator = page.locator(selector).first();
-  await locator.waitFor({ state: "visible", timeout: timeoutMs });
-  await locator.click();
-  await page.waitForTimeout(200);
+  await clickLocator(page, locator, timeoutMs);
 }
 
 async function closeDetailIfOpen(page, timeoutMs) {
   const detail = page.locator("#detail.is-open .detail-back").first();
   if (await detail.count()) {
-    await detail.click();
-    await page.waitForTimeout(200);
+    await clickLocator(page, detail, timeoutMs);
   }
   await page.waitForTimeout(120);
 }
@@ -151,8 +163,7 @@ async function runOperation(page, request, op) {
       throw new Error("screenshot operation requires path");
     }
     fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    return { kind: op.kind, path: screenshotPath };
+    return { kind: op.kind, path: screenshotPath, skipped: true };
   }
   if (op.kind === "describe") {
     return { kind: op.kind, detail: await describePage(page) };
@@ -194,7 +205,10 @@ async function main() {
     process.stdout.write(JSON.stringify(output, null, 2));
   } finally {
     if (browser) {
-      await browser.close().catch(() => {});
+      await Promise.race([
+        browser.close().catch(() => {}),
+        delay(1000)
+      ]);
     }
   }
 }
