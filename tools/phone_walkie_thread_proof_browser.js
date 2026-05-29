@@ -166,30 +166,37 @@ async function main() {
     throw new Error("Usage: phone_walkie_thread_proof_browser.js <request.json>");
   }
   const request = JSON.parse(fs.readFileSync(requestPath, "utf8"));
-  const browser = await chromium.connectOverCDP(String(request.cdp_url || ""));
-  const page = await findCoverPage(browser, request);
-  await waitForAppShell(page, Number(request.timeout_ms || 15000));
-  const operations = Array.isArray(request.operations) && request.operations.length
-    ? request.operations
-    : [{ kind: "describe" }];
-  const results = [];
-  for (const op of operations) {
-    results.push(await runOperation(page, request, op));
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(String(request.cdp_url || ""));
+    const page = await findCoverPage(browser, request);
+    await waitForAppShell(page, Number(request.timeout_ms || 15000));
+    const operations = Array.isArray(request.operations) && request.operations.length
+      ? request.operations
+      : [{ kind: "describe" }];
+    const results = [];
+    for (const op of operations) {
+      results.push(await runOperation(page, request, op));
+    }
+    const output = {
+      ok: true,
+      page_title: await safeTitle(page),
+      page_url: page.url(),
+      final_surface: await describePage(page),
+      operations: results
+    };
+    const outputPath = String(request.output_path || "").trim();
+    if (outputPath) {
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));
+      return;
+    }
+    process.stdout.write(JSON.stringify(output, null, 2));
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
-  const output = {
-    ok: true,
-    page_title: await safeTitle(page),
-    page_url: page.url(),
-    final_surface: await describePage(page),
-    operations: results
-  };
-  const outputPath = String(request.output_path || "").trim();
-  if (outputPath) {
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));
-    return;
-  }
-  process.stdout.write(JSON.stringify(output, null, 2));
 }
 
 main().catch(error => {
