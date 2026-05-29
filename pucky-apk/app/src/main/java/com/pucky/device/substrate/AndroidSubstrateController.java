@@ -38,8 +38,8 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class AndroidSubstrateController {
-    private static final int DEFAULT_LIMIT = 50;
-    private static final int MAX_LIMIT = 200;
+    private static final int DEFAULT_LIMIT = 5000;
+    private static final int MAX_LIMIT = 5000;
     private static final int MAX_JSON_CHARS = 256 * 1024;
     private static final String VOICEMAIL_READ = "com.android.voicemail.permission.READ_VOICEMAIL";
     private static final String VOICEMAIL_WRITE = "com.android.voicemail.permission.ADD_VOICEMAIL";
@@ -212,14 +212,6 @@ public final class AndroidSubstrateController {
                 permissions(),
                 "",
                 note("Notification listener is not a database; add as a future opt-in substrate surface.")));
-        Json.add(out, surface(
-                "email",
-                "external_api",
-                array("gmail/oauth", "imap/oauth", "notification.listener"),
-                array("future:oauth", "future:notification.listener"),
-                permissions(),
-                "",
-                note("Email is not a reliable Android OS master provider; use app APIs or notification listener.")));
         return out;
     }
 

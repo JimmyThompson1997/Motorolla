@@ -231,7 +231,9 @@ public final class PhoneDataControllerTest {
         assertTrue(controller.contains("mergeSmsRows(providerRows, notificationRows"));
         assertTrue(controller.contains("notification_listener"));
         assertTrue(controller.contains("phone.contacts.create requires display_name"));
-        assertTrue(controller.contains("phone.contacts.replace requires display_name"));
+        assertTrue(controller.contains("phone.contacts.replace requires display_name, phones, or emails"));
+        assertTrue(controller.contains("phone.contacts.replace display_name cannot be empty"));
+        assertTrue(controller.contains("deleteDataRows(rawContactId, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)"));
         assertTrue(controller.contains("Missing required field: "));
         assertTrue(controller.contains("Invalid long for "));
         assertTrue(controller.contains("before_timestamp_ms"));

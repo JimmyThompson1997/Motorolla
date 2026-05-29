@@ -1,6 +1,7 @@
 package com.pucky.device.command;
 
 import android.Manifest;
+import android.content.ContentUris;
 import android.content.ContentProviderOperation;
 import android.content.ContentProviderResult;
 import android.content.ContentResolver;
@@ -10,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.ContactsContract;
+import android.util.Base64;
 
 import com.pucky.device.notifications.PuckyNotificationLedger;
 import com.pucky.device.status.AppIdentity;
@@ -20,6 +22,8 @@ import com.pucky.device.util.Json;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,8 +35,8 @@ public final class PhoneDataController {
     private static final String VOICEMAIL_READ = "com.android.voicemail.permission.READ_VOICEMAIL";
     private static final String READ_BLOCKED_NUMBERS = "android.permission.READ_BLOCKED_NUMBERS";
     private static final String WRITE_BLOCKED_NUMBERS = "android.permission.WRITE_BLOCKED_NUMBERS";
-    private static final int DEFAULT_LIMIT = 25;
-    private static final int MAX_LIMIT = 200;
+    private static final int DEFAULT_LIMIT = 5000;
+    private static final int MAX_LIMIT = 5000;
 
     private final Context context;
     private final SettingsStore settingsStore;
@@ -397,9 +401,11 @@ public final class PhoneDataController {
         return safe(() -> {
             requirePermission(Manifest.permission.WRITE_CONTACTS);
             long contactId = requiredLong(args, "contact_id");
-            String displayName = args.optString("display_name", "").trim();
-            if (displayName.isEmpty()) {
-                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "phone.contacts.replace requires display_name");
+            boolean replaceName = args.has("display_name");
+            boolean replacePhones = args.has("phones");
+            boolean replaceEmails = args.has("emails");
+            if (!replaceName && !replacePhones && !replaceEmails) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "phone.contacts.replace requires display_name, phones, or emails");
             }
             long rawContactId = firstRawContactId(contactId);
             if (rawContactId <= 0L) {
@@ -407,20 +413,22 @@ public final class PhoneDataController {
             }
 
             ArrayList<ContentProviderOperation> operations = new ArrayList<>();
-            operations.add(ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
-                    .withSelection(
-                            ContactsContract.Data.RAW_CONTACT_ID + "=? AND "
-                                    + ContactsContract.Data.MIMETYPE + " IN (?,?,?)",
-                            new String[] {
-                                    String.valueOf(rawContactId),
-                                    ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE,
-                                    ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
-                                    ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE
-                            })
-                    .build());
-            addStructuredNameInsert(operations, rawContactId, displayName);
-            addPhoneInsertsForRawContact(operations, rawContactId, args.optJSONArray("phones"));
-            addEmailInsertsForRawContact(operations, rawContactId, args.optJSONArray("emails"));
+            if (replaceName) {
+                String displayName = args.optString("display_name", "").trim();
+                if (displayName.isEmpty()) {
+                    throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "phone.contacts.replace display_name cannot be empty");
+                }
+                operations.add(deleteDataRows(rawContactId, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE));
+                addStructuredNameInsert(operations, rawContactId, displayName);
+            }
+            if (replacePhones) {
+                operations.add(deleteDataRows(rawContactId, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE));
+                addPhoneInsertsForRawContact(operations, rawContactId, args.optJSONArray("phones"));
+            }
+            if (replaceEmails) {
+                operations.add(deleteDataRows(rawContactId, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE));
+                addEmailInsertsForRawContact(operations, rawContactId, args.optJSONArray("emails"));
+            }
             resolver.applyBatch(ContactsContract.AUTHORITY, operations);
 
             JSONObject contact = readContact(contactId);
@@ -446,6 +454,73 @@ public final class PhoneDataController {
             Json.put(out, "contact_id", contactId);
             Json.put(out, "deleted", deleted > 0);
             Json.put(out, "raw_contact_rows_deleted", deleted);
+            return out;
+        });
+    }
+
+    public JSONObject contactsPhotoGet(JSONObject args) throws CommandException {
+        return safe(() -> {
+            requirePermission(Manifest.permission.READ_CONTACTS);
+            long contactId = requiredLong(args, "contact_id");
+            JSONObject contact = readContact(contactId);
+            if (contact == null) {
+                throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "Contact not found: " + contactId);
+            }
+            Uri contactUri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId);
+            byte[] bytes;
+            try (InputStream stream = ContactsContract.Contacts.openContactPhotoInputStream(resolver, contactUri, true)) {
+                bytes = stream == null ? null : readAll(stream);
+            }
+
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_contact_photo_get.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "contact_id", contactId);
+            Json.put(out, "has_photo", bytes != null && bytes.length > 0);
+            Json.put(out, "mime_type", bytes == null || bytes.length == 0 ? JSONObject.NULL : "image/*");
+            Json.put(out, "bytes", bytes == null ? 0 : bytes.length);
+            Json.put(out, "photo_base64", bytes == null || bytes.length == 0
+                    ? JSONObject.NULL
+                    : Base64.encodeToString(bytes, Base64.NO_WRAP));
+            return out;
+        });
+    }
+
+    public JSONObject contactsPhotoPut(JSONObject args) throws CommandException {
+        return safe(() -> {
+            requirePermission(Manifest.permission.WRITE_CONTACTS);
+            long contactId = requiredLong(args, "contact_id");
+            long rawContactId = firstRawContactId(contactId);
+            if (rawContactId <= 0L) {
+                throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "Contact not found: " + contactId);
+            }
+            byte[] photo = decodePhotoBase64(args.optString("photo_base64", ""));
+            if (photo.length == 0) {
+                throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "phone.contacts.photo.put requires photo_base64");
+            }
+
+            ArrayList<ContentProviderOperation> operations = new ArrayList<>();
+            operations.add(ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                    .withSelection(
+                            ContactsContract.Data.RAW_CONTACT_ID + "=? AND " + ContactsContract.Data.MIMETYPE + "=?",
+                            new String[] {
+                                    String.valueOf(rawContactId),
+                                    ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE
+                            })
+                    .build());
+            operations.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photo)
+                    .build());
+            resolver.applyBatch(ContactsContract.AUTHORITY, operations);
+
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_contact_photo_put.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "contact_id", contactId);
+            Json.put(out, "bytes_written", photo.length);
+            Json.put(out, "contact", readContact(contactId));
             return out;
         });
     }
@@ -1088,6 +1163,14 @@ public final class PhoneDataController {
         }
     }
 
+    private ContentProviderOperation deleteDataRows(long rawContactId, String mimeType) {
+        return ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection(
+                        ContactsContract.Data.RAW_CONTACT_ID + "=? AND " + ContactsContract.Data.MIMETYPE + "=?",
+                        new String[] { String.valueOf(rawContactId), mimeType })
+                .build();
+    }
+
     private void addStructuredNameInsert(ArrayList<ContentProviderOperation> operations, int rawContactBackRef, String displayName) {
         operations.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
                 .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactBackRef)
@@ -1306,6 +1389,32 @@ public final class PhoneDataController {
 
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private static byte[] decodePhotoBase64(String raw) throws CommandException {
+        String value = raw == null ? "" : raw.trim();
+        if (value.startsWith("data:")) {
+            int comma = value.indexOf(',');
+            value = comma >= 0 ? value.substring(comma + 1) : "";
+        }
+        if (value.isEmpty()) {
+            return new byte[0];
+        }
+        try {
+            return Base64.decode(value, Base64.DEFAULT);
+        } catch (IllegalArgumentException e) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Invalid contact photo_base64");
+        }
+    }
+
+    private static byte[] readAll(InputStream stream) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = stream.read(buffer)) != -1) {
+            out.write(buffer, 0, read);
+        }
+        return out.toByteArray();
     }
 
     private static String firstNonEmpty(String... values) {

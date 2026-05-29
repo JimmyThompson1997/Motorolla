@@ -95,6 +95,27 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.display_gesture.trigger",
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
+            "android.catalog",
+            "android.content.query", "android.content.insert", "android.content.update",
+            "android.content.delete", "android.content.call", "android.content.get_type",
+            "android.intent.start", "android.manager.call",
+            "android.permission.status", "android.permission.request",
+            "android.sms.list", "android.sms.thread", "android.sms.send",
+            "android.calls.list", "android.calls.state", "android.calls.place",
+            "android.calls.answer", "android.calls.hangup",
+            "android.contacts.search", "android.contacts.get", "android.contacts.create",
+            "android.contacts.replace", "android.contacts.delete",
+            "android.contacts.photo.get", "android.contacts.photo.put",
+            "android.voicemail.list",
+            "android.blocked_numbers.list", "android.blocked_numbers.add", "android.blocked_numbers.remove",
+            "android.calendar.list", "android.calendar.get", "android.calendar.create",
+            "android.calendar.update", "android.calendar.delete",
+            "android.clock.alarm.set", "android.clock.timer.set", "android.clock.alarms.show",
+            "android.settings.get", "android.settings.put", "android.settings.open",
+            "android.media.images.list", "android.media.video.list", "android.media.audio.list",
+            "android.downloads.list", "android.downloads.get",
+            "android.user_dictionary.list", "android.user_dictionary.add", "android.user_dictionary.delete",
+            "android.notifications.listener.status", "android.notifications.listener.messages",
             "phone.telephony.status",
             "phone.sms.list", "phone.sms.get_thread", "phone.sms.send",
             "phone.calls.list", "phone.calls.state", "phone.calls.place", "phone.calls.answer", "phone.calls.hangup",
@@ -145,6 +166,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final AppUpdateController appUpdateController;
     private final AndroidSubstrateController androidSubstrateController;
     private final PhoneDataController phoneDataController;
+    private final AndroidRuntimeController androidRuntimeController;
     private final PuckyTurnController puckyTurnController;
 
     public NativeCommandExecutor(
@@ -221,12 +243,20 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.appUpdateController = appUpdateController;
         this.androidSubstrateController = androidSubstrateController;
         this.phoneDataController = phoneDataController;
+        this.androidRuntimeController = new AndroidRuntimeController(
+                androidSubstrateController,
+                phoneDataController,
+                notificationController);
         this.puckyTurnController = puckyTurnController;
     }
 
     @Override
     public JSONObject execute(CommandEnvelope command) throws CommandException {
-        switch (command.type()) {
+        String type = command.type();
+        if (type.startsWith("android.") && !"android.substrate".equals(type)) {
+            return androidRuntimeController.execute(type, command.args());
+        }
+        switch (type) {
             case "ping":
                 return ping(command.args());
             case "command.catalog":

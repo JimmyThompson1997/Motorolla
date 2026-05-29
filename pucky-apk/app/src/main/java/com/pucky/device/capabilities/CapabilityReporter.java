@@ -226,6 +226,14 @@ public final class CapabilityReporter {
                 null, "not_recorded", "Launches user-mediated calendar insert intent."));
         Json.add(out, cap("intent.phone_dial", "phone.intent.dial", "implemented_untested", "user_mediated", "visible",
                 null, "not_recorded", "Launches ACTION_DIAL only, not direct call."));
+        Json.add(out, cap("android.runtime_plane",
+                "android.catalog/android.content.query/android.content.insert/android.content.update/android.content.delete/android.content.call/android.content.get_type/android.intent.start/android.manager.call/android.permission.status/android.permission.request",
+                "implemented_guarded", "yes", "privacy_sensitive", null, "not_recorded",
+                "Preferred Android-native command namespace over the substrate and manager primitives. ADB remains the external USB-C operator hatch, not an APK command."));
+        Json.add(out, cap("android.native_families",
+                "android.sms.*/android.calls.*/android.contacts.*/android.voicemail.list/android.blocked_numbers.*/android.calendar.*/android.clock.*/android.settings.*/android.media.*/android.downloads.*/android.user_dictionary.*/android.notifications.listener.*",
+                "implemented_guarded", "yes", "privacy_sensitive", null, "not_recorded",
+                "Thin named Android endpoints for agent legibility. Existing phone.*, notify.listener.*, and intent convenience commands remain aliases."));
         Json.add(out, cap("phone.telephony", "phone.telephony.status", "implemented", "yes", "privacy_sensitive",
                 Manifest.permission.READ_PHONE_STATE, "not_recorded",
                 "Reports telephony permissions, role holders, and readiness for the first-class communications room."));
@@ -241,12 +249,12 @@ public final class CapabilityReporter {
                         ? "implemented_untested" : "blocked_by_permission",
                 "yes", "privacy_sensitive", Manifest.permission.READ_CALL_LOG, "not_recorded",
                 "Lists call history, supports deep history windows, reports live call state, and wraps direct place, answer, or hangup actions over the Android communications room."));
-        Json.add(out, cap("phone.contacts", "phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete",
+        Json.add(out, cap("phone.contacts", "phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete/android.contacts.photo.get/android.contacts.photo.put",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CONTACTS)
                         && permissionReporter.isEffectivelyGranted(Manifest.permission.WRITE_CONTACTS)
                         ? "implemented_untested" : "blocked_by_permission",
                 "yes", "privacy_sensitive", Manifest.permission.READ_CONTACTS, "not_recorded",
-                "Searches, reads, creates, replaces, and deletes device-local contacts through stable first-class commands."));
+                "Searches, reads, creates, replaces, deletes, and attaches contact photos through stable first-class commands."));
         Json.add(out, cap("phone.voicemail", "phone.voicemail.list",
                 permissionReporter.isEffectivelyGranted("com.android.voicemail.permission.READ_VOICEMAIL")
                         ? "implemented_guarded" : "blocked_by_permission",

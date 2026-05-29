@@ -33,9 +33,9 @@ import java.util.Set;
 public final class PuckyNotificationLedger {
     private static final Object LOCK = new Object();
     private static final String FILE_NAME = "pucky-notification-listener.json";
-    private static final int DEFAULT_LIMIT = 25;
-    private static final int MAX_LIMIT = 200;
-    private static final int MAX_RECENT_MESSAGES = 400;
+    private static final int DEFAULT_LIMIT = 5000;
+    private static final int MAX_LIMIT = 5000;
+    private static final int MAX_RECENT_MESSAGES = 5000;
 
     private PuckyNotificationLedger() {
     }

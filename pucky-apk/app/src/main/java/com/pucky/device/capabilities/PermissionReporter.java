@@ -109,53 +109,53 @@ public final class PermissionReporter {
         add(out, Manifest.permission.POST_NOTIFICATIONS, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
                 array("notify.show", "timer.set", "foreground service notification"));
         add(out, Manifest.permission.READ_SMS, declared, true, true, "dangerous",
-                array("android.substrate SMS query", "phone.sms.list", "phone.sms.get_thread"));
+                array("android.substrate SMS query", "android.sms.list", "android.sms.thread", "phone.sms.list", "phone.sms.get_thread"));
         add(out, Manifest.permission.SEND_SMS, declared, true, true, "dangerous",
-                array("android.substrate SMS send", "phone.sms.send"));
+                array("android.substrate SMS send", "android.sms.send", "phone.sms.send"));
         add(out, Manifest.permission.RECEIVE_SMS, declared, true, true, "dangerous",
                 array("android.substrate inbound SMS"));
         add(out, Manifest.permission.CALL_PHONE, declared, true, true, "dangerous",
-                array("android.substrate place call", "phone.calls.place"));
+                array("android.substrate place call", "android.calls.place", "phone.calls.place"));
         add(out, Manifest.permission.ANSWER_PHONE_CALLS, declared, true, true, "dangerous",
-                array("android.substrate hang up or answer calls", "phone.calls.answer", "phone.calls.hangup"));
+                array("android.substrate hang up or answer calls", "android.calls.answer", "android.calls.hangup", "phone.calls.answer", "phone.calls.hangup"));
         add(out, Manifest.permission.READ_PHONE_STATE, declared, true, true, "dangerous",
-                array("android.substrate phone state", "phone.telephony.status", "phone.calls.state"));
+                array("android.substrate phone state", "android.calls.state", "phone.telephony.status", "phone.calls.state"));
         add(out, Manifest.permission.READ_CALL_LOG, declared, true, true, "dangerous",
-                array("android.substrate call log query", "phone.calls.list", "phone.voicemail.list"));
+                array("android.substrate call log query", "android.calls.list", "android.voicemail.list", "phone.calls.list", "phone.voicemail.list"));
         add(out, Manifest.permission.WRITE_CALL_LOG, declared, true, true, "dangerous",
                 array("android.substrate call log mutation"));
         add(out, Manifest.permission.READ_CONTACTS, declared, true, true, "dangerous",
-                array("android.substrate contacts query", "phone.contacts.search", "phone.contacts.get"));
+                array("android.substrate contacts query", "android.contacts.search", "android.contacts.get", "android.contacts.photo.get", "phone.contacts.search", "phone.contacts.get"));
         add(out, Manifest.permission.WRITE_CONTACTS, declared, true, true, "dangerous",
-                array("android.substrate contacts mutation", "phone.contacts.create", "phone.contacts.replace", "phone.contacts.delete"));
+                array("android.substrate contacts mutation", "android.contacts.create", "android.contacts.replace", "android.contacts.delete", "android.contacts.photo.put", "phone.contacts.create", "phone.contacts.replace", "phone.contacts.delete"));
         add(out, Manifest.permission.GET_ACCOUNTS, declared, true, true, "dangerous",
                 array("android.substrate account-backed providers"));
         add(out, Manifest.permission.READ_CALENDAR, declared, true, true, "dangerous",
-                array("android.substrate calendar query"));
+                array("android.substrate calendar query", "android.calendar.list", "android.calendar.get"));
         add(out, Manifest.permission.WRITE_CALENDAR, declared, true, true, "dangerous",
-                array("android.substrate calendar mutation"));
+                array("android.substrate calendar mutation", "android.calendar.create", "android.calendar.update", "android.calendar.delete"));
         add(out, Manifest.permission.READ_EXTERNAL_STORAGE, declared, true, Build.VERSION.SDK_INT < 33, "dangerous",
-                array("android.substrate media query"));
+                array("android.substrate media query", "android.media.images.list", "android.media.video.list", "android.media.audio.list", "android.downloads.list"));
         add(out, Manifest.permission.READ_MEDIA_IMAGES, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
-                array("android.substrate image media query"));
+                array("android.substrate image media query", "android.media.images.list"));
         add(out, Manifest.permission.READ_MEDIA_VIDEO, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
-                array("android.substrate video media query"));
+                array("android.substrate video media query", "android.media.video.list"));
         add(out, Manifest.permission.READ_MEDIA_AUDIO, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
-                array("android.substrate audio media query"));
+                array("android.substrate audio media query", "android.media.audio.list"));
         add(out, "com.android.alarm.permission.SET_ALARM", declared, false, true, "normal",
-                array("alarm.intent.set"));
+                array("alarm.intent.set", "android.clock.alarm.set", "android.clock.timer.set", "android.clock.alarms.show"));
         add(out, "com.android.voicemail.permission.READ_VOICEMAIL", declared, true, true, "dangerous",
-                array("android.substrate voicemail query", "phone.voicemail.list"));
+                array("android.substrate voicemail query", "android.voicemail.list", "phone.voicemail.list"));
         add(out, "com.android.voicemail.permission.ADD_VOICEMAIL", declared, true, true, "dangerous",
                 array("android.substrate voicemail insert"));
         add(out, "android.permission.READ_BLOCKED_NUMBERS", declared, true, true, "dangerous",
-                array("android.substrate blocked number query", "phone.blocked_numbers.list"));
+                array("android.substrate blocked number query", "android.blocked_numbers.list", "phone.blocked_numbers.list"));
         add(out, "android.permission.WRITE_BLOCKED_NUMBERS", declared, true, true, "dangerous",
-                array("android.substrate blocked number mutation", "phone.blocked_numbers.add", "phone.blocked_numbers.remove"));
+                array("android.substrate blocked number mutation", "android.blocked_numbers.add", "android.blocked_numbers.remove", "phone.blocked_numbers.add", "phone.blocked_numbers.remove"));
         add(out, "android.permission.READ_USER_DICTIONARY", declared, true, true, "dangerous",
-                array("android.substrate user dictionary query"));
+                array("android.substrate user dictionary query", "android.user_dictionary.list"));
         add(out, "android.permission.WRITE_USER_DICTIONARY", declared, true, true, "dangerous",
-                array("android.substrate user dictionary mutation"));
+                array("android.substrate user dictionary mutation", "android.user_dictionary.add", "android.user_dictionary.delete"));
         return out;
     }
 
