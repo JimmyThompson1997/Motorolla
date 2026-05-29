@@ -1986,6 +1986,7 @@ def open_card_detail_with_retry(
             config,
             description=f"{case_key} did not expose the expected tile file action: {action_label}",
             content_desc_pattern=rf"^{re.escape(action_label)}$",
+            text_pattern=rf"^{re.escape(action_label)}$",
             timeout=timeout,
         )
     for attempt in range(2):
@@ -2011,6 +2012,7 @@ def open_card_detail_with_retry(
                 config,
                 description=f"{case_key} did not expose the expected tile file action: {action_label}",
                 content_desc_pattern=rf"^{re.escape(action_label)}$",
+                text_pattern=rf"^{re.escape(action_label)}$",
                 timeout=timeout,
             )
     raise SuiteError(f"{case_key} did not open a detail view titled {open_title}")

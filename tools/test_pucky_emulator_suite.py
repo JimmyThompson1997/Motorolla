@@ -2180,6 +2180,55 @@ def test_open_card_detail_with_retry_retries_after_missed_tap(monkeypatch: pytes
     assert "<hierarchy" in refreshed_tile_xml
 
 
+def test_open_card_detail_with_retry_waits_for_text_only_action_label(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    card = {
+        "title": "Retry card",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Retry file",
+                        "viewer": {"type": "text", "viewer_src": "data:text/plain,ok"},
+                    }
+                ],
+            }
+        ],
+    }
+    taps: list[str] = []
+
+    def fake_wait_for_ui_node(_args, _runner, _config, *, description, content_desc_pattern=None, text_pattern=None, **_kwargs):
+        if "expected tile file action" in description:
+            assert content_desc_pattern == r"^Open\ file\ for\ Retry\ card$"
+            assert text_pattern == r"^Open\ file\ for\ Retry\ card$"
+            return {"text": "Open file for Retry card", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Open file for Retry card' bounds='[1,2][3,4]' /></hierarchy>"
+        if "did not open a detail view" in description:
+            return {"text": "Retry file", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Retry file' bounds='[1,2][3,4]' /></hierarchy>"
+        raise AssertionError(description)
+
+    monkeypatch.setattr(suite, "wait_for_ui_node", fake_wait_for_ui_node)
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: taps.append("tap"))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    opened_xml, refreshed_tile_xml = suite.open_card_detail_with_retry(
+        args,
+        runner,
+        config,
+        case_key="retry_case",
+        title="Retry card",
+        card=card,
+        tile_xml="<hierarchy rotation='0' />",
+        timeout=5.0,
+    )
+
+    assert taps == ["tap"]
+    assert "Retry file" in opened_xml
+    assert "Open file for Retry card" in refreshed_tile_xml
+
+
 def test_clean_dry_run_does_not_delete_slot_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     marker = Path(config.run_dir) / "keep.txt"
