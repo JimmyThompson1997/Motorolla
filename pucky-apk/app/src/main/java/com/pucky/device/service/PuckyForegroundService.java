@@ -41,6 +41,7 @@ import com.pucky.device.capabilities.PermissionReporter;
 import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.command.CommandRouter;
 import com.pucky.device.command.NativeCommandExecutor;
+import com.pucky.device.command.PhoneDataController;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
@@ -231,6 +232,7 @@ public final class PuckyForegroundService extends Service {
         CommandLogStore logStore = app.commandLogStore();
         PermissionReporter permissionReporter = new PermissionReporter(this, settings);
         CapabilityReporter capabilityReporter = new CapabilityReporter(this, settings, permissionReporter);
+        AndroidSubstrateController substrateController = new AndroidSubstrateController(this);
         NativeCommandExecutor executor = new NativeCommandExecutor(
                 new StatusProvider(this, settings),
                 new BatteryProvider(this),
@@ -266,7 +268,8 @@ public final class PuckyForegroundService extends Service {
                 PuckyRecipeController.shared(this),
                 WakeWordController.shared(this),
                 new AppUpdateController(this),
-                new AndroidSubstrateController(this),
+                substrateController,
+                new PhoneDataController(this, settings, substrateController),
                 PuckyTurnController.shared(this));
         CommandRouter router = new CommandRouter(executor);
         brokerClient = new BrokerControlClient(this, settings, router, logStore);

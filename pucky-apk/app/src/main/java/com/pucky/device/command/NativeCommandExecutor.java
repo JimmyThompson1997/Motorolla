@@ -94,6 +94,13 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.display_gesture.trigger",
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
+            "phone.telephony.status",
+            "phone.sms.list", "phone.sms.get_thread", "phone.sms.send",
+            "phone.calls.list", "phone.calls.place", "phone.calls.hangup",
+            "phone.contacts.search", "phone.contacts.get", "phone.contacts.create",
+            "phone.contacts.replace", "phone.contacts.delete",
+            "phone.voicemail.list",
+            "phone.blocked_numbers.list", "phone.blocked_numbers.add", "phone.blocked_numbers.remove",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
             "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.merge", "ui.reply_cards.get",
             "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
@@ -136,6 +143,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final WakeWordController wakeWordController;
     private final AppUpdateController appUpdateController;
     private final AndroidSubstrateController androidSubstrateController;
+    private final PhoneDataController phoneDataController;
     private final PuckyTurnController puckyTurnController;
 
     public NativeCommandExecutor(
@@ -174,6 +182,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             WakeWordController wakeWordController,
             AppUpdateController appUpdateController,
             AndroidSubstrateController androidSubstrateController,
+            PhoneDataController phoneDataController,
             PuckyTurnController puckyTurnController) {
         this.statusProvider = statusProvider;
         this.batteryProvider = batteryProvider;
@@ -210,6 +219,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.wakeWordController = wakeWordController;
         this.appUpdateController = appUpdateController;
         this.androidSubstrateController = androidSubstrateController;
+        this.phoneDataController = phoneDataController;
         this.puckyTurnController = puckyTurnController;
     }
 
@@ -504,6 +514,38 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return intentController.calendarInsertIntent(command.args());
             case "phone.intent.dial":
                 return intentController.dialIntent(command.args());
+            case "phone.telephony.status":
+                return phoneDataController.telephonyStatus();
+            case "phone.sms.list":
+                return phoneDataController.smsList(command.args());
+            case "phone.sms.get_thread":
+                return phoneDataController.smsGetThread(command.args());
+            case "phone.sms.send":
+                return phoneDataController.smsSend(command.args());
+            case "phone.calls.list":
+                return phoneDataController.callsList(command.args());
+            case "phone.calls.place":
+                return phoneDataController.callsPlace(command.args());
+            case "phone.calls.hangup":
+                return phoneDataController.callsHangup(command.args());
+            case "phone.contacts.search":
+                return phoneDataController.contactsSearch(command.args());
+            case "phone.contacts.get":
+                return phoneDataController.contactsGet(command.args());
+            case "phone.contacts.create":
+                return phoneDataController.contactsCreate(command.args());
+            case "phone.contacts.replace":
+                return phoneDataController.contactsReplace(command.args());
+            case "phone.contacts.delete":
+                return phoneDataController.contactsDelete(command.args());
+            case "phone.voicemail.list":
+                return phoneDataController.voicemailList(command.args());
+            case "phone.blocked_numbers.list":
+                return phoneDataController.blockedNumbersList(command.args());
+            case "phone.blocked_numbers.add":
+                return phoneDataController.blockedNumbersAdd(command.args());
+            case "phone.blocked_numbers.remove":
+                return phoneDataController.blockedNumbersRemove(command.args());
             case "note.create_local":
                 return noteController.create(command.args());
             case "note.list_local":

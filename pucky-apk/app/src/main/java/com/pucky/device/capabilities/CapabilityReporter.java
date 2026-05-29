@@ -221,6 +221,38 @@ public final class CapabilityReporter {
                 null, "not_recorded", "Launches user-mediated calendar insert intent."));
         Json.add(out, cap("intent.phone_dial", "phone.intent.dial", "implemented_untested", "user_mediated", "visible",
                 null, "not_recorded", "Launches ACTION_DIAL only, not direct call."));
+        Json.add(out, cap("phone.telephony", "phone.telephony.status", "implemented", "yes", "privacy_sensitive",
+                Manifest.permission.READ_PHONE_STATE, "not_recorded",
+                "Reports telephony permissions, role holders, and readiness for the first-class communications room."));
+        Json.add(out, cap("phone.sms", "phone.sms.list/phone.sms.get_thread/phone.sms.send",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.READ_SMS)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.SEND_SMS)
+                        ? "implemented_untested" : "blocked_by_permission",
+                "yes", "privacy_sensitive", Manifest.permission.READ_SMS, "not_recorded",
+                "Lists recent SMS, reads a thread by address or thread id, and sends direct SMS through the Android communications room."));
+        Json.add(out, cap("phone.calls", "phone.calls.list/phone.calls.place/phone.calls.hangup",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CALL_LOG)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.CALL_PHONE)
+                        ? "implemented_untested" : "blocked_by_permission",
+                "yes", "privacy_sensitive", Manifest.permission.READ_CALL_LOG, "not_recorded",
+                "Lists call history and wraps direct place or hangup actions over the Android communications room."));
+        Json.add(out, cap("phone.contacts", "phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CONTACTS)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.WRITE_CONTACTS)
+                        ? "implemented_untested" : "blocked_by_permission",
+                "yes", "privacy_sensitive", Manifest.permission.READ_CONTACTS, "not_recorded",
+                "Searches, reads, creates, replaces, and deletes device-local contacts through stable first-class commands."));
+        Json.add(out, cap("phone.voicemail", "phone.voicemail.list",
+                permissionReporter.isEffectivelyGranted("com.android.voicemail.permission.READ_VOICEMAIL")
+                        ? "implemented_guarded" : "blocked_by_permission",
+                "yes", "privacy_sensitive", "com.android.voicemail.permission.READ_VOICEMAIL", "not_recorded",
+                "Best-effort read-only voicemail listing that reports honest readiness when role or provider state blocks access."));
+        Json.add(out, cap("phone.blocked_numbers", "phone.blocked_numbers.list/phone.blocked_numbers.add/phone.blocked_numbers.remove",
+                permissionReporter.isEffectivelyGranted("android.permission.READ_BLOCKED_NUMBERS")
+                        && permissionReporter.isEffectivelyGranted("android.permission.WRITE_BLOCKED_NUMBERS")
+                        ? "implemented_guarded" : "blocked_by_permission",
+                "yes", "privacy_sensitive", "android.permission.READ_BLOCKED_NUMBERS", "not_recorded",
+                "Lists and mutates blocked numbers when Android role and provider state allow it, with android.substrate preserved as the escape hatch."));
         Json.add(out, cap("notes.local", "note.create_local", "implemented", "yes", "quiet", null, "not_recorded",
                 "Creates app-local Pucky note."));
         Json.add(out, cap("notes.local_list", "note.list_local", "implemented", "yes", "quiet", null, "not_recorded",
