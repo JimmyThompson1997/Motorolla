@@ -518,6 +518,41 @@ def card_has_page_surface(card: dict[str, Any]) -> bool:
     return False
 
 
+def transcript_messages(card: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = card.get("transcript_messages")
+    return [item for item in messages if isinstance(item, dict)] if isinstance(messages, list) else []
+
+
+def message_attachments(message: dict[str, Any]) -> list[dict[str, Any]]:
+    attachments = message.get("attachments")
+    return [item for item in attachments if isinstance(item, dict)] if isinstance(attachments, list) else []
+
+
+def card_has_user_audio_chip(card: dict[str, Any]) -> bool:
+    for message in transcript_messages(card):
+        if str(message.get("role") or "").lower() != "user":
+            continue
+        for attachment in message_attachments(message):
+            kind = str(attachment.get("kind") or "").lower()
+            mime = str(attachment.get("mime_type") or "").lower()
+            if kind == "audio" or mime.startswith("audio/"):
+                return True
+    return False
+
+
+def card_has_assistant_artifact(card: dict[str, Any]) -> bool:
+    if str(card.get("html_path") or "").strip():
+        return True
+    for key in ("attachments", "images"):
+        value = card.get(key)
+        if isinstance(value, list) and value:
+            return True
+    for message in transcript_messages(card):
+        if str(message.get("role") or "").lower() == "assistant" and message_attachments(message):
+            return True
+    return False
+
+
 def select_card(
     cards: list[dict[str, Any]],
     *,
@@ -987,6 +1022,218 @@ def run_continuation_scenario(
     }
 
 
+def run_feed_focus_scenario(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    card: dict[str, Any],
+    text: str,
+    scenario_dir: Path,
+) -> dict[str, Any]:
+    before_cards = snapshot_cards(args)
+    source_thread_id = origin_thread_id(card)
+    if not source_thread_id:
+        raise PhoneProofError("feed focus source card is missing origin.thread_id")
+    home_before = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="home-before.json",
+        device_name="home-before-device.png",
+        timeout_seconds=30,
+    )
+    focused = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[
+            {"kind": "goto_home"},
+            {"kind": "focus_card", "session_id": str(card.get("session_id") or card.get("local_session_id") or "")},
+            screenshot_operation(scenario_dir / "before-send.png"),
+            {"kind": "describe"},
+        ],
+        scenario_dir=scenario_dir,
+        browser_name="before-send.json",
+        device_name="before-send-device.png",
+        timeout_seconds=45,
+    )
+    scope_before = wait_for_scope(args, source_thread_id, "feed_tile_selected")
+    turn_status_before = turn_status(args)
+    fixture = put_fixture_for_text(args, text, "feed-focus")
+    start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
+    turn_id = str(start.get("turn_id") or "")
+    if not turn_id:
+        raise PhoneProofError("feed focus scenario did not return a turn_id")
+    home_after_start = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "clear_focus"}, {"kind": "goto_home"}, screenshot_operation(scenario_dir / "pending.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="pending.json",
+        device_name="pending-device.png",
+        timeout_seconds=60,
+    )
+
+    def pending_check() -> dict[str, Any] | None:
+        snapshot = snapshot_cards(args)
+        card_now = pending_thread_card(snapshot, source_thread_id)
+        if card_now is None or card_now.get("title") != "Sent message":
+            return None
+        if len(thread_cards(snapshot, source_thread_id)) != 1:
+            raise PhoneProofError(f"feed focus produced multiple visible tiles for thread {source_thread_id}")
+        return {"snapshot": snapshot, "card": card_now}
+
+    pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description="feed focus pending sent card")
+    turn_status_pending = turn_status(args)
+    transcript_turn = wait_for_turn_transcript(args, turn_id)
+    home_with_transcript = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "transcript-known.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="transcript-known.json",
+        device_name="transcript-known-device.png",
+        timeout_seconds=45,
+    )
+    final_turn = wait_for_turn_reply_saved(args, turn_id)
+    final_snapshot = snapshot_cards(args)
+    home_after_reply = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "reply-complete.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="reply-complete.json",
+        device_name="reply-complete-device.png",
+        timeout_seconds=45,
+    )
+    final_card = final_thread_card(final_snapshot, source_thread_id)
+    if final_card is None:
+        raise PhoneProofError("feed focus did not leave a final visible tile")
+    before_index = visible_thread_index(home_before, source_thread_id)
+    pending_card = visible_thread_card(home_after_start, source_thread_id) or {}
+    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or {}
+    reply_card = visible_thread_card(home_after_reply, source_thread_id) or {}
+    checks = scenario_checks(
+        {
+            "focused_card_matches_thread": ((focused.get("final_surface") or {}).get("focused_card") or {}).get("thread_id") == source_thread_id,
+            "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
+            "scope_matches_surface": str(scope_before.get("source_surface") or "") == "feed_tile_selected",
+            "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
+            "pending_tile_kind": str(pending_card.get("kind") or "") == "pending_outbound",
+            "pending_placeholder_visible": "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
+            "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
+            "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
+            "transcript_preview_matches_user": str(transcript_turn.get("user_transcript") or "").strip().lower() in str(transcript_card.get("preview") or "").strip().lower(),
+            "final_thread_reused": origin_thread_id(final_card) == source_thread_id,
+            "final_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_reply, source_thread_id) == before_index,
+            "no_duplicate_visible_tile": sum(1 for item in cards_from_snapshot(final_snapshot) if origin_thread_id(item) == source_thread_id) == 1,
+            "reply_home_is_not_pending": str(reply_card.get("kind") or "") != "pending_outbound",
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"feed focus checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
+    return {
+        "scenario": "feed_focus",
+        "source_card": card,
+        "source_thread_id": source_thread_id,
+        "before_cards": before_cards,
+        "home_before": home_before,
+        "focused": focused,
+        "scope_before": scope_before,
+        "turn_status_before": turn_status_before,
+        "fixture": fixture,
+        "turn_start": start,
+        "pending": pending,
+        "turn_status_pending": turn_status_pending,
+        "turn_with_transcript": transcript_turn,
+        "turn_final": final_turn,
+        "final_snapshot": final_snapshot,
+        "final_card": final_card,
+        "home_after_reply": home_after_reply,
+        "checks": checks,
+    }
+
+
+def run_history_scenario(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    card: dict[str, Any],
+    text: str,
+    scenario_dir: Path,
+) -> dict[str, Any]:
+    setup = run_continuation_scenario(
+        args,
+        serial=serial,
+        name="history_retention_setup",
+        cdp_url=cdp_url,
+        card=card,
+        action="transcript",
+        expected_surface="thread_transcript",
+        text=text,
+        scenario_dir=scenario_dir / "setup",
+    )
+    source_thread_id = str(setup.get("source_thread_id") or "")
+    final_card = setup.get("final_card") if isinstance(setup.get("final_card"), dict) else {}
+    transcript_open = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=browser_ops_for_card_open(final_card, "transcript", "transcript") + [screenshot_operation(scenario_dir / "before-send.png")],
+        scenario_dir=scenario_dir,
+        browser_name="history-transcript.json",
+        device_name="history-transcript-device.png",
+        timeout_seconds=60,
+    )
+    transcript_scope = wait_for_scope(args, source_thread_id, "thread_transcript")
+    attachment_open = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[
+            {"kind": "open_card_action", "session_id": str(final_card.get("session_id") or ""), "action": "attachment", "expected_detail_type": "attachment"},
+            screenshot_operation(scenario_dir / "reply-complete.png"),
+            {"kind": "describe"},
+        ],
+        scenario_dir=scenario_dir,
+        browser_name="history-attachment.json",
+        device_name="history-attachment-device.png",
+        timeout_seconds=60,
+    )
+    attachment_scope = wait_for_scope(args, source_thread_id, "thread_attachment")
+    final_snapshot = snapshot_cards(args)
+    checks = scenario_checks(
+        {
+            "thread_transcript_scope": str(transcript_scope.get("thread_id") or "") == source_thread_id,
+            "thread_attachment_scope": str(attachment_scope.get("thread_id") or "") == source_thread_id,
+            "user_audio_chip_exists": card_has_user_audio_chip(final_card),
+            "assistant_artifact_exists": card_has_assistant_artifact(final_card),
+            "home_single_latest_tile": len(thread_cards(final_snapshot, source_thread_id)) == 1,
+            "attachment_detail_matches_thread": ((attachment_open.get("final_surface") or {}).get("detail") or {}).get("thread_id") == source_thread_id,
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"history checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
+    return {
+        "scenario": "history",
+        "setup": setup,
+        "source_thread_id": source_thread_id,
+        "transcript_open": transcript_open,
+        "attachment_open": attachment_open,
+        "transcript_scope": transcript_scope,
+        "attachment_scope": attachment_scope,
+        "final_snapshot": final_snapshot,
+        "checks": checks,
+    }
+
+
 def run_negative_scenario(
     args: argparse.Namespace,
     *,
@@ -1239,7 +1486,7 @@ def run_final_boss_scenario(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run real-phone Walkie thread-continuation proof against the Pucky cover WebView.")
-    parser.add_argument("--scenario", choices=("transcript", "page", "negative", "all", "final_boss"), default="all")
+    parser.add_argument("--scenario", choices=("feed_focus", "transcript", "page", "negative", "history", "all", "final_boss"), default="all")
     parser.add_argument("--serial", default=os.environ.get("PUCKY_PHONE_SERIAL", ""))
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", DEFAULT_BROKER_URL))
@@ -1252,12 +1499,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--devtools-port", type=int, default=9222)
     parser.add_argument("--transcript-card-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--transcript-thread-id", default="")
+    parser.add_argument("--feed-focus-card-title-contains", default="Proof HTML Dashboard")
+    parser.add_argument("--feed-focus-thread-id", default="")
     parser.add_argument("--page-card-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--page-thread-id", default="")
+    parser.add_argument("--history-card-title-contains", default="Proof HTML Dashboard")
+    parser.add_argument("--history-thread-id", default="")
     parser.add_argument("--page-surface", choices=("auto", "page", "attachment"), default="auto")
+    parser.add_argument("--feed-focus-text", default="Continue this focused tile.")
     parser.add_argument("--transcript-text", default="Should we change these goals?")
     parser.add_argument("--page-text", default="Can you revise this file?")
     parser.add_argument("--negative-text", default="Start a fresh thread.")
+    parser.add_argument("--history-text", default="Keep this history together.")
     parser.add_argument("--final-boss-thread-a-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--final-boss-thread-a-id", default="")
     parser.add_argument("--final-boss-thread-b-title-contains", default="Proof CSV Table")
@@ -1320,6 +1573,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         scenarios: list[dict[str, Any]] = []
         cards = cards_from_snapshot(cards_before)
 
+        if args.scenario in {"feed_focus", "all"}:
+            feed_card = select_card(
+                cards,
+                title_contains=args.feed_focus_card_title_contains,
+                required_thread_id=args.feed_focus_thread_id,
+                require_thread=True,
+            )
+            scenarios.append(
+                run_feed_focus_scenario(
+                    args,
+                    serial=serial,
+                    cdp_url=cdp["cdp_url"],
+                    card=feed_card,
+                    text=args.feed_focus_text,
+                    scenario_dir=scenario_root / "feed-focus",
+                )
+            )
+            cards = cards_from_snapshot(snapshot_cards(args))
+
         if args.scenario in {"transcript", "all"}:
             transcript_card = select_card(
                 cards,
@@ -1340,6 +1612,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     scenario_dir=scenario_root / "transcript",
                 )
             )
+            cards = cards_from_snapshot(snapshot_cards(args))
 
         if args.scenario in {"page", "all"}:
             page_card = select_card(
@@ -1367,6 +1640,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     scenario_dir=scenario_root / "page",
                 )
             )
+            cards = cards_from_snapshot(snapshot_cards(args))
 
         if args.scenario in {"negative", "all"}:
             scenarios.append(
@@ -1378,8 +1652,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     scenario_dir=scenario_root / "negative-home",
                 )
             )
+            cards = cards_from_snapshot(snapshot_cards(args))
 
-        if args.scenario == "final_boss":
+        if args.scenario in {"history", "all"}:
+            history_card = select_card(
+                cards,
+                title_contains=args.history_card_title_contains,
+                required_thread_id=args.history_thread_id,
+                require_thread=True,
+                require_page=True,
+            )
+            scenarios.append(
+                run_history_scenario(
+                    args,
+                    serial=serial,
+                    cdp_url=cdp["cdp_url"],
+                    card=history_card,
+                    text=args.history_text,
+                    scenario_dir=scenario_root / "history",
+                )
+            )
+            cards = cards_from_snapshot(snapshot_cards(args))
+
+        if args.scenario in {"final_boss", "all"}:
             scenarios.append(
                 run_final_boss_scenario(
                     args,

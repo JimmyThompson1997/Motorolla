@@ -30,6 +30,9 @@ async function waitForAppShell(page, timeoutMs) {
 
 async function describePage(page) {
   return page.evaluate(() => {
+    if (window.PuckyUiDebug && typeof window.PuckyUiDebug.describe === "function") {
+      return window.PuckyUiDebug.describe();
+    }
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
     const detail = document.getElementById("detail");
@@ -114,6 +117,16 @@ async function closeDetailIfOpen(page, timeoutMs) {
 }
 
 async function gotoHome(page, timeoutMs) {
+  const debugResult = await page.evaluate(() => {
+    if (window.PuckyUiDebug && typeof window.PuckyUiDebug.dispatch === "function") {
+      return window.PuckyUiDebug.dispatch("goto_home", {});
+    }
+    return null;
+  }).catch(() => null);
+  if (debugResult && debugResult.ok) {
+    await waitForAppShell(page, timeoutMs);
+    return describePage(page);
+  }
   await closeDetailIfOpen(page, timeoutMs);
   const route = await page.evaluate(() => document.querySelector(".app-shell")?.getAttribute("data-view") || "");
   if (route !== "feed") {
@@ -133,16 +146,67 @@ function cardActionSelector(op) {
   return `[${key}="${value}"][data-card-action="${action}"]`;
 }
 
+async function runDebugAction(page, action, args, timeoutMs) {
+  const result = await page.evaluate(({ action, args }) => {
+    if (!window.PuckyUiDebug || typeof window.PuckyUiDebug.dispatch !== "function") {
+      return { ok: false, error: "PuckyUiDebug unavailable" };
+    }
+    return window.PuckyUiDebug.dispatch(action, args || {});
+  }, { action, args });
+  if (!result || !result.ok) {
+    throw new Error(result && result.error ? result.error : `ui debug action failed: ${action}`);
+  }
+  await page.waitForTimeout(250);
+  return result;
+}
+
 async function runOperation(page, request, op) {
   const timeoutMs = Number(op.timeout_ms || request.timeout_ms || 15000);
   if (op.kind === "goto_home") {
     return { kind: op.kind, detail: await gotoHome(page, timeoutMs) };
   }
   if (op.kind === "back") {
-    await closeDetailIfOpen(page, timeoutMs);
+    const result = await page.evaluate(() => {
+      if (window.PuckyUiDebug && typeof window.PuckyUiDebug.dispatch === "function") {
+        return window.PuckyUiDebug.dispatch("back", {});
+      }
+      return null;
+    }).catch(() => null);
+    if (!result || !result.ok) {
+      await closeDetailIfOpen(page, timeoutMs);
+    }
     return { kind: op.kind, detail: await describePage(page) };
   }
+  if (op.kind === "focus_card") {
+    const detail = await runDebugAction(page, "focus_card", {
+      session_id: op.session_id || "",
+      card_id: op.card_id || ""
+    }, timeoutMs);
+    return { kind: op.kind, detail };
+  }
+  if (op.kind === "clear_focus") {
+    const detail = await runDebugAction(page, "clear_focus", {}, timeoutMs);
+    return { kind: op.kind, detail };
+  }
   if (op.kind === "open_card_action") {
+    const debugResult = await page.evaluate(({ session_id, card_id, action }) => {
+      if (!window.PuckyUiDebug || typeof window.PuckyUiDebug.dispatch !== "function") {
+        return null;
+      }
+      return window.PuckyUiDebug.dispatch("open_card_action", {
+        session_id: session_id || "",
+        card_id: card_id || "",
+        action: action || "transcript"
+      });
+    }, { session_id: op.session_id || "", card_id: op.card_id || "", action: op.action || "transcript" }).catch(() => null);
+    if (debugResult && debugResult.ok) {
+      if (op.expected_detail_type) {
+        await page.waitForSelector(`#detail.is-open[data-detail-type="${escapeAttribute(op.expected_detail_type)}"]`, {
+          timeout: timeoutMs
+        });
+      }
+      return { kind: op.kind, selector: debugResult.selector || "", detail: await describePage(page), debug: debugResult };
+    }
     const selector = cardActionSelector(op);
     await clickSelector(page, selector, timeoutMs);
     if (op.expected_detail_type) {
@@ -163,7 +227,8 @@ async function runOperation(page, request, op) {
       throw new Error("screenshot operation requires path");
     }
     fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-    return { kind: op.kind, path: screenshotPath, skipped: true };
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    return { kind: op.kind, path: screenshotPath };
   }
   if (op.kind === "describe") {
     return { kind: op.kind, detail: await describePage(page) };
