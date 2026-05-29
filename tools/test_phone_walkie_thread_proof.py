@@ -72,6 +72,14 @@ def test_walkie_start_payload_uses_fixture_volume_up_auto_endpoint_defaults() ->
 def test_select_card_prefers_thread_backed_page_surface_and_excludes_threads() -> None:
     cards = [
         {
+            "card_id": "pending-a",
+            "session_id": "pending-a",
+            "title": "Proof HTML Dashboard",
+            "html_path": "/tmp/proof-pending.html",
+            "pending_outbound": True,
+            "origin": {"thread_id": "thread-pending"},
+        },
+        {
             "card_id": "a",
             "session_id": "a",
             "title": "Proof HTML Dashboard",

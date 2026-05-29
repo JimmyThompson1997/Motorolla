@@ -518,6 +518,8 @@ def select_card(
     excluded = excluded_thread_ids or set()
     matches: list[dict[str, Any]] = []
     for card in cards:
+        if bool(card.get("pending_outbound")):
+            continue
         thread_id = origin_thread_id(card)
         if require_thread and not thread_id:
             continue
