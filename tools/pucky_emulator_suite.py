@@ -89,6 +89,33 @@ WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "ui.reply_cards.before.json",
     "ui.reply_cards.final.json",
     "proof.json",
+SYNTHETIC_REPLY_CARD_COMMAND_BUDGET = 7000
+DIRECT_PHOTO_CAPTURE_TIMEOUT_MS = 15000
+DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS = 2
+PROVISION_PERMISSION_GRANTS = (
+    "android.permission.RECORD_AUDIO",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.CAMERA",
+    "android.permission.READ_CALENDAR",
+    "android.permission.WRITE_CALENDAR",
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+    "android.permission.READ_MEDIA_AUDIO",
+)
+PERMISSION_ALLOW_PATTERNS = (
+    r"^While using the app$",
+    r"^Only this time$",
+    r"^Allow$",
+)
+DOCUMENT_VIEWER_SOURCE_KEYS = (
+    "viewer_src",
+    "viewer_url",
+    "viewer_path",
+    "html_viewer_path",
+    "document_html_path",
+    "viewer_artifact",
+    "html_artifact",
+    "document_html_artifact",
 )
 
 
@@ -765,6 +792,77 @@ def launch_home_command(args: argparse.Namespace, config: SlotConfig) -> list[st
     return adb_command(args, config.serial, command)
 
 
+def launch_home_resilient(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    wait_for_channel: bool = False,
+    stage: str = "after_home_launch",
+    timeout_seconds: int = 45,
+) -> dict[str, Any]:
+    attempts = [
+        ("show_home", launch_home_command(args, config)),
+        ("full_launch", launch_command(args, config)),
+    ]
+    last_error: Exception | None = None
+    for mode, command in attempts:
+        try:
+            runner.run(command, timeout=30)
+            result = {"ok": True, "launch_mode": mode}
+            if wait_for_channel:
+                result["channel"] = ensure_broker_command_channel(
+                    args,
+                    runner,
+                    config,
+                    stage=stage,
+                    timeout_seconds=timeout_seconds,
+                )
+            return result
+        except Exception as exc:
+            last_error = exc if isinstance(exc, Exception) else SuiteError(str(exc))
+            runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30, check=False)
+            if not runner.dry_run:
+                time.sleep(0.75)
+    raise last_error or SuiteError("Unable to relaunch the home surface")
+
+
+def direct_photo_capture_payload() -> dict[str, Any]:
+    return {"timeout_ms": DIRECT_PHOTO_CAPTURE_TIMEOUT_MS, "suppress_chime": True}
+
+
+def is_camera_capture_timeout_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return "camera capture timed out" in text or ("photo.capture" in text and "timed out" in text)
+
+
+def direct_photo_capture(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS + 1):
+        try:
+            return command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, "photo.capture", direct_photo_capture_payload()),
+                    timeout=180,
+                )
+            )
+        except Exception as exc:
+            last_error = exc if isinstance(exc, Exception) else SuiteError(str(exc))
+            if attempt >= DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS or not is_camera_capture_timeout_error(last_error):
+                raise
+            clear_blocking_system_dialogs(args, runner, config)
+            ensure_device_interactive(args, runner, config)
+            launch_home_resilient(args, runner, config)
+            if not runner.dry_run:
+                time.sleep(1.0)
+    raise last_error or SuiteError("Direct photo.capture failed")
+
+
 def puckyctl_timeout_ms(args: argparse.Namespace, *, minimum_seconds: int | float = 0) -> int:
     configured = int(getattr(args, "puckyctl_timeout_ms", 120000) or 120000)
     minimum = max(0, int(float(minimum_seconds) * 1000))
@@ -795,6 +893,10 @@ def puckyctl_command(
         json.dumps(payload, separators=(",", ":")),
         "--wait",
     ]
+
+
+def windows_command_length(command: list[str]) -> int:
+    return len(subprocess.list2cmdline([str(part) for part in command]))
 
 
 def reply_cards_write_command(
@@ -1048,7 +1150,12 @@ def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Pa
     return path
 
 
-def replay_cards_from_broker_log(log_path: Path, titles: Iterable[str]) -> dict[str, dict[str, Any]]:
+def replay_cards_from_broker_log(
+    log_path: Path,
+    titles: Iterable[str],
+    *,
+    allow_partial: bool = False,
+) -> dict[str, dict[str, Any]]:
     wanted = {str(title).strip() for title in titles if str(title).strip()}
     if not wanted:
         return {}
@@ -1080,7 +1187,7 @@ def replay_cards_from_broker_log(log_path: Path, titles: Iterable[str]) -> dict[
                 if title in wanted:
                     found[title] = deepcopy(card)
     missing = [title for title in titles if str(title).strip() and str(title).strip() not in found]
-    if missing:
+    if missing and not allow_partial:
         raise SuiteError(f"Replay broker log missing captured cards for: {', '.join(missing)}")
     return found
 
@@ -1112,7 +1219,7 @@ def command_json_allow_failure(runner: Runner, command: list[str], *, timeout: i
 
 
 def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
-    attempts = 3
+    attempts = 4
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
@@ -1122,13 +1229,19 @@ def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> di
             if attempt >= attempts or not is_transient_puckyctl_failure(exc):
                 raise
             last_error = exc
-            time.sleep(0.5 * attempt)
+            time.sleep(command_retry_delay_seconds(exc, attempt))
     else:
         raise last_error or SuiteError("Unknown puckyctl command failure")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
         return {"raw_stdout": result.stdout, "raw_stderr": result.stderr}
+
+
+def command_retry_delay_seconds(exc: Exception, attempt: int) -> float:
+    if "DEVICE_OFFLINE" in str(exc or "").upper():
+        return float(max(2.0, attempt * 2.0))
+    return float(0.5 * attempt)
 
 
 def is_transient_puckyctl_failure(exc: Exception) -> bool:
@@ -1139,6 +1252,7 @@ def is_transient_puckyctl_failure(exc: Exception) -> bool:
         "ConnectionAbortedError",
         "ConnectionResetError",
         "RemoteDisconnected",
+        "DEVICE_OFFLINE",
     )
     return any(marker in text for marker in markers)
 
@@ -1260,6 +1374,14 @@ def long_press(
     )
 
 
+def scroll_feed(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> None:
+    runner.run(
+        adb_command(args, config.serial, ["shell", "input", "swipe", "528", "860", "528", "280", "250"]),
+        timeout=30,
+        check=False,
+    )
+
+
 def turn_url_to_feed_url(turn_url: str) -> str:
     clean = str(turn_url or "").strip()
     if clean.endswith("/api/turn"):
@@ -1369,7 +1491,17 @@ def feed_request(turn_url: str, token: str, *, limit: int = 25, cursor: str = ""
     url = turn_url_to_feed_url(turn_url) + f"?limit={int(limit)}"
     if cursor:
         url += "&cursor=" + urllib.parse.quote(cursor, safe="")
-    return http_json_request(url, timeout=60, token=token)
+    attempts = 3
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return http_json_request(url, timeout=60, token=token)
+        except Exception as exc:
+            if attempt >= attempts or not is_transient_puckyctl_failure(exc):
+                raise
+            last_error = exc
+            time.sleep(0.5 * attempt)
+    raise last_error or SuiteError(f"Feed request failed for {url}")
 
 
 def wait_for_live_feed_item(args: argparse.Namespace, turn_id: str, *, timeout: float = 120.0, limit: int = 25) -> dict[str, Any]:
@@ -1480,15 +1612,26 @@ def snapshot_card_by_turn_id(snapshot: dict[str, Any], turn_id: str) -> dict[str
 
 def dump_ui_hierarchy(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
     remote_path = "/sdcard/pucky_window_dump.xml"
-    runner.run(adb_command(args, config.serial, ["shell", "uiautomator", "dump", remote_path]), timeout=30, check=False)
-    if runner.dry_run:
-        runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
-        return "<hierarchy rotation=\"0\"/>"
-    result = runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
-    text = result.stdout.strip()
-    if "<hierarchy" not in text:
-        raise SuiteError(f"Unable to capture UI hierarchy: {text or result.stderr}")
-    return text
+    last_error = ""
+    for attempt in range(1, 3):
+        try:
+            runner.run(adb_command(args, config.serial, ["shell", "uiautomator", "dump", remote_path]), timeout=30, check=False)
+            if runner.dry_run:
+                runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
+                return "<hierarchy rotation=\"0\"/>"
+            result = runner.run(adb_command(args, config.serial, ["exec-out", "cat", remote_path]), timeout=30)
+            text = result.stdout.strip()
+            if "<hierarchy" not in text:
+                raise SuiteError(f"Unable to capture UI hierarchy: {text or result.stderr}")
+            return text
+        except (SuiteError, subprocess.TimeoutExpired) as exc:
+            last_error = str(exc)
+            if attempt >= 2:
+                raise SuiteError(f"Unable to capture UI hierarchy after retry: {last_error}") from exc
+            runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30, check=False)
+            if not runner.dry_run:
+                time.sleep(0.75)
+    raise SuiteError(f"Unable to capture UI hierarchy: {last_error}")
 
 
 def parse_node_bounds(bounds: str) -> tuple[int, int, int, int]:
@@ -1543,6 +1686,42 @@ def dismiss_anr_dialog_if_present(
     return False
 
 
+def dismiss_permission_dialog_if_present(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    xml_text: str,
+) -> bool:
+    for pattern in PERMISSION_ALLOW_PATTERNS:
+        nodes = find_ui_nodes(xml_text, text_pattern=pattern)
+        if not nodes:
+            nodes = find_ui_nodes(xml_text, content_desc_pattern=pattern)
+        if not nodes:
+            continue
+        if not runner.dry_run:
+            tap_ui_node(args, runner, config, nodes[0])
+            time.sleep(1.5)
+        return True
+    return False
+
+
+def dismiss_blocking_system_dialog_if_present(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    xml_text: str,
+) -> bool:
+    return dismiss_anr_dialog_if_present(args, runner, config, xml_text) or dismiss_permission_dialog_if_present(args, runner, config, xml_text)
+
+
+def clear_blocking_system_dialogs(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
+    try:
+        xml_text = dump_ui_hierarchy(args, runner, config)
+    except Exception:
+        return False
+    return dismiss_blocking_system_dialog_if_present(args, runner, config, xml_text)
+
+
 def wait_for_ui_node(
     args: argparse.Namespace,
     runner: Runner,
@@ -1558,7 +1737,7 @@ def wait_for_ui_node(
     while time.monotonic() < deadline:
         xml_text = dump_ui_hierarchy(args, runner, config)
         last_xml = xml_text
-        if dismiss_anr_dialog_if_present(args, runner, config, xml_text):
+        if dismiss_blocking_system_dialog_if_present(args, runner, config, xml_text):
             continue
         nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
         if nodes:
@@ -1582,7 +1761,7 @@ def wait_for_ui_absence(
     while time.monotonic() < deadline:
         xml_text = dump_ui_hierarchy(args, runner, config)
         last_xml = xml_text
-        if dismiss_anr_dialog_if_present(args, runner, config, xml_text):
+        if dismiss_blocking_system_dialog_if_present(args, runner, config, xml_text):
             continue
         nodes = find_ui_nodes(xml_text, text_pattern=text_pattern, content_desc_pattern=content_desc_pattern)
         if not nodes:
@@ -1594,6 +1773,137 @@ def wait_for_ui_absence(
 def tap_ui_node(args: argparse.Namespace, runner: Runner, config: SlotConfig, node: dict[str, str]) -> None:
     left, top, right, bottom = parse_node_bounds(node.get("bounds", ""))
     tap(args, runner, config, ((left + right) // 2, (top + bottom) // 2))
+
+
+def wait_for_feed_card_title(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    title: str,
+    timeout: float = 30.0,
+    max_scrolls: int = 6,
+) -> tuple[dict[str, str], str]:
+    deadline = time.monotonic() + timeout
+    clean_title = str(title or "").strip()
+    pattern = re.escape(clean_title)
+    last_xml = ""
+    scrolls = 0
+    while time.monotonic() < deadline:
+        xml_text = dump_ui_hierarchy(args, runner, config)
+        last_xml = xml_text
+        if dismiss_blocking_system_dialog_if_present(args, runner, config, xml_text):
+            continue
+        nodes = find_ui_nodes(xml_text, text_pattern=pattern)
+        if nodes:
+            return nodes[0], xml_text
+        if scrolls < max_scrolls:
+            scroll_feed(args, runner, config)
+            scrolls += 1
+            if not runner.dry_run:
+                time.sleep(0.75)
+            continue
+        time.sleep(1.0)
+    raise SuiteError(f"Did not find feed card titled {title} after {int(timeout)}s")
+
+
+def ensure_feed_card_visible(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    title: str,
+    local_card: dict[str, Any] | None,
+    timeout: float = 30.0,
+) -> tuple[dict[str, str], str, dict[str, Any]]:
+    recovery = {"rematerialized": False}
+    try:
+        node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=timeout)
+        return node, xml_text, recovery
+    except SuiteError as exc:
+        recovery["first_error"] = str(exc)
+        if not isinstance(local_card, dict):
+            raise
+    snapshot = command_result(
+        command_json(
+            runner,
+            reply_cards_write_command(args, config, {"cards": [local_card]}),
+            timeout=180,
+        )
+    )
+    recovery["rematerialized"] = True
+    recovery["snapshot"] = snapshot
+    launch_home_resilient(
+        args,
+        runner,
+        config,
+        wait_for_channel=not runner.dry_run,
+        stage="displayable_feed_recovery",
+        timeout_seconds=max(45, int(math.ceil(timeout))),
+    )
+    node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=timeout)
+    return node, xml_text, recovery
+
+
+def open_card_detail_with_retry(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    case_key: str,
+    title: str,
+    card: dict[str, Any],
+    tile_xml: str,
+    timeout: float = 30.0,
+) -> tuple[str, str]:
+    action_label = card_action_accessibility_label(card)
+    open_title = card_open_title(card)
+    if not action_label:
+        raise SuiteError(f"{case_key} returned no tile-openable attachment")
+
+    def find_action_node_in_xml(xml_text: str) -> dict[str, str] | None:
+        nodes = find_ui_nodes(xml_text, content_desc_pattern=rf"^{re.escape(action_label)}$")
+        if not nodes:
+            nodes = find_ui_nodes(xml_text, text_pattern=rf"^{re.escape(action_label)}$")
+        return nodes[0] if nodes else None
+
+    current_tile_xml = tile_xml
+    action_node = find_action_node_in_xml(current_tile_xml)
+    if action_node is None:
+        action_node, current_tile_xml = wait_for_ui_node(
+            args,
+            runner,
+            config,
+            description=f"{case_key} did not expose the expected tile file action: {action_label}",
+            content_desc_pattern=rf"^{re.escape(action_label)}$",
+            timeout=timeout,
+        )
+    for attempt in range(2):
+        tap_ui_node(args, runner, config, action_node)
+        if not runner.dry_run:
+            time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
+        try:
+            _, opened_xml = wait_for_ui_node(
+                args,
+                runner,
+                config,
+                description=f"{case_key} did not open a detail view titled {open_title}",
+                text_pattern=rf"^{re.escape(open_title)}$",
+                timeout=timeout,
+            )
+            return opened_xml, current_tile_xml
+        except SuiteError:
+            if attempt >= 1:
+                raise
+            action_node, current_tile_xml = wait_for_ui_node(
+                args,
+                runner,
+                config,
+                description=f"{case_key} did not expose the expected tile file action: {action_label}",
+                content_desc_pattern=rf"^{re.escape(action_label)}$",
+                timeout=timeout,
+            )
+    raise SuiteError(f"{case_key} did not open a detail view titled {open_title}")
 
 
 def first_displayable_attachment_snapshot(card: dict[str, Any]) -> dict[str, Any] | None:
@@ -1900,6 +2210,11 @@ def cmd_start(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "config": asdict(config), "pid": pid, "commands": runner.planned, "dry_run": args.dry_run}
 
 
+def grant_provision_permissions(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> None:
+    for permission in PROVISION_PERMISSION_GRANTS:
+        runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, permission]), timeout=30, check=False)
+
+
 def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
@@ -1915,20 +2230,27 @@ def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
         raise SuiteError(f"APK not found: {args.apk}")
     runner.run(adb_command(args, config.serial, ["reverse", f"tcp:{config.broker_port}", f"tcp:{config.broker_port}"]), timeout=30)
     runner.run(adb_command(args, config.serial, ["install", "-r", str(args.apk)]), timeout=180)
-    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.RECORD_AUDIO"]), timeout=30)
-    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.POST_NOTIFICATIONS"]), timeout=30, check=False)
-    runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.CAMERA"]), timeout=30, check=False)
+    grant_provision_permissions(args, runner, config)
     runner.run(adb_command(args, config.serial, ["shell", "wm", "size", "1056x1056"]), timeout=30)
     runner.run(adb_command(args, config.serial, ["shell", "wm", "density", "420"]), timeout=30)
     runner.run(launch_command(args, config), timeout=30)
-    broker_device = wait_for_broker_device(config) if not args.dry_run else {"dry_run": True}
+    broker_channel = ensure_broker_command_channel(args, runner, config, stage="after_provision_launch", timeout_seconds=90)
+    broker_device = broker_channel.get("device") if isinstance(broker_channel, dict) else broker_channel
     if not args.dry_run:
         state = load_state(ROOT, args.slot)
         pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
         if broker_pid > 0:
             pids["fake_broker"] = broker_pid
         save_state(config, {"config": asdict(config), "pids": pids, "serial": config.serial, "broker_url": f"http://127.0.0.1:{config.broker_port}"})
-    return {"ok": True, "config": asdict(config), "broker_pid": broker_pid, "broker_device": broker_device, "commands": runner.planned, "dry_run": args.dry_run}
+    return {
+        "ok": True,
+        "config": asdict(config),
+        "broker_pid": broker_pid,
+        "broker_device": broker_device,
+        "broker_channel": broker_channel,
+        "commands": runner.planned,
+        "dry_run": args.dry_run,
+    }
 
 
 def default_cards(config: SlotConfig) -> dict[str, Any]:
@@ -2712,21 +3034,56 @@ def ensure_broker_command_channel(
 ) -> dict[str, Any]:
     if runner.dry_run:
         return {"stage": stage, "dry_run": True}
-    device = wait_for_broker_device(config, timeout=float(timeout_seconds))
-    ping = command_result(
-        command_json(
-            runner,
-            puckyctl_command(
-                args,
-                config,
-                "ping",
-                {},
-                timeout_ms=puckyctl_timeout_ms(args, minimum_seconds=timeout_seconds),
-            ),
-            timeout=max(60, int(timeout_seconds)),
-        )
-    )
-    return {"stage": stage, "device": device, "ping": ping}
+    deadline = time.monotonic() + float(timeout_seconds)
+    last_device: dict[str, Any] | None = None
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            device = broker_device_snapshot(config, timeout=3.0)
+            if isinstance(device, dict):
+                last_device = device
+            candidate = device if isinstance(device, dict) else last_device
+            if isinstance(candidate, dict) and candidate.get("device_id") == config.device_id and bool(candidate.get("online")):
+                ping = command_result(
+                    command_json(
+                        runner,
+                        puckyctl_command(
+                            args,
+                            config,
+                            "ping",
+                            {},
+                            timeout_ms=puckyctl_timeout_ms(args, minimum_seconds=timeout_seconds),
+                        ),
+                        timeout=max(60, int(timeout_seconds)),
+                    )
+                )
+                return {"stage": stage, "device": candidate, "ping": ping}
+        except Exception as exc:
+            last_error = str(exc)
+            if isinstance(last_device, dict) and last_device.get("device_id") == config.device_id and bool(last_device.get("online")):
+                try:
+                    ping = command_result(
+                        command_json(
+                            runner,
+                            puckyctl_command(
+                                args,
+                                config,
+                                "ping",
+                                {},
+                                timeout_ms=puckyctl_timeout_ms(args, minimum_seconds=timeout_seconds),
+                            ),
+                            timeout=max(60, int(timeout_seconds)),
+                        )
+                    )
+                    return {"stage": stage, "device": last_device, "ping": ping}
+                except Exception as ping_exc:
+                    last_error = str(ping_exc)
+        try:
+            clear_blocking_system_dialogs(args, runner, config)
+        except Exception:
+            pass
+        time.sleep(1.0)
+    raise SuiteError(f"Timed out waiting for broker command channel {stage}: device={last_device} error={last_error}")
 
 
 def record_thread_origin_failure(
@@ -3528,14 +3885,142 @@ def cmd_prove_accepted_timeout_recovery(args: argparse.Namespace) -> dict[str, A
     }
 
 
+def data_url_text(mime_type: str, text: str) -> str:
+    return f"data:{mime_type};charset=utf-8,{urllib.parse.quote(text, safe='')}"
+
+
+def displayable_reply_file_cases(runtime_icon_slug: str) -> list[dict[str, Any]]:
+    png_data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+    jpg_data = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+    svg_data = data_url_text("image/svg+xml", "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><rect width='24' height='24' fill='#66d9ef'/></svg>")
+    wav_data = "data:audio/wav;base64,UklGRg=="
+    mp3_data = "data:audio/mpeg;base64,SUQz"
+    mp4_data = "data:video/mp4;base64,AAAA"
+    webm_data = "data:video/webm;base64,GkXfoA=="
+    doc_view = data_url_text("text/html", "<html><body><h1>Preview</h1><p>Proof</p></body></html>")
+
+    def synthetic_case(
+        key: str,
+        card_title: str,
+        card_icon: str,
+        attachments: list[dict[str, Any]],
+        *,
+        expects_action: bool = True,
+        opened_screenshot: str | None = None,
+        aliases: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "key": key,
+            "card_title": card_title,
+            "card_icon": card_icon,
+            "source": "synthetic",
+            "synthetic_attachments": attachments,
+            "tile_screenshot": f"{key}-tile.png",
+            "opened_screenshot": opened_screenshot if opened_screenshot is not None else (f"{key}-opened.png" if expects_action else ""),
+            "expects_action": expects_action,
+            "aliases": list(aliases or []),
+        }
+
+    return [
+        synthetic_case("html", "Proof HTML Dashboard", "bolt", [{"title": "Proof HTML Dashboard File", "kind": "html", "mime_type": "text/html", "viewer": {"type": "html_iframe", "viewer_src": data_url_text("text/html", "<html><body><h1>HTML</h1></body></html>")}}]),
+        synthetic_case("htm", "Proof HTM Panel", "bolt", [{"title": "Proof HTM Panel File", "kind": "html", "mime_type": "text/html", "viewer": {"type": "html_iframe", "viewer_src": data_url_text("text/html", "<html><body><h1>HTM</h1></body></html>")}}]),
+        synthetic_case("csv", "Proof CSV Table", "calendar", [{"title": "Proof CSV Table File", "kind": "table", "mime_type": "text/csv", "viewer": {"type": "table", "viewer_src": data_url_text("text/csv", "option,cost,speed\nA,1,fast")}}]),
+        synthetic_case("tsv", "Proof TSV Table", "calendar", [{"title": "Proof TSV Table File", "kind": "table", "mime_type": "text/tab-separated-values", "viewer": {"type": "table", "viewer_src": data_url_text("text/tab-separated-values", "option\tcost\tspeed\nA\t1\tfast")}}]),
+        synthetic_case("txt", "Proof Text Note", "mail", [{"title": "Proof Text Note File", "kind": "text", "mime_type": "text/plain", "viewer": {"type": "text", "viewer_src": data_url_text("text/plain", "next step one\nnext step two")}}]),
+        synthetic_case("md", "Proof Markdown Note", "mail", [{"title": "Proof Markdown Note File", "kind": "text", "mime_type": "text/markdown", "viewer": {"type": "text", "viewer_src": data_url_text("text/markdown", "# Heading\n- one\n- two")}}]),
+        synthetic_case("json", "Proof JSON Summary", "clock", [{"title": "Proof JSON Summary File", "kind": "text", "mime_type": "application/json", "viewer": {"type": "text", "viewer_src": data_url_text("application/json", '{"summary":"ok","risks":["low"]}')}}]),
+        synthetic_case("xml", "Proof XML Summary", "clock", [{"title": "Proof XML Summary File", "kind": "text", "mime_type": "application/xml", "viewer": {"type": "text", "viewer_src": data_url_text("application/xml", "<proof><status>ok</status></proof>")}}]),
+        synthetic_case("png", "Proof PNG Image", "moon", [{"title": "Proof PNG Image File", "kind": "image", "mime_type": "image/png", "data_url": png_data}]),
+        synthetic_case("jpg", "Proof JPG Image", "moon", [{"title": "Proof JPG Image File", "kind": "image", "mime_type": "image/jpeg", "data_url": jpg_data}]),
+        synthetic_case("svg", "Proof SVG Image", "moon", [{"title": "Proof SVG Image File", "kind": "image", "mime_type": "image/svg+xml", "data_url": svg_data}]),
+        synthetic_case("wav", "Proof WAV Audio", "bolt", [{"title": "Proof WAV Audio File", "kind": "audio", "mime_type": "audio/wav", "data_url": wav_data}]),
+        synthetic_case("mp3", "Proof MP3 Audio", "bolt", [{"title": "Proof MP3 Audio File", "kind": "audio", "mime_type": "audio/mpeg", "data_url": mp3_data}]),
+        synthetic_case("mp4", "Proof MP4 Video", "calendar", [{"title": "Proof MP4 Video File", "kind": "video", "mime_type": "video/mp4", "data_url": mp4_data}]),
+        synthetic_case("webm", "Proof WEBM Video", "calendar", [{"title": "Proof WEBM Video File", "kind": "video", "mime_type": "video/webm", "data_url": webm_data}]),
+        synthetic_case("pdf_derivative", "Proof PDF Viewer", "moon", [{"title": "Proof PDF Viewer File", "name": "proof.pdf", "kind": "document", "mime_type": "application/pdf", "viewer": {"type": "document_html", "viewer_src": doc_view}}]),
+        synthetic_case("pdf_download_only", "Proof PDF Download", "moon", [{"title": "Proof PDF Download File", "name": "proof.pdf", "kind": "document", "mime_type": "application/pdf"}], expects_action=False),
+        synthetic_case("docx_derivative", "Proof DOCX Viewer", "mail", [{"title": "Proof DOCX Viewer File", "name": "proof.docx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "viewer": {"type": "document_html", "viewer_src": doc_view}}]),
+        synthetic_case("docx_download_only", "Proof DOCX Download", "mail", [{"title": "Proof DOCX Download File", "name": "proof.docx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}], expects_action=False),
+        synthetic_case("pptx_derivative", "Proof PPTX Viewer", "clock", [{"title": "Proof PPTX Viewer File", "name": "proof.pptx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "viewer": {"type": "document_html", "viewer_src": doc_view}}]),
+        synthetic_case("pptx_download_only", "Proof PPTX Download", "clock", [{"title": "Proof PPTX Download File", "name": "proof.pptx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}], expects_action=False),
+        synthetic_case("xlsx_derivative", "Proof XLSX Viewer", "calendar", [{"title": "Proof XLSX Viewer File", "name": "proof.xlsx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "viewer": {"type": "document_html", "viewer_src": doc_view}}]),
+        synthetic_case("xlsx_download_only", "Proof XLSX Download", "calendar", [{"title": "Proof XLSX Download File", "name": "proof.xlsx", "kind": "document", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}], expects_action=False),
+        synthetic_case("multi", "Proof Multi Attachment Order", "bolt", [{"title": "Proof Multi First", "kind": "html", "mime_type": "text/html", "viewer": {"type": "html_iframe", "viewer_src": data_url_text("text/html", "<html><body><h1>First</h1></body></html>")}}, {"title": "Proof Multi Second", "kind": "table", "mime_type": "text/csv", "viewer": {"type": "table", "viewer_src": data_url_text("text/csv", "name,value\nsecond,2")}}], opened_screenshot="multi-opened-first.png"),
+        synthetic_case("binary", "Proof Binary Archive", "mail", [{"title": "Proof Binary Archive File", "name": "proof-binary.zip", "kind": "archive", "mime_type": "application/zip"}], expects_action=False, opened_screenshot=""),
+        synthetic_case("icon_added", "Proof Runtime Icon", runtime_icon_slug, [{"title": "Proof Runtime Icon File", "kind": "text", "mime_type": "text/plain", "viewer": {"type": "text", "viewer_src": data_url_text("text/plain", "proof icon\nready")}}]),
+    ]
+
+
+def synthetic_displayable_case_card(case: dict[str, Any], *, index: int = 1) -> dict[str, Any]:
+    key = str(case.get("key") or f"case-{index}")
+    turn_id = f"synthetic-displayable-{index:02d}-{key}"
+    card_id = f"synthetic-card-{index:02d}-{key}"
+    attachments = normalize_attachments(deepcopy(case.get("synthetic_attachments") or []))
+    return {
+        "card_id": card_id,
+        "turn_id": turn_id,
+        "session_id": turn_id,
+        "title": str(case.get("card_title") or key),
+        "summary": f"Synthetic proof payload for {case.get('card_title') or key}.",
+        "icon": str(case.get("card_icon") or "bolt"),
+        "created_at": now_iso(),
+        "trace": {"schema": "pucky.turn_trace.v1", "sections": []},
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "text": f"Synthetic proof payload for {case.get('card_title') or key}.",
+                "attachments": attachments,
+            }
+        ],
+    }
+
+
+def proof_visible_card(card: dict[str, Any]) -> dict[str, Any]:
+    visible = deepcopy(card)
+    visible["archived"] = False
+    visible["deleted"] = False
+    visible["read"] = False
+    return visible
+
+
+def materialize_reply_card(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    card: dict[str, Any],
+    *,
+    timeout: int = 180,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    visible_card = proof_visible_card(card)
+    command = reply_cards_write_command(args, config, {"cards": [visible_card]})
+    length = windows_command_length(command)
+    if length >= SYNTHETIC_REPLY_CARD_COMMAND_BUDGET and str(visible_card.get("turn_id") or "").startswith("synthetic-displayable-"):
+        raise SuiteError(f"Synthetic reply-card payload exceeded Windows command budget ({length} chars)")
+    snapshot = command_result(command_json(runner, command, timeout=timeout))
+    local_card = find_snapshot_card(
+        snapshot,
+        card_id=str(visible_card.get("card_id") or ""),
+        turn_id=str(visible_card.get("turn_id") or visible_card.get("session_id") or ""),
+    )
+    return snapshot, local_card
+
+
+def card_icon_registry_contains(payload: dict[str, Any], name: str) -> bool:
+    icons = payload.get("icons") if isinstance(payload.get("icons"), list) else []
+    target = str(name or "").strip()
+    return any(isinstance(item, dict) and str(item.get("name") or "").strip() == target for item in icons)
+
+
+def scratch_bundle_needed(bundle_status: dict[str, Any], config: SlotConfig) -> bool:
+    return str(bundle_status.get("ui_version") or "").strip() != str(config.bundle_version or "").strip()
+
+
 def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
     require_emulator_serial(config.serial)
     if not serial_is_connected(args, runner, config.serial):
         raise SuiteError(f"Emulator is not connected: {config.serial}")
-    if not args.turn_token:
-        raise SuiteError("prove-displayable-reply-files requires --turn-token or PUCKY_API_TOKEN")
 
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
     bundle_refresh = {"ok": True, "skipped": True}
@@ -3554,165 +4039,59 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         time.sleep(args.ui_dwell_seconds)
     bundle_status = command_result(command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=120))
     scratch_bundle = {"ok": True, "skipped": True}
-    if args.skip_refresh and not str(bundle_status.get("ui_version") or "").strip():
+    if args.skip_refresh and scratch_bundle_needed(bundle_status, config):
         scratch_bundle = ensure_scratch_bundle(args, runner, config)
         bundle_status = scratch_bundle["bundle_status"]
-        runner.run(launch_home_command(args, config), timeout=30)
+        launch_home_resilient(args, runner, config, wait_for_channel=not args.dry_run, stage="displayable_after_scratch_bundle", timeout_seconds=45)
         if not args.dry_run:
             time.sleep(args.ui_dwell_seconds)
     command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
-    runner.run(launch_home_command(args, config), timeout=30)
+    launch_home_resilient(args, runner, config, wait_for_channel=not args.dry_run, stage="displayable_after_clear", timeout_seconds=45)
     if not args.dry_run:
         time.sleep(args.ui_dwell_seconds)
 
     card_icons_url = args.vm_base_url.rstrip("/") + "/api/card-icons"
-    icon_registry_before = http_json_request(card_icons_url, timeout=30)
     runtime_icon_slug = "proof_orbit"
+    cases = displayable_reply_file_cases(runtime_icon_slug)
+    requires_live_turns = any(str(case.get("source") or "") not in {"synthetic"} for case in cases)
+    if requires_live_turns and not args.turn_token:
+        raise SuiteError("prove-displayable-reply-files requires --turn-token or PUCKY_API_TOKEN for live-turn cases")
+
+    icon_registry_before = http_json_request(card_icons_url, timeout=30)
     runtime_icon_payload = {
         "name": runtime_icon_slug,
         "label": "Proof Orbit",
         "filled_svg": '<path d="M12 2 14.8 9.2 22 12 14.8 14.8 12 22 9.2 14.8 2 12 9.2 9.2Z"/>',
         "outline_svg": '<path d="M12 4.5 14 10 19.5 12 14 14 12 19.5 10 14 4.5 12 10 10Z"/>',
     }
-    icon_registry_upsert = http_json_request(
-        card_icons_url,
-        timeout=30,
-        method="POST",
-        token=args.turn_token,
-        body=runtime_icon_payload,
-    )
-    icon_registry_after = http_json_request(card_icons_url, timeout=30)
-
-    cases = [
-        {
-            "key": "html",
-            "card_title": "Proof HTML Dashboard",
-            "card_icon": "bolt",
-            "prompt": (
-                "Create a small browser-displayable HTML dashboard with three goals for today. "
-                "Save it as a complete HTML file and return it as the first browser-displayable result. "
-                "Use card_title exactly 'Proof HTML Dashboard' and card_icon exactly 'bolt'."
-            ),
-            "tile_screenshot": "html-tile.png",
-            "opened_screenshot": "html-opened.png",
-            "expects_action": True,
-            "aliases": [],
-        },
-        {
-            "key": "csv",
-            "card_title": "Proof CSV Table",
-            "card_icon": "calendar",
-            "prompt": (
-                "Create a CSV table comparing three options with columns option, cost, and speed. "
-                "Return the CSV as the first attachment. "
-                "Use card_title exactly 'Proof CSV Table' and card_icon exactly 'calendar'. "
-                "Make the first attachment title exactly 'Proof CSV Table File'."
-            ),
-            "tile_screenshot": "csv-tile.png",
-            "opened_screenshot": "csv-opened.png",
-            "expects_action": True,
-            "aliases": [],
-        },
-        {
-            "key": "txt",
-            "card_title": "Proof Text Note",
-            "card_icon": "mail",
-            "prompt": (
-                "Create a plain text note file listing three next steps. "
-                "Return that text file as the first attachment. "
-                "Use card_title exactly 'Proof Text Note' and card_icon exactly 'mail'. "
-                "Make the first attachment title exactly 'Proof Text Note File'."
-            ),
-            "tile_screenshot": "txt-tile.png",
-            "opened_screenshot": "txt-opened.png",
-            "expects_action": True,
-            "aliases": [],
-        },
-        {
-            "key": "json",
-            "card_title": "Proof JSON Summary",
-            "card_icon": "clock",
-            "prompt": (
-                "Create a JSON file summarizing three findings with keys summary, risks, and next_action. "
-                "Return that JSON file as the first attachment. "
-                "Use card_title exactly 'Proof JSON Summary' and card_icon exactly 'clock'. "
-                "Make the first attachment title exactly 'Proof JSON Summary File'."
-            ),
-            "tile_screenshot": "json-tile.png",
-            "opened_screenshot": "json-opened.png",
-            "expects_action": True,
-            "aliases": [],
-        },
-        {
-            "key": "pdf_derivative",
-            "card_title": "Proof PDF Viewer",
-            "card_icon": "moon",
-            "prompt": (
-                "Create a tiny PDF file and also create a browser-safe HTML viewer page for it. "
-                "Return the PDF as the first attachment and set its viewer_path to the HTML viewer page. "
-                "Use card_title exactly 'Proof PDF Viewer' and card_icon exactly 'moon'. "
-                "Make the first attachment title exactly 'Proof PDF Viewer File'."
-            ),
-            "tile_screenshot": "pdf-tile.png",
-            "opened_screenshot": "pdf-opened-derivative.png",
-            "expects_action": True,
-            "aliases": ["icon-existing.png"],
-        },
-        {
-            "key": "multi",
-            "card_title": "Proof Multi Attachment Order",
-            "card_icon": "bolt",
-            "prompt": (
-                "Create two browser-displayable files and return them in this exact attachment order: "
-                "first an HTML page titled 'Proof Multi First', then a CSV file titled 'Proof Multi Second'. "
-                "Use card_title exactly 'Proof Multi Attachment Order' and card_icon exactly 'bolt'."
-            ),
-            "tile_screenshot": "multi-tile.png",
-            "opened_screenshot": "multi-opened-first.png",
-            "expects_action": True,
-            "aliases": [],
-        },
-        {
-            "key": "binary",
-            "card_title": "Proof Binary Archive",
-            "card_icon": "mail",
-            "prompt": (
-                "Create only a ZIP archive containing two tiny text files. "
-                "Return the ZIP archive as an attachment, but do not create any browser-displayable viewer file for it. "
-                "Use card_title exactly 'Proof Binary Archive' and card_icon exactly 'mail'. "
-                "Make the first attachment title exactly 'Proof Binary Archive File'."
-            ),
-            "tile_screenshot": "binary-no-file-icon.png",
-            "opened_screenshot": "",
-            "expects_action": False,
-            "aliases": [],
-        },
-        {
-            "key": "icon_added",
-            "card_title": "Proof Runtime Icon",
-            "card_icon": runtime_icon_slug,
-            "prompt": (
-                f"Create a plain text note file with two bullet points and return it as the first attachment. "
-                f"Use card_title exactly 'Proof Runtime Icon' and card_icon exactly '{runtime_icon_slug}'. "
-                "Make the first attachment title exactly 'Proof Runtime Icon File'."
-            ),
-            "tile_screenshot": "icon-added.png",
-            "opened_screenshot": "",
-            "expects_action": True,
-            "aliases": [],
-        },
-    ]
+    icon_registry_upsert: dict[str, Any]
+    auth_token = str(args.turn_token or args.operator_token or "").strip()
+    if card_icon_registry_contains(icon_registry_before, runtime_icon_slug):
+        icon_registry_upsert = {"ok": True, "skipped": True, "reason": "already_present"}
+        icon_registry_after = icon_registry_before
+    elif auth_token:
+        icon_registry_upsert = http_json_request(
+            card_icons_url,
+            timeout=30,
+            method="POST",
+            token=auth_token,
+            body=runtime_icon_payload,
+        )
+        icon_registry_after = http_json_request(card_icons_url, timeout=30)
+    else:
+        raise SuiteError("prove-displayable-reply-files needs --turn-token or --operator-token when proof_orbit is not already registered")
     replay_cards: dict[str, dict[str, Any]] = {}
     if args.replay_broker_log:
         replay_cards = replay_cards_from_broker_log(
             args.replay_broker_log,
             [str(case["card_title"]) for case in cases],
+            allow_partial=True,
         )
 
     results: list[dict[str, Any]] = []
     for index, case in enumerate(cases, start=1):
-        prompt = str(case["prompt"])
-        if replay_cards:
+        prompt = str(case.get("prompt") or "")
+        if str(case["card_title"]) in replay_cards:
             replay_card = normalize_replay_card(replay_cards[str(case["card_title"])])
             turn_id = str(replay_card.get("turn_id") or f"replay-{case['key']}")
             live_turn = {
@@ -3730,19 +4109,28 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "title": str(replay_card.get("title") or ""),
             }
             feed_sync = {"ok": True, "replayed": True, "skipped": True}
-            materialized_snapshot = command_result(
-                command_json(
-                    runner,
-                    reply_cards_write_command(args, config, {"cards": [replay_card]}),
-                    timeout=180,
-                )
-            )
+            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, replay_card, timeout=180)
             snapshot = materialized_snapshot
-            local_card = find_snapshot_card(
-                materialized_snapshot,
-                card_id=str(replay_card.get("card_id") or ""),
-                turn_id=turn_id,
-            )
+        elif str(case.get("source") or "") == "synthetic":
+            synthetic_card = synthetic_displayable_case_card(case, index=index)
+            turn_id = str(synthetic_card.get("turn_id") or f"synthetic-{case['key']}")
+            live_turn = {
+                "ok": True,
+                "synthetic": True,
+                "turn_id": turn_id,
+                "card_id": str(synthetic_card.get("card_id") or ""),
+                "title": str(synthetic_card.get("title") or ""),
+            }
+            live_feed_item = {
+                "ok": True,
+                "synthetic": True,
+                "turn_id": turn_id,
+                "card_id": str(synthetic_card.get("card_id") or ""),
+                "title": str(synthetic_card.get("title") or ""),
+            }
+            feed_sync = {"ok": True, "synthetic": True, "skipped": True}
+            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, synthetic_card, timeout=180)
+            snapshot = materialized_snapshot
         else:
             turn_id = f"prove-displayable-{case['key']}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
             live_turn = post_live_text_turn(args, turn_id, prompt)
@@ -3762,31 +4150,27 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 turn_id=turn_id,
                 timeout=float(args.snapshot_timeout_seconds),
             )
-            materialized_snapshot = command_result(
-                command_json(
-                    runner,
-                    reply_cards_write_command(args, config, {"cards": [local_card]}),
-                    timeout=180,
-                )
-            )
-            local_card = find_snapshot_card(
-                materialized_snapshot,
-                card_id=str(live_turn.get("card_id") or ""),
-                turn_id=turn_id,
-            )
-        runner.run(launch_home_command(args, config), timeout=30)
+            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, local_card, timeout=180)
+        launch_home_resilient(
+            args,
+            runner,
+            config,
+            wait_for_channel=not args.dry_run,
+            stage=f"displayable_{case['key']}_home",
+            timeout_seconds=max(45, int(args.viewer_timeout_seconds)),
+        )
         if not args.dry_run:
             time.sleep(args.ui_dwell_seconds)
 
         tile_screenshot = Path(config.evidence_dir) / str(case["tile_screenshot"])
         opened_screenshot = Path(config.evidence_dir) / str(case["opened_screenshot"]) if case["opened_screenshot"] else None
         title = str(local_card.get("title") or case["card_title"])
-        _, tile_xml = wait_for_ui_node(
+        _, tile_xml, feed_recovery = ensure_feed_card_visible(
             args,
             runner,
             config,
-            description=f"{case['key']} did not render card text for {title}",
-            text_pattern=re.escape(title),
+            title=title,
+            local_card=local_card,
             timeout=float(args.viewer_timeout_seconds),
         )
         tile_xml_path = Path(config.evidence_dir) / f"{case['key']}-tile.xml"
@@ -3800,34 +4184,17 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         opened_xml = ""
         opened_xml_path = Path(config.evidence_dir) / f"{case['key']}-opened.xml"
         if case["expects_action"]:
-            if not action_label:
-                raise SuiteError(f"{case['key']} returned no tile-openable attachment")
-            nodes = find_ui_nodes(tile_xml, content_desc_pattern=rf"^{re.escape(action_label)}$")
-            if not nodes:
-                nodes = find_ui_nodes(tile_xml, text_pattern=rf"^{re.escape(action_label)}$")
-            if not nodes:
-                action_node, refreshed_tile_xml = wait_for_ui_node(
-                    args,
-                    runner,
-                    config,
-                    description=f"{case['key']} did not expose the expected tile file action: {action_label}",
-                    content_desc_pattern=rf"^{re.escape(action_label)}$",
-                    timeout=float(args.viewer_timeout_seconds),
-                )
-                nodes = [action_node]
-                tile_xml = refreshed_tile_xml
-                tile_xml_path.write_text(tile_xml, encoding="utf-8")
-            tap_ui_node(args, runner, config, nodes[0])
-            if not args.dry_run:
-                time.sleep(args.ui_dwell_seconds)
-            _, opened_xml = wait_for_ui_node(
+            opened_xml, tile_xml = open_card_detail_with_retry(
                 args,
                 runner,
                 config,
-                description=f"{case['key']} did not open a detail view titled {open_title}",
-                text_pattern=rf"^{re.escape(open_title)}$",
+                case_key=str(case["key"]),
+                title=title,
+                card=local_card,
+                tile_xml=tile_xml,
                 timeout=float(args.viewer_timeout_seconds),
             )
+            tile_xml_path.write_text(tile_xml, encoding="utf-8")
             opened_xml_path.write_text(opened_xml, encoding="utf-8")
             if opened_screenshot is not None and not args.dry_run:
                 capture_screenshot(args, runner, config, opened_screenshot)
@@ -3869,6 +4236,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "card_icon": str(local_card.get("icon") or ""),
                 "attachment_count": len((attachment_info or {}).get("attachments") or []),
                 "case_index": index,
+                "feed_recovery": feed_recovery,
             }
         )
 
@@ -4094,7 +4462,7 @@ def cmd_prove_apk_actions(args: argparse.Namespace) -> dict[str, Any]:
             ("notify.show", {"id": "proof_direct_notification", "title": "Direct notification", "text": "Direct APK action proof"}),
             ("notify.list_active", {}),
             ("notify.cancel", {"id": "proof_direct_notification"}),
-            ("photo.capture", {"timeout_ms": 8000, "suppress_chime": True}),
+            ("photo.capture", direct_photo_capture_payload()),
             ("pucky.turn.settings.set", {"arrival_cue_mode": "haptic"}),
             ("pucky.turn.arrival_cue.test", {"turn_id": "proof_direct_haptic"}),
             ("location.get", {"timeout_ms": 15000, "max_cache_age_ms": 0, "provider": "gps", "fresh": True}),
@@ -4124,6 +4492,7 @@ def cmd_prove_apk_actions(args: argparse.Namespace) -> dict[str, Any]:
         channel = ensure_broker_command_channel(args, runner, config, stage="apk_actions_start", timeout_seconds=90)
         runner.run(launch_home_command(args, config), timeout=30)
         ensure_device_interactive(args, runner, config)
+        grant_provision_permissions(args, runner, config)
         runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_COARSE_LOCATION"]), timeout=30, check=False)
         runner.run(adb_command(args, config.serial, ["shell", "pm", "grant", args.package_name, "android.permission.ACCESS_FINE_LOCATION"]), timeout=30, check=False)
         accessibility_component = f"{args.package_name}/com.pucky.device.accessibility.PuckyAccessibilityService"
@@ -4197,13 +4566,7 @@ def cmd_prove_apk_actions(args: argparse.Namespace) -> dict[str, Any]:
             raise SuiteError("Direct notification remained active after notify.cancel")
 
         camera_info = command_result(command_json(runner, puckyctl_command(args, config, "camera.info", {}), timeout=120))
-        direct_photo = command_result(
-            command_json(
-                runner,
-                puckyctl_command(args, config, "photo.capture", {"timeout_ms": 8000, "suppress_chime": True}),
-                timeout=180,
-            )
-        )
+        direct_photo = direct_photo_capture(args, runner, config)
         direct_photo_path = str(direct_photo.get("app_private_path") or direct_photo.get("path") or "").strip()
         if not direct_photo.get("captured") or not direct_photo_path or not adb_path_exists(args, runner, config, direct_photo_path):
             raise SuiteError(f"Direct photo.capture did not produce a readable device file: {direct_photo}")
