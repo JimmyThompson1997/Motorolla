@@ -225,6 +225,8 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert 'if (name === "pucky.turn.status")' in app
     assert 'command === "pucky.turn.status"' in app
     assert 'command: "pucky.turn.status"' in app
+    assert 'if (state.route === "feed") {' in app
+    assert 'await refreshCardsFromNativeSnapshot({ render: false });' in app
     assert "function renderVoiceStatus()" in app
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
@@ -424,7 +426,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "dismissOpenCardMenu(true);" in app
     assert "card-menu-action card-menu-star" in app
     assert "card-menu-action card-menu-archive" in app
-    assert "state.openCardMenuSessionId === sessionId ? \"\" : sessionId" in app
+    assert "state.openCardMenuThreadId = cardThreadId(card);" in app
     assert "state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)" in app
     assert "Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX" in app
     assert "shouldSuppressCardActivation()" in app
@@ -1633,17 +1635,28 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert 'command === "ui.surface.get"' in app
     assert 'command === "ui.debug.goto_home"' in app
     assert 'command === "ui.debug.back"' in app
+    assert 'command === "ui.debug.focus_card"' in app
+    assert 'command === "ui.debug.clear_focus"' in app
     assert 'command === "ui.debug.open_card_action"' in app
     assert "function describeUiSurface()" in app
     assert "function uiDebugDispatch(action, rawArgs = {})" in app
+    assert "function uiDebugFocusCard(rawArgs = {})" in app
+    assert "function uiDebugClearFocus()" in app
+    assert "function findFocusedCard()" in app
+    assert "function reconcileFocusedCardSelection()" in app
+    assert "async function refreshCardsFromNativeSnapshot(options = {})" in app
     assert "function uiDebugOpenCardAction(rawArgs = {})" in app
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app
     assert "dispatch: uiDebugDispatch" in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
+    assert "focused_card: {" in app
     assert "thread_scope: {" in app
     assert "visible_cards: cards" in app
+    assert 'active: Boolean(focusedCard)' in app
+    assert 'menu_open: Boolean(focusedCard)' in app
+    assert "openCardMenuThreadId" in app
     assert 'pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound"' in app
     assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
     assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app

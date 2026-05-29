@@ -48,6 +48,7 @@ public final class PuckyUiController {
     public JSONObject replyCardsSet(JSONObject args) throws com.pucky.device.command.CommandException {
         JSONArray cards = args.optJSONArray("cards");
         JSONObject out = replyCards.replace(cards);
+        PuckyFeedController.shared(context).notifyFeedUpdated();
         PuckyState.get().setLifecycleEvent("reply_cards.updated");
         PuckyState.get().broadcast(context);
         return out;
@@ -67,6 +68,7 @@ public final class PuckyUiController {
 
     public JSONObject replyCardsClear() {
         JSONObject out = replyCards.clear();
+        PuckyFeedController.shared(context).notifyFeedUpdated();
         PuckyState.get().setLifecycleEvent("reply_cards.cleared");
         PuckyState.get().broadcast(context);
         return out;
@@ -76,12 +78,32 @@ public final class PuckyUiController {
         return new UiSurfaceController(context).status(bundles);
     }
 
+    public JSONObject voiceThreadScopeGet() {
+        return VoiceThreadScopeController.shared(context).get();
+    }
+
+    public JSONObject voiceThreadScopeSet(JSONObject args) throws com.pucky.device.command.CommandException {
+        return VoiceThreadScopeController.shared(context).set(args);
+    }
+
+    public JSONObject voiceThreadScopeClear(JSONObject args) {
+        return VoiceThreadScopeController.shared(context).clear(args);
+    }
+
     public JSONObject debugGotoHome(JSONObject args) {
         return UiAutomationController.dispatch("goto_home", args);
     }
 
     public JSONObject debugBack(JSONObject args) {
         return UiAutomationController.dispatch("back", args);
+    }
+
+    public JSONObject debugFocusCard(JSONObject args) {
+        return UiAutomationController.dispatch("focus_card", args);
+    }
+
+    public JSONObject debugClearFocus(JSONObject args) {
+        return UiAutomationController.dispatch("clear_focus", args);
     }
 
     public JSONObject debugOpenCardAction(JSONObject args) {

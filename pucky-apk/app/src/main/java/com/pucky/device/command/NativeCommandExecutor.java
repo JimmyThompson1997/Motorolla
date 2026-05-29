@@ -75,6 +75,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "button.events.list", "button.events.clear", "button.simulate",
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
+            "voice.thread_scope.get", "voice.thread_scope.set", "voice.thread_scope.clear",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "pucky.turn.settings.get", "pucky.turn.settings.set",
             "pucky.turn.arrival_cue.test", "pucky.turn.sent_cue.test",
@@ -127,7 +128,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.merge", "ui.reply_cards.get",
             "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
             "ui.bundle.refresh", "ui.surface.get", "ui.debug.goto_home",
-            "ui.debug.back", "ui.debug.open_card_action",
+            "ui.debug.back", "ui.debug.focus_card", "ui.debug.clear_focus", "ui.debug.open_card_action",
             "ui.shell.mode.get", "ui.shell.mode.set",
             "launcher.capability.get", "android.substrate"
     };
@@ -451,6 +452,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return voiceCaptureController.list(command.args());
             case "voice.capture.delete":
                 return voiceCaptureController.delete(command.args());
+            case "voice.thread_scope.get":
+                return uiController.voiceThreadScopeGet();
+            case "voice.thread_scope.set":
+                return uiController.voiceThreadScopeSet(command.args());
+            case "voice.thread_scope.clear":
+                return uiController.voiceThreadScopeClear(command.args());
             case "pucky.turn.status":
                 return puckyTurnController.status();
             case "pucky.turn.start":
@@ -617,6 +624,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.debugGotoHome(command.args());
             case "ui.debug.back":
                 return uiController.debugBack(command.args());
+            case "ui.debug.focus_card":
+                return uiController.debugFocusCard(command.args());
+            case "ui.debug.clear_focus":
+                return uiController.debugClearFocus(command.args());
             case "ui.debug.open_card_action":
                 return uiController.debugOpenCardAction(command.args());
             case "ui.shell.mode.get":

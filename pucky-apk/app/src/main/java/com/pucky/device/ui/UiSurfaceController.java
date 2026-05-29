@@ -56,6 +56,7 @@ public final class UiSurfaceController {
         Json.put(out, "bridge_connected", true);
         Json.put(out, "route", live.optString("route", ""));
         Json.put(out, "detail", live.optJSONObject("detail") == null ? new JSONObject() : live.optJSONObject("detail"));
+        Json.put(out, "focused_card", live.optJSONObject("focused_card") == null ? new JSONObject() : live.optJSONObject("focused_card"));
         Json.put(out, "thread_scope", live.optJSONObject("thread_scope") == null ? new JSONObject() : live.optJSONObject("thread_scope"));
         Json.put(out, "visible_cards", live.optJSONArray("visible_cards") == null ? new org.json.JSONArray() : live.optJSONArray("visible_cards"));
         Json.put(out, "ui_debug_available", live.optBoolean("ui_debug_available", false));

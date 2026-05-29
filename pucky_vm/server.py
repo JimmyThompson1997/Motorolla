@@ -808,6 +808,7 @@ class PuckyVoiceService:
         thread_id: str | None = None,
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
+        debug_fixture_transcript: str | None = None,
         proof_reply_delay_ms: str | int | None = None,
     ) -> dict[str, object]:
         if not audio:
@@ -848,9 +849,11 @@ class PuckyVoiceService:
             telemetry["stt_start_ms"] = _elapsed_ms(total_start)
             self._update_turn_status(turn_id, "stt_running", "running", telemetry)
             start = time.perf_counter()
-            transcript = self.stt.transcribe(audio, content_type)
+            transcript_override = str(debug_fixture_transcript or "").strip()
+            transcript = transcript_override or self.stt.transcribe(audio, content_type)
             telemetry["stt_ms"] = _elapsed_ms(start)
             telemetry["stt_end_ms"] = _elapsed_ms(total_start)
+            telemetry["debug_fixture_transcript_used"] = bool(transcript_override)
             telemetry["transcript_chars"] = len(transcript)
             telemetry["user_transcript"] = transcript
             return self._handle_transcript_turn(
@@ -1613,6 +1616,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "stt_start_ms",
         "stt_end_ms",
         "stt_ms",
+        "debug_fixture_transcript_used",
         "transcript_chars",
         "user_transcript",
         "codex_start_ms",
@@ -1664,6 +1668,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "stt_start_ms",
         "stt_end_ms",
         "stt_ms",
+        "debug_fixture_transcript_used",
         "transcript_chars",
         "codex_start_ms",
         "codex_end_ms",
@@ -2519,6 +2524,7 @@ def make_handler(service: PuckyVoiceService):
                     thread_id=self.headers.get("X-Pucky-Thread-Id", ""),
                     thread_scope_source=self.headers.get("X-Pucky-Thread-Scope-Source", ""),
                     thread_card_id=self.headers.get("X-Pucky-Thread-Card-Id", ""),
+                    debug_fixture_transcript=self.headers.get("X-Pucky-Debug-Fixture-Transcript", ""),
                     proof_reply_delay_ms=self.headers.get("X-Pucky-Proof-Reply-Delay-Ms", ""),
                 )
             except ValueError as exc:

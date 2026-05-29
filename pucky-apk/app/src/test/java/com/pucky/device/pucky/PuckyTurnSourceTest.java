@@ -121,6 +121,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(turn.contains("synchronized boolean archiveHistoryRecord(String turnId, String localSessionId)"));
         assertTrue(turn.contains("public JSONObject debugInjectHistory(JSONObject args) throws CommandException"));
         assertTrue(turn.contains("public JSONObject debugResponseFault(JSONObject args) throws CommandException"));
+        assertTrue(turn.contains("boolean clearAll = args.optBoolean(\"clear_all\", false);"));
+        assertTrue(turn.contains("int removed = clearAll ? clearTurnHistory() : (clear ? clearDebugInjectedHistory() : 0);"));
+        assertTrue(turn.contains("private synchronized int clearTurnHistory()"));
         assertTrue(turn.contains("pucky.turn.debug.inject_history is only available on debug builds"));
         assertTrue(turn.contains("pucky.turn.debug.response_fault is only available on debug builds"));
 
@@ -167,21 +170,41 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("intercept(audioBytes, localSessionId, clientTurnId, speechGate, capture)"));
         assertTrue(source.contains("copyIfPresent(target, capture, \"capture_source\")"));
         assertTrue(source.contains("copyIfPresent(target, capture, \"fixture_name\")"));
+        assertTrue(source.contains("copyIfPresent(startArgs, args, \"debug_fixture_transcript\")"));
         assertTrue(source.contains("copyIfPresent(startArgs, args, \"proof_reply_delay_ms\")"));
         assertTrue(capture.contains("capture.triggerSource"));
         assertTrue(capture.contains("capture.autoEndpoint"));
         assertTrue(capture.contains("capture.captureSource"));
         assertTrue(capture.contains("capture.fixtureStartDelayMs"));
+        assertTrue(capture.contains("capture.fixturePath"));
+        assertTrue(capture.contains("capture.debugFixtureTranscript"));
         assertTrue(capture.contains("capture.proofReplyDelayMs"));
+        assertTrue(capture.contains("capture.fixtureError"));
+        assertTrue(capture.contains("capture.fixtureBytes"));
+        assertTrue(capture.contains("capture.fixtureSamples"));
+        assertTrue(capture.contains("capture.fixtureFramesTarget"));
+        assertTrue(capture.contains("capture.fixtureFramesSent"));
         assertTrue(capture.contains("startFixtureFeed(capture)"));
         assertTrue(capture.contains("Json.put(out, \"capture_source\", capture.captureSource)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_path\", capture.fixturePath)"));
         assertTrue(capture.contains("Json.put(out, \"fixture_start_delay_ms\", capture.fixtureStartDelayMs)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_bytes\", capture.fixtureBytes)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_samples\", capture.fixtureSamples)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_frames_target\", capture.fixtureFramesTarget)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_frames_sent\", capture.fixtureFramesSent)"));
+        assertTrue(capture.contains("Json.put(out, \"fixture_error\", capture.fixtureError)"));
+        assertTrue(capture.contains("Fixture feed ready turn="));
+        assertTrue(capture.contains("Fixture feed canceled turn="));
+        assertTrue(capture.contains("Fixture feed completed turn="));
+        assertTrue(capture.contains("Json.put(out, \"debug_fixture_transcript\", capture.debugFixtureTranscript)"));
         assertTrue(capture.contains("Json.put(out, \"proof_reply_delay_ms\", capture.proofReplyDelayMs)"));
         assertTrue(capture.contains("capture.wakePhraseFamily"));
         assertTrue(capture.contains("capture.wakePhraseDetected"));
         assertTrue(capture.contains("Json.put(out, \"trigger_source\", capture.triggerSource)"));
         assertTrue(source.contains("copyIfPresent(target, capture, \"fixture_start_delay_ms\")"));
+        assertTrue(source.contains("copyIfPresent(target, capture, \"debug_fixture_transcript\")"));
         assertTrue(source.contains("copyIfPresent(target, capture, \"proof_reply_delay_ms\")"));
+        assertTrue(source.contains(".header(\"X-Pucky-Debug-Fixture-Transcript\", threadScope.optString(\"debug_fixture_transcript\", \"\"))"));
         assertTrue(source.contains(".header(\"X-Pucky-Proof-Reply-Delay-Ms\""));
         assertTrue(source.contains("JSONObject threadScope = voiceThreadScopeSnapshot(triggerSource)"));
         assertTrue(source.contains("applyVoiceThreadScope(startArgs, threadScope)"));
@@ -189,6 +212,16 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("applyVoiceThreadScope(out, threadScope)"));
         assertTrue(source.contains("if (!\"volume_up_hold\".equals(triggerSource))"));
         assertFalse(source.contains("&& !\"wake_word\".equals(triggerSource)"));
+        assertTrue(capture.contains("capture.threadMode"));
+        assertTrue(capture.contains("capture.threadId"));
+        assertTrue(capture.contains("capture.threadCardId"));
+        assertTrue(capture.contains("capture.threadSessionId"));
+        assertTrue(capture.contains("capture.threadScopeSource"));
+        assertTrue(capture.contains("Json.put(out, \"thread_mode\", capture.threadMode)"));
+        assertTrue(capture.contains("Json.put(out, \"thread_id\", capture.threadId)"));
+        assertTrue(capture.contains("Json.put(out, \"thread_card_id\", capture.threadCardId)"));
+        assertTrue(capture.contains("Json.put(out, \"thread_session_id\", capture.threadSessionId)"));
+        assertTrue(capture.contains("Json.put(out, \"thread_scope_source\", capture.threadScopeSource)"));
     }
 
     @Test

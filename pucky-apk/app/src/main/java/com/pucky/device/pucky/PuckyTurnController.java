@@ -228,8 +228,10 @@ public final class PuckyTurnController {
                     "pucky.turn.debug.inject_history is only available on debug builds");
         }
         boolean clear = args.optBoolean("clear", false);
-        int removed = clear ? clearDebugInjectedHistory() : 0;
-        if (!clear || args.has("turn_id") || args.has("local_session_id") || args.has("session_id")) {
+        boolean clearAll = args.optBoolean("clear_all", false);
+        boolean clearRequested = clear || clearAll;
+        int removed = clearAll ? clearTurnHistory() : (clear ? clearDebugInjectedHistory() : 0);
+        if (!clearRequested || args.has("turn_id") || args.has("local_session_id") || args.has("session_id")) {
             String turnId = args.optString("turn_id", "").trim();
             String localSessionId = args.optString("local_session_id", args.optString("session_id", "")).trim();
             if (turnId.isEmpty() && localSessionId.isEmpty()) {
@@ -611,6 +613,7 @@ public final class PuckyTurnController {
                 .header("X-Pucky-Thread-Id", threadScope.optString("thread_id", ""))
                 .header("X-Pucky-Thread-Scope-Source", threadScope.optString("thread_scope_source", ""))
                 .header("X-Pucky-Thread-Card-Id", threadScope.optString("thread_card_id", ""))
+                .header("X-Pucky-Debug-Fixture-Transcript", threadScope.optString("debug_fixture_transcript", ""))
                 .header("X-Pucky-Proof-Reply-Delay-Ms",
                         threadScope.optInt("proof_reply_delay_ms", 0) > 0
                                 ? Integer.toString(threadScope.optInt("proof_reply_delay_ms", 0))
@@ -1271,6 +1274,12 @@ public final class PuckyTurnController {
         if (last.optBoolean("debug_injected", false)) {
             prefs.edit().remove(LAST_STATUS).apply();
         }
+        return removed;
+    }
+
+    private synchronized int clearTurnHistory() {
+        int removed = turnHistoryArray().length();
+        prefs.edit().remove(HISTORY).remove(LAST_STATUS).commit();
         return removed;
     }
 

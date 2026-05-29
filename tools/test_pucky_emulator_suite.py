@@ -194,6 +194,39 @@ def test_cmd_start_reapplies_userdata_tuning_for_existing_slot(monkeypatch: pyte
     assert calls == [config.avd_name]
 
 
+def test_wait_for_snapshot_condition_honors_custom_poll_interval(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=True)
+    snapshots = iter([{"cards": []}, {"ready": True}])
+    clock = {"now": 0.0}
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(suite, "command_json", lambda *args, **kwargs: next(snapshots))
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload)
+    monkeypatch.setattr(suite, "puckyctl_command", lambda *args, **kwargs: ["puckyctl"])
+    monkeypatch.setattr(suite.time, "monotonic", lambda: clock["now"])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(suite.time, "sleep", fake_sleep)
+
+    result = suite.wait_for_snapshot_condition(
+        args,
+        runner,
+        config,
+        description="snapshot ready",
+        predicate=lambda snapshot: bool(snapshot.get("ready")),
+        timeout=1.0,
+        sleep_seconds=0.125,
+    )
+
+    assert result == {"ready": True}
+    assert sleeps == [0.125]
+
+
 def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path) -> None:
     args = ns(tmp_path)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
@@ -211,7 +244,6 @@ def test_adb_launch_and_puckyctl_commands_are_scoped_to_emulator(tmp_path: Path)
     assert "180000" in command
     assert f"http://127.0.0.1:{config.broker_port}" in command
     assert "--device-id" in command and config.device_id in command
-
 
 def test_reply_cards_write_command_uses_set_for_emulator(tmp_path: Path) -> None:
     args = ns(tmp_path)
@@ -256,6 +288,94 @@ def test_launch_home_command_reuses_provisioning_payload_when_turn_config_presen
     assert home[:3] == [str(args.adb), "-s", config.serial]
     assert "--ez" in home and "show_home" in home and "true" in home
     assert "--es" in home and "provisioning_json_base64" in home
+
+
+def test_launch_command_uses_resolved_launcher_activity_when_default_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 3, run_id="fixed")
+
+    def fake_run(command, capture_output, text, timeout, check):
+        assert command[:3] == [str(args.adb), "-s", config.serial]
+        return argparse.Namespace(
+            stdout=(
+                "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n"
+                "com.pucky.device.debug/com.pucky.device.MainActivity\n"
+            )
+        )
+
+    monkeypatch.setattr(suite.subprocess, "run", fake_run)
+
+    launch = suite.launch_command(args, config)
+    home = suite.launch_home_command(args, config)
+
+    assert f"{args.package_name}/com.pucky.device.MainActivity" in launch
+    assert f"{args.package_name}/com.pucky.device.MainActivity" in home
+
+
+def test_launch_command_respects_explicit_activity_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = ns(tmp_path, dry_run=False, activity_name="com.pucky.device.CustomActivity")
+    config = suite.slot_config(tmp_path, 3, run_id="fixed")
+
+    def fail_run(*_args, **_kwargs):
+        raise AssertionError("resolve-activity should not run when activity_name is explicitly set")
+
+    monkeypatch.setattr(suite.subprocess, "run", fail_run)
+
+    launch = suite.launch_command(args, config)
+
+    assert f"{args.package_name}/com.pucky.device.CustomActivity" in launch
+
+
+def test_grant_runtime_permissions_covers_main_activity_prompt_set(tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=True)
+
+    suite.grant_runtime_permissions(args, runner, config)
+
+    grants = [planned["command"][-1] for planned in runner.planned]
+    assert "android.permission.READ_SMS" in grants
+    assert "android.permission.RECORD_AUDIO" in grants
+    assert "android.permission.ACCESS_FINE_LOCATION" in grants
+
+
+def test_grant_runtime_permissions_tolerates_timeout_on_redundant_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls: list[str] = []
+
+    def fake_run(command, *, timeout=30, check=False, **_kwargs):
+        permission = command[-1]
+        calls.append(permission)
+        if permission == "android.permission.SEND_SMS":
+            raise suite.subprocess.TimeoutExpired(command, timeout)
+        return argparse.Namespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(runner, "run", fake_run)
+
+    suite.grant_runtime_permissions(args, runner, config)
+
+    assert "android.permission.SEND_SMS" in calls
+    assert "android.permission.RECORD_AUDIO" in calls
+
+
+def test_dismiss_permission_controller_force_stops_permission_package(tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=True)
+
+    suite.dismiss_permission_controller(args, runner, config)
+
+    assert runner.planned[-1]["command"][-3:] == [
+        "am",
+        "force-stop",
+        suite.DEFAULT_PERMISSION_CONTROLLER_PACKAGE,
+    ]
 
 
 def test_parser_includes_pending_outbound_proof_command() -> None:
@@ -483,10 +603,12 @@ def test_parser_includes_walkie_thread_lab_command() -> None:
 def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
     assert suite.WALKIE_THREAD_LAB_RESULT_SCHEMA == "pucky.walkie_thread_lab.v1"
     assert suite.WALKIE_THREAD_LAB_SCENARIOS == (
+        "feed-focus-continuation",
         "transcript-continuation",
         "page-continuation",
         "attachment-continuation",
         "negative-home",
+        "focus-clear-negative",
         "history-retention",
         "final-boss-overlap",
         "all",
@@ -497,16 +619,129 @@ def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
         "pending.png",
         "transcript-known.png",
         "reply-complete.png",
+        "ui.surface.home-before.json",
+        "ui.surface.focused.json",
         "ui.surface.before.json",
         "ui.surface.pending.json",
         "ui.surface.transcript.json",
         "ui.surface.final.json",
+        "ui.surface.attachment.json",
         "voice.thread_scope.before.json",
+        "voice.thread_scope.focused.json",
         "pucky.turn.history.json",
+        "pucky.turn.read.<turn_id>.json",
         "ui.reply_cards.before.json",
         "ui.reply_cards.final.json",
         "proof.json",
     )
+    assert suite.WALKIE_THREAD_TRANSPORT_FIXTURES == {
+        "thread_continue": "wake_weather",
+        "file_revise": "wake_weather",
+        "fresh_thread": "fresh_thread",
+        "thread_bravo": "thread_bravo",
+        "thread_alpha": "thread_alpha",
+    }
+
+
+def test_start_fixture_turn_passes_debug_fixture_transcript_and_delay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload)
+
+    def fake_command_json(_runner, command, *, timeout=60):
+        seen["command"] = command
+        seen["timeout"] = timeout
+        return {"ok": True, "turn_id": "turn-1"}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    result = suite.start_fixture_turn(
+        args,
+        runner,
+        config,
+        fixture_name="thread_continue",
+        fixture_path="/data/local/tmp/thread_continue.wav",
+        debug_fixture_transcript="Should we change these goals?",
+        proof_reply_delay_ms=2200,
+    )
+
+    args_index = seen["command"].index("--args-json")
+    payload = json.loads(seen["command"][args_index + 1])
+    assert payload["debug_fixture_transcript"] == "Should we change these goals?"
+    assert payload["proof_reply_delay_ms"] == 2200
+    assert payload.get("fixture_start_delay_ms", suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS) == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
+    assert result["turn_id"] == "turn-1"
+
+
+def test_push_turn_fixture_uses_app_owned_upload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    fixture = tmp_path / "thread_continue.wav"
+    fixture.write_bytes(b"RIFFdemo")
+    seen: dict[str, object] = {}
+
+    def fake_upload(_args, _runner, _config, *, source_path, filename, max_bytes=0):
+        seen["source_path"] = source_path
+        seen["filename"] = filename
+        seen["max_bytes"] = max_bytes
+        return {"device_path": "/data/user/0/com.pucky.device.debug/files/downloads/thread_continue.wav"}
+
+    monkeypatch.setattr(suite, "upload_app_owned_file", fake_upload)
+
+    remote = suite.push_turn_fixture(args, runner, config, fixture, "thread_continue")
+
+    assert remote == "/data/user/0/com.pucky.device.debug/files/downloads/thread_continue.wav"
+    assert seen["source_path"] == fixture
+    assert seen["filename"] == "thread_continue.wav"
+
+
+def test_upload_app_owned_file_stages_with_adb_and_run_as(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=True)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=True)
+    fixture = tmp_path / "thread_continue.wav"
+    fixture.write_bytes(b"RIFFdemo")
+
+    monkeypatch.setattr(suite, "adb_command", lambda _args, serial, rest: ["adb", "-s", serial, *rest])
+
+    uploaded = suite.upload_app_owned_file(
+        args,
+        runner,
+        config,
+        source_path=fixture,
+        filename="thread_continue.wav",
+    )
+
+    commands = [planned["command"] for planned in runner.planned]
+    assert commands[0][-2:] == [str(fixture), "/data/local/tmp/thread_continue.wav"]
+    assert commands[1][3] == "shell"
+    assert f"run-as {suite.DEFAULT_PACKAGE} sh -c " in commands[1][4]
+    assert uploaded["device_path"] == "/data/user/0/com.pucky.device.debug/files/downloads/thread_continue.wav"
+
+
+def test_reset_walkie_thread_lab_state_uses_full_history_clear(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload)
+
+    def fake_command_json(_runner, command, *, timeout=60):
+        args_index = command.index("--args-json")
+        payload = json.loads(command[args_index + 1])
+        commands.append((command[command.index("command") + 1], payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    suite.reset_walkie_thread_lab_state(args, runner, config)
+
+    assert ("pucky.turn.debug.inject_history", {"clear_all": True}) in commands
 
 
 def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
@@ -591,6 +826,71 @@ def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message(
     assert info["viewer_type"] == "table"
     assert suite.card_action_accessibility_label(card) == "Open file for Attachment card"
     assert suite.card_open_title(card) == "Newest"
+
+
+def test_visible_cards_handles_null_surface_entries() -> None:
+    assert suite.visible_cards({"visible_cards": None}) == []
+
+
+def test_surface_from_snapshot_normalizes_pending_thread_identity_and_preview() -> None:
+    snapshot = {
+        "cards": [
+            {
+                "card_id": "pending_turn_turn-a",
+                "session_id": "turn-a",
+                "origin": {"thread_id": "thread-A"},
+                "pending_outbound": True,
+                "pending_state": "uploading",
+                "summary": "Sending your message...",
+                "title": "Proof HTML Dashboard",
+            },
+            {
+                "card_id": "reply_turn_turn-b",
+                "session_id": "turn-b",
+                "origin": {"thread_id": "thread-B"},
+                "summary": "Proof CSV Table",
+                "title": "Proof CSV Table",
+            },
+        ]
+    }
+
+    surface = suite.surface_from_snapshot(snapshot)
+
+    assert surface["route"] == "feed"
+    assert suite.visible_thread_cards(surface, "thread-A")[0]["card_id"] == "pending_turn_turn-a"
+    assert suite.visible_thread_cards(surface, "thread-A")[0]["kind"] == "pending_outbound"
+    assert suite.visible_thread_cards(surface, "thread-A")[0]["pending_outbound"] is True
+    assert suite.visible_thread_cards(surface, "thread-A")[0]["preview"] == "Sending your message..."
+    assert suite.visible_thread_cards(surface, "thread-B")[0]["kind"] == "reply"
+
+
+def test_final_boss_effective_delays_enforce_overlap_floors() -> None:
+    args = argparse.Namespace(
+        final_boss_delay_ms_a=6000,
+        final_boss_delay_ms_new=3000,
+        final_boss_delay_ms_b=0,
+    )
+
+    assert suite.final_boss_effective_delays(args) == (
+        suite.FINAL_BOSS_MIN_DELAY_MS_A,
+        suite.FINAL_BOSS_MIN_DELAY_MS_NEW,
+        suite.FINAL_BOSS_MIN_DELAY_MS_B,
+    )
+
+    args = argparse.Namespace(
+        final_boss_delay_ms_a=18000,
+        final_boss_delay_ms_new=9000,
+        final_boss_delay_ms_b=2200,
+    )
+
+    assert suite.final_boss_effective_delays(args) == (18000, 9000, 2200)
+
+
+def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:
+    assert suite.continuation_fixture_start_delay_ms("thread_transcript") == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
+    assert suite.continuation_fixture_start_delay_ms("feed_tile_selected") == suite.FEED_FOCUS_FIXTURE_START_DELAY_MS
+    assert suite.continuation_fixture_start_delay_ms("thread_page") == suite.PAGE_CONTINUATION_FIXTURE_START_DELAY_MS
+    assert suite.continuation_fixture_start_delay_ms("thread_attachment") == suite.ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS
 
 
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
