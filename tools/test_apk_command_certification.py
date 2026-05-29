@@ -65,6 +65,8 @@ def test_outcome_mapping_accepts_honest_failures() -> None:
 def test_should_retry_response_only_for_transient_failures() -> None:
     assert cert.should_retry_response({"ok": False, "status": "device_offline", "error": {"code": "DEVICE_OFFLINE"}}) is True
     assert cert.should_retry_response({"ok": False, "status": "accepted", "error": {"code": ""}}) is True
+    assert cert.should_retry_response({"ok": False, "status": "failed", "error": {"code": "BROKER_UNAVAILABLE"}}) is True
+    assert cert.should_retry_response({"ok": False, "status": "failed", "error": {"message": "[WinError 10054] An existing connection was forcibly closed by the remote host"}}) is True
     assert cert.should_retry_response({"ok": False, "status": "completed", "error": {"code": "PERMISSION_MISSING"}}) is False
 
 

@@ -176,8 +176,15 @@ def wait_for_device_online(args: argparse.Namespace) -> None:
 def should_retry_response(response: dict[str, Any]) -> bool:
     error = response.get("error") if isinstance(response.get("error"), dict) else {}
     code = str(error.get("code", ""))
+    message = str(error.get("message", ""))
     status = str(response.get("status", ""))
-    return code in {"DEVICE_OFFLINE", "WAIT_TIMEOUT", "TimeoutExpired"} or status in {"device_offline", "accepted", "sent"}
+    transient_codes = {"BROKER_UNAVAILABLE", "DEVICE_OFFLINE", "WAIT_TIMEOUT", "TimeoutExpired"}
+    return (
+        code in transient_codes
+        or status in {"device_offline", "accepted", "sent"}
+        or "forcibly closed" in message.lower()
+        or "connection reset" in message.lower()
+    )
 
 
 def run_command(args: argparse.Namespace, command: str, payload: dict[str, Any], *, timeout_seconds: int = 60) -> dict[str, Any]:
