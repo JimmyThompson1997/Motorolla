@@ -471,6 +471,9 @@ public final class PhoneDataController {
             try (InputStream stream = ContactsContract.Contacts.openContactPhotoInputStream(resolver, contactUri, true)) {
                 bytes = stream == null ? null : readAll(stream);
             }
+            if (bytes == null || bytes.length == 0) {
+                bytes = contactPhotoDataBytes(contactId);
+            }
 
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.phone_contact_photo_get.v1");
@@ -511,6 +514,8 @@ public final class PhoneDataController {
             operations.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
                     .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
                     .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.Data.IS_PRIMARY, 1)
+                    .withValue(ContactsContract.Data.IS_SUPER_PRIMARY, 1)
                     .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photo)
                     .build());
             resolver.applyBatch(ContactsContract.AUTHORITY, operations);
@@ -1143,6 +1148,31 @@ public final class PhoneDataController {
             }
         }
         return out;
+    }
+
+    private byte[] contactPhotoDataBytes(long contactId) {
+        try (Cursor cursor = resolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                new String[] { ContactsContract.CommonDataKinds.Photo.PHOTO },
+                ContactsContract.Data.CONTACT_ID + "=? AND " + ContactsContract.Data.MIMETYPE + "=?",
+                new String[] {
+                        String.valueOf(contactId),
+                        ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE
+                },
+                ContactsContract.Data.IS_SUPER_PRIMARY + " DESC, " + ContactsContract.Data._ID + " DESC")) {
+            if (cursor == null) {
+                return null;
+            }
+            while (cursor.moveToNext()) {
+                if (!cursor.isNull(0)) {
+                    byte[] blob = cursor.getBlob(0);
+                    if (blob != null && blob.length > 0) {
+                        return blob;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void collectContactIds(

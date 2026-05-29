@@ -93,11 +93,14 @@ public final class AndroidRuntimePlaneTest {
         assertTrue(runtime.contains("return phoneDataController.callsAnswer(args)"));
         assertTrue(runtime.contains("return phoneDataController.contactsPhotoGet(args)"));
         assertTrue(runtime.contains("return notificationController.listenerMessages(requireLimit(args, command))"));
+        assertTrue(runtime.contains("User dictionary insert returned no URI"));
 
         assertTrue(runtime.contains("HIGH_LIMIT_FUSE = 5000"));
         assertTrue(runtime.contains("requires explicit limit"));
         assertTrue(phone.contains("DEFAULT_LIMIT = 5000"));
         assertTrue(phone.contains("MAX_LIMIT = 5000"));
+        assertTrue(phone.contains("contactPhotoDataBytes(contactId)"));
+        assertTrue(phone.contains("ContactsContract.Data.IS_SUPER_PRIMARY"));
         assertTrue(ledger.contains("DEFAULT_LIMIT = 5000"));
         assertTrue(ledger.contains("MAX_RECENT_MESSAGES = 5000"));
     }

@@ -279,7 +279,11 @@ public final class AndroidRuntimeController {
         JSONObject payload = new JSONObject();
         Json.put(payload, "uri", "content://user_dictionary/words");
         Json.put(payload, "values", values);
-        return substrateOp(payload, "content.insert");
+        JSONObject raw = substrateOp(payload, "content.insert");
+        if (raw.isNull("inserted_uri")) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE, "User dictionary insert returned no URI");
+        }
+        return raw;
     }
 
     private JSONObject userDictionaryDelete(JSONObject args) throws CommandException {
