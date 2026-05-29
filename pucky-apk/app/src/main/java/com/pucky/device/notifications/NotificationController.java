@@ -220,6 +220,14 @@ public final class NotificationController {
         return out;
     }
 
+    public JSONObject listenerStatus(JSONObject args) {
+        return PuckyNotificationLedger.status(context);
+    }
+
+    public JSONObject listenerMessages(JSONObject args) throws CommandException {
+        return PuckyNotificationLedger.messages(context, args == null ? new JSONObject() : args);
+    }
+
     private void createChannel() {
         ensureChannel(CHANNEL_ID, "Pucky commands", false);
         ensureChannel(AUDIBLE_CHANNEL_ID, "Pucky audible commands", true);

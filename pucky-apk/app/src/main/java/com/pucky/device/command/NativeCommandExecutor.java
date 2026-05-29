@@ -64,7 +64,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.recipes.sync", "pucky.recipes.list", "pucky.recipes.test",
             "pucky.recipes.clear", "pucky.recipes.schema", "device.primitives.list",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
-            "notify.channels.get", "audio.tone", "audio.route.get", "audio.volume.set",
+            "notify.channels.get", "notify.listener.status", "notify.listener.messages",
+            "audio.tone", "audio.route.get", "audio.volume.set",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
             "media.export.list", "media.export.delete", "player.asset.prepare", "player.load",
             "player.play", "player.pause", "player.stop", "player.seek", "player.state",
@@ -344,6 +345,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return notificationController.active(command.args());
             case "notify.channels.get":
                 return notificationController.channels(command.args());
+            case "notify.listener.status":
+                return notificationController.listenerStatus(command.args());
+            case "notify.listener.messages":
+                return notificationController.listenerMessages(command.args());
             case "audio.tone":
                 return audioController.tone(command.args());
             case "audio.route.get":

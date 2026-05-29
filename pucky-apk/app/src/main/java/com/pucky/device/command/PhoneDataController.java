@@ -11,6 +11,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.ContactsContract;
 
+import com.pucky.device.notifications.PuckyNotificationLedger;
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.substrate.AndroidSubstrateController;
@@ -21,6 +22,7 @@ import org.json.JSONObject;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -62,6 +64,7 @@ public final class PhoneDataController {
             Json.put(out, "roles", permissions.optJSONObject("roles"));
             Json.put(out, "surfaces", catalog.optJSONArray("surfaces"));
             Json.put(out, "readiness", readinessSummary(catalog.optJSONArray("surfaces")));
+            Json.put(out, "notification_listener", PuckyNotificationLedger.status(context));
             return out;
         });
     }
@@ -69,6 +72,8 @@ public final class PhoneDataController {
     public JSONObject smsList(JSONObject args) throws CommandException {
         return safe(() -> {
             int limit = boundedLimit(args);
+            long beforeTimestampMs = optionalLong(args, "before_timestamp_ms");
+            long beforeId = optionalLong(args, "before_id");
             JSONObject result = substrate(historyQueryArgs(
                     "content://sms",
                     array("_id", "thread_id", "address", "date", "type", "read", "seen", "status", "creator", "body"),
@@ -77,13 +82,18 @@ public final class PhoneDataController {
                     "date DESC, _id DESC",
                     limit,
                     args));
-            JSONArray rows = normalizeSmsRows(result.optJSONArray("rows"));
+            JSONArray providerRows = normalizeSmsRows(result.optJSONArray("rows"));
+            JSONArray notificationRows = args != null && !args.optBoolean("include_notifications", true)
+                    ? new JSONArray()
+                    : normalizeSmsRows(PuckyNotificationLedger.smsRows(context, limit, beforeTimestampMs, beforeId));
+            JSONArray rows = mergeSmsRows(providerRows, notificationRows, limit);
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.phone_sms_list.v1");
             Json.put(out, "generated_at", Instant.now().toString());
             Json.put(out, "rows", rows);
             Json.put(out, "count", rows.length());
             Json.put(out, "truncated", result.optBoolean("truncated", false));
+            Json.put(out, "source_counts", smsSourceCounts(rows));
             return out;
         });
     }
@@ -109,9 +119,25 @@ public final class PhoneDataController {
                     "date DESC, _id DESC",
                     scanLimit,
                     args);
-            JSONArray rows = normalizeSmsRows(substrate(query).optJSONArray("rows"));
+            long beforeTimestampMs = optionalLong(args, "before_timestamp_ms");
+            long beforeId = optionalLong(args, "before_id");
+            JSONArray providerRows = normalizeSmsRows(substrate(query).optJSONArray("rows"));
+            String addressForNotifications = !address.isEmpty() ? address : firstSmsAddress(providerRows);
+            JSONArray notificationRows = args != null && !args.optBoolean("include_notifications", true)
+                    ? new JSONArray()
+                    : addressForNotifications.isEmpty()
+                            ? new JSONArray()
+                            : normalizeSmsRows(PuckyNotificationLedger.smsRowsForAddress(
+                                    context,
+                                    addressForNotifications,
+                                    scanLimit,
+                                    beforeTimestampMs,
+                                    beforeId));
+            JSONArray rows = mergeSmsRows(providerRows, notificationRows, scanLimit);
             if (!address.isEmpty()) {
                 rows = filterSmsRowsByAddress(rows, address, limit);
+            } else if (!addressForNotifications.isEmpty()) {
+                rows = filterSmsRowsByAddress(rows, addressForNotifications, limit);
             } else if (rows.length() > limit) {
                 rows = firstN(rows, limit);
             }
@@ -123,6 +149,7 @@ public final class PhoneDataController {
             Json.put(out, "address", address.isEmpty() ? JSONObject.NULL : address);
             Json.put(out, "rows", rows);
             Json.put(out, "count", rows.length());
+            Json.put(out, "source_counts", smsSourceCounts(rows));
             return out;
         });
     }
@@ -564,16 +591,34 @@ public final class PhoneDataController {
 
     static JSONObject normalizeSmsRow(JSONObject row) {
         JSONObject out = new JSONObject();
-        Json.put(out, "message_id", stringValue(row, "_id"));
-        Json.put(out, "thread_id", stringValue(row, "thread_id"));
+        Json.put(out, "message_id", firstNonEmpty(stringValue(row, "message_id"), stringValue(row, "_id")));
+        Json.put(out, "thread_id", firstNonEmpty(stringValue(row, "thread_id"), "unknown"));
         Json.put(out, "address", stringValue(row, "address"));
         Json.put(out, "body", stringValue(row, "body"));
-        Json.put(out, "timestamp_ms", longValue(row, "date"));
-        Json.put(out, "direction", smsDirectionForType(longValue(row, "type")));
+        long timestampMs = longValue(row, "timestamp_ms");
+        if (timestampMs <= 0L) {
+            timestampMs = longValue(row, "date");
+        }
+        Json.put(out, "timestamp_ms", timestampMs);
+        String direction = stringValue(row, "direction");
+        if (direction.isEmpty()) {
+            direction = smsDirectionForType(longValue(row, "type"));
+        }
+        Json.put(out, "direction", direction);
         Json.put(out, "read", boolValue(row, "read"));
         Json.put(out, "seen", boolValue(row, "seen"));
-        Json.put(out, "status", stringValue(row, "status"));
-        Json.put(out, "creator", stringValue(row, "creator"));
+        Json.put(out, "status", row.has("status") && row.opt("status") == JSONObject.NULL
+                ? JSONObject.NULL
+                : firstNonEmpty(stringValue(row, "status"), row.opt("status") == null ? "" : String.valueOf(row.opt("status"))));
+        Json.put(out, "creator", row.has("creator") && row.opt("creator") == JSONObject.NULL
+                ? JSONObject.NULL
+                : stringValue(row, "creator"));
+        Json.put(out, "source", firstNonEmpty(stringValue(row, "source"), "sms_provider"));
+        Json.put(out, "source_package", row.has("source_package") ? row.opt("source_package") : JSONObject.NULL);
+        Json.put(out, "conversation_title", row.has("conversation_title") ? row.opt("conversation_title") : JSONObject.NULL);
+        Json.put(out, "sender_name", row.has("sender_name") ? row.opt("sender_name") : JSONObject.NULL);
+        Json.put(out, "sender_uri", row.has("sender_uri") ? row.opt("sender_uri") : JSONObject.NULL);
+        Json.put(out, "notification_key", row.has("notification_key") ? row.opt("notification_key") : JSONObject.NULL);
         return out;
     }
 
@@ -594,6 +639,103 @@ public final class PhoneDataController {
             }
         }
         return out;
+    }
+
+    static JSONArray mergeSmsRows(JSONArray providerRows, JSONArray notificationRows, int limit) {
+        List<JSONObject> merged = new ArrayList<>();
+        appendSmsRows(merged, providerRows);
+        appendSmsRows(merged, notificationRows);
+        merged.sort(Comparator
+                .comparingLong((JSONObject row) -> longValue(row, "timestamp_ms"))
+                .thenComparing(row -> stringValue(row, "message_id"))
+                .reversed());
+        JSONArray out = new JSONArray();
+        for (JSONObject row : merged) {
+            if (out.length() >= Math.max(1, limit)) {
+                break;
+            }
+            Json.add(out, row);
+        }
+        return out;
+    }
+
+    private static void appendSmsRows(List<JSONObject> merged, JSONArray rows) {
+        if (rows == null) {
+            return;
+        }
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) {
+                continue;
+            }
+            JSONObject normalized = normalizeSmsRow(row);
+            if (!containsEquivalentSms(merged, normalized)) {
+                merged.add(normalized);
+            }
+        }
+    }
+
+    private static boolean containsEquivalentSms(List<JSONObject> rows, JSONObject candidate) {
+        for (JSONObject existing : rows) {
+            if (sameSms(existing, candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sameSms(JSONObject left, JSONObject right) {
+        String leftSource = stringValue(left, "source");
+        String rightSource = stringValue(right, "source");
+        String leftId = stringValue(left, "message_id");
+        String rightId = stringValue(right, "message_id");
+        if (!leftSource.isEmpty() && leftSource.equals(rightSource) && !leftId.isEmpty() && leftId.equals(rightId)) {
+            return true;
+        }
+        if (!stringValue(left, "direction").equals(stringValue(right, "direction"))) {
+            return false;
+        }
+        if (!stringValue(left, "body").equals(stringValue(right, "body"))) {
+            return false;
+        }
+        if (!numbersEquivalent(normalizeDigits(stringValue(left, "address")), normalizeDigits(stringValue(right, "address")))) {
+            return false;
+        }
+        return Math.abs(longValue(left, "timestamp_ms") - longValue(right, "timestamp_ms")) <= 120000L;
+    }
+
+    private static JSONObject smsSourceCounts(JSONArray rows) {
+        JSONObject out = new JSONObject();
+        int provider = 0;
+        int notifications = 0;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) {
+                continue;
+            }
+            if ("notification_listener".equals(row.optString("source", ""))) {
+                notifications++;
+            } else {
+                provider++;
+            }
+        }
+        Json.put(out, "sms_provider", provider);
+        Json.put(out, "notification_listener", notifications);
+        return out;
+    }
+
+    private static String firstSmsAddress(JSONArray rows) {
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) {
+                continue;
+            }
+            String address = row.optString("address", "").trim();
+            if (!address.isEmpty()) {
+                return address;
+            }
+        }
+        return "";
     }
 
     static String smsDirectionForType(long type) {
@@ -1164,6 +1306,15 @@ public final class PhoneDataController {
 
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 
     private static String androidError(Exception e) {

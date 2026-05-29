@@ -57,6 +57,46 @@ public final class PhoneDataControllerTest {
     }
 
     @Test
+    public void mergesNotificationRepliesIntoSmsThreadsWithoutDuplicates() throws Exception {
+        JSONArray provider = new JSONArray();
+        provider.put(new JSONObject()
+                .put("_id", 101)
+                .put("thread_id", 1)
+                .put("address", "+14074969882")
+                .put("date", 1000L)
+                .put("type", 2)
+                .put("body", "hey there"));
+
+        JSONArray notifications = new JSONArray();
+        notifications.put(new JSONObject()
+                .put("message_id", "2001")
+                .put("thread_id", "notify:+14074969882")
+                .put("address", "407-496-9882")
+                .put("timestamp_ms", 2000L)
+                .put("direction", "inbound")
+                .put("body", "normal human reply")
+                .put("source", "notification_listener")
+                .put("source_package", "com.google.android.apps.messaging"));
+        notifications.put(new JSONObject()
+                .put("message_id", "2002")
+                .put("thread_id", "notify:+14074969882")
+                .put("address", "+1 (407) 496-9882")
+                .put("timestamp_ms", 2005L)
+                .put("direction", "inbound")
+                .put("body", "normal human reply")
+                .put("source", "notification_listener")
+                .put("source_package", "com.google.android.apps.messaging"));
+
+        JSONArray merged = PhoneDataController.mergeSmsRows(provider, notifications, 10);
+
+        assertEquals(2, merged.length());
+        assertEquals("notification_listener", merged.getJSONObject(0).getString("source"));
+        assertEquals("normal human reply", merged.getJSONObject(0).getString("body"));
+        assertEquals("sms_provider", merged.getJSONObject(1).getString("source"));
+        assertEquals("hey there", merged.getJSONObject(1).getString("body"));
+    }
+
+    @Test
     public void normalizesCallRows() throws Exception {
         JSONArray rows = new JSONArray();
         rows.put(new JSONObject()
@@ -133,6 +173,8 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("\"phone.blocked_numbers.list\""));
         assertTrue(executor.contains("\"phone.blocked_numbers.add\""));
         assertTrue(executor.contains("\"phone.blocked_numbers.remove\""));
+        assertTrue(executor.contains("\"notify.listener.status\""));
+        assertTrue(executor.contains("\"notify.listener.messages\""));
         assertTrue(executor.contains("return phoneDataController.telephonyStatus()"));
         assertTrue(executor.contains("return phoneDataController.smsList(command.args())"));
         assertTrue(executor.contains("return phoneDataController.callsState(command.args())"));
@@ -140,6 +182,8 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("return phoneDataController.callsAnswer(command.args())"));
         assertTrue(executor.contains("return phoneDataController.contactsReplace(command.args())"));
         assertTrue(executor.contains("return phoneDataController.blockedNumbersRemove(command.args())"));
+        assertTrue(executor.contains("return notificationController.listenerStatus(command.args())"));
+        assertTrue(executor.contains("return notificationController.listenerMessages(command.args())"));
 
         assertTrue(service.contains("AndroidSubstrateController substrateController = new AndroidSubstrateController(this);"));
         assertTrue(service.contains("new PhoneDataController(this, settings, substrateController)"));
@@ -150,6 +194,8 @@ public final class PhoneDataControllerTest {
         assertTrue(capability.contains("phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete"));
         assertTrue(capability.contains("phone.voicemail.list"));
         assertTrue(capability.contains("phone.blocked_numbers.list/phone.blocked_numbers.add/phone.blocked_numbers.remove"));
+        assertTrue(capability.contains("notify.listener.status/notify.listener.messages"));
+        assertTrue(capability.contains("normal inbound replies"));
 
         assertTrue(permission.contains("phone.sms.list"));
         assertTrue(permission.contains("phone.sms.send"));
@@ -174,10 +220,16 @@ public final class PhoneDataControllerTest {
         assertTrue(controller.contains("pucky.phone_telephony_status.v1"));
         assertTrue(controller.contains("Json.put(out, \"roles\", permissions.optJSONObject(\"roles\"))"));
         assertTrue(controller.contains("Json.put(out, \"readiness\", readinessSummary(catalog.optJSONArray(\"surfaces\")))"));
+        assertTrue(controller.contains("Json.put(out, \"notification_listener\", PuckyNotificationLedger.status(context))"));
         assertTrue(controller.contains("phone.sms.send requires to and body"));
         assertTrue(controller.contains("phone.calls.place requires number"));
         assertTrue(controller.contains("pucky.phone_calls_state.v1"));
         assertTrue(controller.contains("pucky.phone_call_answer.v1"));
+        assertTrue(controller.contains("include_notifications"));
+        assertTrue(controller.contains("normalizeSmsRows(PuckyNotificationLedger.smsRows("));
+        assertTrue(controller.contains("normalizeSmsRows(PuckyNotificationLedger.smsRowsForAddress("));
+        assertTrue(controller.contains("mergeSmsRows(providerRows, notificationRows"));
+        assertTrue(controller.contains("notification_listener"));
         assertTrue(controller.contains("phone.contacts.create requires display_name"));
         assertTrue(controller.contains("phone.contacts.replace requires display_name"));
         assertTrue(controller.contains("Missing required field: "));
@@ -209,6 +261,8 @@ public final class PhoneDataControllerTest {
         String dialer = read("src/main/java/com/pucky/device/calls/PuckyDialerActivity.java");
         String inCall = read("src/main/java/com/pucky/device/calls/PuckyInCallService.java");
         String store = read("src/main/java/com/pucky/device/calls/PuckyCallStateStore.java");
+        String notifications = read("src/main/java/com/pucky/device/notifications/PuckyNotificationListenerService.java");
+        String ledger = read("src/main/java/com/pucky/device/notifications/PuckyNotificationLedger.java");
 
         assertTrue(manifest.contains("com.pucky.device.calls.PuckyDialerActivity") || manifest.contains(".calls.PuckyDialerActivity"));
         assertTrue(manifest.contains("android.intent.action.DIAL"));
@@ -217,6 +271,8 @@ public final class PhoneDataControllerTest {
         assertTrue(manifest.contains("android.permission.BIND_INCALL_SERVICE"));
         assertTrue(manifest.contains("android.telecom.InCallService"));
         assertTrue(manifest.contains("android.telecom.IN_CALL_SERVICE_UI"));
+        assertTrue(manifest.contains("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"));
+        assertTrue(manifest.contains("android.service.notification.NotificationListenerService"));
 
         assertTrue(dialer.contains("setTitle(\"Pucky Dialer\")"));
         assertTrue(dialer.contains("telecom.placeCall(Uri.fromParts(\"tel\", number, null), new Bundle())"));
@@ -229,6 +285,13 @@ public final class PhoneDataControllerTest {
         assertTrue(store.contains("call.answer(VideoProfile.STATE_AUDIO_ONLY)"));
         assertTrue(store.contains("\"overall_state\""));
         assertTrue(store.contains("\"default_dialer_held\""));
+
+        assertTrue(notifications.contains("extends NotificationListenerService"));
+        assertTrue(notifications.contains("PuckyNotificationLedger.onNotificationPosted(this, notification)"));
+
+        assertTrue(ledger.contains("pucky.notification_listener_status.v1"));
+        assertTrue(ledger.contains("pucky.notification_listener_messages.v1"));
+        assertTrue(ledger.contains("com.google.android.apps.messaging"));
     }
 
     private static String read(String path) throws Exception {

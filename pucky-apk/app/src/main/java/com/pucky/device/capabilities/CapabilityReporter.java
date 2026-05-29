@@ -9,6 +9,7 @@ import android.os.Build;
 import android.speech.SpeechRecognizer;
 
 import com.pucky.device.accessibility.PuckyAccessibilityService;
+import com.pucky.device.notifications.PuckyNotificationLedger;
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -137,6 +138,10 @@ public final class CapabilityReporter {
                 null, "not_recorded", "Lists this app's active notifications where platform supports it."));
         Json.add(out, cap("notification.channels", "notify.channels.get", Build.VERSION.SDK_INT >= 26 ? "implemented" : "blocked_by_platform",
                 "yes", "quiet", null, "not_recorded", "Lists app notification channels."));
+        Json.add(out, cap("notification.listener", "notify.listener.status/notify.listener.messages",
+                notificationListenerStatus(), "user_enabled_notification_access", "privacy_sensitive",
+                null, "not_recorded",
+                "Reads cross-app messaging-style notifications after the user or adb enables notification access, which is the live fallback for normal inbound replies that do not surface through content://sms rows."));
         Json.add(out, cap("audio.tone", "audio.tone", "implemented_untested", "yes", "audible", null, "not_recorded",
                 "Short bounded ToneGenerator beep."));
         Json.add(out, cap("audio.route", "audio.route.get", "implemented", "yes", "quiet", null, "not_recorded",
@@ -332,6 +337,13 @@ public final class CapabilityReporter {
         return permissionReporter.isEffectivelyGranted(Manifest.permission.POST_NOTIFICATIONS)
                 ? "implemented_untested"
                 : "blocked_by_permission";
+    }
+
+    private String notificationListenerStatus() {
+        JSONObject status = PuckyNotificationLedger.status(context);
+        return status.optBoolean("access_enabled", false)
+                ? "implemented_untested"
+                : "requires_user_mediated_intent";
     }
 
     private String nativeSpeechStatus() {
