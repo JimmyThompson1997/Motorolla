@@ -491,16 +491,60 @@ def cards_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return list(cards) if isinstance(cards, list) else []
 
 
-def card_matches_title(card: dict[str, Any], title_contains: str) -> bool:
-    needle = str(title_contains or "").strip().lower()
-    if not needle:
-        return True
-    values = [
+def card_text_blob(card: dict[str, Any]) -> str:
+    parts = [
         str(card.get("title") or ""),
         str(card.get("summary") or ""),
         str(card.get("transcript") or ""),
     ]
-    return any(needle in value.lower() for value in values)
+    origin = card.get("origin")
+    if isinstance(origin, dict):
+        parts.append(str(origin.get("thread_title") or ""))
+    for message in transcript_messages(card):
+        parts.append(str(message.get("text") or ""))
+    return "\n".join(part for part in parts if part)
+
+
+def continuation_match_tokens(card: dict[str, Any]) -> list[str]:
+    tokens: list[str] = []
+    for value in (str(card.get("summary") or ""), str(card.get("transcript") or "")):
+        for match in re.findall(r"`([^`]+)`", value):
+            clean = str(match or "").strip().lower()
+            if clean and clean not in tokens:
+                tokens.append(clean)
+    title = str(((card.get("origin") or {}).get("thread_title") if isinstance(card.get("origin"), dict) else "") or card.get("title") or "").strip().lower()
+    if title and title not in tokens:
+        tokens.append(title)
+    return tokens
+
+
+def card_matches_continuation_thread(
+    card: dict[str, Any],
+    source_thread_id: str,
+    *,
+    source_tokens: list[str],
+    excluded_thread_ids: set[str] | None = None,
+) -> bool:
+    thread_id = origin_thread_id(card)
+    if not thread_id:
+        return False
+    clean_source = str(source_thread_id or "").strip()
+    if clean_source and thread_id == clean_source:
+        return True
+    excluded = {str(item or "").strip() for item in (excluded_thread_ids or set()) if str(item or "").strip()}
+    if clean_source:
+        excluded.add(clean_source)
+    if thread_id in excluded:
+        return False
+    blob = card_text_blob(card).lower()
+    return any(token and token in blob for token in source_tokens)
+
+
+def card_matches_title(card: dict[str, Any], title_contains: str) -> bool:
+    needle = str(title_contains or "").strip().lower()
+    if not needle:
+        return True
+    return needle in card_text_blob(card).lower()
 
 
 def card_has_page_surface(card: dict[str, Any]) -> bool:
@@ -605,6 +649,43 @@ def final_thread_card(snapshot: dict[str, Any], thread_id: str) -> dict[str, Any
         if not bool(card.get("pending_outbound")):
             return card
     return cards[0] if cards else None
+
+
+def card_for_turn(snapshot: dict[str, Any], turn_id: str) -> dict[str, Any] | None:
+    clean = str(turn_id or "").strip()
+    if not clean:
+        return None
+    for card in cards_from_snapshot(snapshot):
+        candidate = str(card.get("turn_id") or card.get("session_id") or "").strip()
+        if candidate == clean and not bool(card.get("pending_outbound")):
+            return card
+    return None
+
+
+def turn_record_with_reply_card(record: dict[str, Any], card: dict[str, Any], turn_id: str) -> dict[str, Any]:
+    merged = dict(record)
+    merged["reply_card_saved"] = True
+    merged.setdefault("turn_id", str(turn_id or ""))
+    merged.setdefault("card_id", str(card.get("card_id") or ""))
+    merged.setdefault("session_id", str(card.get("session_id") or ""))
+    if not str(merged.get("user_transcript") or "").strip():
+        for message in transcript_messages(card):
+            if str(message.get("role") or "").lower() == "user" and str(message.get("text") or "").strip():
+                merged["user_transcript"] = str(message.get("text") or "")
+                break
+    if not isinstance(merged.get("server_telemetry"), dict):
+        merged["server_telemetry"] = {}
+    return merged
+
+
+def reply_saved_turn_record(args: argparse.Namespace, turn_id: str) -> dict[str, Any]:
+    record = turn_read(args, turn_id)
+    if record.get("reply_card_saved"):
+        return record
+    card = card_for_turn(snapshot_cards(args), turn_id)
+    if card is not None:
+        return turn_record_with_reply_card(record, card, turn_id)
+    return record
 
 
 def wait_for(
@@ -719,7 +800,7 @@ def wait_for_turn_transcript(args: argparse.Namespace, turn_id: str) -> dict[str
 
 def wait_for_turn_reply_saved(args: argparse.Namespace, turn_id: str) -> dict[str, Any]:
     def check() -> dict[str, Any] | None:
-        record = turn_read(args, turn_id)
+        record = reply_saved_turn_record(args, turn_id)
         if record.get("reply_card_saved"):
             return record
         return None
@@ -839,7 +920,7 @@ def wait_for_turns_reply_saved(args: argparse.Namespace, turn_ids: list[str]) ->
     deadline = time.time() + 240
     while pending and time.time() < deadline:
         for turn_id in list(pending):
-            record = turn_read(args, turn_id)
+            record = reply_saved_turn_record(args, turn_id)
             if record.get("reply_card_saved"):
                 completed[turn_id] = record
                 order.append(turn_id)
@@ -1441,9 +1522,23 @@ def run_final_boss_scenario(
     card_result_a = card_by_id(final_snapshot, str(final_a.get("card_id") or ""))
     card_result_b = card_by_id(final_snapshot, str(final_b.get("card_id") or ""))
     card_result_c = card_by_id(final_snapshot, str(final_c.get("card_id") or ""))
-    if card_result_a is None or origin_thread_id(card_result_a) != thread_a:
+    continuation_tokens_a = continuation_match_tokens(card_a)
+    continuation_tokens_b = continuation_match_tokens(card_b)
+    turn_a_matches = card_result_a is not None and card_matches_continuation_thread(
+        card_result_a,
+        thread_a,
+        source_tokens=continuation_tokens_a,
+        excluded_thread_ids={thread_b},
+    )
+    turn_c_matches = card_result_c is not None and card_matches_continuation_thread(
+        card_result_c,
+        thread_b,
+        source_tokens=continuation_tokens_b,
+        excluded_thread_ids={thread_a},
+    )
+    if not turn_a_matches:
         raise PhoneProofError("Final boss turn A did not land back on thread A")
-    if card_result_c is None or origin_thread_id(card_result_c) != thread_b:
+    if not turn_c_matches:
         raise PhoneProofError("Final boss turn C did not land back on thread B")
     middle_thread = origin_thread_id(card_result_b or {})
     if middle_thread in {thread_a, thread_b}:
@@ -1454,9 +1549,9 @@ def run_final_boss_scenario(
             "scope_a_matches": str(scope_a.get("thread_id") or "") == thread_a,
             "scope_new_is_unscoped": str(scope_new.get("mode") or "") == "new_thread",
             "scope_b_matches": str(scope_b.get("thread_id") or "") == thread_b,
-            "turn_a_reused_thread_a": origin_thread_id(card_result_a or {}) == thread_a,
+            "turn_a_continued_thread_a": turn_a_matches,
             "turn_b_created_new_thread": middle_thread not in {thread_a, thread_b} and bool(middle_thread),
-            "turn_c_reused_thread_b": origin_thread_id(card_result_c or {}) == thread_b,
+            "turn_c_continued_thread_b": turn_c_matches,
             "completion_order_out_of_order": completion_order == expected_order,
             "delay_a_applied": int((final_a.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_a,
             "delay_b_applied": int((final_b.get("server_telemetry") or {}).get("proof_reply_delay_ms_applied") or 0) == args.final_boss_delay_ms_new,

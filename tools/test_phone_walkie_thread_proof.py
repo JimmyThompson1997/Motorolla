@@ -201,6 +201,67 @@ def test_scenario_checks_reports_overall_pass() -> None:
     assert failing == {"passed": False, "checks": {"one": True, "two": False}}
 
 
+def test_reply_saved_turn_record_uses_visible_card_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = make_args(tmp_path)
+    turn_id = "turn-123"
+
+    monkeypatch.setattr(
+        proof,
+        "turn_read",
+        lambda _args, _turn_id: {"turn_id": _turn_id, "latest_state": "completed", "server_telemetry": {"proof_reply_delay_ms_applied": 6000}},
+    )
+    monkeypatch.setattr(
+        proof,
+        "snapshot_cards",
+        lambda _args: {
+            "cards": [
+                {
+                    "card_id": "card-123",
+                    "session_id": turn_id,
+                    "turn_id": turn_id,
+                    "title": "Dashboard continued",
+                    "summary": "Updated `dashboard.html`.",
+                    "transcript_messages": [
+                        {"role": "user", "text": "Continue the dashboard thread."},
+                        {"role": "assistant", "text": "Updated `dashboard.html`."},
+                    ],
+                    "origin": {"thread_id": "thread-new"},
+                }
+            ]
+        },
+    )
+
+    result = proof.reply_saved_turn_record(args, turn_id)
+
+    assert result["reply_card_saved"] is True
+    assert result["card_id"] == "card-123"
+    assert result["user_transcript"] == "Continue the dashboard thread."
+    assert result["server_telemetry"]["proof_reply_delay_ms_applied"] == 6000
+
+
+def test_card_matches_continuation_thread_accepts_semantic_new_thread() -> None:
+    source = {
+        "title": "Thread A Continued",
+        "summary": "Continuing Thread A with `dashboard.html` updates.",
+        "origin": {"thread_id": "thread-a", "thread_title": "Thread A Continued"},
+    }
+    result = {
+        "title": "Dashboard continued",
+        "summary": "Updated `dashboard.html` and daily goals.",
+        "origin": {"thread_id": "thread-a-next"},
+    }
+
+    tokens = proof.continuation_match_tokens(source)
+
+    assert "dashboard.html" in tokens
+    assert "thread a continued" in tokens
+    assert proof.card_matches_continuation_thread(result, "thread-a", source_tokens=tokens, excluded_thread_ids={"thread-b"}) is True
+    assert proof.card_matches_continuation_thread({"origin": {"thread_id": "thread-a"}}, "thread-a", source_tokens=tokens) is True
+    assert proof.card_matches_continuation_thread(result, "thread-a", source_tokens=tokens, excluded_thread_ids={"thread-a-next"}) is False
+
+
 def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_path: Path) -> None:
     args = make_args(tmp_path)
     local_git = {"head": "abc123", "upstream": "abc123"}

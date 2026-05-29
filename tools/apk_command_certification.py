@@ -272,7 +272,7 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "ui.reply_cards.get", "ui.bundle.status", "ui.surface.get", "ui.shell.mode.get",
         "launcher.capability.get", "android.catalog", "android.permission.status",
         "android.calls.state", "android.notifications.listener.status", "phone.telephony.status",
-        "phone.calls.state", "notify.listener.status",
+        "phone.calls.state", "notify.listener.status", "voice.thread_scope.get",
     }
     list_limited = {
         "log.tail", "artifact.list", "pucky.clipboard.list", "button.events.list",
@@ -446,7 +446,11 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "ui.bundle.refresh": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
         "ui.debug.goto_home": Recipe("pass_or_honest_failure", {}),
         "ui.debug.back": Recipe("pass_or_honest_failure", {}),
+        "ui.debug.focus_card": Recipe("pass_honest_failure", {"session_id": f"missing-{run_nonce}"}),
+        "ui.debug.clear_focus": Recipe("pass_or_honest_failure", {}),
         "ui.debug.open_card_action": Recipe("pass_honest_failure", {"card_id": f"missing-{run_nonce}", "action": "open"}),
+        "voice.thread_scope.set": Recipe("pass", {"mode": "existing_thread", "thread_id": f"thread-{run_nonce}", "source_surface": "thread_transcript"}),
+        "voice.thread_scope.clear": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
         "ui.shell.mode.set": Recipe("pass_or_honest_failure", {"mode": "auto"}),
         "android.substrate": Recipe("pass_honest_failure", {}),
     })
