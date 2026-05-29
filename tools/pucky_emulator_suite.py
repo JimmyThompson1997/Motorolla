@@ -1328,7 +1328,7 @@ def command_json_allow_failure(runner: Runner, command: list[str], *, timeout: i
 
 
 def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> dict[str, Any]:
-    attempts = 4
+    attempts = 8
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:

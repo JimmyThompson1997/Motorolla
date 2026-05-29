@@ -1344,6 +1344,27 @@ def test_command_json_retries_device_offline_with_longer_backoff(monkeypatch: py
     assert sleeps and sleeps[0] >= 2.0
 
 
+def test_command_json_retries_extended_device_offline_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = suite.Runner(dry_run=False)
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_run(command, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] <= 5:
+            raise suite.SuiteError("DEVICE_OFFLINE: emulator-5554 temporarily unavailable")
+        return suite.subprocess.CompletedProcess(command, 0, stdout='{"ok":true}', stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = suite.command_json(runner, ["fake", "command"], timeout=1)
+
+    assert attempts["count"] == 6
+    assert result == {"ok": True}
+    assert sleeps[:5] == [2.0, 4.0, 6.0, 8.0, 10.0]
+
+
 def test_feed_request_retries_transient_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = {"count": 0}
     sleeps: list[float] = []
