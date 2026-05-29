@@ -2045,6 +2045,47 @@ def test_launch_home_resilient_falls_back_to_full_launch(monkeypatch: pytest.Mon
     assert any("connect true" in " ".join(command) for command in commands)
 
 
+def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    retries: list[str] = []
+
+    runner.run = lambda *_args, **_kwargs: suite.subprocess.CompletedProcess([], 0, stdout="", stderr="")  # type: ignore[method-assign]
+    monkeypatch.setattr(suite, "grant_runtime_permissions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "dismiss_permission_controller", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
+    monkeypatch.setattr(suite, "sync_default_recipe_bundle", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    def fake_ensure(_args, _runner, _config, *, stage: str, timeout_seconds: int) -> dict[str, object]:
+        assert timeout_seconds == 90
+        if stage == "turn_lab_relaunch":
+            raise suite.SuiteError("device offline")
+        return {"stage": stage, "ok": True}
+
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", fake_ensure)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **kwargs: retries.append(str(kwargs["stage"])) or {"ok": True},
+    )
+
+    runtime = suite.configure_turn_lab_runtime(
+        args,
+        runner,
+        config,
+        fake_turn=type("FakeTurn", (), {"base_url": "http://127.0.0.1:55123"})(),
+        reply_mode="card_only",
+        relaunch=True,
+    )
+
+    assert retries == ["turn_lab_relaunch_retry"]
+    assert runtime["turn_url"] == "http://127.0.0.1:55123"
+
+
 def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")

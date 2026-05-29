@@ -3212,7 +3212,17 @@ def configure_turn_lab_runtime(
         runner.run(adb_command(args, config.serial, ["shell", "am", "force-stop", args.package_name]), timeout=30)
         time.sleep(1.0 if not runner.dry_run else 0.0)
         runner.run(launch_command(args, config), timeout=30)
-        ensure_broker_command_channel(args, runner, config, stage="turn_lab_relaunch", timeout_seconds=90)
+        try:
+            ensure_broker_command_channel(args, runner, config, stage="turn_lab_relaunch", timeout_seconds=90)
+        except SuiteError:
+            launch_home_resilient(
+                args,
+                runner,
+                config,
+                wait_for_channel=True,
+                stage="turn_lab_relaunch_retry",
+                timeout_seconds=90,
+            )
     else:
         ensure_broker_command_channel(args, runner, config, stage="turn_lab_existing", timeout_seconds=90)
     settings = command_result(command_json(
