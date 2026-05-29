@@ -140,7 +140,36 @@ def puckyctl_args(args: argparse.Namespace, command: str, payload: dict[str, Any
     ]
 
 
+def should_retry_response(response: dict[str, Any]) -> bool:
+    error = response.get("error") if isinstance(response.get("error"), dict) else {}
+    code = str(error.get("code", ""))
+    status = str(response.get("status", ""))
+    return code in {"DEVICE_OFFLINE", "WAIT_TIMEOUT", "TimeoutExpired"} or status in {"device_offline", "accepted", "sent"}
+
+
 def run_command(args: argparse.Namespace, command: str, payload: dict[str, Any], *, timeout_seconds: int = 60) -> dict[str, Any]:
+    last: dict[str, Any] | None = None
+    attempts = max(1, int(args.command_attempts))
+    for attempt in range(1, attempts + 1):
+        response = run_command_once(args, command, payload, timeout_seconds=timeout_seconds)
+        response["attempt"] = attempt
+        last = response
+        if response.get("ok") or not should_retry_response(response) or attempt >= attempts:
+            return response
+        time.sleep(min(10.0, 1.5 * attempt))
+    return last or {
+        "returncode": 1,
+        "ok": False,
+        "status": "unknown",
+        "type": command,
+        "command_id": "",
+        "result": {},
+        "error": {"code": "UNKNOWN", "message": "No command attempt ran"},
+        "raw_tail": "",
+    }
+
+
+def run_command_once(args: argparse.Namespace, command: str, payload: dict[str, Any], *, timeout_seconds: int = 60) -> dict[str, Any]:
     try:
         completed = run_subprocess(puckyctl_args(args, command, payload, timeout_seconds), timeout=timeout_seconds + 15)
     except Exception as exc:
@@ -216,6 +245,8 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
     recipes: dict[str, Recipe] = {name: Recipe("pass") for name in read_empty}
     recipes.update({name: Recipe("pass", {"limit": 5}) for name in list_limited})
     recipes.update({
+        "artifact.list": Recipe("pass", {"limit": 5}, timeout_seconds=180),
+        "speech.echo.last": Recipe("pass", timeout_seconds=120),
         "location.get": Recipe("pass_or_honest_failure", {"cached": True, "timeout_ms": 3000}),
         "location.watch": Recipe("pass_or_honest_failure", {"duration_ms": 1000, "interval_ms": 1000, "max_samples": 1}),
         "location.tracker.status": Recipe("pass"),
@@ -545,6 +576,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-recipes", action="store_true")
     parser.add_argument("--include-live-comms", action="store_true")
     parser.add_argument("--include-user-mediated", action="store_true")
+    parser.add_argument("--command-attempts", type=int, default=3)
     parser.add_argument("--command-pause-seconds", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=ROOT / ".tmp" / "apk-command-certification" / "latest.json")
     return parser

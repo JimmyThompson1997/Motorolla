@@ -60,3 +60,33 @@ def test_outcome_mapping_accepts_honest_failures() -> None:
     assert cert.outcome_for(honest, failed_response) == "pass_honest_failure"
     assert cert.outcome_for(honest, ok_response) == "pass"
     assert cert.outcome_for(strict, failed_response) == "fail"
+
+
+def test_should_retry_response_only_for_transient_failures() -> None:
+    assert cert.should_retry_response({"ok": False, "status": "device_offline", "error": {"code": "DEVICE_OFFLINE"}}) is True
+    assert cert.should_retry_response({"ok": False, "status": "accepted", "error": {"code": ""}}) is True
+    assert cert.should_retry_response({"ok": False, "status": "completed", "error": {"code": "PERMISSION_MISSING"}}) is False
+
+
+def test_run_command_retries_until_success(monkeypatch) -> None:
+    calls = []
+    responses = iter(
+        [
+            {"ok": False, "status": "device_offline", "error": {"code": "DEVICE_OFFLINE"}, "result": {}, "command_id": "one", "type": "ping", "returncode": 1, "raw_tail": ""},
+            {"ok": True, "status": "completed", "error": None, "result": {"schema": "ok"}, "command_id": "two", "type": "ping", "returncode": 0, "raw_tail": ""},
+        ]
+    )
+
+    def fake_once(args, command, payload, *, timeout_seconds=60):
+        calls.append((command, payload, timeout_seconds))
+        return next(responses)
+
+    monkeypatch.setattr(cert, "run_command_once", fake_once)
+    monkeypatch.setattr(cert.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = argparse.Namespace(command_attempts=3)
+    result = cert.run_command(args, "ping", {})
+
+    assert len(calls) == 2
+    assert result["ok"] is True
+    assert result["attempt"] == 2
