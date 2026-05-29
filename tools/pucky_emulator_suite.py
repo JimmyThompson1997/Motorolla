@@ -89,6 +89,7 @@ WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "ui.reply_cards.before.json",
     "ui.reply_cards.final.json",
     "proof.json",
+)
 SYNTHETIC_REPLY_CARD_COMMAND_BUDGET = 7000
 DIRECT_PHOTO_CAPTURE_TIMEOUT_MS = 15000
 DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS = 2
