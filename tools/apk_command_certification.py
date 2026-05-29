@@ -108,7 +108,16 @@ def command_result_payload(envelope: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def run_subprocess(argv: list[str], *, cwd: Path = ROOT, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, cwd=str(cwd), text=True, capture_output=True, timeout=timeout, check=False)
+    return subprocess.run(
+        argv,
+        cwd=str(cwd),
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def puckyctl_args(args: argparse.Namespace, command: str, payload: dict[str, Any], timeout_seconds: int) -> list[str]:
@@ -216,7 +225,7 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "location.tracker.clear": Recipe("pass_or_honest_failure", {"older_than_ms": 0, "reason": run_nonce}),
         "location.tracker.export": Recipe("pass_or_honest_failure", {"limit": 5}),
         "file.download": Recipe("pass_honest_failure", {"url": "https://example.invalid/pucky-cert.txt"}),
-        "file.put_base64": Recipe("pass", {"filename": f"{run_nonce}.txt", "mime_type": "text/plain", "data_base64": "cHVja3ktY2VydA=="}),
+        "file.put_base64": Recipe("pass", {"filename": f"{run_nonce}.txt", "mime_type": "text/plain", "content_base64": "cHVja3ktY2VydA=="}),
         "app.update.install_downloaded": Recipe("pass_honest_failure", {"path": "/data/local/tmp/pucky-cert-missing.apk"}),
         "sensor.sample": Recipe("pass_or_honest_failure", {"events": 1, "timeout": 1000}),
         "sensor.watch": Recipe("pass_or_honest_failure", {"events": 1, "timeout": 1000}),
@@ -408,6 +417,43 @@ def outcome_for(recipe: Recipe, response: dict[str, Any] | None, *, skipped: boo
     return "fail"
 
 
+def cleanup_after(args: argparse.Namespace, command: str, response: dict[str, Any], *, timeout_seconds: int = 60) -> list[dict[str, Any]]:
+    if not response.get("ok"):
+        return []
+    result = response.get("result") or {}
+    cleanup: list[tuple[str, dict[str, Any]]] = []
+    if command in {"android.contacts.create", "phone.contacts.create"}:
+        contact = result.get("contact") if isinstance(result.get("contact"), dict) else {}
+        contact_id = contact.get("contact_id")
+        if contact_id is not None:
+            cleanup.append((command.replace(".create", ".delete"), {"contact_id": contact_id}))
+    elif command == "note.create_local":
+        note = result.get("note") if isinstance(result.get("note"), dict) else {}
+        note_id = note.get("id")
+        if note_id:
+            cleanup.append(("note.delete_local", {"id": note_id}))
+    elif command == "timer.set":
+        timer_id = result.get("id")
+        if timer_id:
+            cleanup.append(("timer.cancel", {"id": timer_id}))
+    elif command == "notify.show":
+        cleanup.append(("notify.cancel", {"tag": response.get("args_tag", "") or ""}))
+
+    rows: list[dict[str, Any]] = []
+    for cleanup_command, payload in cleanup:
+        if cleanup_command == "notify.cancel" and not payload.get("tag"):
+            continue
+        cleanup_response = run_command(args, cleanup_command, payload, timeout_seconds=timeout_seconds)
+        rows.append({
+            "command": cleanup_command,
+            "args": payload,
+            "ok": cleanup_response.get("ok"),
+            "status": cleanup_response.get("status"),
+            "error": cleanup_response.get("error"),
+        })
+    return rows
+
+
 def certify(args: argparse.Namespace) -> dict[str, Any]:
     run_nonce = args.nonce or nonce()
     source = source_commands(args.repo_root)
@@ -443,6 +489,7 @@ def certify(args: argparse.Namespace) -> dict[str, Any]:
             })
             continue
         response = run_command(args, command, recipe.args or {}, timeout_seconds=recipe.timeout_seconds)
+        cleanup = cleanup_after(args, command, {**response, "args_tag": (recipe.args or {}).get("tag", "")})
         rows.append({
             "command": command,
             "expected": recipe.expected,
@@ -453,6 +500,7 @@ def certify(args: argparse.Namespace) -> dict[str, Any]:
             "error": response.get("error"),
             "result_keys": sorted((response.get("result") or {}).keys()),
             "notes": recipe.notes,
+            "cleanup": cleanup,
         })
         time.sleep(args.command_pause_seconds)
 
