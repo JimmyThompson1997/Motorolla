@@ -20,6 +20,7 @@ import android.provider.Telephony;
 import android.telecom.TelecomManager;
 import android.telephony.SmsManager;
 
+import com.pucky.device.calls.PuckyCallStateStore;
 import com.pucky.device.MainActivity;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
@@ -127,7 +128,7 @@ public final class AndroidSubstrateController {
                 "calls",
                 "content+manager",
                 array("content://call_log/calls"),
-                array("content.query", "content.insert", "content.update", "content.delete", "manager.call:place_call", "manager.call:hangup_active"),
+                array("content.query", "content.insert", "content.update", "content.delete", "manager.call:place_call", "manager.call:hangup_active", "manager.call:answer_ringing", "manager.call:call_state"),
                 permissions(Manifest.permission.READ_CALL_LOG, Manifest.permission.WRITE_CALL_LOG, Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS),
                 "android.app.role.DIALER",
                 queryExample("content://call_log/calls", array("_id", "number", "date", "type", "duration", "new", "is_read", "name", "voicemail_uri", "transcription"), "date DESC")));
@@ -442,6 +443,10 @@ public final class AndroidSubstrateController {
                 return placeCall(args);
             case "hangup_active":
                 return hangupActive();
+            case "answer_ringing":
+                return answerRinging();
+            case "call_state":
+                return callState();
             default:
                 throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Unsupported manager.call action: " + action);
         }
@@ -508,6 +513,24 @@ public final class AndroidSubstrateController {
         boolean ended = telecom.endCall();
         JSONObject out = baseResult("manager.call", "hangup_active");
         Json.put(out, "ended", ended);
+        return out;
+    }
+
+    private JSONObject answerRinging() throws CommandException {
+        requirePermission(Manifest.permission.ANSWER_PHONE_CALLS);
+        JSONObject state = PuckyCallStateStore.answerRinging(context);
+        JSONObject out = baseResult("manager.call", "answer_ringing");
+        Json.put(out, "answered", state.optBoolean("answered", false));
+        Json.put(out, "call_key", state.opt("call_key"));
+        Json.put(out, "state", state.opt("state"));
+        Json.put(out, "reason", state.opt("reason"));
+        Json.put(out, "number", state.opt("number"));
+        return out;
+    }
+
+    private JSONObject callState() {
+        JSONObject out = baseResult("manager.call", "call_state");
+        Json.put(out, "state", PuckyCallStateStore.snapshot(context));
         return out;
     }
 
@@ -700,6 +723,15 @@ public final class AndroidSubstrateController {
         }
         if (Manifest.permission.WRITE_SETTINGS.equals(name)) {
             return Settings.System.canWrite(context);
+        }
+        if ("android.permission.READ_BLOCKED_NUMBERS".equals(name)
+                || "android.permission.WRITE_BLOCKED_NUMBERS".equals(name)) {
+            return holdsRole("android.app.role.DIALER") || holdsRole("android.app.role.SMS")
+                    || context.checkSelfPermission(name) == PackageManager.PERMISSION_GRANTED;
+        }
+        if (VOICEMAIL_READ.equals(name) || VOICEMAIL_WRITE.equals(name)) {
+            return holdsRole("android.app.role.DIALER")
+                    || context.checkSelfPermission(name) == PackageManager.PERMISSION_GRANTED;
         }
         return context.checkSelfPermission(name) == PackageManager.PERMISSION_GRANTED;
     }

@@ -69,11 +69,14 @@ public final class PhoneDataController {
     public JSONObject smsList(JSONObject args) throws CommandException {
         return safe(() -> {
             int limit = boundedLimit(args);
-            JSONObject result = substrate(queryArgs(
+            JSONObject result = substrate(historyQueryArgs(
                     "content://sms",
                     array("_id", "thread_id", "address", "date", "type", "read", "seen", "status", "creator", "body"),
-                    "date DESC",
-                    limit));
+                    null,
+                    null,
+                    "date DESC, _id DESC",
+                    limit,
+                    args));
             JSONArray rows = normalizeSmsRows(result.optJSONArray("rows"));
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.phone_sms_list.v1");
@@ -94,15 +97,18 @@ public final class PhoneDataController {
                 throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "phone.sms.get_thread requires thread_id or address");
             }
 
-            JSONObject query = queryArgs(
+            JSONArray threadWhereArgs = threadId.isEmpty() ? null : array(threadId);
+            int scanLimit = address.isEmpty()
+                    ? Math.min(MAX_LIMIT, Math.max(limit, 50))
+                    : Math.min(MAX_LIMIT, Math.max(limit * 8, 50));
+            JSONObject query = historyQueryArgs(
                     "content://sms",
                     array("_id", "thread_id", "address", "date", "type", "read", "seen", "status", "creator", "body"),
-                    "date DESC",
-                    Math.min(MAX_LIMIT, Math.max(limit, 50)));
-            if (!threadId.isEmpty()) {
-                Json.put(query, "where", "thread_id = ?");
-                Json.put(query, "where_args", array(threadId));
-            }
+                    threadId.isEmpty() ? null : "thread_id = ?",
+                    threadWhereArgs,
+                    "date DESC, _id DESC",
+                    scanLimit,
+                    args);
             JSONArray rows = normalizeSmsRows(substrate(query).optJSONArray("rows"));
             if (!address.isEmpty()) {
                 rows = filterSmsRowsByAddress(rows, address, limit);
@@ -148,11 +154,14 @@ public final class PhoneDataController {
     public JSONObject callsList(JSONObject args) throws CommandException {
         return safe(() -> {
             int limit = boundedLimit(args);
-            JSONObject result = substrate(queryArgs(
+            JSONObject result = substrate(historyQueryArgs(
                     "content://call_log/calls",
                     array("_id", "number", "formatted_number", "date", "type", "duration", "new", "is_read", "name", "voicemail_uri", "transcription"),
-                    "date DESC",
-                    limit));
+                    null,
+                    null,
+                    "date DESC, _id DESC",
+                    limit,
+                    args));
             JSONArray rows = normalizeCallRows(result.optJSONArray("rows"));
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.phone_calls_list.v1");
@@ -160,6 +169,32 @@ public final class PhoneDataController {
             Json.put(out, "rows", rows);
             Json.put(out, "count", rows.length());
             Json.put(out, "truncated", result.optBoolean("truncated", false));
+            return out;
+        });
+    }
+
+    public JSONObject callsState(JSONObject args) throws CommandException {
+        return safe(() -> {
+            JSONObject payload = new JSONObject();
+            Json.put(payload, "op", "manager.call");
+            Json.put(payload, "action", "call_state");
+            JSONObject raw = substrate(payload);
+            JSONObject state = raw.optJSONObject("state");
+            if (state == null) {
+                state = new JSONObject();
+            }
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_calls_state.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "overall_state", state.optString("overall_state", "idle"));
+            Json.put(out, "has_ringing_call", state.optBoolean("has_ringing_call", false));
+            Json.put(out, "has_ongoing_call", state.optBoolean("has_ongoing_call", false));
+            Json.put(out, "tracked_call_count", state.optInt("tracked_call_count", 0));
+            Json.put(out, "calls", state.optJSONArray("calls"));
+            Json.put(out, "default_dialer_package", state.optString("default_dialer_package", ""));
+            Json.put(out, "default_dialer_held", state.optBoolean("default_dialer_held", false));
+            Json.put(out, "system_in_call", state.optBoolean("system_in_call", false));
+            Json.put(out, "system_in_managed_call", state.optBoolean("system_in_managed_call", false));
             return out;
         });
     }
@@ -179,6 +214,24 @@ public final class PhoneDataController {
             Json.put(out, "schema", "pucky.phone_call_place.v1");
             Json.put(out, "generated_at", Instant.now().toString());
             Json.put(out, "requested", raw.optBoolean("requested", false));
+            Json.put(out, "number", raw.opt("number"));
+            return out;
+        });
+    }
+
+    public JSONObject callsAnswer(JSONObject args) throws CommandException {
+        return safe(() -> {
+            JSONObject payload = new JSONObject();
+            Json.put(payload, "op", "manager.call");
+            Json.put(payload, "action", "answer_ringing");
+            JSONObject raw = substrate(payload);
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_call_answer.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "answered", raw.optBoolean("answered", false));
+            Json.put(out, "call_key", raw.opt("call_key"));
+            Json.put(out, "state", raw.opt("state"));
+            Json.put(out, "reason", raw.opt("reason"));
             Json.put(out, "number", raw.opt("number"));
             return out;
         });
@@ -661,13 +714,66 @@ public final class PhoneDataController {
     }
 
     private JSONObject queryArgs(String uri, JSONArray projection, String sort, int limit) {
+        return queryArgs(uri, projection, null, null, sort, limit);
+    }
+
+    private JSONObject queryArgs(String uri, JSONArray projection, String where, JSONArray whereArgs, String sort, int limit) {
         JSONObject out = new JSONObject();
         Json.put(out, "op", "content.query");
         Json.put(out, "uri", uri);
         Json.put(out, "projection", projection);
+        if (where != null && !where.trim().isEmpty()) {
+            Json.put(out, "where", where);
+        }
+        if (whereArgs != null && whereArgs.length() > 0) {
+            Json.put(out, "where_args", whereArgs);
+        }
         Json.put(out, "sort", sort);
         Json.put(out, "limit", Math.max(1, Math.min(MAX_LIMIT, limit)));
         return out;
+    }
+
+    private JSONObject historyQueryArgs(
+            String uri,
+            JSONArray projection,
+            String baseWhere,
+            JSONArray baseWhereArgs,
+            String sort,
+            int limit,
+            JSONObject args) throws CommandException {
+        StringBuilder where = new StringBuilder();
+        JSONArray whereArgs = new JSONArray();
+        appendWhereClause(where, whereArgs, baseWhere, baseWhereArgs);
+
+        long beforeTimestampMs = optionalLong(args, "before_timestamp_ms");
+        long beforeId = optionalLong(args, "before_id");
+        if (beforeTimestampMs > 0L && beforeId > 0L) {
+            appendWhereClause(
+                    where,
+                    whereArgs,
+                    "(date < ? OR (date = ? AND _id < ?))",
+                    array(String.valueOf(beforeTimestampMs), String.valueOf(beforeTimestampMs), String.valueOf(beforeId)));
+        } else if (beforeTimestampMs > 0L) {
+            appendWhereClause(where, whereArgs, "date < ?", array(String.valueOf(beforeTimestampMs)));
+        } else if (beforeId > 0L) {
+            appendWhereClause(where, whereArgs, "_id < ?", array(String.valueOf(beforeId)));
+        }
+        return queryArgs(uri, projection, where.length() == 0 ? null : where.toString(), whereArgs, sort, limit);
+    }
+
+    private void appendWhereClause(StringBuilder where, JSONArray whereArgs, String clause, JSONArray clauseArgs) {
+        if (clause == null || clause.trim().isEmpty()) {
+            return;
+        }
+        if (where.length() > 0) {
+            where.append(" AND ");
+        }
+        where.append('(').append(clause).append(')');
+        if (clauseArgs != null) {
+            for (int i = 0; i < clauseArgs.length(); i++) {
+                Json.add(whereArgs, clauseArgs.optString(i, ""));
+            }
+        }
     }
 
     private JSONArray readinessSummary(JSONArray surfaces) {
@@ -966,6 +1072,18 @@ public final class PhoneDataController {
         String value = trimmed(args, key);
         if (value.isEmpty()) {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Missing required field: " + key);
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND, "Invalid long for " + key + ": " + value);
+        }
+    }
+
+    private long optionalLong(JSONObject args, String key) throws CommandException {
+        String value = trimmed(args, key);
+        if (value.isEmpty()) {
+            return 0L;
         }
         try {
             return Long.parseLong(value);

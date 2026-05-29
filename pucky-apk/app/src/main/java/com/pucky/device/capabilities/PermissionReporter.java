@@ -6,6 +6,8 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.provider.Settings;
+import android.telecom.TelecomManager;
+import android.provider.Telephony;
 
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.SettingsStore;
@@ -68,6 +70,14 @@ public final class PermissionReporter {
         if (Manifest.permission.POST_NOTIFICATIONS.equals(permission) && Build.VERSION.SDK_INT < 33) {
             return true;
         }
+        if ("android.permission.READ_BLOCKED_NUMBERS".equals(permission)
+                || "android.permission.WRITE_BLOCKED_NUMBERS".equals(permission)) {
+            return isGranted(permission) || holdsDialerRole() || holdsSmsRole();
+        }
+        if ("com.android.voicemail.permission.READ_VOICEMAIL".equals(permission)
+                || "com.android.voicemail.permission.ADD_VOICEMAIL".equals(permission)) {
+            return isGranted(permission) || holdsDialerRole();
+        }
         return isGranted(permission);
     }
 
@@ -107,9 +117,9 @@ public final class PermissionReporter {
         add(out, Manifest.permission.CALL_PHONE, declared, true, true, "dangerous",
                 array("android.substrate place call", "phone.calls.place"));
         add(out, Manifest.permission.ANSWER_PHONE_CALLS, declared, true, true, "dangerous",
-                array("android.substrate hang up or answer calls", "phone.calls.hangup"));
+                array("android.substrate hang up or answer calls", "phone.calls.answer", "phone.calls.hangup"));
         add(out, Manifest.permission.READ_PHONE_STATE, declared, true, true, "dangerous",
-                array("android.substrate phone state", "phone.telephony.status"));
+                array("android.substrate phone state", "phone.telephony.status", "phone.calls.state"));
         add(out, Manifest.permission.READ_CALL_LOG, declared, true, true, "dangerous",
                 array("android.substrate call log query", "phone.calls.list", "phone.voicemail.list"));
         add(out, Manifest.permission.WRITE_CALL_LOG, declared, true, true, "dangerous",
@@ -171,6 +181,16 @@ public final class PermissionReporter {
 
     private boolean isGranted(String permission) {
         return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean holdsDialerRole() {
+        TelecomManager telecom = (TelecomManager) context.getSystemService(Context.TELECOM_SERVICE);
+        return telecom != null && context.getPackageName().equals(telecom.getDefaultDialerPackage());
+    }
+
+    private boolean holdsSmsRole() {
+        String defaultSmsPackage = Telephony.Sms.getDefaultSmsPackage(context);
+        return context.getPackageName().equals(defaultSmsPackage);
     }
 
     private Set<String> declaredPermissions() {

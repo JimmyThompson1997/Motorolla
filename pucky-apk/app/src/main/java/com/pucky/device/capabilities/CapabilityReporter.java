@@ -229,13 +229,13 @@ public final class CapabilityReporter {
                         && permissionReporter.isEffectivelyGranted(Manifest.permission.SEND_SMS)
                         ? "implemented_untested" : "blocked_by_permission",
                 "yes", "privacy_sensitive", Manifest.permission.READ_SMS, "not_recorded",
-                "Lists recent SMS, reads a thread by address or thread id, and sends direct SMS through the Android communications room."));
-        Json.add(out, cap("phone.calls", "phone.calls.list/phone.calls.place/phone.calls.hangup",
+                "Lists recent SMS, supports deep history windows, reads a thread by address or thread id, and sends direct SMS through the Android communications room."));
+        Json.add(out, cap("phone.calls", "phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.hangup",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CALL_LOG)
                         && permissionReporter.isEffectivelyGranted(Manifest.permission.CALL_PHONE)
                         ? "implemented_untested" : "blocked_by_permission",
                 "yes", "privacy_sensitive", Manifest.permission.READ_CALL_LOG, "not_recorded",
-                "Lists call history and wraps direct place or hangup actions over the Android communications room."));
+                "Lists call history, supports deep history windows, reports live call state, and wraps direct place, answer, or hangup actions over the Android communications room."));
         Json.add(out, cap("phone.contacts", "phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CONTACTS)
                         && permissionReporter.isEffectivelyGranted(Manifest.permission.WRITE_CONTACTS)

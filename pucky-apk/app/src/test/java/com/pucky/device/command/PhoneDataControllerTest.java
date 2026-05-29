@@ -95,6 +95,7 @@ public final class PhoneDataControllerTest {
         assertEquals("missed", PhoneDataController.callTypeFor(3));
         assertEquals("voicemail", PhoneDataController.callTypeFor(4));
         assertEquals("blocked", PhoneDataController.callTypeFor(6));
+        assertEquals("answered_externally", PhoneDataController.callTypeFor(7));
         assertEquals("unknown", PhoneDataController.callTypeFor(99));
 
         String userNumber = PhoneDataController.normalizeDigits("+1 (407) 496-9882");
@@ -119,7 +120,9 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("\"phone.sms.get_thread\""));
         assertTrue(executor.contains("\"phone.sms.send\""));
         assertTrue(executor.contains("\"phone.calls.list\""));
+        assertTrue(executor.contains("\"phone.calls.state\""));
         assertTrue(executor.contains("\"phone.calls.place\""));
+        assertTrue(executor.contains("\"phone.calls.answer\""));
         assertTrue(executor.contains("\"phone.calls.hangup\""));
         assertTrue(executor.contains("\"phone.contacts.search\""));
         assertTrue(executor.contains("\"phone.contacts.get\""));
@@ -132,7 +135,9 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("\"phone.blocked_numbers.remove\""));
         assertTrue(executor.contains("return phoneDataController.telephonyStatus()"));
         assertTrue(executor.contains("return phoneDataController.smsList(command.args())"));
+        assertTrue(executor.contains("return phoneDataController.callsState(command.args())"));
         assertTrue(executor.contains("return phoneDataController.callsPlace(command.args())"));
+        assertTrue(executor.contains("return phoneDataController.callsAnswer(command.args())"));
         assertTrue(executor.contains("return phoneDataController.contactsReplace(command.args())"));
         assertTrue(executor.contains("return phoneDataController.blockedNumbersRemove(command.args())"));
 
@@ -141,7 +146,7 @@ public final class PhoneDataControllerTest {
 
         assertTrue(capability.contains("phone.telephony.status"));
         assertTrue(capability.contains("phone.sms.list/phone.sms.get_thread/phone.sms.send"));
-        assertTrue(capability.contains("phone.calls.list/phone.calls.place/phone.calls.hangup"));
+        assertTrue(capability.contains("phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.hangup"));
         assertTrue(capability.contains("phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete"));
         assertTrue(capability.contains("phone.voicemail.list"));
         assertTrue(capability.contains("phone.blocked_numbers.list/phone.blocked_numbers.add/phone.blocked_numbers.remove"));
@@ -149,7 +154,9 @@ public final class PhoneDataControllerTest {
         assertTrue(permission.contains("phone.sms.list"));
         assertTrue(permission.contains("phone.sms.send"));
         assertTrue(permission.contains("phone.calls.place"));
+        assertTrue(permission.contains("phone.calls.answer"));
         assertTrue(permission.contains("phone.calls.hangup"));
+        assertTrue(permission.contains("phone.calls.state"));
         assertTrue(permission.contains("phone.telephony.status"));
         assertTrue(permission.contains("phone.calls.list"));
         assertTrue(permission.contains("phone.contacts.search"));
@@ -169,10 +176,15 @@ public final class PhoneDataControllerTest {
         assertTrue(controller.contains("Json.put(out, \"readiness\", readinessSummary(catalog.optJSONArray(\"surfaces\")))"));
         assertTrue(controller.contains("phone.sms.send requires to and body"));
         assertTrue(controller.contains("phone.calls.place requires number"));
+        assertTrue(controller.contains("pucky.phone_calls_state.v1"));
+        assertTrue(controller.contains("pucky.phone_call_answer.v1"));
         assertTrue(controller.contains("phone.contacts.create requires display_name"));
         assertTrue(controller.contains("phone.contacts.replace requires display_name"));
         assertTrue(controller.contains("Missing required field: "));
         assertTrue(controller.contains("Invalid long for "));
+        assertTrue(controller.contains("before_timestamp_ms"));
+        assertTrue(controller.contains("before_id"));
+        assertTrue(controller.contains("historyQueryArgs("));
         assertTrue(controller.contains("requireSurfaceReady(catalog, \"voicemail\")"));
         assertTrue(controller.contains("requireSurfaceReady(catalog, \"blocked_numbers\")"));
         assertTrue(controller.contains("Role required for surface: "));
@@ -187,6 +199,35 @@ public final class PhoneDataControllerTest {
         assertTrue(substrate.contains("send_sms requires to and body"));
         assertTrue(substrate.contains("place_call requires number"));
         assertTrue(substrate.contains("Emergency-like numbers are blocked"));
+        assertTrue(substrate.contains("answer_ringing"));
+        assertTrue(substrate.contains("call_state"));
+    }
+
+    @Test
+    public void manifestAndCallSourcesExposeDialerQualification() throws Exception {
+        String manifest = read("src/main/AndroidManifest.xml");
+        String dialer = read("src/main/java/com/pucky/device/calls/PuckyDialerActivity.java");
+        String inCall = read("src/main/java/com/pucky/device/calls/PuckyInCallService.java");
+        String store = read("src/main/java/com/pucky/device/calls/PuckyCallStateStore.java");
+
+        assertTrue(manifest.contains("com.pucky.device.calls.PuckyDialerActivity") || manifest.contains(".calls.PuckyDialerActivity"));
+        assertTrue(manifest.contains("android.intent.action.DIAL"));
+        assertTrue(manifest.contains("android:scheme=\"tel\""));
+        assertTrue(manifest.contains("android.permission.BIND_INCALL_SERVICE"));
+        assertTrue(manifest.contains("android.telecom.InCallService"));
+        assertTrue(manifest.contains("android.telecom.IN_CALL_SERVICE_UI"));
+
+        assertTrue(dialer.contains("setTitle(\"Pucky Dialer\")"));
+        assertTrue(dialer.contains("telecom.placeCall(Uri.fromParts(\"tel\", number, null), new Bundle())"));
+        assertTrue(dialer.contains("PuckyCallStateStore.answerRinging(this)"));
+
+        assertTrue(inCall.contains("extends InCallService"));
+        assertTrue(inCall.contains("PuckyCallStateStore.onCallAdded(this, call)"));
+        assertTrue(inCall.contains("PuckyCallStateStore.onBringToForeground(this, showDialpad)"));
+
+        assertTrue(store.contains("call.answer(VideoProfile.STATE_AUDIO_ONLY)"));
+        assertTrue(store.contains("\"overall_state\""));
+        assertTrue(store.contains("\"default_dialer_held\""));
     }
 
     private static String read(String path) throws Exception {

@@ -96,7 +96,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "phone.telephony.status",
             "phone.sms.list", "phone.sms.get_thread", "phone.sms.send",
-            "phone.calls.list", "phone.calls.place", "phone.calls.hangup",
+            "phone.calls.list", "phone.calls.state", "phone.calls.place", "phone.calls.answer", "phone.calls.hangup",
             "phone.contacts.search", "phone.contacts.get", "phone.contacts.create",
             "phone.contacts.replace", "phone.contacts.delete",
             "phone.voicemail.list",
@@ -524,8 +524,12 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return phoneDataController.smsSend(command.args());
             case "phone.calls.list":
                 return phoneDataController.callsList(command.args());
+            case "phone.calls.state":
+                return phoneDataController.callsState(command.args());
             case "phone.calls.place":
                 return phoneDataController.callsPlace(command.args());
+            case "phone.calls.answer":
+                return phoneDataController.callsAnswer(command.args());
             case "phone.calls.hangup":
                 return phoneDataController.callsHangup(command.args());
             case "phone.contacts.search":
