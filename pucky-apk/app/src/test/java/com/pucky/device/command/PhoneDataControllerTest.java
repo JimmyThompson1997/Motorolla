@@ -212,6 +212,7 @@ public final class PhoneDataControllerTest {
 
         assertTrue(manifest.contains("com.pucky.device.calls.PuckyDialerActivity") || manifest.contains(".calls.PuckyDialerActivity"));
         assertTrue(manifest.contains("android.intent.action.DIAL"));
+        assertTrue(manifest.split("android.intent.action.DIAL", -1).length >= 3);
         assertTrue(manifest.contains("android:scheme=\"tel\""));
         assertTrue(manifest.contains("android.permission.BIND_INCALL_SERVICE"));
         assertTrue(manifest.contains("android.telecom.InCallService"));
