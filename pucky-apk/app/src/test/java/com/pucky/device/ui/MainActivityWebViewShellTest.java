@@ -317,18 +317,29 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("uiController.replyCardsClear"));
         assertTrue(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));
         assertTrue(uiController.contains("return PuckyFeedController.shared(context).snapshot();"));
+        assertTrue(uiController.contains("PuckyFeedController.shared(context).notifyFeedUpdated();"));
         assertTrue(source.contains("\"ui.bundle.status\""));
         assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
         assertTrue(source.contains("\"ui.bundle.refresh\""));
         assertTrue(source.contains("\"ui.surface.get\""));
         assertTrue(source.contains("\"ui.debug.goto_home\""));
         assertTrue(source.contains("\"ui.debug.back\""));
+        assertTrue(source.contains("\"ui.debug.focus_card\""));
+        assertTrue(source.contains("\"ui.debug.clear_focus\""));
         assertTrue(source.contains("\"ui.debug.open_card_action\""));
+        assertTrue(source.contains("\"voice.thread_scope.get\""));
+        assertTrue(source.contains("\"voice.thread_scope.set\""));
+        assertTrue(source.contains("\"voice.thread_scope.clear\""));
         assertTrue(source.contains("\"ui.shell.mode.get\""));
         assertTrue(source.contains("\"ui.shell.mode.set\""));
         assertTrue(source.contains("uiController.surfaceGet(uiBundleController)"));
+        assertTrue(source.contains("uiController.voiceThreadScopeGet()"));
+        assertTrue(source.contains("uiController.voiceThreadScopeSet(command.args())"));
+        assertTrue(source.contains("uiController.voiceThreadScopeClear(command.args())"));
         assertTrue(source.contains("uiController.debugGotoHome(command.args())"));
         assertTrue(source.contains("uiController.debugBack(command.args())"));
+        assertTrue(source.contains("uiController.debugFocusCard(command.args())"));
+        assertTrue(source.contains("uiController.debugClearFocus(command.args())"));
         assertTrue(source.contains("uiController.debugOpenCardAction(command.args())"));
         assertTrue(source.contains("uiBundleController.status()"));
         assertTrue(source.contains("uiBundleController.installDownloaded"));
@@ -337,9 +348,15 @@ public final class MainActivityWebViewShellTest {
         assertTrue(intentController.contains("Intent.CATEGORY_BROWSABLE"));
         assertTrue(intentController.contains("args.optBoolean(\"require_resolvable\", false)"));
         assertTrue(uiController.contains("public JSONObject surfaceGet(UiBundleController bundles)"));
+        assertTrue(uiController.contains("public JSONObject voiceThreadScopeGet()"));
+        assertTrue(uiController.contains("public JSONObject voiceThreadScopeSet(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject voiceThreadScopeClear(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugGotoHome(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugBack(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject debugFocusCard(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject debugClearFocus(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugOpenCardAction(JSONObject args)"));
+        assertTrue(read("src/main/java/com/pucky/device/ui/UiSurfaceController.java").contains("\"focused_card\""));
     }
 
     @Test

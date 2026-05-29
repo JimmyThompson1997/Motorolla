@@ -66,6 +66,10 @@ public final class PuckyFeedController {
         return mergedSnapshot();
     }
 
+    public void notifyFeedUpdated() {
+        emitFeedUpdated();
+    }
+
     public JSONObject sync(JSONObject args) throws CommandException {
         return syncInternal(
                 args.optString("reason", "manual"),

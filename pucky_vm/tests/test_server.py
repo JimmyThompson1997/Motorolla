@@ -1069,6 +1069,17 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), "audio/wav")
             self.assertEqual(response.read(), b"RIFFdemo")
 
+    def test_audio_turn_allows_debug_fixture_transcript_override_for_proof_lane(self) -> None:
+        body = self.post_audio(
+            b"RIFFdemo",
+            "audio/wav",
+            turn_id="audio-history-override",
+            headers={"X-Pucky-Debug-Fixture-Transcript": "Should we change these goals?"},
+        )
+
+        self.assertEqual(body["transcript_messages"][0]["text"], "Should we change these goals?")
+        self.assertTrue(body["telemetry"]["debug_fixture_transcript_used"])
+
     def test_feed_collapses_same_thread_to_latest_card_but_keeps_history(self) -> None:
         scripted = ScriptedCodex()
         self.service.codex = scripted

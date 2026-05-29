@@ -5,6 +5,7 @@ import android.os.Build;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Log;
 
 import com.pucky.device.BuildConfig;
 import com.pucky.device.command.CommandErrorCodes;
@@ -22,6 +23,7 @@ import java.time.Instant;
 import java.util.Locale;
 
 public final class WalkieAudioCaptureController {
+    private static final String TAG = "PuckyWalkieCapture";
     private static final String READY_HAPTIC_MS = "ready_haptic_ms";
     private static final int DEFAULT_READY_HAPTIC_MS = 55;
     private static final int HAPTIC_AMPLITUDE = 220;
@@ -37,6 +39,11 @@ public final class WalkieAudioCaptureController {
         String sessionId;
         String turnId;
         String triggerSource;
+        String threadMode;
+        String threadId;
+        String threadCardId;
+        String threadSessionId;
+        String threadScopeSource;
         String wakePhraseFamily;
         String wakePhraseDetected;
         File file;
@@ -54,6 +61,11 @@ public final class WalkieAudioCaptureController {
         String debugFixtureTranscript;
         int fixtureStartDelayMs;
         int proofReplyDelayMs;
+        long fixtureBytes;
+        int fixtureSamples;
+        int fixtureFramesTarget;
+        int fixtureFramesSent;
+        String fixtureError;
         AudioFrameBus bus;
         PcmCaptureConsumer pcm;
         WalkieSpeechGate gate;
@@ -109,6 +121,11 @@ public final class WalkieAudioCaptureController {
         capture.sessionId = sessionId;
         capture.turnId = turnId;
         capture.triggerSource = args.optString("trigger_source", args.optString("source", "volume_up_hold"));
+        capture.threadMode = safe(args.optString("thread_mode", "new"));
+        capture.threadId = safe(args.optString("thread_id", ""));
+        capture.threadCardId = safe(args.optString("thread_card_id", ""));
+        capture.threadSessionId = safe(args.optString("thread_session_id", ""));
+        capture.threadScopeSource = safe(args.optString("thread_scope_source", ""));
         capture.wakePhraseFamily = args.optString("wake_phrase_family", "");
         capture.wakePhraseDetected = args.optString("wake_phrase_detected", "");
         capture.file = uniqueFile(dir, sessionId + ".wav");
@@ -126,6 +143,11 @@ public final class WalkieAudioCaptureController {
         capture.debugFixtureTranscript = "";
         capture.fixtureStartDelayMs = 0;
         capture.proofReplyDelayMs = 0;
+        capture.fixtureBytes = 0L;
+        capture.fixtureSamples = 0;
+        capture.fixtureFramesTarget = 0;
+        capture.fixtureFramesSent = 0;
+        capture.fixtureError = "";
         if (BuildConfig.DEBUG) {
             String requestedCaptureSource = safe(args.optString("capture_source", "mic")).toLowerCase(Locale.US);
             if ("fixture".equals(requestedCaptureSource)) {
@@ -255,6 +277,11 @@ public final class WalkieAudioCaptureController {
         Json.put(out, "mime_type", "audio/wav");
         Json.put(out, "audio_source", "voice_recognition");
         Json.put(out, "trigger_source", capture.triggerSource);
+        Json.put(out, "thread_mode", capture.threadMode);
+        Json.put(out, "thread_id", capture.threadId);
+        Json.put(out, "thread_card_id", capture.threadCardId);
+        Json.put(out, "thread_session_id", capture.threadSessionId);
+        Json.put(out, "thread_scope_source", capture.threadScopeSource);
         Json.put(out, "capture_source", capture.captureSource);
         Json.put(out, "auto_endpoint", capture.autoEndpoint);
         Json.put(out, "speech_start_timeout_ms", capture.speechStartTimeoutMs);
@@ -268,7 +295,15 @@ public final class WalkieAudioCaptureController {
         }
         if ("fixture".equals(capture.captureSource)) {
             Json.put(out, "fixture_name", capture.fixtureName);
+            Json.put(out, "fixture_path", capture.fixturePath);
             Json.put(out, "fixture_start_delay_ms", capture.fixtureStartDelayMs);
+            Json.put(out, "fixture_bytes", capture.fixtureBytes);
+            Json.put(out, "fixture_samples", capture.fixtureSamples);
+            Json.put(out, "fixture_frames_target", capture.fixtureFramesTarget);
+            Json.put(out, "fixture_frames_sent", capture.fixtureFramesSent);
+            if (!capture.fixtureError.isEmpty()) {
+                Json.put(out, "fixture_error", capture.fixtureError);
+            }
             if (BuildConfig.DEBUG && !capture.debugFixtureTranscript.isEmpty()) {
                 Json.put(out, "debug_fixture_transcript", capture.debugFixtureTranscript);
             }
@@ -336,6 +371,13 @@ public final class WalkieAudioCaptureController {
             throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
                     "Fixture capture file not found: " + fixtureFile.getAbsolutePath());
         }
+        try {
+            capture.fixtureBytes = readAllBytes(fixtureFile).length;
+        } catch (Exception exc) {
+            capture.fixtureError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                    "Unable to read fixture capture file: " + capture.fixtureError);
+        }
     }
 
     private void startFixtureFeed(ActiveCapture capture) {
@@ -344,15 +386,31 @@ public final class WalkieAudioCaptureController {
                 if (capture.fixtureStartDelayMs > 0) {
                     sleepQuietly(capture.fixtureStartDelayMs);
                 }
-                short[] samples = OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(readAllBytes(resolveFixtureFile(capture)));
+                byte[] fixtureBytes = readAllBytes(resolveFixtureFile(capture));
+                short[] samples = OnDeviceInjectedAudioRecognizer.readPcm16MonoWav(fixtureBytes);
+                synchronized (WalkieAudioCaptureController.this) {
+                    capture.fixtureBytes = fixtureBytes.length;
+                    capture.fixtureSamples = samples.length;
+                    capture.fixtureFramesSent = 0;
+                    capture.fixtureError = "";
+                }
                 if (samples.length == 0) {
                     samples = new short[AudioFrameBus.FRAME_SAMPLES];
                 }
                 int trailingFrames = Math.max(1, (capture.trailingSilenceMs + 500 + (AudioFrameBus.FRAME_MS - 1)) / AudioFrameBus.FRAME_MS);
                 int totalFrames = ((samples.length + AudioFrameBus.FRAME_SAMPLES - 1) / AudioFrameBus.FRAME_SAMPLES) + trailingFrames;
+                synchronized (WalkieAudioCaptureController.this) {
+                    capture.fixtureFramesTarget = totalFrames;
+                }
+                Log.i(TAG, "Fixture feed ready turn=" + capture.turnId
+                        + " bytes=" + fixtureBytes.length
+                        + " samples=" + samples.length
+                        + " total_frames=" + totalFrames
+                        + " delay_ms=" + capture.fixtureStartDelayMs);
                 for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                     synchronized (WalkieAudioCaptureController.this) {
                         if (active != capture) {
+                            Log.i(TAG, "Fixture feed canceled turn=" + capture.turnId + " sent_frames=" + capture.fixtureFramesSent);
                             return;
                         }
                     }
@@ -365,9 +423,17 @@ public final class WalkieAudioCaptureController {
                     long timestamp = System.nanoTime();
                     capture.pcm.onFrame(frame, timestamp);
                     capture.gate.onFrame(frame, timestamp);
+                    synchronized (WalkieAudioCaptureController.this) {
+                        capture.fixtureFramesSent = frameIndex + 1;
+                    }
                     sleepQuietly(AudioFrameBus.FRAME_MS);
                 }
-            } catch (Exception ignored) {
+                Log.i(TAG, "Fixture feed completed turn=" + capture.turnId + " sent_frames=" + capture.fixtureFramesSent);
+            } catch (Exception exc) {
+                synchronized (WalkieAudioCaptureController.this) {
+                    capture.fixtureError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
+                }
+                Log.w(TAG, "Fixture feed failed for " + capture.turnId + ": " + capture.fixtureError, exc);
             }
         }, "pucky-walkie-fixture-feed");
         worker.setDaemon(true);

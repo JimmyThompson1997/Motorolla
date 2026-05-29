@@ -290,9 +290,11 @@
     metaCard: null,
     feedRefreshPromise: null,
     feedRefreshing: false,
+    nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
     starredSessionIds: new Set(),
     openCardMenuSessionId: "",
+    openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
     waveHistory: new Map(),
     links: initialLinksState(),
@@ -348,11 +350,15 @@
       if (name === "pucky.turn.status") {
         applyTurnStatus(payload);
         renderVoiceStatus();
+        if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" && state.route === "feed") {
+          void refreshCardsFromNativeSnapshot({ render: true });
+        }
       }
       if (name === "pucky.feed.updated") {
         const cards = Array.isArray(payload && payload.cards) ? payload.cards : [];
         if (cards.length || (payload && payload.count === 0)) {
           state.cards = cards;
+          reconcileFocusedCardSelection();
           clearMissingFeedIconFilter();
           render();
           restoreNavStateAfterCards();
@@ -605,6 +611,12 @@
     if (command === "ui.debug.back") {
       return uiDebugDispatch("back", args);
     }
+    if (command === "ui.debug.focus_card") {
+      return uiDebugDispatch("focus_card", args);
+    }
+    if (command === "ui.debug.clear_focus") {
+      return uiDebugDispatch("clear_focus", args);
+    }
     if (command === "ui.debug.open_card_action") {
       return uiDebugDispatch("open_card_action", args);
     }
@@ -760,6 +772,7 @@
         : { cards: await fetchReplyCards() };
       state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
       reconcileReadOverrides();
+      reconcileFocusedCardSelection();
       clearMissingFeedIconFilter();
       if (options.render !== false) {
         render();
@@ -781,6 +794,7 @@
       state.cards = MOCK_CARDS;
     }
     reconcileReadOverrides();
+    reconcileFocusedCardSelection();
     clearMissingFeedIconFilter();
     render();
     restoreNavStateAfterCards();
@@ -788,6 +802,34 @@
     if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       syncFeedCards({ reason: "load_cards", silent: true, render: true });
     }
+  }
+
+  async function refreshCardsFromNativeSnapshot(options = {}) {
+    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      return { cards: state.cards };
+    }
+    if (state.nativeFeedSnapshotPromise) {
+      return state.nativeFeedSnapshotPromise;
+    }
+    state.nativeFeedSnapshotPromise = (async () => {
+      try {
+        const cards = await fetchReplyCards();
+        state.cards = Array.isArray(cards) ? cards : state.cards;
+        reconcileReadOverrides();
+        reconcileFocusedCardSelection();
+        clearMissingFeedIconFilter();
+        if (options.render !== false) {
+          render();
+          restoreNavStateAfterCards();
+        }
+        return { cards: state.cards };
+      } catch (_) {
+        return { cards: state.cards };
+      } finally {
+        state.nativeFeedSnapshotPromise = null;
+      }
+    })();
+    return state.nativeFeedSnapshotPromise;
   }
 
   async function loadTurnStatus(options = {}) {
@@ -1757,6 +1799,8 @@
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
     const detail = document.getElementById("detail");
+    const focusedSessionId = String(state.openCardMenuSessionId || "");
+    const focusedCard = findFocusedCard();
     const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
       kind: node.getAttribute("data-card-kind") || "",
       card_id: node.getAttribute("data-card-id") || "",
@@ -1777,6 +1821,13 @@
         thread_id: detail?.getAttribute("data-detail-thread-id") || "",
         viewer: detail?.getAttribute("data-detail-viewer") || ""
       },
+        focused_card: {
+          active: Boolean(focusedCard),
+          session_id: focusedSessionId,
+          card_id: String(focusedCard?.card_id || ""),
+          thread_id: String(cardOrigin(focusedCard).thread_id || ""),
+          menu_open: Boolean(focusedCard),
+        },
       thread_scope: {
         visible: Boolean(threadScope && !threadScope.hidden),
         active: threadScope?.getAttribute("data-thread-scope-active") || "false",
@@ -1802,6 +1853,12 @@
         handled: handleAndroidBack(),
         surface: describeUiSurface()
       };
+    }
+    if (action === "focus_card") {
+      return uiDebugFocusCard(rawArgs);
+    }
+    if (action === "clear_focus") {
+      return uiDebugClearFocus();
     }
     if (action === "open_card_action") {
       return uiDebugOpenCardAction(rawArgs);
@@ -1884,6 +1941,71 @@
       action: "open_card_action",
       handled: true,
       selector,
+      surface: describeUiSurface()
+    };
+  }
+
+  function uiDebugFocusCard(rawArgs = {}) {
+    const sessionId = String(rawArgs.session_id || "").trim();
+    const cardId = String(rawArgs.card_id || "").trim();
+    if (!sessionId && !cardId) {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: false,
+        action: "focus_card",
+        handled: false,
+        error: "session_id or card_id is required",
+        surface: describeUiSurface()
+      };
+    }
+    if (state.route !== "feed" || normalizeNavDetail(state.navDetail)) {
+      uiDebugGotoHome();
+    }
+    if (state.showArchivedFeed) {
+      state.showArchivedFeed = false;
+    }
+    const card = sessionId
+      ? findCardBySessionId(sessionId)
+      : state.cards.find(item => String(item?.card_id || "") === cardId);
+    const nextSessionId = cardSessionId(card) || sessionId;
+    if (!card || !nextSessionId) {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: false,
+        action: "focus_card",
+        handled: false,
+        error: "Could not find card to focus",
+        surface: describeUiSurface()
+      };
+    }
+    state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+    state.openCardMenuSessionId = nextSessionId;
+    state.openCardMenuThreadId = cardThreadId(card);
+    renderFeed();
+    void syncVoiceThreadScope({ reason: "debug_focus_card", render: true });
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: true,
+      action: "focus_card",
+      handled: true,
+      session_id: nextSessionId,
+      surface: describeUiSurface()
+    };
+  }
+
+  function uiDebugClearFocus() {
+    const handled = dismissOpenCardMenu(false);
+    if (!handled) {
+      state.openCardMenuSessionId = "";
+      state.openCardMenuThreadId = "";
+      renderFeed();
+      void syncVoiceThreadScope({ reason: "debug_clear_focus", render: true });
+    }
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: true,
+      action: "clear_focus",
+      handled,
       surface: describeUiSurface()
     };
   }
@@ -4880,6 +5002,7 @@
       return false;
     }
     state.openCardMenuSessionId = "";
+    state.openCardMenuThreadId = "";
     if (suppressClick) {
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
     }
@@ -4981,7 +5104,13 @@
       timer = window.setTimeout(() => {
         timer = 0;
         state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-        state.openCardMenuSessionId = state.openCardMenuSessionId === sessionId ? "" : sessionId;
+        if (state.openCardMenuSessionId === sessionId) {
+          state.openCardMenuSessionId = "";
+          state.openCardMenuThreadId = "";
+        } else {
+          state.openCardMenuSessionId = sessionId;
+          state.openCardMenuThreadId = cardThreadId(card);
+        }
         renderFeed();
         void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });
       }, CARD_MENU_LONG_PRESS_MS);
@@ -6131,6 +6260,7 @@
         ? result.snapshot
         : { cards: await fetchReplyCards() };
       state.cards = applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);
+      reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
@@ -6376,7 +6506,7 @@
         }
       }
     }
-    const selected = findCardBySessionId(state.openCardMenuSessionId);
+    const selected = findFocusedCard();
     if (selected) {
       return threadScopeForCard(selected, "feed_tile_selected") || initialThreadScope();
     }
@@ -6416,6 +6546,40 @@
   function findCardBySessionId(sessionId) {
     const target = String(sessionId || "");
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
+  }
+
+  function findCardByThreadId(threadId) {
+    const target = String(threadId || "").trim();
+    return target ? state.cards.find(card => cardThreadId(card) === target) || null : null;
+  }
+
+  function findFocusedCard() {
+    const focusedSessionId = String(state.openCardMenuSessionId || "");
+    const direct = focusedSessionId ? findCardBySessionId(focusedSessionId) : null;
+    if (direct) {
+      return direct;
+    }
+    const focusedThreadId = String(state.openCardMenuThreadId || "").trim();
+    return focusedThreadId ? findCardByThreadId(focusedThreadId) : null;
+  }
+
+  function reconcileFocusedCardSelection() {
+    if (!state.openCardMenuSessionId && !state.openCardMenuThreadId) {
+      return;
+    }
+    const direct = findCardBySessionId(state.openCardMenuSessionId);
+    if (direct) {
+      state.openCardMenuThreadId = cardThreadId(direct);
+      return;
+    }
+    const fallback = findCardByThreadId(state.openCardMenuThreadId);
+    if (fallback) {
+      state.openCardMenuSessionId = cardSessionId(fallback);
+      state.openCardMenuThreadId = cardThreadId(fallback);
+      return;
+    }
+    state.openCardMenuSessionId = "";
+    state.openCardMenuThreadId = "";
   }
 
   function rememberFeedScroll() {
@@ -7037,7 +7201,7 @@
   }
 
   setInterval(async () => {
-    if (state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
+    if (state.route === "feed" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
       let changed = false;
       try {
         if (state.activePath) {
@@ -7048,9 +7212,14 @@
           }
           changed = true;
         }
-        if (isTurnActive(state.turn)) {
+        if (state.route === "feed" || isTurnActive(state.turn)) {
+          const wasTurnActive = isTurnActive(state.turn);
           await loadTurnStatus({ render: false });
-          changed = true;
+          const turnActive = isTurnActive(state.turn);
+          if (state.route === "feed" && (turnActive || wasTurnActive)) {
+            await refreshCardsFromNativeSnapshot({ render: false });
+          }
+          changed = changed || turnActive || wasTurnActive;
         }
         if (wakeProofVisualState(state.wakeStatus) !== "idle") {
           await loadWakeStatus({ render: false });
