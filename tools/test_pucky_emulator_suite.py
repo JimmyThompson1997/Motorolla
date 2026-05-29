@@ -637,9 +637,9 @@ def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
     assert suite.WALKIE_THREAD_TRANSPORT_FIXTURES == {
         "thread_continue": "wake_weather",
         "file_revise": "wake_weather",
-        "fresh_thread": "fresh_thread",
-        "thread_bravo": "thread_bravo",
-        "thread_alpha": "thread_alpha",
+        "fresh_thread": "wake_weather",
+        "thread_bravo": "wake_weather",
+        "thread_alpha": "wake_weather",
     }
 
 
