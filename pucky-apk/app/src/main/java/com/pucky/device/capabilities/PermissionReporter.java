@@ -99,25 +99,25 @@ public final class PermissionReporter {
         add(out, Manifest.permission.POST_NOTIFICATIONS, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
                 array("notify.show", "timer.set", "foreground service notification"));
         add(out, Manifest.permission.READ_SMS, declared, true, true, "dangerous",
-                array("android.substrate SMS query"));
+                array("android.substrate SMS query", "phone.sms.list", "phone.sms.get_thread"));
         add(out, Manifest.permission.SEND_SMS, declared, true, true, "dangerous",
-                array("android.substrate SMS send"));
+                array("android.substrate SMS send", "phone.sms.send"));
         add(out, Manifest.permission.RECEIVE_SMS, declared, true, true, "dangerous",
                 array("android.substrate inbound SMS"));
         add(out, Manifest.permission.CALL_PHONE, declared, true, true, "dangerous",
-                array("android.substrate place call"));
+                array("android.substrate place call", "phone.calls.place"));
         add(out, Manifest.permission.ANSWER_PHONE_CALLS, declared, true, true, "dangerous",
-                array("android.substrate hang up or answer calls"));
+                array("android.substrate hang up or answer calls", "phone.calls.hangup"));
         add(out, Manifest.permission.READ_PHONE_STATE, declared, true, true, "dangerous",
-                array("android.substrate phone state"));
+                array("android.substrate phone state", "phone.telephony.status"));
         add(out, Manifest.permission.READ_CALL_LOG, declared, true, true, "dangerous",
-                array("android.substrate call log query"));
+                array("android.substrate call log query", "phone.calls.list", "phone.voicemail.list"));
         add(out, Manifest.permission.WRITE_CALL_LOG, declared, true, true, "dangerous",
                 array("android.substrate call log mutation"));
         add(out, Manifest.permission.READ_CONTACTS, declared, true, true, "dangerous",
-                array("android.substrate contacts query"));
+                array("android.substrate contacts query", "phone.contacts.search", "phone.contacts.get"));
         add(out, Manifest.permission.WRITE_CONTACTS, declared, true, true, "dangerous",
-                array("android.substrate contacts mutation"));
+                array("android.substrate contacts mutation", "phone.contacts.create", "phone.contacts.replace", "phone.contacts.delete"));
         add(out, Manifest.permission.GET_ACCOUNTS, declared, true, true, "dangerous",
                 array("android.substrate account-backed providers"));
         add(out, Manifest.permission.READ_CALENDAR, declared, true, true, "dangerous",
@@ -135,13 +135,13 @@ public final class PermissionReporter {
         add(out, "com.android.alarm.permission.SET_ALARM", declared, false, true, "normal",
                 array("alarm.intent.set"));
         add(out, "com.android.voicemail.permission.READ_VOICEMAIL", declared, true, true, "dangerous",
-                array("android.substrate voicemail query"));
+                array("android.substrate voicemail query", "phone.voicemail.list"));
         add(out, "com.android.voicemail.permission.ADD_VOICEMAIL", declared, true, true, "dangerous",
                 array("android.substrate voicemail insert"));
         add(out, "android.permission.READ_BLOCKED_NUMBERS", declared, true, true, "dangerous",
-                array("android.substrate blocked number query"));
+                array("android.substrate blocked number query", "phone.blocked_numbers.list"));
         add(out, "android.permission.WRITE_BLOCKED_NUMBERS", declared, true, true, "dangerous",
-                array("android.substrate blocked number mutation"));
+                array("android.substrate blocked number mutation", "phone.blocked_numbers.add", "phone.blocked_numbers.remove"));
         add(out, "android.permission.READ_USER_DICTIONARY", declared, true, true, "dangerous",
                 array("android.substrate user dictionary query"));
         add(out, "android.permission.WRITE_USER_DICTIONARY", declared, true, true, "dangerous",
