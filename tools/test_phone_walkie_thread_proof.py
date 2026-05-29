@@ -145,6 +145,25 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert "page.screenshot" in source
 
 
+def test_preferred_cover_display_id_prefers_secondary_display() -> None:
+    text = (
+        'Display 4627039422300187648 (HWC display 0): port=0 pnpId=MTK displayName="MTKDEV"\n'
+        'Display 4627039422300187651 (HWC display 3): port=3 pnpId=MTK displayName="MTKDEV"\n'
+    )
+
+    assert proof.parse_surfaceflinger_displays(text) == [
+        {"display_id": "4627039422300187648", "hwc_display": "0"},
+        {"display_id": "4627039422300187651", "hwc_display": "3"},
+    ]
+    assert proof.preferred_cover_display_id(text) == "4627039422300187651"
+
+
+def test_extract_png_bytes_strips_warning_prefix() -> None:
+    body = b"WARNING: multiple displays\n\x89PNG\r\n\x1a\npayload"
+
+    assert proof.extract_png_bytes(body) == b"\x89PNG\r\n\x1a\npayload"
+
+
 def test_visible_thread_index_finds_matching_slot() -> None:
     surface = {
         "final_surface": {
@@ -208,3 +227,32 @@ def test_require_official_local_repo_rejects_noncanonical(monkeypatch: pytest.Mo
 
     with pytest.raises(proof.PhoneProofError, match="must run from"):
         proof.require_official_local_repo(other, canonical)
+
+
+def test_thread_scope_status_falls_back_to_surface_when_command_not_allowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = make_args(tmp_path)
+
+    def fake_run_pucky_command(_args: argparse.Namespace, command_type: str, payload: dict[str, object], **_: object) -> dict[str, object]:
+        if command_type == "voice.thread_scope.get":
+            raise proof.PhoneProofError("puckyctl command send voice.thread_scope.get failed: COMMAND_NOT_ALLOWED")
+        if command_type == "ui.surface.get":
+            return {
+                "thread_scope": {
+                    "mode": "existing_thread",
+                    "thread_id": "thread-1",
+                    "source_surface": "thread_transcript",
+                }
+            }
+        raise AssertionError(f"unexpected command {command_type}")
+
+    monkeypatch.setattr(proof, "run_pucky_command", fake_run_pucky_command)
+
+    result = proof.thread_scope_status(args)
+
+    assert result == {
+        "mode": "existing_thread",
+        "thread_id": "thread-1",
+        "source_surface": "thread_transcript",
+    }

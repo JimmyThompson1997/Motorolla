@@ -410,6 +410,7 @@ public final class PuckyTurnController {
         }
         String localSessionId = active.optString("session_id", "pucky_" + Long.toHexString(System.currentTimeMillis()));
         JSONObject last = lastStatus();
+        final JSONObject activeCapture = mergeThreadScopeFromMatchedStatus(active, last);
         String clientTurnId = active.optString("turn_id", last.optString("turn_id", generateClientTurnId()));
         String triggerSource = active.optString("trigger_source", last.optString("trigger_source", "volume_up_hold"));
         JSONObject speechGate = voice.optJSONObject("speech_gate");
@@ -436,7 +437,7 @@ public final class PuckyTurnController {
             Json.put(out, "local_session_id", localSessionId);
             Json.put(out, "turn_id", clientTurnId);
             Json.put(out, "trigger_source", triggerSource);
-            copyCaptureMetadata(out, active);
+            copyCaptureMetadata(out, activeCapture);
             Json.put(out, "speech_gate", speechGate);
             Json.put(out, "speech_detected", false);
             Json.put(out, "upload_configured", isUploadConfigured());
@@ -458,7 +459,7 @@ public final class PuckyTurnController {
         Json.put(out, "local_session_id", localSessionId);
         Json.put(out, "turn_id", clientTurnId);
         Json.put(out, "trigger_source", triggerSource);
-        copyCaptureMetadata(out, active);
+        copyCaptureMetadata(out, activeCapture);
         Json.put(out, "speech_gate", speechGate);
         Json.put(out, "speech_detected", true);
         Json.put(out, "upload_configured", isUploadConfigured());
@@ -480,7 +481,7 @@ public final class PuckyTurnController {
             JSONObject stopArgs = reasonArgs(reason);
             Json.put(stopArgs, "feedback", false);
             JSONObject stopped = WalkieAudioCaptureController.shared(context).stop(stopArgs);
-            JSONObject capture = stopped.optJSONObject("capture");
+            JSONObject capture = mergeThreadScopeFromMatchedStatus(stopped.optJSONObject("capture"), lastStatus());
             if (capture == null) {
                 markStatus("idle", stopped, "no_capture");
                 return;
@@ -1870,6 +1871,67 @@ public final class PuckyTurnController {
         copyIfPresent(target, capture, "fixture_start_delay_ms");
         copyIfPresent(target, capture, "debug_fixture_transcript");
         copyIfPresent(target, capture, "proof_reply_delay_ms");
+    }
+
+    static JSONObject mergeThreadScopeFromMatchedStatus(JSONObject capture, JSONObject fallback) {
+        if (capture == null) {
+            return null;
+        }
+        if (fallback == null || !sameTurnCapture(capture, fallback)) {
+            return capture;
+        }
+        String currentMode = capture.optString("thread_mode", "").trim();
+        if ("new".equals(currentMode)) {
+            return capture;
+        }
+        copyIfBlank(capture, fallback, "thread_mode");
+        if ("new".equals(capture.optString("thread_mode", "").trim())) {
+            return capture;
+        }
+        copyIfBlank(capture, fallback, "thread_id");
+        copyIfBlank(capture, fallback, "thread_card_id");
+        copyIfBlank(capture, fallback, "thread_session_id");
+        copyIfBlank(capture, fallback, "thread_scope_source");
+        return capture;
+    }
+
+    private static boolean sameTurnCapture(JSONObject capture, JSONObject fallback) {
+        String captureTurnId = firstNonBlank(capture, "turn_id");
+        String fallbackTurnId = firstNonBlank(fallback, "turn_id");
+        if (!captureTurnId.isEmpty() && !fallbackTurnId.isEmpty() && !captureTurnId.equals(fallbackTurnId)) {
+            return false;
+        }
+        String captureSessionId = firstNonBlank(capture, "session_id", "local_session_id");
+        String fallbackSessionId = firstNonBlank(fallback, "local_session_id", "session_id");
+        return captureSessionId.isEmpty() || fallbackSessionId.isEmpty() || captureSessionId.equals(fallbackSessionId);
+    }
+
+    private static void copyIfBlank(JSONObject target, JSONObject source, String key) {
+        if (target == null || source == null) {
+            return;
+        }
+        String current = target.optString(key, "").trim();
+        if (!current.isEmpty()) {
+            return;
+        }
+        String value = source.optString(key, "").trim();
+        if (value.isEmpty()) {
+            return;
+        }
+        Json.put(target, key, value);
+    }
+
+    private static String firstNonBlank(JSONObject object, String... keys) {
+        if (object == null || keys == null) {
+            return "";
+        }
+        for (String key : keys) {
+            String value = object.optString(key, "").trim();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private JSONObject voiceThreadScopeSnapshot(String triggerSource) {

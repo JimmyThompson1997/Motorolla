@@ -415,7 +415,39 @@ def snapshot_surface(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def thread_scope_status(args: argparse.Namespace) -> dict[str, Any]:
-    return run_pucky_command(args, "voice.thread_scope.get", {})
+    try:
+        return run_pucky_command(args, "voice.thread_scope.get", {})
+    except PhoneProofError as exc:
+        message = str(exc)
+        if "COMMAND_NOT_ALLOWED" not in message and "not allowed" not in message.lower():
+            raise
+        surface = snapshot_surface(args)
+        thread_scope = surface.get("thread_scope")
+        if isinstance(thread_scope, dict):
+            return thread_scope
+        raise PhoneProofError(f"voice.thread_scope.get is unavailable and ui.surface.get had no thread_scope: {message}") from exc
+
+
+def parse_surfaceflinger_displays(text: str) -> list[dict[str, str]]:
+    displays: list[dict[str, str]] = []
+    for match in re.finditer(r"Display (\d+) \(HWC display (\d+)\):", str(text or "")):
+        displays.append({"display_id": match.group(1), "hwc_display": match.group(2)})
+    return displays
+
+
+def preferred_cover_display_id(text: str) -> str:
+    displays = parse_surfaceflinger_displays(text)
+    if not displays:
+        return ""
+    return sorted(displays, key=lambda item: int(item["hwc_display"]))[-1]["display_id"]
+
+
+def extract_png_bytes(body: bytes) -> bytes:
+    header = b"\x89PNG\r\n\x1a\n"
+    index = body.find(header)
+    if index < 0:
+        raise PhoneProofError("device screenshot did not return a PNG")
+    return body[index:]
 
 
 def bundle_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -678,9 +710,10 @@ def apk_identity(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def capture_device_screenshot(args: argparse.Namespace, serial: str, path: Path) -> Path:
-    body = run_adb_bytes(args, serial, ["exec-out", "screencap", "-p"], timeout_seconds=30)
-    if not body.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise PhoneProofError("device screenshot did not return a PNG")
+    display_text = run_adb(args, serial, ["shell", "dumpsys", "SurfaceFlinger", "--display-id"], timeout_seconds=30)
+    display_id = preferred_cover_display_id(display_text)
+    screencap_args = ["exec-out", "screencap", "-p"] if not display_id else ["exec-out", "screencap", "-d", display_id, "-p"]
+    body = extract_png_bytes(run_adb_bytes(args, serial, screencap_args, timeout_seconds=30))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(body)
     return path
