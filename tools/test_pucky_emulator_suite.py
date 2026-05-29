@@ -910,6 +910,38 @@ def test_scenario_evidence_dir_clears_stale_files(tmp_path: Path) -> None:
     assert not stale.exists()
 
 
+def test_surface_from_snapshot_collapses_thread_cards_with_pending_winner() -> None:
+    surface = suite.surface_from_snapshot(
+        {
+            "cards": [
+                {
+                    "card_id": "pending-a",
+                    "session_id": "turn-a",
+                    "pending_outbound": True,
+                    "summary": "Sending your message...",
+                    "origin": {"thread_id": "thread-A"},
+                },
+                {
+                    "card_id": "base-a",
+                    "session_id": "base-a",
+                    "title": "Proof HTML Dashboard",
+                    "origin": {"thread_id": "thread-A"},
+                },
+                {
+                    "card_id": "base-b",
+                    "session_id": "base-b",
+                    "title": "Proof CSV Table",
+                    "origin": {"thread_id": "thread-B"},
+                },
+            ]
+        }
+    )
+
+    assert [card["thread_id"] for card in surface["visible_cards"]] == ["thread-A", "thread-B"]
+    assert surface["visible_cards"][0]["card_id"] == "pending-a"
+    assert surface["visible_cards"][0]["kind"] == "pending_outbound"
+
+
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
     card = {
         "title": "Localized attachment",
@@ -1032,6 +1064,11 @@ def test_cmd_prove_displayable_reply_files_preserves_official_bundle_on_skip_ref
         suite,
         "http_json_request",
         lambda *_args, **_kwargs: {"icons": [{"name": "proof_orbit"}]},
+    )
+    monkeypatch.setattr(
+        suite,
+        "stabilize_displayable_proof_surface",
+        lambda *_args, **_kwargs: {"ok": True},
     )
     monkeypatch.setattr(suite, "launch_home_resilient", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(
@@ -2171,6 +2208,81 @@ def test_reset_home_surface_if_needed_uses_ui_debug_for_open_transcript(
     assert result["needs_reset"] is True
     assert result["used_ui_debug"] is True
     assert commands == ["ui.debug.goto_home", "ui.debug.clear_focus"]
+
+
+def test_stabilize_displayable_proof_surface_stops_turn_and_clears_focus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False, ui_dwell_seconds=0.0)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls: list[str] = []
+
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload.get("result", payload))
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **kwargs: calls.append(str(kwargs["stage"])) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        suite,
+        "reset_home_surface_if_needed",
+        lambda *_args, **_kwargs: {"needs_reset": True, "used_ui_debug": True},
+    )
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = suite.stabilize_displayable_proof_surface(
+        args,
+        runner,
+        config,
+        stage="displayable_html_materialize",
+        timeout_seconds=45,
+    )
+
+    assert result["turn_stop"]["ok"] is True
+    assert result["home_reset"]["used_ui_debug"] is True
+    assert calls == ["displayable_html_materialize"]
+
+
+def test_materialize_reply_card_resilient_retries_after_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    stages: list[str] = []
+    attempts = {"count": 0}
+    card = {"card_id": "card-1", "turn_id": "turn-1", "title": "Proof HTML Dashboard"}
+
+    monkeypatch.setattr(
+        suite,
+        "stabilize_displayable_proof_surface",
+        lambda *_args, **kwargs: stages.append(str(kwargs["stage"])) or {"ok": True},
+    )
+
+    def fake_materialize(*_args, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise suite.subprocess.TimeoutExpired(["ui.reply_cards.set"], 180)
+        return {"cards": [card]}, card
+
+    monkeypatch.setattr(suite, "materialize_reply_card", fake_materialize)
+
+    recovery, snapshot, local_card = suite.materialize_reply_card_resilient(
+        args,
+        runner,
+        config,
+        card,
+        stage="displayable_html_materialize",
+        timeout=180,
+    )
+
+    assert attempts["count"] == 2
+    assert recovery["retried_after_timeout"] is True
+    assert stages == ["displayable_html_materialize", "displayable_html_materialize_retry"]
+    assert snapshot["cards"][0]["card_id"] == "card-1"
+    assert local_card["title"] == "Proof HTML Dashboard"
 
 
 def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(

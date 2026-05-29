@@ -3009,6 +3009,7 @@ def scenario_evidence_dir(config: SlotConfig, scenario_name: str) -> Path:
 def surface_from_snapshot(snapshot: dict[str, Any] | None, *, route: str = "feed") -> dict[str, Any]:
     raw_cards = snapshot.get("cards") if isinstance(snapshot, dict) and isinstance(snapshot.get("cards"), list) else []
     cards: list[dict[str, Any]] = []
+    thread_indexes: dict[str, int] = {}
     for item in raw_cards:
         if not isinstance(item, dict):
             continue
@@ -3024,6 +3025,17 @@ def surface_from_snapshot(snapshot: dict[str, Any] | None, *, route: str = "feed
         card["pending_outbound"] = bool(item.get("pending_outbound"))
         card["pending_state"] = str(item.get("pending_state") or "")
         card["preview"] = preview
+        thread_id = str(card.get("thread_id") or "")
+        if thread_id:
+            existing_index = thread_indexes.get(thread_id)
+            if existing_index is None:
+                thread_indexes[thread_id] = len(cards)
+                cards.append(card)
+                continue
+            existing = cards[existing_index]
+            if bool(card.get("pending_outbound")) and not bool(existing.get("pending_outbound")):
+                cards[existing_index] = card
+            continue
         cards.append(card)
     return {
         "schema": "pucky.ui_surface.v1",
@@ -4482,6 +4494,82 @@ def materialize_reply_card(
     return snapshot, local_card
 
 
+def stop_active_turn(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    try:
+        return command_result(
+            command_json(
+                runner,
+                puckyctl_command(args, config, "pucky.turn.stop", {}),
+                timeout=120,
+            )
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def stabilize_displayable_proof_surface(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    stage: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    turn_stop = stop_active_turn(args, runner, config)
+    launch = launch_home_resilient(
+        args,
+        runner,
+        config,
+        wait_for_channel=not runner.dry_run,
+        stage=stage,
+        timeout_seconds=timeout_seconds,
+    )
+    home_reset = reset_home_surface_if_needed(args, runner, config)
+    if not runner.dry_run:
+        time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
+    return {
+        "turn_stop": turn_stop,
+        "launch": launch,
+        "home_reset": home_reset,
+    }
+
+
+def materialize_reply_card_resilient(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    card: dict[str, Any],
+    *,
+    stage: str,
+    timeout: int = 180,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    timeout_seconds = max(45, int(math.ceil(timeout)))
+    recovery = {
+        "surface_reset": stabilize_displayable_proof_surface(
+            args,
+            runner,
+            config,
+            stage=stage,
+            timeout_seconds=timeout_seconds,
+        ),
+        "retried_after_timeout": False,
+    }
+    try:
+        snapshot, local_card = materialize_reply_card(args, runner, config, card, timeout=timeout)
+        return recovery, snapshot, local_card
+    except subprocess.TimeoutExpired:
+        recovery["retried_after_timeout"] = True
+        recovery["surface_reset_retry"] = stabilize_displayable_proof_surface(
+            args,
+            runner,
+            config,
+            stage=f"{stage}_retry",
+            timeout_seconds=timeout_seconds,
+        )
+        snapshot, local_card = materialize_reply_card(args, runner, config, card, timeout=timeout)
+        return recovery, snapshot, local_card
+
+
 def card_icon_registry_contains(payload: dict[str, Any], name: str) -> bool:
     icons = payload.get("icons") if isinstance(payload.get("icons"), list) else []
     target = str(name or "").strip()
@@ -4540,13 +4628,21 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
     if args.skip_refresh and scratch_bundle_needed(bundle_status, config):
         scratch_bundle = ensure_scratch_bundle(args, runner, config)
         bundle_status = scratch_bundle["bundle_status"]
-        launch_home_resilient(args, runner, config, wait_for_channel=not args.dry_run, stage="displayable_after_scratch_bundle", timeout_seconds=45)
-        if not args.dry_run:
-            time.sleep(args.ui_dwell_seconds)
+        stabilize_displayable_proof_surface(
+            args,
+            runner,
+            config,
+            stage="displayable_after_scratch_bundle",
+            timeout_seconds=45,
+        )
     command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
-    launch_home_resilient(args, runner, config, wait_for_channel=not args.dry_run, stage="displayable_after_clear", timeout_seconds=45)
-    if not args.dry_run:
-        time.sleep(args.ui_dwell_seconds)
+    initial_surface_reset = stabilize_displayable_proof_surface(
+        args,
+        runner,
+        config,
+        stage="displayable_after_clear",
+        timeout_seconds=max(45, int(args.viewer_timeout_seconds)),
+    )
 
     card_icons_url = args.vm_base_url.rstrip("/") + "/api/card-icons"
     runtime_icon_slug = "proof_orbit"
@@ -4607,7 +4703,14 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "title": str(replay_card.get("title") or ""),
             }
             feed_sync = {"ok": True, "replayed": True, "skipped": True}
-            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, replay_card, timeout=180)
+            materialize_recovery, materialized_snapshot, local_card = materialize_reply_card_resilient(
+                args,
+                runner,
+                config,
+                replay_card,
+                stage=f"displayable_{case['key']}_materialize",
+                timeout=180,
+            )
             snapshot = materialized_snapshot
         elif str(case.get("source") or "") == "synthetic":
             synthetic_card = synthetic_displayable_case_card(case, index=index)
@@ -4627,7 +4730,14 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "title": str(synthetic_card.get("title") or ""),
             }
             feed_sync = {"ok": True, "synthetic": True, "skipped": True}
-            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, synthetic_card, timeout=180)
+            materialize_recovery, materialized_snapshot, local_card = materialize_reply_card_resilient(
+                args,
+                runner,
+                config,
+                synthetic_card,
+                stage=f"displayable_{case['key']}_materialize",
+                timeout=180,
+            )
             snapshot = materialized_snapshot
         else:
             turn_id = f"prove-displayable-{case['key']}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
@@ -4648,7 +4758,14 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 turn_id=turn_id,
                 timeout=float(args.snapshot_timeout_seconds),
             )
-            materialized_snapshot, local_card = materialize_reply_card(args, runner, config, local_card, timeout=180)
+            materialize_recovery, materialized_snapshot, local_card = materialize_reply_card_resilient(
+                args,
+                runner,
+                config,
+                local_card,
+                stage=f"displayable_{case['key']}_materialize",
+                timeout=180,
+            )
         launch_home_resilient(
             args,
             runner,
@@ -4735,6 +4852,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "attachment_count": len((attachment_info or {}).get("attachments") or []),
                 "case_index": index,
                 "feed_recovery": feed_recovery,
+                "materialize_recovery": materialize_recovery,
             }
         )
 
@@ -4849,6 +4967,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         "bundle_refresh": bundle_refresh,
         "bundle_status": bundle_status,
         "scratch_bundle": scratch_bundle,
+        "initial_surface_reset": initial_surface_reset,
         "icon_registry_before": icon_registry_before,
         "icon_registry_upsert": icon_registry_upsert,
         "icon_registry_after": icon_registry_after,
