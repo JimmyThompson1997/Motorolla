@@ -334,6 +334,23 @@ def test_replay_cards_from_broker_log_uses_latest_matching_card(tmp_path: Path) 
     assert cards["Proof Runtime Icon"]["card_id"] == "icon-card"
 
 
+def test_replay_cards_from_broker_log_can_allow_partial_coverage(tmp_path: Path) -> None:
+    log_path = tmp_path / "fake-broker.log"
+    lines = [
+        {"message": {"result": {"cards": [{"title": "Proof HTML Dashboard", "card_id": "html-card"}]}}},
+        {"command": {"args": {"cards": [{"title": "Proof CSV Table", "card_id": "csv-card"}]}}},
+    ]
+    log_path.write_text("\n".join(json.dumps(item) for item in lines), encoding="utf-8")
+
+    cards = suite.replay_cards_from_broker_log(
+        log_path,
+        ["Proof HTML Dashboard", "Proof JSON Summary"],
+        allow_partial=True,
+    )
+
+    assert cards == {"Proof HTML Dashboard": {"title": "Proof HTML Dashboard", "card_id": "html-card"}}
+
+
 def test_normalize_replay_card_renormalizes_attachment_kinds() -> None:
     card = {
         "title": "Proof Runtime Icon",
@@ -447,6 +464,28 @@ def test_dismiss_anr_dialog_if_present_taps_wait(monkeypatch: pytest.MonkeyPatch
     assert tapped == ["Wait"]
 
 
+def test_dismiss_permission_dialog_if_present_taps_allow_variant(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    tapped: list[str] = []
+
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="Allow Pucky to access photos and videos?" bounds="[80,280][980,380]" />
+  <node index="1" text="While using the app" bounds="[80,620][980,730]" />
+</hierarchy>
+"""
+
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: tapped.append(_args[3]["text"]))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    handled = suite.dismiss_permission_dialog_if_present(args, runner, config, xml)
+
+    assert handled is True
+    assert tapped == ["While using the app"]
+
+
 def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message() -> None:
     card = {
         "title": "Attachment card",
@@ -491,6 +530,60 @@ def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths
     assert info["viewer_type"] == "html_iframe"
     assert info["item"]["viewer"]["viewer_path"].endswith("proof_html_dashboard.html")
     assert suite.card_action_accessibility_label(card) == "Open file for Localized attachment"
+
+
+def test_synthetic_displayable_case_payloads_stay_within_windows_budget(tmp_path: Path) -> None:
+    args = ns(tmp_path)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    lengths: list[int] = []
+
+    for index, case in enumerate(suite.displayable_reply_file_cases("proof_orbit"), start=1):
+        if case.get("source") != "synthetic":
+            continue
+        card = suite.synthetic_displayable_case_card(case, index=index)
+        command = suite.reply_cards_write_command(args, config, {"cards": [card]})
+        lengths.append(suite.windows_command_length(command))
+
+    assert lengths
+    assert max(lengths) < suite.SYNTHETIC_REPLY_CARD_COMMAND_BUDGET
+
+
+def test_synthetic_document_case_materializes_document_html_viewer() -> None:
+    case = next(item for item in suite.displayable_reply_file_cases("proof_orbit") if item["key"] == "docx_derivative")
+
+    card = suite.synthetic_displayable_case_card(case, index=1)
+    info = suite.first_displayable_attachment_snapshot(card)
+
+    assert info is not None
+    assert info["viewer_type"] == "document_html"
+    assert info["item"]["viewer"]["type"] == "document_html"
+    assert info["item"]["viewer"]["viewer_src"].startswith("data:text/html")
+
+
+def test_scratch_bundle_needed_when_bundle_version_mismatches(tmp_path: Path) -> None:
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    assert suite.scratch_bundle_needed({"ui_version": ""}, config) is True
+    assert suite.scratch_bundle_needed({"ui_version": "someone-elses-bundle"}, config) is True
+    assert suite.scratch_bundle_needed({"ui_version": config.bundle_version}, config) is False
+
+
+def test_proof_visible_card_unarchives_and_marks_unread() -> None:
+    card = {
+        "card_id": "card-runtime-icon",
+        "turn_id": "turn-runtime-icon",
+        "title": "Proof Runtime Icon",
+        "archived": True,
+        "deleted": True,
+        "read": True,
+    }
+
+    visible = suite.proof_visible_card(card)
+
+    assert visible["archived"] is False
+    assert visible["deleted"] is False
+    assert visible["read"] is False
+    assert card["archived"] is True
 
 
 def test_parser_includes_wake_lab_command() -> None:
@@ -689,6 +782,77 @@ def test_prove_apk_actions_dry_run_plans_direct_and_recipe_commands(monkeypatch:
     assert "send a notification" in planned
 
 
+def test_direct_photo_capture_retries_timeout_with_full_budget(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    photo_attempts = {"count": 0}
+    launches: list[str] = []
+    clears: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_command_json(_runner, command, **_kwargs):
+        name = command[command.index("command") + 1]
+        assert name == "photo.capture"
+        payload = json.loads(command[command.index("--args-json") + 1])
+        assert payload == {"timeout_ms": 15000, "suppress_chime": True}
+        photo_attempts["count"] += 1
+        if photo_attempts["count"] == 1:
+            raise suite.SuiteError("Command failed: photo.capture Camera capture timed out")
+        return {"result": {"captured": True, "app_private_path": "/tmp/direct-photo.jpg"}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(suite, "clear_blocking_system_dialogs", lambda *_args, **_kwargs: clears.append("clear") or False)
+    monkeypatch.setattr(suite, "ensure_device_interactive", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **_kwargs: launches.append("launch") or {"ok": True, "launch_mode": "show_home"},
+    )
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = suite.direct_photo_capture(args, runner, config)
+
+    assert result["captured"] is True
+    assert photo_attempts["count"] == 2
+    assert clears == ["clear"]
+    assert launches == ["launch"]
+    assert sleeps == [1.0]
+
+
+def test_prove_apk_actions_regrants_provision_permissions_before_live_checks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, slot=1, dry_run=False, location_lat=37.4220, location_lon=-122.0841)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    granted: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "ensure_device_interactive", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "grant_provision_permissions", lambda *_args, **_kwargs: granted.append("granted"))
+    monkeypatch.setattr(suite, "emulator_health_snapshot", lambda *_args, **_kwargs: {})
+
+    def fake_run(self, command, **kwargs):
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def fake_command_json(_runner, command, **_kwargs):
+        name = command[command.index("command") + 1]
+        if name == "ui.bundle.status":
+            return {"result": {"ui_version": "git-proof"}}
+        raise suite.SuiteError("stop after permission grants")
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    with pytest.raises(suite.SuiteError, match="stop after permission grants"):
+        suite.cmd_prove_apk_actions(args)
+
+    assert granted == ["granted"]
+
+
 def test_launch_command_embeds_provisioning_json_for_live_feed_sync(tmp_path: Path) -> None:
     args = ns(
         tmp_path,
@@ -769,6 +933,47 @@ def test_command_json_retries_transient_puckyctl_failures() -> None:
 
     assert attempts["count"] == 3
     assert result == {"ok": True}
+
+
+def test_command_json_retries_device_offline_with_longer_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = suite.Runner(dry_run=False)
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_run(command, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise suite.SuiteError("DEVICE_OFFLINE: emulator-5554 temporarily unavailable")
+        return suite.subprocess.CompletedProcess(command, 0, stdout='{"ok":true}', stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = suite.command_json(runner, ["fake", "command"], timeout=1)
+
+    assert attempts["count"] == 2
+    assert result == {"ok": True}
+    assert sleeps and sleeps[0] >= 2.0
+
+
+def test_feed_request_retries_transient_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_http_json_request(*_args, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise suite.SuiteError("ConnectionResetError: transient reset")
+        return {"items": [{"turn_id": "turn-123"}], "next_cursor": ""}
+
+    monkeypatch.setattr(suite, "http_json_request", fake_http_json_request)
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = suite.feed_request("https://pucky.fly.dev/api/turn", "secret-token")
+
+    assert attempts["count"] == 3
+    assert result["items"][0]["turn_id"] == "turn-123"
+    assert sleeps == [0.5, 1.0]
 
 
 def test_appops_running_parser_is_case_insensitive() -> None:
@@ -998,6 +1203,38 @@ def test_cmd_provision_waits_for_install_services_before_install(monkeypatch: py
 
     assert result["ok"] is True
     assert events[:2] == ["install_services_ready", "install"]
+
+
+def test_cmd_provision_grants_calendar_and_media_permissions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, skip_build=True, dry_run=False)
+    args.apk.write_text("apk", encoding="utf-8")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "start_node_broker", lambda *_args, **_kwargs: -1)
+    monkeypatch.setattr(suite, "wait_for_install_services", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"stage": "after_provision_launch", "ok": True})
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+
+    def fake_run(self, command, **kwargs):
+        commands.append(command)
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+
+    result = suite.cmd_provision(args)
+
+    assert result["ok"] is True
+    joined = [" ".join(command) for command in commands if " pm grant " in f" {' '.join(command)} "]
+    assert any("android.permission.READ_CALENDAR" in item for item in joined)
+    assert any("android.permission.WRITE_CALENDAR" in item for item in joined)
+    assert any("android.permission.READ_MEDIA_IMAGES" in item for item in joined)
+    assert any("android.permission.READ_MEDIA_VIDEO" in item for item in joined)
+    assert any("android.permission.READ_MEDIA_AUDIO" in item for item in joined)
 
 
 def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1245,6 +1482,41 @@ def test_prove_thread_origin_waits_for_broker_channel_around_refresh(monkeypatch
     assert channel_stages == ["before_refresh", "after_refresh", "after_relaunch"]
 
 
+def test_ensure_broker_command_channel_clears_blockers_until_reconnected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    devices = iter(
+        [
+            None,
+            {"device_id": config.device_id, "online": False},
+            {"device_id": config.device_id, "online": True},
+        ]
+    )
+    clears: list[str] = []
+    ping_attempts = {"count": 0}
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "broker_device_snapshot", lambda *_args, **_kwargs: next(devices))
+    monkeypatch.setattr(suite, "clear_blocking_system_dialogs", lambda *_args, **_kwargs: clears.append("clear") or False)
+
+    def fake_command_json(_runner, _command, **_kwargs):
+        ping_attempts["count"] += 1
+        if ping_attempts["count"] == 1:
+            raise suite.SuiteError("DEVICE_OFFLINE: broker reconnecting")
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    result = suite.ensure_broker_command_channel(args, runner, config, stage="after_launch", timeout_seconds=5)
+
+    assert result["stage"] == "after_launch"
+    assert result["ping"]["ok"] is True
+    assert len(clears) >= 2
+
+
 def test_wait_for_snapshot_card_retries_until_card_lands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
@@ -1317,6 +1589,207 @@ def test_provision_refuses_when_configured_serial_is_not_emulator(tmp_path: Path
 
     with pytest.raises(suite.SuiteError, match="Refusing non-emulator"):
         suite.cmd_provision(args)
+
+
+def test_launch_home_resilient_falls_back_to_full_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        joined = " ".join(command)
+        if "show_home true" in joined:
+            raise suite.SuiteError("foreground timeout")
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = suite.launch_home_resilient(args, runner, config)
+
+    assert result["launch_mode"] == "full_launch"
+    assert any("show_home true" in " ".join(command) for command in commands)
+    assert any("connect true" in " ".join(command) for command in commands)
+
+
+def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[list[str]] = []
+    dump_attempts = {"count": 0}
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        joined = " ".join(command)
+        if "uiautomator dump" in joined:
+            dump_attempts["count"] += 1
+            if dump_attempts["count"] == 1:
+                raise suite.subprocess.TimeoutExpired(command, kwargs.get("timeout", 30))
+            return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if "exec-out cat" in joined:
+            return suite.subprocess.CompletedProcess(command, 0, stdout="<hierarchy rotation='0' />", stderr="")
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    xml = suite.dump_ui_hierarchy(args, runner, config)
+
+    assert "<hierarchy" in xml
+    assert any("input keyevent 4" in " ".join(command) for command in commands)
+
+
+def test_wait_for_feed_card_title_scrolls_until_visible(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    xmls = iter(
+        [
+            "<hierarchy rotation='0'></hierarchy>",
+            "<hierarchy rotation='0'><node text='Proof Runtime Icon' bounds='[1,2][3,4]' /></hierarchy>",
+        ]
+    )
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "dump_ui_hierarchy", lambda *_args, **_kwargs: next(xmls))
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+
+    node, xml = suite.wait_for_feed_card_title(args, runner, config, title="Proof Runtime Icon", timeout=5.0)
+
+    assert node["text"] == "Proof Runtime Icon"
+    assert "Proof Runtime Icon" in xml
+    assert any("input swipe" in " ".join(command) for command in commands)
+
+
+def test_wait_for_feed_card_title_matches_title_prefix_inside_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(
+        suite,
+        "dump_ui_hierarchy",
+        lambda *_args, **_kwargs: "<hierarchy rotation='0'><node text='Proof HTML Dashboard Saved: hello world' bounds='[1,2][3,4]' /></hierarchy>",
+    )
+
+    node, xml = suite.wait_for_feed_card_title(args, runner, config, title="Proof HTML Dashboard", timeout=2.0)
+
+    assert node["text"].startswith("Proof HTML Dashboard")
+    assert "hello world" in xml
+
+
+def test_ensure_feed_card_visible_rematerializes_single_card_on_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls = {"waits": 0, "launches": 0}
+    written: list[list[str]] = []
+    target_card = {
+        "card_id": "card-runtime-icon",
+        "turn_id": "turn-runtime-icon",
+        "session_id": "turn-runtime-icon",
+        "title": "Proof Runtime Icon",
+    }
+
+    def fake_wait(*_args, **_kwargs):
+        calls["waits"] += 1
+        if calls["waits"] == 1:
+            raise suite.SuiteError("not yet visible")
+        return {"text": "Proof Runtime Icon", "bounds": "[1,2][3,4]"}, "<hierarchy />"
+
+    def fake_command_json(_runner, command, **_kwargs):
+        written.append(command)
+        return {"result": {"cards": [target_card]}}
+
+    monkeypatch.setattr(suite, "wait_for_feed_card_title", fake_wait)
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **_kwargs: calls.__setitem__("launches", calls["launches"] + 1) or {"ok": True},
+    )
+
+    node, _xml, recovery = suite.ensure_feed_card_visible(
+        args,
+        runner,
+        config,
+        title="Proof Runtime Icon",
+        local_card=target_card,
+        timeout=5.0,
+    )
+
+    assert node["text"] == "Proof Runtime Icon"
+    assert calls["waits"] == 2
+    assert calls["launches"] == 1
+    assert written and "ui.reply_cards.set" in " ".join(written[0])
+    assert recovery["rematerialized"] is True
+
+
+def test_open_card_detail_with_retry_retries_after_missed_tap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    card = {
+        "title": "Retry card",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Retry file",
+                        "viewer": {"type": "text", "viewer_src": "data:text/plain,ok"},
+                    }
+                ],
+            }
+        ],
+    }
+    tile_xml = "<hierarchy rotation='0'><node content-desc='Open file for Retry card' bounds='[1,2][3,4]' /></hierarchy>"
+    taps: list[str] = []
+    opened_attempts = {"count": 0}
+
+    def fake_wait_for_ui_node(_args, _runner, _config, *, description, **_kwargs):
+        if "expected tile file action" in description:
+            return {"content-desc": "Open file for Retry card", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0' />"
+        if "did not open a detail view" in description:
+            opened_attempts["count"] += 1
+            if opened_attempts["count"] == 1:
+                raise suite.SuiteError("missed tap")
+            return {"text": "Retry file", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Retry file' bounds='[1,2][3,4]' /></hierarchy>"
+        raise AssertionError(description)
+
+    monkeypatch.setattr(suite, "wait_for_ui_node", fake_wait_for_ui_node)
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: taps.append("tap"))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    opened_xml, refreshed_tile_xml = suite.open_card_detail_with_retry(
+        args,
+        runner,
+        config,
+        case_key="retry_case",
+        title="Retry card",
+        card=card,
+        tile_xml=tile_xml,
+        timeout=5.0,
+    )
+
+    assert opened_attempts["count"] == 2
+    assert len(taps) == 2
+    assert "Retry file" in opened_xml
+    assert "<hierarchy" in refreshed_tile_xml
 
 
 def test_clean_dry_run_does_not_delete_slot_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
