@@ -891,6 +891,23 @@ def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:
     assert suite.continuation_fixture_start_delay_ms("feed_tile_selected") == suite.FEED_FOCUS_FIXTURE_START_DELAY_MS
     assert suite.continuation_fixture_start_delay_ms("thread_page") == suite.PAGE_CONTINUATION_FIXTURE_START_DELAY_MS
     assert suite.continuation_fixture_start_delay_ms("thread_attachment") == suite.ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS
+    assert suite.FEED_FOCUS_FIXTURE_START_DELAY_MS == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
+    assert suite.HISTORY_RETENTION_FIXTURE_START_DELAY_MS == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
+    assert suite.FINAL_BOSS_SPEECH_START_TIMEOUT_MS >= 12000
+
+
+def test_scenario_evidence_dir_clears_stale_files(tmp_path: Path) -> None:
+    config = suite.slot_config(tmp_path, 2, run_id="fixed")
+    scenario_dir = Path(config.evidence_dir) / "feed-focus-continuation"
+    scenario_dir.mkdir(parents=True)
+    stale = scenario_dir / "proof.json"
+    stale.write_text('{"stale": true}', encoding="utf-8")
+
+    result = suite.scenario_evidence_dir(config, "feed-focus-continuation")
+
+    assert result == scenario_dir
+    assert result.exists()
+    assert not stale.exists()
 
 
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
@@ -1596,6 +1613,11 @@ def test_cmd_provision_waits_for_install_services_before_install(monkeypatch: py
         "wait_for_install_services",
         lambda *_args, **_kwargs: events.append("install_services_ready"),
     )
+    monkeypatch.setattr(
+        suite,
+        "ensure_broker_command_channel",
+        lambda *_args, **_kwargs: {"stage": "after_provision_launch", "device": {"device_id": config.device_id, "online": True}, "ping": {"ok": True}},
+    )
     monkeypatch.setattr(suite, "wait_for_broker_device", lambda *_args, **_kwargs: {"device_id": config.device_id, "online": True})
     monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
@@ -2146,6 +2168,36 @@ def test_ensure_feed_card_visible_rematerializes_single_card_on_retry(monkeypatc
     assert calls["launches"] == 1
     assert written and "ui.reply_cards.set" in " ".join(written[0])
     assert recovery["rematerialized"] is True
+
+
+def test_ensure_feed_card_visible_expands_timeout_after_rematerialization(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    waits: list[float] = []
+
+    def fake_wait(*_args, title, timeout, **_kwargs):
+        waits.append(timeout)
+        if len(waits) == 1:
+            raise suite.SuiteError(f"Did not find feed card titled {title} after {int(timeout)}s")
+        return {"text": title, "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0' />"
+
+    monkeypatch.setattr(suite, "wait_for_feed_card_title", fake_wait)
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload)
+    monkeypatch.setattr(suite, "reply_cards_write_command", lambda *_args, **_kwargs: ["ui.reply_cards.set"])
+    monkeypatch.setattr(suite, "launch_home_resilient", lambda *_args, **_kwargs: None)
+
+    suite.ensure_feed_card_visible(
+        args,
+        runner,
+        config,
+        title="Proof JPG Image",
+        local_card={"title": "Proof JPG Image", "card_id": "card-1"},
+        timeout=30.0,
+    )
+
+    assert waits == [30.0, 60.0]
 
 
 def test_open_card_detail_with_retry_retries_after_missed_tap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

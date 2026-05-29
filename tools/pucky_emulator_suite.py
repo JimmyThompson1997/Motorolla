@@ -90,12 +90,12 @@ DISPLAYABLE_VIEWER_TYPES = {"html_iframe", "table", "text", "image_gallery", "vi
 NODE_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 WAKE_TURN_FIXTURE_START_DELAY_MS = 1200
 WALKIE_THREAD_FIXTURE_START_DELAY_MS = 400
-FEED_FOCUS_FIXTURE_START_DELAY_MS = 2200
+FEED_FOCUS_FIXTURE_START_DELAY_MS = 400
 PAGE_CONTINUATION_FIXTURE_START_DELAY_MS = 1200
 ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS = 400
-HISTORY_RETENTION_FIXTURE_START_DELAY_MS = 2200
+HISTORY_RETENTION_FIXTURE_START_DELAY_MS = 400
 FINAL_BOSS_FIXTURE_START_DELAY_MS = 1200
-FINAL_BOSS_SPEECH_START_TIMEOUT_MS = 6000
+FINAL_BOSS_SPEECH_START_TIMEOUT_MS = 12000
 FINAL_BOSS_MIN_DELAY_MS_A = 12000
 FINAL_BOSS_MIN_DELAY_MS_NEW = 7000
 FINAL_BOSS_MIN_DELAY_MS_B = 1000
@@ -1951,7 +1951,8 @@ def ensure_feed_card_visible(
         stage="displayable_feed_recovery",
         timeout_seconds=max(45, int(math.ceil(timeout))),
     )
-    node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=timeout)
+    recovery_timeout = max(timeout * 2.0, 60.0)
+    node, xml_text = wait_for_feed_card_title(args, runner, config, title=title, timeout=recovery_timeout)
     return node, xml_text, recovery
 
 
@@ -2927,6 +2928,19 @@ def continuation_fixture_start_delay_ms(expected_source_surface: str) -> int:
     if source == "thread_page":
         return PAGE_CONTINUATION_FIXTURE_START_DELAY_MS
     return WALKIE_THREAD_FIXTURE_START_DELAY_MS
+
+
+def scenario_evidence_dir(config: SlotConfig, scenario_name: str) -> Path:
+    evidence_root = Path(config.evidence_dir)
+    scenario_dir = evidence_root / scenario_name
+    try:
+        scenario_dir.resolve().relative_to(evidence_root.resolve())
+    except ValueError as exc:
+        raise SuiteError(f"Refusing to clear evidence outside run directory: {scenario_dir}") from exc
+    if scenario_dir.exists():
+        shutil.rmtree(scenario_dir)
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    return scenario_dir
 
 
 def surface_from_snapshot(snapshot: dict[str, Any] | None, *, route: str = "feed") -> dict[str, Any]:
@@ -5884,8 +5898,7 @@ def run_continuation_scenario(
     transcript_text: str,
     proof_reply_delay_ms: int = CONTINUATION_PROOF_REPLY_DELAY_MS,
 ) -> dict[str, Any]:
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     before_cards = reply_cards_snapshot(args, runner, config)
     write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
     reset_walkie_thread_surface(args, runner, config)
@@ -5984,8 +5997,7 @@ def run_negative_home_scenario(
     transcript_text: str,
 ) -> dict[str, Any]:
     scenario_name = "negative-home"
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     before_cards = reply_cards_snapshot(args, runner, config)
     before_threads = card_thread_ids(before_cards)
     write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
@@ -6053,8 +6065,7 @@ def run_feed_focus_continuation_scenario(
     transcript_text: str,
 ) -> dict[str, Any]:
     scenario_name = "feed-focus-continuation"
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     before_cards = reply_cards_snapshot(args, runner, config)
     write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
     reset_walkie_thread_surface(args, runner, config)
@@ -6160,8 +6171,7 @@ def run_focus_clear_negative_scenario(
     transcript_text: str,
 ) -> dict[str, Any]:
     scenario_name = "focus-clear-negative"
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     before_cards = reply_cards_snapshot(args, runner, config)
     before_threads = card_thread_ids(before_cards)
     write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
@@ -6231,8 +6241,7 @@ def run_history_retention_scenario(
     transcript_text: str,
 ) -> dict[str, Any]:
     scenario_name = "history-retention"
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     before_cards = reply_cards_snapshot(args, runner, config)
     write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
     reset_walkie_thread_surface(args, runner, config)
@@ -6343,8 +6352,7 @@ def run_final_boss_overlap_scenario(
     fixture_transcripts: dict[str, str],
 ) -> dict[str, Any]:
     scenario_name = "final-boss-overlap"
-    scenario_dir = Path(config.evidence_dir) / scenario_name
-    scenario_dir.mkdir(parents=True, exist_ok=True)
+    scenario_dir = scenario_evidence_dir(config, scenario_name)
     # The proof lane needs deterministic overlap ordering despite navigation
     # time between A, fresh-thread, and B turn starts.
     effective_delay_ms_a, effective_delay_ms_new, effective_delay_ms_b = final_boss_effective_delays(args)
