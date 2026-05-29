@@ -100,6 +100,8 @@ public final class AndroidRuntimePlaneTest {
         assertTrue(phone.contains("DEFAULT_LIMIT = 5000"));
         assertTrue(phone.contains("MAX_LIMIT = 5000"));
         assertTrue(phone.contains("contactPhotoDataBytes(contactId)"));
+        assertTrue(phone.contains("Contact photo write did not persist"));
+        assertTrue(phone.contains("\"bytes_readback\""));
         assertTrue(phone.contains("ContactsContract.Data.IS_SUPER_PRIMARY"));
         assertTrue(ledger.contains("DEFAULT_LIMIT = 5000"));
         assertTrue(ledger.contains("MAX_RECENT_MESSAGES = 5000"));

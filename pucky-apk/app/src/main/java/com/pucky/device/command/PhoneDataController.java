@@ -519,12 +519,17 @@ public final class PhoneDataController {
                     .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photo)
                     .build());
             resolver.applyBatch(ContactsContract.AUTHORITY, operations);
+            byte[] persisted = contactPhotoDataBytes(contactId);
+            if (persisted == null || persisted.length == 0) {
+                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, "Contact photo write did not persist");
+            }
 
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.phone_contact_photo_put.v1");
             Json.put(out, "generated_at", Instant.now().toString());
             Json.put(out, "contact_id", contactId);
             Json.put(out, "bytes_written", photo.length);
+            Json.put(out, "bytes_readback", persisted.length);
             Json.put(out, "contact", readContact(contactId));
             return out;
         });
