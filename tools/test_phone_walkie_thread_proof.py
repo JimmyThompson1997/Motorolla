@@ -148,10 +148,14 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     source = (Path(proof.__file__).with_name("phone_walkie_thread_proof_browser.js")).read_text(encoding="utf-8")
 
     assert 'chromium.connectOverCDP' in source
+    assert "PuckyUiDebug.describe" in source
+    assert 'op.kind === "focus_card"' in source
+    assert 'op.kind === "clear_focus"' in source
     assert '[data-route="feed"]' in source
     assert '[data-card-action="' in source
     assert "data-detail-type" in source
     assert 'if (op.kind === "screenshot")' in source
+    assert "page.screenshot" in source
     assert "scrollIntoViewIfNeeded" in source
 
 
@@ -172,61 +176,6 @@ def test_extract_png_bytes_strips_warning_prefix() -> None:
     body = b"WARNING: multiple displays\n\x89PNG\r\n\x1a\npayload"
 
     assert proof.extract_png_bytes(body) == b"\x89PNG\r\n\x1a\npayload"
-
-
-def test_visible_thread_index_finds_matching_slot() -> None:
-    surface = {
-        "final_surface": {
-            "visible_cards": [
-                {"thread_id": "thread-a", "kind": "reply"},
-                {"thread_id": "thread-b", "kind": "pending_outbound"},
-            ]
-        }
-    }
-
-    assert proof.visible_thread_index(surface, "thread-a") == 0
-    assert proof.visible_thread_index(surface, "thread-b") == 1
-    assert proof.visible_thread_index(surface, "missing") == -1
-
-
-def test_scenario_checks_reports_overall_pass() -> None:
-    passing = proof.scenario_checks({"one": True, "two": True})
-    failing = proof.scenario_checks({"one": True, "two": False})
-
-    assert passing == {"passed": True, "checks": {"one": True, "two": True}}
-    assert failing == {"passed": False, "checks": {"one": True, "two": False}}
-
-
-def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_path: Path) -> None:
-    args = make_args(tmp_path)
-    local_git = {"head": "abc123", "upstream": "abc123"}
-    bundle = {"installed": True, "ui_version": "git-abc123"}
-    surface = {"ui_version": "git-abc123"}
-    installed = {"version_name": "0.1", "version_code": "42"}
-    identity = {"git_commit": "abc123", "git_dirty": False, "version_name": "0.1", "version_code": 42}
-
-    result = proof.verify_target_identity(
-        args,
-        local_git=local_git,
-        remote_manifest=None,
-        bundle=bundle,
-        surface=surface,
-        installed_package=installed,
-        identity=identity,
-    )
-
-    assert result["passed"] is True
-
-    with pytest.raises(proof.PhoneProofError, match="target identity mismatch"):
-        proof.verify_target_identity(
-            args,
-            local_git=local_git,
-            remote_manifest=None,
-            bundle=bundle,
-            surface=surface,
-            installed_package=installed,
-            identity={"git_commit": "other", "git_dirty": False, "version_name": "0.1", "version_code": 42},
-        )
 
 
 def test_visible_thread_index_finds_matching_slot() -> None:
@@ -321,3 +270,40 @@ def test_thread_scope_status_falls_back_to_surface_when_command_not_allowed(
         "thread_id": "thread-1",
         "source_surface": "thread_transcript",
     }
+
+
+def test_phone_proof_parser_includes_feed_focus_history_and_all_final_boss(tmp_path: Path) -> None:
+    args = proof.parse_args([
+        "--repo-root",
+        str(tmp_path),
+        "--canonical-root",
+        str(tmp_path),
+        "--scenario",
+        "feed_focus",
+    ])
+    history = proof.parse_args([
+        "--repo-root",
+        str(tmp_path),
+        "--canonical-root",
+        str(tmp_path),
+        "--scenario",
+        "history",
+    ])
+
+    assert args.scenario == "feed_focus"
+    assert history.scenario == "history"
+    assert args.feed_focus_text
+    assert history.history_text
+
+
+def test_card_history_helpers_find_user_audio_and_assistant_artifacts() -> None:
+    card = {
+        "html_path": "/tmp/page.html",
+        "transcript_messages": [
+            {"role": "user", "attachments": [{"kind": "audio", "mime_type": "audio/wav"}]},
+            {"role": "assistant", "attachments": [{"kind": "document", "artifact": "doc"}]},
+        ],
+    }
+
+    assert proof.card_has_user_audio_chip(card) is True
+    assert proof.card_has_assistant_artifact(card) is True
