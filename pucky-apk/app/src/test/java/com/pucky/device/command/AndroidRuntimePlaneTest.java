@@ -1,13 +1,19 @@
 package com.pucky.device.command;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class AndroidRuntimePlaneTest {
     private static final String[] ANDROID_COMMANDS = new String[] {
@@ -81,6 +87,19 @@ public final class AndroidRuntimePlaneTest {
     }
 
     @Test
+    public void commandCatalogInventoryIsExactAndUnduplicated() throws Exception {
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        List<String> commands = commandNames(executor);
+
+        assertEquals(237, commands.size());
+        assertEquals(commands.size(), new HashSet<>(commands).size());
+        assertTrue(commands.contains("ui.debug.goto_home"));
+        assertTrue(commands.contains("ui.debug.back"));
+        assertTrue(commands.contains("ui.debug.open_card_action"));
+        assertTrue(commands.contains("android.substrate"));
+    }
+
+    @Test
     public void runtimeAliasesUseExistingThinControllers() throws Exception {
         String runtime = read("src/main/java/com/pucky/device/command/AndroidRuntimeController.java");
         String phone = read("src/main/java/com/pucky/device/command/PhoneDataController.java");
@@ -143,5 +162,17 @@ public final class AndroidRuntimePlaneTest {
 
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8).replace("\r\n", "\n");
+    }
+
+    private static List<String> commandNames(String executor) {
+        int start = executor.indexOf("private static final String[] COMMANDS = new String[] {");
+        int end = executor.indexOf("\n    };", start);
+        String block = executor.substring(start, end);
+        Matcher matcher = Pattern.compile("\"([^\"]+)\"").matcher(block);
+        List<String> commands = new ArrayList<>();
+        while (matcher.find()) {
+            commands.add(matcher.group(1));
+        }
+        return commands;
     }
 }
