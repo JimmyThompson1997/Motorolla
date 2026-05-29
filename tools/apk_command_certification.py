@@ -140,6 +140,39 @@ def puckyctl_args(args: argparse.Namespace, command: str, payload: dict[str, Any
     ]
 
 
+def puckyctl_devices_args(args: argparse.Namespace) -> list[str]:
+    return [
+        sys.executable,
+        str(args.puckyctl),
+        "--json",
+        "--broker",
+        args.broker,
+        "devices",
+    ]
+
+
+def device_online(args: argparse.Namespace) -> bool:
+    completed = run_subprocess(puckyctl_devices_args(args), timeout=30)
+    parsed = extract_json("\n".join(part for part in (completed.stdout, completed.stderr) if part).strip())
+    devices = command_result_payload(parsed).get("devices") if isinstance(parsed, dict) else None
+    if not isinstance(devices, list):
+        return False
+    for device in devices:
+        if isinstance(device, dict) and device.get("device_id") == args.device_id:
+            return bool(device.get("online"))
+    return False
+
+
+def wait_for_device_online(args: argparse.Namespace) -> None:
+    if not getattr(args, "wait_online", False):
+        return
+    deadline = time.monotonic() + max(1, int(getattr(args, "online_timeout_seconds", 180)))
+    while time.monotonic() < deadline:
+        if device_online(args):
+            return
+        time.sleep(5)
+
+
 def should_retry_response(response: dict[str, Any]) -> bool:
     error = response.get("error") if isinstance(response.get("error"), dict) else {}
     code = str(error.get("code", ""))
@@ -151,6 +184,7 @@ def run_command(args: argparse.Namespace, command: str, payload: dict[str, Any],
     last: dict[str, Any] | None = None
     attempts = max(1, int(args.command_attempts))
     for attempt in range(1, attempts + 1):
+        wait_for_device_online(args)
         response = run_command_once(args, command, payload, timeout_seconds=timeout_seconds)
         response["attempt"] = attempt
         last = response
@@ -527,6 +561,7 @@ def certify(args: argparse.Namespace) -> dict[str, Any]:
             "outcome": outcome_for(recipe, response),
             "args": recipe.args or {},
             "command_id": response.get("command_id"),
+            "attempt": response.get("attempt"),
             "status": response.get("status"),
             "error": response.get("error"),
             "result_keys": sorted((response.get("result") or {}).keys()),
@@ -576,7 +611,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-recipes", action="store_true")
     parser.add_argument("--include-live-comms", action="store_true")
     parser.add_argument("--include-user-mediated", action="store_true")
-    parser.add_argument("--command-attempts", type=int, default=3)
+    parser.add_argument("--command-attempts", type=int, default=6)
+    parser.add_argument("--wait-online", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--online-timeout-seconds", type=int, default=180)
     parser.add_argument("--command-pause-seconds", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=ROOT / ".tmp" / "apk-command-certification" / "latest.json")
     return parser
