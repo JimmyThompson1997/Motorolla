@@ -1777,7 +1777,10 @@ def dump_ui_hierarchy(args: argparse.Namespace, runner: Runner, config: SlotConf
             last_error = str(exc)
             if attempt >= 2:
                 raise SuiteError(f"Unable to capture UI hierarchy after retry: {last_error}") from exc
-            runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30, check=False)
+            try:
+                runner.run(adb_command(args, config.serial, ["shell", "input", "keyevent", "4"]), timeout=30, check=False)
+            except subprocess.TimeoutExpired:
+                pass
             if not runner.dry_run:
                 time.sleep(0.75)
     raise SuiteError(f"Unable to capture UI hierarchy: {last_error}")
@@ -2825,6 +2828,20 @@ def ui_surface(
                     timeout=120,
                 )
             )
+        except subprocess.TimeoutExpired as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise SuiteError(f"ui.surface.get timed out after recovery retry: {exc}") from exc
+            launch_home_resilient(
+                args,
+                runner,
+                config,
+                wait_for_channel=True,
+                stage=f"ui_surface_reconnect_{attempt}",
+                timeout_seconds=90,
+            )
+            if not runner.dry_run:
+                time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
         except SuiteError as exc:
             last_error = exc
             if attempt >= attempts or not is_transient_puckyctl_failure(exc):
@@ -2914,6 +2931,7 @@ def reset_walkie_thread_surface(
 ) -> None:
     ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
     ui_debug_command(args, runner, config, "ui.debug.clear_focus", {})
+    ui_debug_command(args, runner, config, "ui.debug.refresh_cards", {})
 
 
 def reset_home_surface_if_needed(
@@ -6743,7 +6761,7 @@ def run_final_boss_overlap_scenario(
     # The proof lane needs deterministic overlap ordering despite navigation
     # time between A, fresh-thread, and B turn starts.
     effective_delay_ms_a, effective_delay_ms_new, effective_delay_ms_b = final_boss_effective_delays(args)
-    ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    reset_walkie_thread_surface(args, runner, config)
     capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="home-before.png", surface_name="ui.surface.before.json")
 
     ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_a["session_id"], "action": "transcript"})
@@ -6813,6 +6831,7 @@ def run_final_boss_overlap_scenario(
     )
     pending_new_surface = surface_from_snapshot(pending_new_snapshot)
 
+    ui_debug_command(args, runner, config, "ui.debug.refresh_cards", {})
     ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_b["session_id"], "action": "transcript"})
     wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread B detail")
     wait_for_voice_thread_scope(

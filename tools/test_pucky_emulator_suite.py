@@ -1118,6 +1118,37 @@ def test_ui_surface_relaunches_after_transient_device_offline(
     assert relaunches == ["ui_surface_reconnect_1"]
 
 
+def test_ui_surface_relaunches_after_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls = {"count": 0}
+    relaunches: list[str] = []
+
+    def fake_command_json(_runner, command, *, timeout=60):
+        assert "ui.surface.get" in command
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise suite.subprocess.TimeoutExpired(command, timeout)
+        return {"result": {"route": "feed", "ui_version": "git-test"}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **kwargs: relaunches.append(str(kwargs["stage"])) or {"ok": True},
+    )
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    surface = suite.ui_surface(args, runner, config)
+
+    assert surface["route"] == "feed"
+    assert calls["count"] == 2
+    assert relaunches == ["ui_surface_reconnect_1"]
+
+
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
     card = {
         "title": "Localized attachment",
@@ -2386,6 +2417,25 @@ def test_reset_home_surface_if_needed_uses_ui_debug_for_open_transcript(
     assert commands == ["ui.debug.goto_home", "ui.debug.clear_focus"]
 
 
+def test_reset_walkie_thread_surface_refreshes_seeded_cards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[str] = []
+
+    monkeypatch.setattr(
+        suite,
+        "ui_debug_command",
+        lambda *_args, **_kwargs: commands.append(_args[3]) or {"ok": True, "handled": True},
+    )
+
+    suite.reset_walkie_thread_surface(args, runner, config)
+
+    assert commands == ["ui.debug.goto_home", "ui.debug.clear_focus", "ui.debug.refresh_cards"]
+
+
 def test_stabilize_displayable_proof_surface_stops_turn_and_clears_focus(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2583,6 +2633,37 @@ def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch
     xml = suite.dump_ui_hierarchy(args, runner, config)
 
     assert "<hierarchy" in xml
+    assert any("input keyevent 4" in " ".join(command) for command in commands)
+
+
+def test_dump_ui_hierarchy_ignores_timeout_during_backout_recovery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[list[str]] = []
+    dump_attempts = {"count": 0}
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        joined = " ".join(command)
+        if "uiautomator dump" in joined:
+            dump_attempts["count"] += 1
+            if dump_attempts["count"] == 1:
+                raise suite.subprocess.TimeoutExpired(command, kwargs.get("timeout", 30))
+            return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if "input keyevent 4" in joined:
+            raise suite.subprocess.TimeoutExpired(command, kwargs.get("timeout", 30))
+        if "exec-out cat" in joined:
+            return suite.subprocess.CompletedProcess(command, 0, stdout="<hierarchy rotation='0' />", stderr="")
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    xml = suite.dump_ui_hierarchy(args, runner, config)
+
+    assert "<hierarchy" in xml
+    assert dump_attempts["count"] == 2
     assert any("input keyevent 4" in " ".join(command) for command in commands)
 
 
