@@ -1086,6 +1086,14 @@ def wait_for_broker_device(config: SlotConfig, *, timeout: float = 45.0) -> dict
     raise SuiteError(f"Timed out waiting for broker device {config.device_id}: {last_payload}")
 
 
+def broker_health_available(config: SlotConfig, *, timeout: float = 3.0) -> bool:
+    try:
+        wait_http(f"http://127.0.0.1:{config.broker_port}/health", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def broker_device_snapshot(config: SlotConfig, *, timeout: float = 4.0) -> dict[str, Any] | None:
     try:
         payload = wait_http(f"{local_broker_url(config)}/devices", timeout=timeout)
@@ -1280,6 +1288,14 @@ def save_state(config: SlotConfig, extra: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def state_pid(value: Any) -> int | None:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
 def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Path:
     path = Path(config.evidence_dir) / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1423,8 +1439,12 @@ def command_json(runner: Runner, command: list[str], *, timeout: int = 60) -> di
 
 
 def command_retry_delay_seconds(exc: Exception, attempt: int) -> float:
-    if "DEVICE_OFFLINE" in str(exc or "").upper():
+    text = str(exc or "")
+    upper = text.upper()
+    if "DEVICE_OFFLINE" in upper:
         return float(max(2.0, attempt * 2.0))
+    if "BROKER_UNAVAILABLE" in upper or "WINERROR 10061" in upper or "CONNECTIONREFUSEDERROR" in upper:
+        return float(max(1.5, attempt * 1.5))
     return float(0.5 * attempt)
 
 
@@ -1433,10 +1453,13 @@ def is_transient_puckyctl_failure(exc: Exception) -> bool:
     markers = (
         "WinError 10053",
         "WinError 10054",
+        "WinError 10061",
         "ConnectionAbortedError",
+        "ConnectionRefusedError",
         "ConnectionResetError",
         "RemoteDisconnected",
         "DEVICE_OFFLINE",
+        "BROKER_UNAVAILABLE",
     )
     return any(marker in text for marker in markers)
 
@@ -2431,6 +2454,65 @@ def start_node_broker(args: argparse.Namespace, runner: Runner, config: SlotConf
     return pid
 
 
+def recover_broker_command_path(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    stage: str,
+    timeout_seconds: int = 90,
+) -> dict[str, Any]:
+    state = load_state(ROOT, config.slot)
+    pids = state.get("pids") if isinstance(state.get("pids"), dict) else {}
+    emulator_pid = state_pid(pids.get("emulator"))
+    broker_pid = state_pid(pids.get("fake_broker"))
+    recovery: dict[str, Any] = {"stage": stage}
+    state_changed = False
+
+    if not serial_is_connected(args, runner, config.serial):
+        if emulator_pid and process_alive(emulator_pid):
+            wait_for_boot(args, runner, config, pid=emulator_pid, timeout=max(90.0, float(timeout_seconds)))
+            recovery["waited_for_boot"] = True
+        else:
+            new_emulator_pid = runner.start_detached(
+                emulator_start_command(args, config),
+                cwd=ROOT,
+                env=sdk_env(args, config),
+                stdout_path=Path(config.evidence_dir) / "emulator.log",
+                stderr_path=Path(config.evidence_dir) / "emulator.err.log",
+            )
+            wait_for_boot(args, runner, config, pid=new_emulator_pid, timeout=max(180.0, float(timeout_seconds)))
+            pids["emulator"] = new_emulator_pid
+            recovery["started_emulator"] = new_emulator_pid
+            state_changed = True
+
+    if not broker_health_available(config, timeout=3.0):
+        if broker_pid is None or not process_alive(broker_pid):
+            new_broker_pid = start_node_broker(args, runner, config)
+            if new_broker_pid > 0:
+                pids["fake_broker"] = new_broker_pid
+                recovery["started_broker"] = new_broker_pid
+                state_changed = True
+        wait_http(f"http://127.0.0.1:{config.broker_port}/health", timeout=max(10.0, float(timeout_seconds) / 2.0))
+
+    runner.run(
+        adb_command(args, config.serial, ["reverse", f"tcp:{config.broker_port}", f"tcp:{config.broker_port}"]),
+        timeout=30,
+        check=False,
+    )
+    recovery["channel"] = launch_home_resilient(
+        args,
+        runner,
+        config,
+        wait_for_channel=True,
+        stage=stage,
+        timeout_seconds=timeout_seconds,
+    )
+    if state_changed and not runner.dry_run:
+        save_state(config, {"config": asdict(config), "pids": pids, "serial": config.serial, "broker_url": f"http://127.0.0.1:{config.broker_port}"})
+    return recovery
+
+
 def start_static_server(args: argparse.Namespace, runner: Runner, config: SlotConfig, bundle_dir: Path) -> int:
     if not port_available(config.ui_port):
         return -1
@@ -2815,6 +2897,41 @@ def wake_stage_snapshot(
     }
 
 
+def broker_command_result(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    command_name: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    timeout: int = 120,
+    recovery_stage: str,
+    recovery_attempts: int = 2,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, recovery_attempts + 1):
+        try:
+            return command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, command_name, payload or {}),
+                    timeout=timeout,
+                )
+            )
+        except Exception as exc:
+            if attempt >= recovery_attempts or not is_transient_puckyctl_failure(exc):
+                raise
+            last_error = exc
+            recover_broker_command_path(
+                args,
+                runner,
+                config,
+                stage=f"{recovery_stage}_{attempt}",
+                timeout_seconds=90,
+            )
+    raise last_error or SuiteError(f"Unable to complete broker command: {command_name}")
+
+
 def turn_history(
     args: argparse.Namespace,
     runner: Runner,
@@ -2822,12 +2939,14 @@ def turn_history(
     *,
     limit: int = 20,
 ) -> dict[str, Any]:
-    return command_result(
-        command_json(
-            runner,
-            puckyctl_command(args, config, "pucky.turn.history", {"limit": limit}),
-            timeout=120,
-        )
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        "pucky.turn.history",
+        {"limit": limit},
+        timeout=120,
+        recovery_stage="turn_history_recover",
     )
 
 
@@ -2971,12 +3090,14 @@ def reply_cards_snapshot(
     runner: Runner,
     config: SlotConfig,
 ) -> dict[str, Any]:
-    return command_result(
-        command_json(
-            runner,
-            puckyctl_command(args, config, "ui.reply_cards.get", {}),
-            timeout=120,
-        )
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        "ui.reply_cards.get",
+        {},
+        timeout=120,
+        recovery_stage="reply_cards_get_recover",
     )
 
 
@@ -2987,12 +3108,14 @@ def ui_debug_command(
     command_name: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return command_result(
-        command_json(
-            runner,
-            puckyctl_command(args, config, command_name, payload or {}),
-            timeout=120,
-        )
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        command_name,
+        payload or {},
+        timeout=120,
+        recovery_stage=f"{command_name.replace('.', '_')}_recover",
     )
 
 
@@ -3328,12 +3451,14 @@ def read_turn_record(
     config: SlotConfig,
     turn_id: str,
 ) -> dict[str, Any]:
-    return command_result(
-        command_json(
-            runner,
-            puckyctl_command(args, config, "pucky.turn.read", {"turn_id": turn_id}),
-            timeout=120,
-        )
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        "pucky.turn.read",
+        {"turn_id": turn_id},
+        timeout=120,
+        recovery_stage="turn_read_recover",
     )
 
 

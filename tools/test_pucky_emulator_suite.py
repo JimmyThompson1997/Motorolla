@@ -1840,6 +1840,27 @@ def test_command_json_retries_extended_device_offline_windows(monkeypatch: pytes
     assert sleeps[:5] == [2.0, 4.0, 6.0, 8.0, 10.0]
 
 
+def test_command_json_retries_broker_unavailable_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = suite.Runner(dry_run=False)
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_run(command, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise suite.SuiteError("BROKER_UNAVAILABLE: [WinError 10061] No connection could be made because the target machine actively refused it")
+        return suite.subprocess.CompletedProcess(command, 0, stdout='{"ok":true}', stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = suite.command_json(runner, ["fake", "command"], timeout=1)
+
+    assert attempts["count"] == 3
+    assert result == {"ok": True}
+    assert sleeps[:2] == [1.5, 3.0]
+
+
 def test_feed_request_retries_transient_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = {"count": 0}
     sleeps: list[float] = []
@@ -1858,6 +1879,44 @@ def test_feed_request_retries_transient_transport_failures(monkeypatch: pytest.M
     assert attempts["count"] == 3
     assert result["items"][0]["turn_id"] == "turn-123"
     assert sleeps == [0.5, 1.0]
+
+
+def test_broker_command_result_recovers_after_broker_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    attempts = {"count": 0}
+    recoveries: list[str] = []
+
+    def fake_command_json(_runner, command, *, timeout=60):
+        assert "pucky.turn.history" in command
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise suite.SuiteError("BROKER_UNAVAILABLE: [WinError 10061] No connection could be made because the target machine actively refused it")
+        return {"result": {"ok": True, "items": []}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(
+        suite,
+        "recover_broker_command_path",
+        lambda *_args, **kwargs: recoveries.append(str(kwargs["stage"])) or {"ok": True},
+    )
+
+    result = suite.broker_command_result(
+        args,
+        runner,
+        config,
+        "pucky.turn.history",
+        {"limit": 1},
+        timeout=120,
+        recovery_stage="turn_history_recover",
+    )
+
+    assert result["ok"] is True
+    assert attempts["count"] == 2
+    assert recoveries == ["turn_history_recover_1"]
 
 
 def test_appops_running_parser_is_case_insensitive() -> None:
