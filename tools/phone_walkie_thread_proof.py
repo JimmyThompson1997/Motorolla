@@ -653,6 +653,19 @@ def card_has_transcript_preview(card: dict[str, Any], transcript: str) -> bool:
     return bool(needle) and needle in card_text_blob(card).strip().lower()
 
 
+def pending_user_preview_observed(
+    pending: dict[str, Any],
+    pending_card: dict[str, Any],
+    transcript_hint: str,
+) -> bool:
+    return (
+        bool(pending.get("placeholder_seen"))
+        or card_has_pending_placeholder(pending_card)
+        or bool(pending.get("transcript_preview_seen"))
+        or card_has_transcript_preview(pending_card, transcript_hint)
+    )
+
+
 def observe_pending_thread_card(
     args: argparse.Namespace,
     thread_id: str,
@@ -1121,7 +1134,7 @@ def run_continuation_scenario(
             "scope_matches_surface": str(scope_before.get("source_surface") or "") == expected_surface,
             "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
             "pending_tile_kind": bool(pending["card"].get("pending_outbound")),
-            "pending_placeholder_visible": bool(pending.get("placeholder_seen")) or card_has_pending_placeholder(pending_card),
+            "pending_placeholder_visible": pending_user_preview_observed(pending, pending_card, text),
             "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
             "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
             "transcript_preview_matches_user": bool(pending.get("transcript_preview_seen")) or card_has_transcript_preview(transcript_card, str(transcript_turn.get("user_transcript") or "")),
@@ -1269,7 +1282,7 @@ def run_feed_focus_scenario(
             "scope_matches_surface": str(scope_before.get("source_surface") or "") == "feed_tile_selected",
             "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
             "pending_tile_kind": bool(pending["card"].get("pending_outbound")),
-            "pending_placeholder_visible": bool(pending.get("placeholder_seen")) or card_has_pending_placeholder(pending_card),
+            "pending_placeholder_visible": pending_user_preview_observed(pending, pending_card, text),
             "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
             "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
             "transcript_preview_matches_user": bool(pending.get("transcript_preview_seen")) or card_has_transcript_preview(transcript_card, str(transcript_turn.get("user_transcript") or "")),

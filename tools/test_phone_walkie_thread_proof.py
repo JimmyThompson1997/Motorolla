@@ -253,6 +253,16 @@ def test_card_text_helpers_cover_preview_placeholder_and_transcript() -> None:
     assert proof.card_has_transcript_preview(card, "Continue this focused tile.") is True
 
 
+def test_pending_user_preview_observed_accepts_transcript_when_placeholder_is_gone() -> None:
+    pending = {"placeholder_seen": False, "transcript_preview_seen": True}
+    card = {
+        "preview": "Continue this focused tile.",
+        "origin": {"thread_id": "thread-a"},
+    }
+
+    assert proof.pending_user_preview_observed(pending, card, "Continue this focused tile.") is True
+
+
 def test_observe_pending_thread_card_returns_latest_pending_when_placeholder_is_missed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
