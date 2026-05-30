@@ -478,12 +478,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["deepgram_key"], "present")
         self.assertNotIn("secret", json.dumps(payload))
 
-    def test_config_defaults_codex_model_to_spark_medium(self) -> None:
+    def test_config_defaults_codex_model_to_spark_low(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
             config = Config.from_env()
 
         self.assertEqual(config.codex_model, "gpt-5.3-codex-spark")
-        self.assertEqual(config.codex_reasoning_effort, "medium")
+        self.assertEqual(config.codex_reasoning_effort, "low")
 
     def test_config_env_overrides_codex_defaults(self) -> None:
         with mock.patch.dict(

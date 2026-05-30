@@ -213,7 +213,7 @@ class Config:
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
             codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
             codex_model=os.environ.get("PUCKY_CODEX_MODEL", "gpt-5.3-codex-spark").strip() or "gpt-5.3-codex-spark",
-            codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT", "medium").strip() or "medium",
+            codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT", "low").strip() or "low",
             composio_api_key=os.environ.get("COMPOSIO_API_KEY", "").strip(),
             composio_base_url=os.environ.get("COMPOSIO_BASE_URL", DEFAULT_COMPOSIO_BASE_URL).strip() or DEFAULT_COMPOSIO_BASE_URL,
             composio_default_user_id=os.environ.get("PUCKY_COMPOSIO_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
