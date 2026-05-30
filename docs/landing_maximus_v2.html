@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PUCKY — Your Will. Executed.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: #060402;
+  font-family: 'EB Garamond', Georgia, serif;
+  color: #e8ddd0;
+  overflow-x: hidden;
+}
+
+/* ── NAV ── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 600;
+  padding: 22px 56px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.nav-logo {
+  font-family: 'Cinzel', serif; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.35em; color: #e8ddd0; text-decoration: none;
+}
+.nav-cta {
+  font-family: 'Cinzel', serif; font-size: 9.5px; letter-spacing: 0.22em;
+  color: #e8ddd0; text-decoration: none;
+  border: 0.5px solid rgba(232,221,208,0.35); padding: 9px 24px;
+  background: rgba(139,26,26,0.15);
+  transition: background .2s, border-color .2s;
+}
+.nav-cta:hover { background: rgba(139,26,26,0.4); border-color: rgba(232,221,208,0.65); }
+
+/* ══════════════════════════════════════════
+   PANEL BASE
+   Each panel is full-viewport.
+   Image panels: bg-image + gradient overlays
+   Solid panels: pure gradient bg
+══════════════════════════════════════════ */
+.panel {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* background image layer */
+.panel-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+}
+
+/* every panel gets a gradient fallback that looks good on its own */
+.panel-bg-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* panel overlay: darkens for legibility */
+.panel-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* all text content sits above */
+.panel-content {
+  position: relative;
+  z-index: 10;
+}
+
+/* ══════════════════════════════════════════
+   PANEL 1 — HERO
+   Image: astronaut in flower field / space bg
+   Content: centered, full-bleed impact
+══════════════════════════════════════════ */
+#panel-hero .panel-bg {
+  /*
+    Replace with your hero image:
+    background-image: url('astronaut.jpg');
+    background-position: center 40%;
+  */
+}
+#panel-hero .panel-bg-fallback {
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 20%, #0d2a5e 0%, #06040a 65%),
+    radial-gradient(ellipse 60% 50% at 75% 80%, rgba(196,132,26,0.18) 0%, transparent 60%);
+}
+#panel-hero .panel-overlay {
+  background:
+    /* top fade to black so nav reads */
+    linear-gradient(to bottom, rgba(6,4,2,0.75) 0%, rgba(6,4,2,0.1) 22%),
+    /* bottom fade to black for transition */
+    linear-gradient(to top, rgba(6,4,2,0.85) 0%, rgba(6,4,2,0.0) 35%),
+    /* overall dark veil so text pops */
+    rgba(6,4,2,0.4);
+}
+#panel-hero .panel-content {
+  width: 100%;
+  text-align: center;
+  padding: 0 10%;
+}
+
+.hero-eyebrow {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.55em; color: rgba(196,132,26,0.75);
+  display: block; margin-bottom: 28px;
+  text-transform: uppercase;
+  opacity: 0; animation: fadeUp 1.2s ease 0.2s forwards;
+}
+.hero-title {
+  font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: clamp(72px, 12vw, 160px);
+  color: #f0e8d8;
+  line-height: 0.88; letter-spacing: 0.04em;
+  margin-bottom: 28px;
+  text-shadow: 0 4px 60px rgba(0,0,0,0.7);
+  opacity: 0; animation: fadeUp 1.4s ease 0.4s forwards;
+}
+.hero-divider {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; margin-bottom: 28px;
+  opacity: 0; animation: fadeUp 1.2s ease 0.6s forwards;
+}
+.div-line { height: 0.5px; width: 60px; background: #8b1a1a; }
+.div-gem {
+  width: 5px; height: 5px;
+  background: #8b1a1a; transform: rotate(45deg);
+  box-shadow: 0 0 10px rgba(139,26,26,0.8);
+}
+.hero-tag {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(20px, 2.4vw, 30px);
+  color: rgba(232,221,208,0.72); display: block;
+  margin-bottom: 36px;
+  opacity: 0; animation: fadeUp 1.2s ease 0.7s forwards;
+}
+.hero-buttons {
+  opacity: 0; animation: fadeUp 1.2s ease 0.9s forwards;
+}
+.btn-p {
+  font-family: 'Cinzel', serif; font-size: 10px;
+  letter-spacing: 0.2em; color: #f0e4c0;
+  background: #8b1a1a; padding: 14px 42px;
+  text-decoration: none; display: inline-block;
+  box-shadow: 0 4px 28px rgba(139,26,26,0.5);
+  transition: background .2s, box-shadow .2s;
+  margin-right: 20px;
+}
+.btn-p:hover { background: #a02020; box-shadow: 0 6px 36px rgba(160,32,32,0.6); }
+.btn-g {
+  font-family: 'Cinzel', serif; font-size: 10px; letter-spacing: 0.2em;
+  color: rgba(232,221,208,0.5); text-decoration: none;
+  border-bottom: 0.5px solid rgba(232,221,208,0.3); padding-bottom: 2px;
+  transition: color .2s, border-color .2s;
+}
+.btn-g:hover { color: rgba(232,221,208,0.9); border-color: rgba(232,221,208,0.65); }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════════
+   PANEL 2 — CAPABILITIES
+   Solid dark panel, 2×2 feature grid
+   Optional: background image on right side
+══════════════════════════════════════════ */
+#panel-caps {
+  background: #080508;
+  border-top: 0.5px solid rgba(139,26,26,0.2);
+  align-items: stretch;
+}
+#panel-caps .panel-content {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100vh;
+}
+.caps-left {
+  padding: 120px 72px 80px;
+  display: flex; flex-direction: column; justify-content: center;
+  border-right: 0.5px solid rgba(139,26,26,0.15);
+}
+.caps-right {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+}
+.caps-right-image {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 0.5px solid rgba(139,26,26,0.15);
+}
+.caps-right-image .panel-bg {
+  /*
+    Drop a second image here — something powerful, dark, dramatic.
+    background-image: url('hero2.jpg');
+  */
+}
+.caps-right-image .panel-bg-fallback {
+  background:
+    radial-gradient(ellipse 80% 100% at 60% 50%, #1a0a08 0%, #08050e 80%),
+    linear-gradient(135deg, rgba(139,26,26,0.08) 0%, transparent 60%);
+  position: absolute; inset: 0;
+}
+.caps-right-image .panel-overlay {
+  background: rgba(6,4,2,0.3);
+  position: absolute; inset: 0; z-index: 1;
+}
+.caps-right-image-label {
+  position: absolute; z-index: 2;
+  bottom: 28px; right: 32px;
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.4em; color: rgba(232,221,208,0.2);
+}
+.caps-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.cap {
+  padding: 40px 36px;
+  border-right: 0.5px solid rgba(139,26,26,0.12);
+  border-bottom: 0.5px solid rgba(139,26,26,0.12);
+  transition: background .25s;
+}
+.cap:nth-child(even) { border-right: none; }
+.cap:hover { background: rgba(139,26,26,0.05); }
+.cap-n {
+  font-family: 'Cinzel', serif; font-size: 8.5px;
+  letter-spacing: 0.42em; color: rgba(196,132,26,0.5);
+  display: block; margin-bottom: 12px;
+}
+.cap-h {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: clamp(13px, 1.2vw, 16px);
+  color: #f0e8d8; margin-bottom: 8px;
+  letter-spacing: 0.01em; line-height: 1.2;
+}
+.cap-b {
+  font-family: 'EB Garamond', serif;
+  font-size: 14px; color: rgba(232,221,208,0.42);
+  line-height: 1.7;
+}
+
+.section-eyebrow {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.5em; color: rgba(196,132,26,0.65);
+  display: block; margin-bottom: 14px;
+  text-transform: uppercase;
+}
+.section-h {
+  font-family: 'Cinzel', serif; font-weight: 700;
+  font-size: clamp(28px, 3vw, 44px);
+  color: #f0e8d8; letter-spacing: 0.03em;
+  line-height: 1.0; margin-bottom: 20px;
+}
+.section-b {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(16px, 1.4vw, 20px);
+  color: rgba(232,221,208,0.45); line-height: 1.65;
+  max-width: 380px; margin-bottom: 36px;
+}
+.s-divider {
+  width: 44px; height: 0.5px;
+  background: linear-gradient(to right, #8b1a1a, transparent);
+  margin-bottom: 36px;
+}
+
+/* ══════════════════════════════════════════
+   PANEL 3 — CTA
+   Deep crimson-tinged dark, full-center
+   Optional: astronaut image at low opacity
+══════════════════════════════════════════ */
+#panel-cta .panel-bg {
+  /*
+    background-image: url('astronaut.jpg');
+    background-position: center 30%;
+    opacity already handled by overlay
+  */
+}
+#panel-cta .panel-bg-fallback {
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 30%, #150808 0%, #060402 60%),
+    radial-gradient(ellipse 60% 40% at 50% 90%, rgba(139,26,26,0.12) 0%, transparent 60%);
+}
+#panel-cta .panel-overlay {
+  background:
+    linear-gradient(to bottom, rgba(6,4,2,0.7) 0%, rgba(6,4,2,0.3) 50%, rgba(6,4,2,0.85) 100%);
+}
+#panel-cta .panel-content {
+  width: 100%;
+  text-align: center;
+  padding: 0 10%;
+}
+.cta-eyebrow {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.5em; color: rgba(196,132,26,0.65);
+  display: block; margin-bottom: 20px;
+  text-transform: uppercase;
+}
+.cta-title {
+  font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: clamp(40px, 6vw, 80px);
+  color: #f0e8d8; letter-spacing: 0.04em;
+  line-height: 0.92; margin-bottom: 20px;
+  text-shadow: 0 4px 40px rgba(0,0,0,0.6);
+}
+.cta-sub {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(17px, 1.6vw, 22px);
+  color: rgba(232,221,208,0.45);
+  margin-bottom: 42px; display: block;
+}
+.cta-note {
+  margin-top: 24px;
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.35em; color: rgba(232,221,208,0.2);
+  display: block;
+}
+
+/* ── INTEGRATIONS STRIP (between panels) ── */
+.int-strip {
+  background: #06040a;
+  border-top: 0.5px solid rgba(139,26,26,0.15);
+  border-bottom: 0.5px solid rgba(139,26,26,0.15);
+  padding: 40px 56px;
+  display: flex;
+  align-items: center;
+  gap: 40px;
+}
+.int-label {
+  font-family: 'Cinzel', serif; font-size: 8.5px;
+  letter-spacing: 0.4em; color: rgba(232,221,208,0.2);
+  white-space: nowrap; flex-shrink: 0;
+}
+.int-tags {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.int-tag {
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.18em; color: rgba(232,221,208,0.28);
+  border: 0.5px solid rgba(232,221,208,0.08);
+  padding: 6px 14px;
+  transition: color .2s, border-color .2s;
+}
+.int-tag:hover { color: rgba(232,221,208,0.65); border-color: rgba(232,221,208,0.25); }
+.int-more {
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.3em; color: rgba(196,132,26,0.4);
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* ── FOOTER ── */
+footer {
+  padding: 22px 56px;
+  background: #040201;
+  display: flex; justify-content: space-between;
+  border-top: 0.5px solid rgba(232,221,208,0.04);
+}
+.foot {
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.28em; color: rgba(232,221,208,0.15);
+}
+
+/* ── GRAIN ── */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 999;
+  pointer-events: none; opacity: 0.032; mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain .4s steps(2) infinite;
+}
+@keyframes grain {
+  0%  { transform: translate(0,0); }
+  25% { transform: translate(-2%,-3%); }
+  50% { transform: translate(1%,2%); }
+  75% { transform: translate(-1%,1%); }
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  nav { padding: 18px 24px; }
+  #panel-caps .panel-content { grid-template-columns: 1fr; }
+  .caps-left { padding: 80px 32px 48px; }
+  .caps-right-image { min-height: 260px; }
+  .int-strip { flex-direction: column; align-items: flex-start; padding: 32px 24px; }
+  #panel-hero .panel-content,
+  #panel-cta .panel-content { padding: 0 6%; }
+  footer { padding: 18px 24px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="#">PUCKY</a>
+  <a class="nav-cta" href="#access">Request Access</a>
+</nav>
+
+<!-- ══ PANEL 1: HERO ══ -->
+<div class="panel" id="panel-hero">
+  <div class="panel-bg"></div>
+  <div class="panel-bg-fallback"></div>
+  <div class="panel-overlay"></div>
+
+  <!--
+    TO ADD THE ASTRONAUT IMAGE:
+    1. Save astronaut.jpg to the same folder
+    2. In .panel-bg above, set: background-image: url('astronaut.jpg');
+    3. The gradient overlays handle legibility automatically
+  -->
+
+  <div class="panel-content">
+    <span class="hero-eyebrow">Voice Agent · Motorola Razr 2024</span>
+    <h1 class="hero-title">Your Will.<br>Executed.</h1>
+    <div class="hero-divider">
+      <div class="div-line"></div>
+      <div class="div-gem"></div>
+      <div class="div-line"></div>
+    </div>
+    <span class="hero-tag">Hold a button. Say what needs doing. Walk away.</span>
+    <div class="hero-buttons">
+      <a class="btn-p" href="#access">Get Early Access</a>
+      <a class="btn-g" href="#capabilities">See What It Does</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PANEL 2: CAPABILITIES ══ -->
+<div class="panel" id="panel-caps">
+  <div class="panel-content">
+
+    <div class="caps-left">
+      <span class="section-eyebrow">The Agent</span>
+      <h2 class="section-h">Your Most<br>Capable Hire</h2>
+      <div class="s-divider"></div>
+      <p class="section-b">
+        Pucky lives on your Razr's front screen — connected to every tool you use,
+        running on a cloud VM, working while you don't.
+      </p>
+      <a class="btn-p" href="#access">Request Access</a>
+    </div>
+
+    <div class="caps-right">
+      <!-- optional image top-right — drop in a second hero image here -->
+      <div class="caps-right-image">
+        <div class="panel-bg"></div>
+        <div class="panel-bg-fallback"></div>
+        <div class="panel-overlay"></div>
+        <span class="caps-right-image-label">Agent VM · Active</span>
+      </div>
+
+      <!-- 2×2 feature grid bottom-right -->
+      <div class="caps-grid" id="capabilities">
+        <div class="cap">
+          <span class="cap-n">01</span>
+          <div class="cap-h">Acts Across<br>All Your Apps</div>
+          <p class="cap-b">200+ tools via Composio. Gmail, Notion, Slack, GitHub — one voice, every surface.</p>
+        </div>
+        <div class="cap">
+          <span class="cap-n">02</span>
+          <div class="cap-h">Remembers<br>Everything</div>
+          <p class="cap-b">Persistent context. Your history, preferences, and ongoing work — always at hand.</p>
+        </div>
+        <div class="cap">
+          <span class="cap-n">03</span>
+          <div class="cap-h">Schedules &amp;<br>Automates</div>
+          <p class="cap-b">Set recurring work. Weekly reports, follow-ups, triggers — running on your schedule.</p>
+        </div>
+        <div class="cap">
+          <span class="cap-n">04</span>
+          <div class="cap-h">Zero Technical<br>Setup</div>
+          <p class="cap-b">Sideload APK. Pair VM. Talk. No code, no config, no infrastructure to manage.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ INTEGRATIONS STRIP ══ -->
+<div class="int-strip">
+  <span class="int-label">Connected Via Composio</span>
+  <div class="int-tags">
+    <span class="int-tag">Gmail</span>
+    <span class="int-tag">Calendar</span>
+    <span class="int-tag">Notion</span>
+    <span class="int-tag">Slack</span>
+    <span class="int-tag">GitHub</span>
+    <span class="int-tag">Linear</span>
+    <span class="int-tag">Sheets</span>
+    <span class="int-tag">Airtable</span>
+    <span class="int-tag">Stripe</span>
+    <span class="int-tag">HubSpot</span>
+    <span class="int-tag">Jira</span>
+    <span class="int-tag">Figma</span>
+    <span class="int-tag">Shopify</span>
+    <span class="int-tag">Twilio</span>
+    <span class="int-tag">Salesforce</span>
+    <span class="int-tag">Dropbox</span>
+  </div>
+  <span class="int-more">+ 200 more</span>
+</div>
+
+<!-- ══ PANEL 3: CTA ══ -->
+<div class="panel" id="panel-cta">
+  <div class="panel-bg"></div>
+  <div class="panel-bg-fallback"></div>
+  <div class="panel-overlay"></div>
+
+  <!--
+    Great place for the astronaut image at low opacity:
+    Set background-image: url('astronaut.jpg') on .panel-bg
+    The overlay gradient darkens it to ~30% visibility
+  -->
+
+  <div class="panel-content" id="access">
+    <span class="cta-eyebrow">Early Access · Limited</span>
+    <h2 class="cta-title">Claim Your<br>Agent</h2>
+    <span class="cta-sub">Motorola Razr 2024 · APK · Android Sideload</span>
+    <div>
+      <a class="btn-p" href="#">Request Access</a>
+      <a class="btn-g" href="#">Download APK</a>
+    </div>
+    <span class="cta-note">Powered by Composio &nbsp;·&nbsp; Runs on Cloud VM</span>
+  </div>
+</div>
+
+<footer>
+  <span class="foot">Pucky — Voice Agent</span>
+  <span class="foot">© 2025</span>
+</footer>
+
+</body>
+</html>

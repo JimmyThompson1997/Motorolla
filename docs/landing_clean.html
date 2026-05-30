@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PUCKY — Your Agent. Always On.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: #06040a;
+  font-family: 'EB Garamond', Georgia, serif;
+  color: #e8ddd0;
+  overflow-x: hidden;
+}
+
+/* ── NAV ── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 500;
+  padding: 22px 60px;
+  display: flex; justify-content: space-between; align-items: center;
+  background: linear-gradient(to bottom, rgba(6,4,10,0.95) 0%, transparent 100%);
+}
+.nav-logo {
+  font-family: 'Cinzel', serif; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.35em; color: #e8ddd0; text-decoration: none;
+}
+.nav-cta {
+  font-family: 'Cinzel', serif; font-size: 9.5px; letter-spacing: 0.22em;
+  color: #e8ddd0; text-decoration: none;
+  border: 0.5px solid rgba(232,221,208,0.35); padding: 9px 26px;
+  transition: border-color .2s, color .2s;
+}
+.nav-cta:hover { border-color: rgba(232,221,208,0.8); }
+
+/* ══════════════════════════════════
+   HERO
+══════════════════════════════════ */
+.hero {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  padding: 0 60px;
+  gap: 80px;
+  padding-top: 80px;
+}
+
+/* left: image frame */
+.hero-image-wrap {
+  position: relative;
+  height: 680px;
+  overflow: hidden;
+}
+.hero-image-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(to top, rgba(6,4,10,0.55) 0%, transparent 40%),
+              linear-gradient(to right, transparent 70%, rgba(6,4,10,0.6) 100%);
+}
+.hero-img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top;
+  display: block;
+}
+/* placeholder if no image */
+.hero-img-placeholder {
+  width: 100%; height: 100%;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, #1a3a6e 0%, #0a1628 50%, #06040a 100%),
+    radial-gradient(circle at 70% 60%, rgba(196,132,26,0.3) 0%, transparent 50%);
+  display: flex; align-items: flex-end; padding: 40px;
+}
+.hero-img-label {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.3em; color: rgba(232,221,208,0.2);
+  text-transform: uppercase;
+}
+.hero-frame-accent {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 1px; height: 120px;
+  background: linear-gradient(to top, #8b1a1a, transparent);
+  z-index: 3;
+}
+.hero-frame-accent-h {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 120px; height: 1px;
+  background: linear-gradient(to right, #8b1a1a, transparent);
+  z-index: 3;
+}
+
+/* right: copy */
+.hero-copy {
+  max-width: 520px;
+}
+.eyebrow {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.5em; color: rgba(196,132,26,0.7);
+  display: block; margin-bottom: 20px;
+  text-transform: uppercase;
+}
+.hero-title {
+  font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: clamp(48px, 6vw, 88px);
+  color: #f0e8d8;
+  line-height: 0.9; letter-spacing: 0.04em;
+  margin-bottom: 24px;
+}
+.divider {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+}
+.div-line { height: 0.5px; flex: 0 0 44px; background: #8b1a1a; }
+.div-gem {
+  width: 5px; height: 5px; flex-shrink: 0;
+  background: #8b1a1a; transform: rotate(45deg);
+  box-shadow: 0 0 8px rgba(139,26,26,0.7);
+}
+.hero-sub {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(18px, 1.8vw, 24px);
+  color: rgba(232,221,208,0.75); line-height: 1.35;
+  margin-bottom: 14px;
+}
+.hero-body {
+  font-family: 'EB Garamond', serif;
+  font-size: clamp(14px, 1.1vw, 16px);
+  color: rgba(232,221,208,0.5); line-height: 1.9;
+  margin-bottom: 36px;
+  max-width: 400px;
+}
+.btn-primary {
+  font-family: 'Cinzel', serif; font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #f0e4c0; background: #8b1a1a;
+  padding: 14px 42px; text-decoration: none;
+  display: inline-block;
+  box-shadow: 0 4px 28px rgba(139,26,26,0.35);
+  transition: background .2s, box-shadow .2s;
+  margin-right: 20px;
+}
+.btn-primary:hover { background: #a02020; box-shadow: 0 6px 36px rgba(160,32,32,0.5); }
+.btn-ghost {
+  font-family: 'Cinzel', serif; font-size: 10px; letter-spacing: 0.2em;
+  color: rgba(232,221,208,0.45); text-decoration: none;
+  border-bottom: 0.5px solid rgba(232,221,208,0.25); padding-bottom: 2px;
+  transition: color .2s, border-color .2s;
+}
+.btn-ghost:hover { color: rgba(232,221,208,0.9); border-color: rgba(232,221,208,0.6); }
+
+/* ══════════════════════════════════
+   HOW IT WORKS (device callout)
+══════════════════════════════════ */
+.how {
+  padding: 100px 60px;
+  background: #060408;
+  border-top: 0.5px solid rgba(139,26,26,0.2);
+}
+.section-label {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.55em; color: rgba(196,132,26,0.6);
+  text-transform: uppercase; display: block;
+  text-align: center; margin-bottom: 12px;
+}
+.section-title {
+  font-family: 'Cinzel', serif; font-weight: 700;
+  font-size: clamp(24px, 3vw, 40px);
+  color: #f0e8d8; text-align: center;
+  letter-spacing: 0.04em; margin-bottom: 60px;
+}
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 48px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.step {
+  text-align: center;
+}
+.step-num {
+  font-family: 'Cinzel', serif; font-size: 9px;
+  letter-spacing: 0.4em; color: #8b1a1a;
+  display: block; margin-bottom: 18px;
+}
+.step-head {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: clamp(16px, 1.6vw, 20px);
+  color: #f0e8d8; margin-bottom: 12px;
+  letter-spacing: 0.02em;
+}
+.step-body {
+  font-family: 'EB Garamond', serif;
+  font-size: 15px; color: rgba(232,221,208,0.5);
+  line-height: 1.8;
+}
+.step-divider {
+  width: 0.5px; height: 60px;
+  background: linear-gradient(to bottom, transparent, rgba(139,26,26,0.4), transparent);
+  margin: 0 auto 24px;
+}
+
+/* ══════════════════════════════════
+   CAPABILITIES
+══════════════════════════════════ */
+.capabilities {
+  padding: 100px 60px;
+  background: #08050e;
+  border-top: 0.5px solid rgba(139,26,26,0.15);
+}
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.cap-item {
+  padding: 36px 40px;
+  background: rgba(255,255,255,0.02);
+  border: 0.5px solid rgba(232,221,208,0.06);
+  transition: background .2s, border-color .2s;
+}
+.cap-item:hover {
+  background: rgba(139,26,26,0.06);
+  border-color: rgba(139,26,26,0.2);
+}
+.cap-num {
+  font-family: 'Cinzel', serif; font-size: 8.5px;
+  letter-spacing: 0.4em; color: rgba(196,132,26,0.5);
+  display: block; margin-bottom: 14px;
+}
+.cap-head {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: clamp(14px, 1.4vw, 18px);
+  color: #f0e8d8; margin-bottom: 10px;
+  letter-spacing: 0.02em;
+}
+.cap-body {
+  font-family: 'EB Garamond', serif;
+  font-size: 15px; color: rgba(232,221,208,0.45);
+  line-height: 1.75;
+}
+
+/* ══════════════════════════════════
+   INTEGRATIONS
+══════════════════════════════════ */
+.integrations {
+  padding: 80px 60px;
+  background: #06040a;
+  border-top: 0.5px solid rgba(139,26,26,0.15);
+  text-align: center;
+}
+.int-note {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: 15px; color: rgba(232,221,208,0.4);
+  margin-bottom: 40px;
+}
+.int-logos {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  max-width: 800px;
+  margin: 0 auto 24px;
+}
+.int-tag {
+  font-family: 'Cinzel', serif; font-size: 8.5px;
+  letter-spacing: 0.22em; color: rgba(232,221,208,0.3);
+  border: 0.5px solid rgba(232,221,208,0.1);
+  padding: 8px 18px;
+  transition: color .2s, border-color .2s;
+}
+.int-tag:hover { color: rgba(232,221,208,0.7); border-color: rgba(232,221,208,0.3); }
+.int-more {
+  font-family: 'Cinzel', serif; font-size: 8.5px;
+  letter-spacing: 0.3em; color: rgba(196,132,26,0.5);
+  margin-top: 20px; display: block;
+}
+
+/* ══════════════════════════════════
+   ASTRONAUT DIVIDER
+══════════════════════════════════ */
+.astro-divider {
+  position: relative;
+  height: 340px;
+  overflow: hidden;
+  border-top: 0.5px solid rgba(139,26,26,0.15);
+}
+.astro-divider-img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center 55%;
+  display: block;
+  opacity: 0.55;
+}
+.astro-divider-placeholder {
+  width: 100%; height: 100%;
+  background:
+    linear-gradient(to bottom, #06040a 0%, transparent 20%, transparent 80%, #06040a 100%),
+    radial-gradient(ellipse 100% 80% at 50% 40%, #0d2a5e 0%, #06040a 70%);
+}
+.astro-divider-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, #06040a 0%, transparent 25%, transparent 75%, #06040a 100%);
+  z-index: 2;
+}
+.astro-quote {
+  position: absolute;
+  bottom: 48px; left: 50%; transform: translateX(-50%);
+  z-index: 3;
+  text-align: center;
+  white-space: nowrap;
+}
+.astro-quote-text {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(18px, 2vw, 26px);
+  color: rgba(240,232,216,0.7);
+  letter-spacing: 0.02em;
+}
+
+/* ══════════════════════════════════
+   CTA
+══════════════════════════════════ */
+.cta-section {
+  padding: 100px 60px;
+  background: #06040a;
+  text-align: center;
+  border-top: 0.5px solid rgba(139,26,26,0.2);
+}
+.cta-section .section-label { margin-bottom: 16px; }
+.cta-title {
+  font-family: 'Cinzel', serif; font-weight: 900;
+  font-size: clamp(32px, 4.5vw, 62px);
+  color: #f0e8d8; letter-spacing: 0.04em;
+  line-height: 0.95; margin-bottom: 16px;
+}
+.cta-sub {
+  font-family: 'EB Garamond', serif; font-style: italic;
+  font-size: clamp(16px, 1.4vw, 20px);
+  color: rgba(232,221,208,0.4);
+  margin-bottom: 40px; display: block;
+}
+.cta-buttons { display: flex; gap: 24px; justify-content: center; align-items: center; }
+
+/* ── FOOTER ── */
+footer {
+  padding: 24px 60px;
+  background: #040208;
+  display: flex; justify-content: space-between; align-items: center;
+  border-top: 0.5px solid rgba(232,221,208,0.04);
+}
+.foot {
+  font-family: 'Cinzel', serif; font-size: 8px;
+  letter-spacing: 0.3em; color: rgba(232,221,208,0.15);
+}
+
+/* ── GRAIN OVERLAY ── */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: 999;
+  pointer-events: none; opacity: 0.028; mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain .4s steps(2) infinite;
+}
+@keyframes grain {
+  0%  { transform: translate(0,0); }
+  25% { transform: translate(-2%,-3%); }
+  50% { transform: translate(1%,2%); }
+  75% { transform: translate(-1%,1%); }
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 860px) {
+  nav { padding: 20px 28px; }
+  .hero {
+    grid-template-columns: 1fr;
+    padding: 100px 28px 60px;
+    gap: 48px;
+  }
+  .hero-image-wrap { height: 380px; }
+  .how, .capabilities, .integrations, .cta-section { padding: 70px 28px; }
+  .steps { grid-template-columns: 1fr; gap: 40px; }
+  .cap-grid { grid-template-columns: 1fr; }
+  .astro-divider { height: 220px; }
+  footer { padding: 20px 28px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="#">PUCKY</a>
+  <a class="nav-cta" href="#access">Request Access</a>
+</nav>
+
+<!-- ══ HERO ══ -->
+<section class="hero">
+
+  <div class="hero-image-wrap">
+    <!--
+      Drop your astronaut image here:
+      <img class="hero-img" src="astronaut.jpg" alt="">
+      Until then the gradient placeholder below shows:
+    -->
+    <div class="hero-img-placeholder">
+      <span class="hero-img-label">Agent Active</span>
+    </div>
+    <div class="hero-frame-accent"></div>
+    <div class="hero-frame-accent-h"></div>
+  </div>
+
+  <div class="hero-copy">
+    <span class="eyebrow">Voice-First Agent · Motorola Razr 2024</span>
+    <h1 class="hero-title">Your Will.<br>Executed.</h1>
+    <div class="divider">
+      <div class="div-line"></div>
+      <div class="div-gem"></div>
+    </div>
+    <span class="hero-sub">Hold a button. Say what needs doing.<br>Your agent handles the rest.</span>
+    <span class="hero-body">
+      Pucky lives on your Razr's front screen — always ready, never in the way.
+      Connected to hundreds of your apps. Remembers everything. Works while you don't.
+    </span>
+    <a class="btn-primary" href="#access">Get Early Access</a>
+    <a class="btn-ghost" href="#how">See How It Works</a>
+  </div>
+
+</section>
+
+<!-- ══ HOW IT WORKS ══ -->
+<section class="how" id="how">
+  <span class="section-label">The Protocol</span>
+  <h2 class="section-title">Three Motions. Infinite Reach.</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-divider"></div>
+      <span class="step-num">I</span>
+      <div class="step-head">Hold Volume Up</div>
+      <p class="step-body">Flip open your Razr, hold the volume key. Your agent is listening on the front screen — no unlock, no navigation.</p>
+    </div>
+    <div class="step">
+      <div class="step-divider"></div>
+      <span class="step-num">II</span>
+      <div class="step-head">Say What You Need</div>
+      <p class="step-body">Send an email. Book a table. Pull a report. Schedule the work. Speak it once in plain language — done.</p>
+    </div>
+    <div class="step">
+      <div class="step-divider"></div>
+      <span class="step-num">III</span>
+      <div class="step-head">Walk Away</div>
+      <p class="step-body">The agent executes across your connected apps on a cloud VM. Results arrive. You're already onto the next thing.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ CAPABILITIES ══ -->
+<section class="capabilities" id="capabilities">
+  <span class="section-label">What It Does</span>
+  <h2 class="section-title">Everything You'd Delegate<br>to Someone Exceptional</h2>
+  <div class="cap-grid">
+    <div class="cap-item">
+      <span class="cap-num">01</span>
+      <div class="cap-head">Act Across Your Apps</div>
+      <p class="cap-body">Connected to hundreds of tools via Composio — Gmail, Notion, Slack, GitHub, Sheets, Linear, and more. One agent, all your surfaces.</p>
+    </div>
+    <div class="cap-item">
+      <span class="cap-num">02</span>
+      <div class="cap-head">Remember Everything</div>
+      <p class="cap-body">Context that persists. Your agent knows your preferences, your history, your ongoing work — so you never repeat yourself.</p>
+    </div>
+    <div class="cap-item">
+      <span class="cap-num">03</span>
+      <div class="cap-head">Schedule &amp; Automate</div>
+      <p class="cap-body">Set it and forget it. Weekly reports, daily digests, recurring tasks — your agent runs them on time, every time.</p>
+    </div>
+    <div class="cap-item">
+      <span class="cap-num">04</span>
+      <div class="cap-head">No Technical Setup</div>
+      <p class="cap-body">Sideload the APK. Pair with your VM. Start talking. No code, no config files, no infrastructure to manage.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ ASTRONAUT IMAGE DIVIDER ══ -->
+<div class="astro-divider">
+  <!--
+    Replace placeholder with:
+    <img class="astro-divider-img" src="astronaut.jpg" alt="">
+  -->
+  <div class="astro-divider-placeholder"></div>
+  <div class="astro-divider-overlay"></div>
+  <div class="astro-quote">
+    <span class="astro-quote-text">The work is handled. Breathe.</span>
+  </div>
+</div>
+
+<!-- ══ INTEGRATIONS ══ -->
+<section class="integrations" id="integrations">
+  <span class="section-label">Connected Via Composio</span>
+  <h2 class="section-title">Every Tool You Already Use</h2>
+  <p class="int-note">Pucky connects to your existing apps — nothing to rebuild, nothing to migrate.</p>
+  <div class="int-logos">
+    <span class="int-tag">Gmail</span>
+    <span class="int-tag">Google Calendar</span>
+    <span class="int-tag">Notion</span>
+    <span class="int-tag">Slack</span>
+    <span class="int-tag">GitHub</span>
+    <span class="int-tag">Linear</span>
+    <span class="int-tag">Sheets</span>
+    <span class="int-tag">Airtable</span>
+    <span class="int-tag">Stripe</span>
+    <span class="int-tag">HubSpot</span>
+    <span class="int-tag">Jira</span>
+    <span class="int-tag">Salesforce</span>
+    <span class="int-tag">Dropbox</span>
+    <span class="int-tag">Figma</span>
+    <span class="int-tag">Shopify</span>
+    <span class="int-tag">Twilio</span>
+  </div>
+  <span class="int-more">+ 200 more via Composio</span>
+</section>
+
+<!-- ══ CTA ══ -->
+<section class="cta-section" id="access">
+  <span class="section-label">Early Access</span>
+  <h2 class="cta-title">Claim Your Agent</h2>
+  <span class="cta-sub">Limited to Motorola Razr 2024. APK · Android · Sideload.</span>
+  <div class="cta-buttons">
+    <a class="btn-primary" href="#">Request Access</a>
+    <a class="btn-ghost" href="#">Download APK</a>
+  </div>
+</section>
+
+<footer>
+  <span class="foot">Pucky — Voice Agent</span>
+  <span class="foot">Powered by Composio &nbsp;·&nbsp; Razr 2024</span>
+</footer>
+
+</body>
+</html>
