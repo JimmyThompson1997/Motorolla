@@ -2812,6 +2812,27 @@ def voice_thread_scope_status(
     )
 
 
+def wait_for_voice_thread_scope(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    predicate,
+    *,
+    description: str,
+    timeout_seconds: float = 10.0,
+    sleep_seconds: float = 0.1,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_scope: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        scope = voice_thread_scope_status(args, runner, config)
+        last_scope = scope if isinstance(scope, dict) else {}
+        if predicate(last_scope):
+            return last_scope
+        time.sleep(sleep_seconds)
+    raise SuiteError(f"Timed out waiting for {description}: {last_scope}")
+
+
 def reply_cards_snapshot(
     args: argparse.Namespace,
     runner: Runner,
@@ -3104,6 +3125,43 @@ def wait_for_ui_surface(
             return last
         time.sleep(sleep_seconds)
     raise SuiteError(f"Timed out waiting for {description}: {last}")
+
+
+def wait_for_ui_surface_with_webview_relaunch(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    predicate,
+    *,
+    timeout_seconds: float = 20.0,
+    sleep_seconds: float = 0.25,
+    description: str,
+    retry_stage: str,
+) -> dict[str, Any]:
+    try:
+        return wait_for_ui_surface(
+            args,
+            runner,
+            config,
+            predicate,
+            timeout_seconds=timeout_seconds,
+            sleep_seconds=sleep_seconds,
+            description=description,
+        )
+    except SuiteError as exc:
+        if "webview_timeout" not in str(exc):
+            raise
+        launch_home_resilient(args, runner, config, wait_for_channel=True, stage=retry_stage, timeout_seconds=90)
+        ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+        return wait_for_ui_surface(
+            args,
+            runner,
+            config,
+            predicate,
+            timeout_seconds=max(timeout_seconds, 30.0),
+            sleep_seconds=sleep_seconds,
+            description=f"{description} after relaunch",
+        )
 
 
 def wait_for_turn_record(
@@ -3434,13 +3492,14 @@ def seed_walkie_thread_cards(
         timeout=20.0,
     )
     ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
-    wait_for_ui_surface(
+    wait_for_ui_surface_with_webview_relaunch(
         args,
         runner,
         config,
         lambda surface: str(surface.get("route") or "") == "feed",
         timeout_seconds=20.0,
         description="seeded walkie thread home route",
+        retry_stage="seeded_walkie_thread_home_relaunch",
     )
     return catalog
 
@@ -4527,11 +4586,31 @@ def stabilize_displayable_proof_surface(
     home_reset = reset_home_surface_if_needed(args, runner, config)
     if not runner.dry_run:
         time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
-    return {
+    final_surface = ui_surface(args, runner, config)
+    result = {
         "turn_stop": turn_stop,
         "launch": launch,
         "home_reset": home_reset,
+        "final_surface": final_surface,
     }
+    if str(final_surface.get("route") or "") != "feed":
+        runner.run(launch_command(args, config), timeout=30)
+        route_retry: dict[str, Any] = {"launch_mode": "full_launch"}
+        if not runner.dry_run:
+            route_retry["channel"] = ensure_broker_command_channel(
+                args,
+                runner,
+                config,
+                stage=f"{stage}_route_retry",
+                timeout_seconds=timeout_seconds,
+            )
+            time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
+        route_retry["home_reset"] = reset_home_surface_if_needed(args, runner, config)
+        final_surface = ui_surface(args, runner, config)
+        route_retry["final_surface"] = final_surface
+        result["route_retry"] = route_retry
+        result["final_surface"] = final_surface
+    return result
 
 
 def materialize_reply_card_resilient(
@@ -4766,16 +4845,13 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 stage=f"displayable_{case['key']}_materialize",
                 timeout=180,
             )
-        launch_home_resilient(
+        post_materialize_surface_reset = stabilize_displayable_proof_surface(
             args,
             runner,
             config,
-            wait_for_channel=not args.dry_run,
             stage=f"displayable_{case['key']}_home",
             timeout_seconds=max(45, int(args.viewer_timeout_seconds)),
         )
-        if not args.dry_run:
-            time.sleep(args.ui_dwell_seconds)
 
         tile_screenshot = Path(config.evidence_dir) / str(case["tile_screenshot"])
         opened_screenshot = Path(config.evidence_dir) / str(case["opened_screenshot"]) if case["opened_screenshot"] else None
@@ -4853,6 +4929,7 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 "case_index": index,
                 "feed_recovery": feed_recovery,
                 "materialize_recovery": materialize_recovery,
+                "post_materialize_surface_reset": post_materialize_surface_reset,
             }
         )
 
@@ -6136,7 +6213,15 @@ def run_continuation_scenario(
     write_json_file(scenario_dir / "ui.surface.before.json", before_send_surface)
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = voice_thread_scope_status(args, runner, config)
+    scope_before = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == expected_source_surface
+        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
+        description=f"{scenario_name} native scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
     started = start_fixture_turn(
@@ -6221,7 +6306,13 @@ def run_negative_home_scenario(
     reset_walkie_thread_surface(args, runner, config)
     capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="home-before.png", surface_name="ui.surface.home-before.json")
     before_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="before-send.png", surface_name="ui.surface.before.json")
-    scope_before = voice_thread_scope_status(args, runner, config)
+    scope_before = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "new_thread" and not str(scope.get("thread_id") or ""),
+        description=f"{scenario_name} native new-thread scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
     started = start_fixture_turn(
         args,
@@ -6306,7 +6397,15 @@ def run_feed_focus_continuation_scenario(
     write_json_file(scenario_dir / "ui.surface.before.json", focused_surface)
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = voice_thread_scope_status(args, runner, config)
+    scope_before = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == "feed_tile_selected"
+        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
+        description=f"{scenario_name} native focused scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.focused.json", scope_before)
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
@@ -6406,7 +6505,15 @@ def run_focus_clear_negative_scenario(
     )
     write_json_file(scenario_dir / "ui.debug.focus_card.json", focus_result)
     write_json_file(scenario_dir / "ui.surface.focused.json", focused_surface)
-    focused_scope = voice_thread_scope_status(args, runner, config)
+    focused_scope = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == "feed_tile_selected"
+        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
+        description=f"{scenario_name} native focused scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.focused.json", focused_scope)
 
     ui_debug_command(args, runner, config, "ui.debug.clear_focus", {})
@@ -6421,7 +6528,13 @@ def run_focus_clear_negative_scenario(
     write_json_file(scenario_dir / "ui.surface.before.json", before_surface)
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = voice_thread_scope_status(args, runner, config)
+    scope_before = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "new_thread" and not str(scope.get("thread_id") or ""),
+        description=f"{scenario_name} native cleared scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
     final_snapshot = reply_cards_snapshot(args, runner, config)
@@ -6475,7 +6588,15 @@ def run_history_retention_scenario(
     write_json_file(scenario_dir / "ui.surface.before.json", before_surface)
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = voice_thread_scope_status(args, runner, config)
+    scope_before = wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == "thread_transcript"
+        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
+        description=f"{scenario_name} native transcript scope",
+    )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
     started = start_fixture_turn(
@@ -6578,6 +6699,15 @@ def run_final_boss_overlap_scenario(
 
     ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_a["session_id"], "action": "transcript"})
     wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread A detail")
+    wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == "thread_transcript"
+        and str(scope.get("thread_id") or "") == str(card_a["origin"]["thread_id"]),
+        description="final boss thread A native scope",
+    )
     turn_a_id = str(start_fixture_turn(
         args,
         runner,
@@ -6591,6 +6721,13 @@ def run_final_boss_overlap_scenario(
     ).get("turn_id") or "")
 
     ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "new_thread" and not str(scope.get("thread_id") or ""),
+        description="final boss fresh native scope",
+    )
     pending_a_snapshot = wait_for_snapshot_condition(
         args,
         runner,
@@ -6629,6 +6766,15 @@ def run_final_boss_overlap_scenario(
 
     ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_b["session_id"], "action": "transcript"})
     wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread B detail")
+    wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda scope: scope.get("mode") == "existing_thread"
+        and scope.get("source_surface") == "thread_transcript"
+        and str(scope.get("thread_id") or "") == str(card_b["origin"]["thread_id"]),
+        description="final boss thread B native scope",
+    )
     turn_c_id = str(start_fixture_turn(
         args,
         runner,

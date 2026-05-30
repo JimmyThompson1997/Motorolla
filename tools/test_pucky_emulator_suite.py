@@ -942,6 +942,75 @@ def test_surface_from_snapshot_collapses_thread_cards_with_pending_winner() -> N
     assert surface["visible_cards"][0]["kind"] == "pending_outbound"
 
 
+def test_wait_for_voice_thread_scope_polls_until_expected_scope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    scopes = [
+        {"mode": "new_thread", "thread_id": ""},
+        {"mode": "existing_thread", "thread_id": "thread-A"},
+    ]
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(suite, "voice_thread_scope_status", lambda *_args, **_kwargs: scopes.pop(0))
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    scope = suite.wait_for_voice_thread_scope(
+        args,
+        runner,
+        config,
+        lambda item: item.get("mode") == "existing_thread",
+        description="test scope",
+    )
+
+    assert scope["thread_id"] == "thread-A"
+    assert sleeps == [0.1]
+
+
+def test_wait_for_ui_surface_with_webview_relaunch_recovers_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls = {"wait": 0}
+    launches: list[str] = []
+    debug_commands: list[str] = []
+
+    def fake_wait(*_args, **kwargs):
+        calls["wait"] += 1
+        if calls["wait"] == 1:
+            raise suite.SuiteError("Timed out waiting for home: {'ui_debug_error': 'webview_timeout'}")
+        return {"route": "feed", "schema": "pucky.ui_surface.v1", "description": kwargs["description"]}
+
+    monkeypatch.setattr(suite, "wait_for_ui_surface", fake_wait)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **kwargs: launches.append(str(kwargs["stage"])) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        suite,
+        "ui_debug_command",
+        lambda *_args, **_kwargs: debug_commands.append(str(_args[3])) or {"ok": True},
+    )
+
+    surface = suite.wait_for_ui_surface_with_webview_relaunch(
+        args,
+        runner,
+        config,
+        lambda item: item.get("route") == "feed",
+        description="home route",
+        retry_stage="home_retry",
+    )
+
+    assert surface["route"] == "feed"
+    assert launches == ["home_retry"]
+    assert debug_commands == ["ui.debug.goto_home"]
+
+
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:
     card = {
         "title": "Localized attachment",
@@ -2230,6 +2299,11 @@ def test_stabilize_displayable_proof_surface_stops_turn_and_clears_focus(
         "reset_home_surface_if_needed",
         lambda *_args, **_kwargs: {"needs_reset": True, "used_ui_debug": True},
     )
+    monkeypatch.setattr(
+        suite,
+        "ui_surface",
+        lambda *_args, **_kwargs: {"route": "feed", "ui_debug_available": True, "detail": {}, "thread_scope": {}, "focused_card": {}},
+    )
     monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
 
     result = suite.stabilize_displayable_proof_surface(
@@ -2243,6 +2317,41 @@ def test_stabilize_displayable_proof_surface_stops_turn_and_clears_focus(
     assert result["turn_stop"]["ok"] is True
     assert result["home_reset"]["used_ui_debug"] is True
     assert calls == ["displayable_html_materialize"]
+
+
+def test_stabilize_displayable_proof_surface_retries_full_launch_when_route_is_blank(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False, ui_dwell_seconds=0.0)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    surfaces = iter([
+        {"route": "", "ui_debug_available": False, "detail": {}, "thread_scope": {}, "focused_card": {}},
+        {"route": "feed", "ui_debug_available": True, "detail": {}, "thread_scope": {}, "focused_card": {}},
+    ])
+    commands: list[list[str]] = []
+
+    runner.run = lambda command, **_kwargs: commands.append(command) or suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")  # type: ignore[method-assign]
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload.get("result", payload))
+    monkeypatch.setattr(suite, "launch_home_resilient", lambda *_args, **_kwargs: {"ok": True, "launch_mode": "show_home"})
+    monkeypatch.setattr(suite, "reset_home_surface_if_needed", lambda *_args, **_kwargs: {"needs_reset": True})
+    monkeypatch.setattr(suite, "ui_surface", lambda *_args, **_kwargs: next(surfaces))
+    monkeypatch.setattr(suite, "launch_command", lambda *_args, **_kwargs: ["adb", "launch"])
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = suite.stabilize_displayable_proof_surface(
+        args,
+        runner,
+        config,
+        stage="displayable_jpg_home",
+        timeout_seconds=45,
+    )
+
+    assert result["route_retry"]["channel"]["ok"] is True
+    assert result["final_surface"]["route"] == "feed"
+    assert commands == [["adb", "launch"]]
 
 
 def test_materialize_reply_card_resilient_retries_after_timeout(
