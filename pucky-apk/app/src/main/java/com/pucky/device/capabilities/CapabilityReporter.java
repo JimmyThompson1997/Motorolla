@@ -111,6 +111,10 @@ public final class CapabilityReporter {
                 hasAnySensor() ? "implemented_guarded" : "blocked_by_hardware",
                 "foreground_service", "visible", "android.permission.VIBRATE", "not_recorded",
                 "Cover-screen hand-wave detector gated by closed device state, face-up/stationary accelerometer checks, and Accessibility screen lock when enabled."));
+        Json.add(out, cap("physical.gesture.feedback", "physical.gesture.feedback.status/physical.gesture.feedback.set/physical.gesture.feedback.trigger",
+                hasAnySensor() ? "experimental" : "blocked_by_hardware",
+                "foreground_service", "audible_haptic", "android.permission.VIBRATE", "not_recorded",
+                "Experimental raw accel/gyro/gravity detector: single chop plays a ping and strong double back tap plays two haptics for pickup/catch testing."));
         Json.add(out, cap("screen.lock", "screen.lock.status/screen.lock.request/screen.lock.open_accessibility_settings",
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
