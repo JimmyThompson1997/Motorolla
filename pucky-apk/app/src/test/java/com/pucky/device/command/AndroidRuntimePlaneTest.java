@@ -91,12 +91,13 @@ public final class AndroidRuntimePlaneTest {
         String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         List<String> commands = commandNames(executor);
 
-        assertEquals(242, commands.size());
+        assertEquals(243, commands.size());
         assertEquals(commands.size(), new HashSet<>(commands).size());
         assertTrue(commands.contains("ui.debug.goto_home"));
         assertTrue(commands.contains("ui.debug.back"));
         assertTrue(commands.contains("ui.debug.focus_card"));
         assertTrue(commands.contains("ui.debug.clear_focus"));
+        assertTrue(commands.contains("ui.debug.refresh_cards"));
         assertTrue(commands.contains("ui.debug.open_card_action"));
         assertTrue(commands.contains("android.substrate"));
     }

@@ -765,6 +765,31 @@ def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:
     assert len(title_nodes) == 1
 
 
+def test_find_ui_nodes_treats_text_and_content_desc_patterns_as_or() -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.Button" package="com.pucky.device.debug" content-desc="Open file for Proof CSV Table" bounds="[900,180][1000,260]" />
+  <node index="1" text="Open file for Proof HTML Dashboard" resource-id="" class="android.widget.Button" package="com.pucky.device.debug" content-desc="" bounds="[876,204][989,307]" />
+</hierarchy>
+"""
+
+    desc_only = suite.find_ui_nodes(
+        xml,
+        text_pattern=r"^Open file for Proof CSV Table$",
+        content_desc_pattern=r"^Open file for Proof CSV Table$",
+    )
+    assert len(desc_only) == 1
+    assert desc_only[0]["content-desc"] == "Open file for Proof CSV Table"
+
+    text_only = suite.find_ui_nodes(
+        xml,
+        text_pattern=r"^Open file for Proof HTML Dashboard$",
+        content_desc_pattern=r"^Open file for Proof HTML Dashboard$",
+    )
+    assert len(text_only) == 1
+    assert text_only[0]["text"] == "Open file for Proof HTML Dashboard"
+
+
 def test_dismiss_anr_dialog_if_present_taps_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
@@ -1008,7 +1033,38 @@ def test_wait_for_ui_surface_with_webview_relaunch_recovers_timeout(
 
     assert surface["route"] == "feed"
     assert launches == ["home_retry"]
-    assert debug_commands == ["ui.debug.goto_home"]
+    assert debug_commands == ["ui.debug.goto_home", "ui.debug.refresh_cards"]
+
+
+def test_ui_surface_relaunches_after_transient_device_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls = {"count": 0}
+    relaunches: list[str] = []
+
+    def fake_command_json(_runner, command, *, timeout=60):
+        assert "ui.surface.get" in command
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise suite.SuiteError("DEVICE_OFFLINE: broker reconnecting")
+        return {"result": {"route": "feed", "ui_version": "git-test"}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(
+        suite,
+        "launch_home_resilient",
+        lambda *_args, **kwargs: relaunches.append(str(kwargs["stage"])) or {"ok": True},
+    )
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    surface = suite.ui_surface(args, runner, config)
+
+    assert surface["route"] == "feed"
+    assert calls["count"] == 2
+    assert relaunches == ["ui_surface_reconnect_1"]
 
 
 def test_first_displayable_attachment_snapshot_normalizes_localized_viewer_paths() -> None:

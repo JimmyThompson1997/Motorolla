@@ -326,6 +326,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("\"ui.debug.back\""));
         assertTrue(source.contains("\"ui.debug.focus_card\""));
         assertTrue(source.contains("\"ui.debug.clear_focus\""));
+        assertTrue(source.contains("\"ui.debug.refresh_cards\""));
         assertTrue(source.contains("\"ui.debug.open_card_action\""));
         assertTrue(source.contains("\"voice.thread_scope.get\""));
         assertTrue(source.contains("\"voice.thread_scope.set\""));
@@ -340,6 +341,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("uiController.debugBack(command.args())"));
         assertTrue(source.contains("uiController.debugFocusCard(command.args())"));
         assertTrue(source.contains("uiController.debugClearFocus(command.args())"));
+        assertTrue(source.contains("uiController.debugRefreshCards(command.args())"));
         assertTrue(source.contains("uiController.debugOpenCardAction(command.args())"));
         assertTrue(source.contains("uiBundleController.status()"));
         assertTrue(source.contains("uiBundleController.installDownloaded"));
@@ -355,6 +357,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue(uiController.contains("public JSONObject debugBack(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugFocusCard(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugClearFocus(JSONObject args)"));
+        assertTrue(uiController.contains("public JSONObject debugRefreshCards(JSONObject args)"));
         assertTrue(uiController.contains("public JSONObject debugOpenCardAction(JSONObject args)"));
         assertTrue(read("src/main/java/com/pucky/device/ui/UiSurfaceController.java").contains("\"focused_card\""));
     }

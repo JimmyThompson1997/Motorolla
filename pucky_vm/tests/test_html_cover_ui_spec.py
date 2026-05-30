@@ -1575,9 +1575,11 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert 'command === "ui.surface.get"' in app
     assert 'command === "ui.debug.goto_home"' in app
     assert 'command === "ui.debug.back"' in app
+    assert 'command === "ui.debug.refresh_cards"' in app
     assert 'command === "ui.debug.open_card_action"' in app
     assert "function describeUiSurface()" in app
     assert "function uiDebugDispatch(action, rawArgs = {})" in app
+    assert "function uiDebugRefreshCards()" in app
     assert "function uiDebugOpenCardAction(rawArgs = {})" in app
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app
@@ -1637,11 +1639,13 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert 'command === "ui.debug.back"' in app
     assert 'command === "ui.debug.focus_card"' in app
     assert 'command === "ui.debug.clear_focus"' in app
+    assert 'command === "ui.debug.refresh_cards"' in app
     assert 'command === "ui.debug.open_card_action"' in app
     assert "function describeUiSurface()" in app
     assert "function uiDebugDispatch(action, rawArgs = {})" in app
     assert "function uiDebugFocusCard(rawArgs = {})" in app
     assert "function uiDebugClearFocus()" in app
+    assert "function uiDebugRefreshCards()" in app
     assert "function findFocusedCard()" in app
     assert "function reconcileFocusedCardSelection()" in app
     assert "async function refreshCardsFromNativeSnapshot(options = {})" in app

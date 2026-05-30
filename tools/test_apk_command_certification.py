@@ -9,7 +9,7 @@ def test_certification_recipes_cover_current_command_universe() -> None:
     commands = cert.source_commands()
     coverage = cert.validate_recipe_coverage(commands, cert.static_recipes("unit-cert"))
 
-    assert len(commands) == 242
+    assert len(commands) == 243
     assert len(commands) == len(set(commands))
     assert coverage == {"missing": [], "extra": [], "duplicates": []}
 
@@ -31,6 +31,7 @@ def test_command_universe_contains_android_plane_aliases_and_fallback() -> None:
         "ui.debug.back",
         "ui.debug.focus_card",
         "ui.debug.clear_focus",
+        "ui.debug.refresh_cards",
         "ui.debug.open_card_action",
         "voice.thread_scope.get",
         "voice.thread_scope.set",

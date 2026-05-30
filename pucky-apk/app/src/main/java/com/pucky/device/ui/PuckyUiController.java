@@ -106,6 +106,10 @@ public final class PuckyUiController {
         return UiAutomationController.dispatch("clear_focus", args);
     }
 
+    public JSONObject debugRefreshCards(JSONObject args) {
+        return UiAutomationController.dispatch("refresh_cards", args);
+    }
+
     public JSONObject debugOpenCardAction(JSONObject args) {
         return UiAutomationController.dispatch("open_card_action", args);
     }

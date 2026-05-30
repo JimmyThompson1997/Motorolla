@@ -617,6 +617,9 @@
     if (command === "ui.debug.clear_focus") {
       return uiDebugDispatch("clear_focus", args);
     }
+    if (command === "ui.debug.refresh_cards") {
+      return uiDebugDispatch("refresh_cards", args);
+    }
     if (command === "ui.debug.open_card_action") {
       return uiDebugDispatch("open_card_action", args);
     }
@@ -1860,6 +1863,9 @@
     if (action === "clear_focus") {
       return uiDebugClearFocus();
     }
+    if (action === "refresh_cards") {
+      return uiDebugRefreshCards();
+    }
     if (action === "open_card_action") {
       return uiDebugOpenCardAction(rawArgs);
     }
@@ -1892,6 +1898,20 @@
       ok: true,
       action: "goto_home",
       handled,
+      surface: describeUiSurface()
+    };
+  }
+
+  function uiDebugRefreshCards() {
+    void refreshCardsFromNativeSnapshot({ render: true }).then(() => {
+      void syncVoiceThreadScope({ reason: "debug_refresh_cards", render: true });
+    });
+    return {
+      schema: "pucky.ui_debug_action.v1",
+      ok: true,
+      action: "refresh_cards",
+      handled: true,
+      pending: true,
       surface: describeUiSurface()
     };
   }

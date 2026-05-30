@@ -128,7 +128,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.merge", "ui.reply_cards.get",
             "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
             "ui.bundle.refresh", "ui.surface.get", "ui.debug.goto_home",
-            "ui.debug.back", "ui.debug.focus_card", "ui.debug.clear_focus", "ui.debug.open_card_action",
+            "ui.debug.back", "ui.debug.focus_card", "ui.debug.clear_focus", "ui.debug.refresh_cards", "ui.debug.open_card_action",
             "ui.shell.mode.get", "ui.shell.mode.set",
             "launcher.capability.get", "android.substrate"
     };
@@ -628,6 +628,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.debugFocusCard(command.args());
             case "ui.debug.clear_focus":
                 return uiController.debugClearFocus(command.args());
+            case "ui.debug.refresh_cards":
+                return uiController.debugRefreshCards(command.args());
             case "ui.debug.open_card_action":
                 return uiController.debugOpenCardAction(command.args());
             case "ui.shell.mode.get":

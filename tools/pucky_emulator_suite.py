@@ -1788,9 +1788,14 @@ def find_ui_nodes(
         attrs = dict(node.attrib)
         text_value = str(attrs.get("text") or "")
         desc_value = str(attrs.get("content-desc") or "")
-        if text_re and not text_re.search(text_value):
+        text_matches = bool(text_re and text_re.search(text_value))
+        desc_matches = bool(desc_re and desc_re.search(desc_value))
+        if text_re and desc_re:
+            if not (text_matches or desc_matches):
+                continue
+        elif text_re and not text_matches:
             continue
-        if desc_re and not desc_re.search(desc_value):
+        elif desc_re and not desc_matches:
             continue
         found.append(attrs)
     return found
@@ -2789,13 +2794,32 @@ def ui_surface(
     runner: Runner,
     config: SlotConfig,
 ) -> dict[str, Any]:
-    return command_result(
-        command_json(
-            runner,
-            puckyctl_command(args, config, "ui.surface.get", {}),
-            timeout=120,
-        )
-    )
+    attempts = 2 if not runner.dry_run else 1
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return command_result(
+                command_json(
+                    runner,
+                    puckyctl_command(args, config, "ui.surface.get", {}),
+                    timeout=120,
+                )
+            )
+        except SuiteError as exc:
+            last_error = exc
+            if attempt >= attempts or not is_transient_puckyctl_failure(exc):
+                raise
+            launch_home_resilient(
+                args,
+                runner,
+                config,
+                wait_for_channel=True,
+                stage=f"ui_surface_reconnect_{attempt}",
+                timeout_seconds=90,
+            )
+            if not runner.dry_run:
+                time.sleep(getattr(args, "ui_dwell_seconds", 1.0))
+    raise last_error or SuiteError("Unable to query ui.surface.get")
 
 
 def voice_thread_scope_status(
@@ -3153,6 +3177,7 @@ def wait_for_ui_surface_with_webview_relaunch(
             raise
         launch_home_resilient(args, runner, config, wait_for_channel=True, stage=retry_stage, timeout_seconds=90)
         ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+        ui_debug_command(args, runner, config, "ui.debug.refresh_cards", {})
         return wait_for_ui_surface(
             args,
             runner,
@@ -3492,13 +3517,17 @@ def seed_walkie_thread_cards(
         timeout=20.0,
     )
     ui_debug_command(args, runner, config, "ui.debug.goto_home", {})
+    ui_debug_command(args, runner, config, "ui.debug.refresh_cards", {})
+    expected_threads = {str(item.get("origin", {}).get("thread_id") or item.get("thread_id") or "") for item in catalog.values()}
+    expected_threads.discard("")
     wait_for_ui_surface_with_webview_relaunch(
         args,
         runner,
         config,
-        lambda surface: str(surface.get("route") or "") == "feed",
+        lambda surface: str(surface.get("route") or "") == "feed"
+        and expected_threads.issubset({str(item.get("thread_id") or "") for item in visible_cards(surface)}),
         timeout_seconds=20.0,
-        description="seeded walkie thread home route",
+        description="seeded walkie thread home cards",
         retry_stage="seeded_walkie_thread_home_relaunch",
     )
     return catalog

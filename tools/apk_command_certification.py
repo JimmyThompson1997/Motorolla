@@ -448,6 +448,7 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "ui.debug.back": Recipe("pass_or_honest_failure", {}),
         "ui.debug.focus_card": Recipe("pass_honest_failure", {"session_id": f"missing-{run_nonce}"}),
         "ui.debug.clear_focus": Recipe("pass_or_honest_failure", {}),
+        "ui.debug.refresh_cards": Recipe("pass_or_honest_failure", {}),
         "ui.debug.open_card_action": Recipe("pass_honest_failure", {"card_id": f"missing-{run_nonce}", "action": "open"}),
         "voice.thread_scope.set": Recipe("pass", {"mode": "existing_thread", "thread_id": f"thread-{run_nonce}", "source_surface": "thread_transcript"}),
         "voice.thread_scope.clear": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
