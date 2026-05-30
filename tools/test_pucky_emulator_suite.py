@@ -2787,6 +2787,43 @@ def test_configure_turn_lab_runtime_retries_relaunch_when_broker_stays_offline(
     ]
 
 
+def test_configure_turn_lab_runtime_keeps_fake_turn_provisioning_for_future_relaunches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(
+        tmp_path,
+        dry_run=False,
+        turn_url="https://pucky.fly.dev/api/turn",
+        turn_token="prod-token",
+    )
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+
+    runner.run = lambda *_args, **_kwargs: suite.subprocess.CompletedProcess([], 0, stdout="", stderr="")  # type: ignore[method-assign]
+    monkeypatch.setattr(suite, "grant_runtime_permissions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "dismiss_permission_controller", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "sync_default_recipe_bundle", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "effective_activity_name", lambda *_args, **_kwargs: "com.pucky.device.MainActivity")
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
+
+    suite.configure_turn_lab_runtime(
+        args,
+        runner,
+        config,
+        fake_turn=type("FakeTurn", (), {"base_url": "http://127.0.0.1:55123"})(),
+        reply_mode="card_only",
+        relaunch=False,
+    )
+
+    command = suite.launch_home_command(args, config)
+    encoded = command[command.index("provisioning_json_base64") + 1]
+    payload = json.loads(suite.base64.b64decode(encoded).decode("utf-8"))
+
+    assert payload["pucky_turn_url"] == "http://127.0.0.1:55123"
+    assert payload["pucky_api_token"] == "dev-token"
+
+
 def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")

@@ -3629,8 +3629,9 @@ def configure_turn_lab_runtime(
     ))
     recipe_sync = sync_default_recipe_bundle(args, runner, config)
     configured_turn_url = fake_turn.base_url if fake_turn is not None else str(original_turn_url or "")
-    setattr(args, "turn_url", original_turn_url)
-    setattr(args, "turn_token", original_turn_token)
+    if fake_turn is None:
+        setattr(args, "turn_url", original_turn_url)
+        setattr(args, "turn_token", original_turn_token)
     return {"turn_settings": settings, "recipe_sync": recipe_sync, "turn_url": configured_turn_url}
 
 
