@@ -1017,6 +1017,7 @@ def run_continuation_scenario(
     action: str,
     expected_surface: str,
     text: str,
+    proof_reply_delay_ms: int,
     scenario_dir: Path,
 ) -> dict[str, Any]:
     before_cards = snapshot_cards(args)
@@ -1051,7 +1052,12 @@ def run_continuation_scenario(
     scope_before = wait_for_scope(args, source_thread_id, expected_surface)
     turn_status_before = turn_status(args)
     fixture = put_fixture_for_text(args, text, name)
-    start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
+    start = start_fixture_turn(
+        args,
+        str(fixture["remote"]["path"]),
+        text,
+        proof_reply_delay_ms=proof_reply_delay_ms,
+    )
     turn_id = str(start.get("turn_id") or "")
     if not turn_id:
         raise PhoneProofError(f"{name} did not return a turn_id")
@@ -1163,6 +1169,7 @@ def run_feed_focus_scenario(
     cdp_url: str,
     card: dict[str, Any],
     text: str,
+    proof_reply_delay_ms: int,
     scenario_dir: Path,
 ) -> dict[str, Any]:
     before_cards = snapshot_cards(args)
@@ -1197,7 +1204,12 @@ def run_feed_focus_scenario(
     scope_before = wait_for_scope(args, source_thread_id, "feed_tile_selected")
     turn_status_before = turn_status(args)
     fixture = put_fixture_for_text(args, text, "feed-focus")
-    start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
+    start = start_fixture_turn(
+        args,
+        str(fixture["remote"]["path"]),
+        text,
+        proof_reply_delay_ms=proof_reply_delay_ms,
+    )
     turn_id = str(start.get("turn_id") or "")
     if not turn_id:
         raise PhoneProofError("feed focus scenario did not return a turn_id")
@@ -1371,6 +1383,7 @@ def run_negative_scenario(
     serial: str,
     cdp_url: str,
     text: str,
+    proof_reply_delay_ms: int,
     scenario_dir: Path,
 ) -> dict[str, Any]:
     before_cards = snapshot_cards(args)
@@ -1388,7 +1401,12 @@ def run_negative_scenario(
     scope_before = wait_for_new_thread_scope(args)
     turn_status_before = turn_status(args)
     fixture = put_fixture_for_text(args, text, "negative-home")
-    start = start_fixture_turn(args, str(fixture["remote"]["path"]), text)
+    start = start_fixture_turn(
+        args,
+        str(fixture["remote"]["path"]),
+        text,
+        proof_reply_delay_ms=proof_reply_delay_ms,
+    )
     turn_id = str(start.get("turn_id") or "")
     if not turn_id:
         raise PhoneProofError("negative scenario did not return a turn_id")
@@ -1656,6 +1674,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--page-text", default="Can you revise this file?")
     parser.add_argument("--negative-text", default="Start a fresh thread.")
     parser.add_argument("--history-text", default="Keep this history together.")
+    parser.add_argument("--continuation-delay-ms", type=int, default=0)
+    parser.add_argument("--negative-delay-ms", type=int, default=0)
     parser.add_argument("--final-boss-thread-a-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--final-boss-thread-a-id", default="")
     parser.add_argument("--final-boss-thread-b-title-contains", default="Proof CSV Table")
@@ -1732,6 +1752,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     cdp_url=cdp["cdp_url"],
                     card=feed_card,
                     text=args.feed_focus_text,
+                    proof_reply_delay_ms=args.continuation_delay_ms,
                     scenario_dir=scenario_root / "feed-focus",
                 )
             )
@@ -1754,6 +1775,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     action="transcript",
                     expected_surface="thread_transcript",
                     text=args.transcript_text,
+                    proof_reply_delay_ms=args.continuation_delay_ms,
                     scenario_dir=scenario_root / "transcript",
                 )
             )
@@ -1782,6 +1804,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     action=action,
                     expected_surface=expected_surface,
                     text=args.page_text,
+                    proof_reply_delay_ms=args.continuation_delay_ms,
                     scenario_dir=scenario_root / "page",
                 )
             )
@@ -1794,6 +1817,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     serial=serial,
                     cdp_url=cdp["cdp_url"],
                     text=args.negative_text,
+                    proof_reply_delay_ms=args.negative_delay_ms,
                     scenario_dir=scenario_root / "negative-home",
                 )
             )
@@ -1814,6 +1838,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     cdp_url=cdp["cdp_url"],
                     card=history_card,
                     text=args.history_text,
+                    proof_reply_delay_ms=args.continuation_delay_ms,
                     scenario_dir=scenario_root / "history",
                 )
             )
