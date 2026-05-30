@@ -2115,6 +2115,16 @@ def open_card_detail_with_retry(
             nodes = find_ui_nodes(xml_text, text_pattern=rf"^{re.escape(action_label)}$")
         return nodes[0] if nodes else None
 
+    def surface_detail_matches_card(surface: dict[str, Any]) -> bool:
+        detail = surface.get("detail") if isinstance(surface.get("detail"), dict) else {}
+        if not bool(detail.get("open")):
+            return False
+        card_id = str(card.get("card_id") or "").strip()
+        session_id = str(card.get("session_id") or "").strip()
+        detail_card_id = str(detail.get("card_id") or "").strip()
+        detail_session_id = str(detail.get("session_id") or "").strip()
+        return bool((card_id and detail_card_id == card_id) or (session_id and detail_session_id == session_id))
+
     current_tile_xml = tile_xml
     action_node = find_action_node_in_xml(current_tile_xml)
     if action_node is None:
@@ -2141,9 +2151,14 @@ def open_card_detail_with_retry(
                 timeout=timeout,
             )
             return opened_xml, current_tile_xml
-        except SuiteError:
+        except SuiteError as exc:
+            try:
+                if surface_detail_matches_card(ui_surface(args, runner, config)):
+                    return dump_ui_hierarchy(args, runner, config), current_tile_xml
+            except Exception:
+                pass
             if attempt >= 1:
-                raise
+                raise exc
             action_node, current_tile_xml = wait_for_ui_node(
                 args,
                 runner,
@@ -6865,7 +6880,22 @@ def run_focus_clear_negative_scenario(
 
     final_snapshot = reply_cards_snapshot(args, runner, config)
     write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
-    final_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="reply-complete.png", surface_name="ui.surface.final.json")
+    final_surface = wait_for_ui_surface(
+        args,
+        runner,
+        config,
+        lambda surface: (
+            str(surface.get("route") or "") == "feed"
+            and not bool(focused_card(surface).get("active"))
+            and str(surface.get("thread_scope", {}).get("mode") or "") == "new_thread"
+            and not str(surface.get("thread_scope", {}).get("thread_id") or "")
+            and bool(surface.get("visible_cards"))
+        ),
+        description=f"{scenario_name} final home visible",
+    )
+    write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
+    if not runner.dry_run:
+        capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
     proof = {
         "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
         "scenario": scenario_name,

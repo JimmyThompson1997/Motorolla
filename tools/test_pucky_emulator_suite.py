@@ -3185,6 +3185,62 @@ def test_open_card_detail_with_retry_waits_for_text_only_action_label(monkeypatc
     assert "Open file for Retry card" in refreshed_tile_xml
 
 
+def test_open_card_detail_with_retry_accepts_matching_surface_detail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    card = {
+        "card_id": "card-1",
+        "session_id": "session-1",
+        "title": "Surface card",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Surface file",
+                        "viewer": {"type": "html_iframe", "viewer_src": "data:text/html,ok"},
+                    }
+                ],
+            }
+        ],
+    }
+    tile_xml = "<hierarchy rotation='0'><node text='Open file for Surface card' bounds='[1,2][3,4]' /></hierarchy>"
+    taps: list[str] = []
+
+    def fake_wait_for_ui_node(_args, _runner, _config, *, description, **_kwargs):
+        if "did not open a detail view" in description:
+            raise suite.SuiteError("uiautomator title not exposed yet")
+        raise AssertionError(description)
+
+    monkeypatch.setattr(suite, "wait_for_ui_node", fake_wait_for_ui_node)
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: taps.append("tap"))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        suite,
+        "ui_surface",
+        lambda *_args, **_kwargs: {"detail": {"open": True, "card_id": "card-1", "session_id": "session-1"}},
+    )
+    monkeypatch.setattr(suite, "dump_ui_hierarchy", lambda *_args, **_kwargs: "<hierarchy rotation='0'><node text='detail open' /></hierarchy>")
+
+    opened_xml, refreshed_tile_xml = suite.open_card_detail_with_retry(
+        args,
+        runner,
+        config,
+        case_key="surface_case",
+        title="Surface card",
+        card=card,
+        tile_xml=tile_xml,
+        timeout=5.0,
+    )
+
+    assert taps == ["tap"]
+    assert "detail open" in opened_xml
+    assert "Open file for Surface card" in refreshed_tile_xml
+
+
 def test_clean_dry_run_does_not_delete_slot_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     marker = Path(config.run_dir) / "keep.txt"

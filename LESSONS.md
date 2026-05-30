@@ -29,3 +29,4 @@
 - 2026-05-29 - The final-boss Walkie overlap proof can miss the intentionally short `thread_b` pending window if `ui.reply_cards` polling sleeps 2 seconds; use faster snapshot polling for overlap certification so the 1000 ms pending state is observable.
 - 2026-05-29 - During emulator broker reconnects, `puckyctl ping` can succeed before the broker `devices` listing includes the emulator again; treat a successful ping against the target broker as command-channel proof instead of failing only on a stale device list.
 - 2026-05-29 - Walkie lab reset needs a `pucky.feed.sync` cursor reset after clearing local reply cards; otherwise an advanced feed cursor can make VM-backed cards look missing even when the broker has them.
+- 2026-05-29 - WebView detail panes can open even when `uiautomator` misses the expected title text; for emulator displayable-file proof, accept matching `ui.surface.get.detail` state as the authoritative open-detail signal.
