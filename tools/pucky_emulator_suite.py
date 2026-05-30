@@ -4995,6 +4995,45 @@ def card_icon_registry_contains(payload: dict[str, Any], name: str) -> bool:
     return any(isinstance(item, dict) and str(item.get("name") or "").strip() == target for item in icons)
 
 
+def archive_reply_card_for_displayable_proof(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    card: dict[str, Any],
+    live_turn: dict[str, Any],
+    *,
+    client_action_id: str,
+) -> dict[str, Any]:
+    if bool(live_turn.get("synthetic")) or bool(live_turn.get("replayed")):
+        archived = deepcopy(card)
+        archived["archived"] = True
+        archived["read"] = True
+        return command_result(
+            command_json(
+                runner,
+                reply_cards_write_command(args, config, {"cards": [archived]}),
+                timeout=180,
+            )
+        )
+    return command_result(
+        command_json(
+            runner,
+            puckyctl_command(
+                args,
+                config,
+                "pucky.feed.action",
+                {
+                    "card_id": str(card.get("card_id") or ""),
+                    "session_id": str(card.get("session_id") or card.get("turn_id") or ""),
+                    "action": "archive",
+                    "client_action_id": client_action_id,
+                },
+            ),
+            timeout=120,
+        )
+    )
+
+
 def bundle_matches_local_master(bundle_status: dict[str, Any], root: Path = ROOT) -> bool:
     commit = str(bundle_status.get("source_commit_full") or "").strip()
     if not commit:
@@ -5323,22 +5362,13 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
                 capture_screenshot(args, runner, config, archive_menu_screenshot)
         except SuiteError:
             archive_menu_xml_path.write_text("", encoding="utf-8")
-        archive_result = command_result(
-            command_json(
-                runner,
-                puckyctl_command(
-                    args,
-                    config,
-                    "pucky.feed.action",
-                    {
-                        "card_id": archive_card_id,
-                        "session_id": archive_turn_id,
-                        "action": "archive",
-                        "client_action_id": f"prove_displayable_archive_{int(time.time())}",
-                    },
-                ),
-                timeout=120,
-            )
+        archive_result = archive_reply_card_for_displayable_proof(
+            args,
+            runner,
+            config,
+            archive_case.get("local_card") if isinstance(archive_case.get("local_card"), dict) else {},
+            archive_case.get("live_turn") if isinstance(archive_case.get("live_turn"), dict) else {},
+            client_action_id=f"prove_displayable_archive_{int(time.time())}",
         )
         archived_snapshot = wait_for_snapshot_condition(
             args,

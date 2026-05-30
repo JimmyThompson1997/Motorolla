@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1448,6 +1449,76 @@ def test_proof_visible_card_unarchives_and_marks_unread() -> None:
     assert visible["deleted"] is False
     assert visible["read"] is False
     assert card["archived"] is True
+
+
+def test_archive_reply_card_for_displayable_proof_uses_local_write_for_synthetic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    calls: list[list[str]] = []
+    payloads: list[dict[str, Any]] = []
+
+    def fake_reply_write(_args, _config, payload):
+        payloads.append(payload)
+        return ["ui.reply_cards.set"]
+
+    def fake_command_json(_runner, command, **_kwargs):
+        calls.append(command)
+        return {"ok": True, "result": {"ok": True}}
+
+    monkeypatch.setattr(suite, "reply_cards_write_command", fake_reply_write)
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload["result"])
+
+    result = suite.archive_reply_card_for_displayable_proof(
+        args,
+        runner,
+        config,
+        {"card_id": "synthetic-card", "session_id": "synthetic-session", "title": "Synthetic"},
+        {"synthetic": True},
+        client_action_id="archive-1",
+    )
+
+    assert result["ok"] is True
+    assert calls == [["ui.reply_cards.set"]]
+    assert payloads[0]["cards"][0]["archived"] is True
+    assert payloads[0]["cards"][0]["read"] is True
+
+
+def test_archive_reply_card_for_displayable_proof_uses_feed_action_for_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_puckyctl_command(_args, _config, command_type, payload, **_kwargs):
+        commands.append((command_type, payload))
+        return ["puckyctl", command_type]
+
+    monkeypatch.setattr(suite, "puckyctl_command", fake_puckyctl_command)
+    monkeypatch.setattr(suite, "command_json", lambda *_args, **_kwargs: {"result": {"ok": True}})
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload["result"])
+
+    result = suite.archive_reply_card_for_displayable_proof(
+        args,
+        runner,
+        config,
+        {"card_id": "live-card", "session_id": "live-session", "turn_id": "live-turn"},
+        {"ok": True},
+        client_action_id="archive-live",
+    )
+
+    assert result["ok"] is True
+    assert commands == [
+        (
+            "pucky.feed.action",
+            {"card_id": "live-card", "session_id": "live-session", "action": "archive", "client_action_id": "archive-live"},
+        )
+    ]
 
 
 def test_parser_includes_wake_lab_command() -> None:
