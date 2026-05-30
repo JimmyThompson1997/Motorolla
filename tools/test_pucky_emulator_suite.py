@@ -1026,14 +1026,28 @@ def test_final_boss_effective_delays_enforce_overlap_floors() -> None:
         suite.FINAL_BOSS_MIN_DELAY_MS_NEW,
         suite.FINAL_BOSS_MIN_DELAY_MS_B,
     )
+    assert suite.FINAL_BOSS_MIN_DELAY_MS_A >= 60000
+    assert suite.FINAL_BOSS_MIN_DELAY_MS_NEW >= 35000
 
     args = argparse.Namespace(
-        final_boss_delay_ms_a=18000,
-        final_boss_delay_ms_new=9000,
+        final_boss_delay_ms_a=65000,
+        final_boss_delay_ms_new=40000,
         final_boss_delay_ms_b=2200,
     )
 
-    assert suite.final_boss_effective_delays(args) == (18000, 9000, 2200)
+    assert suite.final_boss_effective_delays(args) == (65000, 40000, 2200)
+
+
+def test_require_walkie_proof_passes_raises_failed_keys() -> None:
+    suite.require_walkie_proof_passes({"scenario": "ok", "passes": {"thread": True}})
+
+    with pytest.raises(suite.SuiteError, match="final-boss-overlap proof failed: completion_order"):
+        suite.require_walkie_proof_passes(
+            {
+                "scenario": "final-boss-overlap",
+                "passes": {"completion_order": False, "thread_scope": True},
+            }
+        )
 
 
 def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:

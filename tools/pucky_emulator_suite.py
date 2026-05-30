@@ -105,8 +105,8 @@ ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS = 400
 HISTORY_RETENTION_FIXTURE_START_DELAY_MS = 400
 FINAL_BOSS_FIXTURE_START_DELAY_MS = 1200
 FINAL_BOSS_SPEECH_START_TIMEOUT_MS = 12000
-FINAL_BOSS_MIN_DELAY_MS_A = 12000
-FINAL_BOSS_MIN_DELAY_MS_NEW = 7000
+FINAL_BOSS_MIN_DELAY_MS_A = 60000
+FINAL_BOSS_MIN_DELAY_MS_NEW = 35000
 FINAL_BOSS_MIN_DELAY_MS_B = 1000
 WALKIE_THREAD_LAB_RESULT_SCHEMA = "pucky.walkie_thread_lab.v1"
 WALKIE_THREAD_LAB_SCENARIOS = (
@@ -141,6 +141,14 @@ WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "ui.reply_cards.final.json",
     "proof.json",
 )
+
+
+def require_walkie_proof_passes(proof: dict[str, Any]) -> None:
+    passes = proof.get("passes") if isinstance(proof.get("passes"), dict) else {}
+    failed = [str(name) for name, ok in passes.items() if not bool(ok)]
+    if failed:
+        scenario = str(proof.get("scenario") or "walkie-thread-lab")
+        raise SuiteError(f"{scenario} proof failed: {', '.join(failed)}")
 SYNTHETIC_REPLY_CARD_COMMAND_BUDGET = 7000
 DIRECT_PHOTO_CAPTURE_TIMEOUT_MS = 15000
 DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS = 2
@@ -6678,6 +6686,7 @@ def run_continuation_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": thread_id, "proof": proof}
 
 
@@ -6751,6 +6760,7 @@ def run_negative_home_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": new_thread_id, "proof": proof}
 
 
@@ -6865,6 +6875,7 @@ def run_feed_focus_continuation_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": thread_id, "proof": proof}
 
 
@@ -6964,6 +6975,7 @@ def run_focus_clear_negative_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": "", "thread_id": "", "proof": proof}
 
 
@@ -7082,6 +7094,7 @@ def run_history_retention_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": str((final_card.get("origin") or {}).get("thread_id") or ""), "proof": proof}
 
 
@@ -7253,6 +7266,7 @@ def run_final_boss_overlap_scenario(
         },
     }
     write_json_file(scenario_dir / "proof.json", proof)
+    require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_ids": {"a": turn_a_id, "b": turn_b_id, "c": turn_c_id}, "proof": proof}
 
 
