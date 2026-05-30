@@ -1511,7 +1511,8 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     assert "function threadScopeForCard(card, sourceSurface)" in app
     assert "function desiredThreadScope()" in app
     assert "function sameThreadScope(left, right)" in app
-    assert "async function syncVoiceThreadScope(options = {})" in app
+    assert "function syncVoiceThreadScope(options = {})" in app
+    assert "threadScopeSyncTail = task.catch(() => {});" in app
     assert '"feed_tile_selected"' in app
     assert '"thread_transcript"' in app
     assert '"thread_page"' in app
@@ -1523,12 +1524,12 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     assert '"data-source-surface"' in app
     assert 'void syncVoiceThreadScope({ reason: "tab_click", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });' in app
-    assert 'void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true, force: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_transcript", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_page", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_audio_detail", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });' in app
-    assert 'void syncVoiceThreadScope({ reason: "detail_dismiss", render: true });' in app
+    assert 'void syncVoiceThreadScope({ reason: "detail_dismiss", render: true, force: true });' in app
     assert ".thread-scope-status" in styles
     badge = css_block(styles, ".thread-scope-status")
     assert "font-size: 11px;" in badge
@@ -1646,6 +1647,9 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "function uiDebugFocusCard(rawArgs = {})" in app
     assert "function uiDebugClearFocus()" in app
     assert "function uiDebugRefreshCards()" in app
+    assert "let threadScopeSyncTail = Promise.resolve();" in app
+    assert 'reason: "debug_goto_home", render: true, force: true' in app
+    assert 'reason: "detail_dismiss", render: true, force: true' in app
     assert "function findFocusedCard()" in app
     assert "function reconcileFocusedCardSelection()" in app
     assert "async function refreshCardsFromNativeSnapshot(options = {})" in app

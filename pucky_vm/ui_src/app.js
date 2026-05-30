@@ -1893,6 +1893,7 @@
       tab.click();
       handled = true;
     }
+    void syncVoiceThreadScope({ reason: "debug_goto_home", render: true, force: true });
     return {
       schema: "pucky.ui_debug_action.v1",
       ok: true,
@@ -2019,7 +2020,7 @@
       state.openCardMenuSessionId = "";
       state.openCardMenuThreadId = "";
       renderFeed();
-      void syncVoiceThreadScope({ reason: "debug_clear_focus", render: true });
+      void syncVoiceThreadScope({ reason: "debug_clear_focus", render: true, force: true });
     }
     return {
       schema: "pucky.ui_debug_action.v1",
@@ -4410,7 +4411,7 @@
     panel.setAttribute("aria-hidden", "true");
     clearDetailDataAttributes(panel);
     panel.replaceChildren();
-    void syncVoiceThreadScope({ reason: "detail_dismiss", render: true });
+    void syncVoiceThreadScope({ reason: "detail_dismiss", render: true, force: true });
   }
 
   function handleAndroidBack() {
@@ -5027,7 +5028,7 @@
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
     }
     renderFeed();
-    void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true });
+    void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true, force: true });
     return true;
   }
 
@@ -6541,26 +6542,33 @@
       && String(left?.source_surface || "") === String(right?.source_surface || "");
   }
 
-  async function syncVoiceThreadScope(options = {}) {
-    const desired = desiredThreadScope();
-    if (sameThreadScope(state.threadScope, desired)) {
+  let threadScopeSyncTail = Promise.resolve();
+
+  function syncVoiceThreadScope(options = {}) {
+    const task = threadScopeSyncTail.catch(() => {}).then(async () => {
+      const desired = desiredThreadScope();
+      if (!options.force && sameThreadScope(state.threadScope, desired)) {
+        if (options.render !== false) {
+          renderThreadScopeBadge();
+        }
+        return state.threadScope;
+      }
+      try {
+        state.threadScope = normalizeThreadScope(
+          desired.active
+            ? await Pucky.request({ command: "voice.thread_scope.set", args: desired })
+            : await Pucky.request({ command: "voice.thread_scope.clear", args: { reason: String(options.reason || "") } })
+        );
+      } catch (_) {
+        state.threadScope = desired;
+      }
       if (options.render !== false) {
         renderThreadScopeBadge();
       }
-      return;
-    }
-    try {
-      state.threadScope = normalizeThreadScope(
-        desired.active
-          ? await Pucky.request({ command: "voice.thread_scope.set", args: desired })
-          : await Pucky.request({ command: "voice.thread_scope.clear", args: { reason: String(options.reason || "") } })
-      );
-    } catch (_) {
-      state.threadScope = desired;
-    }
-    if (options.render !== false) {
-      renderThreadScopeBadge();
-    }
+      return state.threadScope;
+    });
+    threadScopeSyncTail = task.catch(() => {});
+    return task;
   }
 
   function findCardBySessionId(sessionId) {

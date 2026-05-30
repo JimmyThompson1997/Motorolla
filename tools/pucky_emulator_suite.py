@@ -1284,6 +1284,15 @@ def replay_cards_from_broker_log(
     *,
     allow_partial: bool = False,
 ) -> dict[str, dict[str, Any]]:
+    def is_pending_outbound(card: dict[str, Any]) -> bool:
+        if bool(card.get("pending_outbound")) or bool(card.get("pending_placeholder")):
+            return True
+        pending_state = str(card.get("pending_state") or "").strip().lower()
+        if pending_state in {"pending", "failed"}:
+            return True
+        summary = str(card.get("summary") or "").strip()
+        return summary == "Sending your message..."
+
     wanted = {str(title).strip() for title in titles if str(title).strip()}
     if not wanted:
         return {}
@@ -1313,6 +1322,17 @@ def replay_cards_from_broker_log(
             for card in cards:
                 title = str(card.get("title") or "").strip()
                 if title in wanted:
+                    existing = found.get(title)
+                    if existing is None:
+                        found[title] = deepcopy(card)
+                        continue
+                    existing_pending = is_pending_outbound(existing)
+                    incoming_pending = is_pending_outbound(card)
+                    if existing_pending and not incoming_pending:
+                        found[title] = deepcopy(card)
+                        continue
+                    if not existing_pending and incoming_pending:
+                        continue
                     found[title] = deepcopy(card)
     missing = [title for title in titles if str(title).strip() and str(title).strip() not in found]
     if missing and not allow_partial:

@@ -471,6 +471,57 @@ def test_replay_cards_from_broker_log_can_allow_partial_coverage(tmp_path: Path)
     assert cards == {"Proof HTML Dashboard": {"title": "Proof HTML Dashboard", "card_id": "html-card"}}
 
 
+def test_replay_cards_from_broker_log_prefers_completed_reply_over_later_pending_placeholder(tmp_path: Path) -> None:
+    log_path = tmp_path / "fake-broker.log"
+    lines = [
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {
+                            "title": "Proof HTML Dashboard",
+                            "card_id": "reply-card",
+                            "turn_id": "reply-turn",
+                            "summary": "Rendered dashboard reply",
+                            "transcript_messages": [
+                                {
+                                    "role": "assistant",
+                                    "attachments": [
+                                        {"title": "Proof HTML Dashboard File", "kind": "html", "mime_type": "text/html"}
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {
+                            "title": "Proof HTML Dashboard",
+                            "card_id": "pending-card",
+                            "turn_id": "pending-turn",
+                            "summary": "Sending your message...",
+                            "pending_outbound": True,
+                            "pending_placeholder": True,
+                            "pending_state": "failed",
+                        }
+                    ]
+                }
+            }
+        },
+    ]
+    log_path.write_text("\n".join(json.dumps(item) for item in lines), encoding="utf-8")
+
+    cards = suite.replay_cards_from_broker_log(log_path, ["Proof HTML Dashboard"])
+
+    assert cards["Proof HTML Dashboard"]["card_id"] == "reply-card"
+    assert cards["Proof HTML Dashboard"]["turn_id"] == "reply-turn"
+
+
 def test_normalize_replay_card_renormalizes_attachment_kinds() -> None:
     card = {
         "title": "Proof Runtime Icon",
