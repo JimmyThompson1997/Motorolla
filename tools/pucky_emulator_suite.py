@@ -1231,6 +1231,33 @@ def wait_for_install_services(
     raise SuiteError(f"Timed out waiting for Android install services readiness: {config.serial}")
 
 
+def is_streamed_install_storage_service_failure(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "performing streamed install" in text
+        and "nullpointerexception" in text
+        and (
+            "packagemanagerinternal.freestorage" in text
+            or "storagemanagerservice.allocatebytes" in text
+        )
+    )
+
+
+def install_apk_resilient(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+) -> None:
+    install_command = adb_command(args, config.serial, ["install", "-r", str(args.apk)])
+    try:
+        runner.run(install_command, timeout=180)
+        return
+    except SuiteError as exc:
+        if args.dry_run or not is_streamed_install_storage_service_failure(exc):
+            raise
+    runner.run(adb_command(args, config.serial, ["install", "--no-streaming", "-r", str(args.apk)]), timeout=300)
+
+
 def serial_is_connected(args: argparse.Namespace, runner: Runner, serial: str) -> bool:
     require_emulator_serial(serial)
     if runner.dry_run:
@@ -2583,7 +2610,7 @@ def cmd_provision(args: argparse.Namespace) -> dict[str, Any]:
     if not Path(args.apk).exists() and not args.dry_run:
         raise SuiteError(f"APK not found: {args.apk}")
     runner.run(adb_command(args, config.serial, ["reverse", f"tcp:{config.broker_port}", f"tcp:{config.broker_port}"]), timeout=30)
-    runner.run(adb_command(args, config.serial, ["install", "-r", str(args.apk)]), timeout=180)
+    install_apk_resilient(args, runner, config)
     grant_provision_permissions(args, runner, config)
     grant_runtime_permissions(args, runner, config)
     dismiss_permission_controller(args, runner, config)

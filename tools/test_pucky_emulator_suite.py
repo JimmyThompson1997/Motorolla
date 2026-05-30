@@ -2185,6 +2185,47 @@ def test_cmd_provision_grants_calendar_and_media_permissions(monkeypatch: pytest
     assert any("android.permission.READ_MEDIA_AUDIO" in item for item in joined)
 
 
+def test_cmd_provision_falls_back_to_no_streaming_install_after_streamed_storage_npe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, slot=1, skip_build=True, dry_run=False)
+    args.apk.write_text("apk", encoding="utf-8")
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    install_commands: list[list[str]] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "start_node_broker", lambda *_args, **_kwargs: -1)
+    monkeypatch.setattr(suite, "wait_for_install_services", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"stage": "after_provision_launch", "ok": True})
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+
+    def fake_run(self, command, **kwargs):
+        joined = " ".join(command)
+        if " install " in f" {joined} ":
+            install_commands.append(command)
+            if "--no-streaming" not in command:
+                raise suite.SuiteError(
+                    "Command failed (1): adb install -r app-debug.apk\nstdout:\nPerforming Streamed Install\n\nstderr:\n"
+                    "Exception occurred while executing 'install':\n"
+                    "java.lang.NullPointerException: Attempt to invoke virtual method "
+                    "'void android.content.pm.PackageManagerInternal.freeStorage(java.lang.String, long, int)' "
+                    "on a null object reference\n\tat com.android.server.StorageManagerService.allocateBytes"
+                )
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+
+    result = suite.cmd_provision(args)
+
+    assert result["ok"] is True
+    assert len(install_commands) == 2
+    assert install_commands[0][-2:] == ["-r", str(args.apk)]
+    assert install_commands[1][-3:] == ["--no-streaming", "-r", str(args.apk)]
+
+
 def test_save_state_preserves_slot_and_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     monkeypatch.setattr(suite, "now_iso", lambda: "2026-05-23T00:00:00Z")
