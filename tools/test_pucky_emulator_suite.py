@@ -861,6 +861,7 @@ def test_reset_walkie_thread_lab_state_uses_full_history_clear(monkeypatch: pyte
     suite.reset_walkie_thread_lab_state(args, runner, config)
 
     assert ("pucky.turn.debug.inject_history", {"clear_all": True}) in commands
+    assert ("pucky.feed.sync", {"reason": "walkie_thread_lab_reset", "reset_cursor": True}) in commands
 
 
 def test_find_ui_nodes_matches_content_desc_and_bounds() -> None:

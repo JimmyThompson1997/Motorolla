@@ -3209,6 +3209,13 @@ def reset_walkie_thread_lab_state(
             raise
     command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.debug.response_fault", {"clear": True}), timeout=120))
     command_result(command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120))
+    command_result(
+        command_json(
+            runner,
+            puckyctl_command(args, config, "pucky.feed.sync", {"reason": "walkie_thread_lab_reset", "reset_cursor": True}),
+            timeout=120,
+        )
+    )
 
 
 def write_json_file(path: Path, payload: Any) -> Path:

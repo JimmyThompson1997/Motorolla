@@ -28,3 +28,4 @@
 - 2026-05-29 - Full APK command sweeps over the Fly broker can hit transient `DEVICE_OFFLINE` windows during long runs; certification harnesses should poll `devices` and wait through reconnects before marking endpoint rows failed.
 - 2026-05-29 - The final-boss Walkie overlap proof can miss the intentionally short `thread_b` pending window if `ui.reply_cards` polling sleeps 2 seconds; use faster snapshot polling for overlap certification so the 1000 ms pending state is observable.
 - 2026-05-29 - During emulator broker reconnects, `puckyctl ping` can succeed before the broker `devices` listing includes the emulator again; treat a successful ping against the target broker as command-channel proof instead of failing only on a stale device list.
+- 2026-05-29 - Walkie lab reset needs a `pucky.feed.sync` cursor reset after clearing local reply cards; otherwise an advanced feed cursor can make VM-backed cards look missing even when the broker has them.
