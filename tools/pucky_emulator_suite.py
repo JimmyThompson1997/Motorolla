@@ -87,6 +87,15 @@ EMULATOR_RUNTIME_PERMISSIONS = (
     "android.permission.ACCESS_COARSE_LOCATION",
 )
 DISPLAYABLE_VIEWER_TYPES = {"html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"}
+DISPLAYABLE_VIEWER_PRIORITY = {
+    "html_iframe": 60,
+    "document_html": 55,
+    "table": 50,
+    "image_gallery": 45,
+    "video_player": 40,
+    "audio_player": 35,
+    "text": 30,
+}
 NODE_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 WAKE_TURN_FIXTURE_START_DELAY_MS = 1200
 WALKIE_THREAD_FIXTURE_START_DELAY_MS = 400
@@ -1293,6 +1302,26 @@ def replay_cards_from_broker_log(
         summary = str(card.get("summary") or "").strip()
         return summary == "Sending your message..."
 
+    def replay_card_priority(card: dict[str, Any]) -> int:
+        score = 0
+        if not is_pending_outbound(card):
+            score += 100
+        normalized = normalize_replay_card(card)
+        attachment_info = first_displayable_attachment_snapshot(normalized)
+        if attachment_info:
+            viewer_type = str(attachment_info.get("viewer_type") or "").lower()
+            item = attachment_info.get("item") if isinstance(attachment_info.get("item"), dict) else {}
+            score += DISPLAYABLE_VIEWER_PRIORITY.get(viewer_type, 0)
+            if str(item.get("preview_path") or "").strip():
+                score += 4
+            if str(item.get("viewer_path") or "").strip():
+                score += 4
+            if str(item.get("document_html_path") or "").strip():
+                score += 4
+        if str(normalized.get("html_path") or "").strip():
+            score += 5
+        return score
+
     wanted = {str(title).strip() for title in titles if str(title).strip()}
     if not wanted:
         return {}
@@ -1328,6 +1357,13 @@ def replay_cards_from_broker_log(
                         continue
                     existing_pending = is_pending_outbound(existing)
                     incoming_pending = is_pending_outbound(card)
+                    existing_priority = replay_card_priority(existing)
+                    incoming_priority = replay_card_priority(card)
+                    if incoming_priority > existing_priority:
+                        found[title] = deepcopy(card)
+                        continue
+                    if incoming_priority < existing_priority:
+                        continue
                     if existing_pending and not incoming_pending:
                         found[title] = deepcopy(card)
                         continue
@@ -2096,6 +2132,42 @@ def first_displayable_attachment_snapshot(card: dict[str, Any]) -> dict[str, Any
             if viewer_type in DISPLAYABLE_VIEWER_TYPES:
                 return {"attachments": attachments, "index": index, "item": item, "viewer_type": viewer_type}
     return None
+
+
+def expected_displayable_attachment_snapshot(case: dict[str, Any]) -> dict[str, Any] | None:
+    attachments = normalize_attachments(deepcopy(case.get("synthetic_attachments") or []))
+    for index, item in enumerate(attachments):
+        viewer = item.get("viewer") if isinstance(item.get("viewer"), dict) else {}
+        viewer_type = str(viewer.get("type") or "").lower()
+        if viewer_type in DISPLAYABLE_VIEWER_TYPES:
+            return {"attachments": attachments, "index": index, "item": item, "viewer_type": viewer_type}
+    return None
+
+
+def replay_card_matches_displayable_case(card: dict[str, Any], case: dict[str, Any]) -> bool:
+    if str(case.get("source") or "").lower() != "synthetic":
+        return True
+    if not bool(case.get("expects_action")):
+        return False
+    expected = expected_displayable_attachment_snapshot(case)
+    if expected is None:
+        return bool(str(card.get("html_path") or "").strip()) or first_displayable_attachment_snapshot(normalize_replay_card(card)) is not None
+    actual = first_displayable_attachment_snapshot(normalize_replay_card(card))
+    if actual is None:
+        return False
+    expected_item = expected.get("item") if isinstance(expected.get("item"), dict) else {}
+    actual_item = actual.get("item") if isinstance(actual.get("item"), dict) else {}
+    if str(actual.get("viewer_type") or "").lower() != str(expected.get("viewer_type") or "").lower():
+        return False
+    expected_kind = str(expected_item.get("kind") or "").strip().lower()
+    actual_kind = str(actual_item.get("kind") or "").strip().lower()
+    if expected_kind and actual_kind != expected_kind:
+        return False
+    expected_mime = str(expected_item.get("mime_type") or "").strip().lower()
+    actual_mime = str(actual_item.get("mime_type") or "").strip().lower()
+    if expected_mime and actual_mime != expected_mime:
+        return False
+    return True
 
 
 def card_action_accessibility_label(card: dict[str, Any]) -> str | None:
@@ -4831,8 +4903,9 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
     results: list[dict[str, Any]] = []
     for index, case in enumerate(cases, start=1):
         prompt = str(case.get("prompt") or "")
-        if str(case["card_title"]) in replay_cards:
-            replay_card = normalize_replay_card(replay_cards[str(case["card_title"])])
+        replay_card_candidate = replay_cards.get(str(case["card_title"]))
+        if isinstance(replay_card_candidate, dict) and replay_card_matches_displayable_case(replay_card_candidate, case):
+            replay_card = normalize_replay_card(replay_card_candidate)
             turn_id = str(replay_card.get("turn_id") or f"replay-{case['key']}")
             live_turn = {
                 "ok": True,

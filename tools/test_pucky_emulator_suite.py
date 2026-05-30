@@ -522,6 +522,74 @@ def test_replay_cards_from_broker_log_prefers_completed_reply_over_later_pending
     assert cards["Proof HTML Dashboard"]["turn_id"] == "reply-turn"
 
 
+def test_replay_cards_from_broker_log_prefers_stronger_displayable_attachment_over_later_title_collision(tmp_path: Path) -> None:
+    log_path = tmp_path / "fake-broker.log"
+    lines = [
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {
+                            "title": "Proof HTML Dashboard",
+                            "card_id": "reply-card",
+                            "turn_id": "reply-turn",
+                            "summary": "Rendered dashboard reply",
+                            "transcript_messages": [
+                                {
+                                    "role": "assistant",
+                                    "attachments": [
+                                        {
+                                            "title": "Proof HTML Dashboard",
+                                            "kind": "html",
+                                            "mime_type": "text/html",
+                                            "path": "/data/proof-dashboard.html",
+                                            "viewer_path": "/data/proof-dashboard-viewer.html",
+                                            "preview_path": "/data/proof-dashboard-preview.html",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "message": {
+                "result": {
+                    "cards": [
+                        {
+                            "title": "Proof HTML Dashboard",
+                            "card_id": "walkie-card",
+                            "turn_id": "walkie-turn",
+                            "summary": "Existing dashboard thread with an older artifact-rich transcript.",
+                            "html_path": "/data/proof-pocket-computers.html",
+                            "transcript_messages": [
+                                {
+                                    "role": "assistant",
+                                    "attachments": [
+                                        {
+                                            "title": "Morning notes TXT",
+                                            "mime_type": "text/plain",
+                                            "path": "/data/proof-morning-notes.txt",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    ]
+    log_path.write_text("\n".join(json.dumps(item) for item in lines), encoding="utf-8")
+
+    cards = suite.replay_cards_from_broker_log(log_path, ["Proof HTML Dashboard"])
+
+    assert cards["Proof HTML Dashboard"]["card_id"] == "reply-card"
+    assert cards["Proof HTML Dashboard"]["turn_id"] == "reply-turn"
+
+
 def test_normalize_replay_card_renormalizes_attachment_kinds() -> None:
     card = {
         "title": "Proof Runtime Icon",
@@ -1202,6 +1270,58 @@ def test_synthetic_document_case_materializes_document_html_viewer() -> None:
     assert info["viewer_type"] == "document_html"
     assert info["item"]["viewer"]["type"] == "document_html"
     assert info["item"]["viewer"]["viewer_src"].startswith("data:text/html")
+
+
+def test_replay_card_matches_displayable_case_rejects_incompatible_title_collision() -> None:
+    case = next(item for item in suite.displayable_reply_file_cases("proof_orbit") if item["key"] == "html")
+    card = {
+        "title": "Proof HTML Dashboard",
+        "card_id": "walkie-card",
+        "turn_id": "walkie-turn",
+        "summary": "Existing dashboard thread with an older artifact-rich transcript.",
+        "html_path": "/data/proof-pocket-computers.html",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Morning notes TXT",
+                        "mime_type": "text/plain",
+                        "path": "/data/proof-morning-notes.txt",
+                    }
+                ],
+            }
+        ],
+    }
+
+    assert suite.replay_card_matches_displayable_case(card, case) is False
+
+
+def test_replay_card_matches_displayable_case_accepts_matching_html_reply() -> None:
+    case = next(item for item in suite.displayable_reply_file_cases("proof_orbit") if item["key"] == "html")
+    card = {
+        "title": "Proof HTML Dashboard",
+        "card_id": "reply-card",
+        "turn_id": "reply-turn",
+        "summary": "Rendered dashboard reply",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Proof HTML Dashboard",
+                        "kind": "html",
+                        "mime_type": "text/html",
+                        "path": "/data/proof-dashboard.html",
+                        "viewer_path": "/data/proof-dashboard-viewer.html",
+                        "preview_path": "/data/proof-dashboard-preview.html",
+                    }
+                ],
+            }
+        ],
+    }
+
+    assert suite.replay_card_matches_displayable_case(card, case) is True
 
 
 def test_scratch_bundle_needed_when_bundle_version_mismatches(tmp_path: Path) -> None:
