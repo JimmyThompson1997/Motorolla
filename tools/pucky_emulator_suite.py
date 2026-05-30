@@ -3898,6 +3898,32 @@ def ensure_broker_command_channel(
                     )
                 )
                 return {"stage": stage, "device": candidate, "ping": ping}
+            can_probe_without_listing = not (
+                isinstance(candidate, dict)
+                and candidate.get("device_id") == config.device_id
+                and not bool(candidate.get("online"))
+            )
+            if can_probe_without_listing and broker_health_available(config, timeout=1.0):
+                exploratory_timeout_seconds = min(max(int(timeout_seconds), 15), 30)
+                ping = command_result(
+                    command_json(
+                        runner,
+                        puckyctl_command(
+                            args,
+                            config,
+                            "ping",
+                            {},
+                            timeout_ms=puckyctl_timeout_ms(args, minimum_seconds=exploratory_timeout_seconds),
+                        ),
+                        timeout=exploratory_timeout_seconds,
+                    )
+                )
+                fallback_device = {
+                    "device_id": config.device_id,
+                    "online": True,
+                    "discovered_via_ping": True,
+                }
+                return {"stage": stage, "device": fallback_device, "ping": ping}
         except Exception as exc:
             last_error = str(exc)
             if isinstance(last_device, dict) and last_device.get("device_id") == config.device_id and bool(last_device.get("online")):

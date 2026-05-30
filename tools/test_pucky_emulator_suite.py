@@ -2506,6 +2506,35 @@ def test_ensure_broker_command_channel_clears_blockers_until_reconnected(monkeyp
     assert len(clears) >= 2
 
 
+def test_ensure_broker_command_channel_accepts_ping_without_device_listing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    ping_attempts = {"count": 0}
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+    monkeypatch.setattr(suite, "broker_device_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "broker_health_available", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "clear_blocking_system_dialogs", lambda *_args, **_kwargs: False)
+
+    def fake_command_json(_runner, _command, **_kwargs):
+        ping_attempts["count"] += 1
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(suite, "command_json", fake_command_json)
+
+    result = suite.ensure_broker_command_channel(args, runner, config, stage="after_launch", timeout_seconds=5)
+
+    assert ping_attempts["count"] == 1
+    assert result["ping"]["ok"] is True
+    assert result["device"]["device_id"] == config.device_id
+    assert result["device"]["discovered_via_ping"] is True
+
+
 def test_wait_for_snapshot_card_retries_until_card_lands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
