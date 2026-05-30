@@ -34,3 +34,4 @@
 - 2026-05-29 - Phone Walkie continuation proof can miss the brief "Sending your message..." placeholder; keep polling the same thread tile and accept transcript-preview evidence when the pending card outlives the placeholder text.
 - 2026-05-29 - On the live Fly Pucky VM, `gpt-5.3-codex-spark` at `PUCKY_CODEX_REASONING_EFFORT=medium` can hit the Codex usage cap while `low` still completes; if real-phone Walkie proof starts failing after `codex_running`, verify the live app-server budget before blaming thread routing.
 - 2026-05-29 - Pucky VM defaults to Codex Spark with low reasoning effort for fast control-plane turns; override `PUCKY_CODEX_REASONING_EFFORT` only when a flow explicitly needs deeper reasoning.
+- 2026-05-30 - Displayable proof replay cards can expose `Open page for ...` in the VM-built UI even when older attachment metadata also looks file-like; match the UI's page/file action label instead of deriving only from attachment snapshots.

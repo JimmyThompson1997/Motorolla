@@ -2104,15 +2104,17 @@ def open_card_detail_with_retry(
     tile_xml: str,
     timeout: float = 30.0,
 ) -> tuple[str, str]:
-    action_label = card_action_accessibility_label(card)
+    action_labels = card_action_accessibility_labels(card)
+    action_label = action_labels[0] if action_labels else None
+    action_pattern = action_labels_pattern(action_labels)
     open_title = card_open_title(card)
     if not action_label:
         raise SuiteError(f"{case_key} returned no tile-openable attachment")
 
     def find_action_node_in_xml(xml_text: str) -> dict[str, str] | None:
-        nodes = find_ui_nodes(xml_text, content_desc_pattern=rf"^{re.escape(action_label)}$")
+        nodes = find_ui_nodes(xml_text, content_desc_pattern=action_pattern)
         if not nodes:
-            nodes = find_ui_nodes(xml_text, text_pattern=rf"^{re.escape(action_label)}$")
+            nodes = find_ui_nodes(xml_text, text_pattern=action_pattern)
         return nodes[0] if nodes else None
 
     def surface_detail_matches_card(surface: dict[str, Any]) -> bool:
@@ -2132,9 +2134,9 @@ def open_card_detail_with_retry(
             args,
             runner,
             config,
-            description=f"{case_key} did not expose the expected tile file action: {action_label}",
-            content_desc_pattern=rf"^{re.escape(action_label)}$",
-            text_pattern=rf"^{re.escape(action_label)}$",
+            description=f"{case_key} did not expose the expected tile file action: {' or '.join(action_labels)}",
+            content_desc_pattern=action_pattern,
+            text_pattern=action_pattern,
             timeout=timeout,
         )
     for attempt in range(2):
@@ -2163,9 +2165,9 @@ def open_card_detail_with_retry(
                 args,
                 runner,
                 config,
-                description=f"{case_key} did not expose the expected tile file action: {action_label}",
-                content_desc_pattern=rf"^{re.escape(action_label)}$",
-                text_pattern=rf"^{re.escape(action_label)}$",
+                description=f"{case_key} did not expose the expected tile file action: {' or '.join(action_labels)}",
+                content_desc_pattern=action_pattern,
+                text_pattern=action_pattern,
                 timeout=timeout,
             )
     raise SuiteError(f"{case_key} did not open a detail view titled {open_title}")
@@ -2245,6 +2247,24 @@ def card_action_accessibility_label(card: dict[str, Any]) -> str | None:
     if attachment:
         return f"Open file for {title}"
     return None
+
+
+def card_action_accessibility_labels(card: dict[str, Any]) -> list[str]:
+    primary = card_action_accessibility_label(card)
+    if not primary:
+        return []
+    title = str(card.get("title") or "").strip() or "Pucky"
+    labels = [primary]
+    for label in (f"Open page for {title}", f"Open file for {title}"):
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def action_labels_pattern(labels: list[str]) -> str:
+    if not labels:
+        return r"a^"
+    return rf"^(?:{'|'.join(re.escape(label) for label in labels)})$"
 
 
 def card_open_title(card: dict[str, Any]) -> str:

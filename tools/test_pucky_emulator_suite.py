@@ -971,6 +971,10 @@ def test_first_displayable_attachment_snapshot_prefers_latest_assistant_message(
     assert info["item"]["title"] == "Newest"
     assert info["viewer_type"] == "table"
     assert suite.card_action_accessibility_label(card) == "Open file for Attachment card"
+    assert suite.card_action_accessibility_labels(card) == [
+        "Open file for Attachment card",
+        "Open page for Attachment card",
+    ]
     assert suite.card_open_title(card) == "Newest"
 
 
@@ -3229,8 +3233,8 @@ def test_open_card_detail_with_retry_waits_for_text_only_action_label(monkeypatc
 
     def fake_wait_for_ui_node(_args, _runner, _config, *, description, content_desc_pattern=None, text_pattern=None, **_kwargs):
         if "expected tile file action" in description:
-            assert content_desc_pattern == r"^Open\ file\ for\ Retry\ card$"
-            assert text_pattern == r"^Open\ file\ for\ Retry\ card$"
+            assert content_desc_pattern == r"^(?:Open\ file\ for\ Retry\ card|Open\ page\ for\ Retry\ card)$"
+            assert text_pattern == r"^(?:Open\ file\ for\ Retry\ card|Open\ page\ for\ Retry\ card)$"
             return {"text": "Open file for Retry card", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Open file for Retry card' bounds='[1,2][3,4]' /></hierarchy>"
         if "did not open a detail view" in description:
             return {"text": "Retry file", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Retry file' bounds='[1,2][3,4]' /></hierarchy>"
@@ -3254,6 +3258,56 @@ def test_open_card_detail_with_retry_waits_for_text_only_action_label(monkeypatc
     assert taps == ["tap"]
     assert "Retry file" in opened_xml
     assert "Open file for Retry card" in refreshed_tile_xml
+
+
+def test_open_card_detail_with_retry_accepts_page_action_for_file_like_replay_card(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    card = {
+        "title": "Replay dashboard",
+        "transcript_messages": [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "title": "Replay notes",
+                        "viewer": {"type": "text", "viewer_src": "data:text/plain,ok"},
+                    }
+                ],
+            }
+        ],
+    }
+    tile_xml = "<hierarchy rotation='0'><node text='Open page for Replay dashboard' bounds='[1,2][3,4]' /></hierarchy>"
+    taps: list[str] = []
+
+    def fake_wait_for_ui_node(_args, _runner, _config, *, description, **_kwargs):
+        if "expected tile file action" in description:
+            raise AssertionError("alternate action label should be found in the provided tile XML")
+        if "did not open a detail view" in description:
+            return {"text": "Replay notes", "bounds": "[1,2][3,4]"}, "<hierarchy rotation='0'><node text='Replay notes' bounds='[1,2][3,4]' /></hierarchy>"
+        raise AssertionError(description)
+
+    monkeypatch.setattr(suite, "wait_for_ui_node", fake_wait_for_ui_node)
+    monkeypatch.setattr(suite, "tap_ui_node", lambda *_args: taps.append("tap"))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+
+    opened_xml, refreshed_tile_xml = suite.open_card_detail_with_retry(
+        args,
+        runner,
+        config,
+        case_key="replay_html",
+        title="Replay dashboard",
+        card=card,
+        tile_xml=tile_xml,
+        timeout=5.0,
+    )
+
+    assert taps == ["tap"]
+    assert "Replay notes" in opened_xml
+    assert "Open page for Replay dashboard" in refreshed_tile_xml
 
 
 def test_open_card_detail_with_retry_accepts_matching_surface_detail(
