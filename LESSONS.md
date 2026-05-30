@@ -32,4 +32,5 @@
 - 2026-05-29 - WebView detail panes can open even when `uiautomator` misses the expected title text; for emulator displayable-file proof, accept matching `ui.surface.get.detail` state as the authoritative open-detail signal.
 - 2026-05-29 - Synthetic or replay-materialized reply cards are local APK state, not VM feed rows; archive proof for those cards must mutate `ui.reply_cards` locally instead of calling `pucky.feed.action`.
 - 2026-05-29 - Phone Walkie continuation proof can miss the brief "Sending your message..." placeholder; keep polling the same thread tile and accept transcript-preview evidence when the pending card outlives the placeholder text.
+- 2026-05-29 - On the live Fly Pucky VM, `gpt-5.3-codex-spark` at `PUCKY_CODEX_REASONING_EFFORT=medium` can hit the Codex usage cap while `low` still completes; if real-phone Walkie proof starts failing after `codex_running`, verify the live app-server budget before blaming thread routing.
 - 2026-05-29 - Pucky VM defaults to Codex Spark with low reasoning effort for fast control-plane turns; override `PUCKY_CODEX_REASONING_EFFORT` only when a flow explicitly needs deeper reasoning.
