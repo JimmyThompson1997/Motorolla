@@ -1050,6 +1050,90 @@ def test_require_walkie_proof_passes_raises_failed_keys() -> None:
         )
 
 
+def test_write_walkie_thread_lab_aggregate_proof_writes_all_summary(tmp_path: Path) -> None:
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    results = [
+        {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True, "slot_preserved": True}}},
+        {"scenario": "final-boss-overlap", "proof": {"passes": {"completion_order": True, "final_tiles_isolated": True}}},
+    ]
+
+    proof = suite.write_walkie_thread_lab_aggregate_proof(config, results)
+
+    proof_path = Path(config.evidence_dir) / "all" / "proof.json"
+    assert proof_path.exists()
+    assert proof == {
+        "schema": suite.WALKIE_THREAD_LAB_RESULT_SCHEMA,
+        "scenario": "all",
+        "passes": {
+            "feed-focus-continuation": True,
+            "final-boss-overlap": True,
+        },
+    }
+    assert json.loads(proof_path.read_text(encoding="utf-8")) == proof
+
+
+def test_turn_remote_completion_timestamp_requires_remote_ok() -> None:
+    assert suite.turn_remote_completion_timestamp(None) == ""
+    assert suite.turn_remote_completion_timestamp({"turn": {"updated_at": "2026-05-30T19:43:12.724977Z"}}) == ""
+    assert (
+        suite.turn_remote_completion_timestamp(
+            {
+                "turn": {
+                    "updated_at": "2026-05-30T19:43:12.724977Z",
+                    "server_telemetry": {"status": "ok"},
+                }
+            }
+        )
+        == "2026-05-30T19:43:12.724977Z"
+    )
+
+
+def test_wait_for_turn_remote_completion_order_sorts_by_remote_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    now = {"value": 0.0}
+    reads = {"turn-c": 0, "turn-b": 0, "turn-a": 0}
+    payloads = {
+        "turn-c": [
+            {"turn": {"updated_at": "", "server_telemetry": {}}},
+            {"turn": {"updated_at": "2026-05-30T19:43:03.000000Z", "server_telemetry": {"status": "ok"}}},
+        ],
+        "turn-b": [
+            {"turn": {"updated_at": "", "server_telemetry": {}}},
+            {"turn": {"updated_at": "2026-05-30T19:43:01.000000Z", "server_telemetry": {"status": "ok"}}},
+        ],
+        "turn-a": [
+            {"turn": {"updated_at": "", "server_telemetry": {}}},
+            {"turn": {"updated_at": "2026-05-30T19:43:02.000000Z", "server_telemetry": {"status": "ok"}}},
+        ],
+    }
+
+    monkeypatch.setattr(suite.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(suite.time, "sleep", lambda seconds: now.__setitem__("value", now["value"] + seconds))
+
+    def fake_read_turn_record(_args, _runner, _config, turn_id):
+        idx = reads[turn_id]
+        reads[turn_id] = min(idx + 1, len(payloads[turn_id]) - 1)
+        return payloads[turn_id][idx]
+
+    monkeypatch.setattr(suite, "read_turn_record", fake_read_turn_record)
+
+    result = suite.wait_for_turn_remote_completion_order(
+        args,
+        runner,
+        config,
+        ["turn-c", "turn-b", "turn-a"],
+        timeout_seconds=5.0,
+        sleep_seconds=0.1,
+    )
+
+    assert result == ["turn-b", "turn-a", "turn-c"]
+
+
 def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:
     assert suite.continuation_fixture_start_delay_ms("thread_transcript") == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
     assert suite.continuation_fixture_start_delay_ms("feed_tile_selected") == suite.FEED_FOCUS_FIXTURE_START_DELAY_MS

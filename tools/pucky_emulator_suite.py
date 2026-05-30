@@ -149,6 +149,31 @@ def require_walkie_proof_passes(proof: dict[str, Any]) -> None:
     if failed:
         scenario = str(proof.get("scenario") or "walkie-thread-lab")
         raise SuiteError(f"{scenario} proof failed: {', '.join(failed)}")
+
+
+def aggregate_walkie_thread_lab_proof(results: list[dict[str, Any]]) -> dict[str, Any]:
+    passes: dict[str, bool] = {}
+    for result in results:
+        scenario = str(result.get("scenario") or "").strip()
+        if not scenario:
+            continue
+        proof = result.get("proof") if isinstance(result.get("proof"), dict) else {}
+        scenario_passes = proof.get("passes") if isinstance(proof.get("passes"), dict) else {}
+        passes[scenario] = bool(scenario_passes) and all(bool(value) for value in scenario_passes.values())
+    return {
+        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
+        "scenario": "all",
+        "passes": passes,
+    }
+
+
+def write_walkie_thread_lab_aggregate_proof(config: SlotConfig, results: list[dict[str, Any]]) -> dict[str, Any]:
+    proof = aggregate_walkie_thread_lab_proof(results)
+    write_json_file(scenario_evidence_dir(config, "all") / "proof.json", proof)
+    require_walkie_proof_passes(proof)
+    return proof
+
+
 SYNTHETIC_REPLY_CARD_COMMAND_BUDGET = 7000
 DIRECT_PHOTO_CAPTURE_TIMEOUT_MS = 15000
 DIRECT_PHOTO_CAPTURE_RETRY_ATTEMPTS = 2
@@ -486,6 +511,11 @@ class LocalProofTurnServer:
 
     def register_fixture(self, audio_path: Path, transcript: str) -> None:
         self.stt.register(audio_path, transcript)
+
+    def turn_status_snapshot(self, turn_id: str) -> dict[str, Any]:
+        with self.service._turn_status_lock:
+            payload = dict(self.service._turn_statuses.get(str(turn_id), {}))
+        return payload
 
     def stop(self) -> None:
         self.server.shutdown()
@@ -6574,6 +6604,52 @@ def wait_for_turn_completion_order(
     return completed
 
 
+def turn_remote_completion_timestamp(read_payload: dict[str, Any] | None) -> str:
+    if not isinstance(read_payload, dict):
+        return ""
+    turn = read_payload.get("turn")
+    if not isinstance(turn, dict):
+        return ""
+    telemetry = turn.get("server_telemetry")
+    if not isinstance(telemetry, dict) or str(telemetry.get("status") or "") != "ok":
+        return ""
+    timestamp = str(turn.get("updated_at") or "").strip()
+    return timestamp
+
+
+def wait_for_turn_remote_completion_order(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    turn_ids: list[str],
+    *,
+    proof_server: LocalProofTurnServer | None = None,
+    timeout_seconds: float = 30.0,
+    sleep_seconds: float = 0.2,
+) -> list[str]:
+    pending = list(turn_ids)
+    observed: dict[str, str] = {}
+    deadline = time.monotonic() + timeout_seconds
+    while pending and time.monotonic() < deadline:
+        for turn_id in list(pending):
+            completed_at = ""
+            if proof_server is not None:
+                status_payload = proof_server.turn_status_snapshot(turn_id)
+                if bool(status_payload.get("completed")) and str(status_payload.get("status") or "") == "ok":
+                    completed_at = str(status_payload.get("updated_at") or "").strip()
+            else:
+                read_payload = read_turn_record(args, runner, config, turn_id)
+                completed_at = turn_remote_completion_timestamp(read_payload)
+            if completed_at:
+                observed[turn_id] = completed_at
+                pending.remove(turn_id)
+        if pending:
+            time.sleep(sleep_seconds)
+    if pending:
+        raise SuiteError(f"Timed out waiting for remote completion order: remaining={pending} observed={observed}")
+    return [item[0] for item in sorted(observed.items(), key=lambda item: (item[1], item[0]))]
+
+
 CONTINUATION_PROOF_REPLY_DELAY_MS = 6000
 
 
@@ -7107,6 +7183,7 @@ def run_final_boss_overlap_scenario(
     card_b: dict[str, Any],
     remote_paths: dict[str, str],
     fixture_transcripts: dict[str, str],
+    proof_server: LocalProofTurnServer,
 ) -> dict[str, Any]:
     scenario_name = "final-boss-overlap"
     scenario_dir = scenario_evidence_dir(config, scenario_name)
@@ -7222,7 +7299,14 @@ def run_final_boss_overlap_scenario(
     write_json_file(scenario_dir / "ui.surface.pending.json", pending_surface)
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "pending.png")
-    completion_order = wait_for_turn_completion_order(args, runner, config, [turn_c_id, turn_b_id, turn_a_id], timeout_seconds=float(args.turn_timeout_seconds))
+    completion_order = wait_for_turn_remote_completion_order(
+        args,
+        runner,
+        config,
+        [turn_c_id, turn_b_id, turn_a_id],
+        proof_server=proof_server,
+        timeout_seconds=float(args.turn_timeout_seconds),
+    )
     final_snapshot = reply_cards_snapshot(args, runner, config)
     write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
     final_surface = surface_from_snapshot(final_snapshot)
@@ -7337,7 +7421,16 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
             if scenario == "history-retention":
                 return run_history_retention_scenario(args, runner, config, card=catalog["thread_a"], remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"])
             if scenario == "final-boss-overlap":
-                return run_final_boss_overlap_scenario(args, runner, config, card_a=catalog["thread_a"], card_b=catalog["thread_b"], remote_paths=remote_paths, fixture_transcripts=fixture_transcripts)
+                return run_final_boss_overlap_scenario(
+                    args,
+                    runner,
+                    config,
+                    card_a=catalog["thread_a"],
+                    card_b=catalog["thread_b"],
+                    remote_paths=remote_paths,
+                    fixture_transcripts=fixture_transcripts,
+                    proof_server=proof_server,
+                )
             raise SuiteError(f"Unsupported scenario: {scenario}")
         finally:
             proof_server.stop()
@@ -7358,7 +7451,8 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
             if args.dry_run or scenario not in retriable_scenarios:
                 raise
             results.append(run_named_scenario(scenario))
-    return {
+    aggregate_proof = write_walkie_thread_lab_aggregate_proof(config, results) if args.scenario == "all" else None
+    payload = {
         "ok": True,
         "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
         "scenario": args.scenario,
@@ -7368,6 +7462,9 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
         "commands": runner.planned,
         "dry_run": args.dry_run,
     }
+    if aggregate_proof is not None:
+        payload["proof"] = aggregate_proof
+    return payload
 
 
 def cmd_stop(args: argparse.Namespace) -> dict[str, Any]:
