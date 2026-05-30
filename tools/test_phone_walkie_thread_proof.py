@@ -241,6 +241,75 @@ def test_reply_saved_turn_record_uses_visible_card_fallback(
     assert result["server_telemetry"]["proof_reply_delay_ms_applied"] == 6000
 
 
+def test_card_text_helpers_cover_preview_placeholder_and_transcript() -> None:
+    card = {
+        "preview": "Sending your message...",
+        "summary": "Continue this focused tile.",
+        "origin": {"thread_id": "thread-a"},
+    }
+
+    assert "Sending your message..." in proof.card_text_blob(card)
+    assert proof.card_has_pending_placeholder(card) is True
+    assert proof.card_has_transcript_preview(card, "Continue this focused tile.") is True
+
+
+def test_observe_pending_thread_card_returns_latest_pending_when_placeholder_is_missed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = make_args(tmp_path)
+    snapshots = iter([
+        {"cards": []},
+        {
+            "cards": [
+                {
+                    "card_id": "pending-1",
+                    "session_id": "pending-1",
+                    "pending_outbound": True,
+                    "summary": "Continue this focused tile.",
+                    "origin": {"thread_id": "thread-a"},
+                }
+            ]
+        },
+    ])
+    current = {"value": 0.0}
+
+    def fake_snapshot_cards(_args: argparse.Namespace) -> dict:
+        try:
+            return next(snapshots)
+        except StopIteration:
+            return {
+                "cards": [
+                    {
+                        "card_id": "pending-1",
+                        "session_id": "pending-1",
+                        "pending_outbound": True,
+                        "summary": "Continue this focused tile.",
+                        "origin": {"thread_id": "thread-a"},
+                    }
+                ]
+            }
+
+    def fake_monotonic() -> float:
+        current["value"] += 0.2
+        return current["value"]
+
+    monkeypatch.setattr(proof, "snapshot_cards", fake_snapshot_cards)
+    monkeypatch.setattr(proof.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(proof.time, "sleep", lambda _seconds: None)
+
+    result = proof.observe_pending_thread_card(
+        args,
+        "thread-a",
+        "Continue this focused tile.",
+        timeout_seconds=0.6,
+        description="pending thread card",
+    )
+
+    assert result["placeholder_seen"] is False
+    assert result["transcript_preview_seen"] is True
+    assert result["card"]["card_id"] == "pending-1"
+
+
 def test_card_matches_continuation_thread_accepts_semantic_new_thread() -> None:
     source = {
         "title": "Thread A Continued",

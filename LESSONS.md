@@ -31,3 +31,4 @@
 - 2026-05-29 - Walkie lab reset needs a `pucky.feed.sync` cursor reset after clearing local reply cards; otherwise an advanced feed cursor can make VM-backed cards look missing even when the broker has them.
 - 2026-05-29 - WebView detail panes can open even when `uiautomator` misses the expected title text; for emulator displayable-file proof, accept matching `ui.surface.get.detail` state as the authoritative open-detail signal.
 - 2026-05-29 - Synthetic or replay-materialized reply cards are local APK state, not VM feed rows; archive proof for those cards must mutate `ui.reply_cards` locally instead of calling `pucky.feed.action`.
+- 2026-05-29 - Phone Walkie continuation proof can miss the brief "Sending your message..." placeholder; keep polling the same thread tile and accept transcript-preview evidence when the pending card outlives the placeholder text.

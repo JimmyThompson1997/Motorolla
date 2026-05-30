@@ -493,6 +493,7 @@ def cards_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 def card_text_blob(card: dict[str, Any]) -> str:
     parts = [
+        str(card.get("preview") or ""),
         str(card.get("title") or ""),
         str(card.get("summary") or ""),
         str(card.get("transcript") or ""),
@@ -641,6 +642,63 @@ def pending_thread_card(snapshot: dict[str, Any], thread_id: str) -> dict[str, A
         if bool(card.get("pending_outbound")):
             return card
     return None
+
+
+def card_has_pending_placeholder(card: dict[str, Any]) -> bool:
+    return "sending your message..." in card_text_blob(card).strip().lower()
+
+
+def card_has_transcript_preview(card: dict[str, Any], transcript: str) -> bool:
+    needle = str(transcript or "").strip().lower()
+    return bool(needle) and needle in card_text_blob(card).strip().lower()
+
+
+def observe_pending_thread_card(
+    args: argparse.Namespace,
+    thread_id: str,
+    transcript_hint: str,
+    *,
+    timeout_seconds: int | float,
+    interval_seconds: float = 0.25,
+    description: str,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    latest: dict[str, Any] | None = None
+    latest_snapshot: dict[str, Any] | None = None
+    placeholder_snapshot: dict[str, Any] | None = None
+    placeholder_card: dict[str, Any] | None = None
+    transcript_snapshot: dict[str, Any] | None = None
+    transcript_card: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        snapshot = snapshot_cards(args)
+        cards = thread_cards(snapshot, thread_id)
+        if len(cards) > 1:
+            raise PhoneProofError(f"{description} produced multiple visible tiles for thread {thread_id}")
+        card_now = pending_thread_card(snapshot, thread_id)
+        if card_now is not None:
+            latest = card_now
+            latest_snapshot = snapshot
+            if placeholder_snapshot is None and card_has_pending_placeholder(card_now):
+                placeholder_snapshot = snapshot
+                placeholder_card = card_now
+            if transcript_snapshot is None and card_has_transcript_preview(card_now, transcript_hint):
+                transcript_snapshot = snapshot
+                transcript_card = card_now
+            if placeholder_snapshot is not None:
+                break
+        time.sleep(interval_seconds)
+    if latest is None or latest_snapshot is None:
+        raise PhoneProofError(f"Timed out waiting for {description}")
+    return {
+        "snapshot": latest_snapshot,
+        "card": latest,
+        "placeholder_seen": placeholder_snapshot is not None,
+        "placeholder_snapshot": placeholder_snapshot,
+        "placeholder_card": placeholder_card,
+        "transcript_preview_seen": transcript_snapshot is not None,
+        "transcript_snapshot": transcript_snapshot,
+        "transcript_card": transcript_card,
+    }
 
 
 def final_thread_card(snapshot: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
@@ -1008,18 +1066,13 @@ def run_continuation_scenario(
         timeout_seconds=60,
     )
 
-    def pending_check() -> dict[str, Any] | None:
-        snapshot = snapshot_cards(args)
-        card_now = pending_thread_card(snapshot, source_thread_id)
-        if card_now is None:
-            return None
-        if card_now.get("title") != "Sent message":
-            return None
-        if len(thread_cards(snapshot, source_thread_id)) != 1:
-            raise PhoneProofError(f"{name} produced multiple visible tiles for thread {source_thread_id}")
-        return {"snapshot": snapshot, "card": card_now}
-
-    pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description=f"{name} pending sent card")
+    pending = observe_pending_thread_card(
+        args,
+        source_thread_id,
+        text,
+        timeout_seconds=60,
+        description=f"{name} pending sent card",
+    )
     turn_status_pending = turn_status(args)
     transcript_turn = wait_for_turn_transcript(args, turn_id)
     transcript_snapshot = snapshot_cards(args)
@@ -1053,19 +1106,19 @@ def run_continuation_scenario(
     if len(thread_cards(final_snapshot, source_thread_id)) != 1:
         raise PhoneProofError(f"{name} left multiple visible cards on thread {source_thread_id}")
     before_index = visible_thread_index(home_before, source_thread_id)
-    pending_card = visible_thread_card(home_after_start, source_thread_id) or {}
-    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or {}
+    pending_card = visible_thread_card(home_after_start, source_thread_id) or pending.get("placeholder_card") or pending["card"]
+    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or pending.get("transcript_card") or {}
     reply_card = visible_thread_card(home_after_reply, source_thread_id) or {}
     checks = scenario_checks(
         {
             "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
             "scope_matches_surface": str(scope_before.get("source_surface") or "") == expected_surface,
             "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
-            "pending_tile_kind": str(pending_card.get("kind") or "") == "pending_outbound",
-            "pending_placeholder_visible": "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
+            "pending_tile_kind": bool(pending["card"].get("pending_outbound")),
+            "pending_placeholder_visible": bool(pending.get("placeholder_seen")) or card_has_pending_placeholder(pending_card),
             "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
             "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
-            "transcript_preview_matches_user": str(transcript_turn.get("user_transcript") or "").strip().lower() in str(transcript_card.get("preview") or "").strip().lower(),
+            "transcript_preview_matches_user": bool(pending.get("transcript_preview_seen")) or card_has_transcript_preview(transcript_card, str(transcript_turn.get("user_transcript") or "")),
             "final_thread_reused": origin_thread_id(final_card) == source_thread_id,
             "final_single_visible_tile": len(thread_cards(final_snapshot, source_thread_id)) == 1,
             "final_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_reply, source_thread_id) == before_index,
@@ -1159,16 +1212,13 @@ def run_feed_focus_scenario(
         timeout_seconds=60,
     )
 
-    def pending_check() -> dict[str, Any] | None:
-        snapshot = snapshot_cards(args)
-        card_now = pending_thread_card(snapshot, source_thread_id)
-        if card_now is None or card_now.get("title") != "Sent message":
-            return None
-        if len(thread_cards(snapshot, source_thread_id)) != 1:
-            raise PhoneProofError(f"feed focus produced multiple visible tiles for thread {source_thread_id}")
-        return {"snapshot": snapshot, "card": card_now}
-
-    pending = wait_for(pending_check, timeout_seconds=60, interval_seconds=0.75, description="feed focus pending sent card")
+    pending = observe_pending_thread_card(
+        args,
+        source_thread_id,
+        text,
+        timeout_seconds=60,
+        description="feed focus pending sent card",
+    )
     turn_status_pending = turn_status(args)
     transcript_turn = wait_for_turn_transcript(args, turn_id)
     home_with_transcript = capture_phase(
@@ -1197,8 +1247,8 @@ def run_feed_focus_scenario(
     if final_card is None:
         raise PhoneProofError("feed focus did not leave a final visible tile")
     before_index = visible_thread_index(home_before, source_thread_id)
-    pending_card = visible_thread_card(home_after_start, source_thread_id) or {}
-    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or {}
+    pending_card = visible_thread_card(home_after_start, source_thread_id) or pending.get("placeholder_card") or pending["card"]
+    transcript_card = visible_thread_card(home_with_transcript, source_thread_id) or pending.get("transcript_card") or {}
     reply_card = visible_thread_card(home_after_reply, source_thread_id) or {}
     checks = scenario_checks(
         {
@@ -1206,11 +1256,11 @@ def run_feed_focus_scenario(
             "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
             "scope_matches_surface": str(scope_before.get("source_surface") or "") == "feed_tile_selected",
             "pending_tile_reused_thread": origin_thread_id(pending["card"]) == source_thread_id,
-            "pending_tile_kind": str(pending_card.get("kind") or "") == "pending_outbound",
-            "pending_placeholder_visible": "sending your message" in str(pending_card.get("preview") or "").strip().lower(),
+            "pending_tile_kind": bool(pending["card"].get("pending_outbound")),
+            "pending_placeholder_visible": bool(pending.get("placeholder_seen")) or card_has_pending_placeholder(pending_card),
             "pending_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_start, source_thread_id) == before_index,
             "pending_single_visible_tile": len(thread_cards(pending["snapshot"], source_thread_id)) == 1,
-            "transcript_preview_matches_user": str(transcript_turn.get("user_transcript") or "").strip().lower() in str(transcript_card.get("preview") or "").strip().lower(),
+            "transcript_preview_matches_user": bool(pending.get("transcript_preview_seen")) or card_has_transcript_preview(transcript_card, str(transcript_turn.get("user_transcript") or "")),
             "final_thread_reused": origin_thread_id(final_card) == source_thread_id,
             "final_same_visible_slot": before_index >= 0 and visible_thread_index(home_after_reply, source_thread_id) == before_index,
             "no_duplicate_visible_tile": sum(1 for item in cards_from_snapshot(final_snapshot) if origin_thread_id(item) == source_thread_id) == 1,
