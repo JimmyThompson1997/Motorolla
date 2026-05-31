@@ -1981,7 +1981,7 @@ def snapshot_card_by_turn_id(snapshot: dict[str, Any], turn_id: str) -> dict[str
 
 
 def dump_ui_hierarchy(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
-    remote_path = "/sdcard/pucky_window_dump.xml"
+    remote_path = "/data/local/tmp/pucky_window_dump.xml"
     last_error = ""
     for attempt in range(1, 3):
         try:

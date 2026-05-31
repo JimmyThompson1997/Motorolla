@@ -3678,6 +3678,29 @@ def test_dump_ui_hierarchy_retries_after_timeout(monkeypatch: pytest.MonkeyPatch
     assert any("input keyevent 4" in " ".join(command) for command in commands)
 
 
+def test_dump_ui_hierarchy_uses_adb_local_tmp_not_shared_storage(tmp_path: Path) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        joined = " ".join(command)
+        if "exec-out cat" in joined:
+            return suite.subprocess.CompletedProcess(command, 0, stdout="<hierarchy rotation='0' />", stderr="")
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    runner.run = fake_run  # type: ignore[method-assign]
+
+    xml = suite.dump_ui_hierarchy(args, runner, config)
+
+    assert "<hierarchy" in xml
+    joined_commands = [" ".join(command) for command in commands]
+    assert any("/data/local/tmp/pucky_window_dump.xml" in command for command in joined_commands)
+    assert all("/sdcard/pucky_window_dump.xml" not in command for command in joined_commands)
+
+
 def test_dump_ui_hierarchy_ignores_timeout_during_backout_recovery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
