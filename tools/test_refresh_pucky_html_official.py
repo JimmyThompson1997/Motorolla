@@ -179,10 +179,59 @@ def test_validate_emulator_evidence_rejects_mismatch(tmp_path: Path) -> None:
         official.validate_emulator_evidence(official.load_emulator_evidence(path), remote, local)
 
 
+def test_wait_for_broker_command_channel_retries_transient_ping_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = argparse.Namespace(command_timeout_seconds=30)
+    attempts = {"count": 0}
+
+    def fake_command(_args: argparse.Namespace, command_type: str, payload: dict) -> dict:
+        assert command_type == "ping"
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise official.OfficialRefreshError("Command ping failed: DEVICE_OFFLINE")
+        return {"ok": True, "echo": payload}
+
+    monkeypatch.setattr(official, "run_pucky_command", fake_command)
+    monkeypatch.setattr(official.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = official.wait_for_broker_command_channel(args, timeout_seconds=5, sleep_seconds=0.0)
+
+    assert attempts["count"] == 3
+    assert result["ok"] is True
+
+
+def test_run_pucky_command_resilient_waits_for_channel_after_transient_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = argparse.Namespace(command_timeout_seconds=30)
+    attempts = {"count": 0}
+    waits: list[float] = []
+
+    def fake_command(_args: argparse.Namespace, command_type: str, payload: dict) -> dict:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise official.OfficialRefreshError("Command ui.bundle.refresh failed: DEVICE_OFFLINE")
+        return {"installed": True, "payload": payload}
+
+    monkeypatch.setattr(official, "run_pucky_command", fake_command)
+    monkeypatch.setattr(
+        official,
+        "wait_for_broker_command_channel",
+        lambda _args, *, timeout_seconds=None, sleep_seconds=2.0: waits.append(float(timeout_seconds or 0.0)) or {"ok": True},
+    )
+
+    result = official.run_pucky_command_resilient(
+        args,
+        "ui.bundle.refresh",
+        {"url": "https://pucky.fly.dev/ui/pucky/latest/bundle.zip"},
+    )
+
+    assert attempts["count"] == 2
+    assert waits == [30.0]
+    assert result["installed"] is True
+
+
 def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[str] = []
 
-    def fake_command(args: argparse.Namespace, command_type: str, payload: dict) -> dict:
+    def fake_command(args: argparse.Namespace, command_type: str, payload: dict, *, attempts: int = 3) -> dict:
         calls.append(command_type)
         if command_type == "ui.bundle.refresh":
             return {"installed": True}
@@ -199,9 +248,14 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
             }
         raise AssertionError(command_type)
 
-    monkeypatch.setattr(official, "run_pucky_command", fake_command)
+    monkeypatch.setattr(official, "wait_for_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(official, "run_pucky_command_resilient", fake_command)
 
-    args = argparse.Namespace(bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip", max_bundle_bytes=10 * 1024 * 1024)
+    args = argparse.Namespace(
+        bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
+        max_bundle_bytes=10 * 1024 * 1024,
+        command_timeout_seconds=120,
+    )
     remote = {
         "ui_version": "git-abcdef0",
         "source_commit_short": "abcdef0",
@@ -211,6 +265,7 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
     result = official.refresh_target(args, remote, local)
 
     assert calls == ["ui.bundle.refresh", "ui.shell.mode.set", "ui.bundle.status"]
+    assert result["broker_channel"]["ok"] is True
     assert result["bundle_status"]["ui_version"] == "git-abcdef0"
 
 

@@ -18,6 +18,17 @@ DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
 DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"
 RESULT_SCHEMA = "pucky.ui_bundle_refresh_evidence.v1"
+TRANSIENT_PUCKY_FAILURE_MARKERS = (
+    "WINERROR 10053",
+    "WINERROR 10054",
+    "WINERROR 10061",
+    "CONNECTIONABORTEDERROR",
+    "CONNECTIONREFUSEDERROR",
+    "CONNECTIONRESETERROR",
+    "REMOTEDISCONNECTED",
+    "DEVICE_OFFLINE",
+    "BROKER_UNAVAILABLE",
+)
 
 
 class OfficialRefreshError(RuntimeError):
@@ -145,6 +156,52 @@ def run_pucky_command(args: argparse.Namespace, command_type: str, payload: dict
     return result if isinstance(result, dict) else {}
 
 
+def is_transient_pucky_failure(message: str) -> bool:
+    upper = str(message or "").upper()
+    return any(marker in upper for marker in TRANSIENT_PUCKY_FAILURE_MARKERS)
+
+
+def wait_for_broker_command_channel(
+    args: argparse.Namespace,
+    *,
+    timeout_seconds: float | None = None,
+    sleep_seconds: float = 2.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + float(timeout_seconds or max(15, args.command_timeout_seconds))
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            return run_pucky_command(args, "ping", {})
+        except OfficialRefreshError as exc:
+            last_error = str(exc)
+            if not is_transient_pucky_failure(last_error):
+                raise
+        time.sleep(sleep_seconds)
+    raise OfficialRefreshError(f"Timed out waiting for broker command channel: {last_error}")
+
+
+def run_pucky_command_resilient(
+    args: argparse.Namespace,
+    command_type: str,
+    payload: dict[str, Any],
+    *,
+    attempts: int = 3,
+) -> dict[str, Any]:
+    last_error: OfficialRefreshError | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return run_pucky_command(args, command_type, payload)
+        except OfficialRefreshError as exc:
+            if attempt >= attempts or not is_transient_pucky_failure(str(exc)):
+                raise
+            last_error = exc
+            wait_for_broker_command_channel(
+                args,
+                timeout_seconds=min(max(15, args.command_timeout_seconds), 60),
+            )
+    raise last_error or OfficialRefreshError(f"Command {command_type} failed")
+
+
 def verify_bundle_status(bundle_status: dict[str, Any], remote_manifest: dict[str, Any], local_git: dict[str, object]) -> dict[str, Any]:
     if not bundle_status.get("installed"):
         raise OfficialRefreshError("Target did not report an installed UI bundle")
@@ -191,7 +248,11 @@ def refresh_target(
     remote_manifest: dict[str, Any],
     local_git: dict[str, object],
 ) -> dict[str, Any]:
-    bundle_install = run_pucky_command(
+    broker_channel = wait_for_broker_command_channel(
+        args,
+        timeout_seconds=min(max(15, args.command_timeout_seconds), 60),
+    )
+    bundle_install = run_pucky_command_resilient(
         args,
         "ui.bundle.refresh",
         {
@@ -199,10 +260,11 @@ def refresh_target(
             "max_bytes": args.max_bundle_bytes,
         },
     )
-    shell_mode = run_pucky_command(args, "ui.shell.mode.set", {"mode": "web_cached"})
-    bundle_status = run_pucky_command(args, "ui.bundle.status", {})
+    shell_mode = run_pucky_command_resilient(args, "ui.shell.mode.set", {"mode": "web_cached"})
+    bundle_status = run_pucky_command_resilient(args, "ui.bundle.status", {})
     verify_bundle_status(bundle_status, remote_manifest, local_git)
     return {
+        "broker_channel": broker_channel,
         "bundle_install": bundle_install,
         "shell_mode": shell_mode,
         "bundle_status": bundle_status,
@@ -227,6 +289,7 @@ def build_evidence(
         "manifest_url": args.manifest_url,
         "local_git": local_git,
         "remote_manifest": remote_manifest,
+        "broker_channel": refresh_result.get("broker_channel", {}),
         "bundle_install": refresh_result["bundle_install"],
         "shell_mode": refresh_result["shell_mode"],
         "bundle_status": refresh_result["bundle_status"],
