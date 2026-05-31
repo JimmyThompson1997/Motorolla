@@ -106,6 +106,7 @@ def test_create_and_start_commands_use_workspace_avd_home(tmp_path: Path) -> Non
     assert create[:4] == [str(args.avdmanager), "create", "avd", "--force"]
     assert "--name" in create and "pucky_webview_api35_03" in create
     assert "--package" in create and suite.DEFAULT_SYSTEM_IMAGE in create
+    assert "--sdcard" in create and suite.DEFAULT_SDCARD_SIZE in create
     assert start == [
         str(args.emulator),
         "-avd",
@@ -186,6 +187,7 @@ def test_cmd_start_reapplies_userdata_tuning_for_existing_slot(monkeypatch: pyte
     monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(suite, "avd_artifacts_exist", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(suite, "tune_avd_config", lambda cfg: calls.append(cfg.avd_name))
     monkeypatch.setattr(suite.Runner, "start_detached", lambda self, *args, **kwargs: 123)
 
@@ -193,6 +195,39 @@ def test_cmd_start_reapplies_userdata_tuning_for_existing_slot(monkeypatch: pyte
 
     assert result["ok"] is True
     assert calls == [config.avd_name]
+
+
+def test_cmd_start_creates_missing_avd_before_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = ns(tmp_path, slot=1, no_wait=True, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(suite, "avd_artifacts_exist", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(suite, "sdk_env", lambda *_args, **_kwargs: {"ANDROID_AVD_HOME": config.avd_home})
+    monkeypatch.setattr(suite, "tune_avd_config", lambda cfg: calls.append(("tune", cfg.avd_name)))
+
+    def fake_run(self, command, **kwargs):
+        calls.append(("run", list(command)))
+        return suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def fake_start_detached(self, command, **kwargs):
+        calls.append(("start", list(command)))
+        return 321
+
+    monkeypatch.setattr(suite.Runner, "run", fake_run)
+    monkeypatch.setattr(suite.Runner, "start_detached", fake_start_detached)
+
+    result = suite.cmd_start(args)
+
+    assert result["ok"] is True
+    assert calls[0] == ("run", suite.avdmanager_create_command(args, config))
+    assert calls[1] == ("tune", config.avd_name)
+    assert calls[2] == ("start", suite.emulator_start_command(args, config))
 
 
 def test_wait_for_snapshot_condition_honors_custom_poll_interval(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -313,6 +348,21 @@ def test_launch_command_uses_resolved_launcher_activity_when_default_is_unavaila
 
     assert f"{args.package_name}/com.pucky.device.MainActivity" in launch
     assert f"{args.package_name}/com.pucky.device.MainActivity" in home
+
+
+def test_effective_activity_name_falls_back_to_main_activity_when_resolution_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    monkeypatch.setattr(
+        suite.subprocess,
+        "run",
+        lambda *args, **kwargs: argparse.Namespace(stdout="No activity found\n"),
+    )
+
+    assert suite.effective_activity_name(args, config) == "com.pucky.device.MainActivity"
 
 
 def test_launch_command_respects_explicit_activity_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -763,6 +813,32 @@ def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
     }
 
 
+def test_walkie_thread_lab_all_expands_only_core_gate_sequence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parser = suite.build_parser()
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "all", "--dry-run"])
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "require_emulator_serial", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+
+    result = suite.cmd_walkie_thread_lab(args)
+
+    assert suite.WALKIE_THREAD_LAB_ALL_SCENARIOS == (
+        "feed-focus-continuation",
+        "transcript-continuation",
+        "page-continuation",
+        "attachment-continuation",
+        "negative-home",
+        "history-retention",
+        "final-boss-overlap",
+    )
+    assert [item["scenario"] for item in result["results"]] == list(suite.WALKIE_THREAD_LAB_ALL_SCENARIOS)
+    assert "focus-clear-negative" not in [item["scenario"] for item in result["results"]]
+
+
 def test_start_fixture_turn_passes_debug_fixture_transcript_and_delay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = ns(tmp_path, dry_run=False)
     config = suite.slot_config(tmp_path, 2, run_id="fixed")
@@ -1132,6 +1208,181 @@ def test_wait_for_turn_remote_completion_order_sorts_by_remote_timestamp(
     )
 
     assert result == ["turn-b", "turn-a", "turn-c"]
+
+
+def test_walkie_thread_lab_retry_recovers_slot_before_second_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parser = suite.build_parser()
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "feed-focus-continuation", "--skip-refresh"])
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    events: list[str] = []
+    call_count = {"scenario": 0}
+
+    class FakeRunner:
+        def __init__(self, dry_run: bool = False) -> None:
+            self.dry_run = dry_run
+            self.planned: list[dict[str, Any]] = []
+
+        def run(self, _command, timeout=None, check=True):
+            events.append("launch")
+            return None
+
+    class DummyProofServer:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("proof_start")
+
+        def stop(self) -> None:
+            events.append("proof_stop")
+
+        def register_fixture(self, *_args) -> None:
+            return None
+
+    monkeypatch.setattr(suite, "Runner", FakeRunner)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "require_emulator_serial", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "grant_runtime_permissions", lambda *_args, **_kwargs: events.append("grant_runtime_permissions"))
+    monkeypatch.setattr(suite, "dismiss_permission_controller", lambda *_args, **_kwargs: events.append("dismiss_permission_controller"))
+    monkeypatch.setattr(suite, "launch_command", lambda *_args, **_kwargs: ["launch-home"])
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        suite,
+        "prepare_turn_fixtures",
+        lambda *_args, **_kwargs: {
+            "wake_weather": Path("wake_weather.wav"),
+            "thread_continue": Path("thread_continue.wav"),
+            "file_revise": Path("file_revise.wav"),
+            "fresh_thread": Path("fresh_thread.wav"),
+            "thread_bravo": Path("thread_bravo.wav"),
+            "thread_alpha": Path("thread_alpha.wav"),
+        },
+    )
+    monkeypatch.setattr(suite, "push_turn_fixture", lambda *_args, **_kwargs: f"/remote/{_args[-1]}")
+    monkeypatch.setattr(suite, "LocalProofTurnServer", DummyProofServer)
+    monkeypatch.setattr(suite, "configure_turn_lab_runtime", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "reset_walkie_thread_lab_state", lambda *_args, **_kwargs: events.append("reset_walkie_thread_lab_state"))
+    monkeypatch.setattr(
+        suite,
+        "seed_walkie_thread_cards",
+        lambda *_args, **_kwargs: {
+            "thread_a": {"session_id": "session-a", "origin": {"thread_id": "thread-A"}},
+            "thread_b": {"session_id": "session-b", "origin": {"thread_id": "thread-B"}},
+        },
+    )
+    monkeypatch.setattr(suite, "cmd_create", lambda *_args, **_kwargs: events.append("create") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_stop", lambda *_args, **_kwargs: events.append("stop") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_start", lambda *_args, **_kwargs: events.append("start") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_provision", lambda *_args, **_kwargs: events.append("provision") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_seed_ui", lambda *_args, **_kwargs: events.append("seed_ui") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_smoke", lambda *_args, **_kwargs: events.append("smoke") or {"ok": True})
+
+    def fake_feed_focus(*_args, **_kwargs):
+        call_count["scenario"] += 1
+        events.append(f"scenario_{call_count['scenario']}")
+        if call_count["scenario"] == 1:
+            raise suite.SuiteError("Broker wedged")
+        return {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True}}}
+
+    monkeypatch.setattr(suite, "run_feed_focus_continuation_scenario", fake_feed_focus)
+
+    result = suite.cmd_walkie_thread_lab(args)
+
+    assert result["ok"] is True
+    assert call_count["scenario"] == 2
+    assert events.index("scenario_1") < events.index("stop") < events.index("create") < events.index("start") < events.index("provision") < events.index("seed_ui") < events.index("smoke") < events.index("scenario_2")
+
+
+def test_walkie_thread_lab_retry_retries_in_place_for_non_transport_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parser = suite.build_parser()
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "feed-focus-continuation", "--skip-refresh"])
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    events: list[str] = []
+    call_count = {"scenario": 0}
+
+    class FakeRunner:
+        def __init__(self, dry_run: bool = False) -> None:
+            self.dry_run = dry_run
+            self.planned: list[dict[str, Any]] = []
+
+        def run(self, _command, timeout=None, check=True):
+            events.append("launch")
+            return None
+
+    class DummyProofServer:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("proof_start")
+
+        def stop(self) -> None:
+            events.append("proof_stop")
+
+        def register_fixture(self, *_args) -> None:
+            return None
+
+    monkeypatch.setattr(suite, "Runner", FakeRunner)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "require_emulator_serial", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "grant_runtime_permissions", lambda *_args, **_kwargs: events.append("grant_runtime_permissions"))
+    monkeypatch.setattr(suite, "dismiss_permission_controller", lambda *_args, **_kwargs: events.append("dismiss_permission_controller"))
+    monkeypatch.setattr(suite, "launch_command", lambda *_args, **_kwargs: ["launch-home"])
+    monkeypatch.setattr(suite, "ensure_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        suite,
+        "prepare_turn_fixtures",
+        lambda *_args, **_kwargs: {
+            "wake_weather": Path("wake_weather.wav"),
+            "thread_continue": Path("thread_continue.wav"),
+            "file_revise": Path("file_revise.wav"),
+            "fresh_thread": Path("fresh_thread.wav"),
+            "thread_bravo": Path("thread_bravo.wav"),
+            "thread_alpha": Path("thread_alpha.wav"),
+        },
+    )
+    monkeypatch.setattr(suite, "push_turn_fixture", lambda *_args, **_kwargs: f"/remote/{_args[-1]}")
+    monkeypatch.setattr(suite, "LocalProofTurnServer", DummyProofServer)
+    monkeypatch.setattr(suite, "configure_turn_lab_runtime", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(suite, "reset_walkie_thread_lab_state", lambda *_args, **_kwargs: events.append("reset_walkie_thread_lab_state"))
+    monkeypatch.setattr(
+        suite,
+        "seed_walkie_thread_cards",
+        lambda *_args, **_kwargs: {
+            "thread_a": {"session_id": "session-a", "origin": {"thread_id": "thread-A"}},
+            "thread_b": {"session_id": "session-b", "origin": {"thread_id": "thread-B"}},
+        },
+    )
+    monkeypatch.setattr(suite, "cmd_create", lambda *_args, **_kwargs: events.append("create") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_stop", lambda *_args, **_kwargs: events.append("stop") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_start", lambda *_args, **_kwargs: events.append("start") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_provision", lambda *_args, **_kwargs: events.append("provision") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_seed_ui", lambda *_args, **_kwargs: events.append("seed_ui") or {"ok": True})
+    monkeypatch.setattr(suite, "cmd_smoke", lambda *_args, **_kwargs: events.append("smoke") or {"ok": True})
+
+    def fake_feed_focus(*_args, **_kwargs):
+        call_count["scenario"] += 1
+        events.append(f"scenario_{call_count['scenario']}")
+        if call_count["scenario"] == 1:
+            raise suite.SuiteError("detail surface did not stabilize")
+        return {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True}}}
+
+    monkeypatch.setattr(suite, "run_feed_focus_continuation_scenario", fake_feed_focus)
+
+    result = suite.cmd_walkie_thread_lab(args)
+
+    assert result["ok"] is True
+    assert call_count["scenario"] == 2
+    assert "create" not in events
+    assert "stop" not in events
+    assert "start" not in events
+    assert events.index("scenario_1") < events.index("scenario_2")
 
 
 def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:
@@ -2313,6 +2564,7 @@ def test_cmd_start_reuses_existing_connected_serial(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "save_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite, "avd_artifacts_exist", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(suite, "tune_avd_config", lambda _cfg: None)
     monkeypatch.setattr(suite.Runner, "start_detached", lambda self, *args, **kwargs: launched.append("launched") or 123)
 

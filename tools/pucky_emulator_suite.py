@@ -49,10 +49,11 @@ DEFAULT_AVDMANAGER = DEFAULT_ANDROID_HOME / "cmdline-tools" / "latest" / "bin" /
 DEFAULT_SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
 DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
-DEFAULT_ACTIVITY = "com.pucky.device.CoverHomeActivity"
+DEFAULT_ACTIVITY = "com.pucky.device.MainActivity"
 DEFAULT_PERMISSION_CONTROLLER_PACKAGE = "com.google.android.permissioncontroller"
 DEFAULT_USERDATA_PARTITION_MB = "768"
 DEFAULT_USERDATA_PARTITION_SIZE = DEFAULT_USERDATA_PARTITION_MB + "M"
+DEFAULT_SDCARD_SIZE = "64M"
 DEFAULT_APK = ROOT / "pucky-apk" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
 DEFAULT_FAKE_BROKER = ROOT / "pucky-apk" / "fake-broker"
@@ -119,6 +120,15 @@ WALKIE_THREAD_LAB_SCENARIOS = (
     "history-retention",
     "final-boss-overlap",
     "all",
+)
+WALKIE_THREAD_LAB_ALL_SCENARIOS = (
+    "feed-focus-continuation",
+    "transcript-continuation",
+    "page-continuation",
+    "attachment-continuation",
+    "negative-home",
+    "history-retention",
+    "final-boss-overlap",
 )
 WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "home-before.png",
@@ -784,8 +794,15 @@ def avdmanager_create_command(args: argparse.Namespace, config: SlotConfig) -> l
         "--device",
         args.device_profile,
         "--sdcard",
-        "512M",
+        DEFAULT_SDCARD_SIZE,
     ]
+
+
+def avd_artifacts_exist(config: SlotConfig) -> bool:
+    avd_root = Path(config.avd_home)
+    avd_dir = avd_root / f"{config.avd_name}.avd"
+    avd_ini = avd_root / f"{config.avd_name}.ini"
+    return avd_dir.is_dir() and (avd_dir / "config.ini").exists() and avd_ini.is_file()
 
 
 def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
@@ -2641,11 +2658,15 @@ def cmd_create(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_start(args: argparse.Namespace) -> dict[str, Any]:
     runner = Runner(dry_run=args.dry_run)
     config = config_for_command(ROOT, args.slot, dry_run=args.dry_run)
+    serial_connected = serial_is_connected(args, runner, config.serial)
+    if not args.dry_run and not serial_connected and not avd_artifacts_exist(config):
+        Path(config.avd_home).mkdir(parents=True, exist_ok=True)
+        runner.run(avdmanager_create_command(args, config), env=sdk_env(args, config), timeout=120)
     if not args.dry_run:
         tune_avd_config(config)
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
     pid = -1
-    if not serial_is_connected(args, runner, config.serial):
+    if not serial_connected:
         pid = runner.start_detached(
             emulator_start_command(args, config),
             cwd=ROOT,
@@ -3289,6 +3310,67 @@ def reset_walkie_thread_lab_state(
             timeout=120,
         )
     )
+
+
+def walkie_thread_lab_scenarios_for_request(selected: str) -> list[str]:
+    return list(WALKIE_THREAD_LAB_ALL_SCENARIOS) if selected == "all" else [selected]
+
+
+def walkie_thread_lab_recovery_args(
+    args: argparse.Namespace,
+    command: str,
+    **overrides: Any,
+) -> argparse.Namespace:
+    payload = dict(vars(args))
+    payload["command"] = command
+    payload.update(overrides)
+    return argparse.Namespace(**payload)
+
+
+def recover_walkie_thread_lab_slot(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "stop": cmd_stop(walkie_thread_lab_recovery_args(args, "stop")),
+        "create": cmd_create(walkie_thread_lab_recovery_args(args, "create")),
+        "start": cmd_start(
+            walkie_thread_lab_recovery_args(
+                args,
+                "start",
+                no_wait=False,
+                audio_mode="none",
+                audio_wav_in=None,
+            )
+        ),
+        "provision": cmd_provision(walkie_thread_lab_recovery_args(args, "provision", skip_build=True)),
+        "seed_ui": cmd_seed_ui(
+            walkie_thread_lab_recovery_args(
+                args,
+                "seed-ui",
+                cards_json="",
+                cards_file=None,
+                max_bundle_bytes=20 * 1024 * 1024,
+            )
+        ),
+        "smoke": cmd_smoke(walkie_thread_lab_recovery_args(args, "smoke")),
+    }
+
+
+def should_recover_walkie_thread_lab_exception(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    recovery_tokens = (
+        "broker",
+        "adb",
+        "transport",
+        "device offline",
+        "device is offline",
+        "emulator is not connected",
+        "timed out waiting for emulator boot",
+        "no devices/emulators found",
+        "connection reset",
+        "connection aborted",
+        "broken pipe",
+        "socket",
+    )
+    return any(token in text for token in recovery_tokens)
 
 
 def write_json_file(path: Path, payload: Any) -> Path:
@@ -7381,7 +7463,7 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
 
     Path(config.evidence_dir).mkdir(parents=True, exist_ok=True)
     if args.dry_run:
-        scenarios = list(WALKIE_THREAD_LAB_SCENARIOS[:-1]) if args.scenario == "all" else [args.scenario]
+        scenarios = walkie_thread_lab_scenarios_for_request(args.scenario)
         return {
             "ok": True,
             "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
@@ -7410,7 +7492,7 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
     for name in fixture_transcripts:
         transport_name = WALKIE_THREAD_TRANSPORT_FIXTURES.get(name, name)
         remote_paths[name] = push_turn_fixture(args, runner, config, fixtures[transport_name], name)
-    scenarios = list(WALKIE_THREAD_LAB_SCENARIOS[:-1]) if args.scenario == "all" else [args.scenario]
+    scenarios = walkie_thread_lab_scenarios_for_request(args.scenario)
     results: list[dict[str, Any]] = []
     runtime: dict[str, Any] | None = None
 
@@ -7465,9 +7547,11 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
     for scenario in scenarios:
         try:
             results.append(run_named_scenario(scenario))
-        except Exception:
+        except Exception as exc:
             if args.dry_run or scenario not in retriable_scenarios:
                 raise
+            if should_recover_walkie_thread_lab_exception(exc):
+                recover_walkie_thread_lab_slot(args)
             results.append(run_named_scenario(scenario))
     aggregate_proof = write_walkie_thread_lab_aggregate_proof(config, results) if args.scenario == "all" else None
     payload = {
