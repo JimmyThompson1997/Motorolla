@@ -32,18 +32,6 @@ public final class AndroidRuntimeController {
         switch (command) {
             case "android.catalog":
                 return substrateOp(args, "catalog");
-            case "android.content.query":
-                return substrateOp(args, "content.query");
-            case "android.content.insert":
-                return substrateOp(args, "content.insert");
-            case "android.content.update":
-                return substrateOp(args, "content.update");
-            case "android.content.delete":
-                return substrateOp(args, "content.delete");
-            case "android.content.call":
-                return substrateOp(args, "content.call");
-            case "android.content.get_type":
-                return substrateOp(args, "content.get_type");
             case "android.intent.start":
                 return substrateOp(args, "intent.start");
             case "android.manager.call":
@@ -330,7 +318,7 @@ public final class AndroidRuntimeController {
     private JSONObject substrateOp(JSONObject args, String op) throws CommandException {
         JSONObject payload = copy(args);
         Json.put(payload, "op", op);
-        return substrateController.execute(payload);
+        return substrateController.executeTrusted(payload);
     }
 
     private JSONObject requireLimit(JSONObject args, String command) throws CommandException {

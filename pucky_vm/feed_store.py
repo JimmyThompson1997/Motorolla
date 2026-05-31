@@ -71,6 +71,12 @@ class FeedStore:
         request_audio_artifact_id = f"{card_id}:request_audio"
         audio_artifact_id = f"{card_id}:audio"
         html_artifact_id = f"{card_id}:html" if html_base64 else ""
+        artifact_ids_to_keep = {audio_artifact_id}
+        if request_audio_base64:
+            artifact_ids_to_keep.add(request_audio_artifact_id)
+        if html_artifact_id:
+            artifact_ids_to_keep.add(html_artifact_id)
+        artifact_ids_to_keep.update(self._transcript_attachment_artifact_ids(transcript_messages))
         origin_json = json.dumps(origin or {}, separators=(",", ":"))
         with self._lock:
             existing = self._fetch_card_row(card_id)
@@ -116,8 +122,6 @@ class FeedStore:
                         updated_at=now_iso,
                         updated_at_ms=now_ms,
                     )
-                else:
-                    self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (request_audio_artifact_id,))
                 self._upsert_artifact(
                     artifact_id=audio_artifact_id,
                     card_id=card_id,
@@ -139,8 +143,6 @@ class FeedStore:
                         updated_at=now_iso,
                         updated_at_ms=now_ms,
                     )
-                else:
-                    self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (html_artifact_id,))
                 self._store_transcript_attachment_artifacts(
                     transcript_messages=transcript_messages,
                     html_artifact_id=html_artifact_id,
@@ -151,6 +153,7 @@ class FeedStore:
                     updated_at=now_iso,
                     updated_at_ms=now_ms,
                 )
+                self._prune_card_artifacts(card_id, artifact_ids_to_keep)
                 self._conn.execute(
                     """
                     INSERT INTO feed_cards (
@@ -492,7 +495,37 @@ class FeedStore:
                         created_at=created_at,
                         updated_at=updated_at,
                         updated_at_ms=updated_at_ms,
-                    )
+        )
+
+    def _transcript_attachment_artifact_ids(self, transcript_messages: list[dict[str, object]]) -> set[str]:
+        artifact_ids: set[str] = set()
+        for message in transcript_messages or []:
+            if not isinstance(message, dict):
+                continue
+            for attachment in message.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                for artifact_field in (
+                    "artifact",
+                    "viewer_artifact",
+                    "html_artifact",
+                    "document_html_artifact",
+                    "preview_artifact",
+                ):
+                    artifact_id = str(attachment.get(artifact_field) or "").strip()
+                    if artifact_id:
+                        artifact_ids.add(artifact_id)
+        return artifact_ids
+
+    def _prune_card_artifacts(self, card_id: str, artifact_ids_to_keep: set[str]) -> None:
+        if not artifact_ids_to_keep:
+            self._conn.execute("DELETE FROM artifacts WHERE card_id = ?", (card_id,))
+            return
+        placeholders = ",".join("?" for _ in artifact_ids_to_keep)
+        self._conn.execute(
+            f"DELETE FROM artifacts WHERE card_id = ? AND artifact_id NOT IN ({placeholders})",
+            (card_id, *sorted(artifact_ids_to_keep)),
+        )
 
     def _fetch_card_row(self, card_id: str) -> sqlite3.Row | None:
         return self._conn.execute(

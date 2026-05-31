@@ -381,6 +381,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
         assertTrue(source.contains("String brokerToken = getToken();"));
         assertTrue(source.contains("return getPuckyTurnAuthToken();"));
+        assertTrue(source.contains("return \"dev-token\".equals(clean) ? \"\" : clean;"));
+        assertFalse(source.contains("prefs.getString(TOKEN, \"dev-token\")"));
+        assertFalse(source.contains("nonEmpty(token, \"dev-token\")"));
     }
 
     @Test

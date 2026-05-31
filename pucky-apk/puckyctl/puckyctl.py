@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "schema": CONFIG_SCHEMA,
     "broker_base_url": "http://127.0.0.1:8080",
     "operator_token_env": "PUCKY_OPERATOR_TOKEN",
-    "operator_token": "operator-dev-token",
+    "operator_token": "",
     "default_device_id": "",
     "evidence_dir": "/data/pucky/evidence",
     "default_timeout_ms": 30000,

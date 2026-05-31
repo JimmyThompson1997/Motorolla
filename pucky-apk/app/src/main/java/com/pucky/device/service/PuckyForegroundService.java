@@ -64,7 +64,6 @@ import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.storage.StorageProvider;
 import com.pucky.device.substrate.AndroidSubstrateController;
-import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.ui.PuckyUiController;
@@ -241,7 +240,6 @@ public final class PuckyForegroundService extends Service {
                 new StorageProvider(this),
                 new NotificationController(this),
                 new AudioController(this),
-                new ShellController(),
                 new CameraController(this),
                 new TimerController(this),
                 logStore,

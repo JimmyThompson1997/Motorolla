@@ -51,13 +51,13 @@ public final class CommandEnvelope {
 
     public boolean expired(Instant now) {
         if (createdAt == null || createdAt.isEmpty() || ttlMs <= 0) {
-            return false;
+            return true;
         }
         try {
             Instant created = Instant.parse(createdAt);
             return Duration.between(created, now).toMillis() > ttlMs;
         } catch (Exception ignored) {
-            return false;
+            return true;
         }
     }
 

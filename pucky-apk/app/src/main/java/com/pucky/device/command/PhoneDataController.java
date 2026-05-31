@@ -937,7 +937,7 @@ public final class PhoneDataController {
     }
 
     private JSONObject substrate(JSONObject args) throws CommandException {
-        return substrateController.execute(args);
+        return substrateController.executeTrusted(args);
     }
 
     private JSONObject queryArgs(String uri, JSONArray projection, String sort, int limit) {

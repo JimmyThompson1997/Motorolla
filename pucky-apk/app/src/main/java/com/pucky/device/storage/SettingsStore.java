@@ -63,7 +63,9 @@ public final class SettingsStore {
     }
 
     public String getToken() {
-        return prefs.getString(TOKEN, "dev-token");
+        String value = prefs.getString(TOKEN, "");
+        String clean = value == null ? "" : value.trim();
+        return "dev-token".equals(clean) ? "" : clean;
     }
 
     public Context context() {
@@ -81,7 +83,7 @@ public final class SettingsStore {
         }
         String brokerToken = getToken();
         String clean = brokerToken == null ? "" : brokerToken.trim();
-        return "dev-token".equals(clean) ? "" : clean;
+        return clean;
     }
 
     public String getPuckyApiToken() {
@@ -160,7 +162,7 @@ public final class SettingsStore {
         prefs.edit()
                 .putString(DEVICE_ID, nonEmpty(deviceId, getDeviceId()))
                 .putString(BROKER_URL, nonEmpty(brokerUrl, getBrokerUrl()))
-                .putString(TOKEN, nonEmpty(token, "dev-token"))
+                .putString(TOKEN, nonEmpty(token, getToken()))
                 .commit();
     }
 

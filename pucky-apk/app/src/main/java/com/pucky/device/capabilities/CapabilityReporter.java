@@ -84,8 +84,6 @@ public final class CapabilityReporter {
                 "Small bounded SHA-256 benchmark, capped by max_ms."));
         Json.add(out, cap("command.catalog", "command.catalog", "implemented", "yes", "quiet", null, "self_reported",
                 "Lists the Pucky command bus subcommands available through the single pucky.command.v1 endpoint."));
-        Json.add(out, cap("shell.exec", "shell.exec", "implemented_untested", "yes", "raw_device_shell", null,
-                "not_recorded", "Runs /system/bin/sh -c as the Pucky app UID with bounded timeout/output. This is intentionally close to the device metal, not root."));
         Json.add(out, cap("artifact.list", "artifact.list", "implemented", "yes", "quiet", null, "not_recorded",
                 "Lists app-owned artifacts only."));
         Json.add(out, cap("artifact.hash", "artifact.hash", "implemented", "yes", "quiet", null, "not_recorded",
@@ -227,9 +225,9 @@ public final class CapabilityReporter {
         Json.add(out, cap("intent.phone_dial", "phone.intent.dial", "implemented_untested", "user_mediated", "visible",
                 null, "not_recorded", "Launches ACTION_DIAL only, not direct call."));
         Json.add(out, cap("android.runtime_plane",
-                "android.catalog/android.content.query/android.content.insert/android.content.update/android.content.delete/android.content.call/android.content.get_type/android.intent.start/android.manager.call/android.permission.status/android.permission.request",
+                "android.catalog/android.intent.start/android.manager.call/android.permission.status/android.permission.request",
                 "implemented_guarded", "yes", "privacy_sensitive", null, "not_recorded",
-                "Preferred Android-native command namespace over the substrate and manager primitives. ADB remains the external USB-C operator hatch, not an APK command."));
+                "Preferred Android-native command namespace over substrate and manager primitives. Raw content-provider access stays internal to named commands. ADB remains the external USB-C operator hatch, not an APK command."));
         Json.add(out, cap("android.native_families",
                 "android.sms.*/android.calls.*/android.contacts.*/android.voicemail.list/android.blocked_numbers.*/android.calendar.*/android.clock.*/android.settings.*/android.media.*/android.downloads.*/android.user_dictionary.*/android.notifications.listener.*",
                 "implemented_guarded", "yes", "privacy_sensitive", null, "not_recorded",
@@ -291,7 +289,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("adb.install", null, "requires_adb", "adb_only", "visible", null, "not_applicable",
                 "Development-only installation path."));
         Json.add(out, cap("root.shell", null, "requires_root", "root_only", "visible", null, "not_applicable",
-                "shell.exec is app-UID shell access only; root remains unavailable."));
+                "The APK exposes no raw shell command; root remains unavailable."));
         return out;
     }
 

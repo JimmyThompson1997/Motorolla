@@ -31,7 +31,6 @@ import com.pucky.device.storage.CommandLogStore;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.storage.StorageProvider;
 import com.pucky.device.substrate.AndroidSubstrateController;
-import com.pucky.device.system.ShellController;
 import com.pucky.device.system.SystemController;
 import com.pucky.device.timers.TimerController;
 import com.pucky.device.ui.PuckyUiController;
@@ -56,7 +55,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "file.put_base64", "app.update.install_downloaded", "sensor.list", "sensor.sample", "sensor.watch",
             "camera.info", "torch.set", "photo.capture", "timer.set", "timer.cancel",
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
-            "service.status", "power.policy.get", "compute.benchmark", "shell.exec",
+            "service.status", "power.policy.get", "compute.benchmark",
             "screen.lock.status", "screen.lock.request", "screen.lock.open_accessibility_settings",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.url", "artifact.delete",
             "pucky.clipboard.list", "pucky.clipboard.last", "pucky.clipboard.read",
@@ -97,8 +96,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "cover.event", "settings.open", "settings.panel", "browser.open",
             "share.text", "alarm.intent.set", "calendar.intent.insert", "phone.intent.dial",
             "android.catalog",
-            "android.content.query", "android.content.insert", "android.content.update",
-            "android.content.delete", "android.content.call", "android.content.get_type",
             "android.intent.start", "android.manager.call",
             "android.permission.status", "android.permission.request",
             "android.sms.list", "android.sms.thread", "android.sms.send",
@@ -140,7 +137,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final StorageProvider storageProvider;
     private final NotificationController notificationController;
     private final AudioController audioController;
-    private final ShellController shellController;
     private final CameraController cameraController;
     private final TimerController timerController;
     private final CommandLogStore commandLogStore;
@@ -180,7 +176,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             StorageProvider storageProvider,
             NotificationController notificationController,
             AudioController audioController,
-            ShellController shellController,
             CameraController cameraController,
             TimerController timerController,
             CommandLogStore commandLogStore,
@@ -217,7 +212,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.storageProvider = storageProvider;
         this.notificationController = notificationController;
         this.audioController = audioController;
-        this.shellController = shellController;
         this.cameraController = cameraController;
         this.timerController = timerController;
         this.commandLogStore = commandLogStore;
@@ -332,8 +326,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return systemController.openAccessibilitySettings();
             case "compute.benchmark":
                 return systemController.benchmark(command.args());
-            case "shell.exec":
-                return shellController.exec(command.args());
             case "artifact.list":
                 return artifactController.list(command.args());
             case "artifact.hash":
@@ -664,7 +656,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
         Json.put(out, "schema", "pucky.command_catalog.v1");
         Json.put(out, "endpoint", "pucky.command.v1");
         Json.put(out, "commands", commands);
-        Json.put(out, "raw_shell", "shell.exec");
         return out;
     }
 

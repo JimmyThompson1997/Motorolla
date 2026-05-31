@@ -853,9 +853,9 @@ def bearer_token(headers):
 
 
 def compare_token(actual, expected):
-    if not expected:
-        return True
-    return hmac.compare_digest(actual or "", expected)
+    actual = str(actual or "").strip()
+    expected = str(expected or "").strip()
+    return bool(expected) and hmac.compare_digest(actual, expected)
 
 
 def query_token(path):
@@ -1078,14 +1078,14 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def require_operator(self):
-        expected = os.environ.get("PUCKY_OPERATOR_TOKEN", "operator-dev-token")
+        expected = os.environ.get("PUCKY_OPERATOR_TOKEN", "")
         if compare_token(bearer_token(self.headers), expected):
             return True
         self.send_json({"error": "UNAUTHORIZED"}, 401)
         return False
 
     def require_device(self):
-        expected = os.environ.get("PUCKY_DEVICE_TOKEN", "dev-token")
+        expected = os.environ.get("PUCKY_DEVICE_TOKEN", "")
         actual = bearer_token(self.headers) or query_token(self.path)
         if compare_token(actual, expected):
             return True

@@ -154,7 +154,12 @@ if (-not (Test-Path -LiteralPath $apk)) {
     throw "APK was not found after build: $apk"
 }
 
-& $adb -s $Serial install -r $apk
+$installOutput = @(& $adb -s $Serial install -r $apk 2>&1)
+$installExitCode = $LASTEXITCODE
+$installText = $installOutput -join "`n"
+if ($installExitCode -ne 0 -or $installText -notmatch "(?m)^Success\b") {
+    throw "APK install failed with exit code $($installExitCode):`n$installText"
+}
 
 $package = & $adb -s $Serial shell dumpsys package $PackageName
 $packageText = $package -join "`n"
@@ -199,10 +204,18 @@ if (-not [string]::IsNullOrWhiteSpace($ProvisionToken) `
     [System.IO.File]::WriteAllText($localProvisioningFile, $json, [Text.Encoding]::UTF8)
 
     Write-Host "Importing app provisioning without printing token values"
-    & $adb -s $Serial push $localProvisioningFile $deviceProvisioningFile | Out-Null
-    & $adb -s $Serial shell "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile"
-    & $adb -s $Serial shell "rm -f $deviceProvisioningFile"
-    & $adb -s $Serial shell "am start -n $PackageName/$ActivityName --es provisioning_file $appProvisioningFile --ez connect false" | Out-Null
+    try {
+        & $adb -s $Serial push $localProvisioningFile $deviceProvisioningFile | Out-Null
+        & $adb -s $Serial shell "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile"
+        & $adb -s $Serial shell "rm -f $deviceProvisioningFile"
+        & $adb -s $Serial shell "am start -n $PackageName/$ActivityName --es provisioning_file $appProvisioningFile --ez connect false" | Out-Null
+    } finally {
+        try {
+            & $adb -s $Serial shell "rm -f $deviceProvisioningFile" | Out-Null
+        } catch {
+        }
+        Remove-Item -LiteralPath $localProvisioningFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "Canonical APK installed and verified."

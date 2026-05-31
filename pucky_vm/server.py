@@ -1719,6 +1719,21 @@ def _request_base_url(handler) -> str:
     return f"{proto}://{host}"
 
 
+def _parse_content_length(length_text: str | None, limit: int) -> int | None:
+    clean = str(length_text or "").strip()
+    if not clean:
+        return None
+    try:
+        length = int(clean)
+    except Exception:
+        raise ValueError("invalid_content_length")
+    if length < 0:
+        raise ValueError("invalid_content_length")
+    if length > limit:
+        raise ValueError("audio body is too large")
+    return length
+
+
 def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_connected: str = "") -> str:
     token_q = quote(token, safe="")
     back_q = html.escape(back_url, quote=True)
@@ -2203,6 +2218,9 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, service.health())
                 return
             if path == "/api/links/composio/portal-url":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
                 query = parse_qs(parsed.query)
                 payload = service.links_portal_url(
                     _request_base_url(self),
@@ -2540,11 +2558,8 @@ def make_handler(service: PuckyVoiceService):
             print(f"{self.address_string()} - {fmt % args}", flush=True)
 
         def _read_body(self, limit: int) -> bytes:
-            length_text = self.headers.get("Content-Length")
-            if length_text:
-                length = int(length_text)
-                if length > limit:
-                    raise ValueError("audio body is too large")
+            length = _parse_content_length(self.headers.get("Content-Length"), limit)
+            if length is not None:
                 return self.rfile.read(length)
             data = self.rfile.read(limit + 1)
             if len(data) > limit:

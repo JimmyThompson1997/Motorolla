@@ -9,6 +9,7 @@ import java.time.Instant;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public final class CommandRouterTest {
     @Test
@@ -73,19 +74,47 @@ public final class CommandRouterTest {
         assertNotNull(envelope.args());
     }
 
+    @Test
+    public void commandEnvelopeExpiresFailClosedForMissingCreatedAt() throws Exception {
+        JSONObject out = baseCommand("cmd_missing_created_at", "ping");
+        Json.put(out, "ttl_ms", 30000);
+
+        assertTrue(CommandEnvelope.parse(out.toString()).expired(Instant.now()));
+    }
+
+    @Test
+    public void commandEnvelopeExpiresFailClosedForInvalidCreatedAt() throws Exception {
+        assertTrue(CommandEnvelope.parse(command("cmd_bad_created_at", "ping", 30000, "not-a-time")).expired(Instant.now()));
+    }
+
+    @Test
+    public void commandEnvelopeExpiresFailClosedForZeroTtl() throws Exception {
+        assertTrue(CommandEnvelope.parse(command("cmd_zero_ttl", "ping", 0)).expired(Instant.now()));
+    }
+
+    @Test
+    public void commandEnvelopeExpiresFailClosedForNegativeTtl() throws Exception {
+        assertTrue(CommandEnvelope.parse(command("cmd_negative_ttl", "ping", -1)).expired(Instant.now()));
+    }
+
     private static String command(String id, String type, long ttlMs) {
         return command(id, type, ttlMs, Instant.now().toString());
     }
 
     private static String command(String id, String type, long ttlMs, String createdAt) {
+        JSONObject out = baseCommand(id, type);
+        Json.put(out, "created_at", createdAt);
+        Json.put(out, "ttl_ms", ttlMs);
+        return out.toString();
+    }
+
+    private static JSONObject baseCommand(String id, String type) {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.command.v1");
         Json.put(out, "id", id);
         Json.put(out, "type", type);
         Json.put(out, "args", new JSONObject());
-        Json.put(out, "created_at", createdAt);
-        Json.put(out, "ttl_ms", ttlMs);
-        return out.toString();
+        return out;
     }
 }
 

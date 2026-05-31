@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -445,6 +446,14 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
 class ServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.env_patch = mock.patch.dict(
+            "os.environ",
+            {
+                "PUCKY_OPERATOR_TOKEN": "test-operator-token",
+                "PUCKY_DEVICE_TOKEN": "test-device-token",
+            },
+        )
+        self.env_patch.start()
         self.broker = reset_broker_for_tests(self.tmp.name + "/broker.sqlite3")
         self.stt = FakeSTT()
         self.tts = FakeTTS()
@@ -465,6 +474,7 @@ class ServerTests(unittest.TestCase):
             self.broker.DB.close()
             self.broker.DB = None
         self.broker.DEVICES.clear()
+        self.env_patch.stop()
         self.tmp.cleanup()
 
     def test_healthz_reports_ready_without_secrets(self) -> None:
@@ -533,7 +543,7 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn('"links_url"', config_script)
 
     def test_links_portal_url_endpoint_returns_signed_first_party_url(self) -> None:
-        payload = self.get_json("/api/links/composio/portal-url")
+        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["schema"], "pucky.links_portal_url.v1")
@@ -545,6 +555,12 @@ class ServerTests(unittest.TestCase):
         verified = self.service._verify_links_portal_token(token)
         self.assertIsNotNone(verified)
         self.assertEqual(verified["user_id"], "jimmythompson323")
+
+    def test_links_portal_url_endpoint_requires_auth(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/links/composio/portal-url")
+
+        self.assertEqual(caught.exception.code, 401)
 
     def test_links_portal_page_renders_first_party_apps_portal(self) -> None:
         token = self.issue_portal_token()
@@ -828,7 +844,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(health["ok"])
         self.assertEqual(health["devices_online"], 0)
 
-        devices = self.get_json("/v1/devices", headers={"Authorization": "Bearer operator-dev-token"})
+        devices = self.get_json("/v1/devices", headers={"Authorization": "Bearer test-operator-token"})
         self.assertEqual(devices["devices"], [])
 
         request = urllib.request.Request(
@@ -836,7 +852,7 @@ class ServerTests(unittest.TestCase):
             data=json.dumps({"type": "status.get", "args": {}}).encode("utf-8"),
             method="POST",
             headers={
-                "Authorization": "Bearer operator-dev-token",
+                "Authorization": "Bearer test-operator-token",
                 "Content-Type": "application/json",
             },
         )
@@ -846,6 +862,24 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "DEVICE_OFFLINE")
         self.assertEqual(payload["command"]["status"], "device_offline")
+
+    def test_turn_text_rejects_bad_content_length_without_waiting_for_body(self) -> None:
+        for content_length in ("-1", "not-a-number"):
+            response = self.raw_http(
+                "\r\n".join(
+                    [
+                        "POST /api/turn/text HTTP/1.1",
+                        f"Host: 127.0.0.1:{self.server.server_port}",
+                        "Authorization: Bearer secret",
+                        "Content-Type: application/json",
+                        f"Content-Length: {content_length}",
+                        "Connection: close",
+                        "",
+                        "",
+                    ]
+                ).encode("ascii")
+            )
+            self.assertIn(" 400 ", response.splitlines()[0])
 
     def test_turn_status_missing_turn_id_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -1405,6 +1439,15 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8")
 
+    def raw_http(self, request: bytes) -> str:
+        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as sock:
+            sock.settimeout(2)
+            sock.sendall(request)
+            try:
+                return sock.recv(4096).decode("utf-8", errors="replace")
+            except socket.timeout as exc:
+                self.fail(f"server did not answer before reading the declared body: {exc}")
+
     def post_audio(
         self,
         audio: bytes,
@@ -1470,7 +1513,7 @@ class ServerTests(unittest.TestCase):
         return urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
 
     def issue_portal_token(self) -> str:
-        payload = self.get_json("/api/links/composio/portal-url")
+        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
         return self.portal_token(payload["portal_url"])
 
 

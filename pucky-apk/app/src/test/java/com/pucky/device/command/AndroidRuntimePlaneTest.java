@@ -18,12 +18,6 @@ import java.util.regex.Pattern;
 public final class AndroidRuntimePlaneTest {
     private static final String[] ANDROID_COMMANDS = new String[] {
             "android.catalog",
-            "android.content.query",
-            "android.content.insert",
-            "android.content.update",
-            "android.content.delete",
-            "android.content.call",
-            "android.content.get_type",
             "android.intent.start",
             "android.manager.call",
             "android.permission.status",
@@ -91,8 +85,15 @@ public final class AndroidRuntimePlaneTest {
         String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         List<String> commands = commandNames(executor);
 
-        assertEquals(243, commands.size());
+        assertEquals(236, commands.size());
         assertEquals(commands.size(), new HashSet<>(commands).size());
+        assertFalse(commands.contains("shell.exec"));
+        assertFalse(commands.contains("android.content.query"));
+        assertFalse(commands.contains("android.content.insert"));
+        assertFalse(commands.contains("android.content.update"));
+        assertFalse(commands.contains("android.content.delete"));
+        assertFalse(commands.contains("android.content.call"));
+        assertFalse(commands.contains("android.content.get_type"));
         assertTrue(commands.contains("ui.debug.goto_home"));
         assertTrue(commands.contains("ui.debug.back"));
         assertTrue(commands.contains("ui.debug.focus_card"));
@@ -108,9 +109,9 @@ public final class AndroidRuntimePlaneTest {
         String phone = read("src/main/java/com/pucky/device/command/PhoneDataController.java");
         String ledger = read("src/main/java/com/pucky/device/notifications/PuckyNotificationLedger.java");
 
-        assertTrue(runtime.contains("return substrateOp(args, \"content.query\")"));
         assertTrue(runtime.contains("return substrateOp(args, \"intent.start\")"));
         assertTrue(runtime.contains("return substrateOp(args, \"manager.call\")"));
+        assertTrue(runtime.contains("return substrateController.executeTrusted(payload)"));
         assertTrue(runtime.contains("return phoneDataController.smsList(requireLimit(args, command))"));
         assertTrue(runtime.contains("return phoneDataController.callsAnswer(args)"));
         assertTrue(runtime.contains("return phoneDataController.contactsPhotoGet(args)"));
@@ -142,6 +143,19 @@ public final class AndroidRuntimePlaneTest {
         assertTrue(surfaces.contains("\"notifications\""));
         assertTrue(surfaces.contains("\"calendar\""));
         assertTrue(surfaces.contains("\"blocked_numbers\""));
+    }
+
+    @Test
+    public void rawContentProviderCommandsStayInternalToNamedControllers() throws Exception {
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String runtime = read("src/main/java/com/pucky/device/command/AndroidRuntimeController.java");
+        String substrate = read("src/main/java/com/pucky/device/substrate/AndroidSubstrateController.java");
+
+        assertFalse(executor.contains("\"android.content.query\""));
+        assertFalse(runtime.contains("case \"android.content.query\""));
+        assertTrue(substrate.contains("public JSONObject executeTrusted(JSONObject args)"));
+        assertTrue(substrate.contains("Raw content-provider op is not exposed"));
+        assertTrue(runtime.contains("return substrateController.executeTrusted(payload)"));
     }
 
     @Test

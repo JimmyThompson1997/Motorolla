@@ -53,22 +53,36 @@ public final class AndroidSubstrateController {
     }
 
     public JSONObject execute(JSONObject args) throws CommandException {
+        return executeInternal(args, false);
+    }
+
+    public JSONObject executeTrusted(JSONObject args) throws CommandException {
+        return executeInternal(args, true);
+    }
+
+    private JSONObject executeInternal(JSONObject args, boolean allowContentProviderOps) throws CommandException {
         String op = args.optString("op", "catalog").trim().toLowerCase(Locale.US);
         try {
             switch (op) {
                 case "catalog":
                     return catalog();
                 case "content.query":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return query(args);
                 case "content.insert":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return insert(args);
                 case "content.update":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return update(args);
                 case "content.delete":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return delete(args);
                 case "content.call":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return call(args);
                 case "content.get_type":
+                    requireTrustedContentProviderOp(allowContentProviderOps, op);
                     return getType(args);
                 case "intent.start":
                     return startIntent(args);
@@ -101,17 +115,19 @@ public final class AndroidSubstrateController {
         Json.put(out, "roles", roleStates());
         Json.put(out, "ops", array(
                 "catalog",
-                "content.query",
-                "content.insert",
-                "content.update",
-                "content.delete",
-                "content.call",
-                "content.get_type",
                 "intent.start",
                 "manager.call",
                 "permission.status",
                 "permission.request"));
         return out;
+    }
+
+    private void requireTrustedContentProviderOp(boolean allowContentProviderOps, String op) throws CommandException {
+        if (!allowContentProviderOps) {
+            throw new CommandException(
+                    CommandErrorCodes.COMMAND_NOT_ALLOWED,
+                    "Raw content-provider op is not exposed: " + op + ". Use named Android or phone commands.");
+        }
     }
 
     private JSONArray surfaces() {

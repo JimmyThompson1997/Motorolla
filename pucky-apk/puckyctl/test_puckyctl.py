@@ -6,6 +6,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -63,6 +64,14 @@ class BrokerIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         db_path = pathlib.Path(self.tmp.name) / "broker.sqlite3"
+        self.env_patch = mock.patch.dict(
+            "os.environ",
+            {
+                "PUCKY_OPERATOR_TOKEN": "operator-token",
+                "PUCKY_DEVICE_TOKEN": "device-token",
+            },
+        )
+        self.env_patch.start()
         broker.DEVICES.clear()
         broker.init_db(str(db_path))
         self.server = broker.ThreadingHTTPServer(("127.0.0.1", 0), broker.Handler)
@@ -71,7 +80,7 @@ class BrokerIntegrationTests(unittest.TestCase):
         self.ctx = puckyctl.build_context({
             "broker_base_url": f"http://127.0.0.1:{self.server.server_address[1]}",
             "default_device_id": "pucky-test",
-            "operator_token": "operator-dev-token",
+            "operator_token": "operator-token",
             "default_output": "json",
             "evidence_dir": str(pathlib.Path(self.tmp.name) / "evidence"),
         })
@@ -81,11 +90,22 @@ class BrokerIntegrationTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         broker.DB.close()
+        self.env_patch.stop()
         self.tmp.cleanup()
 
     def test_health_and_devices(self):
         self.assertTrue(puckyctl.api_health(self.ctx)["ok"])
         self.assertEqual(puckyctl.api_devices(self.ctx), [])
+
+    def test_operator_token_fails_closed_when_not_configured(self):
+        ctx = dict(self.ctx)
+        ctx["operator_token"] = "operator-dev-token"
+
+        with mock.patch.dict("os.environ", {"PUCKY_OPERATOR_TOKEN": ""}):
+            with self.assertRaises(puckyctl.CliError) as caught:
+                puckyctl.api_devices(ctx)
+
+        self.assertEqual(401, caught.exception.status)
 
     def test_send_offline_command_uses_v1_alias(self):
         result = puckyctl.run_command_send(
@@ -165,7 +185,7 @@ class BrokerIntegrationTests(unittest.TestCase):
             "recipe_id": "check_email",
             "raw_transcript": "check email",
         }
-        response = self.post_device_event("pucky-test", body, token="dev-token")
+        response = self.post_device_event("pucky-test", body, token="device-token")
 
         self.assertTrue(response["ok"])
         history = broker.history(20, "pucky-test")
@@ -184,8 +204,15 @@ class BrokerIntegrationTests(unittest.TestCase):
             self.post_device_event("pucky-test", {
                 "device_id": "other-device",
                 "type": "agent.recipe_triggered",
-            }, token="dev-token")
+            }, token="device-token")
         self.assertEqual(400, mismatch.exception.code)
+
+    def test_device_token_fails_closed_when_not_configured(self):
+        with mock.patch.dict("os.environ", {"PUCKY_DEVICE_TOKEN": ""}):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token="dev-token")
+
+        self.assertEqual(401, caught.exception.code)
 
     def post_device_event(self, device_id, body, token):
         url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/devices/{device_id}/events"

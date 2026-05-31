@@ -9,7 +9,7 @@ def test_certification_recipes_cover_current_command_universe() -> None:
     commands = cert.source_commands()
     coverage = cert.validate_recipe_coverage(commands, cert.static_recipes("unit-cert"))
 
-    assert len(commands) == 243
+    assert len(commands) == 236
     assert len(commands) == len(set(commands))
     assert coverage == {"missing": [], "extra": [], "duplicates": []}
 
@@ -19,7 +19,6 @@ def test_command_universe_contains_android_plane_aliases_and_fallback() -> None:
 
     required = {
         "android.catalog",
-        "android.content.query",
         "android.sms.send",
         "android.calls.answer",
         "android.contacts.photo.put",
