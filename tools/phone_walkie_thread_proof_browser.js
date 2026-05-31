@@ -227,7 +227,7 @@ async function runOperation(page, request, op) {
       throw new Error("screenshot operation requires path");
     }
     fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await page.screenshot({ path: screenshotPath, timeout: timeoutMs });
     return { kind: op.kind, path: screenshotPath };
   }
   if (op.kind === "describe") {
