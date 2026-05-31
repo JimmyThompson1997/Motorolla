@@ -1286,6 +1286,8 @@ def wait_for_install_services(
 
 def is_streamed_install_storage_service_failure(exc: Exception) -> bool:
     text = str(exc or "").lower()
+    if "performing streamed install" in text and "failed to install" in text and "stderr:" in text:
+        return True
     return (
         "performing streamed install" in text
         and "nullpointerexception" in text
