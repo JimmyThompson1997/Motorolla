@@ -1,5 +1,6 @@
 (() => {
   const FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1";
+  const HOME_MENU_ICON_LIBRARY_KEY = "pucky.cover.home_menu_icon_library.v1";
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
@@ -152,6 +153,10 @@
     { route: "settings", icon: "settings", label: "Settings" }
   ];
 
+  const DEFAULT_HOME_MENU_ICONS = [
+    { key: "book", icon: "book", label: "Audiobooks", accent: "#72c2ff" }
+  ];
+
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
@@ -270,6 +275,7 @@
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
     excludedFeedIcons: loadFeedIconExcludes(),
+    homeMenuIconLibrary: loadHomeMenuIconLibrary(),
     readOverrides: loadReadOverrides(),
     turn: initialTurnStatus(),
     threadScope: initialThreadScope(),
@@ -300,6 +306,8 @@
     links: initialLinksState(),
     drag: null
   };
+
+  ensureStoredHomeMenuIcons();
 
   const pending = new Map();
   let seq = 0;
@@ -2496,6 +2504,13 @@
   function uniqueFeedIconFilters() {
     const seen = new Set();
     const filters = [];
+    state.homeMenuIconLibrary.forEach(filter => {
+      if (!filter || seen.has(filter.key)) {
+        return;
+      }
+      seen.add(filter.key);
+      filters.push({ ...filter });
+    });
     state.cards.forEach(card => {
       if (!card || card.deleted || isPendingOutboundCard(card)) {
         return;
@@ -2509,6 +2524,11 @@
           label: `${icon} replies`,
           accent: card.accent || "#f5f9ff"
         });
+        return;
+      }
+      const existing = filters.find(filter => filter.key === icon);
+      if (existing && !existing.accent && card.accent) {
+        existing.accent = card.accent;
       }
     });
     return filters;
@@ -6970,6 +6990,66 @@
     } catch (_) {
       return new Set();
     }
+  }
+
+  function normalizeHomeMenuIconEntry(entry) {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+    const key = String(entry.key || entry.icon || "").toLowerCase().trim();
+    const icon = String(entry.icon || entry.key || "").toLowerCase().trim();
+    if (!/^[a-z0-9_]{1,48}$/.test(key) || !/^[a-z0-9_]{1,48}$/.test(icon)) {
+      return null;
+    }
+    const label = String(entry.label || `${key} replies`).trim() || `${key} replies`;
+    const accent = String(entry.accent || "#f5f9ff").trim() || "#f5f9ff";
+    return { key, icon, label, accent };
+  }
+
+  function loadHomeMenuIconLibrary() {
+    const merged = [];
+    const seen = new Set();
+    const append = (entry) => {
+      const normalized = normalizeHomeMenuIconEntry(entry);
+      if (!normalized || seen.has(normalized.key)) {
+        return;
+      }
+      seen.add(normalized.key);
+      merged.push(normalized);
+    };
+    DEFAULT_HOME_MENU_ICONS.forEach(append);
+    try {
+      const parsed = JSON.parse(localStorage.getItem(HOME_MENU_ICON_LIBRARY_KEY) || "[]");
+      if (Array.isArray(parsed)) {
+        parsed.forEach(append);
+      }
+    } catch (_) {
+      // Fall back to the bundled defaults when stored icon preferences are unavailable.
+    }
+    return merged;
+  }
+
+  function persistHomeMenuIconLibrary() {
+    try {
+      localStorage.setItem(HOME_MENU_ICON_LIBRARY_KEY, JSON.stringify(state.homeMenuIconLibrary));
+    } catch (_) {
+      // Home menu icon preferences are convenience state; default icons remain safe.
+    }
+  }
+
+  function ensureStoredHomeMenuIcons() {
+    const normalized = loadHomeMenuIconLibrary();
+    let stored = "";
+    try {
+      stored = String(localStorage.getItem(HOME_MENU_ICON_LIBRARY_KEY) || "");
+    } catch (_) {
+      stored = "";
+    }
+    if (stored && JSON.stringify(normalized) === JSON.stringify(state.homeMenuIconLibrary)) {
+      return;
+    }
+    state.homeMenuIconLibrary = normalized;
+    persistHomeMenuIconLibrary();
   }
 
   function persistFeedIconExcludes() {

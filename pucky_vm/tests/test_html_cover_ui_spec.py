@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -369,6 +370,35 @@ def test_home_cards_use_persistent_long_press_archive_menu() -> None:
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "installCardLongPressMenu(wrapper, card);" in app
+
+
+def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
+    app = read("app.js")
+    fixtures = json.loads(read("fixtures/reply_cards.json"))
+    deploy_fixture = json.loads(read("fixtures/reply_cards_deploy.json"))
+
+    assert 'HOME_MENU_ICON_LIBRARY_KEY = "pucky.cover.home_menu_icon_library.v1"' in app
+    assert "const DEFAULT_HOME_MENU_ICONS = [" in app
+    assert '{ key: "book", icon: "book", label: "Audiobooks", accent: "#72c2ff" }' in app
+    assert "homeMenuIconLibrary: loadHomeMenuIconLibrary()" in app
+    assert "ensureStoredHomeMenuIcons();" in app
+    assert "function normalizeHomeMenuIconEntry(entry)" in app
+    assert "function loadHomeMenuIconLibrary()" in app
+    assert "function persistHomeMenuIconLibrary()" in app
+    assert "state.homeMenuIconLibrary.forEach(filter => {" in app
+
+    fixture_cards = {card["session_id"]: card for card in fixtures["cards"]}
+    deploy_cards = {card["session_id"]: card for card in deploy_fixture["cards"]}
+
+    assert fixture_cards["fixture_book"]["icon"] == "book"
+    assert fixture_cards["fixture_meeting"]["archived"] is True
+    assert fixture_cards["fixture_night"]["archived"] is True
+    assert fixture_cards["fixture_book"].get("archived") is not True
+
+    assert deploy_cards["fixture_book"]["icon"] == "book"
+    assert deploy_cards["fixture_meeting"]["archived"] is True
+    assert deploy_cards["fixture_night"]["archived"] is True
+    assert deploy_cards["fixture_book"].get("archived") is not True
 
 
 def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filters() -> None:
