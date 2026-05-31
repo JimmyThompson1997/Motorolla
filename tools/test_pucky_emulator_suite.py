@@ -726,6 +726,44 @@ def test_parser_includes_walkie_thread_lab_command() -> None:
     assert args.skip_refresh is False
 
 
+def test_parser_accepts_walkie_continuation_proof_alias() -> None:
+    parser = suite.build_parser()
+
+    args = parser.parse_args(["walkie-continuation-proof", "--slot", "2", "--scenario", "final-boss-overlap", "--dry-run"])
+
+    assert args.command == "walkie-continuation-proof"
+    assert args.slot == 2
+    assert args.scenario == "final-boss-overlap"
+    assert args.final_boss_delay_ms_a == 6000
+    assert args.final_boss_delay_ms_new == 3000
+    assert args.final_boss_delay_ms_b == 0
+    assert args.page_surface == "auto"
+    assert args.skip_refresh is False
+
+
+def test_dispatch_accepts_walkie_continuation_proof_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    parser = suite.build_parser()
+    args = parser.parse_args(["walkie-continuation-proof", "--slot", "2", "--scenario", "final-boss-overlap", "--dry-run"])
+
+    monkeypatch.setattr(
+        suite,
+        "cmd_walkie_thread_lab",
+        lambda parsed_args: {
+            "ok": True,
+            "command": parsed_args.command,
+            "scenario": parsed_args.scenario,
+        },
+    )
+
+    result = suite.dispatch(args)
+
+    assert result == {
+        "ok": True,
+        "command": "walkie-continuation-proof",
+        "scenario": "final-boss-overlap",
+    }
+
+
 def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
     assert suite.WALKIE_THREAD_LAB_RESULT_SCHEMA == "pucky.walkie_thread_lab.v1"
     assert suite.WALKIE_THREAD_LAB_SCENARIOS == (

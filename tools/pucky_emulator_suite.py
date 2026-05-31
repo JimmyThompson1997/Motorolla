@@ -151,6 +151,9 @@ WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "ui.reply_cards.final.json",
     "proof.json",
 )
+WALKIE_THREAD_LAB_DESCRIPTION = (
+    "Run the emulator Walkie thread-continuation certification scenarios."
+)
 
 
 def require_walkie_proof_passes(proof: dict[str, Any]) -> None:
@@ -7646,7 +7649,15 @@ def build_parser() -> argparse.ArgumentParser:
         "prove-apk-actions",
         "walkie-thread-lab",
     ):
-        item = sub.add_parser(name)
+        if name == "walkie-thread-lab":
+            item = sub.add_parser(
+                name,
+                aliases=("walkie-continuation-proof",),
+                help=WALKIE_THREAD_LAB_DESCRIPTION,
+                description=WALKIE_THREAD_LAB_DESCRIPTION,
+            )
+        else:
+            item = sub.add_parser(name)
         add_common(item)
         item.add_argument("--slot", type=int, default=1)
         if name == "start":
@@ -7769,7 +7780,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return cmd_prove_displayable_reply_files(args)
     if args.command == "prove-apk-actions":
         return cmd_prove_apk_actions(args)
-    if args.command == "walkie-thread-lab":
+    if args.command in {"walkie-thread-lab", "walkie-continuation-proof"}:
         return cmd_walkie_thread_lab(args)
     raise SuiteError(f"Unknown command: {args.command}")
 

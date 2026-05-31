@@ -82,6 +82,10 @@ If `--version` and `PUCKY_UI_VERSION` are omitted, the bundle version defaults
 to `git-<short-sha>` when the source tree has git metadata, or to the contents
 of `pucky_vm/.pucky_ui_version` for archive-based VM deploys.
 
+For the live repo-backed Fly VM, leave `PUCKY_UI_VERSION` unset so
+`ui_version` tracks the current checkout SHA. Reserve the override for
+archive-based or deliberately pinned bundle deploys.
+
 Serve the latest source/bundle from the VM service:
 
 - `GET /ui/pucky/latest/`

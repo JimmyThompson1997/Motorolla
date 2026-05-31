@@ -25,7 +25,6 @@ fi
 mkdir -p /data/home/codex
 
 cd /data/pucky-src
-if git_sha="$(git rev-parse --short HEAD 2>/dev/null)"; then
-  export PUCKY_UI_VERSION="git-${git_sha}"
-fi
+# Leave PUCKY_UI_VERSION unset for repo-backed Fly runs so the manifest version
+# follows the current checkout SHA instead of a stale process-level override.
 exec bash ./pucky_vm/run_service.sh
