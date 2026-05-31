@@ -789,8 +789,13 @@
 
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
+    const authoritative = options.authoritative === true;
+    const resetCursor = options.resetCursor === true || authoritative;
     try {
-      const result = await Pucky.request({ command: "pucky.feed.sync", args: { reason } });
+      const result = await Pucky.request({
+        command: "pucky.feed.sync",
+        args: { reason, reset_cursor: resetCursor, authoritative }
+      });
       const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
         ? result.snapshot
         : { cards: await fetchReplyCards() };
@@ -824,7 +829,7 @@
     restoreNavStateAfterCards();
     void syncVoiceThreadScope({ reason: "load_cards", render: true });
     if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
-      syncFeedCards({ reason: "load_cards", silent: true, render: true });
+      syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true });
     }
   }
 
@@ -3267,6 +3272,7 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
+    appendCardSwipeAction(wrapper);
     wrapper.append(cardEl);
     installCardArchiveSwipe(wrapper, card);
     return wrapper;
@@ -3291,9 +3297,18 @@
       meta.append(time);
     }
     cardEl.append(copy, meta);
+    appendCardSwipeAction(wrapper);
     wrapper.append(cardEl);
     installCardArchiveSwipe(wrapper, card);
     return wrapper;
+  }
+
+  function appendCardSwipeAction(wrapper) {
+    const action = el("div", "card-swipe-action");
+    action.setAttribute("aria-hidden", "true");
+    action.innerHTML = iconSvg("archive_folder", { filled: true });
+    action.append(el("span", "card-swipe-label", "Archive"));
+    wrapper.append(action);
   }
 
   async function toggleAudio(card) {
@@ -5096,7 +5111,9 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    return requestFeedAction(card, "archive");
+    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });
+    const freshCard = findCardByIdentity(card) || card;
+    return requestFeedAction(freshCard, "archive");
   }
 
   function canArchiveBySwipe(card) {
@@ -5603,7 +5620,7 @@
 
     state.feedRefreshPromise = (async () => {
       try {
-        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
+        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false, authoritative: true }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
         state.feedScrollTop = 0;
         render();
         restoreScrollPosition(document.getElementById("feed"), 0);
@@ -6370,11 +6387,16 @@
       const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
         ? result.snapshot
         : { cards: await fetchReplyCards() };
-      state.cards = applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);
+      state.cards = result && result.ok === false
+        ? (Array.isArray(snapshot.cards) ? snapshot.cards : state.cards)
+        : applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);
       reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
+      if (result && result.ok === false && !options.silent) {
+        showToast(result.error || "Feed refreshed");
+      }
       return result;
     } catch (error) {
       if (!options.silent) {
@@ -6675,6 +6697,16 @@
   function findCardBySessionId(sessionId) {
     const target = String(sessionId || "");
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
+  }
+
+  function findCardByIdentity(sourceCard) {
+    const cardId = String(sourceCard && sourceCard.card_id || "");
+    const sessionId = cardSessionId(sourceCard);
+    return state.cards.find(card => {
+      const sameCard = cardId && String(card && card.card_id || "") === cardId;
+      const sameSession = sessionId && cardSessionId(card) === sessionId;
+      return sameCard || sameSession;
+    }) || null;
   }
 
   function findCardByThreadId(threadId) {

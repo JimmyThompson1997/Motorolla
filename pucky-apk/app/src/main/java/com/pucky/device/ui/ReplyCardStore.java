@@ -15,7 +15,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class ReplyCardStore {
     private static final String PREFS = "pucky_reply_cards";
@@ -87,6 +89,42 @@ public final class ReplyCardStore {
     public JSONObject clear() {
         prefs().edit().putString(KEY_CARDS, "[]").apply();
         return snapshot(Collections.emptyList());
+    }
+
+    public JSONObject pruneStaleFeedAuthority(JSONArray authoritativeCards) throws CommandException {
+        Set<String> authoritativeCardIds = new HashSet<>();
+        Set<String> authoritativeSessionIds = new HashSet<>();
+        if (authoritativeCards != null) {
+            for (int index = 0; index < authoritativeCards.length(); index++) {
+                JSONObject item = authoritativeCards.optJSONObject(index);
+                if (item == null) {
+                    continue;
+                }
+                String cardId = safe(item.optString("card_id", ""));
+                String sessionId = safe(item.optString("session_id", ""));
+                if (!cardId.isEmpty()) {
+                    authoritativeCardIds.add(cardId);
+                }
+                if (!sessionId.isEmpty()) {
+                    authoritativeSessionIds.add(sessionId);
+                }
+            }
+        }
+        List<ReplyCard> next = new ArrayList<>();
+        int pruned = 0;
+        for (ReplyCard card : readCards()) {
+            if (isAuthoritativeMatch(card, authoritativeCardIds, authoritativeSessionIds)
+                    || !isPrunableFeedAuthorityCard(card)) {
+                next.add(card);
+            } else {
+                pruned++;
+            }
+        }
+        sortCards(next);
+        writeCards(next);
+        JSONObject out = snapshot(next);
+        Json.put(out, "pruned", pruned);
+        return out;
     }
 
     public JSONObject snapshot() {
@@ -324,6 +362,36 @@ public final class ReplyCardStore {
             next.add(incoming);
         }
         return next;
+    }
+
+    private static boolean isAuthoritativeMatch(ReplyCard card, Set<String> cardIds, Set<String> sessionIds) {
+        String cardId = safe(card.cardId());
+        String sessionId = safe(card.sessionId());
+        return (!cardId.isEmpty() && cardIds.contains(cardId))
+                || (!sessionId.isEmpty() && sessionIds.contains(sessionId));
+    }
+
+    private static boolean isPrunableFeedAuthorityCard(ReplyCard card) {
+        if (card == null) {
+            return false;
+        }
+        String cardId = safe(card.cardId());
+        String turnId = safe(card.turnId());
+        if (isLocalProofCard(cardId, turnId)) {
+            return false;
+        }
+        if ("vm".equals(card.feedAuthority())) {
+            return true;
+        }
+        return cardId.startsWith("pucky_card_");
+    }
+
+    private static boolean isLocalProofCard(String cardId, String turnId) {
+        return cardId.startsWith("synthetic-card-")
+                || turnId.startsWith("synthetic-displayable-")
+                || cardId.startsWith("pucky_card_proof_")
+                || turnId.startsWith("proof-")
+                || cardId.startsWith("fixture_");
     }
 
     private static boolean sameIdentity(ReplyCard left, ReplyCard right) {

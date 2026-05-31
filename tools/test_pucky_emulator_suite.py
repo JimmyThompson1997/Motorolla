@@ -1493,6 +1493,49 @@ def test_first_free_slot_config_scans_default_range_in_order(
     assert config.serial == "emulator-5562"
 
 
+def test_free_slot_command_is_read_only_and_scans_default_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parser = suite.build_parser()
+    args = parser.parse_args(["free-slot", "--dry-run"])
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        suite,
+        "first_free_slot_config",
+        lambda *_args, **_kwargs: suite.slot_config(tmp_path, 6, run_id="fixed"),
+    )
+
+    result = suite.dispatch(args)
+
+    assert result["ok"] is True
+    assert result["config"]["slot"] == 6
+    assert result["range"] == [3, 10]
+    assert result["dry_run"] is True
+
+
+def test_archive_swipe_points_are_realistic_native_motion(tmp_path: Path) -> None:
+    config = suite.slot_config(tmp_path, 4, run_id="fixed")
+
+    swipe = suite.card_archive_swipe_motion(config, (100, 200, 900, 420))
+
+    assert swipe["start_x"] == 260
+    assert swipe["end_x"] == 740
+    assert swipe["y"] == 310
+    assert 500 <= swipe["duration_ms"] <= 650
+
+
+def test_displayable_archive_proof_uses_native_swipe_evidence_names() -> None:
+    source = Path("tools/pucky_emulator_suite.py").read_text(encoding="utf-8")
+    start = source.index("archive_case =")
+    archive_block = source[start:source.index("evidence = {", start)]
+
+    assert "perform_card_archive_swipe(" in archive_block
+    assert "archive-swipe-armed.png" in archive_block
+    assert "archive-before.xml" in archive_block
+    assert "archive-removed.xml" in archive_block
+    assert "long_press(" not in archive_block
+
+
 def test_build_turn_timing_artifact_correlates_button_turn_and_web_timing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

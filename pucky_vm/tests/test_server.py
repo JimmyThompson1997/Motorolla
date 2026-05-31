@@ -833,6 +833,21 @@ class ServerTests(unittest.TestCase):
         payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertTrue(payload["items"][0]["archived"])
 
+    def test_feed_archive_missing_card_fails_with_not_found(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.post_json(
+                "/api/feed/actions",
+                {
+                    "client_action_id": "missing_card_archive",
+                    "card_id": "pucky_card_missing",
+                    "action": "archive",
+                },
+            )
+
+        self.assertEqual(caught.exception.code, 404)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "card_not_found")
+
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.get_json("/api/turn/status?turn_id=missing")

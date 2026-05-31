@@ -1703,6 +1703,44 @@ def long_press(
     )
 
 
+def card_archive_swipe_motion(config: SlotConfig, bounds: tuple[int, int, int, int]) -> dict[str, int]:
+    left, top, right, bottom = bounds
+    width = max(1, right - left)
+    return {
+        "start_x": left + round(width * 0.20),
+        "end_x": left + round(width * 0.80),
+        "y": (top + bottom) // 2,
+        "duration_ms": 560,
+    }
+
+
+def perform_card_archive_swipe(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    bounds: tuple[int, int, int, int],
+) -> dict[str, int]:
+    motion = card_archive_swipe_motion(config, bounds)
+    runner.run(
+        adb_command(
+            args,
+            config.serial,
+            [
+                "shell",
+                "input",
+                "swipe",
+                str(motion["start_x"]),
+                str(motion["y"]),
+                str(motion["end_x"]),
+                str(motion["y"]),
+                str(motion["duration_ms"]),
+            ],
+        ),
+        timeout=30,
+    )
+    return motion
+
+
 def scroll_feed(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> None:
     runner.run(
         adb_command(args, config.serial, ["shell", "input", "swipe", "528", "860", "528", "280", "250"]),
@@ -5666,35 +5704,20 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         )
         archive_before_xml_path = Path(config.evidence_dir) / "archive-before.xml"
         archive_before_xml_path.write_text(archive_before_xml, encoding="utf-8")
-        left, top, right, bottom = parse_node_bounds(archive_card_node.get("bounds", ""))
-        long_press_point = (528 if right >= 528 else (left + right) // 2, (top + bottom) // 2)
-        long_press(
+        archive_before_screenshot = Path(config.evidence_dir) / "archive-before.png"
+        if not args.dry_run:
+            capture_screenshot(args, runner, config, archive_before_screenshot)
+        swipe_motion = perform_card_archive_swipe(
             args,
             runner,
             config,
-            long_press_point,
-            duration_ms=max(args.long_press_ms, 420),
+            parse_node_bounds(archive_card_node.get("bounds", "")),
         )
         if not args.dry_run:
-            time.sleep(max(args.ui_dwell_seconds, 1.5))
-        archive_menu_xml_path = Path(config.evidence_dir) / "archive-menu.xml"
-        archive_menu_screenshot = Path(config.evidence_dir) / "reply-archive-menu.png"
-        archive_menu_observed = False
-        try:
-            _, archive_menu_xml = wait_for_ui_node(
-                args,
-                runner,
-                config,
-                description="Archive menu did not appear after long-pressing reply card",
-                text_pattern=r"^Archive$",
-                timeout=float(args.viewer_timeout_seconds),
-            )
-            archive_menu_observed = True
-            archive_menu_xml_path.write_text(archive_menu_xml, encoding="utf-8")
-            if not args.dry_run:
-                capture_screenshot(args, runner, config, archive_menu_screenshot)
-        except SuiteError:
-            archive_menu_xml_path.write_text("", encoding="utf-8")
+            time.sleep(max(args.ui_dwell_seconds, 0.75))
+        archive_swipe_screenshot = Path(config.evidence_dir) / "archive-swipe-armed.png"
+        if not args.dry_run:
+            capture_screenshot(args, runner, config, archive_swipe_screenshot)
         archive_result = archive_reply_card_for_displayable_proof(
             args,
             runner,
@@ -5732,11 +5755,11 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             "card_id": archive_card_id,
             "turn_id": archive_turn_id,
             "archive_result": archive_result,
-            "menu_observed": archive_menu_observed,
-            "menu_screenshot": str(archive_menu_screenshot),
+            "swipe_motion": swipe_motion,
+            "before_screenshot": str(archive_before_screenshot),
+            "swipe_screenshot": str(archive_swipe_screenshot),
             "removed_screenshot": str(archive_removed_screenshot),
             "before_xml_path": str(archive_before_xml_path),
-            "menu_xml_path": str(archive_menu_xml_path),
             "removed_xml_path": str(archive_removed_xml_path),
             "snapshot": archived_snapshot,
         }
@@ -5775,7 +5798,8 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         | (
             {
                 "archive": {
-                    "menu": archive_proof.get("menu_screenshot", ""),
+                    "before": archive_proof.get("before_screenshot", ""),
+                    "swipe": archive_proof.get("swipe_screenshot", ""),
                     "removed": archive_proof.get("removed_screenshot", ""),
                 }
             }
@@ -7582,6 +7606,18 @@ def cmd_clean(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "stopped": stopped, "removed": [str(target) for target in targets], "dry_run": args.dry_run}
 
 
+def cmd_free_slot(args: argparse.Namespace) -> dict[str, Any]:
+    runner = Runner(dry_run=bool(args.dry_run))
+    config = first_free_slot_config(args, runner, ROOT, start_slot=3, end_slot=10)
+    return {
+        "ok": True,
+        "range": [3, 10],
+        "config": asdict(config),
+        "commands": runner.planned,
+        "dry_run": bool(args.dry_run),
+    }
+
+
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--android-home", type=Path, default=DEFAULT_ANDROID_HOME)
     parser.add_argument("--java-home", type=Path, default=DEFAULT_JAVA_HOME)
@@ -7606,6 +7642,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor_parser = sub.add_parser("doctor")
     add_common(doctor_parser)
+    free_slot_parser = sub.add_parser("free-slot")
+    add_common(free_slot_parser)
     for name in (
         "create",
         "start",
@@ -7727,6 +7765,8 @@ def build_parser() -> argparse.ArgumentParser:
 def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "doctor":
         return doctor(args)
+    if args.command == "free-slot":
+        return cmd_free_slot(args)
     if args.command == "create":
         return cmd_create(args)
     if args.command == "start":

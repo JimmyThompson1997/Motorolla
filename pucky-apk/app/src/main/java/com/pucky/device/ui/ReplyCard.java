@@ -31,6 +31,7 @@ public final class ReplyCard {
     private final String images;
     private final String trace;
     private final String origin;
+    private final String feedAuthority;
     private final boolean archived;
     private final boolean read;
     private final boolean deleted;
@@ -55,6 +56,7 @@ public final class ReplyCard {
             String images,
             String trace,
             String origin,
+            String feedAuthority,
             boolean archived,
             boolean read,
             boolean deleted) throws CommandException {
@@ -77,6 +79,7 @@ public final class ReplyCard {
         this.images = jsonArrayOrBlank(images, "images");
         this.trace = jsonObjectOrBlank(trace, "trace");
         this.origin = jsonObjectOrBlank(origin, "origin");
+        this.feedAuthority = optional(feedAuthority);
         this.archived = archived;
         this.read = read;
         this.deleted = deleted;
@@ -106,6 +109,7 @@ public final class ReplyCard {
                 jsonArrayString(input, "images"),
                 jsonObjectString(input, "trace"),
                 jsonObjectString(input, "origin"),
+                input.optString("feed_authority", ""),
                 input.optBoolean("archived", false),
                 input.optBoolean("read", false),
                 input.optBoolean("deleted", false));
@@ -165,6 +169,7 @@ public final class ReplyCard {
         putOptionalJsonArray(out, "images", images);
         putOptionalJsonObject(out, "trace", trace);
         putOptionalJsonObject(out, "origin", origin);
+        putOptional(out, "feed_authority", feedAuthority);
         Json.put(out, "archived", archived);
         Json.put(out, "read", read);
         Json.put(out, "deleted", deleted);
@@ -245,6 +250,10 @@ public final class ReplyCard {
 
     public String origin() {
         return origin;
+    }
+
+    public String feedAuthority() {
+        return feedAuthority;
     }
 
     public boolean archived() {

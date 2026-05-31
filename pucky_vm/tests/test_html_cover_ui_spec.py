@@ -358,7 +358,8 @@ def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
     assert "CARD_ARCHIVE_SWIPE_SLOP_PX = 12" in app
     assert "showArchivedFeed: false" in app
     assert "async function archiveHomeCard(card)" in app
-    assert 'return requestFeedAction(card, "archive");' in app
+    assert 'syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true })' in app
+    assert 'return requestFeedAction(freshCard, "archive");' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
     assert "function installCardArchiveSwipe(wrapper, card)" in app
@@ -463,9 +464,9 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX" in swipe
     assert "shouldSuppressCardActivation()" in app
     assert "toggleCardStar(card);" not in app
-    assert ".card-wrap::before" in styles
-    assert '.card-wrap.is-card-swipe-active::before' in styles
-    assert '.card-wrap.is-card-swipe-armed::before' in styles
+    assert ".card-swipe-action" in styles
+    assert ".card-wrap.is-card-swipe-active .card-swipe-action" in styles
+    assert ".card-wrap.is-card-swipe-armed .card-swipe-action" in styles
     assert '.card-wrap.is-card-swiped-away .card' in styles
 
 
@@ -490,9 +491,9 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert "reconcileReadOverrides();" in app
     assert 'identity.addEventListener("click"' in app
     assert "toggleCardRead(card);" in app
-    assert ".card-wrap::before" in styles
-    assert ".card-wrap.is-card-swipe-active::before" in styles
-    assert ".card-wrap.is-card-swipe-armed::before" in styles
+    assert ".card-swipe-action" in styles
+    assert ".card-wrap.is-card-swipe-active .card-swipe-action" in styles
+    assert ".card-wrap.is-card-swipe-armed .card-swipe-action" in styles
     assert ".card-wrap.is-card-swiped-away .card" in styles
     assert ".card-longpress-menu" not in styles
     assert ".card-menu-action" not in styles
@@ -747,7 +748,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert "function toggleRead(card, action)" in app
     assert "function isActionRead(card, action)" in app
     assert 'requestFeedAction(card, "mark_read", { silent: true });' in app
-    assert "state.cards = applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);" in app
+    assert "result && result.ok === false" in app
+    assert ": applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);" in app
     assert "return { ...card, archived: true };" in app
     assert "return Boolean(card && card.read);" in app
     assert 'if (!options.restoring) {\n      markCardRead(card);' in app
@@ -767,6 +769,26 @@ def test_card_actions_have_local_read_state() -> None:
     assert ".action.is-unread" in styles
     assert ".action.is-read" in styles
     assert "--action-accent" not in styles
+
+
+def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "authoritative: true" in app
+    assert "reset_cursor: resetCursor" in app
+    assert 'syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true })' in app
+    assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
+    assert "appendCardSwipeAction(wrapper);" in app
+    assert 'iconSvg("archive_folder"' in app
+    assert 'el("span", "card-swipe-label", "Archive")' in app
+    assert "result && result.ok === false" in app
+
+    swipe_css = styles[styles.index(".card-swipe-action"):styles.index(".card-wrap .card")]
+    assert ".card-wrap::before" not in styles
+    assert "color: #fff;" in swipe_css
+    assert "border:" not in swipe_css
+    assert "box-shadow:" not in swipe_css
 
 
 def test_card_actions_are_aligned_to_content_row() -> None:

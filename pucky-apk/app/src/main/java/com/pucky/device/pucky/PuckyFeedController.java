@@ -71,17 +71,18 @@ public final class PuckyFeedController {
     }
 
     public JSONObject sync(JSONObject args) throws CommandException {
-        return syncInternal(
-                args.optString("reason", "manual"),
-                args.optInt("limit", 20),
-                true,
-                args.optBoolean("reset_cursor", false));
+        String reason = args.optString("reason", "manual");
+        int limit = args.optInt("limit", 20);
+        boolean emitUpdate = true;
+        boolean resetCursor = args.optBoolean("reset_cursor", false);
+        boolean authoritative = args.optBoolean("authoritative", false);
+        return syncInternal(reason, limit, emitUpdate, resetCursor, authoritative);
     }
 
     public void syncAsync(String reason) {
         Thread worker = new Thread(() -> {
             try {
-                syncInternal(reason, 20, true, false);
+                syncInternal(reason, 20, true, false, false);
             } catch (Exception exc) {
                 Log.d(TAG, "feed sync skipped: " + exc.getMessage());
             }
@@ -147,6 +148,18 @@ public final class PuckyFeedController {
                 .build();
         try (Response response = http.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) {
+                if (response.code() == 404 && "archive".equals(action)) {
+                    Log.d(TAG, "feed action missing card; refreshing authoritative snapshot");
+                    JSONObject refreshed = syncInternal("archive_missing_card", 20, true, true, true);
+                    JSONObject out = new JSONObject();
+                    Json.put(out, "schema", "pucky.feed_action_result.v1");
+                    Json.put(out, "ok", false);
+                    Json.put(out, "action", action);
+                    Json.put(out, "client_action_id", clientActionId);
+                    Json.put(out, "error", "card_not_found");
+                    Json.put(out, "snapshot", refreshed.optJSONObject("snapshot"));
+                    return out;
+                }
                 throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
                         "feed action failed with http_" + response.code());
             }
@@ -179,7 +192,7 @@ public final class PuckyFeedController {
         return card;
     }
 
-    private JSONObject syncInternal(String reason, int limit, boolean emitUpdate, boolean resetCursor) throws CommandException {
+    private JSONObject syncInternal(String reason, int limit, boolean emitUpdate, boolean resetCursor, boolean authoritative) throws CommandException {
         JSONObject before = mergedSnapshot();
         if (!isConfigured()) {
             JSONObject out = new JSONObject();
@@ -187,15 +200,18 @@ public final class PuckyFeedController {
             Json.put(out, "configured", false);
             Json.put(out, "reason", reason);
             Json.put(out, "reset_cursor", resetCursor);
+            Json.put(out, "authoritative", authoritative);
             Json.put(out, "snapshot", before);
             return out;
         }
-        String cursor = resetCursor ? "" : prefs.getString(KEY_CURSOR, "");
+        String cursor = (resetCursor || authoritative) ? "" : prefs.getString(KEY_CURSOR, "");
         String nextCursor = cursor;
         boolean hasMore = false;
         int merged = 0;
+        int pruned = 0;
         int pages = 0;
-        int pageLimit = resetCursor ? 200 : 5;
+        int pageLimit = (resetCursor || authoritative) ? 200 : 5;
+        JSONArray authoritativeCards = new JSONArray();
         do {
             JSONObject page;
             try {
@@ -215,6 +231,9 @@ public final class PuckyFeedController {
                     }
                     try {
                         JSONObject local = cacheRemoteItem(PuckyTurnResponse.fromJson(item), false);
+                        if (authoritative) {
+                            Json.add(authoritativeCards, local);
+                        }
                         PuckyTurnController.shared(context).onReplyRecovered(local, "feed_sync");
                         merged++;
                     } catch (Exception exc) {
@@ -231,9 +250,13 @@ public final class PuckyFeedController {
             }
             pages++;
         } while (hasMore && pages < pageLimit);
+        if (authoritative) {
+            JSONObject prunedSnapshot = replyCards.pruneStaleFeedAuthority(authoritativeCards);
+            pruned = prunedSnapshot.optInt("pruned", 0);
+        }
         prefs.edit().putString(KEY_CURSOR, nextCursor).apply();
         JSONObject snapshot = mergedSnapshot();
-        if (emitUpdate && merged > 0) {
+        if (emitUpdate && (merged > 0 || pruned > 0)) {
             emitFeedUpdated();
         }
         JSONObject out = new JSONObject();
@@ -241,8 +264,10 @@ public final class PuckyFeedController {
         Json.put(out, "configured", true);
         Json.put(out, "reason", reason);
         Json.put(out, "merged", merged);
+        Json.put(out, "pruned", pruned);
         Json.put(out, "cursor", nextCursor);
         Json.put(out, "reset_cursor", resetCursor);
+        Json.put(out, "authoritative", authoritative);
         Json.put(out, "snapshot", snapshot);
         return out;
     }
@@ -572,6 +597,7 @@ public final class PuckyFeedController {
         Json.put(card, "updated_at", response.updatedAt());
         Json.put(card, "icon", response.cardIcon());
         Json.put(card, "origin", response.origin());
+        Json.put(card, "feed_authority", "vm");
         Json.put(card, "archived", response.archived());
         Json.put(card, "read", response.read());
         Json.put(card, "deleted", response.deleted());

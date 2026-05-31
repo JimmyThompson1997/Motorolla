@@ -82,7 +82,8 @@ public final class ReplyCardTest {
                 .put("html_path", "/tmp/reply.html")
                 .put("images", images)
                 .put("trace", trace)
-                .put("origin", origin);
+                .put("origin", origin)
+                .put("feed_authority", "vm");
 
         ReplyCard card = ReplyCard.fromJson(input);
 
@@ -102,6 +103,7 @@ public final class ReplyCardTest {
         assertEquals(images.toString(), card.images());
         assertEquals(trace.toString(), card.trace());
         assertEquals(origin.toString(), card.origin());
+        assertEquals("vm", card.feedAuthority());
         assertTrue(card.hasTranscript());
         assertFalse(card.toJson().has("id"));
         assertEquals("pucky_abc123", card.toJson().getString("session_id"));
@@ -116,6 +118,7 @@ public final class ReplyCardTest {
         assertEquals("pucky.turn_trace.v1", card.toJson().getJSONObject("trace").getString("schema"));
         assertEquals("thread-1", card.toJson().getJSONObject("origin").getString("thread_id"));
         assertEquals("gpt-5.5", card.toJson().getJSONObject("origin").getString("model"));
+        assertEquals("vm", card.toJson().getString("feed_authority"));
     }
 
     @Test
