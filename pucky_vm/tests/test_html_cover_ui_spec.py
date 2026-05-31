@@ -1505,7 +1505,7 @@ def test_document_html_detection_accepts_local_viewer_paths_and_xlsx_is_not_raw_
     assert '["text/plain", "text/markdown", "application/json", "text/xml", "application/xml"].includes(mime)' in kind_block
 
 
-def test_walkie_thread_scope_badge_tracks_detail_views_without_feed_focus() -> None:
+def test_walkie_thread_scope_badge_tracks_detail_views_and_feed_focus() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
@@ -1527,7 +1527,9 @@ def test_walkie_thread_scope_badge_tracks_detail_views_without_feed_focus() -> N
     assert '"thread_transcript"' in app
     assert '"thread_page"' in app
     assert '"thread_attachment"' in app
-    assert '"feed_tile_selected"' not in app
+    assert "const focusedCard = findFocusedCard();" in app
+    assert 'return threadScopeForCard(focusedCard, "feed_tile_selected") || initialThreadScope();' in app
+    assert '"feed_tile_selected"' in app
     assert '"Talk to continue..."' not in app
     assert '"data-thread-scope-active"' in app
     assert '"data-thread-scope-mode"' in app

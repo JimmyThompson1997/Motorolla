@@ -6628,6 +6628,10 @@
         }
       }
     }
+    const focusedCard = findFocusedCard();
+    if (focusedCard) {
+      return threadScopeForCard(focusedCard, "feed_tile_selected") || initialThreadScope();
+    }
     return initialThreadScope();
   }
 
