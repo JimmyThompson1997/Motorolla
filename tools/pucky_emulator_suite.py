@@ -5151,7 +5151,23 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
             stage="displayable_after_scratch_bundle",
             timeout_seconds=45,
         )
-    command_json(runner, puckyctl_command(args, config, "ui.reply_cards.clear", {}), timeout=120)
+    pre_clear_surface_reset = stabilize_displayable_proof_surface(
+        args,
+        runner,
+        config,
+        stage="displayable_before_clear",
+        timeout_seconds=max(45, int(args.viewer_timeout_seconds)),
+    )
+    reply_cards_clear = broker_command_result(
+        args,
+        runner,
+        config,
+        "ui.reply_cards.clear",
+        {},
+        timeout=max(120, int(args.viewer_timeout_seconds)),
+        recovery_stage="displayable_reply_cards_clear",
+        recovery_attempts=3,
+    )
     initial_surface_reset = stabilize_displayable_proof_surface(
         args,
         runner,
@@ -5473,6 +5489,8 @@ def cmd_prove_displayable_reply_files(args: argparse.Namespace) -> dict[str, Any
         "bundle_refresh": bundle_refresh,
         "bundle_status": bundle_status,
         "scratch_bundle": scratch_bundle,
+        "pre_clear_surface_reset": pre_clear_surface_reset,
+        "reply_cards_clear": reply_cards_clear,
         "initial_surface_reset": initial_surface_reset,
         "icon_registry_before": icon_registry_before,
         "icon_registry_upsert": icon_registry_upsert,

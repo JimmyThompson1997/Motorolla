@@ -1535,6 +1535,97 @@ def test_cmd_prove_displayable_reply_files_preserves_official_bundle_on_skip_ref
     assert captured["payload"]["scratch_bundle"]["skipped"] is True
 
 
+def test_cmd_prove_displayable_reply_files_stabilizes_and_recovers_before_clearing_cards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(
+        tmp_path,
+        slot=1,
+        dry_run=False,
+        skip_refresh=False,
+        ui_dwell_seconds=0.0,
+        viewer_timeout_seconds=75,
+        refresh_timeout_seconds=60,
+        turn_timeout_seconds=60,
+        snapshot_timeout_seconds=60,
+        long_press_ms=420,
+        vm_base_url="https://pucky.fly.dev",
+        operator_token="operator-dev-token",
+        turn_token="dev-token",
+        replay_broker_log=None,
+    )
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    captured: dict[str, object] = {}
+    clear_calls: list[dict[str, object]] = []
+    stages: list[str] = []
+
+    monkeypatch.setattr(suite, "ROOT", tmp_path)
+    monkeypatch.setattr(suite, "config_for_command", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(suite, "require_emulator_serial", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "serial_is_connected", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(suite.Runner, "run", lambda self, *_args, **_kwargs: suite.subprocess.CompletedProcess([], 0, stdout="", stderr=""))
+    monkeypatch.setattr(suite.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(suite, "run_official_refresh", lambda *_args, **_kwargs: {"ok": True, "evidence_path": "refresh.json"})
+    monkeypatch.setattr(
+        suite,
+        "ensure_broker_command_channel",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
+    monkeypatch.setattr(suite, "displayable_reply_file_cases", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        suite,
+        "http_json_request",
+        lambda *_args, **_kwargs: {"icons": [{"name": "proof_orbit"}]},
+    )
+    monkeypatch.setattr(
+        suite,
+        "stabilize_displayable_proof_surface",
+        lambda *_args, **kwargs: stages.append(str(kwargs["stage"])) or {"stage": kwargs["stage"], "ok": True},
+    )
+    monkeypatch.setattr(suite, "launch_home_resilient", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        suite,
+        "write_evidence",
+        lambda _config, _name, payload: captured.__setitem__("payload", payload) or (Path(_config.evidence_dir) / _name),
+    )
+    monkeypatch.setattr(
+        suite,
+        "command_json",
+        lambda *_args, **_kwargs: {"result": {"ui_version": "git-abc123", "source_commit_full": "abc123", "source_branch": "master", "source_dirty": False}},
+    )
+    monkeypatch.setattr(suite, "command_result", lambda payload: payload.get("result", payload))
+    monkeypatch.setattr(
+        suite,
+        "broker_command_result",
+        lambda _args, _runner, _config, command_name, payload=None, **kwargs: clear_calls.append(
+            {
+                "command_name": command_name,
+                "payload": payload or {},
+                "timeout": kwargs["timeout"],
+                "recovery_stage": kwargs["recovery_stage"],
+                "recovery_attempts": kwargs["recovery_attempts"],
+            }
+        )
+        or {"ok": True},
+    )
+
+    result = suite.cmd_prove_displayable_reply_files(args)
+
+    assert result["ok"] is True
+    assert stages == ["displayable_before_clear", "displayable_after_clear"]
+    assert clear_calls == [
+        {
+            "command_name": "ui.reply_cards.clear",
+            "payload": {},
+            "timeout": 120,
+            "recovery_stage": "displayable_reply_cards_clear",
+            "recovery_attempts": 3,
+        }
+    ]
+    assert captured["payload"]["pre_clear_surface_reset"]["stage"] == "displayable_before_clear"
+    assert captured["payload"]["reply_cards_clear"]["ok"] is True
+
+
 def test_proof_visible_card_unarchives_and_marks_unread() -> None:
     card = {
         "card_id": "card-runtime-icon",
