@@ -628,8 +628,39 @@ def select_card(
     if not matches:
         raise PhoneProofError(
             f"No reply card matched title={title_contains!r} require_thread={require_thread} require_page={require_page}"
-        )
+    )
     return matches[0]
+
+
+def select_feed_focus_card(
+    cards: list[dict[str, Any]],
+    surface_snapshot: dict[str, Any],
+    *,
+    title_contains: str = "",
+    required_thread_id: str = "",
+) -> dict[str, Any]:
+    required_thread = str(required_thread_id or "").strip()
+    if required_thread:
+        return select_card(cards, required_thread_id=required_thread, require_thread=True)
+    visible = visible_cards(surface_snapshot)
+    card_by_thread_id = {
+        origin_thread_id(card): card
+        for card in cards
+        if origin_thread_id(card)
+    }
+    for visible_card in visible:
+        thread_id = str(visible_card.get("thread_id") or "").strip()
+        if not thread_id:
+            continue
+        candidate = card_by_thread_id.get(thread_id)
+        if candidate is None:
+            continue
+        if title_contains and not card_matches_title(candidate, title_contains):
+            continue
+        return candidate
+    if title_contains:
+        return select_card(cards, title_contains=title_contains, require_thread=True)
+    return select_card(cards, require_thread=True)
 
 
 def thread_cards(snapshot: dict[str, Any], thread_id: str) -> list[dict[str, Any]]:
@@ -924,8 +955,13 @@ def capture_device_screenshot(args: argparse.Namespace, serial: str, path: Path)
 
 
 def visible_cards(surface_result: dict[str, Any]) -> list[dict[str, Any]]:
-    final_surface = surface_result.get("final_surface") if isinstance(surface_result, dict) else {}
-    cards = final_surface.get("visible_cards") if isinstance(final_surface, dict) else []
+    if not isinstance(surface_result, dict):
+        return []
+    final_surface = surface_result.get("final_surface")
+    if isinstance(final_surface, dict) and isinstance(final_surface.get("visible_cards"), list):
+        cards = final_surface.get("visible_cards") or []
+    else:
+        cards = surface_result.get("visible_cards") or []
     return [card for card in cards if isinstance(card, dict)]
 
 
@@ -1675,7 +1711,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--devtools-port", type=int, default=9222)
     parser.add_argument("--transcript-card-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--transcript-thread-id", default="")
-    parser.add_argument("--feed-focus-card-title-contains", default="Proof HTML Dashboard")
+    parser.add_argument("--feed-focus-card-title-contains", default="")
     parser.add_argument("--feed-focus-thread-id", default="")
     parser.add_argument("--page-card-title-contains", default="Proof HTML Dashboard")
     parser.add_argument("--page-thread-id", default="")
@@ -1752,11 +1788,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         cards = cards_from_snapshot(cards_before)
 
         if args.scenario in {"feed_focus", "all"}:
-            feed_card = select_card(
+            feed_card = select_feed_focus_card(
                 cards,
+                surface_before,
                 title_contains=args.feed_focus_card_title_contains,
                 required_thread_id=args.feed_focus_thread_id,
-                require_thread=True,
             )
             scenarios.append(
                 run_feed_focus_scenario(

@@ -103,6 +103,34 @@ def test_select_card_prefers_thread_backed_page_surface_and_excludes_threads() -
     assert proof.select_card(cards, required_thread_id="thread-b", require_thread=True)["card_id"] == "b"
 
 
+def test_select_feed_focus_card_prefers_first_visible_thread_when_unpinned() -> None:
+    cards = [
+        {
+            "card_id": "a",
+            "session_id": "a",
+            "title": "Proof HTML Dashboard",
+            "origin": {"thread_id": "thread-a"},
+        },
+        {
+            "card_id": "b",
+            "session_id": "b",
+            "title": "Need tile context",
+            "origin": {"thread_id": "thread-b"},
+        },
+    ]
+    surface = {
+        "visible_cards": [
+            {"thread_id": "thread-b", "preview": "Need tile context"},
+            {"thread_id": "thread-a", "preview": "Proof HTML Dashboard"},
+        ]
+    }
+
+    result = proof.select_feed_focus_card(cards, surface)
+
+    assert result["card_id"] == "b"
+    assert proof.select_feed_focus_card(cards, surface, required_thread_id="thread-a")["card_id"] == "a"
+
+
 def test_browser_helper_args_sets_node_path_and_request_file(tmp_path: Path) -> None:
     args = make_args(tmp_path)
     request = tmp_path / "request.json"
@@ -191,6 +219,17 @@ def test_visible_thread_index_finds_matching_slot() -> None:
     assert proof.visible_thread_index(surface, "thread-a") == 0
     assert proof.visible_thread_index(surface, "thread-b") == 1
     assert proof.visible_thread_index(surface, "missing") == -1
+
+
+def test_visible_cards_accepts_direct_surface_snapshot() -> None:
+    surface = {
+        "visible_cards": [
+            {"thread_id": "thread-a", "kind": "reply"},
+            {"thread_id": "thread-b", "kind": "pending_outbound"},
+        ]
+    }
+
+    assert proof.visible_cards(surface) == surface["visible_cards"]
 
 
 def test_scenario_checks_reports_overall_pass() -> None:
