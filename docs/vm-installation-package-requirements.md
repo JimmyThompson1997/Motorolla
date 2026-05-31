@@ -63,7 +63,8 @@ Direct hardware control stays local to USB ADB, UBC, or emulator runs.
 ## Deployment Notes
 
 - Deploy from clean pushed `master` only.
-- The live VM should advertise the current cached bundle with `PUCKY_UI_VERSION=git-<sha>`.
+- On the live repo-backed VM, leave `PUCKY_UI_VERSION` unset so `ui_version`
+  falls through to the current checkout SHA.
 - The live APK should be installed from the canonical repo after the matching commit is on GitHub.
 - After deploy, verify both:
   - `puckyctl --broker https://pucky.fly.dev health`
@@ -75,7 +76,9 @@ After any production deploy:
 
 1. `https://pucky.fly.dev/healthz` returns healthy.
 2. `https://pucky.fly.dev/health` returns broker health.
-3. `https://pucky.fly.dev/ui/pucky/latest/manifest.json` reports the expected `git-<sha>` bundle version.
+3. `https://pucky.fly.dev/ui/pucky/latest/manifest.json` reports the expected
+   `git-<sha>` `ui_version` and matching `source_commit_full`.
 4. The phone shows online in `puckyctl devices`.
-5. `ui.bundle.status` on-device reports the same `git-<sha>` bundle version.
+5. `ui.bundle.status` on-device reports the same `git-<sha>` bundle version and
+   matching source commit.
 6. A local screenshot confirms the refreshed UI is actually on screen.
