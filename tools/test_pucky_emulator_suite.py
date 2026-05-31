@@ -811,12 +811,10 @@ def test_parser_includes_walkie_thread_lab_command() -> None:
 def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
     assert suite.WALKIE_THREAD_LAB_RESULT_SCHEMA == "pucky.walkie_thread_lab.v1"
     assert suite.WALKIE_THREAD_LAB_SCENARIOS == (
-        "feed-focus-continuation",
         "transcript-continuation",
         "page-continuation",
         "attachment-continuation",
         "negative-home",
-        "focus-clear-negative",
         "history-retention",
         "final-boss-overlap",
         "all",
@@ -828,14 +826,13 @@ def test_walkie_thread_lab_scenarios_and_evidence_schema_are_stable() -> None:
         "transcript-known.png",
         "reply-complete.png",
         "ui.surface.home-before.json",
-        "ui.surface.focused.json",
         "ui.surface.before.json",
         "ui.surface.pending.json",
         "ui.surface.transcript.json",
         "ui.surface.final.json",
         "ui.surface.attachment.json",
         "voice.thread_scope.before.json",
-        "voice.thread_scope.focused.json",
+        "turn.timing.json",
         "pucky.turn.history.json",
         "pucky.turn.read.<turn_id>.json",
         "ui.reply_cards.before.json",
@@ -865,7 +862,6 @@ def test_walkie_thread_lab_all_expands_only_core_gate_sequence(
     result = suite.cmd_walkie_thread_lab(args)
 
     assert suite.WALKIE_THREAD_LAB_ALL_SCENARIOS == (
-        "feed-focus-continuation",
         "transcript-continuation",
         "page-continuation",
         "attachment-continuation",
@@ -874,7 +870,6 @@ def test_walkie_thread_lab_all_expands_only_core_gate_sequence(
         "final-boss-overlap",
     )
     assert [item["scenario"] for item in result["results"]] == list(suite.WALKIE_THREAD_LAB_ALL_SCENARIOS)
-    assert "focus-clear-negative" not in [item["scenario"] for item in result["results"]]
 
 
 def test_start_fixture_turn_passes_debug_fixture_transcript_and_delay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1167,7 +1162,7 @@ def test_require_walkie_proof_passes_raises_failed_keys() -> None:
 def test_write_walkie_thread_lab_aggregate_proof_writes_all_summary(tmp_path: Path) -> None:
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     results = [
-        {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True, "slot_preserved": True}}},
+        {"scenario": "transcript-continuation", "proof": {"passes": {"thread_reused": True, "slot_preserved": True}}},
         {"scenario": "final-boss-overlap", "proof": {"passes": {"completion_order": True, "final_tiles_isolated": True}}},
     ]
 
@@ -1179,7 +1174,7 @@ def test_write_walkie_thread_lab_aggregate_proof_writes_all_summary(tmp_path: Pa
         "schema": suite.WALKIE_THREAD_LAB_RESULT_SCHEMA,
         "scenario": "all",
         "passes": {
-            "feed-focus-continuation": True,
+            "transcript-continuation": True,
             "final-boss-overlap": True,
         },
     }
@@ -1252,7 +1247,7 @@ def test_walkie_thread_lab_retry_recovers_slot_before_second_attempt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     parser = suite.build_parser()
-    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "feed-focus-continuation", "--skip-refresh"])
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "transcript-continuation", "--skip-refresh"])
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     events: list[str] = []
     call_count = {"scenario": 0}
@@ -1318,27 +1313,27 @@ def test_walkie_thread_lab_retry_recovers_slot_before_second_attempt(
     monkeypatch.setattr(suite, "cmd_seed_ui", lambda *_args, **_kwargs: events.append("seed_ui") or {"ok": True})
     monkeypatch.setattr(suite, "cmd_smoke", lambda *_args, **_kwargs: events.append("smoke") or {"ok": True})
 
-    def fake_feed_focus(*_args, **_kwargs):
+    def fake_continuation(*_args, **kwargs):
         call_count["scenario"] += 1
-        events.append(f"scenario_{call_count['scenario']}")
+        events.append(f"scenario_{call_count['scenario']}_{kwargs.get('scenario_name')}")
         if call_count["scenario"] == 1:
             raise suite.SuiteError("Broker wedged")
-        return {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True}}}
+        return {"scenario": "transcript-continuation", "proof": {"passes": {"thread_reused": True}}}
 
-    monkeypatch.setattr(suite, "run_feed_focus_continuation_scenario", fake_feed_focus)
+    monkeypatch.setattr(suite, "run_continuation_scenario", fake_continuation)
 
     result = suite.cmd_walkie_thread_lab(args)
 
     assert result["ok"] is True
     assert call_count["scenario"] == 2
-    assert events.index("scenario_1") < events.index("stop") < events.index("create") < events.index("start") < events.index("provision") < events.index("seed_ui") < events.index("smoke") < events.index("scenario_2")
+    assert events.index("scenario_1_transcript-continuation") < events.index("stop") < events.index("create") < events.index("start") < events.index("provision") < events.index("seed_ui") < events.index("smoke") < events.index("scenario_2_transcript-continuation")
 
 
 def test_walkie_thread_lab_retry_retries_in_place_for_non_transport_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     parser = suite.build_parser()
-    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "feed-focus-continuation", "--skip-refresh"])
+    args = parser.parse_args(["walkie-thread-lab", "--slot", "1", "--scenario", "transcript-continuation", "--skip-refresh"])
     config = suite.slot_config(tmp_path, 1, run_id="fixed")
     events: list[str] = []
     call_count = {"scenario": 0}
@@ -1404,14 +1399,14 @@ def test_walkie_thread_lab_retry_retries_in_place_for_non_transport_failure(
     monkeypatch.setattr(suite, "cmd_seed_ui", lambda *_args, **_kwargs: events.append("seed_ui") or {"ok": True})
     monkeypatch.setattr(suite, "cmd_smoke", lambda *_args, **_kwargs: events.append("smoke") or {"ok": True})
 
-    def fake_feed_focus(*_args, **_kwargs):
+    def fake_continuation(*_args, **kwargs):
         call_count["scenario"] += 1
-        events.append(f"scenario_{call_count['scenario']}")
+        events.append(f"scenario_{call_count['scenario']}_{kwargs.get('scenario_name')}")
         if call_count["scenario"] == 1:
             raise suite.SuiteError("detail surface did not stabilize")
-        return {"scenario": "feed-focus-continuation", "proof": {"passes": {"thread_reused": True}}}
+        return {"scenario": "transcript-continuation", "proof": {"passes": {"thread_reused": True}}}
 
-    monkeypatch.setattr(suite, "run_feed_focus_continuation_scenario", fake_feed_focus)
+    monkeypatch.setattr(suite, "run_continuation_scenario", fake_continuation)
 
     result = suite.cmd_walkie_thread_lab(args)
 
@@ -1420,31 +1415,155 @@ def test_walkie_thread_lab_retry_retries_in_place_for_non_transport_failure(
     assert "create" not in events
     assert "stop" not in events
     assert "start" not in events
-    assert events.index("scenario_1") < events.index("scenario_2")
+    assert events.index("scenario_1_transcript-continuation") < events.index("scenario_2_transcript-continuation")
 
 
 def test_continuation_fixture_start_delay_ms_matches_surface_type() -> None:
     assert suite.continuation_fixture_start_delay_ms("thread_transcript") == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
-    assert suite.continuation_fixture_start_delay_ms("feed_tile_selected") == suite.FEED_FOCUS_FIXTURE_START_DELAY_MS
     assert suite.continuation_fixture_start_delay_ms("thread_page") == suite.PAGE_CONTINUATION_FIXTURE_START_DELAY_MS
     assert suite.continuation_fixture_start_delay_ms("thread_attachment") == suite.ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS
-    assert suite.FEED_FOCUS_FIXTURE_START_DELAY_MS == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
     assert suite.HISTORY_RETENTION_FIXTURE_START_DELAY_MS == suite.WALKIE_THREAD_FIXTURE_START_DELAY_MS
     assert suite.FINAL_BOSS_SPEECH_START_TIMEOUT_MS >= 12000
 
 
 def test_scenario_evidence_dir_clears_stale_files(tmp_path: Path) -> None:
     config = suite.slot_config(tmp_path, 2, run_id="fixed")
-    scenario_dir = Path(config.evidence_dir) / "feed-focus-continuation"
+    scenario_dir = Path(config.evidence_dir) / "transcript-continuation"
     scenario_dir.mkdir(parents=True)
     stale = scenario_dir / "proof.json"
     stale.write_text('{"stale": true}', encoding="utf-8")
 
-    result = suite.scenario_evidence_dir(config, "feed-focus-continuation")
+    result = suite.scenario_evidence_dir(config, "transcript-continuation")
 
     assert result == scenario_dir
     assert result.exists()
     assert not stale.exists()
+
+
+def test_slot_state_has_live_processes_only_when_any_pid_is_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(suite, "process_alive", lambda pid: pid == 22)
+
+    assert suite.slot_state_has_live_processes(None) is False
+    assert suite.slot_state_has_live_processes({"pids": {"emulator": "0"}}) is False
+    assert suite.slot_state_has_live_processes({"pids": {"emulator": "11", "broker": "22"}}) is True
+
+
+def test_slot_is_for_sure_free_requires_ports_transport_and_dead_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    runner = suite.Runner(dry_run=False)
+
+    monkeypatch.setattr(suite, "port_available", lambda _port: True)
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "missing")
+    monkeypatch.setattr(suite, "load_state", lambda *_args, **_kwargs: {"pids": {"emulator": "10"}})
+    monkeypatch.setattr(suite, "process_alive", lambda pid: False)
+
+    assert suite.slot_is_for_sure_free(args, runner, tmp_path, 3) is True
+
+    monkeypatch.setattr(suite, "port_available", lambda port: port != suite.slot_config(tmp_path, 3, run_id="probe-slot03").ui_port)
+    assert suite.slot_is_for_sure_free(args, runner, tmp_path, 3) is False
+
+    monkeypatch.setattr(suite, "port_available", lambda _port: True)
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "device")
+    assert suite.slot_is_for_sure_free(args, runner, tmp_path, 3) is False
+
+    monkeypatch.setattr(suite, "adb_transport_state", lambda *_args, **_kwargs: "missing")
+    monkeypatch.setattr(suite, "process_alive", lambda pid: True)
+    assert suite.slot_is_for_sure_free(args, runner, tmp_path, 3) is False
+
+
+def test_first_free_slot_config_scans_default_range_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    runner = suite.Runner(dry_run=False)
+    seen: list[int] = []
+
+    def fake_slot_is_for_sure_free(_args, _runner, _root, slot):
+        seen.append(slot)
+        return slot == 5
+
+    monkeypatch.setattr(suite, "slot_is_for_sure_free", fake_slot_is_for_sure_free)
+
+    config = suite.first_free_slot_config(args, runner, tmp_path)
+
+    assert seen == [3, 4, 5]
+    assert config.slot == 5
+    assert config.serial == "emulator-5562"
+
+
+def test_build_turn_timing_artifact_correlates_button_turn_and_web_timing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = ns(tmp_path, dry_run=False)
+    config = suite.slot_config(tmp_path, 1, run_id="fixed")
+    runner = suite.Runner(dry_run=False)
+
+    monkeypatch.setattr(suite, "now_iso", lambda: "2026-05-31T10:00:00.000Z")
+    monkeypatch.setattr(
+        suite,
+        "turn_history",
+        lambda *_args, **_kwargs: {
+            "turns": [
+                {
+                    "turn_id": "turn-1",
+                    "latest_state": "speaking",
+                    "events": [
+                        {"state": "uploading", "updated_at": "2026-05-31T10:00:01.000Z", "visual_state": "thinking", "phase": "remote"},
+                        {"state": "speaking", "updated_at": "2026-05-31T10:00:02.000Z", "visual_state": "speaking", "phase": "remote"},
+                    ],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(suite, "turn_status", lambda *_args, **_kwargs: {"turn_id": "turn-1", "latest_state": "speaking"})
+    monkeypatch.setattr(
+        suite,
+        "button_events",
+        lambda *_args, **_kwargs: {
+            "events": [
+                {
+                    "gesture": "walkie_hold_start",
+                    "timestamp": "2026-05-31T10:00:00.500Z",
+                    "action_result": {"action": "walkie", "status": "ok"},
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        suite,
+        "read_turn_record",
+        lambda *_args, **_kwargs: {"turn": {"turn_id": "turn-1", "latest_state": "completed", "server_telemetry": {"status": "ok"}}},
+    )
+    monkeypatch.setattr(
+        suite,
+        "ui_surface",
+        lambda *_args, **_kwargs: {
+            "turn_timing": {
+                "events": [
+                    {"event": "voice_status_rendered", "at": "2026-05-31T10:00:00.900Z", "turn_id": "turn-1", "visual_state": "listening"},
+                    {"event": "thread_detail_rebound", "at": "2026-05-31T10:00:02.500Z", "turn_id": "turn-1", "label": "transcript"},
+                ]
+            }
+        },
+    )
+
+    artifact = suite.build_turn_timing_artifact(args, runner, config, turn_ids=["turn-1"])
+
+    assert artifact["schema"] == "pucky.turn_timing_artifact.v1"
+    assert artifact["collected_at"] == "2026-05-31T10:00:00.000Z"
+    assert artifact["turn_ids"] == ["turn-1"]
+    assert artifact["turns"]["turn-1"]["latest_state"] == "completed"
+    assert [item["source"] for item in artifact["timeline"]] == [
+        "button",
+        "web_ui",
+        "turn_history",
+        "turn_history",
+        "web_ui",
+    ]
+    assert artifact["timeline"][0]["offset_ms"] == 0
+    assert artifact["timeline"][-1]["event"] == "thread_detail_rebound"
 
 
 def test_surface_from_snapshot_collapses_thread_cards_with_pending_winner() -> None:

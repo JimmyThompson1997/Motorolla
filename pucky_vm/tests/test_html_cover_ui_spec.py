@@ -257,7 +257,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     voice_status_block = styles.split(".voice-status {", 1)[1].split("}", 1)[0]
     assert "position: fixed" in styles
     assert "--voice-status-size: 38px" in styles
-    assert "top: calc((45px - var(--voice-status-size)) / 2)" in styles
+    assert "top: calc(var(--safe-area-top-pad) + (45px - var(--voice-status-size)) / 2);" in styles
     assert "top: 14px" not in voice_status_block
     assert "z-index: 100" in styles
     assert ".voice-status-idle" in styles
@@ -349,27 +349,34 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
-def test_home_cards_use_persistent_long_press_archive_menu() -> None:
+def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "CARD_MENU_LONG_PRESS_MS = 250" in app
-    assert "CARD_MENU_MOVE_CANCEL_PX = 12" in app
+    assert "CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82" in app
+    assert "CARD_ARCHIVE_SWIPE_MAX_PX = 126" in app
+    assert "CARD_ARCHIVE_SWIPE_SLOP_PX = 12" in app
     assert "showArchivedFeed: false" in app
-    assert "starredSessionIds: new Set()" in app
-    assert 'openCardMenuSessionId: ""' in app
     assert "async function archiveHomeCard(card)" in app
-    assert 'await requestFeedAction(card, "archive");' in app
+    assert 'return requestFeedAction(card, "archive");' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
-    assert "function toggleCardStar(card)" in app
-    assert "function isCardStarred(card)" in app
-    assert "state.starredSessionIds.has(sessionId)" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" in app
+    assert "function canArchiveBySwipe(card)" in app
+    assert "installCardArchiveSwipe(wrapper, card);" in app
+    assert "CARD_MENU_LONG_PRESS_MS" not in app
+    assert "function toggleCardStar(card)" not in app
+    assert "function isCardStarred(card)" not in app
+    assert "function installCardLongPressMenu(wrapper, card)" not in app
     assert "filteredFeedCards()" in app
     assert "const archived = Boolean(card && card.archived);" in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
-    assert "installCardLongPressMenu(wrapper, card);" in app
+    assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
+    assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
+    assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
+    assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
+    assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
 
 
 def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
@@ -405,7 +412,8 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
-    longpress = function_block(app, "cardLongPressMenu")
+    swipe = function_block(app, "installCardArchiveSwipe")
+    can_archive = function_block(app, "canArchiveBySwipe")
     request_mark_read = function_block(app, "requestMarkRead")
 
     assert "function isPendingOutboundCard(card)" in app
@@ -430,9 +438,11 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "identity" not in outbound
     assert "card-actions" not in outbound
 
-    assert "if (isPendingOutboundCard(card)) {" in longpress
-    assert "menu.append(archive);" in longpress
-    assert "toggleCardStar(card);" in longpress
+    assert "if (isPendingOutboundCard(card)) {" in can_archive
+    assert "return isFailedPendingOutboundCard(card);" in can_archive
+    assert "state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;" in swipe
+    assert 'wrapper.classList.add("is-card-swiped-away");' in swipe
+    assert "void archiveHomeCard(card).then(result => {" in swipe
 
     assert ".card.card-outbound" in styles
     assert ".card.card-outbound.is-failed" in styles
@@ -444,40 +454,19 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert ".card-outbound-status.is-thinking" in styles
     assert ".card-outbound-status.is-failed" in styles
     assert ".card-outbound-time" in styles
-    assert "function installCardLongPressMenu(wrapper, card)" in app
-    assert "function cardLongPressMenu(card)" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" in app
+    assert "function cardLongPressMenu(card)" not in app
     assert "function cardFocusBorder()" not in app
     assert 'wrapper.append(cardFocusBorder());' not in app
     assert "function dismissOpenCardMenu(suppressClick = true)" in app
-    assert "function installCardMenuOutsideDismiss()" in app
-    assert 'document.addEventListener("pointerdown", event => {' in app
-    assert 'const menu = target?.closest(".card-longpress-menu");' in app
-    assert "focused.contains(target)" not in app
-    assert "dismissOpenCardMenu(true);" in app
-    assert "card-menu-action card-menu-star" in app
-    assert "card-menu-action card-menu-archive" in app
-    assert "state.openCardMenuThreadId = cardThreadId(card);" in app
-    assert "state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)" in app
-    assert "Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX" in app
+    assert "state.showArchivedFeed || state.feedRefreshing" in can_archive
+    assert "Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX" in swipe
     assert "shouldSuppressCardActivation()" in app
-    assert "identity.disabled = menuOpen;" in app
-    assert "body.tabIndex = menuOpen ? -1 : 0;" in app
-    assert 'body.setAttribute("aria-disabled", menuOpen ? "true" : "false");' in app
-    assert "audio.disabled = menuOpen;" in app
-    assert "page.disabled = menuOpen;" in app
-    assert "toggleCardStar(card);" in app
-    assert "persistStarredSessionIds" not in app
-    assert 'localStorage.setItem("pucky.cover.starred' not in app
-    assert "!window.PointerEvent" not in app
-    assert 'card-swipe-reveal card-swipe-archive' not in app
-    assert 'card-swipe-reveal card-swipe-voice' not in app
-    assert "CARD_SWIPE_ARCHIVE_THRESHOLD" not in app
-    assert "CARD_SWIPE_REVEAL_MAX" not in app
-    assert "CARD_SWIPE_INTENT_PX" not in app
-    assert "CARD_SLOT_REVEAL_MAX" not in app
-    assert "CARD_SLOT_OPEN_THRESHOLD" not in app
-    assert 'wrapper.dataset.cardSwipeSuppress = "true"' not in app
-    assert "@keyframes card-menu-tracer-spin" not in styles
+    assert "toggleCardStar(card);" not in app
+    assert ".card-wrap::before" in styles
+    assert '.card-wrap.is-card-swipe-active::before' in styles
+    assert '.card-wrap.is-card-swipe-armed::before' in styles
+    assert '.card-wrap.is-card-swiped-away .card' in styles
 
 
 def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
@@ -501,31 +490,23 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert "reconcileReadOverrides();" in app
     assert 'identity.addEventListener("click"' in app
     assert "toggleCardRead(card);" in app
-    assert ".card-wrap.is-swiping .card" not in styles
-    assert ".card-wrap.is-archiving" not in styles
-    assert ".card-wrap.is-collapsing" not in styles
-    assert ".card-swipe-reveal" not in styles
-    assert ".card-swipe-archive" not in styles
-    assert ".card-swipe-voice" not in styles
-    assert ".card-swipe-pill" not in styles
-    assert ".card-side-slot" not in styles
-    assert ".card-side-divider" not in styles
-    assert ".card-wrap.is-side-slot-open .card-side-slot" not in styles
-    assert ".card-longpress-menu" in styles
-    assert ".card-menu-action" in styles
-    assert ".card-menu-action.is-selected" in styles
-    assert ".card-menu-star {" not in styles
-    assert ".card-wrap.is-card-menu-open .card" in styles
+    assert ".card-wrap::before" in styles
+    assert ".card-wrap.is-card-swipe-active::before" in styles
+    assert ".card-wrap.is-card-swipe-armed::before" in styles
+    assert ".card-wrap.is-card-swiped-away .card" in styles
+    assert ".card-longpress-menu" not in styles
+    assert ".card-menu-action" not in styles
+    assert ".card-wrap.is-card-menu-open .card" not in styles
     assert ".card-focus-border" not in styles
     assert ".card-focus-border-segment" not in styles
     assert ".card-wrap.is-card-menu-open .card-menu-action::after" not in styles
-    assert ".card-wrap.is-card-menu-open .identity" in styles
-    assert ".card-wrap.is-card-menu-open .card-body" in styles
-    assert ".card-wrap.is-card-menu-open .card-actions" in styles
+    assert ".card-wrap.is-card-menu-open .identity" not in styles
+    assert ".card-wrap.is-card-menu-open .card-body" not in styles
+    assert ".card-wrap.is-card-menu-open .card-actions" not in styles
     assert "filter: blur(3.2px) saturate(0.82);" not in styles
     assert "opacity: 0.24;" not in styles
-    assert "filter: none;" in styles
-    assert "opacity: 1;" in styles
+    assert "touch-action: pan-y;" in styles
+    assert "transition:" in css_block(styles, ".card-wrap .card")
     assert "animation: card-menu-tracer-path" not in styles
     assert "@keyframes card-menu-tracer-path" not in styles
     assert "@keyframes card-focus-border-run" not in styles
@@ -1524,7 +1505,7 @@ def test_document_html_detection_accepts_local_viewer_paths_and_xlsx_is_not_raw_
     assert '["text/plain", "text/markdown", "application/json", "text/xml", "application/xml"].includes(mime)' in kind_block
 
 
-def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -> None:
+def test_walkie_thread_scope_badge_tracks_detail_views_without_feed_focus() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
@@ -1543,27 +1524,42 @@ def test_walkie_thread_scope_badge_tracks_feed_focus_and_thread_detail_views() -
     assert "function sameThreadScope(left, right)" in app
     assert "function syncVoiceThreadScope(options = {})" in app
     assert "threadScopeSyncTail = task.catch(() => {});" in app
-    assert '"feed_tile_selected"' in app
     assert '"thread_transcript"' in app
     assert '"thread_page"' in app
     assert '"thread_attachment"' in app
-    assert '"Talk to continue..."' in app
+    assert '"feed_tile_selected"' not in app
+    assert '"Talk to continue..."' not in app
     assert '"data-thread-scope-active"' in app
     assert '"data-thread-scope-mode"' in app
     assert '"data-thread-id"' in app
     assert '"data-source-surface"' in app
     assert 'void syncVoiceThreadScope({ reason: "tab_click", render: true });' in app
-    assert 'void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "card_menu_dismiss", render: true, force: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_transcript", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_page", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_audio_detail", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });' in app
     assert 'void syncVoiceThreadScope({ reason: "detail_dismiss", render: true, force: true });' in app
+    assert "node.hidden = true;" in app
+    assert 'node.setAttribute("aria-hidden", "true");' in app
     assert ".thread-scope-status" in styles
     badge = css_block(styles, ".thread-scope-status")
     assert "font-size: 11px;" in badge
     assert "text-overflow: ellipsis;" in badge
+
+
+def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() -> None:
+    app = read("app.js")
+
+    assert "function attachmentPromotesToChatMedia(item)" in app
+    assert 'return ["image_gallery", "video_player", "document_html", "html_iframe"].includes(viewerType);' in app
+    assert "normalizedAttachments(message?.attachments).filter(attachmentPromotesToChatMedia)" in app
+    assert "function resolveNavDetailCard(detail)" in app
+    assert "const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;" in app
+    assert "function syncOpenThreadDetailAfterCards()" in app
+    assert "const nextCard = resolveNavDetailCard(detail);" in app
+    assert 'showTranscript(nextCard, shouldStickToLatest' in app
+    assert 'recordTurnUiEvent("thread_detail_rebound", {' in app
 
 def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:
     app = read("app.js")
@@ -1683,6 +1679,8 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "function findFocusedCard()" in app
     assert "function reconcileFocusedCardSelection()" in app
     assert "async function refreshCardsFromNativeSnapshot(options = {})" in app
+    assert 'recordTurnUiEvent("feed_snapshot_refresh_start"' in app
+    assert 'recordTurnUiEvent("feed_snapshot_refresh_complete"' in app
     assert "function uiDebugOpenCardAction(rawArgs = {})" in app
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app
@@ -1691,6 +1689,7 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "detail: {" in app
     assert "focused_card: {" in app
     assert "thread_scope: {" in app
+    assert "turn_timing: currentTurnUiTiming()," in app
     assert "visible_cards: cards" in app
     assert 'active: Boolean(focusedCard)' in app
     assert 'menu_open: Boolean(focusedCard)' in app

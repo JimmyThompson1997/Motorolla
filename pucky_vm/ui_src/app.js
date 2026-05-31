@@ -13,9 +13,11 @@
   const FEED_REFRESH_MIN_DWELL_MS = 450;
   const FEED_REFRESH_TIMEOUT_MS = 15000;
   const FEED_SYNC_INTERVAL_MS = 15000;
-  const CARD_MENU_LONG_PRESS_MS = 250;
-  const CARD_MENU_MOVE_CANCEL_PX = 12;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
+  const CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82;
+  const CARD_ARCHIVE_SWIPE_MAX_PX = 126;
+  const CARD_ARCHIVE_SWIPE_SLOP_PX = 12;
+  const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
   const MATERIAL_SYMBOLS = {
@@ -298,10 +300,12 @@
     feedRefreshing: false,
     nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
-    starredSessionIds: new Set(),
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
+    turnUiEvents: [],
+    lastRenderedTurnVisualState: "",
+    lastRenderedTurnId: "",
     waveHistory: new Map(),
     links: initialLinksState(),
     drag: null
@@ -356,10 +360,18 @@
         renderVoiceStatus();
       }
       if (name === "pucky.turn.status") {
+        const incoming = normalizeTurnStatus(payload);
+        const indicator = turnIndicatorFromStatus(incoming);
+        recordTurnUiEvent("turn_status_event", {
+          turn_id: turnStatusTurnId(incoming),
+          state: indicator.state,
+          visual_state: turnVisualState(incoming),
+          remote_stage: indicator.remote_stage || ""
+        });
         applyTurnStatus(payload);
         renderVoiceStatus();
         if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" && state.route === "feed") {
-          void refreshCardsFromNativeSnapshot({ render: true });
+          void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });
         }
       }
       if (name === "pucky.feed.updated") {
@@ -370,6 +382,7 @@
           clearMissingFeedIconFilter();
           render();
           restoreNavStateAfterCards();
+          syncOpenThreadDetailAfterCards();
         }
       }
     }
@@ -822,6 +835,11 @@
     if (state.nativeFeedSnapshotPromise) {
       return state.nativeFeedSnapshotPromise;
     }
+    const turnId = turnStatusTurnId(state.turn);
+    recordTurnUiEvent("feed_snapshot_refresh_start", {
+      turn_id: turnId,
+      reason: String(options.reason || "native_snapshot")
+    });
     state.nativeFeedSnapshotPromise = (async () => {
       try {
         const cards = await fetchReplyCards();
@@ -832,7 +850,13 @@
         if (options.render !== false) {
           render();
           restoreNavStateAfterCards();
+          syncOpenThreadDetailAfterCards();
         }
+        recordTurnUiEvent("feed_snapshot_refresh_complete", {
+          turn_id: turnId,
+          reason: String(options.reason || "native_snapshot"),
+          card_count: state.cards.length
+        });
         return { cards: state.cards };
       } catch (_) {
         return { cards: state.cards };
@@ -1656,6 +1680,16 @@
     const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle";
     const visualState = wakeProofState !== "idle" ? wakeProofState : turnState;
     const label = wakeProofState !== "idle" ? "wake matched" : turnStateLabel(visualState);
+    const turnId = turnStatusTurnId(state.turn);
+    if (state.lastRenderedTurnVisualState !== visualState || state.lastRenderedTurnId !== turnId) {
+      state.lastRenderedTurnVisualState = visualState;
+      state.lastRenderedTurnId = turnId;
+      recordTurnUiEvent("voice_status_rendered", {
+        turn_id: turnId,
+        visual_state: visualState,
+        label
+      });
+    }
     indicators.forEach(indicator => {
       indicator.className = `voice-status voice-status-${visualState}`;
       indicator.setAttribute("aria-label", `Turn state: ${label}`);
@@ -1682,6 +1716,50 @@
         remote_stage: "",
         active: false
       }
+    };
+  }
+
+  function turnStatusTurnId(status) {
+    const normalized = normalizeTurnStatus(status);
+    const last = normalized.last_status && typeof normalized.last_status === "object" ? normalized.last_status : {};
+    return String(
+      normalized.turn_id
+      || last.turn_id
+      || normalized.local_session_id
+      || last.local_session_id
+      || ""
+    ).trim();
+  }
+
+  function recordTurnUiEvent(event, detail = {}) {
+    const entry = {
+      schema: "pucky.ui_turn_timing_event.v1",
+      event: String(event || "").trim(),
+      at: new Date().toISOString(),
+      at_ms: Date.now()
+    };
+    Object.entries(detail || {}).forEach(([key, value]) => {
+      if (value !== undefined) {
+        entry[key] = value;
+      }
+    });
+    state.turnUiEvents.push(entry);
+    if (state.turnUiEvents.length > TURN_UI_TIMELINE_MAX_EVENTS) {
+      state.turnUiEvents = state.turnUiEvents.slice(-TURN_UI_TIMELINE_MAX_EVENTS);
+    }
+    return entry;
+  }
+
+  function currentTurnUiTiming() {
+    const turnId = turnStatusTurnId(state.turn);
+    const events = state.turnUiEvents.filter(entry => {
+      const eventTurnId = String(entry?.turn_id || "").trim();
+      return !turnId || !eventTurnId || eventTurnId === turnId;
+    });
+    return {
+      schema: "pucky.ui_turn_timing.v1",
+      turn_id: turnId,
+      events: events.slice(-TURN_UI_TIMELINE_MAX_EVENTS)
     };
   }
 
@@ -1759,7 +1837,7 @@
       card_id: active ? String(raw.card_id || "") : "",
       session_id: active ? String(raw.session_id || "") : "",
       source_surface: active ? String(raw.source_surface || "") : "",
-      label: active ? "Talk to continue..." : "",
+      label: active ? String(raw.label || "") : "",
       updated_at: String(raw.updated_at || ""),
       active
     };
@@ -1774,15 +1852,9 @@
     node.setAttribute("data-thread-scope-mode", state.threadScope.mode || "new_thread");
     node.setAttribute("data-thread-id", state.threadScope.thread_id || "");
     node.setAttribute("data-source-surface", state.threadScope.source_surface || "");
-    if (!state.threadScope.active) {
-      node.hidden = true;
-      node.textContent = "";
-      node.setAttribute("aria-hidden", "true");
-      return;
-    }
-    node.hidden = false;
-    node.textContent = state.threadScope.label || "Talk to continue...";
-    node.setAttribute("aria-hidden", "false");
+    node.hidden = true;
+    node.textContent = "";
+    node.setAttribute("aria-hidden", "true");
   }
 
   function initialUiSurfaceStatus() {
@@ -1847,6 +1919,7 @@
         source_surface: threadScope?.getAttribute("data-source-surface") || "",
         label: (threadScope?.textContent || "").trim()
       },
+      turn_timing: currentTurnUiTiming(),
       visible_cards: cards,
       ui_debug_available: true
     };
@@ -3108,8 +3181,6 @@
       return outboundCardView(card);
     }
     const wrapper = el("div", "card-wrap");
-    const sessionId = cardSessionId(card);
-    const menuOpen = Boolean(sessionId && state.openCardMenuSessionId === sessionId);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
@@ -3118,32 +3189,25 @@
 
     const identity = el("button", `identity ${cardStateClass(card)}`);
     identity.type = "button";
-    identity.disabled = menuOpen;
     applyCardActionData(identity, "mark_read", card, "reply");
     identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
     identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
     identity.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (menuOpen) {
-        return;
-      }
       toggleCardRead(card);
     });
 
     const body = el("div", "card-body");
     body.setAttribute("role", "button");
-    body.tabIndex = menuOpen ? -1 : 0;
-    body.setAttribute("aria-disabled", menuOpen ? "true" : "false");
+    body.tabIndex = 0;
+    body.setAttribute("aria-disabled", "false");
     applyCardActionData(body, "transcript", card, "reply");
     body.addEventListener("click", () => {
-      if (!menuOpen && !shouldSuppressCardActivation()) {
+      if (!shouldSuppressCardActivation()) {
         showTranscript(card);
       }
     });
     body.addEventListener("keydown", (event) => {
-      if (menuOpen) {
-        return;
-      }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         showTranscript(card);
@@ -3163,15 +3227,11 @@
         ? "action action-audio is-playing"
         : "action action-audio");
       audio.type = "button";
-      audio.disabled = menuOpen;
       applyCardActionData(audio, "audio", card, "reply");
       audio.innerHTML = iconSvg("mic", { filled: true });
       audio.setAttribute("aria-label", `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
-        if (menuOpen) {
-          return;
-        }
         await toggleAudio(card);
       });
       actions.append(audio);
@@ -3180,30 +3240,22 @@
     if (card.html_path) {
       const page = el("button", `action ${actionStateClass(card, "page")}`);
       page.type = "button";
-      page.disabled = menuOpen;
       applyCardActionData(page, "page", card, "reply");
       page.innerHTML = iconSvg("attachment", { filled: true });
       page.setAttribute("aria-label", `Open page for ${card.title}`);
       page.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (menuOpen) {
-          return;
-        }
         showRichPage(card);
       });
       actions.append(page);
     } else if (attachmentInfo) {
       const file = el("button", `action ${actionStateClass(card, "attachment")}`);
       file.type = "button";
-      file.disabled = menuOpen;
       applyCardActionData(file, "attachment", card, "reply");
       file.innerHTML = iconSvg("attachment", { filled: true });
       file.setAttribute("aria-label", `Open file for ${card.title}`);
       file.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (menuOpen) {
-          return;
-        }
         showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
       });
       actions.append(file);
@@ -3216,18 +3268,12 @@
       cardEl.append(stamp);
     }
     wrapper.append(cardEl);
-    if (menuOpen) {
-      wrapper.classList.add("is-card-menu-open");
-      wrapper.append(cardLongPressMenu(card));
-    }
-    installCardLongPressMenu(wrapper, card);
+    installCardArchiveSwipe(wrapper, card);
     return wrapper;
   }
 
   function outboundCardView(card) {
     const wrapper = el("div", "card-wrap");
-    const sessionId = cardSessionId(card);
-    const menuOpen = Boolean(sessionId && state.openCardMenuSessionId === sessionId);
     const cardEl = el("article", isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound");
@@ -3246,11 +3292,7 @@
     }
     cardEl.append(copy, meta);
     wrapper.append(cardEl);
-    if (menuOpen) {
-      wrapper.classList.add("is-card-menu-open");
-      wrapper.append(cardLongPressMenu(card));
-    }
-    installCardLongPressMenu(wrapper, card);
+    installCardArchiveSwipe(wrapper, card);
     return wrapper;
   }
 
@@ -5052,123 +5094,106 @@
     return true;
   }
 
-  function focusedCardMenuWrapper() {
-    return document.querySelector(".card-wrap.is-card-menu-open");
-  }
-
-  function isCardStarred(card) {
-    const sessionId = cardSessionId(card);
-    return Boolean(sessionId && state.starredSessionIds.has(sessionId));
-  }
-
-  function toggleCardStar(card) {
-    const sessionId = cardSessionId(card);
-    if (!sessionId) {
-      return;
-    }
-    if (state.starredSessionIds.has(sessionId)) {
-      state.starredSessionIds.delete(sessionId);
-    } else {
-      state.starredSessionIds.add(sessionId);
-    }
-    renderFeed();
-  }
-
-  function cardLongPressMenu(card) {
-    const menu = el("div", "card-longpress-menu");
-    const label = isPendingOutboundCard(card) ? "failed message" : (card.title || "reply");
-    menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", `Actions for ${label}`);
-    menu.dataset.dragIgnore = "true";
-    const archive = el("button", "card-menu-action card-menu-archive");
-    archive.type = "button";
-    archive.setAttribute("role", "menuitem");
-    archive.innerHTML = `${iconSvg("archive_folder", { filled: true })}<span>Archive</span>`;
-    archive.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      archiveHomeCard(card);
-    });
-    if (isPendingOutboundCard(card)) {
-      menu.append(archive);
-      return menu;
-    }
-    const star = el("button", isCardStarred(card)
-      ? "card-menu-action card-menu-star is-selected"
-      : "card-menu-action card-menu-star");
-    star.type = "button";
-    star.setAttribute("role", "menuitemcheckbox");
-    star.setAttribute("aria-checked", isCardStarred(card) ? "true" : "false");
-    star.setAttribute("aria-pressed", isCardStarred(card) ? "true" : "false");
-    star.innerHTML = `${iconSvg("star", { filled: isCardStarred(card) })}<span>Star</span>`;
-    star.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleCardStar(card);
-    });
-    menu.append(star, archive);
-    return menu;
-  }
-
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await requestFeedAction(card, "archive");
+    return requestFeedAction(card, "archive");
   }
 
-  function installCardLongPressMenu(wrapper, card) {
+  function canArchiveBySwipe(card) {
+    if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing) {
+      return false;
+    }
+    if (Boolean(card?.archived)) {
+      return false;
+    }
+    if (isPendingOutboundCard(card)) {
+      return isFailedPendingOutboundCard(card);
+    }
+    return Boolean(cardSessionId(card) || String(card?.card_id || ""));
+  }
+
+  function installCardArchiveSwipe(wrapper, card) {
+    const cardEl = wrapper?.querySelector(".card");
+    if (!cardEl) {
+      return;
+    }
     let startX = 0;
     let startY = 0;
     let activePointerId = null;
-    let timer = 0;
+    let active = false;
+    let horizontal = false;
+    let swiped = false;
+    let swipeOffset = 0;
 
-    const clearTimer = () => {
-      if (timer) {
-        window.clearTimeout(timer);
-        timer = 0;
-      }
+    const applyOffset = x => {
+      swipeOffset = Math.max(0, Math.min(CARD_ARCHIVE_SWIPE_MAX_PX, Math.round(x)));
+      wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
+      wrapper.classList.toggle("is-card-swipe-active", swipeOffset > 0);
+      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= CARD_ARCHIVE_SWIPE_TRIGGER_PX);
     };
+
+    const reset = () => {
+      active = false;
+      horizontal = false;
+      swiped = false;
+      activePointerId = null;
+      applyOffset(0);
+    };
+
     const begin = (x, y, target, pointer = null) => {
-      if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing || isDragIgnoredTarget(target)) {
-        return;
-      }
-      if (isPendingOutboundCard(card) && (!isFailedPendingOutboundCard(card) || Boolean(card?.archived))) {
-        return;
-      }
-      const sessionId = cardSessionId(card);
-      if (!sessionId) {
+      if (!canArchiveBySwipe(card) || isDragIgnoredTarget(target)) {
         return;
       }
       startX = x;
       startY = y;
       activePointerId = pointer;
-      clearTimer();
-      timer = window.setTimeout(() => {
-        timer = 0;
-        state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-        if (state.openCardMenuSessionId === sessionId) {
-          state.openCardMenuSessionId = "";
-          state.openCardMenuThreadId = "";
-        } else {
-          state.openCardMenuSessionId = sessionId;
-          state.openCardMenuThreadId = cardThreadId(card);
-        }
-        renderFeed();
-        void syncVoiceThreadScope({ reason: "card_menu_toggle", render: true });
-      }, CARD_MENU_LONG_PRESS_MS);
+      active = true;
+      horizontal = false;
+      swiped = false;
+      applyOffset(0);
     };
+
     const move = (x, y) => {
-      if (!timer) {
+      if (!active) {
         return;
       }
       const dx = x - startX;
       const dy = y - startY;
-      if (Math.hypot(dx, dy) > CARD_MENU_MOVE_CANCEL_PX) {
-        clearTimer();
+      if (!horizontal && Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX && Math.abs(dy) < CARD_ARCHIVE_SWIPE_SLOP_PX) {
+        return;
       }
+      if (!horizontal && Math.abs(dy) > Math.abs(dx)) {
+        reset();
+        return;
+      }
+      horizontal = true;
+      if (dx <= 0) {
+        applyOffset(0);
+        return;
+      }
+      applyOffset(dx);
     };
+
     const finish = () => {
-      clearTimer();
+      if (!active) {
+        return;
+      }
+      active = false;
       activePointerId = null;
+      if (!horizontal || swipeOffset < CARD_ARCHIVE_SWIPE_TRIGGER_PX || swiped) {
+        reset();
+        return;
+      }
+      swiped = true;
+      state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+      wrapper.classList.add("is-card-swiped-away");
+      applyOffset(CARD_ARCHIVE_SWIPE_MAX_PX);
+      void archiveHomeCard(card).then(result => {
+        if (!result) {
+          wrapper.classList.remove("is-card-swiped-away");
+          reset();
+        }
+      });
     };
 
     wrapper.addEventListener("click", event => {
@@ -5451,6 +5476,46 @@
 
   function canScrollUp(target) {
     return Boolean(target && target.scrollTop > 0);
+  }
+
+  function isNearBottom(target, threshold = 84) {
+    if (!target) {
+      return true;
+    }
+    return (target.scrollHeight - (target.scrollTop + target.clientHeight)) <= threshold;
+  }
+
+  function syncOpenThreadDetailAfterCards() {
+    if (state.route !== "feed") {
+      return null;
+    }
+    const detail = normalizeNavDetail(state.navDetail);
+    if (!detail || detail.type !== "transcript") {
+      return null;
+    }
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      return null;
+    }
+    const nextCard = resolveNavDetailCard(detail);
+    const nextSessionId = cardSessionId(nextCard);
+    if (!nextCard || !nextSessionId || nextSessionId === detail.session_id) {
+      return null;
+    }
+    const content = panel.querySelector(".detail-content");
+    captureCurrentDetailScroll();
+    const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(content);
+    showTranscript(nextCard, shouldStickToLatest
+      ? {}
+      : { restoring: true, scrollTop: state.navDetail?.scroll_top });
+    recordTurnUiEvent("thread_detail_rebound", {
+      turn_id: turnStatusTurnId(state.turn),
+      detail_type: detail.type,
+      thread_id: cardThreadId(nextCard),
+      session_id: nextSessionId,
+      stick_to_latest: shouldStickToLatest
+    });
+    return { type: detail.type, thread_id: cardThreadId(nextCard), session_id: nextSessionId };
   }
 
   function sleep(ms) {
@@ -5876,8 +5941,13 @@
     return normalizeAttachmentViewer(item || {}, attachmentKind(item || {}), String(item?.mime_type || "")).type;
   }
 
+  function attachmentPromotesToChatMedia(item) {
+    const viewerType = attachmentViewerType(item);
+    return ["image_gallery", "video_player", "document_html", "html_iframe"].includes(viewerType);
+  }
+
   function messageImages(card, message, index, messages) {
-    const direct = normalizedAttachments(message?.attachments);
+    const direct = normalizedAttachments(message?.attachments).filter(attachmentPromotesToChatMedia);
     if (direct.length) {
       return direct;
     }
@@ -6437,6 +6507,7 @@
     const normalized = {
       type,
       session_id: sessionId,
+      thread_id: String(detail.thread_id || ""),
       scroll_top: scrollNumber(detail.scroll_top ?? detail.scrollTop)
     };
     if (type === "audio") {
@@ -6454,6 +6525,17 @@
 
   function cardThreadId(card) {
     return String(cardOrigin(card).thread_id || "").trim();
+  }
+
+  function resolveNavDetailCard(detail) {
+    if (!detail) {
+      return null;
+    }
+    const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;
+    if (byThread) {
+      return byThread;
+    }
+    return findCardBySessionId(detail.session_id);
   }
 
   function setDataAttribute(node, name, value) {
@@ -6523,8 +6605,7 @@
       thread_id: threadId,
       card_id: String(card?.card_id || ""),
       session_id: cardSessionId(card),
-      source_surface: sourceSurface,
-      label: "Talk to continue..."
+      source_surface: sourceSurface
     });
   }
 
@@ -6534,7 +6615,7 @@
     }
     const detail = normalizeNavDetail(state.navDetail);
     if (detail) {
-      const card = findCardBySessionId(detail.session_id);
+      const card = resolveNavDetailCard(detail);
       if (card) {
         if (detail.type === "transcript") {
           return threadScopeForCard(card, "thread_transcript") || initialThreadScope();
@@ -6546,10 +6627,6 @@
           return threadScopeForCard(card, "thread_attachment") || initialThreadScope();
         }
       }
-    }
-    const selected = findFocusedCard();
-    if (selected) {
-      return threadScopeForCard(selected, "feed_tile_selected") || initialThreadScope();
     }
     return initialThreadScope();
   }
@@ -6695,6 +6772,7 @@
     state.navDetail = normalizeNavDetail({
       type,
       session_id: sessionId,
+      thread_id: cardThreadId(card),
       scroll_top: options.scrollTop ?? options.scroll_top,
       timestamp_scroll_top: options.timestampScrollTop ?? options.timestamp_scroll_top,
       image_index: options.imageIndex ?? options.image_index
@@ -6939,7 +7017,7 @@
       void syncVoiceThreadScope({ reason: "restore_nav_empty", render: true });
       return;
     }
-    const card = findCardBySessionId(detail.session_id);
+    const card = resolveNavDetailCard(detail);
     if (!card) {
       state.navDetail = null;
       persistNavState();

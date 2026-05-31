@@ -100,7 +100,6 @@ DISPLAYABLE_VIEWER_PRIORITY = {
 NODE_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 WAKE_TURN_FIXTURE_START_DELAY_MS = 1200
 WALKIE_THREAD_FIXTURE_START_DELAY_MS = 400
-FEED_FOCUS_FIXTURE_START_DELAY_MS = 400
 PAGE_CONTINUATION_FIXTURE_START_DELAY_MS = 1200
 ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS = 400
 HISTORY_RETENTION_FIXTURE_START_DELAY_MS = 400
@@ -111,18 +110,15 @@ FINAL_BOSS_MIN_DELAY_MS_NEW = 35000
 FINAL_BOSS_MIN_DELAY_MS_B = 1000
 WALKIE_THREAD_LAB_RESULT_SCHEMA = "pucky.walkie_thread_lab.v1"
 WALKIE_THREAD_LAB_SCENARIOS = (
-    "feed-focus-continuation",
     "transcript-continuation",
     "page-continuation",
     "attachment-continuation",
     "negative-home",
-    "focus-clear-negative",
     "history-retention",
     "final-boss-overlap",
     "all",
 )
 WALKIE_THREAD_LAB_ALL_SCENARIOS = (
-    "feed-focus-continuation",
     "transcript-continuation",
     "page-continuation",
     "attachment-continuation",
@@ -137,14 +133,13 @@ WALKIE_THREAD_LAB_EVIDENCE_FILES = (
     "transcript-known.png",
     "reply-complete.png",
     "ui.surface.home-before.json",
-    "ui.surface.focused.json",
     "ui.surface.before.json",
     "ui.surface.pending.json",
     "ui.surface.transcript.json",
     "ui.surface.final.json",
     "ui.surface.attachment.json",
     "voice.thread_scope.before.json",
-    "voice.thread_scope.focused.json",
+    "turn.timing.json",
     "pucky.turn.history.json",
     "pucky.turn.read.<turn_id>.json",
     "ui.reply_cards.before.json",
@@ -1379,6 +1374,48 @@ def state_pid(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return pid if pid > 0 else None
+
+
+def slot_state_has_live_processes(state: dict[str, Any] | None) -> bool:
+    if not isinstance(state, dict):
+        return False
+    pids = state.get("pids")
+    if not isinstance(pids, dict):
+        return False
+    return any(process_alive(state_pid(value)) for value in pids.values())
+
+
+def slot_is_for_sure_free(
+    args: argparse.Namespace,
+    runner: Runner,
+    root: Path,
+    slot: int,
+) -> bool:
+    config = slot_config(root, slot, run_id=f"probe-slot{slot:02d}")
+    ports_free = all(
+        port_available(port)
+        for port in (config.emulator_port, config.broker_port, config.ui_port)
+    )
+    if not ports_free:
+        return False
+    if adb_transport_state(args, runner, config.serial) != "missing":
+        return False
+    state = load_state(root, slot)
+    return not slot_state_has_live_processes(state)
+
+
+def first_free_slot_config(
+    args: argparse.Namespace,
+    runner: Runner,
+    root: Path,
+    *,
+    start_slot: int = 3,
+    end_slot: int = 10,
+) -> SlotConfig:
+    for slot in range(int(start_slot), int(end_slot) + 1):
+        if slot_is_for_sure_free(args, runner, root, slot):
+            return slot_config(root, slot)
+    raise SuiteError(f"No for-sure free emulator slot found in range {start_slot}..{end_slot}")
 
 
 def write_evidence(config: SlotConfig, name: str, payload: dict[str, Any]) -> Path:
@@ -2903,6 +2940,30 @@ def turn_status(args: argparse.Namespace, runner: Runner, config: SlotConfig) ->
     return command_result(command_json(runner, puckyctl_command(args, config, "pucky.turn.status", {}), timeout=60))
 
 
+def button_events(args: argparse.Namespace, runner: Runner, config: SlotConfig, *, limit: int = 30) -> dict[str, Any]:
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        "button.events.list",
+        {"limit": limit},
+        timeout=120,
+        recovery_stage="button_events_list_recover",
+    )
+
+
+def clear_button_events(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
+    return broker_command_result(
+        args,
+        runner,
+        config,
+        "button.events.clear",
+        {},
+        timeout=120,
+        recovery_stage="button_events_clear_recover",
+    )
+
+
 def appops_record_audio(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str:
     result = runner.run(
         adb_command(args, config.serial, ["shell", "cmd", "appops", "get", args.package_name, "RECORD_AUDIO"]),
@@ -3454,8 +3515,6 @@ def final_boss_effective_delays(args: argparse.Namespace) -> tuple[int, int, int
 
 def continuation_fixture_start_delay_ms(expected_source_surface: str) -> int:
     source = str(expected_source_surface or "")
-    if source == "feed_tile_selected":
-        return FEED_FOCUS_FIXTURE_START_DELAY_MS
     if source == "thread_attachment":
         return ATTACHMENT_CONTINUATION_FIXTURE_START_DELAY_MS
     if source == "thread_page":
@@ -3652,6 +3711,121 @@ def read_turn_record(
         timeout=120,
         recovery_stage="turn_read_recover",
     )
+
+
+def iso_timestamp_millis(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+def build_turn_timing_artifact(
+    args: argparse.Namespace,
+    runner: Runner,
+    config: SlotConfig,
+    *,
+    turn_ids: list[str],
+    surface: dict[str, Any] | None = None,
+    button_limit: int = 30,
+    history_limit: int = 40,
+) -> dict[str, Any]:
+    clean_turn_ids = [str(turn_id or "").strip() for turn_id in turn_ids if str(turn_id or "").strip()]
+    surface_payload = surface if isinstance(surface, dict) else ui_surface(args, runner, config)
+    history_payload = turn_history(args, runner, config, limit=history_limit)
+    status_payload = turn_status(args, runner, config)
+    button_payload = button_events(args, runner, config, limit=button_limit)
+    ui_timing = surface_payload.get("turn_timing") if isinstance(surface_payload.get("turn_timing"), dict) else {}
+    ui_events = ui_timing.get("events") if isinstance(ui_timing.get("events"), list) else []
+    turns: dict[str, Any] = {}
+    timeline: list[dict[str, Any]] = []
+
+    for event in button_payload.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        timestamp_ms = iso_timestamp_millis(event.get("timestamp"))
+        timeline.append(
+            {
+                "source": "button",
+                "event": str(event.get("gesture") or "button_event"),
+                "timestamp": str(event.get("timestamp") or ""),
+                "timestamp_ms": timestamp_ms,
+                "mapped_action": str((event.get("action_result") or {}).get("action") or ""),
+                "status": str((event.get("action_result") or {}).get("status") or ""),
+            }
+        )
+
+    for turn_id in clean_turn_ids:
+        record = history_record_by_turn_id(history_payload, turn_id) or {}
+        read_payload = read_turn_record(args, runner, config, turn_id)
+        turns[turn_id] = {
+            "record": record,
+            "read": read_payload,
+            "latest_state": str((read_payload.get("turn") or {}).get("latest_state") or record.get("latest_state") or ""),
+            "server_telemetry": (read_payload.get("turn") or {}).get("server_telemetry")
+            if isinstance(read_payload.get("turn"), dict)
+            else record.get("server_telemetry"),
+        }
+        for event in record.get("events", []):
+            if not isinstance(event, dict):
+                continue
+            timestamp_ms = iso_timestamp_millis(event.get("updated_at"))
+            timeline.append(
+                {
+                    "source": "turn_history",
+                    "turn_id": turn_id,
+                    "event": str(event.get("state") or ""),
+                    "timestamp": str(event.get("updated_at") or ""),
+                    "timestamp_ms": timestamp_ms,
+                    "visual_state": str(event.get("visual_state") or ""),
+                    "phase": str(event.get("phase") or ""),
+                    "remote_stage": str(event.get("remote_stage") or ""),
+                }
+            )
+
+    for event in ui_events:
+        if not isinstance(event, dict):
+            continue
+        turn_id = str(event.get("turn_id") or "").strip()
+        if clean_turn_ids and turn_id and turn_id not in clean_turn_ids:
+            continue
+        timestamp_ms = iso_timestamp_millis(event.get("at"))
+        timeline.append(
+            {
+                "source": "web_ui",
+                "turn_id": turn_id,
+                "event": str(event.get("event") or ""),
+                "timestamp": str(event.get("at") or ""),
+                "timestamp_ms": timestamp_ms,
+                "visual_state": str(event.get("visual_state") or ""),
+                "label": str(event.get("label") or ""),
+                "reason": str(event.get("reason") or ""),
+            }
+        )
+
+    timeline.sort(key=lambda item: (item.get("timestamp_ms") is None, item.get("timestamp_ms") or 0, str(item.get("source") or "")))
+    origin_ms = next((item.get("timestamp_ms") for item in timeline if isinstance(item.get("timestamp_ms"), int)), None)
+    for item in timeline:
+        timestamp_ms = item.get("timestamp_ms")
+        item["offset_ms"] = (timestamp_ms - origin_ms) if isinstance(timestamp_ms, int) and isinstance(origin_ms, int) else None
+
+    return {
+        "schema": "pucky.turn_timing_artifact.v1",
+        "collected_at": now_iso(),
+        "turn_ids": clean_turn_ids,
+        "button_events": button_payload,
+        "turn_status": status_payload,
+        "ui_surface_turn_timing": ui_timing,
+        "turns": turns,
+        "timeline": timeline,
+    }
 
 
 def turn_event_states(record: dict[str, Any] | None) -> list[str]:
@@ -6802,6 +6976,7 @@ def run_continuation_scenario(
     )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
+    clear_button_events(args, runner, config)
     started = start_fixture_turn(
         args, runner, config,
         fixture_name=scenario_name,
@@ -6845,6 +7020,10 @@ def run_continuation_scenario(
     write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
     write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
     write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    write_json_file(
+        scenario_dir / "turn.timing.json",
+        build_turn_timing_artifact(args, runner, config, turn_ids=[turn_id], surface=final_surface),
+    )
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
 
@@ -6893,6 +7072,7 @@ def run_negative_home_scenario(
         description=f"{scenario_name} native new-thread scope",
     )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
+    clear_button_events(args, runner, config)
     started = start_fixture_turn(
         args,
         runner,
@@ -6926,6 +7106,10 @@ def run_negative_home_scenario(
     final_surface = capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="reply-complete.png", surface_name="ui.surface.final.json")
     write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
     write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    write_json_file(
+        scenario_dir / "turn.timing.json",
+        build_turn_timing_artifact(args, runner, config, turn_ids=[turn_id], surface=final_surface),
+    )
     new_thread_id = str((final_card.get("origin") or {}).get("thread_id") or "")
     proof = {
         "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
@@ -6941,221 +7125,6 @@ def run_negative_home_scenario(
     write_json_file(scenario_dir / "proof.json", proof)
     require_walkie_proof_passes(proof)
     return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": new_thread_id, "proof": proof}
-
-
-def run_feed_focus_continuation_scenario(
-    args: argparse.Namespace,
-    runner: Runner,
-    config: SlotConfig,
-    *,
-    card: dict[str, Any],
-    remote_fixture_path: str,
-    transcript_text: str,
-) -> dict[str, Any]:
-    scenario_name = "feed-focus-continuation"
-    scenario_dir = scenario_evidence_dir(config, scenario_name)
-    before_cards = reply_cards_snapshot(args, runner, config)
-    write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
-    reset_walkie_thread_surface(args, runner, config)
-    home_before = capture_walkie_stage(
-        args, runner, config, scenario_dir,
-        screenshot_name="home-before.png",
-        surface_name="ui.surface.home-before.json",
-    )
-    focus_result, focused_surface = focus_card_surface(
-        args,
-        runner,
-        config,
-        session_id=str(card["session_id"]),
-        predicate=lambda surface: bool(focused_card(surface).get("active"))
-        and str(focused_card(surface).get("session_id") or "") == str(card["session_id"])
-        and str(surface.get("thread_scope", {}).get("source_surface") or "") == "feed_tile_selected",
-        description=f"{scenario_name} focused tile",
-    )
-    write_json_file(scenario_dir / "ui.debug.focus_card.json", focus_result)
-    write_json_file(scenario_dir / "ui.surface.focused.json", focused_surface)
-    write_json_file(scenario_dir / "ui.surface.before.json", focused_surface)
-    if not runner.dry_run:
-        capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = wait_for_voice_thread_scope(
-        args,
-        runner,
-        config,
-        lambda scope: scope.get("mode") == "existing_thread"
-        and scope.get("source_surface") == "feed_tile_selected"
-        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
-        description=f"{scenario_name} native focused scope",
-    )
-    write_json_file(scenario_dir / "voice.thread_scope.focused.json", scope_before)
-    write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
-
-    started = start_fixture_turn(
-        args, runner, config,
-        fixture_name=scenario_name,
-        fixture_path=remote_fixture_path,
-        debug_fixture_transcript=transcript_text,
-        proof_reply_delay_ms=CONTINUATION_PROOF_REPLY_DELAY_MS,
-        fixture_start_delay_ms=continuation_fixture_start_delay_ms("feed_tile_selected"),
-        speech_start_timeout_ms=FINAL_BOSS_SPEECH_START_TIMEOUT_MS,
-    )
-    turn_id = str(started.get("turn_id") or "")
-    if not turn_id:
-        raise SuiteError(f"{scenario_name} did not return a turn id")
-
-    pending_surface, transcript_surface = wait_for_thread_progression(
-        args,
-        runner,
-        config,
-        thread_id=str(card["origin"]["thread_id"]),
-        transcript_text=transcript_text,
-        timeout_seconds=20.0,
-        sleep_seconds=0.1,
-        description=scenario_name,
-    )
-    write_json_file(scenario_dir / "ui.surface.pending.json", pending_surface)
-    write_json_file(scenario_dir / "ui.surface.transcript.json", transcript_surface)
-    if not runner.dry_run:
-        capture_screenshot(args, runner, config, scenario_dir / "transcript-known.png")
-
-    final_snapshot, final_card = wait_for_snapshot_card(args, runner, config, card_id="", turn_id=turn_id, timeout=float(args.turn_timeout_seconds))
-    write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
-    reset_walkie_thread_surface(args, runner, config)
-    final_surface = wait_for_ui_surface(
-        args,
-        runner,
-        config,
-        lambda surface: len(visible_thread_cards(surface, str(card["origin"]["thread_id"]))) == 1
-        and str(visible_thread_cards(surface, str(card["origin"]["thread_id"]))[0].get("kind") or "") != "pending_outbound",
-        timeout_seconds=20.0,
-        description=f"{scenario_name} final tile",
-    )
-    write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
-    write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
-    write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
-    if not runner.dry_run:
-        capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
-
-    thread_id = str((final_card.get("origin") or {}).get("thread_id") or "")
-    pending_card = visible_thread_cards(pending_surface, str(card["origin"]["thread_id"]))[0]
-    proof = {
-        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
-        "scenario": scenario_name,
-        "passes": {
-            "focused_card_active": bool(focused_card(focused_surface).get("active")),
-            "focused_card_session": str(focused_card(focused_surface).get("session_id") or "") == str(card["session_id"]),
-            "scope_existing_thread": scope_before.get("mode") == "existing_thread",
-            "scope_source_surface": scope_before.get("source_surface") == "feed_tile_selected",
-            "thread_reused": thread_id == str(card["origin"]["thread_id"]),
-            "pending_kind": str(pending_card.get("kind") or "") == "pending_outbound",
-            "pending_placeholder": "Sending your message..." in str(pending_card.get("preview") or ""),
-            "transcript_preview": transcript_text in str(visible_thread_cards(transcript_surface, str(card["origin"]["thread_id"]))[0].get("preview") or ""),
-            "slot_preserved": visible_thread_index(pending_surface, str(card["origin"]["thread_id"])) == visible_thread_index(final_surface, str(card["origin"]["thread_id"])),
-            "single_visible_tile": len(visible_thread_cards(final_surface, str(card["origin"]["thread_id"]))) == 1,
-        },
-    }
-    write_json_file(scenario_dir / "proof.json", proof)
-    require_walkie_proof_passes(proof)
-    return {"scenario": scenario_name, "turn_id": turn_id, "thread_id": thread_id, "proof": proof}
-
-
-def run_focus_clear_negative_scenario(
-    args: argparse.Namespace,
-    runner: Runner,
-    config: SlotConfig,
-    *,
-    card: dict[str, Any],
-    remote_fixture_path: str,
-    transcript_text: str,
-) -> dict[str, Any]:
-    scenario_name = "focus-clear-negative"
-    scenario_dir = scenario_evidence_dir(config, scenario_name)
-    before_cards = reply_cards_snapshot(args, runner, config)
-    before_threads = card_thread_ids(before_cards)
-    write_json_file(scenario_dir / "ui.reply_cards.before.json", before_cards)
-    reset_walkie_thread_surface(args, runner, config)
-    capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="home-before.png", surface_name="ui.surface.home-before.json")
-
-    focus_result, focused_surface = focus_card_surface(
-        args,
-        runner,
-        config,
-        session_id=str(card["session_id"]),
-        predicate=lambda surface: bool(focused_card(surface).get("active"))
-        and str(surface.get("thread_scope", {}).get("source_surface") or "") == "feed_tile_selected",
-        description=f"{scenario_name} focused tile",
-    )
-    write_json_file(scenario_dir / "ui.debug.focus_card.json", focus_result)
-    write_json_file(scenario_dir / "ui.surface.focused.json", focused_surface)
-    focused_scope = wait_for_voice_thread_scope(
-        args,
-        runner,
-        config,
-        lambda scope: scope.get("mode") == "existing_thread"
-        and scope.get("source_surface") == "feed_tile_selected"
-        and str(scope.get("thread_id") or "") == str(card["origin"]["thread_id"]),
-        description=f"{scenario_name} native focused scope",
-    )
-    write_json_file(scenario_dir / "voice.thread_scope.focused.json", focused_scope)
-
-    ui_debug_command(args, runner, config, "ui.debug.clear_focus", {})
-    before_surface = wait_for_ui_surface(
-        args,
-        runner,
-        config,
-        lambda surface: not bool(focused_card(surface).get("active"))
-        and str(surface.get("thread_scope", {}).get("mode") or "") == "new_thread",
-        description=f"{scenario_name} cleared focus",
-    )
-    write_json_file(scenario_dir / "ui.surface.before.json", before_surface)
-    if not runner.dry_run:
-        capture_screenshot(args, runner, config, scenario_dir / "before-send.png")
-    scope_before = wait_for_voice_thread_scope(
-        args,
-        runner,
-        config,
-        lambda scope: scope.get("mode") == "new_thread" and not str(scope.get("thread_id") or ""),
-        description=f"{scenario_name} native cleared scope",
-    )
-    write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
-
-    final_snapshot = reply_cards_snapshot(args, runner, config)
-    write_json_file(scenario_dir / "ui.reply_cards.final.json", final_snapshot)
-    final_surface = wait_for_ui_surface(
-        args,
-        runner,
-        config,
-        lambda surface: (
-            str(surface.get("route") or "") == "feed"
-            and not bool(focused_card(surface).get("active"))
-            and str(surface.get("thread_scope", {}).get("mode") or "") == "new_thread"
-            and not str(surface.get("thread_scope", {}).get("thread_id") or "")
-            and bool(surface.get("visible_cards"))
-        ),
-        description=f"{scenario_name} final home visible",
-    )
-    write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
-    if not runner.dry_run:
-        capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
-    proof = {
-        "schema": WALKIE_THREAD_LAB_RESULT_SCHEMA,
-        "scenario": scenario_name,
-        "passes": {
-            "focus_existing_thread": focused_scope.get("mode") == "existing_thread",
-            "focus_source_surface": focused_scope.get("source_surface") == "feed_tile_selected",
-            "clear_returns_new_thread": scope_before.get("mode") == "new_thread",
-            "clear_removes_focus": not bool(focused_card(before_surface).get("active")),
-            "ready_for_new_thread_send": (
-                str(final_surface.get("route") or "") == "feed"
-                and not bool(focused_card(final_surface).get("active"))
-                and str(final_surface.get("thread_scope", {}).get("mode") or "") == "new_thread"
-                and not str(final_surface.get("thread_scope", {}).get("thread_id") or "")
-            ),
-            "final_visible": bool(final_surface.get("visible_cards")),
-        },
-    }
-    write_json_file(scenario_dir / "proof.json", proof)
-    require_walkie_proof_passes(proof)
-    return {"scenario": scenario_name, "turn_id": "", "thread_id": "", "proof": proof}
 
 
 def run_history_retention_scenario(
@@ -7196,6 +7165,7 @@ def run_history_retention_scenario(
     )
     write_json_file(scenario_dir / "voice.thread_scope.before.json", scope_before)
 
+    clear_button_events(args, runner, config)
     started = start_fixture_turn(
         args,
         runner,
@@ -7249,6 +7219,10 @@ def run_history_retention_scenario(
     write_json_file(scenario_dir / "ui.surface.final.json", final_surface)
     write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=30))
     write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    write_json_file(
+        scenario_dir / "turn.timing.json",
+        build_turn_timing_artifact(args, runner, config, turn_ids=[turn_id], surface=final_surface),
+    )
     if not runner.dry_run:
         capture_screenshot(args, runner, config, scenario_dir / "reply-complete.png")
     messages = final_card.get("transcript_messages") if isinstance(final_card.get("transcript_messages"), list) else []
@@ -7295,6 +7269,7 @@ def run_final_boss_overlap_scenario(
     effective_delay_ms_a, effective_delay_ms_new, effective_delay_ms_b = final_boss_effective_delays(args)
     reset_walkie_thread_surface(args, runner, config)
     capture_walkie_stage(args, runner, config, scenario_dir, screenshot_name="home-before.png", surface_name="ui.surface.before.json")
+    clear_button_events(args, runner, config)
 
     ui_debug_command(args, runner, config, "ui.debug.open_card_action", {"session_id": card_a["session_id"], "action": "transcript"})
     wait_for_ui_surface(args, runner, config, lambda surface: str(surface.get("detail", {}).get("type") or "") == "transcript", description="final boss thread A detail")
@@ -7419,6 +7394,10 @@ def run_final_boss_overlap_scenario(
     write_json_file(scenario_dir / "pucky.turn.history.json", turn_history(args, runner, config, limit=40))
     for turn_id in (turn_a_id, turn_b_id, turn_c_id):
         write_json_file(scenario_dir / f"pucky.turn.read.{turn_id}.json", read_turn_record(args, runner, config, turn_id))
+    write_json_file(
+        scenario_dir / "turn.timing.json",
+        build_turn_timing_artifact(args, runner, config, turn_ids=[turn_a_id, turn_b_id, turn_c_id], surface=final_surface),
+    )
     card_a_final = snapshot_card_by_turn_id(final_snapshot, turn_a_id) or {}
     card_b_final = snapshot_card_by_turn_id(final_snapshot, turn_b_id) or {}
     card_c_final = snapshot_card_by_turn_id(final_snapshot, turn_c_id) or {}
@@ -7509,8 +7488,6 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
             runtime = configure_turn_lab_runtime(args, runner, config, fake_turn=proof_server, reply_mode="card_only", relaunch=True)
             reset_walkie_thread_lab_state(args, runner, config)
             catalog = seed_walkie_thread_cards(args, runner, config)
-            if scenario == "feed-focus-continuation":
-                return run_feed_focus_continuation_scenario(args, runner, config, card=catalog["thread_a"], remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"])
             if scenario == "transcript-continuation":
                 return run_continuation_scenario(args, runner, config, scenario_name=scenario, card=catalog["thread_a"], open_action="transcript", expected_detail_type="transcript", expected_source_surface="thread_transcript", remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"])
             if scenario == "page-continuation":
@@ -7519,8 +7496,6 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
                 return run_continuation_scenario(args, runner, config, scenario_name=scenario, card=catalog["thread_b"], open_action="attachment", expected_detail_type="attachment", expected_source_surface="thread_attachment", remote_fixture_path=remote_paths["file_revise"], transcript_text=fixture_transcripts["file_revise"])
             if scenario == "negative-home":
                 return run_negative_home_scenario(args, runner, config, remote_fixture_path=remote_paths["fresh_thread"], transcript_text=fixture_transcripts["fresh_thread"])
-            if scenario == "focus-clear-negative":
-                return run_focus_clear_negative_scenario(args, runner, config, card=catalog["thread_a"], remote_fixture_path=remote_paths["fresh_thread"], transcript_text=fixture_transcripts["fresh_thread"])
             if scenario == "history-retention":
                 return run_history_retention_scenario(args, runner, config, card=catalog["thread_a"], remote_fixture_path=remote_paths["thread_continue"], transcript_text=fixture_transcripts["thread_continue"])
             if scenario == "final-boss-overlap":
@@ -7539,13 +7514,11 @@ def cmd_walkie_thread_lab(args: argparse.Namespace) -> dict[str, Any]:
             proof_server.stop()
 
     retriable_scenarios = {
-        "feed-focus-continuation",
         "transcript-continuation",
         "page-continuation",
         "attachment-continuation",
         "history-retention",
         "negative-home",
-        "focus-clear-negative",
     }
     for scenario in scenarios:
         try:
