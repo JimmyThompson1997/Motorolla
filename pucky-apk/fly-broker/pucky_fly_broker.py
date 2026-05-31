@@ -172,7 +172,65 @@ def record(entry):
             (item["timestamp"], event, device_id, command_id, compact_json(item)),
         )
         DB.commit()
+    record_action_ledger(item)
     print(compact_json(item), flush=True)
+
+
+def record_action_ledger(item):
+    if str(item.get("event") or "") != "command_queued":
+        return
+    path = os.environ.get("PUCKY_ACTION_LEDGER_PATH", "").strip()
+    user_id = (
+        os.environ.get("PUCKY_ACTION_LEDGER_USER_ID", "").strip()
+        or os.environ.get("PUCKY_COMPOSIO_USER_ID", "").strip()
+    )
+    if not path or not user_id:
+        return
+    command = item.get("command") if isinstance(item.get("command"), dict) else {}
+    action = str(command.get("type") or "").strip()
+    if not action:
+        return
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        conn = sqlite3.connect(path, timeout=0.05)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL DEFAULT '',
+                    thread_title TEXT NOT NULL DEFAULT '',
+                    surface TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    tool TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO action_log (
+                    timestamp, user_id, thread_id, thread_title, surface, action, tool, status
+                ) VALUES (?, ?, '', '', ?, ?, ?, ?)
+                """,
+                (
+                    str(item.get("timestamp") or now()),
+                    user_id,
+                    "apk_broker",
+                    action,
+                    "POST /v1/devices/{device_id}/commands",
+                    str(command.get("status") or "queued"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        return
 
 
 def command_to_row(command):

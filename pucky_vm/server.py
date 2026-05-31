@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from .action_ledger import ActionLedger
 from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
@@ -41,6 +42,7 @@ DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "Bearer from the local PUCKY_API_TOKEN environment variable, then use that slug in card_icon. "
     "Do not include markdown fences or any text outside the JSON object."
 )
+BASE_INSTRUCTIONS_FILE_ENV = "PUCKY_CODEX_BASE_INSTRUCTIONS_FILE"
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 DEFAULT_CARD_ICON = "mail"
 REPLY_MODE_CARD_ONLY = "card_only"
@@ -57,6 +59,27 @@ LINKS_AUTH_SCHEME_LABELS = {
     "BEARER_TOKEN": "Token",
     "NO_AUTH": "No auth",
 }
+
+
+def load_codex_base_instructions_file(path: str | None) -> str | None:
+    clean = str(path or "").strip()
+    if not clean:
+        return None
+    resolved = Path(clean).expanduser()
+    if not resolved.exists():
+        raise RuntimeError(f"{BASE_INSTRUCTIONS_FILE_ENV} not found: {resolved}")
+    text = resolved.read_text(encoding="utf-8").strip()
+    if not text:
+        raise RuntimeError(f"{BASE_INSTRUCTIONS_FILE_ENV} is empty: {resolved}")
+    return text
+
+
+def compose_pucky_base_instructions(base_text: str | None, runtime_context: dict[str, object]) -> str | None:
+    base = str(base_text or "").strip()
+    if not base:
+        return None
+    context = json.dumps(runtime_context, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return f"{base}\n\n## Injected Runtime Context\n\n```json\n{context}\n```"
 
 _BROKER_MODULE = None
 _BROKER_DB_PATH: str | None = None
@@ -167,6 +190,8 @@ class Config:
     codex_turn_timeout: float
     developer_instructions: str
     feed_db_path: str
+    codex_base_instructions: str | None = None
+    action_ledger_path: str = ""
     turn_status_ttl_seconds: float = 900.0
     codex_home: str | None = None
     codex_sandbox: str = "danger-full-access"
@@ -208,6 +233,11 @@ class Config:
                 .replace("{local_api_base}", f"http://127.0.0.1:{int(os.environ.get('PORT', os.environ.get('PUCKY_PORT', '8080')))}")
             ),
             feed_db_path=os.environ.get("PUCKY_FEED_DB_PATH", str((Path.cwd() / "pucky_feed.sqlite3").resolve())),
+            codex_base_instructions=load_codex_base_instructions_file(os.environ.get(BASE_INSTRUCTIONS_FILE_ENV)),
+            action_ledger_path=os.environ.get(
+                "PUCKY_ACTION_LEDGER_PATH",
+                str((Path.cwd() / "pucky_action_ledger.sqlite3").resolve()),
+            ),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
@@ -332,6 +362,17 @@ def _links_auth_label(managed_auth_schemes: list[str] | None, auth_schemes: list
     return " + ".join(labels)
 
 
+def _compact_composio_app(item: dict[str, object]) -> dict[str, object]:
+    row: dict[str, object] = {}
+    for key in ("slug", "name", "status", "id", "instance_name"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            row[key] = value
+    if "connectable" in item:
+        row["connectable"] = bool(item.get("connectable"))
+    return row
+
+
 class PuckyVoiceService:
     def __init__(
         self,
@@ -343,6 +384,8 @@ class PuckyVoiceService:
         composio: ComposioProvider | None = None,
     ) -> None:
         self.config = config
+        ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
+        self.action_ledger = ActionLedger(ledger_path)
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
             config.deepinfra_api_key,
@@ -356,12 +399,14 @@ class PuckyVoiceService:
             startup_timeout=config.codex_startup_timeout,
             turn_timeout=config.codex_turn_timeout,
             developer_instructions=config.developer_instructions,
+            base_instructions_provider=self.codex_base_instructions_for_thread,
             output_schema=reply_output_schema(),
             codex_home=config.codex_home,
             sandbox=config.codex_sandbox,
             approval_policy=config.codex_approval_policy,
             model=config.codex_model,
             reasoning_effort=config.codex_reasoning_effort,
+            action_logger=self._record_codex_action,
         )
         self.feed = FeedStore(config.feed_db_path)
         self.composio = composio or ComposioClient(config.composio_api_key, config.composio_base_url)
@@ -395,6 +440,142 @@ class PuckyVoiceService:
     def composio_auth_mode(self, value: str | None = None) -> str:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
         return "browser" if candidate == "browser" else "webview"
+
+    def record_action(
+        self,
+        *,
+        surface: str,
+        action: str,
+        status: str,
+        thread_id: str = "",
+        thread_title: str = "",
+        tool: str = "",
+    ) -> None:
+        try:
+            self.action_ledger.record(
+                user_id=self.composio_user_id(),
+                thread_id=thread_id,
+                thread_title=thread_title,
+                surface=surface,
+                action=action,
+                tool=tool,
+                status=status,
+            )
+        except Exception:
+            pass
+
+    def _record_codex_action(self, event: dict[str, object]) -> None:
+        self.record_action(
+            surface=str(event.get("surface") or "codex_runtime"),
+            action=str(event.get("action") or ""),
+            tool=str(event.get("tool") or event.get("action") or ""),
+            status=str(event.get("status") or ""),
+            thread_id=str(event.get("thread_id") or ""),
+        )
+
+    def codex_base_instructions_for_thread(self) -> str | None:
+        runtime_context = self._base_runtime_context()
+        return compose_pucky_base_instructions(self.config.codex_base_instructions, runtime_context)
+
+    def _base_runtime_context(self) -> dict[str, object]:
+        composio_context = self._composio_runtime_context()
+        return {
+            "schema": "pucky.runtime_context.v1",
+            "agent_runtime": {
+                "discover_runtime_actions": "agent.runtime.catalog",
+                "call_runtime_action": "agent.runtime.call",
+            },
+            "action_log": {
+                "schema": "action_log.last_500.v1",
+                "rows": self.action_ledger.last_500(self.composio_user_id()),
+            },
+            "connected_apps": composio_context,
+            "user_facing_app_html": {
+                "kind": "editable HTML/JS/CSS served by the VM and cached by the APK",
+                "official_bundle_url": "/ui/pucky/latest/bundle.zip",
+                "refresh_command": "ui.bundle.refresh",
+                "shell_mode_command": "ui.shell.mode.set=web_cached",
+                "live_ui_snapshot": "inject separately when needed",
+            },
+            "android_apk": {
+                "areas": [
+                    "device status",
+                    "permissions",
+                    "battery/network/location",
+                    "sensors",
+                    "camera/photo/torch",
+                    "notifications",
+                    "audio/media/player",
+                    "voice/wake/speech",
+                    "files/artifacts",
+                    "contacts/SMS/calls/calendar/settings",
+                    "UI/feed/bundle",
+                ],
+                "meta_list": "command.catalog",
+                "capability_summary": "capabilities.get",
+                "command_execution": "POST /v1/devices/{device_id}/commands",
+            },
+        }
+
+    def _composio_runtime_context(self) -> dict[str, object]:
+        user_id = self.composio_user_id()
+        context: dict[str, object] = {
+            "schema": "pucky.composio.runtime_context.v1",
+            "configured": bool(self.composio.configured),
+            "user_id": user_id,
+            "base_url": self.config.composio_base_url,
+            "api_key_resource": "env:COMPOSIO_API_KEY",
+            "user_id_resource": "env:PUCKY_COMPOSIO_USER_ID",
+            "current_connected_accounts": "GET /connected_accounts?user_ids=<user_id>&limit=1000",
+            "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=200",
+            "connect_account": "POST /connected_accounts/link",
+            "connected_apps": [],
+            "available_apps": [],
+        }
+        if not self.composio.configured:
+            return context
+        try:
+            connected_payload = self.composio.list_connected_apps(user_id, force=False)
+            self.record_action(
+                surface="composio",
+                action="connected_accounts.list",
+                tool="GET /connected_accounts",
+                status="ok",
+            )
+            apps_payload = self.composio.list_apps()
+            self.record_action(
+                surface="composio",
+                action="toolkits.list",
+                tool="GET /toolkits",
+                status="ok",
+            )
+        except Exception as exc:
+            self.record_action(surface="composio", action="runtime_context", tool="Composio runtime context", status="error")
+            context["error"] = str(exc)[:240]
+            return context
+        connected_apps = [
+            _compact_composio_app(item)
+            for item in list(connected_payload.get("connected_apps") or [])
+            if isinstance(item, dict)
+        ]
+        connected_slugs = {
+            str(item.get("slug") or "").strip().lower()
+            for item in connected_apps
+            if str(item.get("slug") or "").strip()
+        }
+        available_apps = []
+        for item in list(apps_payload.get("apps") or []):
+            if not isinstance(item, dict) or not bool(item.get("connectable")):
+                continue
+            slug = str(item.get("slug") or "").strip().lower()
+            if not slug or slug in connected_slugs:
+                continue
+            available_apps.append(_compact_composio_app(item))
+            if len(available_apps) >= 200:
+                break
+        context["connected_apps"] = connected_apps
+        context["available_apps"] = available_apps
+        return context
 
     def _portal_token_secret(self) -> str:
         return str(self.config.connect_portal_secret or "").strip()
@@ -2571,6 +2752,12 @@ def make_handler(service: PuckyVoiceService):
 
         def _json(self, status: HTTPStatus, payload: dict[str, object], *, headers: dict[str, str] | None = None) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            service.record_action(
+                surface="pucky_http",
+                action=f"{self.command} {urlsplit(self.path).path}",
+                tool=f"{self.command} {urlsplit(self.path).path}",
+                status=str(int(status)),
+            )
             self.send_response(int(status))
             self._cors_headers()
             self.send_header("Content-Type", "application/json")

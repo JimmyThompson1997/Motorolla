@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import pathlib
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -118,6 +119,40 @@ class BrokerIntegrationTests(unittest.TestCase):
         self.assertEqual(result["type"], "ping")
         stored = puckyctl.get_command(self.ctx, result["command_id"])
         self.assertEqual(stored["args"], {"hello": "world"})
+
+    def test_command_queued_writes_optional_action_ledger_row(self):
+        ledger_path = pathlib.Path(self.tmp.name) / "actions.sqlite3"
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PUCKY_ACTION_LEDGER_PATH": str(ledger_path),
+                "PUCKY_ACTION_LEDGER_USER_ID": "user-1",
+            },
+            clear=False,
+        ):
+            result = puckyctl.run_command_send(
+                self.ctx,
+                ["battery.status", "--args-json", "{}"],
+                direct=True,
+            )
+
+        self.assertFalse(result["ok"])
+        conn = sqlite3.connect(str(ledger_path))
+        try:
+            row = conn.execute(
+                """
+                SELECT user_id, surface, action, tool, status
+                FROM action_log
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(
+            tuple(row),
+            ("user-1", "apk_broker", "battery.status", "POST /v1/devices/{device_id}/commands", "queued"),
+        )
 
     def test_capability_result_is_stored_for_v1_endpoint(self):
         command = {

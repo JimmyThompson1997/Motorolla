@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class CodexAppServerError(RuntimeError):
@@ -74,12 +74,15 @@ class CodexAppServerClient:
     startup_timeout: float = 30.0
     turn_timeout: float = 300.0
     developer_instructions: str | None = None
+    base_instructions: str | None = None
+    base_instructions_provider: Callable[[], str | None] | None = None
     output_schema: dict[str, Any] | None = None
     codex_home: str | None = None
     approval_policy: str = "never"
     sandbox: str = "danger-full-access"
     model: str | None = None
     reasoning_effort: str | None = None
+    action_logger: Callable[[dict[str, object]], None] | None = None
 
     def __post_init__(self) -> None:
         self._process: subprocess.Popen[str] | None = None
@@ -235,11 +238,19 @@ class CodexAppServerClient:
             params["cwd"] = str(Path(self.cwd).resolve())
         if self.developer_instructions:
             params["developerInstructions"] = self.developer_instructions
+        base_instructions = self._base_instructions()
+        if base_instructions:
+            params["baseInstructions"] = base_instructions
         response = self.request("thread/start", params, timeout=self.startup_timeout)
         thread_id = response.get("thread", {}).get("id")
         if not thread_id:
             raise CodexAppServerError("thread/start did not return a thread id")
         return str(thread_id)
+
+    def _base_instructions(self) -> str:
+        if self.base_instructions_provider is not None:
+            return _clean_optional(self.base_instructions_provider())
+        return _clean_optional(self.base_instructions)
 
     def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
         clean = _clean_optional(title)
@@ -364,23 +375,45 @@ class CodexAppServerClient:
             return True
 
     def request(self, method: str, params: dict[str, Any] | None = None, *, timeout: float) -> dict[str, Any]:
+        clean_params = params or {}
+        started_at = time.time()
         with self._lock:
             request_id = self._next_id
             self._next_id += 1
             responses: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
             self._pending[request_id] = responses
-            self._write({"id": request_id, "method": method, "params": params or {}})
+            self._write({"id": request_id, "method": method, "params": clean_params})
         try:
             message = responses.get(timeout=timeout)
         except queue.Empty as exc:
+            self._record_action(method, clean_params, "timeout", started_at)
             raise CodexAppServerError(f"Timed out waiting for {method}") from exc
         finally:
             with self._lock:
                 self._pending.pop(request_id, None)
         if "error" in message:
+            self._record_action(method, clean_params, "error", started_at)
             raise CodexAppServerError(f"{method} failed: {message['error']}")
         result = message.get("result")
+        self._record_action(method, clean_params, "ok", started_at)
         return result if isinstance(result, dict) else {}
+
+    def _record_action(self, method: str, params: dict[str, Any], status: str, started_at: float) -> None:
+        if self.action_logger is None:
+            return
+        try:
+            self.action_logger(
+                {
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
+                    "surface": "codex_runtime",
+                    "action": method,
+                    "tool": method,
+                    "status": status,
+                    "thread_id": _clean_optional(params.get("threadId")),
+                }
+            )
+        except Exception:
+            pass
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self._write({"method": method, "params": params or {}})

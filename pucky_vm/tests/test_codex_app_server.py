@@ -169,6 +169,48 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(turn_starts[1]["params"]["threadId"], "thread-invalid")
             self.assertEqual(turn_starts[2]["params"]["threadId"], "thread-1")
 
+    def test_thread_start_sends_base_instructions_separately_from_developer_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            actions: list[dict[str, object]] = []
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+                developer_instructions="strict json contract",
+                base_instructions_provider=lambda: "pucky base runtime map",
+                action_logger=actions.append,
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                client.send_turn("Pucky base")
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            messages = capture_messages(capture)
+            thread_start = next(msg for msg in messages if msg.get("method") == "thread/start")
+            self.assertEqual(thread_start["params"]["baseInstructions"], "pucky base runtime map")
+            self.assertEqual(thread_start["params"]["developerInstructions"], "strict json contract")
+            self.assertIn(
+                {
+                    "timestamp": actions[1]["timestamp"],
+                    "surface": "codex_runtime",
+                    "action": "thread/start",
+                    "tool": "thread/start",
+                    "status": "ok",
+                    "thread_id": "",
+                },
+                actions,
+            )
+
     def test_thread_origin_reads_metadata_from_local_codex_state_db(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             state_db = Path(tempdir) / "state_5.sqlite"
