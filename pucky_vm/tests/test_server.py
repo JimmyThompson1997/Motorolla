@@ -828,6 +828,33 @@ class ServerTests(unittest.TestCase):
         )
         self.assertEqual(active["items"], [])
 
+    def test_feed_sync_compact_thread_group_omits_heavy_history_payloads(self) -> None:
+        self.post_json(
+            "/api/turn/text",
+            {"text": "First compact thread turn", "turn_id": "feed_compact_thread_a"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread_compact_feed"},
+        )
+        latest = self.post_json(
+            "/api/turn/text",
+            {"text": "Second compact thread turn", "turn_id": "feed_compact_thread_b"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "thread_compact_feed"},
+        )
+
+        full = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(len(full["items"]), 1)
+        self.assertGreaterEqual(len(full["items"][0]["transcript_messages"]), 2)
+        self.assertIn("audio_base64", full["items"][0])
+
+        compact = self.get_json("/api/feed?limit=10&compact=1", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(len(compact["items"]), 1)
+        self.assertEqual(compact["items"][0]["card_id"], latest["card_id"])
+        self.assertNotIn("audio_base64", compact["items"][0])
+        self.assertNotIn("html_base64", compact["items"][0])
+        self.assertEqual([message["text"] for message in compact["items"][0]["transcript_messages"]], [
+            "Second compact thread turn",
+            "Sure, I can help.",
+        ])
+
     def test_turn_fails_closed_when_feed_readback_is_missing(self) -> None:
         original_get_item = self.service.feed.get_item
         self.service.feed.get_item = lambda card_id: None  # type: ignore[assignment]

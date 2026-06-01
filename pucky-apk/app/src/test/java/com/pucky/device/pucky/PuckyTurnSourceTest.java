@@ -368,6 +368,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("syncInternal(reason, limit, emitUpdate, resetCursor, authoritative)"));
         assertTrue(feed.contains("String cursor = (resetCursor || authoritative) ? \"\" : prefs.getString(KEY_CURSOR, \"\")"));
         assertTrue(feed.contains("replyCards.pruneStaleFeedAuthority(authoritativeCards)"));
+        assertTrue(feed.contains("if (!authoritative)"));
+        assertTrue(feed.contains("PuckyTurnController.shared(context).onReplyRecovered(local, \"feed_sync\")"));
         assertTrue(feed.contains("feed action missing card; refreshing authoritative snapshot"));
         assertTrue(feed.contains("Json.put(out, \"ok\", false)"));
         assertTrue(feed.contains("Json.put(out, \"error\", \"card_not_found\")"));

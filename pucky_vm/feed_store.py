@@ -617,25 +617,26 @@ class FeedStore:
         rows.sort(key=lambda row: (int(row["updated_at_ms"]), str(row["card_id"])))
         latest = rows[-1]
         latest_item = self._build_item(str(latest["card_id"]), compact=compact)
-        transcript_messages: list[object] = []
-        for row in rows:
-            turn = self._conn.execute(
-                """
-                SELECT transcript_messages_json
-                FROM turns
-                WHERE turn_id = ?
-                """,
-                (str(row["turn_id"]),),
-            ).fetchone()
-            if turn is None:
-                continue
-            try:
-                messages = json.loads(str(turn["transcript_messages_json"] or "[]") or "[]")
-            except Exception:
-                messages = []
-            if isinstance(messages, list):
-                transcript_messages.extend(messages)
-        latest_item["transcript_messages"] = transcript_messages
+        if not compact:
+            transcript_messages: list[object] = []
+            for row in rows:
+                turn = self._conn.execute(
+                    """
+                    SELECT transcript_messages_json
+                    FROM turns
+                    WHERE turn_id = ?
+                    """,
+                    (str(row["turn_id"]),),
+                ).fetchone()
+                if turn is None:
+                    continue
+                try:
+                    messages = json.loads(str(turn["transcript_messages_json"] or "[]") or "[]")
+                except Exception:
+                    messages = []
+                if isinstance(messages, list):
+                    transcript_messages.extend(messages)
+            latest_item["transcript_messages"] = transcript_messages
         latest_item["thread_history_count"] = len(rows)
         card = latest_item.get("card")
         if isinstance(card, dict):

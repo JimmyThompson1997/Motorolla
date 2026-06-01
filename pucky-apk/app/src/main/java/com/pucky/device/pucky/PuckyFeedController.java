@@ -235,7 +235,9 @@ public final class PuckyFeedController {
                         if (authoritative) {
                             Json.add(authoritativeCards, local);
                         }
-                        PuckyTurnController.shared(context).onReplyRecovered(local, "feed_sync");
+                        if (!authoritative) {
+                            PuckyTurnController.shared(context).onReplyRecovered(local, "feed_sync");
+                        }
                         merged++;
                     } catch (Exception exc) {
                         Log.d(TAG, "feed item skipped: " + exc.getMessage());
