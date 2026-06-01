@@ -16,7 +16,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import textwrap
 import threading
 import urllib.error
 import urllib.parse
@@ -38,6 +37,8 @@ if str(ROOT) not in sys.path:
 
 from pucky_vm.attachment_manifest import normalize_attachments
 from pucky_vm.server import Config, PuckyVoiceService, make_handler, reset_broker_for_tests
+from tools.pucky_emulator_support import display as emu_display_support
+from tools.pucky_emulator_support import vm as emu_vm_support
 
 ANDROID_TOOLS = Path(r"C:\Users\jimmy\Desktop\Android\tools")
 DEFAULT_ANDROID_HOME = ANDROID_TOOLS / "android-sdk"
@@ -2443,32 +2444,12 @@ def normalize_vm_sandbox(value: object) -> str:
 
 
 def vm_thread_query_command(args: argparse.Namespace, thread_id: str) -> list[str]:
-    query = textwrap.dedent(
-        f"""
-        import json, pathlib, sqlite3
-        db = pathlib.Path({str(args.vm_codex_home)!r}) / "state_5.sqlite"
-        conn = sqlite3.connect(str(db))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT id, title, rollout_path, source, model, model_provider, reasoning_effort, sandbox_policy, approval_mode FROM threads WHERE id = ?",
-            ({thread_id!r},),
-        ).fetchone()
-        conn.close()
-        out = dict(row) if row else {{}}
-        rollout = pathlib.Path(str(out.get("rollout_path") or ""))
-        out["rollout_exists"] = rollout.exists() if str(out.get("rollout_path") or "") else False
-        print(json.dumps(out))
-        """
-    ).strip()
-    return [
-        str(args.flyctl),
-        "ssh",
-        "console",
-        "-a",
-        args.fly_app,
-        "--command",
-        f"python3 -c {shlex.quote(query)}",
-    ]
+    return emu_vm_support.vm_thread_query_command(
+        flyctl=args.flyctl,
+        fly_app=args.fly_app,
+        vm_codex_home=str(args.vm_codex_home),
+        thread_id=thread_id,
+    )
 
 
 def query_live_vm_thread(args: argparse.Namespace, thread_id: str) -> dict[str, Any]:
@@ -2490,25 +2471,15 @@ def query_live_vm_thread(args: argparse.Namespace, thread_id: str) -> dict[str, 
 
 
 def official_refresh_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    command = [
-        sys.executable,
-        str(ROOT / "tools" / "refresh_pucky_html_official.py"),
-        "--target",
-        "emulator",
-        "--device-id",
-        config.device_id,
-        "--broker",
-        local_broker_url(config),
-        "--repo-root",
-        str(ROOT),
-        "--vm-base-url",
-        args.vm_base_url,
-        "--command-timeout-seconds",
-        str(args.refresh_timeout_seconds),
-    ]
-    if args.operator_token:
-        command += ["--token", args.operator_token]
-    return command
+    return emu_vm_support.official_refresh_command(
+        python_executable=sys.executable,
+        root=ROOT,
+        device_id=config.device_id,
+        broker_url=local_broker_url(config),
+        vm_base_url=args.vm_base_url,
+        refresh_timeout_seconds=args.refresh_timeout_seconds,
+        operator_token=args.operator_token,
+    )
 
 
 def run_official_refresh(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> dict[str, Any]:
@@ -2546,10 +2517,7 @@ def verify_origin_against_vm(origin: dict[str, Any], vm_thread: dict[str, Any], 
 def capture_screenshot(args: argparse.Namespace, runner: Runner, config: SlotConfig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     display_id = primary_display_id(args, runner, config)
-    screencap_args = ["exec-out", "screencap"]
-    if display_id:
-        screencap_args.extend(["-d", display_id])
-    screencap_args.append("-p")
+    screencap_args = emu_display_support.screencap_args(display_id)
     if runner.dry_run:
         runner.run(adb_command(args, config.serial, screencap_args), timeout=30)
         return

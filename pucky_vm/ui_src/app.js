@@ -3134,12 +3134,38 @@
     return item;
   }
 
+  function openOverlay(overlayId, content, onBackdropClick) {
+    const overlay = document.getElementById(overlayId);
+    if (!overlay) {
+      return null;
+    }
+    overlay.replaceChildren(content);
+    overlay.classList.add("is-open");
+    overlay.setAttribute("aria-hidden", "false");
+    overlay.onclick = event => {
+      if (event.target === overlay && typeof onBackdropClick === "function") {
+        onBackdropClick();
+      }
+    };
+    return overlay;
+  }
+
+  function closeOverlay(overlayId, { clearChildren = true } = {}) {
+    const overlay = document.getElementById(overlayId);
+    if (!overlay) {
+      return null;
+    }
+    overlay.classList.remove("is-open");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.onclick = null;
+    if (clearChildren) {
+      overlay.replaceChildren();
+    }
+    return overlay;
+  }
+
   function openSettingsSelector({ title, currentValue, options, onSelect }) {
     dismissAdvancedSettingsSheet();
-    const overlay = document.getElementById("settingsSelectorOverlay");
-    if (!overlay) {
-      return;
-    }
     const sheet = el("div", "settings-selector-sheet");
     sheet.addEventListener("click", event => event.stopPropagation());
     sheet.append(el("h1", "settings-selector-title", title));
@@ -3166,25 +3192,11 @@
       list.append(button);
     }
     sheet.append(list);
-    overlay.replaceChildren(sheet);
-    overlay.classList.add("is-open");
-    overlay.setAttribute("aria-hidden", "false");
-    overlay.onclick = event => {
-      if (event.target === overlay) {
-        closeSettingsSelector();
-      }
-    };
+    openOverlay("settingsSelectorOverlay", sheet, closeSettingsSelector);
   }
 
   function closeSettingsSelector() {
-    const overlay = document.getElementById("settingsSelectorOverlay");
-    if (!overlay) {
-      return;
-    }
-    overlay.classList.remove("is-open");
-    overlay.setAttribute("aria-hidden", "true");
-    overlay.onclick = null;
-    overlay.replaceChildren();
+    closeOverlay("settingsSelectorOverlay");
   }
 
   function showAdvancedSettingsSheet() {
@@ -5128,7 +5140,6 @@
   }
 
   function openSpeedPicker(context) {
-    const overlay = document.getElementById("speedOverlay");
     const isSetting = context && context.kind === "setting";
     const card = context && context.kind === "card" ? context.card : context;
     const current = isSetting
@@ -5155,16 +5166,11 @@
       });
       menu.append(button);
     }
-    overlay.replaceChildren(menu);
-    overlay.classList.add("is-open");
-    overlay.setAttribute("aria-hidden", "false");
-    overlay.onclick = closeSpeedPicker;
+    openOverlay("speedOverlay", menu, closeSpeedPicker);
   }
 
   function closeSpeedPicker() {
-    const overlay = document.getElementById("speedOverlay");
-    overlay.classList.remove("is-open");
-    overlay.setAttribute("aria-hidden", "true");
+    closeOverlay("speedOverlay");
   }
 
   async function seekRelative(delta) {

@@ -703,6 +703,10 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Buzz + chime" in app
     assert "settingsSelectorOverlay" in app
     assert "settingsSheet" in app
+    assert "function openOverlay(overlayId, content, onBackdropClick)" in app
+    assert "function closeOverlay(overlayId, { clearChildren = true } = {})" in app
+    assert 'openOverlay("settingsSelectorOverlay", sheet, closeSettingsSelector);' in app
+    assert 'closeOverlay("settingsSelectorOverlay");' in app
     assert "detail: wakeStatusDetail(state.wakeStatus)" in app
     assert "suspended_reason: String(raw.suspended_reason || \"\")" in app
     assert "state: String(raw.state || \"idle\")" in app
@@ -740,6 +744,8 @@ def test_settings_tab_includes_default_audio_speed_control() -> None:
     assert "Device only" in app
     assert 'data-setting-id", "default-audio-speed"' in app
     assert 'openSpeedPicker({ kind: "setting"' in app
+    assert 'openOverlay("speedOverlay", menu, closeSpeedPicker);' in app
+    assert 'closeOverlay("speedOverlay");' in app
     assert ".settings-card-value" in styles
     assert ".settings-card.is-disabled" in styles
     assert ".speed-picker-title" in styles
