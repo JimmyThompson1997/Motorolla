@@ -135,6 +135,41 @@ class _WeatherFakeService(_FakeService):
         return context
 
 
+class _WeatherCodexToolFallbackService(_FakeService):
+    class codex:
+        @staticmethod
+        def send_turn(text):
+            class Result:
+                used_thread_id = "thread-weather-codex"
+                thread_mode = "new"
+                reply_text = '{"reply_text":"Weather near you looks mild.","card_title":"Weather","card_icon":"mail","html":null,"attachments":null}'
+
+            return Result()
+
+    def _base_runtime_context(self):
+        context = super()._base_runtime_context()
+        context["action_log"] = {
+            "limit": 150,
+            "rows": [
+                {
+                    "surface": "codex_tool",
+                    "action": "exec_command",
+                    "tool": "exec_command",
+                    "target": "python pucky-apk/puckyctl/puckyctl.py --json --device-id emulator capabilities --refresh",
+                    "status": "ok",
+                },
+                {
+                    "surface": "codex_tool",
+                    "action": "exec_command",
+                    "tool": "exec_command",
+                    "target": "python pucky-apk/puckyctl/puckyctl.py --json --device-id emulator location get --timeout-ms 10000",
+                    "status": "ok",
+                },
+            ],
+        }
+        return context
+
+
 def test_compile_runtime_report_counts_required_runtime_blocks():
     report = compile_runtime_report(_FakeService())
 
@@ -188,4 +223,19 @@ def test_weather_location_smoke_requires_apk_capability_and_location_rows(tmp_pa
     assert report["schema"] == "pucky.runtime_weather_location_smoke.v1"
     assert report["matched_capabilities"]["tool"] == "capabilities.get"
     assert report["matched_location"]["tool"] == "location.get"
+    assert output.exists()
+
+
+def test_weather_location_smoke_accepts_codex_tool_puckyctl_fallback(tmp_path: Path):
+    output = tmp_path / "compiled-weather-codex.md"
+
+    report = run_weather_location_smoke(
+        _WeatherCodexToolFallbackService(),
+        text="use the APK location lane",
+        compiled_output=str(output),
+    )
+
+    assert report["schema"] == "pucky.runtime_weather_location_smoke.v1"
+    assert "capabilities" in report["matched_capabilities"]["target"]
+    assert "location get" in report["matched_location"]["target"]
     assert output.exists()

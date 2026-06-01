@@ -208,6 +208,15 @@ def default_weather_location_text() -> str:
     )
 
 
+def _matches_puckyctl_command(row: dict[str, Any], *needles: str) -> bool:
+    if str(row.get("surface") or "") != "codex_tool":
+        return False
+    target = str(row.get("target") or "").lower()
+    if "puckyctl.py" not in target:
+        return False
+    return all(needle.lower() in target for needle in needles)
+
+
 def run_weather_location_smoke(service: PuckyVoiceService, *, text: str, compiled_output: str = "") -> dict[str, Any]:
     service.start()
     send = getattr(service.codex, "send_turn", None) or getattr(service.codex, "send_text", None)
@@ -233,8 +242,18 @@ def run_weather_location_smoke(service: PuckyVoiceService, *, text: str, compile
         and str(row.get("surface") or "") == "apk_broker"
         and str(row.get("tool") or row.get("action") or "") == "location.get"
     ]
+    if not capability_rows:
+        capability_rows = [
+            row for row in rows
+            if isinstance(row, dict) and _matches_puckyctl_command(row, "capabilities")
+        ]
+    if not location_rows:
+        location_rows = [
+            row for row in rows
+            if isinstance(row, dict) and _matches_puckyctl_command(row, "location", "get")
+        ]
     if not capability_rows or not location_rows:
-        raise RuntimeError("weather/location smoke missing apk_broker capabilities.get and location.get rows")
+        raise RuntimeError("weather/location smoke missing broker rows or codex_tool puckyctl capabilities/location commands")
     reply_text = str(getattr(result, "reply_text", "") or "")
     lowered_reply = reply_text.lower()
     if any(
