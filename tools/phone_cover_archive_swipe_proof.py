@@ -57,6 +57,13 @@ def top_visible_session_id(surface_snapshot: dict[str, Any]) -> str:
     return card_session_id(visible[0]) if visible else ""
 
 
+def surface_route(surface_snapshot: dict[str, Any]) -> str:
+    final_surface = surface_snapshot.get("final_surface")
+    if isinstance(final_surface, dict):
+        return str(final_surface.get("route") or "").strip()
+    return str(surface_snapshot.get("route") or "").strip()
+
+
 def png_dimensions(path: Path) -> tuple[int, int]:
     data = path.read_bytes()
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
@@ -147,13 +154,18 @@ def ensure_feed_surface(args: argparse.Namespace, serial: str) -> dict[str, Any]
     except Exception:
         # Relaunch already targets CoverHomeActivity; keep going if goto_home is unavailable.
         pass
+    def feed_surface() -> dict[str, Any] | None:
+        surface = proof.snapshot_surface(args)
+        return surface if surface_route(surface) == "feed" else None
+
     surface = proof.wait_for(
-        lambda: proof.snapshot_surface(args) if phone_shared.route_of(proof.snapshot_surface(args)) == "feed" else None,
+        feed_surface,
         timeout_seconds=20,
         interval_seconds=1.0,
         description="cover feed route",
     )
-    phone_shared.ensure_route(surface, "feed", "cover archive proof", error_cls=CoverArchiveSwipeProofError)
+    if surface_route(surface) != "feed":
+        raise CoverArchiveSwipeProofError("cover archive proof expected route feed")
     return surface
 
 

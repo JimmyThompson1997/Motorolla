@@ -68,6 +68,11 @@ def test_first_visible_unarchived_card_prefers_visible_order() -> None:
     assert selected["title"] == "Active"
 
 
+def test_surface_route_reads_direct_and_nested_shapes() -> None:
+    assert proof.surface_route({"route": "feed"}) == "feed"
+    assert proof.surface_route({"final_surface": {"route": "meetings"}}) == "meetings"
+
+
 def test_png_dimensions_reads_real_png_header(tmp_path: Path) -> None:
     png_path = tmp_path / "cover.png"
     png_path.write_bytes(
