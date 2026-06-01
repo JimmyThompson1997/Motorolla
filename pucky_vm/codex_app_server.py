@@ -266,6 +266,12 @@ class CodexAppServerClient:
     def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
         return self._thread_origin(thread_id or self._thread_id or "", retries=retries, delay=delay).as_dict()
 
+    def runtime_call(self, method: str, params: dict[str, Any] | None = None, *, timeout: float | None = None) -> dict[str, Any]:
+        clean = _clean_optional(method)
+        if not clean:
+            raise CodexAppServerError("runtime method is required")
+        return self.request(clean, params if isinstance(params, dict) else {}, timeout=timeout or self.startup_timeout)
+
     def _thread_origin(self, thread_id: str, *, retries: int, delay: float) -> CodexThreadOrigin:
         clean_thread_id = _clean_optional(thread_id) or _clean_optional(self._thread_id)
         origin = CodexThreadOrigin(thread_id=clean_thread_id)

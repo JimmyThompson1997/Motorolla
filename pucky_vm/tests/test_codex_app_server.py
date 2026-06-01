@@ -46,6 +46,8 @@ for line in sys.stdin:
         thread_id = "thread-" + str(thread_count)
         send({"id": request_id, "result": {"thread": {"id": thread_id}}})
         send({"method": "thread/started", "params": {"thread": {"id": thread_id}}})
+    elif method == "thread/read":
+        send({"id": request_id, "result": {"thread": {"id": message.get("params", {}).get("threadId", ""), "items": []}}})
     elif method == "thread/name/set":
         send({"id": request_id, "result": {"ok": True}})
     elif method == "turn/start":
@@ -210,6 +212,33 @@ class CodexAppServerClientTests(unittest.TestCase):
                 },
                 actions,
             )
+
+    def test_runtime_call_forwards_raw_codex_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                result = client.runtime_call("thread/read", {"threadId": "thread-smoke"})
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            self.assertEqual(result["thread"]["id"], "thread-smoke")
+            messages = capture_messages(capture)
+            read = next(msg for msg in messages if msg.get("method") == "thread/read")
+            self.assertEqual(read["params"], {"threadId": "thread-smoke"})
 
     def test_thread_origin_reads_metadata_from_local_codex_state_db(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

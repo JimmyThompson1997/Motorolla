@@ -45,11 +45,13 @@ DEFAULT_DEVELOPER_INSTRUCTIONS = (
 BASE_INSTRUCTIONS_FILE_ENV = "PUCKY_CODEX_BASE_INSTRUCTIONS_FILE"
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 DEFAULT_CARD_ICON = "mail"
+DEFAULT_CARD_ICON_ACCENT = "#72c2ff"
 REPLY_MODE_CARD_ONLY = "card_only"
 REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
 MAX_CARD_TITLE_CHARS = 64
 MAX_CARD_ICON_NAME_CHARS = 48
 CARD_ICON_NAME_RE = re.compile(r"^[a-z0-9_]{1,48}$")
+CARD_ICON_ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DISPLAYABLE_ATTACHMENT_PATH_RE = re.compile(r"(/[^\\s\"'<>()[\\]{}]+)")
 BROKER_MODULE_PATH = Path(__file__).resolve().parents[1] / "pucky-apk" / "fly-broker" / "pucky_fly_broker.py"
 LINKS_AUTH_SCHEME_LABELS = {
@@ -59,6 +61,27 @@ LINKS_AUTH_SCHEME_LABELS = {
     "BEARER_TOKEN": "Token",
     "NO_AUTH": "No auth",
 }
+AGENT_RUNTIME_ACTIONS: tuple[dict[str, str], ...] = (
+    {"name": "initialize", "kind": "lifecycle"},
+    {"name": "thread/start", "kind": "mutation"},
+    {"name": "thread/resume", "kind": "lifecycle"},
+    {"name": "thread/fork", "kind": "mutation"},
+    {"name": "thread/list", "kind": "read"},
+    {"name": "thread/loaded/list", "kind": "read"},
+    {"name": "thread/read", "kind": "read"},
+    {"name": "thread/name/set", "kind": "mutation"},
+    {"name": "thread/archive", "kind": "mutation"},
+    {"name": "thread/unarchive", "kind": "mutation"},
+    {"name": "thread/compact/start", "kind": "mutation"},
+    {"name": "thread/rollback", "kind": "mutation"},
+    {"name": "thread/metadata/update", "kind": "mutation"},
+    {"name": "thread/unsubscribe", "kind": "lifecycle"},
+    {"name": "turn/start", "kind": "streaming"},
+    {"name": "turn/steer", "kind": "streaming"},
+    {"name": "turn/interrupt", "kind": "mutation"},
+    {"name": "review/start", "kind": "streaming"},
+)
+AGENT_RUNTIME_ACTION_NAMES = {item["name"] for item in AGENT_RUNTIME_ACTIONS}
 
 
 def load_codex_base_instructions_file(path: str | None) -> str | None:
@@ -87,30 +110,35 @@ DEFAULT_CARD_ICONS = {
     "clock": {
         "name": "clock",
         "label": "Clock",
+        "accent": "#ffb000",
         "filled_svg": '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 17c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7Zm1-12h-2v6l5 3 1-1.73-4-2.27V7Z"/>',
         "outline_svg": '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.3v5.1l3.8 2.2"/>',
     },
     "bolt": {
         "name": "bolt",
         "label": "Bolt",
+        "accent": "#50d86a",
         "filled_svg": '<path d="M7 2h10l-3.2 7H20L9 22l2.3-8H5l2-12Z"/>',
         "outline_svg": '<path d="M13.5 2.8 5.7 13.2h5.7L9.9 21.2l8.4-10.4h-5.8l1-8Z"/>',
     },
     "calendar": {
         "name": "calendar",
         "label": "Calendar",
+        "accent": "#3a84ff",
         "filled_svg": '<path d="M7 2h2v2h6V2h2v2h1c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h1V2Zm11 8H6v10h12V10Z"/>',
         "outline_svg": '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M13 14h3"/>',
     },
     "moon": {
         "name": "moon",
         "label": "Moon",
+        "accent": "#8b63ff",
         "filled_svg": '<path d="M21 14.4C19.7 18.8 15.6 22 10.8 22 5.4 22 1 17.6 1 12.2 1 7.4 4.2 3.3 8.6 2c-.8 1.3-1.2 2.8-1.2 4.4 0 5.6 4.6 10.2 10.2 10.2 1.6 0 3.1-.4 4.4-1.2Z"/>',
         "outline_svg": '<path d="M20.8 14.8A8.8 8.8 0 1 1 9.2 3.2a7.3 7.3 0 0 0 11.6 11.6Z"/>',
     },
     "mail": {
         "name": "mail",
         "label": "Mail",
+        "accent": "#72c2ff",
         "filled_svg": '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
         "outline_svg": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/><path d="m4.4 18 5.7-5.1"/><path d="m19.6 18-5.7-5.1"/>',
     },
@@ -140,6 +168,8 @@ class CodexProvider(Protocol):
     def send_turn(self, text: str, *, thread_id: str | None = None) -> CodexTurnResult: ...
 
     def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None: ...
+
+    def runtime_call(self, method: str, params: dict[str, object] | None = None, *, timeout: float | None = None) -> dict[str, object]: ...
 
     def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]: ...
 
@@ -373,6 +403,14 @@ def _compact_composio_app(item: dict[str, object]) -> dict[str, object]:
     return row
 
 
+def agent_runtime_catalog_payload() -> dict[str, object]:
+    return {
+        "schema": "pucky.agent_runtime.catalog.v1",
+        "call": "agent.runtime.call",
+        "actions": [dict(item) for item in AGENT_RUNTIME_ACTIONS],
+    }
+
+
 class PuckyVoiceService:
     def __init__(
         self,
@@ -441,6 +479,56 @@ class PuckyVoiceService:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
         return "browser" if candidate == "browser" else "webview"
 
+    def agent_runtime_catalog(self) -> dict[str, object]:
+        return agent_runtime_catalog_payload()
+
+    def agent_runtime_call(self, payload: dict[str, object]) -> dict[str, object]:
+        method = str(payload.get("method") or payload.get("action") or "").strip()
+        if method not in AGENT_RUNTIME_ACTION_NAMES:
+            return {
+                "ok": False,
+                "schema": "pucky.agent_runtime.call.v1",
+                "error": "unsupported_agent_runtime_action",
+                "method": method,
+            }
+        params = payload.get("params")
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return {
+                "ok": False,
+                "schema": "pucky.agent_runtime.call.v1",
+                "error": "params_must_be_object",
+                "method": method,
+            }
+        runtime_call = getattr(self.codex, "runtime_call", None)
+        if not callable(runtime_call):
+            return {
+                "ok": False,
+                "schema": "pucky.agent_runtime.call.v1",
+                "error": "codex_runtime_call_unavailable",
+                "method": method,
+            }
+        try:
+            result = runtime_call(method, params, timeout=self.config.codex_turn_timeout)
+        except TypeError:
+            result = runtime_call(method, params)
+        except Exception as exc:
+            self.record_action(surface="agent_runtime", action=method, tool="agent.runtime.call", status="error")
+            return {
+                "ok": False,
+                "schema": "pucky.agent_runtime.call.v1",
+                "error": str(exc),
+                "method": method,
+            }
+        self.record_action(surface="agent_runtime", action=method, tool="agent.runtime.call", status="ok")
+        return {
+            "ok": True,
+            "schema": "pucky.agent_runtime.call.v1",
+            "method": method,
+            "result": result if isinstance(result, dict) else {},
+        }
+
     def record_action(
         self,
         *,
@@ -481,21 +569,18 @@ class PuckyVoiceService:
         composio_context = self._composio_runtime_context()
         return {
             "schema": "pucky.runtime_context.v1",
-            "agent_runtime": {
-                "discover_runtime_actions": "agent.runtime.catalog",
-                "call_runtime_action": "agent.runtime.call",
-            },
+            "agent_runtime": self.agent_runtime_catalog(),
             "action_log": {
                 "schema": "action_log.last_500.v1",
                 "rows": self.action_ledger.last_500(self.composio_user_id()),
             },
-            "connected_apps": composio_context,
+            "composio": composio_context,
+            "reply_card": self._reply_card_runtime_context(),
             "user_facing_app_html": {
                 "kind": "editable HTML/JS/CSS served by the VM and cached by the APK",
                 "official_bundle_url": "/ui/pucky/latest/bundle.zip",
                 "refresh_command": "ui.bundle.refresh",
                 "shell_mode_command": "ui.shell.mode.set=web_cached",
-                "live_ui_snapshot": "inject separately when needed",
             },
             "android_apk": {
                 "areas": [
@@ -524,12 +609,17 @@ class PuckyVoiceService:
             "configured": bool(self.composio.configured),
             "user_id": user_id,
             "base_url": self.config.composio_base_url,
-            "api_key_resource": "env:COMPOSIO_API_KEY",
-            "user_id_resource": "env:PUCKY_COMPOSIO_USER_ID",
-            "current_connected_accounts": "GET /connected_accounts?user_ids=<user_id>&limit=1000",
-            "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=200",
-            "connect_account": "POST /connected_accounts/link",
+            "resources": {
+                "api_key": "env:COMPOSIO_API_KEY",
+                "base_url": "env:COMPOSIO_BASE_URL",
+                "user_id": "env:PUCKY_COMPOSIO_USER_ID",
+            },
+            "endpoints": {
+                "connected_apps": "GET /connected_accounts?user_ids=<user_id>&limit=1000",
+                "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=200",
+            },
             "connected_apps": [],
+            "app_universe": [],
             "available_apps": [],
         }
         if not self.composio.configured:
@@ -574,8 +664,35 @@ class PuckyVoiceService:
             if len(available_apps) >= 200:
                 break
         context["connected_apps"] = connected_apps
+        context["app_universe"] = [
+            _compact_composio_app(item)
+            for item in list(apps_payload.get("apps") or [])
+            if isinstance(item, dict) and bool(item.get("connectable"))
+        ][:200]
         context["available_apps"] = available_apps
         return context
+
+    def _reply_card_runtime_context(self) -> dict[str, object]:
+        return {
+            "schema": "pucky.reply_card.runtime_context.v1",
+            "format": {
+                "reply_text": "spoken answer and feed tile summary",
+                "card_title": "feed tile title",
+                "card_icon": "selects icon and icon-owned accent color",
+                "html": "optional rich page",
+                "attachments": "optional files with path, mime_type, title, and viewer metadata",
+            },
+            "icons_endpoint": "GET /api/card-icons",
+            "icon_upsert_endpoint": "POST /api/card-icons",
+            "icons": [
+                {
+                    "name": icon["name"],
+                    "label": icon["label"],
+                    "accent": icon.get("accent", DEFAULT_CARD_ICON_ACCENT),
+                }
+                for icon in self._load_card_icons().values()
+            ],
+        }
 
     def _portal_token_secret(self) -> str:
         return str(self.config.connect_portal_secret or "").strip()
@@ -940,6 +1057,29 @@ class PuckyVoiceService:
     def artifact(self, artifact_id: str) -> dict[str, object] | None:
         return self.feed.get_artifact(artifact_id)
 
+    def _card_icon_accent(self, icon: object) -> str:
+        name = normalize_card_icon(icon)
+        registry = self._load_card_icons()
+        record = registry.get(name) or registry.get(DEFAULT_CARD_ICON) or {}
+        return str(record.get("accent") or DEFAULT_CARD_ICON_ACCENT)
+
+    def _decorate_feed_item(self, item: dict[str, object]) -> dict[str, object]:
+        icon = item.get("icon")
+        card = item.get("card")
+        if isinstance(card, dict):
+            icon = card.get("icon") or icon
+        accent = self._card_icon_accent(icon)
+        item["accent"] = accent
+        if isinstance(card, dict):
+            card["accent"] = accent
+        return item
+
+    def _decorate_feed_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        for item in list(payload.get("items") or []):
+            if isinstance(item, dict):
+                self._decorate_feed_item(item)
+        return payload
+
     def _load_card_icons(self) -> dict[str, dict[str, str]]:
         with self._card_icon_lock:
             runtime = self._load_runtime_card_icons_locked()
@@ -1221,6 +1361,7 @@ class PuckyVoiceService:
             "title": envelope.card_title,
             "summary": envelope.reply_text,
             "icon": envelope.card_icon,
+            "accent": self._card_icon_accent(envelope.card_icon),
             "origin": origin,
         }
         html_mime_type = ""
@@ -1266,8 +1407,9 @@ class PuckyVoiceService:
             _log_json(telemetry)
             raise RuntimeError("feed_persist_failed")
         telemetry["feed_persisted"] = True
-        result = verified
+        result = self._decorate_feed_item(verified)
         result["card"] = card
+        result["accent"] = card["accent"]
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -1384,7 +1526,7 @@ class PuckyVoiceService:
         return normalize_attachment(normalized)
 
     def feed_sync(self, cursor: str | None, limit: int) -> dict[str, object]:
-        return self.feed.list_feed(cursor, limit)
+        return self._decorate_feed_payload(self.feed.list_feed(cursor, limit))
 
     def feed_action(self, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
         return self.feed.apply_action(
@@ -1521,9 +1663,15 @@ def _normalize_card_icon_record(payload: dict[str, object]) -> dict[str, str]:
     return {
         "name": name,
         "label": str(payload.get("label") or name.replace("_", " ").title()).strip() or name,
+        "accent": normalize_card_icon_accent(payload.get("accent")),
         "filled_svg": filled_svg or outline_svg,
         "outline_svg": outline_svg or filled_svg,
     }
+
+
+def normalize_card_icon_accent(value: object) -> str:
+    accent = str(value or "").strip()
+    return accent.lower() if CARD_ICON_ACCENT_RE.fullmatch(accent) else DEFAULT_CARD_ICON_ACCENT
 
 
 def _sanitize_svg_fragment(value: object) -> str:
@@ -2398,6 +2546,12 @@ def make_handler(service: PuckyVoiceService):
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
                 return
+            if path == "/api/agent-runtime/catalog":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                self._json(HTTPStatus.OK, service.agent_runtime_catalog())
+                return
             if path == "/api/links/composio/portal-url":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -2605,6 +2759,24 @@ def make_handler(service: PuckyVoiceService):
         def do_POST(self) -> None:
             parsed = urlsplit(self.path)
             path = parsed.path
+            if path == "/api/agent-runtime/call":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("agent_runtime_payload_must_be_object")
+                    result = service.agent_runtime_call(payload)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "agent_runtime_call_failed", "detail": str(exc)})
+                    return
+                status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+                self._json(status, result)
+                return
             if path == "/api/links/composio/my-apps/refresh":
                 query = parse_qs(parsed.query)
                 try:

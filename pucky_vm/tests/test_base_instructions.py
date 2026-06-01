@@ -129,14 +129,31 @@ def test_runtime_context_injects_composio_summary_without_literal_api_key(tmp_pa
     )
 
     text = service.codex_base_instructions_for_thread()
+    context = service._base_runtime_context()
 
     assert text is not None
     assert "Gmail" in text
     assert "Slack" in text
     assert "secret-api-key" not in text
     assert "env:COMPOSIO_API_KEY" in text
+    assert "\"agent_runtime\"" in text
+    assert "thread/fork" in text
+    assert "\"reply_card\"" in text
+    assert "\"accent\"" in text
+    assert "\"app_universe\"" in text
     assert "connected_accounts.list" in text
     assert "\"action_log\"" in text
+    assert context["composio"]["connected_apps"] == [
+        {"slug": "gmail", "name": "Gmail", "status": "active", "id": "acct_1"}
+    ]
+    assert context["composio"]["app_universe"] == [
+        {"slug": "gmail", "name": "Gmail", "connectable": True},
+        {"slug": "slack", "name": "Slack", "connectable": True},
+    ]
+    assert context["composio"]["available_apps"] == [
+        {"slug": "slack", "name": "Slack", "connectable": True}
+    ]
+    assert "connect_account" not in context["composio"].get("endpoints", {})
 
 
 def test_static_custom_base_file_is_generic_and_compact():
@@ -148,13 +165,22 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "/memory/MEMORY.md" in text
     assert "max 3000 chars" in text
     assert "max 1000 words" in text
+    assert "filename is the card title" in text
     assert "created date" in text
     assert "last edited date" in text
+    assert "POST /connected_accounts/link" not in text
+    assert "composio.connected_apps" in text
+    assert "composio.app_universe" in text
+    assert "composio.available_apps" in text
     assert "command.catalog" in text
     assert "capabilities.get" in text
     assert "POST /v1/devices/{device_id}/commands" in text
+    assert "## Reply Format" in text
+    assert "reply_card.icons" in text
+    assert "POST /api/card-icons" in text
     assert "Home/feed" not in text
     assert "Audiobooks" not in text
     assert "Always return strict JSON" not in text
     assert "Never store secrets" not in text
+    assert "Static base instructions should not hardcode" not in text
     assert not (repo / "docs" / "pucky-developer-instructions-custom.md").exists()
