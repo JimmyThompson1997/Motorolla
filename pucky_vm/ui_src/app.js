@@ -18,6 +18,9 @@
   const CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX = 96;
   const CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS = 0.55;
   const CARD_ARCHIVE_SWIPE_SLOP_PX = 12;
+  const CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280;
+  const CARD_ARCHIVE_SWIPE_EXIT_MS = 320;
+  const CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -5246,13 +5249,34 @@
       wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= triggerDistance());
     };
 
-    const reset = () => {
+    const clearSwipeClasses = () => {
+      wrapper.classList.remove(
+        "is-card-swipe-active",
+        "is-card-swipe-armed",
+        "is-card-swipe-dragging",
+        "is-card-snapback",
+        "is-card-swiped-away",
+        "is-card-collapsing"
+      );
+    };
+
+    const reset = (options = {}) => {
       releasePointerCapture();
       active = false;
       horizontal = false;
       swiped = false;
       activePointerId = null;
+      if (options.animate && swipeOffset > 0) {
+        wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-armed");
+        wrapper.classList.add("is-card-snapback");
+        applyOffset(0);
+        window.setTimeout(() => {
+          wrapper.classList.remove("is-card-snapback", "is-card-swipe-active");
+        }, CARD_ARCHIVE_SWIPE_SNAPBACK_MS);
+        return;
+      }
       applyOffset(0);
+      clearSwipeClasses();
     };
 
     const capturePointer = pointer => {
@@ -5293,6 +5317,9 @@
       active = true;
       horizontal = false;
       swiped = false;
+      wrapper.style.height = "";
+      wrapper.style.marginBottom = "";
+      clearSwipeClasses();
       applyOffset(0);
     };
 
@@ -5315,6 +5342,7 @@
         return;
       }
       horizontal = true;
+      wrapper.classList.add("is-card-swipe-dragging");
       if (dx <= 0) {
         applyOffset(0);
         return;
@@ -5332,20 +5360,28 @@
       const committed = swipeOffset >= triggerDistance()
         || (velocityX >= CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS && swipeOffset >= CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX);
       if (!horizontal || !committed || swiped) {
-        reset();
+        reset({ animate: horizontal });
         return;
       }
       swiped = true;
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
       const rollback = applyOptimisticArchive(card);
+      const measuredHeight = wrapper.getBoundingClientRect().height;
+      wrapper.style.height = `${Math.max(1, Math.ceil(measuredHeight))}px`;
       wrapper.classList.add("is-card-swiped-away");
+      wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-active", "is-card-swipe-armed", "is-card-snapback");
       applyOffset(maxDragDistance());
       window.setTimeout(() => {
-        render();
-      }, 140);
+        wrapper.classList.add("is-card-collapsing");
+        window.setTimeout(() => {
+          render();
+        }, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);
+      }, CARD_ARCHIVE_SWIPE_EXIT_MS);
       void archiveHomeCard(card).then(result => {
         if (result === null) {
-          wrapper.classList.remove("is-card-swiped-away");
+          wrapper.style.height = "";
+          wrapper.style.marginBottom = "";
+          clearSwipeClasses();
           rollback();
         }
       });

@@ -818,12 +818,38 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     assert "state.cards = previousCards;" in optimistic
     assert "const committed = swipeOffset >= triggerDistance()" in swipe
     assert "velocityX >= CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS" in swipe
-    assert "window.setTimeout(() => {" in swipe
+    assert "CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280" in app
+    assert "CARD_ARCHIVE_SWIPE_EXIT_MS = 320" in app
+    assert "CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320" in app
+    assert 'wrapper.classList.add("is-card-swipe-dragging")' in swipe
+    assert 'reset({ animate: horizontal })' in swipe
+    assert 'wrapper.classList.add("is-card-snapback")' in swipe
+    assert 'wrapper.classList.add("is-card-swiped-away")' in swipe
+    assert 'wrapper.classList.add("is-card-collapsing")' in swipe
+    assert "wrapper.getBoundingClientRect().height" in swipe
+    assert "window.setTimeout(() => {\n        wrapper.classList.add(\"is-card-collapsing\");" in swipe
+    assert "}, CARD_ARCHIVE_SWIPE_EXIT_MS);" in swipe
+    assert "}, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);" in swipe
+    assert "}, 140);" not in swipe
     assert "if (usePointerEvents)" in swipe
     assert "event.preventDefault();" in swipe
     assert "passive: false" in swipe
 
     swipe_css = styles[styles.index(".card-swipe-action"):styles.index(".card-wrap .card")]
+    wrap_css = styles[styles.index(".card-wrap {"):styles.index(".card-swipe-action")]
+    motion_start = styles.index(".card-wrap .card {")
+    motion_css = styles[motion_start:styles.index("\n.card {", motion_start)]
+    assert "height 320ms" in wrap_css
+    assert "margin-bottom 320ms" in wrap_css
+    assert ".card-wrap.is-card-swipe-dragging .card" in motion_css
+    assert "transition: none;" in motion_css
+    assert ".card-wrap.is-card-snapback .card" in motion_css
+    assert "transform 280ms" in motion_css
+    assert ".card-wrap.is-card-swiped-away .card" in motion_css
+    assert "transform 320ms" in motion_css
+    assert ".card-wrap.is-card-collapsing" in motion_css
+    assert "height: 0 !important;" in motion_css
+    assert "margin-bottom: 0;" in motion_css
     assert ".card-wrap::before" not in styles
     assert "color: #fff;" in swipe_css
     assert "fill: currentColor;" in swipe_css
