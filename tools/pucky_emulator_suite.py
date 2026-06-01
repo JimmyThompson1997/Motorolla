@@ -37,7 +37,10 @@ if str(ROOT) not in sys.path:
 
 from pucky_vm.attachment_manifest import normalize_attachments
 from pucky_vm.server import Config, PuckyVoiceService, make_handler, reset_broker_for_tests
+from tools.pucky_emulator_support import bootstrap as emu_bootstrap_support
+from tools.pucky_emulator_support import capture as emu_capture_support
 from tools.pucky_emulator_support import display as emu_display_support
+from tools.pucky_emulator_support import state as emu_state_support
 from tools.pucky_emulator_support import vm as emu_vm_support
 
 ANDROID_TOOLS = Path(r"C:\Users\jimmy\Desktop\Android\tools")
@@ -760,41 +763,19 @@ class Runner:
 
 
 def sdk_env(args: argparse.Namespace, config: SlotConfig) -> dict[str, str]:
-    env = os.environ.copy()
-    env["ANDROID_HOME"] = str(args.android_home)
-    env["ANDROID_SDK_ROOT"] = str(args.android_home)
-    env["ANDROID_AVD_HOME"] = config.avd_home
-    env["JAVA_HOME"] = str(args.java_home)
-    if getattr(args, "audio_mode", "none") == "wav-in":
-        raw_wav_in = getattr(args, "audio_wav_in", None)
-        if raw_wav_in is None or str(raw_wav_in).strip() == "":
-            raise SuiteError("--audio-wav-in is required with --audio-mode wav-in")
-        wav_in = Path(raw_wav_in)
-        if not args.dry_run and not wav_in.exists():
-            raise SuiteError(f"Audio WAV input not found: {wav_in}")
-        env["QEMU_WAV_IN_PATH"] = str(wav_in)
-        env["QEMU_WAV_PATH"] = str(Path(config.evidence_dir) / "qemu-audio-out.wav")
-        env["QEMU_AUDIO_ADC_FIXED_FREQ"] = "44100"
-        env["QEMU_AUDIO_ADC_FIXED_FMT"] = "S16"
-        env["QEMU_AUDIO_ADC_FIXED_CHANNELS"] = "1"
-    return env
+    return emu_bootstrap_support.sdk_env(
+        args,
+        config,
+        error_cls=SuiteError,
+    )
 
 
 def avdmanager_create_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    return [
-        str(args.avdmanager),
-        "create",
-        "avd",
-        "--force",
-        "--name",
-        config.avd_name,
-        "--package",
-        args.system_image,
-        "--device",
-        args.device_profile,
-        "--sdcard",
-        DEFAULT_SDCARD_SIZE,
-    ]
+    return emu_bootstrap_support.avdmanager_create_command(
+        args,
+        config,
+        sdcard_size=DEFAULT_SDCARD_SIZE,
+    )
 
 
 def avd_artifacts_exist(config: SlotConfig) -> bool:
@@ -805,33 +786,12 @@ def avd_artifacts_exist(config: SlotConfig) -> bool:
 
 
 def emulator_start_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    command = [
-        str(args.emulator),
-        "-avd",
-        config.avd_name,
-        "-port",
-        str(config.emulator_port),
-        "-no-window",
-        "-partition-size",
-        DEFAULT_USERDATA_PARTITION_MB,
-    ]
-    mode = getattr(args, "audio_mode", "none")
-    if mode == "none":
-        command.append("-no-audio")
-    elif mode == "host":
-        command.extend(["-audio", "dsound", "-allow-host-audio"])
-    elif mode == "wav-in":
-        command.extend(["-audio", "wav"])
-    else:
-        raise SuiteError(f"Unsupported audio mode: {mode}")
-    command.extend([
-        "-no-snapshot-load",
-        "-no-snapshot-save",
-        "-no-boot-anim",
-        "-gpu",
-        "swiftshader_indirect",
-    ])
-    return command
+    return emu_bootstrap_support.emulator_start_command(
+        args,
+        config,
+        userdata_partition_mb=DEFAULT_USERDATA_PARTITION_MB,
+        error_cls=SuiteError,
+    )
 
 
 def tune_avd_config(
@@ -840,123 +800,56 @@ def tune_avd_config(
     userdata_size: str = DEFAULT_USERDATA_PARTITION_SIZE,
     wait_seconds: float = 10.0,
 ) -> None:
-    config_path = Path(config.avd_home) / f"{config.avd_name}.avd" / "config.ini"
-    deadline = time.monotonic() + max(0.0, wait_seconds)
-    while not config_path.exists() and time.monotonic() < deadline:
-        time.sleep(0.25)
-    if not config_path.exists():
-        return
-    lines = config_path.read_text(encoding="utf-8").splitlines()
-    updated = False
-    for index, line in enumerate(lines):
-        if re.match(r"^\s*disk\.dataPartition\.size\s*=", line):
-            lines[index] = f"disk.dataPartition.size = {userdata_size}"
-            updated = True
-            continue
-    if not updated:
-        lines.append(f"disk.dataPartition.size = {userdata_size}")
-    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    emu_bootstrap_support.tune_avd_config(
+        config,
+        userdata_size=userdata_size,
+        wait_seconds=wait_seconds,
+        monotonic=time.monotonic,
+        sleep=time.sleep,
+    )
 
 
 def adb_command(args: argparse.Namespace, serial: str, command: Iterable[str]) -> list[str]:
-    require_emulator_serial(serial)
-    return [str(args.adb), "-s", serial, *command]
+    return emu_bootstrap_support.adb_command(
+        args,
+        serial,
+        command,
+        require_serial=require_emulator_serial,
+    )
 
 
 def launch_provisioning_json(args: argparse.Namespace, config: SlotConfig) -> str | None:
-    turn_url = str(getattr(args, "turn_url", "") or "").strip()
-    turn_token = str(getattr(args, "turn_token", "") or "").strip()
-    if not turn_url and not turn_token:
-        return None
-    payload: dict[str, Any] = {
-        "schema": "pucky.provisioning.v1",
-        "device_id": config.device_id,
-        "broker_url": f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect",
-        "token": "dev-token",
-        "ui_shell_mode": "web_cached",
-    }
-    if turn_url:
-        payload["pucky_turn_url"] = turn_url
-    if turn_token:
-        payload["pucky_api_token"] = turn_token
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return base64.b64encode(raw).decode("ascii")
+    return emu_bootstrap_support.launch_provisioning_json(args, config)
 
 
 def effective_activity_name(args: argparse.Namespace, config: SlotConfig) -> str:
-    requested = str(getattr(args, "activity_name", "") or "").strip()
-    if getattr(args, "dry_run", False):
-        return requested or DEFAULT_ACTIVITY
-    if requested and requested != DEFAULT_ACTIVITY:
-        return requested
-    try:
-        result = subprocess.run(
-            adb_command(
-                args,
-                config.serial,
-                ["shell", "cmd", "package", "resolve-activity", "--brief", args.package_name],
-            ),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return requested or DEFAULT_ACTIVITY
-    for raw_line in reversed((result.stdout or "").splitlines()):
-        line = raw_line.strip()
-        if not line or "/" not in line or args.package_name not in line:
-            continue
-        _, activity = line.split("/", 1)
-        activity = activity.strip()
-        if not activity:
-            continue
-        if activity.startswith("."):
-            return f"{args.package_name}{activity}"
-        return activity
-    return requested or DEFAULT_ACTIVITY
+    return emu_bootstrap_support.effective_activity_name(
+        args,
+        config,
+        default_activity=DEFAULT_ACTIVITY,
+        adb_command_fn=adb_command,
+        subprocess_module=subprocess,
+    )
 
 
 def launch_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    activity_name = effective_activity_name(args, config)
-    command = [
-        "shell",
-        "am",
-        "start",
-        "-n",
-        f"{args.package_name}/{activity_name}",
-        "--es",
-        "broker_url",
-        f"ws://127.0.0.1:{config.broker_port}/v1/devices/{config.device_id}/connect",
-        "--es",
-        "device_id",
-        config.device_id,
-        "--es",
-        "token",
-        "dev-token",
-    ]
-    provisioning_json = launch_provisioning_json(args, config)
-    if provisioning_json:
-        command.extend(["--es", "provisioning_json_base64", provisioning_json])
-    command.extend(["--ez", "connect", "true"])
-    return adb_command(args, config.serial, command)
+    return emu_bootstrap_support.launch_command(
+        args,
+        config,
+        activity_name=effective_activity_name(args, config),
+        provisioning_json=launch_provisioning_json(args, config),
+        adb_command_fn=adb_command,
+    )
 
 
 def launch_home_command(args: argparse.Namespace, config: SlotConfig) -> list[str]:
-    command = [
-        "shell",
-        "am",
-        "start",
-        "-n",
-        f"{args.package_name}/{effective_activity_name(args, config)}",
-        "--ez",
-        "show_home",
-        "true",
-    ]
-    provisioning_json = launch_provisioning_json(args, config)
-    if provisioning_json:
-        command.extend(["--es", "provisioning_json_base64", provisioning_json])
-    return adb_command(args, config.serial, command)
+    return emu_bootstrap_support.launch_home_command(
+        args,
+        config,
+        activity_name=effective_activity_name(args, config),
+        provisioning_json=launch_provisioning_json(args, config),
+        adb_command_fn=adb_command,
+    )
 
 
 def launch_home_resilient(
@@ -1160,18 +1053,22 @@ def broker_device_snapshot(config: SlotConfig, *, timeout: float = 4.0) -> dict[
 
 
 def boot_signal(args: argparse.Namespace, runner: Runner, config: SlotConfig, prop: str) -> str:
-    result = runner.run(adb_command(args, config.serial, ["shell", "getprop", prop]), timeout=15, check=False)
-    return result.stdout.strip()
+    return emu_bootstrap_support.boot_signal(
+        args,
+        runner,
+        config,
+        prop,
+        adb_command_fn=adb_command,
+    )
 
 
 def emulator_boot_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
-    if boot_signal(args, runner, config, "sys.boot_completed") == "1":
-        return True
-    if boot_signal(args, runner, config, "dev.bootcomplete") == "1":
-        return True
-    if boot_signal(args, runner, config, "service.bootanim.exit") == "1":
-        return True
-    return boot_signal(args, runner, config, "init.svc.bootanim") == "stopped"
+    return emu_bootstrap_support.emulator_boot_ready(
+        args,
+        runner,
+        config,
+        boot_signal_fn=boot_signal,
+    )
 
 
 def process_alive(pid: int | None) -> bool:
@@ -1209,56 +1106,24 @@ def wait_for_boot(
 
 
 def package_manager_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
-    try:
-        service = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "package"]), timeout=15, check=False)
-    except subprocess.TimeoutExpired:
-        return False
-    service_text = (service.stdout + "\n" + service.stderr).lower()
-    if service.returncode != 0 or "can't find service" in service_text or "not found" in service_text:
-        return False
-
-    try:
-        query = runner.run(
-            adb_command(args, config.serial, ["shell", "cmd", "package", "list", "packages", "android"]),
-            timeout=20,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False
-    query_text = (query.stdout + "\n" + query.stderr).lower()
-    if query.returncode == 0 and "package:android" in query_text:
-        return True
-    if "can't find service" in query_text or "not found" in query_text:
-        return False
-
-    try:
-        fallback = runner.run(adb_command(args, config.serial, ["shell", "pm", "path", "android"]), timeout=20, check=False)
-    except subprocess.TimeoutExpired:
-        return False
-    fallback_text = (fallback.stdout + "\n" + fallback.stderr).lower()
-    return fallback.returncode == 0 and "package:" in fallback_text and "can't find service" not in fallback_text
+    return emu_bootstrap_support.package_manager_ready(
+        args,
+        runner,
+        config,
+        adb_command_fn=adb_command,
+        subprocess_module=subprocess,
+    )
 
 
 def install_services_ready(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> bool:
-    if not package_manager_ready(args, runner, config):
-        return False
-    try:
-        mount = runner.run(adb_command(args, config.serial, ["shell", "service", "check", "mount"]), timeout=15, check=False)
-    except subprocess.TimeoutExpired:
-        return False
-    mount_text = (mount.stdout + "\n" + mount.stderr).lower()
-    if mount.returncode != 0 or "can't find service" in mount_text or "not found" in mount_text:
-        return False
-    try:
-        volumes = runner.run(adb_command(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=20, check=False)
-    except subprocess.TimeoutExpired:
-        return False
-    volumes_text = (volumes.stdout + "\n" + volumes.stderr).lower()
-    if volumes.returncode != 0:
-        return False
-    if "exception" in volumes_text or "null object reference" in volumes_text:
-        return False
-    return "mounted" in volumes_text
+    return emu_bootstrap_support.install_services_ready(
+        args,
+        runner,
+        config,
+        package_manager_ready_fn=package_manager_ready,
+        adb_command_fn=adb_command,
+        subprocess_module=subprocess,
+    )
 
 
 def wait_for_install_services(
@@ -1286,17 +1151,7 @@ def wait_for_install_services(
 
 
 def is_streamed_install_storage_service_failure(exc: Exception) -> bool:
-    text = str(exc or "").lower()
-    if "performing streamed install" in text and "failed to install" in text and "stderr:" in text:
-        return True
-    return (
-        "performing streamed install" in text
-        and "nullpointerexception" in text
-        and (
-            "packagemanagerinternal.freestorage" in text
-            or "storagemanagerservice.allocatebytes" in text
-        )
-    )
+    return emu_bootstrap_support.is_streamed_install_storage_service_failure(exc)
 
 
 def install_apk_resilient(
@@ -1304,88 +1159,65 @@ def install_apk_resilient(
     runner: Runner,
     config: SlotConfig,
 ) -> None:
-    install_command = adb_command(args, config.serial, ["install", "-r", str(args.apk)])
-    try:
-        runner.run(install_command, timeout=180)
-        return
-    except SuiteError as exc:
-        if args.dry_run or not is_streamed_install_storage_service_failure(exc):
-            raise
-    runner.run(adb_command(args, config.serial, ["install", "--no-streaming", "-r", str(args.apk)]), timeout=300)
+    emu_bootstrap_support.install_apk_resilient(
+        args,
+        runner,
+        config,
+        adb_command_fn=adb_command,
+        is_streamed_install_storage_service_failure_fn=is_streamed_install_storage_service_failure,
+    )
 
 
 def serial_is_connected(args: argparse.Namespace, runner: Runner, serial: str) -> bool:
-    require_emulator_serial(serial)
-    if runner.dry_run:
-        return True
-    result = runner.run([str(args.adb), "devices", "-l"], check=False)
-    return any(device.serial == serial and device.state == "device" for device in parse_adb_devices(result.stdout))
+    return emu_bootstrap_support.serial_is_connected(
+        args,
+        runner,
+        serial,
+        require_serial=require_emulator_serial,
+        parse_adb_devices_fn=parse_adb_devices,
+    )
 
 
 def adb_transport_state(args: argparse.Namespace, runner: Runner, serial: str) -> str:
-    require_emulator_serial(serial)
-    if runner.dry_run:
-        return "device"
-    result = runner.run([str(args.adb), "devices", "-l"], check=False, timeout=15)
-    for device in parse_adb_devices(result.stdout):
-        if device.serial == serial:
-            return device.state
-    return "missing"
+    return emu_bootstrap_support.adb_transport_state(
+        args,
+        runner,
+        serial,
+        require_serial=require_emulator_serial,
+        parse_adb_devices_fn=parse_adb_devices,
+    )
 
 
 def parse_display_ids(output: str) -> list[str]:
-    ids: list[str] = []
-    for line in output.splitlines():
-        line = line.strip()
-        if line.startswith("Display "):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].isdigit():
-                ids.append(parts[1])
-    return ids
+    return emu_bootstrap_support.parse_display_ids(output)
 
 
 def primary_display_id(args: argparse.Namespace, runner: Runner, config: SlotConfig) -> str | None:
-    result = runner.run(adb_command(args, config.serial, ["shell", "dumpsys", "SurfaceFlinger", "--display-id"]), check=False, timeout=30)
-    ids = parse_display_ids(result.stdout)
-    return ids[0] if ids else None
+    return emu_bootstrap_support.primary_display_id(
+        args,
+        runner,
+        config,
+        adb_command_fn=adb_command,
+    )
 
 
 def load_state(root: Path, slot: int) -> dict[str, Any]:
-    path = root / ".tmp" / "pucky-emulator" / "state" / f"slot{slot:02d}.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return emu_state_support.load_state(root, slot)
 
 
 def save_state(config: SlotConfig, extra: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "schema": "pucky.emulator_slot_state.v1",
-        "saved_at": now_iso(),
-        "slot": config.slot,
-        "run_id": config.run_id,
-        **extra,
-    }
-    path = Path(config.state_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return payload
+    return emu_state_support.save_state(config, extra, now_iso=now_iso)
 
 
 def state_pid(value: Any) -> int | None:
-    try:
-        pid = int(value)
-    except (TypeError, ValueError):
-        return None
-    return pid if pid > 0 else None
+    return emu_state_support.state_pid(value)
 
 
 def slot_state_has_live_processes(state: dict[str, Any] | None) -> bool:
-    if not isinstance(state, dict):
-        return False
-    pids = state.get("pids")
-    if not isinstance(pids, dict):
-        return False
-    return any(process_alive(state_pid(value)) for value in pids.values())
+    return emu_state_support.slot_state_has_live_processes(
+        state,
+        process_alive=process_alive,
+    )
 
 
 def slot_is_for_sure_free(
@@ -2415,11 +2247,11 @@ def card_open_title(card: dict[str, Any]) -> str:
 
 
 def screenshot_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return emu_capture_support.screenshot_sha256(path)
 
 
 def file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return emu_capture_support.file_sha256(path)
 
 
 def normalize_vm_sandbox(value: object) -> str:
@@ -2515,30 +2347,18 @@ def verify_origin_against_vm(origin: dict[str, Any], vm_thread: dict[str, Any], 
 
 
 def capture_screenshot(args: argparse.Namespace, runner: Runner, config: SlotConfig, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    display_id = primary_display_id(args, runner, config)
-    screencap_args = emu_display_support.screencap_args(display_id)
-    if runner.dry_run:
-        runner.run(adb_command(args, config.serial, screencap_args), timeout=30)
-        return
-    with path.open("wb") as out:
-        subprocess.run(adb_command(args, config.serial, screencap_args), stdout=out, check=True, timeout=30)
+    emu_capture_support.capture_screenshot(
+        args,
+        runner,
+        config,
+        path,
+        adb_command_fn=adb_command,
+        primary_display_id_fn=primary_display_id,
+        screencap_args_fn=emu_display_support.screencap_args,
+        subprocess_module=subprocess,
+    )
 
-
-@dataclass
-class AsyncScreenshotCapture:
-    thread: threading.Thread
-    result: dict[str, Any]
-    runner: Runner
-
-    def wait(self) -> None:
-        self.thread.join()
-        if self.runner.planned:
-            self.result.setdefault("commands", [])
-            self.result["commands"].extend(self.runner.planned)
-        error = self.result.get("error")
-        if error:
-            raise error
+AsyncScreenshotCapture = emu_capture_support.AsyncScreenshotCapture
 
 
 def start_async_screenshot_capture(
@@ -2547,18 +2367,14 @@ def start_async_screenshot_capture(
     config: SlotConfig,
     path: Path,
 ) -> AsyncScreenshotCapture:
-    async_runner = Runner(dry_run=runner.dry_run)
-    result: dict[str, Any] = {}
-
-    def work() -> None:
-        try:
-            capture_screenshot(args, async_runner, config, path)
-        except Exception as exc:  # pragma: no cover - propagated by wait()
-            result["error"] = exc
-
-    thread = threading.Thread(target=work, name=f"capture-{path.name}", daemon=True)
-    thread.start()
-    return AsyncScreenshotCapture(thread=thread, result=result, runner=async_runner)
+    return emu_capture_support.start_async_screenshot_capture(
+        args,
+        runner,
+        config,
+        path,
+        runner_cls=Runner,
+        capture_screenshot_fn=capture_screenshot,
+    )
 
 
 def doctor(args: argparse.Namespace) -> dict[str, Any]:
