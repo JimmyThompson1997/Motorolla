@@ -801,6 +801,33 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(archive["ok"])
         self.assertTrue(archive["item"]["archived"])
 
+    def test_feed_sync_supports_compact_active_home_feed(self) -> None:
+        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_compact_turn")
+
+        full = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertIn("audio_base64", full["items"][0])
+
+        compact = self.get_json("/api/feed?limit=10&compact=1", headers={"Authorization": "Bearer secret"})
+        self.assertNotIn("audio_base64", compact["items"][0])
+        self.assertNotIn("html_base64", compact["items"][0])
+        self.assertEqual(compact["items"][0]["card_id"], turn["card_id"])
+
+        archive = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "feed_compact_archive",
+                "card_id": turn["card_id"],
+                "action": "archive",
+            },
+        )
+        self.assertTrue(archive["ok"])
+
+        active = self.get_json(
+            "/api/feed?limit=10&compact=1&include_archived=0",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(active["items"], [])
+
     def test_turn_fails_closed_when_feed_readback_is_missing(self) -> None:
         original_get_item = self.service.feed.get_item
         self.service.feed.get_item = lambda card_id: None  # type: ignore[assignment]

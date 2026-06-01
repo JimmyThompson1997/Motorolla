@@ -194,16 +194,25 @@ class FeedStore:
                 )
             return self._build_item(card_id)
 
-    def list_feed(self, cursor: str | None, limit: int) -> dict[str, object]:
+    def list_feed(
+        self,
+        cursor: str | None,
+        limit: int,
+        *,
+        include_archived: bool = True,
+        compact: bool = False,
+    ) -> dict[str, object]:
         safe_limit = max(1, min(100, int(limit or 20)))
         updated_after_ms, after_card_id = _cursor_decode(cursor)
         with self._lock:
+            archived_clause = "" if include_archived else "AND archived = 0"
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT card_id
                 FROM feed_cards
-                WHERE (updated_at_ms > ?)
-                   OR (updated_at_ms = ? AND card_id > ?)
+                WHERE ((updated_at_ms > ?)
+                   OR (updated_at_ms = ? AND card_id > ?))
+                  {archived_clause}
                 ORDER BY updated_at_ms ASC, card_id ASC
                 LIMIT ?
                 """,
@@ -219,7 +228,10 @@ class FeedStore:
                     continue
                 seen_group_keys.add(group_key)
                 group_keys.append(group_key)
-            items = [self._build_group_item(group_key) for group_key in group_keys]
+            items = [
+                self._build_group_item(group_key, include_archived=include_archived, compact=compact)
+                for group_key in group_keys
+            ]
             next_cursor = ""
             if rows:
                 last = self._fetch_card_row(rows[-1]["card_id"])
@@ -590,13 +602,21 @@ class FeedStore:
         row = self._fetch_card_row(group_key.split(":", 1)[1])
         return [row] if row is not None else []
 
-    def _build_group_item(self, group_key: str) -> dict[str, object]:
+    def _build_group_item(
+        self,
+        group_key: str,
+        *,
+        include_archived: bool = True,
+        compact: bool = False,
+    ) -> dict[str, object]:
         rows = self._card_rows_for_group(group_key)
+        if not include_archived:
+            rows = [row for row in rows if not bool(int(row["archived"]))]
         if not rows:
             raise KeyError("card_not_found")
         rows.sort(key=lambda row: (int(row["updated_at_ms"]), str(row["card_id"])))
         latest = rows[-1]
-        latest_item = self._build_item(str(latest["card_id"]))
+        latest_item = self._build_item(str(latest["card_id"]), compact=compact)
         transcript_messages: list[object] = []
         for row in rows:
             turn = self._conn.execute(
@@ -622,7 +642,7 @@ class FeedStore:
             card["thread_history_count"] = len(rows)
         return latest_item
 
-    def _build_item(self, card_id: str) -> dict[str, object]:
+    def _build_item(self, card_id: str, *, compact: bool = False) -> dict[str, object]:
         row = self._fetch_card_row(card_id)
         if row is None:
             raise KeyError("card_not_found")
@@ -681,10 +701,10 @@ class FeedStore:
             },
             "telemetry": telemetry,
         }
-        if audio is not None:
+        if not compact and audio is not None:
             item["audio_mime_type"] = str(audio["mime_type"])
             item["audio_base64"] = str(audio["content_base64"])
-        if html is not None:
+        if not compact and html is not None:
             item["html_mime_type"] = str(html["mime_type"])
             item["html_base64"] = str(html["content_base64"])
             card = item["card"]

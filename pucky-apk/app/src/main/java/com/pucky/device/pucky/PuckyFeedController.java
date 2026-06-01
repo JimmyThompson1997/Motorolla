@@ -72,10 +72,11 @@ public final class PuckyFeedController {
 
     public JSONObject sync(JSONObject args) throws CommandException {
         String reason = args.optString("reason", "manual");
-        int limit = args.optInt("limit", 20);
         boolean emitUpdate = true;
         boolean resetCursor = args.optBoolean("reset_cursor", false);
         boolean authoritative = args.optBoolean("authoritative", false);
+        int defaultLimit = authoritative ? 100 : 20;
+        int limit = args.optInt("limit", defaultLimit);
         return syncInternal(reason, limit, emitUpdate, resetCursor, authoritative);
     }
 
@@ -274,7 +275,8 @@ public final class PuckyFeedController {
 
     private JSONObject fetchPage(String cursor, int limit) throws Exception {
         String url = feedUrl() + "?cursor=" + URLEncoder.encode(cursor == null ? "" : cursor, "UTF-8")
-                + "&limit=" + Math.max(1, Math.min(100, limit));
+                + "&limit=" + Math.max(1, Math.min(100, limit))
+                + "&include_archived=0&compact=1";
         Request request = new Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())

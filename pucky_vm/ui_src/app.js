@@ -981,6 +981,7 @@
       let payload = null;
       if (!state.links.token || options.force === true) {
         linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
+        await ensureLinksApiConfig();
         payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
         state.links.portal_url = payload.portal_url;
         state.links.token = payload.token;
@@ -1631,19 +1632,40 @@
   }
 
   function linksApiBaseUrl() {
+    if (state.links.apiBaseUrl) {
+      return state.links.apiBaseUrl;
+    }
     if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
       return String(window.location.origin || "").replace(/\/$/, "");
     }
     return DEFAULT_LINKS_API_BASE;
   }
 
+  async function ensureLinksApiConfig() {
+    if (state.links.apiBaseUrl || !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      return;
+    }
+    try {
+      const config = await Pucky.request({ command: "pucky.config.get", args: {} });
+      state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
+      state.links.apiToken = String(config && config.api_token || "");
+    } catch (_) {
+      state.links.apiBaseUrl = "";
+      state.links.apiToken = "";
+    }
+  }
+
   async function linksApiRequest(path, options = {}) {
+    await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
       headers: {}
     };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -2152,6 +2174,8 @@
       error: "",
       portal_url: "",
       token: "",
+      apiBaseUrl: "",
+      apiToken: "",
       auth_mode: "browser",
       apps: [],
       connectedApps: [],

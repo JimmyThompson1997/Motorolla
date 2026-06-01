@@ -80,6 +80,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "links-portal-frame" not in app
     assert "loadLinksPortal({ render: true });" in app
     assert '"/api/links/composio/portal-url"' in app
+    assert 'const config = await Pucky.request({ command: "pucky.config.get", args: {} });' in app
+    assert "state.links.apiBaseUrl = String(config && config.api_base_url || \"\").replace(/\\/$/, \"\");" in app
+    assert "init.headers.Authorization = `Bearer ${state.links.apiToken}`;" in app
     assert 'state.links.token = payload.token;' in app
     assert "const LINKS_ROW_HEIGHT = 62;" in app
     assert "const LINKS_WINDOW_OVERSCAN = 8;" in app

@@ -84,6 +84,8 @@ public final class PuckyWebBridge {
                 return PuckyFeedController.shared(context).sync(args);
             case "pucky.feed.action":
                 return PuckyFeedController.shared(context).action(args);
+            case "pucky.config.get":
+                return puckyConfig();
             case "player.state":
                 return player.state();
             case "player.load":
@@ -181,6 +183,31 @@ public final class PuckyWebBridge {
         Json.put(out, "mode", settings.getUiShellMode());
         Json.put(out, "web_cached", settings.isWebCachedUiEnabled());
         return out;
+    }
+
+    private JSONObject puckyConfig() {
+        String turnUrl = settings.getPuckyTurnUrl();
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.web_config.v1");
+        Json.put(out, "api_base_url", apiBaseUrl(turnUrl));
+        Json.put(out, "api_token", settings.getPuckyApiToken());
+        Json.put(out, "has_api_token", !settings.getPuckyApiToken().trim().isEmpty());
+        return out;
+    }
+
+    private static String apiBaseUrl(String turnUrl) {
+        String base = turnUrl == null ? "" : turnUrl.trim();
+        int queryIndex = base.indexOf('?');
+        if (queryIndex >= 0) {
+            base = base.substring(0, queryIndex);
+        }
+        if (base.endsWith("/api/turn")) {
+            return base.substring(0, base.length() - "/api/turn".length());
+        }
+        if (base.endsWith("/turn")) {
+            return base.substring(0, base.length() - "/turn".length());
+        }
+        return base.replaceAll("/+$", "");
     }
 
     private JSONObject defaultAudioSpeed() {

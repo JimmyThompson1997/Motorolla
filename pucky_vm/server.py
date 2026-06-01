@@ -91,6 +91,10 @@ PUCKY_BASE_PLACEHOLDERS = (
 )
 
 
+def _truthy_query(value: object) -> bool:
+    return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def load_codex_base_instructions_file(path: str | None) -> str | None:
     clean = str(path or "").strip()
     if not clean:
@@ -1690,8 +1694,17 @@ class PuckyVoiceService:
             return None
         return normalize_attachment(normalized)
 
-    def feed_sync(self, cursor: str | None, limit: int) -> dict[str, object]:
-        return self._decorate_feed_payload(self.feed.list_feed(cursor, limit))
+    def feed_sync(
+        self,
+        cursor: str | None,
+        limit: int,
+        *,
+        include_archived: bool = True,
+        compact: bool = False,
+    ) -> dict[str, object]:
+        return self._decorate_feed_payload(
+            self.feed.list_feed(cursor, limit, include_archived=include_archived, compact=compact)
+        )
 
     def feed_action(self, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
         return self.feed.apply_action(
@@ -2877,8 +2890,15 @@ def make_handler(service: PuckyVoiceService):
                 query = parse_qs(parsed.query)
                 cursor = query.get("cursor", [""])[0]
                 limit = query.get("limit", ["20"])[0]
+                include_archived = _truthy_query(query.get("include_archived", ["1"])[0])
+                compact = _truthy_query(query.get("compact", ["0"])[0])
                 try:
-                    payload = service.feed_sync(cursor, int(limit))
+                    payload = service.feed_sync(
+                        cursor,
+                        int(limit),
+                        include_archived=include_archived,
+                        compact=compact,
+                    )
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_sync_failed", "detail": str(exc)})
                     return
