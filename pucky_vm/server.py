@@ -24,6 +24,15 @@ from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
+from .http_surface import (
+    cors_header_items,
+    inline_content_disposition,
+    is_bearer_authorized,
+    json_body,
+    parse_content_length,
+    request_base_url,
+    text_body,
+)
 from .providers import DeepgramSTT, KokoroTTS
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
@@ -2516,29 +2525,6 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
     return normalized
 
 
-def _request_base_url(handler) -> str:
-    proto = str(handler.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-    host = str(handler.headers.get("X-Forwarded-Host") or handler.headers.get("Host") or "").split(",", 1)[0].strip()
-    if not host:
-        host = f"{handler.server.server_address[0]}:{handler.server.server_address[1]}"
-    return f"{proto}://{host}"
-
-
-def _parse_content_length(length_text: str | None, limit: int) -> int | None:
-    clean = str(length_text or "").strip()
-    if not clean:
-        return None
-    try:
-        length = int(clean)
-    except Exception:
-        raise ValueError("invalid_content_length")
-    if length < 0:
-        raise ValueError("invalid_content_length")
-    if length > limit:
-        raise ValueError("audio body is too large")
-    return length
-
-
 def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_connected: str = "") -> str:
     token_q = quote(token, safe="")
     back_q = html.escape(back_url, quote=True)
@@ -3034,7 +3020,7 @@ def make_handler(service: PuckyVoiceService):
                     return
                 query = parse_qs(parsed.query)
                 payload = service.links_portal_url(
-                    _request_base_url(self),
+                    request_base_url(self.headers, self.server.server_address),
                     auth_mode=query.get("auth_mode", [""])[0],
                 )
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
@@ -3047,7 +3033,7 @@ def make_handler(service: PuckyVoiceService):
                 auth_mode = query.get("auth_mode", [""])[0]
                 just_connected = query.get("just_connected", [""])[0]
                 redirect_url = query.get("redirect_url", [""])[0]
-                base_url = _request_base_url(self)
+                base_url = request_base_url(self.headers, self.server.server_address)
                 if app:
                     try:
                         payload = service.links_start_oauth(
@@ -3147,7 +3133,7 @@ def make_handler(service: PuckyVoiceService):
                     payload = service.links_start_oauth(
                         query.get("token", [""])[0],
                         app_slug=query.get("app", [""])[0],
-                        base_url=_request_base_url(self),
+                        base_url=request_base_url(self.headers, self.server.server_address),
                         auth_mode=query.get("auth_mode", [""])[0],
                         redirect_url=query.get("redirect_url", [""])[0] or None,
                     )
@@ -3325,7 +3311,7 @@ def make_handler(service: PuckyVoiceService):
                     payload = json.loads(self._read_body(service.config.max_audio_bytes * 2 + 512 * 1024).decode("utf-8"))
                     if not isinstance(payload, dict):
                         raise ValueError("meeting_payload_must_be_object")
-                    result = service.meeting_ingest(payload, base_url=_request_base_url(self))
+                    result = service.meeting_ingest(payload, base_url=request_base_url(self.headers, self.server.server_address))
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -3431,7 +3417,7 @@ def make_handler(service: PuckyVoiceService):
             print(f"{self.address_string()} - {fmt % args}", flush=True)
 
         def _read_body(self, limit: int) -> bytes:
-            length = _parse_content_length(self.headers.get("Content-Length"), limit)
+            length = parse_content_length(self.headers.get("Content-Length"), limit)
             if length is not None:
                 return self.rfile.read(length)
             data = self.rfile.read(limit + 1)
@@ -3440,10 +3426,10 @@ def make_handler(service: PuckyVoiceService):
             return data
 
         def _is_authorized(self) -> bool:
-            return bool(service.config.pucky_api_token) and self.headers.get("Authorization", "") == f"Bearer {service.config.pucky_api_token}"
+            return is_bearer_authorized(service.config.pucky_api_token, self.headers.get("Authorization", ""))
 
         def _json(self, status: HTTPStatus, payload: dict[str, object], *, headers: dict[str, str] | None = None) -> None:
-            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            body = json_body(payload)
             service.record_action(
                 surface="pucky_http",
                 action=f"{self.command} {urlsplit(self.path).path}",
@@ -3462,7 +3448,7 @@ def make_handler(service: PuckyVoiceService):
             self.wfile.write(body)
 
         def _text(self, status: HTTPStatus, text: str, content_type: str) -> None:
-            body = text.encode("utf-8")
+            body = text_body(text)
             self.send_response(int(status))
             self._cors_headers()
             self.send_header("Content-Type", content_type)
@@ -3479,7 +3465,7 @@ def make_handler(service: PuckyVoiceService):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             if filename:
-                self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(filename)}")
+                self.send_header("Content-Disposition", inline_content_disposition(filename))
             self.end_headers()
             self.wfile.write(body)
 
@@ -3511,9 +3497,8 @@ def make_handler(service: PuckyVoiceService):
             self.wfile.write(body)
 
         def _cors_headers(self) -> None:
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            for key, value in cors_header_items():
+                self.send_header(key, value)
 
     return Handler
 
