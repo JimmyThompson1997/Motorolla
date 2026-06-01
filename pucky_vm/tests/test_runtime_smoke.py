@@ -40,7 +40,7 @@ class _FakeService:
 
     class codex:
         @staticmethod
-        def send_text(text):
+        def send_turn(text):
             class Result:
                 used_thread_id = "thread-tool"
                 thread_mode = "new"

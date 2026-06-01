@@ -167,7 +167,10 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str, base_instru
 
 def run_tool_action_smoke(service: PuckyVoiceService, *, text: str, compiled_output: str = "") -> dict[str, Any]:
     service.start()
-    result = service.codex.send_text(text)
+    send = getattr(service.codex, "send_turn", None) or getattr(service.codex, "send_text", None)
+    if not callable(send):
+        raise RuntimeError("Codex client does not expose send_turn")
+    result = send(text)
     context = service._base_runtime_context()
     compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context)
     if compiled_output:
