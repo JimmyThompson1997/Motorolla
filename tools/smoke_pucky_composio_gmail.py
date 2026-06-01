@@ -83,12 +83,15 @@ def _try_proxy_gmail_metadata(client: Any, account_id: str) -> tuple[str, dict[s
     return message_id, metadata_payload
 
 
-def _try_direct_tool_gmail_metadata(client: Any, account_id: str) -> tuple[str, dict[str, Any]]:
+def _try_direct_tool_gmail_metadata(client: Any, account_id: str, user_id: str) -> tuple[str, dict[str, Any]]:
     if not hasattr(client, "execute_tool"):
         raise RuntimeError("Composio client does not expose execute_tool")
+    if not str(user_id or "").strip():
+        raise RuntimeError("Composio Gmail direct-tool metadata smoke requires a user_id")
     list_payload = client.execute_tool(
         tool_slug="GMAIL_FETCH_EMAILS",
         connected_account_id=account_id,
+        user_id=user_id,
         arguments={
             "max_results": 1,
             "label_ids": ["INBOX"],
@@ -101,6 +104,7 @@ def _try_direct_tool_gmail_metadata(client: Any, account_id: str) -> tuple[str, 
     metadata_payload = client.execute_tool(
         tool_slug="GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
         connected_account_id=account_id,
+        user_id=user_id,
         arguments={
             "message_id": message_id,
             "format": "metadata",
@@ -133,6 +137,7 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
     client = service.composio
     if not hasattr(client, "execute_proxy"):
         raise RuntimeError("Composio client does not expose execute_proxy")
+    user_id = str(service.config.composio_default_user_id or "").strip()
 
     execution_mode = "proxy"
     try:
@@ -142,7 +147,7 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
         if "403" not in detail and "proxy" not in detail.lower():
             raise
         execution_mode = "tool"
-        message_id, metadata_payload = _try_direct_tool_gmail_metadata(client, account_id)
+        message_id, metadata_payload = _try_direct_tool_gmail_metadata(client, account_id, user_id)
     context_after = service._base_runtime_context()
     compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context_after)
     if compiled_output:

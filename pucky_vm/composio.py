@@ -296,10 +296,12 @@ class ComposioClient:
         *,
         tool_slug: str,
         connected_account_id: str,
+        user_id: str = "",
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         clean_tool_slug = _safe_name(tool_slug)
         account_id = _safe_name(connected_account_id)
+        clean_user_id = _safe_name(user_id)
         if not clean_tool_slug:
             raise RuntimeError("tool_slug is required")
         if not account_id:
@@ -307,6 +309,8 @@ class ComposioClient:
         payload: dict[str, Any] = {
             "connected_account_id": account_id,
         }
+        if clean_user_id:
+            payload["user_id"] = clean_user_id
         if arguments:
             payload["arguments"] = dict(arguments)
         return self._request_json(

@@ -98,6 +98,7 @@ def test_composio_client_executes_tools_on_v31_surface(monkeypatch) -> None:
     payload = client.execute_tool(
         tool_slug="GMAIL_FETCH_EMAILS",
         connected_account_id="ca_gmail",
+        user_id="user-123",
         arguments={"max_results": 1},
     )
 
@@ -105,6 +106,7 @@ def test_composio_client_executes_tools_on_v31_surface(monkeypatch) -> None:
     assert captured["url"] == "https://backend.composio.dev/api/v3.1/tools/execute/GMAIL_FETCH_EMAILS"
     assert json.loads(captured["body"]) == {
         "connected_account_id": "ca_gmail",
+        "user_id": "user-123",
         "arguments": {"max_results": 1},
     }
     assert actions == [
