@@ -96,7 +96,7 @@ class _FakeService:
                 "limit": 150,
                 "rows": [
                     {"surface": "codex_runtime", "action": "thread/start", "tool": "thread/start", "target": "thread/start"},
-                    {"surface": "codex_tool", "action": "shell_command", "tool": "shell_command", "target": "rg --version"},
+                    {"surface": "codex_tool", "action": "exec_command", "tool": "exec_command", "target": "rg --version"},
                 ]
             },
         }

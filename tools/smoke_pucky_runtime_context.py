@@ -182,11 +182,11 @@ def run_tool_action_smoke(service: PuckyVoiceService, *, text: str, compiled_out
         row for row in rows
         if isinstance(row, dict)
         and str(row.get("surface") or "") == "codex_tool"
-        and str(row.get("tool") or "") == "shell_command"
+        and str(row.get("tool") or "") in {"shell_command", "exec_command"}
         and "rg" in str(row.get("target") or "").lower()
     ]
     if not matching:
-        raise RuntimeError("runtime tool smoke missing codex_tool shell_command rg row in next compiled prompt")
+        raise RuntimeError("runtime tool smoke missing codex_tool shell/exec command rg row in next compiled prompt")
     return {
         "schema": "pucky.runtime_tool_action_smoke.v1",
         "thread_id": result.used_thread_id,
