@@ -410,6 +410,9 @@ public final class PuckyFeedController {
         if (latest == null || older == null) {
             return;
         }
+        copyForwardIfMissing(latest, older, "audio_path");
+        copyForwardIfMissing(latest, older, "audio_playlist_path");
+        copyForwardIfMissing(latest, older, "audio_timestamps");
         if (latest.optBoolean("pending_outbound", false) && !older.optBoolean("pending_outbound", false)) {
             if (safe(latest.optString("title", "")).isEmpty() || "Sent message".equals(latest.optString("title", ""))) {
                 Json.put(latest, "title", older.optString("title", ""));
@@ -444,6 +447,17 @@ public final class PuckyFeedController {
         }
         if (mergedMessages.length() > 0) {
             Json.put(latest, "transcript_messages", mergedMessages);
+        }
+    }
+
+    private static void copyForwardIfMissing(JSONObject latest, JSONObject older, String field) {
+        if (latest == null || older == null) {
+            return;
+        }
+        String latestValue = safe(latest.optString(field, ""));
+        String olderValue = safe(older.optString(field, ""));
+        if (latestValue.isEmpty() && !olderValue.isEmpty()) {
+            Json.put(latest, field, olderValue);
         }
     }
 

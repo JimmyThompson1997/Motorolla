@@ -146,6 +146,14 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("merged = collapseCardsByThread(merged);"));
         assertTrue(feed.contains("if (latest.optBoolean(\"pending_outbound\", false) && !older.optBoolean(\"pending_outbound\", false)) {"));
         assertTrue(feed.contains("Json.put(latest, \"origin\", older.opt(\"origin\"));"));
+        assertTrue(feed.contains("copyForwardIfMissing(latest, older, \"audio_path\");"));
+        assertTrue(feed.contains("copyForwardIfMissing(latest, older, \"audio_playlist_path\");"));
+        assertTrue(feed.contains("copyForwardIfMissing(latest, older, \"audio_timestamps\");"));
+        assertTrue(feed.contains("private static void copyForwardIfMissing(JSONObject latest, JSONObject older, String field) {"));
+        assertTrue(feed.contains("String latestValue = safe(latest.optString(field, \"\"));"));
+        assertTrue(feed.contains("String olderValue = safe(older.optString(field, \"\"));"));
+        assertTrue(feed.contains("if (latestValue.isEmpty() && !olderValue.isEmpty()) {"));
+        assertTrue(feed.contains("Json.put(latest, field, olderValue);"));
         assertTrue(feed.contains("\"uploading\".equals(state)"));
         assertTrue(feed.contains("\"codex_running\".equals(state)"));
         assertTrue(feed.contains("\"upload_blocked\".equals(state)"));
