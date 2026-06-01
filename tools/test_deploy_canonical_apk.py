@@ -21,8 +21,9 @@ def test_canonical_deploy_can_import_turn_provisioning_without_secret_logging() 
     assert '$provisioning["token"] = $ProvisionToken' in script
     assert '$provisioning["pucky_turn_url"] = $ProvisionTurnUrl' in script
     assert '$provisioning["pucky_turn_reply_mode"] = $ProvisionReplyMode' in script
-    assert "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile" in script
-    assert "--es provisioning_file $appProvisioningFile --ez connect false" in script
+    assert "provisioning_json_base64" in script
+    assert "--ez connect true" in script
+    assert "pucky_turn_provisioning.json" not in script
     assert "without printing token values" in script
     assert "$env:PUCKY_DEVICE_TOKEN" in script
     assert "$env:PUCKY_API_TOKEN" in script

@@ -198,24 +198,10 @@ if (-not [string]::IsNullOrWhiteSpace($ProvisionToken) `
     }
 
     $json = $provisioning | ConvertTo-Json -Depth 6 -Compress
-    $localProvisioningFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pucky_turn_provisioning.json")
-    $deviceProvisioningFile = "/data/local/tmp/pucky_turn_provisioning.json"
-    $appProvisioningFile = "pucky_turn_provisioning.json"
-    [System.IO.File]::WriteAllText($localProvisioningFile, $json, [Text.Encoding]::UTF8)
+    $encodedProvisioning = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 
     Write-Host "Importing app provisioning without printing token values"
-    try {
-        & $adb -s $Serial push $localProvisioningFile $deviceProvisioningFile | Out-Null
-        & $adb -s $Serial shell "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile"
-        & $adb -s $Serial shell "rm -f $deviceProvisioningFile"
-        & $adb -s $Serial shell "am start -n $PackageName/$ActivityName --es provisioning_file $appProvisioningFile --ez connect false" | Out-Null
-    } finally {
-        try {
-            & $adb -s $Serial shell "rm -f $deviceProvisioningFile" | Out-Null
-        } catch {
-        }
-        Remove-Item -LiteralPath $localProvisioningFile -Force -ErrorAction SilentlyContinue
-    }
+    & $adb -s $Serial shell am start -n "$PackageName/$ActivityName" --es provisioning_json_base64 $encodedProvisioning --ez connect true | Out-Null
 }
 
 Write-Host "Canonical APK installed and verified."
