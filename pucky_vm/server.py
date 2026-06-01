@@ -25,6 +25,7 @@ from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_fro
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
 from .providers import DeepgramSTT, KokoroTTS
+from .cover_fixtures import runtime_fixture_text_from_deploy
 from .ui_bundle import UI_SRC, build_ui_bundle, bundle_config_script
 
 
@@ -2988,7 +2989,11 @@ def make_handler(service: PuckyVoiceService):
                 self._file(Path(str(result["bundle_path"])), "application/zip")
                 return
             if path == "/ui/pucky/fixtures/reply_cards.json":
-                self._file(UI_SRC / "fixtures" / "reply_cards.json", "application/json")
+                self._text(
+                    HTTPStatus.OK,
+                    runtime_fixture_text_from_deploy(UI_SRC / "fixtures" / "reply_cards_deploy.json"),
+                    "application/json; charset=utf-8",
+                )
                 return
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
                 self._file(UI_SRC / "index.html", "text/html; charset=utf-8")

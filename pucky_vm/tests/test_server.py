@@ -518,6 +518,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("app.js", manifest["files"])
         self.assertIn("pucky-config.js", manifest["files"])
         self.assertIn("styles.css", manifest["files"])
+        self.assertIn("fixtures/reply_cards.json", manifest["files"])
         self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])
         self.assertIn("fixtures/artifacts/morning.wav", manifest["files"])
 
@@ -536,6 +537,8 @@ class ServerTests(unittest.TestCase):
         fixture = self.get_json("/ui/pucky/fixtures/reply_cards.json")
         self.assertEqual(fixture["schema"], "pucky.reply_cards.v1")
         self.assertGreaterEqual(fixture["count"], 4)
+        self.assertNotIn("artifact_base_path", fixture)
+        self.assertIn("audio_path", fixture["cards"][0])
 
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/pucky-config.js", timeout=10) as response:
             config_script = response.read().decode("utf-8")

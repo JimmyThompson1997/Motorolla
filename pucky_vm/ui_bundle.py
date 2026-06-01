@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from pucky_vm.cover_fixtures import write_runtime_fixture
 
 UI_SRC = Path(__file__).with_name("ui_src")
 UI_DIST = Path(__file__).with_name("ui_dist")
@@ -107,6 +108,10 @@ def build_ui_bundle(
     with TemporaryDirectory() as temp_name:
         staging = Path(temp_name) / "bundle"
         shutil.copytree(UI_SRC, staging)
+        write_runtime_fixture(
+            staging / "fixtures" / "reply_cards_deploy.json",
+            staging / "fixtures" / "reply_cards.json",
+        )
         write_bundle_config(staging)
         manifest = manifest_for(
             staging,

@@ -3,11 +3,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
+import {
+  attachPageLogging,
+  basename,
+  ensureDir,
+  fileUrl,
+  installCodexPuckyBridge,
+  readRuntimeFixtures,
+  resolveChromePath,
+  writeAutomationError
+} from "./cover_shared.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const uiPath = path.join(repoRoot, "pucky_vm", "ui_src", "index.html");
-const fixturesPath = path.join(repoRoot, "pucky_vm", "ui_src", "fixtures", "reply_cards.json");
 const reportDir = path.join(repoRoot, ".tmp", "cover-pause-scrubber");
 const summaryPath = path.join(reportDir, "summary.json");
 const consoleLogPath = path.join(reportDir, "console.log");
@@ -16,37 +25,6 @@ const VIEWPORT = { width: 430, height: 932 };
 const DEFAULT_DURATION_MS = 15000;
 const DEFAULT_SPEED = 1.25;
 const TARGET_SESSION_ID = "fixture_morning";
-
-function ensureDir(target) {
-  fs.mkdirSync(target, { recursive: true });
-}
-
-function resolveChromePath() {
-  const candidates = [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error("Chrome executable not found");
-}
-
-function fileUrl(filePath) {
-  return `file:///${filePath.replace(/\\/g, "/")}`;
-}
-
-function basename(value) {
-  const normalized = String(value || "").replace(/\\/g, "/");
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] || normalized;
-}
-
-function readFixtures() {
-  return JSON.parse(fs.readFileSync(fixturesPath, "utf8"));
-}
 
 function emptyPlayerState() {
   return {
@@ -72,7 +50,7 @@ function emptyPlayerState() {
 
 function createHarnessState() {
   return {
-    cardsSnapshot: readFixtures(),
+    cardsSnapshot: readRuntimeFixtures(repoRoot),
     playerState: emptyPlayerState(),
     playStartedAtMs: 0,
     playBasePositionMs: 0,
@@ -317,42 +295,10 @@ async function run() {
 
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
-    await context.exposeBinding("__codexPuckyPostMessage", async ({ page }, raw) => {
-      let callbackId = "";
-      let payload;
-      try {
-        const parsed = JSON.parse(String(raw || "{}"));
-        callbackId = String(parsed.id || "");
-        payload = { ok: true, result: dispatch(state, parsed) };
-      } catch (error) {
-        payload = {
-          ok: false,
-          error: error.message || String(error),
-          error_type: error.name || "Error"
-        };
-      }
-      if (callbackId) {
-        await page.evaluate(({ id, result }) => {
-          window.Pucky && window.Pucky.__resolve && window.Pucky.__resolve(id, result);
-        }, { id: callbackId, result: payload });
-      }
-      return null;
-    });
-    await context.addInitScript(() => {
-      window.PuckyAndroid = {
-        postMessage(raw) {
-          window.__codexPuckyPostMessage(raw);
-        }
-      };
-    });
+    await installCodexPuckyBridge(context, (message) => dispatch(state, message));
 
     const page = await context.newPage();
-    page.on("console", (message) => {
-      fs.appendFileSync(consoleLogPath, `[console:${message.type()}] ${message.text()}\n`, "utf8");
-    });
-    page.on("pageerror", (error) => {
-      fs.appendFileSync(consoleLogPath, `[pageerror] ${error.message}\n`, "utf8");
-    });
+    attachPageLogging(page, consoleLogPath);
 
     await page.goto(fileUrl(uiPath), { waitUntil: "load", timeout: 30000 });
     await page.waitForSelector('[data-route="feed"]');
@@ -397,8 +343,7 @@ async function run() {
 }
 
 run().catch((error) => {
-  ensureDir(reportDir);
-  fs.writeFileSync(path.join(reportDir, "automation-error.txt"), `${error.stack || error.message}\n`, "utf8");
+  writeAutomationError(reportDir, error);
   console.error(error.stack || error.message);
   process.exit(1);
 });

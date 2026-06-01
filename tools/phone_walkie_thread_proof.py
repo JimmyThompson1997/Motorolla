@@ -417,6 +417,23 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def capture_browser_phase(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    operations: list[dict[str, Any]],
+    scenario_dir: Path,
+    browser_json_name: str,
+    device_png_name: str,
+    timeout_seconds: int | float = 60,
+) -> dict[str, Any]:
+    payload = run_browser_helper(args, cdp_url, operations, timeout_seconds=timeout_seconds)
+    save_json(scenario_dir / browser_json_name, payload)
+    capture_device_screenshot(args, serial, scenario_dir / device_png_name)
+    return payload
+
+
 def snapshot_cards(args: argparse.Namespace) -> dict[str, Any]:
     return run_pucky_command(args, "ui.reply_cards.get", {})
 

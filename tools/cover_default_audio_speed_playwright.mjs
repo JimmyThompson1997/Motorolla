@@ -3,53 +3,29 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
+import {
+  attachPageLogging,
+  basename,
+  clampSpeed,
+  ensureDir,
+  fileUrl,
+  formatSpeed,
+  installCodexPuckyBridge,
+  readRuntimeFixtures,
+  resolveChromePath,
+  writeAutomationError
+} from "./cover_shared.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const uiPath = path.join(repoRoot, "pucky_vm", "ui_src", "index.html");
-const fixturesPath = path.join(repoRoot, "pucky_vm", "ui_src", "fixtures", "reply_cards.json");
 const reportDir = path.join(repoRoot, ".tmp", "cover-default-audio-speed");
 const summaryPath = path.join(reportDir, "summary.json");
 const consoleLogPath = path.join(reportDir, "console.log");
 
 const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
 const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
-const MIN_PLAYBACK_SPEED = 0.5;
-const MAX_PLAYBACK_SPEED = 3;
 const VIEWPORT = { width: 430, height: 932 };
-
-function ensureDir(target) {
-  fs.mkdirSync(target, { recursive: true });
-}
-
-function resolveChromePath() {
-  const candidates = [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error("Chrome executable not found");
-}
-
-function clampSpeed(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return 1;
-  }
-  return Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, parsed));
-}
-
-function formatSpeed(value) {
-  return `${Number(clampSpeed(value).toFixed(2)).toString()}x`;
-}
-
-function fileUrl(filePath) {
-  return `file:///${filePath.replace(/\\/g, "/")}`;
-}
 
 function durationFor(pathOrSource) {
   return /pocket-computers/i.test(String(pathOrSource || ""))
@@ -79,18 +55,8 @@ function emptyPlayerState() {
   };
 }
 
-function readFixtures() {
-  return JSON.parse(fs.readFileSync(fixturesPath, "utf8"));
-}
-
-function basename(value) {
-  const normalized = String(value || "").replace(/\\/g, "/");
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] || normalized;
-}
-
 function createHarnessState() {
-  const fixtures = readFixtures();
+  const fixtures = readRuntimeFixtures(repoRoot);
   return {
     defaultAudioSpeed: 1,
     cardsSnapshot: fixtures,
@@ -302,48 +268,10 @@ async function run() {
   });
 
   const context = await browser.newContext({ viewport: VIEWPORT });
-  await context.exposeBinding("__codexPuckyPostMessage", async ({ page }, raw) => {
-    let id = "";
-    let payload;
-    try {
-      const parsed = JSON.parse(String(raw || "{}"));
-      id = String(parsed.id || "");
-      payload = {
-        ok: true,
-        result: dispatch(state, parsed)
-      };
-    } catch (error) {
-      payload = {
-        ok: false,
-        error: error.message || String(error),
-        error_type: error.name || "Error"
-      };
-    }
-    if (id) {
-      await page.evaluate(
-        ({ callbackId, callbackPayload }) => {
-          window.Pucky && window.Pucky.__resolve && window.Pucky.__resolve(callbackId, callbackPayload);
-        },
-        { callbackId: id, callbackPayload: payload }
-      );
-    }
-    return null;
-  });
-  await context.addInitScript(() => {
-    window.PuckyAndroid = {
-      postMessage(raw) {
-        window.__codexPuckyPostMessage(raw);
-      }
-    };
-  });
+  await installCodexPuckyBridge(context, (message) => dispatch(state, message));
 
   const page = await context.newPage();
-  page.on("console", (message) => {
-    fs.appendFileSync(consoleLogPath, `[console:${message.type()}] ${message.text()}\n`, "utf8");
-  });
-  page.on("pageerror", (error) => {
-    fs.appendFileSync(consoleLogPath, `[pageerror] ${error.message}\n`, "utf8");
-  });
+  attachPageLogging(page, consoleLogPath);
 
   const summary = {
     chrome_path: chromePath,
@@ -419,8 +347,7 @@ async function run() {
 }
 
 run().catch((error) => {
-  ensureDir(reportDir);
-  fs.writeFileSync(path.join(reportDir, "automation-error.txt"), `${error.stack || error.message}\n`, "utf8");
+  writeAutomationError(reportDir, error);
   console.error(error.stack || error.message);
   process.exit(1);
 });

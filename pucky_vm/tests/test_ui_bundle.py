@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 
+from pucky_vm.cover_fixtures import runtime_fixture_from_deploy
 from pucky_vm.ui_bundle import build_ui_bundle
 import pucky_vm.ui_bundle as ui_bundle
 
@@ -24,13 +25,19 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
+    assert "fixtures/reply_cards.json" in manifest["files"]
+    assert "fixtures/reply_cards_deploy.json" in manifest["files"]
 
     with zipfile.ZipFile(result["bundle_path"]) as archive:
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "index.html" in names
+        assert "fixtures/reply_cards.json" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
+        runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
+        deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
+        assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)
 
 
 def test_ui_bundle_can_embed_explicit_source_provenance(tmp_path, monkeypatch: pytest.MonkeyPatch):

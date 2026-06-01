@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from pucky_vm.cover_fixtures import load_deploy_fixture, runtime_fixture_from_deploy
+
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "ui_src"
@@ -11,6 +13,18 @@ UI = ROOT / "ui_src"
 
 def read(name: str) -> str:
     return (UI / name).read_text(encoding="utf-8")
+
+
+def deploy_fixture() -> dict:
+    return load_deploy_fixture(UI / "fixtures" / "reply_cards_deploy.json")
+
+
+def runtime_fixture() -> dict:
+    return runtime_fixture_from_deploy(deploy_fixture())
+
+
+def runtime_fixture_text() -> str:
+    return json.dumps(runtime_fixture(), indent=2, sort_keys=False)
 
 
 def css_block(styles: str, selector: str) -> str:
@@ -385,8 +399,8 @@ def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
 
 def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
     app = read("app.js")
-    fixtures = json.loads(read("fixtures/reply_cards.json"))
-    deploy_fixture = json.loads(read("fixtures/reply_cards_deploy.json"))
+    fixtures = runtime_fixture()
+    deploy_cards_fixture = deploy_fixture()
 
     assert 'HOME_MENU_ICON_LIBRARY_KEY = "pucky.cover.home_menu_icon_library.v1"' in app
     assert "const DEFAULT_HOME_MENU_ICONS = [" in app
@@ -399,7 +413,7 @@ def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
     assert "state.homeMenuIconLibrary.forEach(filter => {" in app
 
     fixture_cards = {card["session_id"]: card for card in fixtures["cards"]}
-    deploy_cards = {card["session_id"]: card for card in deploy_fixture["cards"]}
+    deploy_cards = {card["session_id"]: card for card in deploy_cards_fixture["cards"]}
 
     assert fixture_cards["fixture_book"]["icon"] == "book"
     assert fixture_cards["fixture_meeting"]["archived"] is True
@@ -762,7 +776,7 @@ def test_ui_surface_controller_treats_reset_nav_bundle_url_as_current() -> None:
 def test_leaving_home_uses_standard_material_card_icon() -> None:
     app = read("app.js")
     styles = read("styles.css")
-    fixtures = read("fixtures/reply_cards.json")
+    fixtures = runtime_fixture_text()
 
     assert "function cardIdentityIconSvg(card)" not in app
     assert "function shouldUseRetroCardIcon(card)" not in app
@@ -995,7 +1009,7 @@ def test_feed_waveform_and_mic_follow_current_playback_only() -> None:
 def test_smart_card_and_message_timestamps_are_rendered() -> None:
     app = read("app.js")
     styles = read("styles.css")
-    fixtures = read("fixtures/reply_cards.json")
+    fixtures = runtime_fixture_text()
 
     assert "function cardTimestamp(card)" in app
     assert "function messageTimestamp(message)" in app
@@ -1061,14 +1075,14 @@ def test_paused_player_events_keep_active_card_lane_when_identity_matches() -> N
 
 def test_audiobook_card_uses_single_file_with_timestamps() -> None:
     app = read("app.js")
-    fixtures = read("fixtures/reply_cards.json")
-    deploy_fixture = read("fixtures/reply_cards_deploy.json")
+    fixtures = runtime_fixture_text()
+    deploy_cards_fixture = read("fixtures/reply_cards_deploy.json")
 
     assert '"audio_path": "/mock/pocket-computers.wav"' in fixtures
     assert '"audio_timestamps"' in fixtures
     assert '"audio_playlist_path": "/mock/pocket-computers.m3u"' not in fixtures
-    assert '"device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/From_Pocket_Computers_to_Planetary_Platforms_Kokoro_George.m4a"' in deploy_fixture
-    assert '"public_audio_playlist_path"' not in deploy_fixture
+    assert '"device_audio_path": "/storage/emulated/0/Android/data/com.pucky.device.debug/files/audiobooks/From_Pocket_Computers_to_Planetary_Platforms_Kokoro_George.m4a"' in deploy_cards_fixture
+    assert '"public_audio_playlist_path"' not in deploy_cards_fixture
     assert "function hasAudio(card)" in app
     assert "function audioControlKey(card)" in app
     assert "function isSameAudioCard(player, card)" in app
@@ -1508,7 +1522,7 @@ def test_android_system_back_closes_html_detail_first() -> None:
 def test_turn_trace_is_single_log_sheet_with_thinking_rows() -> None:
     app = read("app.js")
     styles = read("styles.css")
-    fixtures = read("fixtures/reply_cards.json")
+    fixtures = runtime_fixture_text()
 
     assert "function showTurnTrace(card, message = null, index = 0)" in app
     assert "function dismissTraceSheet()" in app

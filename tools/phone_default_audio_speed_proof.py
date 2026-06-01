@@ -95,23 +95,6 @@ def operation_text(payload: dict[str, Any]) -> str:
     return ""
 
 
-def browser_phase(
-    args: argparse.Namespace,
-    *,
-    serial: str,
-    cdp_url: str,
-    operations: list[dict[str, Any]],
-    scenario_dir: Path,
-    browser_json_name: str,
-    device_png_name: str,
-    timeout_seconds: int | float = 60,
-) -> dict[str, Any]:
-    payload = proof.run_browser_helper(args, cdp_url, operations, timeout_seconds=timeout_seconds)
-    proof.save_json(scenario_dir / browser_json_name, payload)
-    proof.capture_device_screenshot(args, serial, scenario_dir / device_png_name)
-    return payload
-
-
 def settings_xml_text(args: argparse.Namespace, serial: str) -> str:
     return proof.run_adb(
         args,
@@ -256,7 +239,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     scenario_dir = args.evidence_dir / f"default-audio-speed-proof-{int(time.time())}"
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
-    baseline_settings = browser_phase(
+    baseline_settings = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp["cdp_url"],
@@ -267,7 +250,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     ensure_route(baseline_settings, "settings", "baseline settings")
 
-    updated_settings = browser_phase(
+    updated_settings = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp["cdp_url"],
@@ -289,7 +272,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     relaunch_cover_home(args, serial)
     cdp_after_relaunch = proof.discover_cover_cdp_url(args, serial)
-    reloaded_settings = browser_phase(
+    reloaded_settings = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp_after_relaunch["cdp_url"],
@@ -319,7 +302,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         proof_reply_delay_ms=args.proof_reply_delay_ms,
     )
     refresh_feed_surface(args)
-    first_audio = browser_phase(
+    first_audio = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp_after_relaunch["cdp_url"],
@@ -330,7 +313,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     first_player_state = wait_for_player_speed(args, args.default_speed)
 
-    first_override = browser_phase(
+    first_override = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp_after_relaunch["cdp_url"],
@@ -341,7 +324,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     first_override_player_state = wait_for_player_speed(args, args.override_speed)
 
-    first_reopen = browser_phase(
+    first_reopen = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp_after_relaunch["cdp_url"],
@@ -359,7 +342,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         proof_reply_delay_ms=args.proof_reply_delay_ms,
     )
     refresh_feed_surface(args)
-    second_audio = browser_phase(
+    second_audio = proof.capture_browser_phase(
         args,
         serial=serial,
         cdp_url=cdp_after_relaunch["cdp_url"],
