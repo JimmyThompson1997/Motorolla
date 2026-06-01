@@ -88,6 +88,9 @@ public final class MeetingRecordingController {
         JSONObject started = VoiceCaptureController.shared(context).start(startArgs);
         activeMeetingId = meetingId;
         JSONObject activeSession = started.optJSONObject("active_session");
+        if (activeSession == null) {
+            activeSession = started;
+        }
         activeVoiceSessionId = activeSession == null ? "" : activeSession.optString("session_id", "");
         JSONObject record = meetingRecordFromCapture(meetingId, activeSession, "recording");
         appendMeeting(record);
