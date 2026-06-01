@@ -24,7 +24,14 @@ public final class MeetingRecordingSourceTest {
         assertTrue(source.contains("\"meeting_recording_stopped\""));
         assertTrue(source.contains("\"meeting_recording_failed\""));
         assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover"));
+        assertTrue(source.contains("MEETING_HOVER_FALSE_GAP_MS = 350L"));
+        assertTrue(source.contains("\"hover_false_gap_ignored\""));
+        assertFalse(source.contains("maxSwipeMs()"));
+        assertFalse(source.contains("minSwipeMs()"));
         assertFalse(source.contains("DEFAULT_MAX_SWIPE_MS = 500L"));
+        assertFalse(source.contains("runNotifyAction"));
+        assertFalse(source.contains("runLockScreenAction"));
+        assertFalse(source.contains("PuckyAccessibilityService"));
     }
 
     @Test
@@ -36,9 +43,13 @@ public final class MeetingRecordingSourceTest {
         assertTrue(executor.contains("\"meeting.recording.start\""));
         assertTrue(executor.contains("\"meeting.recording.stop\""));
         assertTrue(executor.contains("\"meeting.recording.trigger_hover\""));
+        assertTrue(executor.contains("\"meeting.hover.status\""));
+        assertTrue(executor.contains("\"meeting.hover.config.set\""));
         assertTrue(executor.contains("MeetingRecordingController.shared(settingsStore.context())"));
         assertTrue(capability.contains("meeting.recording.status/meeting.recording.start/meeting.recording.stop"));
+        assertTrue(capability.contains("meeting.hover.status/meeting.hover.config.set/meeting.recording.trigger_hover"));
         assertTrue(capability.contains("Three-second cover hover toggles Meeting Recording Mode"));
+        assertTrue(capability.contains("no lock or notify action"));
     }
 
     private static String read(String path) throws Exception {

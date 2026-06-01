@@ -77,6 +77,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
             "meeting.recording.status", "meeting.recording.start",
             "meeting.recording.stop", "meeting.recording.trigger_hover",
+            "meeting.hover.status", "meeting.hover.config.set",
             "voice.thread_scope.get", "voice.thread_scope.set", "voice.thread_scope.clear",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "pucky.turn.settings.get", "pucky.turn.settings.set",
@@ -537,9 +538,11 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return speechEchoLabController.last(command.args());
             case "speech.echo.lab.list":
                 return speechEchoLabController.list(command.args());
+            case "meeting.hover.status":
             case "cover.wave.status":
             case "cover.display_gesture.status":
                 return systemController.coverDisplayGestureStatus();
+            case "meeting.hover.config.set":
             case "cover.wave.config.set":
             case "cover.display_gesture.set":
                 return systemController.coverDisplayGestureSet(command.args());

@@ -89,6 +89,8 @@ public final class PuckyWebBridge {
                 return puckyConfig();
             case "player.state":
                 return player.state();
+            case "player.asset.prepare":
+                return player.assetPrepare(args);
             case "player.load":
                 return player.load(args);
             case "player.play":

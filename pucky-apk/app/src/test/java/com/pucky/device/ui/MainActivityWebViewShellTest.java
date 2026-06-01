@@ -67,6 +67,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"ui.default_audio_speed.get\"")
                         && bridge.contains("case \"ui.default_audio_speed.set\"")
                         && bridge.contains("case \"browser.open\"")
+                        && bridge.contains("case \"player.asset.prepare\"")
                         && bridge.contains("case \"player.play\"")
                         && bridge.contains("case \"player.pause\"")
                         && bridge.contains("case \"player.seek\"")

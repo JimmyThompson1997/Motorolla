@@ -1,31 +1,20 @@
 package com.pucky.device.sensors;
 
-import android.app.ActivityOptions;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
-import android.os.Build;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
-import android.os.VibrationEffect;
-import android.os.Vibrator;
 import android.util.Log;
 import android.view.Display;
 
-import com.pucky.device.CoverHomeActivity;
-import com.pucky.device.MainActivity;
-import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.meeting.MeetingRecordingController;
-import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.util.Json;
 
 import org.json.JSONArray;
@@ -38,30 +27,19 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CoverDisplayGestureController {
     private static final String TAG = "PuckyCoverGesture";
     private static final String PREFS = "pucky_cover_display_gesture";
     private static final String ENABLED = "enabled";
-    private static final String ACTION_ENABLED = "action_enabled";
-    private static final String ACTION_MODE = "action_mode";
-    private static final String MIN_SWIPE_MS = "min_swipe_ms";
-    private static final String MAX_SWIPE_MS = "max_swipe_ms";
     private static final String COOLDOWN_MS = "cooldown_ms";
     private static final String DISPLAY_ID = "display_id";
-    private static final String MODE_NOTIFY = "notify";
-    private static final String MODE_LOCK_SCREEN = "lock_screen";
-    private static final String LEGACY_MODE_POWER = "power";
-    private static final String LEGACY_MODE_DISPLAY = "display";
     private static final int DEFAULT_DISPLAY_ID = 1;
-    private static final int WAKE_REQUEST_CODE = 41005;
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
-    private static final long DEFAULT_MIN_SWIPE_MS = 50L;
-    private static final long DEFAULT_HOVER_CANCEL_MS = 6_000L;
     private static final long MEETING_HOVER_HOLD_MS = 3_000L;
+    private static final long MEETING_HOVER_FALSE_GAP_MS = 350L;
     private static final long DEFAULT_COOLDOWN_MS = 800L;
     private static final long PREFLIGHT_MAX_AGE_MS = 1_250L;
     private static final long ACCEL_SAMPLE_MAX_AGE_MS = 350L;
@@ -94,6 +72,7 @@ public final class CoverDisplayGestureController {
     private boolean running;
     private boolean handNear;
     private long nearStartedAtMs;
+    private long nearFalseStartedAtMs;
     private long activeCandidateId;
     private long lastGestureAtMs;
     private PreflightSnapshot candidatePreflight;
@@ -123,14 +102,12 @@ public final class CoverDisplayGestureController {
             JSONObject out = new JSONObject();
             Json.put(out, "schema", "pucky.cover_display_gesture_status.v2");
             Json.put(out, "enabled", enabled());
-            Json.put(out, "action_enabled", actionEnabled());
-            Json.put(out, "action_mode", actionMode());
+            Json.put(out, "mode", "meeting_hover");
             Json.put(out, "running", running);
             Json.put(out, "display_id", displayId());
             Json.put(out, "display_state", displayStateName(readDisplayState()));
-            Json.put(out, "accessibility_lock_available", PuckyAccessibilityService.canLockScreen(context));
-            Json.put(out, "min_swipe_ms", minSwipeMs());
-            Json.put(out, "max_swipe_ms", maxSwipeMs());
+            Json.put(out, "meeting_hover_hold_ms", MEETING_HOVER_HOLD_MS);
+            Json.put(out, "meeting_hover_false_gap_ms", MEETING_HOVER_FALSE_GAP_MS);
             Json.put(out, "cooldown_ms", cooldownMs());
             Json.put(out, "preflight_max_age_ms", PREFLIGHT_MAX_AGE_MS);
             Json.put(out, "hand_near", handNear);
@@ -150,29 +127,6 @@ public final class CoverDisplayGestureController {
             SharedPreferences.Editor editor = prefs.edit();
             if (args.has("enabled")) {
                 editor.putBoolean(ENABLED, args.optBoolean("enabled", true));
-            }
-            if (args.has("action_enabled")) {
-                editor.putBoolean(ACTION_ENABLED, args.optBoolean("action_enabled", false));
-            }
-            if (args.has("action_mode") && !args.isNull("action_mode")) {
-                String mode = args.optString("action_mode", MODE_NOTIFY).trim().toLowerCase(Locale.US);
-                if (MODE_NOTIFY.equals(mode)) {
-                    editor.putString(ACTION_MODE, MODE_NOTIFY);
-                } else if (MODE_LOCK_SCREEN.equals(mode)
-                        || LEGACY_MODE_POWER.equals(mode)
-                        || LEGACY_MODE_DISPLAY.equals(mode)) {
-                    editor.putString(ACTION_MODE, MODE_LOCK_SCREEN);
-                } else {
-                    lastError = "action_mode must be notify or lock_screen";
-                }
-            }
-            if (args.has("min_swipe_ms")) {
-                editor.putLong(MIN_SWIPE_MS,
-                        clamp(args.optLong("min_swipe_ms", DEFAULT_MIN_SWIPE_MS), 25L, 2_000L));
-            }
-            if (args.has("max_swipe_ms")) {
-                editor.putLong(MAX_SWIPE_MS,
-                        clamp(args.optLong("max_swipe_ms", DEFAULT_HOVER_CANCEL_MS), 500L, 10_000L));
             }
             if (args.has("cooldown_ms")) {
                 editor.putLong(COOLDOWN_MS,
@@ -197,31 +151,27 @@ public final class CoverDisplayGestureController {
     }
 
     public JSONObject trigger(JSONObject args) {
-        String requested = args.optString("action", "toggle").trim().toLowerCase(Locale.US);
-        boolean force = args.optBoolean("force", false);
-        String action = "toggle";
+        String reason = args.optString("reason", "manual_meeting_hover_alias");
+        JSONObject result;
+        boolean triggered = false;
         synchronized (lock) {
-            if (!"toggle".equals(requested) && !requested.isEmpty()) {
-                JSONObject out = status();
-                Json.put(out, "triggered", false);
-                Json.put(out, "trigger_error", "power key mode supports toggle only");
-                return out;
-            }
-            if (!force && !actionEnabled()) {
-                addEventLocked("power_action_skipped", "dry_run_trigger_" + action, 0L, null, null);
-                JSONObject out = status();
-                Json.put(out, "triggered", false);
-                Json.put(out, "trigger_error", "action_enabled is false; pass force=true for test trigger");
-                return out;
-            }
-            addEventLocked("power_action_requested", "trigger_" + action, 0L, null, currentGateSnapshot());
+            addEventLocked("meeting_hover_manual_trigger", reason, 0L, null, currentGateSnapshot());
         }
-        runAction(action, "trigger_" + action);
-        JSONObject out = status();
-        Json.put(out, "triggered", true);
-        Json.put(out, "trigger_action", action);
-        Json.put(out, "trigger_force", force);
-        return out;
+        try {
+            result = MeetingRecordingController.shared(context).triggerHover(args);
+            triggered = true;
+        } catch (CommandException exc) {
+            result = status();
+            Json.put(result, "trigger_error", exc.getMessage());
+            synchronized (lock) {
+                lastError = exc.getMessage();
+                addEventLocked("meeting_recording_failed", reason + ":" + exc.getMessage(),
+                        0L, null, currentGateSnapshot());
+            }
+        }
+        Json.put(result, "triggered", triggered);
+        Json.put(result, "trigger_action", "meeting_recording_toggle");
+        return result;
     }
 
     public void start() {
@@ -304,14 +254,28 @@ public final class CoverDisplayGestureController {
                 return;
             }
             boolean near = proximity.anyNear();
+            if (near) {
+                nearFalseStartedAtMs = 0L;
+            }
             if (near == handNear) {
                 return;
+            }
+            if (!near && handNear) {
+                if (nearFalseStartedAtMs <= 0L) {
+                    nearFalseStartedAtMs = now;
+                }
+                long falseGapMs = now - nearFalseStartedAtMs;
+                if (falseGapMs < MEETING_HOVER_FALSE_GAP_MS) {
+                    addEventLocked("hover_false_gap_ignored", name, falseGapMs, values, null);
+                    return;
+                }
             }
             handNear = near;
             if (near) {
                 activeCandidateId++;
                 candidateId = activeCandidateId;
                 nearStartedAtMs = now;
+                nearFalseStartedAtMs = 0L;
                 candidatePreflight = null;
                 addEventLocked("hover_started", name, 0L, values, null);
                 startPreflight(candidateId, "near_start");
@@ -320,6 +284,7 @@ public final class CoverDisplayGestureController {
             }
             durationMs = nearStartedAtMs <= 0 ? 0L : now - nearStartedAtMs;
             nearStartedAtMs = 0L;
+            nearFalseStartedAtMs = 0L;
             candidateId = activeCandidateId;
             addEventLocked("hover_cancelled", name, durationMs, values, null);
         }
@@ -408,12 +373,6 @@ public final class CoverDisplayGestureController {
     private String earlyRejectReason(long durationMs) {
         long now = SystemClock.elapsedRealtime();
         synchronized (lock) {
-            if (durationMs < minSwipeMs()) {
-                return "too_short_" + durationMs + "ms";
-            }
-            if (durationMs > maxSwipeMs()) {
-                return "too_long_" + durationMs + "ms";
-            }
             long cooldownRemaining = cooldownMs() - (now - lastGestureAtMs);
             if (lastGestureAtMs > 0 && cooldownRemaining > 0) {
                 return "cooldown_" + cooldownRemaining + "ms";
@@ -600,140 +559,6 @@ public final class CoverDisplayGestureController {
         return out;
     }
 
-    private void runAction(String action, String reason) {
-        if (MODE_NOTIFY.equals(actionMode())) {
-            runNotifyAction(action, reason);
-            return;
-        }
-        runLockOrWakeAction(action, reason);
-    }
-
-    private void runNotifyAction(String action, String reason) {
-        buzz();
-        try {
-            JSONObject args = new JSONObject();
-            Json.put(args, "id", "cover_wave_" + action);
-            Json.put(args, "title", "Pucky cover wave");
-            Json.put(args, "text", "Wave accepted: " + action);
-            Json.put(args, "big_text", "Cover wave accepted for " + action + " via " + reason + ".");
-            Json.put(args, "timeout_ms", 4_000L);
-            new NotificationController(context).show(args);
-            synchronized (lock) {
-                addEventLocked("notify_action", reason, 0L, null, currentGateSnapshot());
-            }
-        } catch (Exception exc) {
-            synchronized (lock) {
-                lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
-                addEventLocked("notify_action_failed", reason, 0L, null, currentGateSnapshot());
-            }
-        }
-    }
-
-    private void runLockOrWakeAction(String action, String reason) {
-        int displayState = readDisplayState();
-        if (displayState == Display.STATE_ON) {
-            runLockScreenAction(action, reason);
-        } else {
-            runWakeCoverAction(action, reason, displayState);
-        }
-    }
-
-    private void runLockScreenAction(String action, String reason) {
-        buzz();
-        boolean success = PuckyAccessibilityService.lockScreen();
-        synchronized (lock) {
-            if (success) {
-                addEventLocked("lock_screen_" + action, reason, 0L, null, currentGateSnapshot());
-            } else {
-                lastError = "Accessibility screen lock is unavailable";
-                addEventLocked("lock_screen_unavailable", reason, 0L, null, currentGateSnapshot());
-            }
-        }
-        if (!success) {
-            notifyActionUnavailable();
-        }
-    }
-
-    private void runWakeCoverAction(String action, String reason, int displayState) {
-        buzz();
-        new Handler(context.getMainLooper()).post(() -> {
-            try {
-                Intent intent = new Intent(Intent.ACTION_MAIN)
-                        .addCategory("android.intent.category.SECONDARY_HOME")
-                        .setClass(context, CoverHomeActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                                | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        .putExtra(MainActivity.EXTRA_WAKE_SCREEN, true);
-                Bundle options = coverLaunchOptions(displayId(), true);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        flags |= PendingIntent.FLAG_IMMUTABLE;
-                    }
-                    PendingIntent pendingIntent = PendingIntent.getActivity(
-                            context,
-                            WAKE_REQUEST_CODE,
-                            intent,
-                            flags);
-                    pendingIntent.send(context, 0, null, null, null, null, options);
-                } else {
-                    context.startActivity(intent, options);
-                }
-                synchronized (lock) {
-                    addEventLocked("wake_cover_" + action, displayStateName(displayState),
-                            0L, null, currentGateSnapshot());
-                }
-            } catch (Exception exc) {
-                synchronized (lock) {
-                    lastError = exc.getClass().getSimpleName() + ": " + exc.getMessage();
-                    addEventLocked("wake_cover_failed", reason, 0L, null, currentGateSnapshot());
-                }
-            }
-        });
-    }
-
-    private static Bundle coverLaunchOptions(int displayId, boolean forPendingIntent) {
-        ActivityOptions options = ActivityOptions.makeBasic()
-                .setLaunchDisplayId(displayId);
-        if (forPendingIntent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            options.setPendingIntentBackgroundActivityLaunchAllowed(true);
-            options.setPendingIntentBackgroundActivityStartMode(
-                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-        }
-        return options.toBundle();
-    }
-
-    private void notifyActionUnavailable() {
-        try {
-            JSONObject args = new JSONObject();
-            Json.put(args, "id", "cover_wave_lock_unavailable");
-            Json.put(args, "title", "Pucky screen lock needs setup");
-            Json.put(args, "text", "Enable Pucky screen lock in Accessibility settings.");
-            Json.put(args, "big_text", "The hand-wave gesture was accepted, but Android requires the Pucky Accessibility service before Pucky can lock the screen.");
-            Json.put(args, "timeout_ms", 6_000L);
-            new NotificationController(context).show(args);
-        } catch (Exception exc) {
-            Log.w(TAG, "cover wave unavailable notification failed", exc);
-        }
-    }
-
-    private void buzz() {
-        try {
-            Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
-            if (vibrator == null || !vibrator.hasVibrator()) {
-                return;
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE));
-            } else {
-                vibrator.vibrate(60);
-            }
-        } catch (RuntimeException exc) {
-            Log.w(TAG, "cover wave vibration failed", exc);
-        }
-    }
-
     private void registerSensorLocked(String name) {
         Sensor sensor = findSensorByName(name);
         if (sensor == null || sensorManager == null || listener == null) {
@@ -779,33 +604,13 @@ public final class CoverDisplayGestureController {
         accelSamples.clear();
         handNear = false;
         nearStartedAtMs = 0L;
+        nearFalseStartedAtMs = 0L;
         candidatePreflight = null;
         running = false;
     }
 
     private boolean enabled() {
-        return prefs.getBoolean(ENABLED, false);
-    }
-
-    private boolean actionEnabled() {
-        return prefs.getBoolean(ACTION_ENABLED, false);
-    }
-
-    private String actionMode() {
-        String mode = prefs.getString(ACTION_MODE, MODE_NOTIFY);
-        return MODE_LOCK_SCREEN.equals(mode)
-                || LEGACY_MODE_POWER.equals(mode)
-                || LEGACY_MODE_DISPLAY.equals(mode)
-                ? MODE_LOCK_SCREEN
-                : MODE_NOTIFY;
-    }
-
-    private long minSwipeMs() {
-        return prefs.getLong(MIN_SWIPE_MS, DEFAULT_MIN_SWIPE_MS);
-    }
-
-    private long maxSwipeMs() {
-        return prefs.getLong(MAX_SWIPE_MS, DEFAULT_HOVER_CANCEL_MS);
+        return prefs.getBoolean(ENABLED, true);
     }
 
     private long cooldownMs() {

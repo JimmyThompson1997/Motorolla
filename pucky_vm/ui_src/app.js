@@ -683,6 +683,19 @@
         user_mediated: true
       };
     }
+    if (command === "player.asset.prepare") {
+      const url = String(args.url || "").trim();
+      if (!url) {
+        throw new Error("player.asset.prepare requires url");
+      }
+      const filename = String(args.filename || "meeting-audio.m4a").replace(/[^A-Za-z0-9._-]+/g, "-");
+      return {
+        schema: "pucky.player_asset_prepare.v1",
+        url,
+        device_path: `/data/data/com.pucky.device.debug/files/downloads/${filename}`,
+        mime_type: String(args.mime_type || "audio/mp4")
+      };
+    }
     if (command === "player.play") {
       const nextPath = args.path || state.player.path || state.activePath;
       const nextSource = args.path ? null : (state.player.source || null);
@@ -3098,13 +3111,37 @@
       accent: "#72c2ff",
       created_at: String(card.started_at || card.created_at || ""),
       summary: String(agentCard.summary || card.transcript_text || (meetingState(card) === "processing" ? "Processing..." : "")),
-      audio_path: String(card.device_path || card.audio_path || card.audio_url || ""),
+      audio_path: meetingPlayablePath(card),
+      audio_url: String(card.audio_url || ""),
       audio_mime_type: String(card.mime_type || "audio/mp4"),
       audio_duration_ms: safeNumber(card.duration_ms),
       transcript_messages: meetingTranscriptMessages(card),
       is_meeting_recording: true,
       meeting_record: card
     };
+  }
+
+  function meetingPlayablePath(meeting) {
+    const devicePath = String(meeting && meeting.device_path || "").trim();
+    if (isAndroidPlayableAudioPath(devicePath)) {
+      return devicePath;
+    }
+    const audioPath = String(meeting && meeting.audio_path || "").trim();
+    return isAndroidPlayableAudioPath(audioPath) ? audioPath : "";
+  }
+
+  function isAndroidPlayableAudioPath(path) {
+    const value = String(path || "").trim();
+    return Boolean(value)
+      && !/^[A-Za-z]:[\\/]/.test(value)
+      && !value.startsWith("/data/pucky-src/")
+      && (
+        value.startsWith("/data/data/com.pucky.device")
+        || value.startsWith("/data/user/")
+        || value.startsWith("/storage/emulated/")
+        || value.startsWith("/sdcard/")
+        || value.startsWith("content://")
+      );
   }
 
   function meetingTranscriptMessages(meeting) {
@@ -3679,6 +3716,42 @@
     wrapper.append(action);
   }
 
+  async function prepareAudioForPlayback(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
+    if (card.audio_path && (!card.is_meeting_recording || isAndroidPlayableAudioPath(card.audio_path))) {
+      return String(card.audio_path);
+    }
+    const url = String(card.audio_url || "").trim();
+    if (!url) {
+      return String(card.audio_path || "");
+    }
+    const filename = `${String(card.session_id || card.title || "meeting-audio")
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 72) || "meeting-audio"}.m4a`;
+    const result = await Pucky.request({
+      command: "player.asset.prepare",
+      args: {
+        url,
+        title: card.title,
+        filename,
+        mime_type: card.audio_mime_type || "audio/mp4",
+        max_bytes: 96 * 1024 * 1024
+      }
+    });
+    const path = String(result && (result.device_path || result.path || result.local_path) || "").trim();
+    if (!path) {
+      throw new Error("Meeting audio could not be prepared for playback.");
+    }
+    card.audio_path = path;
+    if (card.meeting_record && typeof card.meeting_record === "object") {
+      card.meeting_record.device_path = path;
+    }
+    return path;
+  }
+
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
     if (state.audioToggleBusyKey === busyKey) {
@@ -3712,12 +3785,13 @@
         });
         rememberPlayerProgress(state.player);
       } else {
-        const start = savedPositionFor(card.audio_path);
+        const audioPath = await prepareAudioForPlayback(card);
+        const start = savedPositionFor(audioPath);
         state.activePath = audioControlKey(card);
-        forgetCompleted(card.audio_path);
+        forgetCompleted(audioPath);
         state.player = await Pucky.request({
           command: "player.play",
-          args: { path: card.audio_path, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
         });
         rememberPlayerProgress(state.player);
       }
@@ -4472,6 +4546,9 @@
     if (item.src || item.data_url) {
       return String(item.src || item.data_url);
     }
+    if (item.url) {
+      return String(item.url);
+    }
     const bundled = bundledArtifactPath(item);
     if (bundled) {
       return bundled;
@@ -5192,10 +5269,11 @@
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
         });
-      } else if (!same && card.audio_path) {
+      } else if (!same && (card.audio_path || card.audio_url)) {
+        const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
       state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
@@ -5406,10 +5484,11 @@
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
         });
-      } else if (!same && card.audio_path) {
+      } else if (!same && (card.audio_path || card.audio_url)) {
+        const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs }
+          args: { path: audioPath, title: card.title, start_at_ms: positionMs }
         });
       }
       state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
@@ -6523,7 +6602,10 @@
   }
 
   function hasAttachmentSource(attachment) {
-    return Boolean(
+    if (!attachment || typeof attachment !== "object") {
+      return false;
+    }
+    const hasDirectSource = Boolean(
       attachment.path
       || attachment.local_path
       || attachment.image_path
@@ -6536,18 +6618,33 @@
       || attachment.html_viewer_path
       || attachment.document_html_path
       || attachment.src
+      || attachment.url
       || attachment.data_url
-      || attachment.text
-      || attachment.preview
       || attachment.viewer
     );
+    if (hasDirectSource) {
+      return true;
+    }
+    const kind = String(attachment.kind || attachment.type || "").toLowerCase();
+    const mime = String(attachment.mime_type || attachment.mime || "").toLowerCase();
+    const textLike = kind === "text"
+      || kind === "markdown"
+      || kind === "html"
+      || kind === "table"
+      || mime.startsWith("text/")
+      || mime === "application/json"
+      || mime === "application/xml";
+    if (!textLike) {
+      return false;
+    }
+    return Boolean(attachment.text || attachment.preview);
   }
 
   function normalizeAttachment(attachment, index = 0) {
     const raw = { ...attachment };
-    const mime = resolvedMediaMime(null, raw, mediaPath(raw) || bundledArtifactPath(raw) || raw.src || raw.data_url || "");
+    const mime = resolvedMediaMime(null, raw, mediaPath(raw) || bundledArtifactPath(raw) || raw.src || raw.url || raw.data_url || "");
     const kind = normalizedAttachmentKind(raw, mime);
-    const id = String(raw.id || raw.sha256 || raw.path || raw.artifact || raw.src || `${kind}-${index}`);
+    const id = String(raw.id || raw.sha256 || raw.path || raw.artifact || raw.src || raw.url || `${kind}-${index}`);
     const title = String(raw.title || raw.name || raw.filename || id.replace(/^.*\//, "") || "Attachment");
     const original = raw.original && typeof raw.original === "object" ? { ...raw.original } : {};
     original.name = original.name || title;

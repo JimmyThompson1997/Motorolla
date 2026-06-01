@@ -244,7 +244,12 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "function meetingRowView(meeting)" in app
     assert "function meetingCardFromRecord(meeting)" in app
     assert "showMeetingDetail(meeting)" in app
-    assert 'audio_path: String(card.device_path || card.audio_path || card.audio_url || "")' in app
+    assert "function meetingPlayablePath(meeting)" in app
+    assert "function isAndroidPlayableAudioPath(path)" in app
+    assert "audio_path: meetingPlayablePath(card)" in app
+    assert 'audio_url: String(card.audio_url || "")' in app
+    assert 'card.device_path || card.audio_path || card.audio_url' not in app
+    assert 'value.startsWith("/data/pucky-src/")' in app
     assert "function meetingTranscriptSection(meeting)" in app
     assert "speaker_turns" in app
     assert "Processing..." in app
@@ -257,6 +262,34 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert ".meeting-speaker-turn" in styles
     assert ".meeting-row-state.is-completed" in styles
     assert ".meetings-empty.is-error" in styles
+
+
+def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
+    app = read("app.js")
+    bridge = (ROOT.parent / "pucky-apk" / "app" / "src" / "main" / "java" / "com" / "pucky" / "device" / "ui" / "PuckyWebBridge.java").read_text(encoding="utf-8")
+
+    assert "async function prepareAudioForPlayback(card)" in app
+    prepare = app.split("async function prepareAudioForPlayback", 1)[1].split("async function toggleAudio", 1)[0]
+    assert 'command: "player.asset.prepare"' in prepare
+    assert "card.audio_path = path;" in prepare
+    toggle = app.split("async function toggleAudio", 1)[1].split("function showTranscript", 1)[0]
+    assert "const audioPath = await prepareAudioForPlayback(card);" in toggle
+    assert "args: { path: audioPath, title: card.title" in toggle
+    scrub = app.split("async function commitAudioScrub", 1)[1].split("function updateAudioScrubPreview", 1)[0]
+    assert "const audioPath = await prepareAudioForPlayback(card);" in scrub
+    timestamp = app.split("async function commitTimestamp", 1)[1].split("async function jumpToTimestamp", 1)[0]
+    assert "const audioPath = await prepareAudioForPlayback(card);" in timestamp
+    assert 'case "player.asset.prepare":' in bridge
+
+
+def test_meeting_transcript_uses_remaining_detail_height() -> None:
+    styles = read("styles.css")
+
+    transcript = css_block(styles, ".meeting-transcript-section")
+    assert "max-height: 46vh" not in transcript
+    assert "flex: 1 1 auto;" in transcript
+    assert "min-height: 0;" in transcript
+    assert "overflow-y: auto;" in transcript
 
 
 def test_meetings_reuse_swipe_archive_without_feed_card_archive() -> None:
@@ -1142,7 +1175,7 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "function activePlayerMatchesCard(card)" in app
     assert "function savedSpeedForCard(card)" in app
     assert "function resolvedStartSpeedForCard(card)" in app
-    assert 'args: { path: card.audio_path, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
+    assert 'args: { path: audioPath, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
     assert 'args: { start_at_ms: savedPositionFor(current.source || current.path), speed: resolvedStartSpeedForCard(card) }' in app
     assert 'args: { start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
 
@@ -1460,6 +1493,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "function resolveArtifactUrl(item, options = {})" in app
     assert 'command: "artifact.url"' in app
     resolve_artifact = app.split("async function resolveArtifactUrl", 1)[1].split("function resolvedImageMime", 1)[0]
+    assert "if (item.url)" in resolve_artifact
     assert resolve_artifact.index('command: "artifact.url"') < resolve_artifact.index('command: "artifact.read_base64"')
     assert "function resolvedImageMime(result, image, path)" in app
     assert "function isPdfMedia(item)" in app
@@ -1525,6 +1559,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert ".image-reel-video" in styles
     assert ".attachment-video-shell" in styles
     assert ".attachment-video-play" in styles
+
     assert ".attachment-video-player" in styles
     assert ".video-controls" in styles
     assert ".video-timeline" in styles
@@ -1600,6 +1635,20 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"mime_type": "image/jpeg"' in fixture
     assert '"mime_type": "application/pdf"' in fixture
     assert '"mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"' in fixture
+
+
+def test_paperclip_requires_real_openable_attachment_source() -> None:
+    app = read("app.js")
+
+    assert "function hasAttachmentSource(attachment)" in app
+    has_source = app.split("function hasAttachmentSource", 1)[1].split("function normalizeAttachment", 1)[0]
+    assert "attachment.url" in has_source
+    assert "const textLike =" in has_source
+    assert 'kind === "text"' in has_source
+    assert 'kind === "audio"' not in has_source
+    assert "if (!textLike) {\n      return false;\n    }" in has_source
+    assert "return Boolean(attachment.text || attachment.preview);" in has_source
+    assert "raw.url" in app
 
 
 def test_android_system_back_closes_html_detail_first() -> None:

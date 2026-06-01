@@ -105,10 +105,10 @@ public final class CapabilityReporter {
                 "yes", "quiet", null, "not_recorded", "Bounded foreground-safe sensor sample."));
         Json.add(out, cap("sensor.watch", "sensor.watch", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Bounded multi-sensor watch by exact sensor name/type for physical gesture mapping."));
-        Json.add(out, cap("cover.wave", "cover.wave.status/cover.wave.config.set/cover.wave.trigger",
+        Json.add(out, cap("meeting.hover", "meeting.hover.status/meeting.hover.config.set/meeting.recording.trigger_hover",
                 hasAnySensor() ? "implemented_guarded" : "blocked_by_hardware",
                 "foreground_service", "visible", "android.permission.VIBRATE", "not_recorded",
-                "Cover-screen hand-wave detector gated by closed device state, face-up/stationary accelerometer checks, and Accessibility screen lock when enabled."));
+                "Three-second cover palm hover toggles Meeting Recording Mode; cover.wave.* remains a deprecated diagnostic alias with no lock or notify action."));
         Json.add(out, cap("screen.lock", "screen.lock.status/screen.lock.request/screen.lock.open_accessibility_settings",
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
