@@ -15,6 +15,7 @@ import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.media.MediaControlController;
 import com.pucky.device.media.MediaExportController;
+import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
@@ -74,6 +75,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "button.events.list", "button.events.clear", "button.simulate",
             "voice.capture.status", "voice.capture.start", "voice.capture.stop",
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
+            "meeting.recording.status", "meeting.recording.start",
+            "meeting.recording.stop", "meeting.recording.trigger_hover",
             "voice.thread_scope.get", "voice.thread_scope.set", "voice.thread_scope.clear",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
             "pucky.turn.settings.get", "pucky.turn.settings.set",
@@ -444,6 +447,14 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return voiceCaptureController.list(command.args());
             case "voice.capture.delete":
                 return voiceCaptureController.delete(command.args());
+            case "meeting.recording.status":
+                return MeetingRecordingController.shared(settingsStore.context()).status();
+            case "meeting.recording.start":
+                return MeetingRecordingController.shared(settingsStore.context()).start(command.args());
+            case "meeting.recording.stop":
+                return MeetingRecordingController.shared(settingsStore.context()).stop(command.args());
+            case "meeting.recording.trigger_hover":
+                return MeetingRecordingController.shared(settingsStore.context()).triggerHover(command.args());
             case "voice.thread_scope.get":
                 return uiController.voiceThreadScopeGet();
             case "voice.thread_scope.set":

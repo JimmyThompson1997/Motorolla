@@ -23,6 +23,8 @@ import android.view.Display;
 import com.pucky.device.CoverHomeActivity;
 import com.pucky.device.MainActivity;
 import com.pucky.device.accessibility.PuckyAccessibilityService;
+import com.pucky.device.command.CommandException;
+import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.util.Json;
 
@@ -58,7 +60,8 @@ public final class CoverDisplayGestureController {
     private static final int DEVICE_STATE_CLOSED_HALL = 0;
     private static final int DEVICE_STATE_CLOSED = 1;
     private static final long DEFAULT_MIN_SWIPE_MS = 50L;
-    private static final long DEFAULT_MAX_SWIPE_MS = 500L;
+    private static final long DEFAULT_HOVER_CANCEL_MS = 6_000L;
+    private static final long MEETING_HOVER_HOLD_MS = 3_000L;
     private static final long DEFAULT_COOLDOWN_MS = 800L;
     private static final long PREFLIGHT_MAX_AGE_MS = 1_250L;
     private static final long ACCEL_SAMPLE_MAX_AGE_MS = 350L;
@@ -169,7 +172,7 @@ public final class CoverDisplayGestureController {
             }
             if (args.has("max_swipe_ms")) {
                 editor.putLong(MAX_SWIPE_MS,
-                        clamp(args.optLong("max_swipe_ms", DEFAULT_MAX_SWIPE_MS), 50L, 4_000L));
+                        clamp(args.optLong("max_swipe_ms", DEFAULT_HOVER_CANCEL_MS), 500L, 10_000L));
             }
             if (args.has("cooldown_ms")) {
                 editor.putLong(COOLDOWN_MS,
@@ -310,18 +313,45 @@ public final class CoverDisplayGestureController {
                 candidateId = activeCandidateId;
                 nearStartedAtMs = now;
                 candidatePreflight = null;
-                addEventLocked("near_started", name, 0L, values, null);
+                addEventLocked("hover_started", name, 0L, values, null);
                 startPreflight(candidateId, "near_start");
+                scheduleHoverHold(candidateId, name, values);
                 return;
             }
             durationMs = nearStartedAtMs <= 0 ? 0L : now - nearStartedAtMs;
             nearStartedAtMs = 0L;
             candidateId = activeCandidateId;
-            shouldEvaluate = true;
+            addEventLocked("hover_cancelled", name, durationMs, values, null);
         }
         if (shouldEvaluate) {
             evaluateCandidate(candidateId, durationMs, name, values);
         }
+    }
+
+    private void scheduleHoverHold(long candidateId, String sourceSensor, float[] values) {
+        Handler handler;
+        synchronized (lock) {
+            handler = sensorHandler;
+        }
+        if (handler == null) {
+            return;
+        }
+        float[] capturedValues = values == null ? null : values.clone();
+        handler.postDelayed(
+                () -> evaluateHoverCandidate(candidateId, sourceSensor, capturedValues),
+                MEETING_HOVER_HOLD_MS);
+    }
+
+    private void evaluateHoverCandidate(long candidateId, String sourceSensor, float[] values) {
+        long durationMs;
+        synchronized (lock) {
+            if (candidateId != activeCandidateId || !handNear || nearStartedAtMs <= 0) {
+                return;
+            }
+            durationMs = SystemClock.elapsedRealtime() - nearStartedAtMs;
+            addEventLocked("hover_progress", sourceSensor, durationMs, values, null);
+        }
+        evaluateCandidate(candidateId, durationMs, sourceSensor, values);
     }
 
     private void evaluateCandidate(long candidateId, long durationMs, String sourceSensor, float[] values) {
@@ -347,16 +377,32 @@ public final class CoverDisplayGestureController {
             return;
         }
 
-        String action = "toggle";
         synchronized (lock) {
-            lastGestureAtMs = SystemClock.elapsedRealtime();
-            addEventLocked("gesture_accepted", action + ":" + sourceSensor, durationMs, values, gates);
-            if (!actionEnabled()) {
-                addEventLocked("power_action_skipped", "dry_run", durationMs, values, gates);
+            if (candidateId != activeCandidateId || !handNear) {
+                addEventLocked("gesture_rejected", "hover_no_longer_active", durationMs, values, gates);
                 return;
             }
+            lastGestureAtMs = SystemClock.elapsedRealtime();
+            addEventLocked("gesture_accepted", "meeting_toggle:" + sourceSensor, durationMs, values, gates);
         }
-        runAction(action, "gesture_" + action);
+        try {
+            JSONObject result = MeetingRecordingController.shared(context).toggleFromHover("cover_hover_hold");
+            String state = result.optString("state", "");
+            synchronized (lock) {
+                addEventLocked(
+                        "recording".equals(state) ? "meeting_recording_started" : "meeting_recording_stopped",
+                        "cover_hover_hold",
+                        durationMs,
+                        values,
+                        gates);
+            }
+        } catch (CommandException exc) {
+            synchronized (lock) {
+                lastError = exc.getMessage();
+                addEventLocked("meeting_recording_failed", "cover_hover_hold:" + exc.getMessage(),
+                        durationMs, values, gates);
+            }
+        }
     }
 
     private String earlyRejectReason(long durationMs) {
@@ -759,7 +805,7 @@ public final class CoverDisplayGestureController {
     }
 
     private long maxSwipeMs() {
-        return prefs.getLong(MAX_SWIPE_MS, DEFAULT_MAX_SWIPE_MS);
+        return prefs.getLong(MAX_SWIPE_MS, DEFAULT_HOVER_CANCEL_MS);
     }
 
     private long cooldownMs() {

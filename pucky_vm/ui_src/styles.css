@@ -3064,3 +3064,133 @@ button {
 .settings-selector-option.is-active .settings-selector-option-check {
   color: var(--blue);
 }
+
+.meetings-page {
+  display: grid;
+  gap: 14px;
+  padding: 10px 12px 18px;
+}
+
+.meetings-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.meetings-kicker {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.meetings-title {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.meetings-refresh {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(245, 249, 255, 0.08);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.12);
+}
+
+.meetings-list-card {
+  display: grid;
+  gap: 8px;
+}
+
+.meeting-row {
+  width: 100%;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(245, 249, 255, 0.06);
+  color: var(--text);
+  text-align: left;
+}
+
+.meeting-row-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(114, 194, 255, 0.14);
+  color: #72c2ff;
+}
+
+.meeting-row-icon .material-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.meeting-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.meeting-row-title,
+.meeting-row-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-row-title {
+  font-size: 15px;
+  font-weight: 820;
+}
+
+.meeting-row-subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.meeting-row-state {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(245, 249, 255, 0.08);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.meeting-row-state.is-completed {
+  background: rgba(80, 216, 106, 0.14);
+  color: #7df397;
+}
+
+.meeting-row-state.is-failed {
+  background: rgba(255, 92, 122, 0.14);
+  color: #ff8fa5;
+}
+
+.meetings-empty {
+  padding: 22px 14px;
+  border-radius: 18px;
+  background: rgba(245, 249, 255, 0.05);
+  color: var(--muted);
+  text-align: center;
+}
+
+.meetings-empty.is-error {
+  color: #ff8fa5;
+}

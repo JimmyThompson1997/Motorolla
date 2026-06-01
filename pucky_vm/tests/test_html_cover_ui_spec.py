@@ -69,11 +69,14 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'icon: "mailbox"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
-    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Links" }' in app
+    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Links" },\n    { route: "meetings", icon: "mic", label: "Meetings" }' in app
     assert "link:" in app
     assert 'route: "links"' in app
     assert 'icon: "link"' in app
     assert 'label: "Links"' in app
+    assert 'route: "meetings"' in app
+    assert 'icon: "mic"' in app
+    assert 'label: "Meetings"' in app
     assert 'route: "settings"' in app
     assert 'icon: "settings"' in app
     assert 'label: "Settings"' in app
@@ -87,9 +90,12 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
     assert "linksPageView()" in app
+    assert "meetingsPageView()" in app
     assert "function linksPageView()" in app
+    assert "function meetingsPageView()" in app
     assert 'if (state.route === "links")' in app
     assert 'const page = linksPageView();' in app
+    assert 'feed.replaceChildren(meetingsPageView());' in app
     assert 'if (feed.firstElementChild !== page || feed.childElementCount !== 1) {' in app
     assert "links-portal-frame" not in app
     assert "loadLinksPortal({ render: true });" in app
@@ -128,6 +134,8 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".tab.is-active .material-icon" in styles
     assert ".tab:not(.is-active) .material-icon" in styles
     assert ".links-page" in styles
+    assert ".meetings-page" in styles
+    assert ".meeting-row" in styles
     assert ".links-portal-frame" not in styles
     assert ".links-shell" not in styles
     assert ".links-title" not in styles
@@ -221,6 +229,28 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/apps"' not in app
     assert '"/api/links/status"' not in app
     assert '"/api/links/connect"' not in app
+
+
+def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "function initialMeetingsState()" in app
+    assert "meetings: initialMeetingsState()" in app
+    assert "async function loadMeetings(options = {})" in app
+    assert 'linksApiRequest("/api/meetings", { cache: "no-store" })' in app
+    assert "function meetingsPageView()" in app
+    assert "function meetingRowView(meeting)" in app
+    assert "function meetingCardFromRecord(meeting)" in app
+    assert "showAudioDetail(meetingCardFromRecord(meeting))" in app
+    assert 'audio_path: String(card.device_path || card.audio_path || card.audio_url || "")' in app
+    assert "Processing..." in app
+    assert 'loadMeetings({ render: true });' in app
+    assert ".meetings-page" in styles
+    assert ".meetings-list-card" in styles
+    assert ".meeting-row-icon" in styles
+    assert ".meeting-row-state.is-completed" in styles
+    assert ".meetings-empty.is-error" in styles
 
 
 def test_voice_status_dot_is_single_turn_indicator() -> None:

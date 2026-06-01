@@ -21,6 +21,13 @@ class DeepgramSTT:
     timeout: float = 60.0
 
     def transcribe(self, audio: bytes, content_type: str) -> str:
+        result = self.transcribe_with_metadata(audio, content_type)
+        transcript = str(result.get("transcript") or "").strip()
+        if not transcript:
+            raise ProviderError("Deepgram returned an empty transcript")
+        return transcript
+
+    def transcribe_with_metadata(self, audio: bytes, content_type: str) -> dict[str, Any]:
         if not audio:
             raise ProviderError("Deepgram cannot transcribe empty audio")
         query = urllib.parse.urlencode({"model": self.model, "smart_format": "true", "diarize": "true"})
@@ -41,7 +48,15 @@ class DeepgramSTT:
         transcript = _deepgram_transcript(payload)
         if not transcript:
             raise ProviderError("Deepgram returned an empty transcript")
-        return transcript
+        return {
+            "schema": "pucky.deepgram_transcript.v1",
+            "provider": "deepgram",
+            "model": self.model,
+            "diarization_requested": True,
+            "transcript": transcript,
+            "speaker_turns": _deepgram_speaker_turns(payload),
+            "raw": payload,
+        }
 
 
 @dataclass(frozen=True)
@@ -99,6 +114,40 @@ def _deepgram_transcript(payload: dict[str, Any]) -> str:
             if transcript:
                 return transcript
     return ""
+
+
+def _deepgram_speaker_turns(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    channels = ((payload.get("results") or {}).get("channels") or [])
+    words: list[dict[str, Any]] = []
+    for channel in channels:
+        for alternative in channel.get("alternatives") or []:
+            for word in alternative.get("words") or []:
+                if isinstance(word, dict):
+                    words.append(word)
+            if words:
+                break
+        if words:
+            break
+    turns: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for word in words:
+        raw_speaker = word.get("speaker")
+        speaker = f"speaker_{raw_speaker}" if raw_speaker is not None and not str(raw_speaker).startswith("speaker_") else str(raw_speaker or "speaker")
+        text = str(word.get("punctuated_word") or word.get("word") or "").strip()
+        if not text:
+            continue
+        if current is None or current.get("speaker") != speaker:
+            current = {
+                "speaker": speaker,
+                "start": word.get("start"),
+                "end": word.get("end"),
+                "text": text,
+            }
+            turns.append(current)
+        else:
+            current["end"] = word.get("end")
+            current["text"] = f"{current.get('text', '')} {text}".strip()
+    return turns
 
 
 def _kokoro_json_audio(data: bytes) -> tuple[bytes, str]:

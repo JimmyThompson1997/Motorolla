@@ -157,6 +157,7 @@
   const PAGE_TABS = [
     { route: "feed", icon: "mail", label: "Home" },
     { route: "links", icon: "link", label: "Links" },
+    { route: "meetings", icon: "mic", label: "Meetings" },
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "settings", icon: "settings", label: "Settings" }
@@ -318,6 +319,7 @@
     lastRenderedTurnId: "",
     waveHistory: new Map(),
     links: initialLinksState(),
+    meetings: initialMeetingsState(),
     drag: null
   };
 
@@ -1683,6 +1685,29 @@
     return payload;
   }
 
+  async function loadMeetings(options = {}) {
+    if (state.meetings.loading) {
+      return;
+    }
+    state.meetings.loading = true;
+    state.meetings.error = "";
+    if (options.render) {
+      renderFeed();
+    }
+    try {
+      const payload = await linksApiRequest("/api/meetings", { cache: "no-store" });
+      state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
+      state.meetings.lastRefreshAt = Date.now();
+    } catch (error) {
+      state.meetings.error = String(error && error.message ? error.message : "Unable to load meetings");
+    } finally {
+      state.meetings.loading = false;
+      if (options.render) {
+        renderFeed();
+      }
+    }
+  }
+
   function ensureSettingsSurfaceCurrent() {
     if (state.route !== "settings") {
       return false;
@@ -2201,6 +2226,15 @@
     };
   }
 
+  function initialMeetingsState() {
+    return {
+      loading: false,
+      error: "",
+      records: [],
+      lastRefreshAt: 0
+    };
+  }
+
   function initialMapTrackerStatus() {
     return {
       schema: "pucky.location_tracker_status.v1",
@@ -2495,6 +2529,8 @@
         linksDebugStartSession("route", { reason: "route_open" });
         linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
         loadLinksPortal({ render: true });
+      } else if (state.route === "meetings") {
+        loadMeetings({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
       }
@@ -2586,6 +2622,10 @@
         feed.replaceChildren(page);
       }
       syncLinksPage();
+      return;
+    }
+    if (state.route === "meetings") {
+      feed.replaceChildren(meetingsPageView());
       return;
     }
     if (state.route !== "feed") {
@@ -2882,6 +2922,118 @@
     }
     syncLinksPage();
     return linksPageNode;
+  }
+
+  function meetingsPageView() {
+    const page = el("section", "meetings-page");
+    const header = el("div", "meetings-header");
+    header.append(
+      el("div", "meetings-kicker", "Meeting Recording Mode"),
+      el("h2", "meetings-title", "Meetings")
+    );
+    const refresh = el("button", "meetings-refresh", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
+    header.append(refresh);
+    page.append(header);
+
+    if (state.meetings.loading && !state.meetings.records.length) {
+      page.append(el("div", "meetings-empty", "Loading meetings..."));
+      return page;
+    }
+    if (state.meetings.error && !state.meetings.records.length) {
+      page.append(el("div", "meetings-empty is-error", state.meetings.error));
+      return page;
+    }
+    if (!state.meetings.records.length) {
+      page.append(el("div", "meetings-empty", "No meeting recordings yet."));
+      return page;
+    }
+    const list = el("section", "meetings-list-card");
+    list.append(...state.meetings.records.slice().reverse().map(meetingRowView));
+    page.append(list);
+    return page;
+  }
+
+  function meetingRowView(meeting) {
+    const row = el("button", "meeting-row");
+    row.type = "button";
+    const icon = el("span", "meeting-row-icon");
+    icon.innerHTML = iconSvg("mic", { filled: false });
+    const copy = el("span", "meeting-row-copy");
+    copy.append(
+      el("span", "meeting-row-title", meetingTitle(meeting)),
+      el("span", "meeting-row-subtitle", meetingSubtitle(meeting))
+    );
+    const stateBadge = el("span", `meeting-row-state is-${meetingState(meeting)}`, meetingStateLabel(meeting));
+    row.append(icon, copy, stateBadge);
+    row.addEventListener("click", () => showAudioDetail(meetingCardFromRecord(meeting)));
+    return row;
+  }
+
+  function meetingCardFromRecord(meeting) {
+    const card = meeting && typeof meeting === "object" ? meeting : {};
+    const agentCard = card.card && typeof card.card === "object" ? card.card : {};
+    return {
+      session_id: String(card.meeting_id || agentCard.session_id || ""),
+      title: meetingTitle(card),
+      icon: "mic",
+      accent: "#72c2ff",
+      created_at: String(card.started_at || card.created_at || ""),
+      summary: String(agentCard.summary || card.transcript_text || (meetingState(card) === "processing" ? "Processing..." : "")),
+      audio_path: String(card.device_path || card.audio_path || card.audio_url || ""),
+      audio_mime_type: String(card.mime_type || "audio/mp4"),
+      audio_duration_ms: safeNumber(card.duration_ms),
+      transcript_messages: meetingTranscriptMessages(card)
+    };
+  }
+
+  function meetingTranscriptMessages(meeting) {
+    const transcript = String(meeting && meeting.transcript_text || "").trim();
+    const summary = String(meeting && meeting.card && meeting.card.summary || "").trim();
+    const messages = [];
+    if (transcript) {
+      messages.push({ role: "user", text: transcript, created_at: meeting.started_at || meeting.created_at || "" });
+    }
+    if (summary) {
+      messages.push({ role: "assistant", text: summary, created_at: meeting.updated_at || "" });
+    }
+    return messages;
+  }
+
+  function meetingTitle(meeting) {
+    const raw = meeting && typeof meeting === "object" ? meeting : {};
+    const card = raw.card && typeof raw.card === "object" ? raw.card : {};
+    return String(card.title || raw.title || raw.meeting_id || "Meeting Recording");
+  }
+
+  function meetingState(meeting) {
+    const value = String(meeting && meeting.state || "uploaded").toLowerCase();
+    return ["uploaded", "processing", "completed", "failed"].includes(value) ? value : "uploaded";
+  }
+
+  function meetingStateLabel(meeting) {
+    const stateName = meetingState(meeting);
+    if (stateName === "processing" || stateName === "uploaded") {
+      return "Processing...";
+    }
+    return stateName === "failed" ? "Failed" : "Ready";
+  }
+
+  function meetingSubtitle(meeting) {
+    const duration = formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
+    const status = meetingStateLabel(meeting);
+    return [duration, status].filter(Boolean).join(" · ");
+  }
+
+  function formatMeetingDuration(durationMs) {
+    const totalSeconds = Math.round(safeNumber(durationMs) / 1000);
+    if (totalSeconds <= 0) {
+      return "";
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
   function linksAppInitial(app) {
@@ -7777,6 +7929,10 @@
       refreshLinksConnectedSoon({ render: true, force: true });
       return;
     }
+    if (state.route === "meetings") {
+      loadMeetings({ render: true });
+      return;
+    }
     if (state.route === "settings") {
       loadSettingsState({ render: true });
     }
@@ -7800,5 +7956,7 @@
     linksDebugStartSession("route", { reason: "boot_route" });
     linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
     loadLinksPortal({ render: true });
+  } else if (state.route === "meetings") {
+    loadMeetings({ render: true });
   }
 })();

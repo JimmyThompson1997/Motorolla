@@ -1,0 +1,47 @@
+package com.pucky.device.sensors;
+
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public final class MeetingRecordingSourceTest {
+    @Test
+    public void coverHoverHoldTogglesMeetingRecordingInsteadOfShortWave() throws Exception {
+        String source = read("src/main/java/com/pucky/device/sensors/CoverDisplayGestureController.java");
+
+        assertTrue(source.contains("MEETING_HOVER_HOLD_MS = 3_000L"));
+        assertTrue(source.contains("scheduleHoverHold"));
+        assertTrue(source.contains("evaluateHoverCandidate"));
+        assertTrue(source.contains("\"hover_started\""));
+        assertTrue(source.contains("\"hover_progress\""));
+        assertTrue(source.contains("\"hover_cancelled\""));
+        assertTrue(source.contains("\"meeting_recording_started\""));
+        assertTrue(source.contains("\"meeting_recording_stopped\""));
+        assertTrue(source.contains("\"meeting_recording_failed\""));
+        assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover"));
+        assertFalse(source.contains("DEFAULT_MAX_SWIPE_MS = 500L"));
+    }
+
+    @Test
+    public void commandAndCapabilitySurfacesExposeMeetingRecording() throws Exception {
+        String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
+        String capability = read("src/main/java/com/pucky/device/capabilities/CapabilityReporter.java");
+
+        assertTrue(executor.contains("\"meeting.recording.status\""));
+        assertTrue(executor.contains("\"meeting.recording.start\""));
+        assertTrue(executor.contains("\"meeting.recording.stop\""));
+        assertTrue(executor.contains("\"meeting.recording.trigger_hover\""));
+        assertTrue(executor.contains("MeetingRecordingController.shared(settingsStore.context())"));
+        assertTrue(capability.contains("meeting.recording.status/meeting.recording.start/meeting.recording.stop"));
+        assertTrue(capability.contains("Three-second cover hover toggles Meeting Recording Mode"));
+    }
+
+    private static String read(String path) throws Exception {
+        return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8).replace("\r\n", "\n");
+    }
+}

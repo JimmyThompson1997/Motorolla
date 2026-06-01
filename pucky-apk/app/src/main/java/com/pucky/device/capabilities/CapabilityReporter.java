@@ -150,6 +150,10 @@ public final class CapabilityReporter {
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "yes", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
                 "MediaRecorder hold-to-record capture to app-owned .m4a artifacts. Raw voice capture is save-only and does not replay recordings."));
+        Json.add(out, cap("meeting.recording", "meeting.recording.status/meeting.recording.start/meeting.recording.stop/meeting.recording.trigger_hover",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
+                "foreground_service", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
+                "Three-second cover hover toggles Meeting Recording Mode, saves an app-owned .m4a file, uploads it to the VM, and hands processing to the meeting agent prompt."));
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",

@@ -617,6 +617,9 @@ class PuckyVoiceService:
         self._links_catalog_cache: tuple[str, dict[str, object]] | None = None
         self._card_icon_lock = threading.Lock()
         self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
+        self._meetings_lock = threading.Lock()
+        self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
+        self._meetings_index_path = self._meetings_dir / "meetings.json"
 
     def start(self) -> None:
         self.codex.start()
@@ -1287,6 +1290,186 @@ class PuckyVoiceService:
 
     def artifact(self, artifact_id: str) -> dict[str, object] | None:
         return self.feed.get_artifact(artifact_id)
+
+    def meetings_list(self) -> dict[str, object]:
+        meetings = self._load_meetings()
+        return {
+            "schema": "pucky.meetings.v1",
+            "ok": True,
+            "count": len(meetings),
+            "meetings": meetings,
+        }
+
+    def meeting_audio(self, meeting_id: str) -> tuple[bytes, str, str] | None:
+        clean_id = _safe_meeting_id(meeting_id)
+        for meeting in self._load_meetings():
+            if str(meeting.get("meeting_id") or "") != clean_id:
+                continue
+            path = Path(str(meeting.get("audio_path") or ""))
+            if path.is_file():
+                return path.read_bytes(), str(meeting.get("mime_type") or "audio/mp4"), path.name
+        return None
+
+    def meeting_ingest(self, payload: dict[str, object], *, base_url: str = "") -> dict[str, object]:
+        meeting_id = _safe_meeting_id(payload.get("meeting_id"))
+        if not meeting_id:
+            raise ValueError("meeting_id_required")
+        mime_type = str(payload.get("mime_type") or "audio/mp4").strip() or "audio/mp4"
+        audio_b64 = str(payload.get("audio_base64") or "").strip()
+        if not audio_b64:
+            raise ValueError("audio_base64_required")
+        audio = base64.b64decode(audio_b64)
+        if not audio:
+            raise ValueError("audio_empty")
+        if len(audio) > self.config.max_audio_bytes:
+            raise ValueError("audio_too_large")
+
+        self._meetings_dir.mkdir(parents=True, exist_ok=True)
+        extension = ".wav" if "wav" in mime_type.lower() else ".m4a"
+        audio_path = self._meetings_dir / f"{meeting_id}{extension}"
+        audio_path.write_bytes(audio)
+        audio_url = f"{base_url.rstrip('/')}/api/meetings/{quote(meeting_id, safe='')}/audio" if base_url else ""
+
+        transcript_payload: dict[str, object]
+        try:
+            transcribe_with_metadata = getattr(self.stt, "transcribe_with_metadata", None)
+            if callable(transcribe_with_metadata):
+                transcript_payload = dict(transcribe_with_metadata(audio, mime_type))
+            else:
+                transcript_payload = {
+                    "schema": "pucky.deepgram_transcript.v1",
+                    "transcript": self.stt.transcribe(audio, mime_type),
+                    "diarization_requested": True,
+                    "speaker_turns": [],
+                }
+            transcript_status = "completed"
+            transcript_error = ""
+        except Exception as exc:
+            transcript_payload = {
+                "schema": "pucky.deepgram_transcript.v1",
+                "transcript": "",
+                "diarization_requested": True,
+                "speaker_turns": [],
+            }
+            transcript_status = "failed"
+            transcript_error = f"{exc.__class__.__name__}: {exc}"
+
+        speaker_turns = list(transcript_payload.get("speaker_turns") or [])
+        transcript_text = str(transcript_payload.get("transcript") or "").strip()
+        now = _iso_time(time.time())
+        record: dict[str, object] = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": meeting_id,
+            "state": "processing",
+            "created_at": now,
+            "updated_at": now,
+            "started_at": str(payload.get("started_at") or ""),
+            "stopped_at": str(payload.get("stopped_at") or ""),
+            "duration_ms": int(payload.get("duration_ms") or 0),
+            "device_id": str(payload.get("device_id") or ""),
+            "device_path": str(payload.get("device_path") or ""),
+            "mime_type": mime_type,
+            "audio_bytes": len(audio),
+            "audio_path": str(audio_path),
+            "audio_url": audio_url,
+            "metadata": {key: value for key, value in payload.items() if key != "audio_base64"},
+            "transcript_status": transcript_status,
+            "transcript_error": transcript_error,
+            "transcript_text": transcript_text,
+            "transcript_result": transcript_payload,
+            "diarization_requested": bool(transcript_payload.get("diarization_requested", True)),
+            "diarization_status": "speaker_turns" if speaker_turns else "no_speaker_turns",
+            "speaker_turns": speaker_turns,
+        }
+        self._upsert_meeting(record)
+
+        prompt = _meeting_agent_handoff_prompt(record)
+        total_start = time.perf_counter()
+        telemetry: dict[str, object] = {
+            "event": "pucky.meeting.agent_handoff",
+            "session_id": meeting_id,
+            "turn_id": meeting_id,
+            "content_type": mime_type,
+            "request_audio_bytes": len(audio),
+            "reply_mode": REPLY_MODE_CARD_ONLY,
+            "stt_provider": "deepgram",
+            "stt_model": getattr(self.stt, "model", ""),
+            "tts_provider": "deepinfra",
+            "tts_model": getattr(self.tts, "model", ""),
+            "tts_voice": getattr(self.tts, "voice", ""),
+            "tts_format": getattr(self.tts, "response_format", ""),
+            "tts_speed": getattr(self.tts, "speed", ""),
+            "stage": "codex_running",
+            "transcript_chars": len(prompt),
+            "user_transcript": prompt,
+        }
+        telemetry.update(_normalize_thread_request(mode="", thread_id="", source="meeting_recording", card_id=""))
+        try:
+            result = self._handle_transcript_turn(
+                turn_id=meeting_id,
+                session_id=meeting_id,
+                reply_mode=REPLY_MODE_CARD_ONLY,
+                transcript=prompt,
+                telemetry=telemetry,
+                total_start=total_start,
+                request_audio_mime_type=mime_type,
+                request_audio_base64=base64.b64encode(audio).decode("ascii"),
+            )
+            record["state"] = "completed"
+            record["updated_at"] = _iso_time(time.time())
+            record["card_id"] = str(result.get("card_id") or "")
+            record["card"] = result.get("card") if isinstance(result.get("card"), dict) else {}
+            record["feed_item"] = result
+            record["failure_reason"] = ""
+        except Exception as exc:
+            record["state"] = "failed"
+            record["updated_at"] = _iso_time(time.time())
+            record["failure_reason"] = f"{exc.__class__.__name__}: {exc}"
+            result = {}
+        self._upsert_meeting(record)
+        return {
+            "schema": "pucky.meeting_ingest.v1",
+            "ok": record.get("state") == "completed",
+            "state": record.get("state"),
+            "meeting_id": meeting_id,
+            "audio_path": str(audio_path),
+            "audio_bytes": len(audio),
+            "meeting": record,
+            "card": result,
+            "agent": result,
+        }
+
+    def _load_meetings(self) -> list[dict[str, object]]:
+        with self._meetings_lock:
+            if not self._meetings_index_path.exists():
+                return []
+            try:
+                payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
+            except Exception:
+                return []
+            rows = payload.get("meetings") if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                return []
+            return [dict(item) for item in rows if isinstance(item, dict)]
+
+    def _upsert_meeting(self, record: dict[str, object]) -> None:
+        with self._meetings_lock:
+            self._meetings_dir.mkdir(parents=True, exist_ok=True)
+            rows: list[dict[str, object]] = []
+            if self._meetings_index_path.exists():
+                try:
+                    payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
+                    raw_rows = payload.get("meetings") if isinstance(payload, dict) else payload
+                    if isinstance(raw_rows, list):
+                        rows = [dict(item) for item in raw_rows if isinstance(item, dict)]
+                except Exception:
+                    rows = []
+            meeting_id = str(record.get("meeting_id") or "")
+            rows = [item for item in rows if str(item.get("meeting_id") or "") != meeting_id]
+            rows.append(dict(record))
+            rows = rows[-200:]
+            payload = {"schema": "pucky.meetings_index.v1", "meetings": rows}
+            self._meetings_index_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def _card_icon_accent(self, icon: object) -> str:
         name = normalize_card_icon(icon)
@@ -2014,6 +2197,59 @@ def _extract_displayable_paths_from_text(reply_text: str, codex_cwd: str | None)
             seen.add(resolved)
             found.append(resolved)
     return found
+
+
+def _safe_meeting_id(raw: object) -> str:
+    value = str(raw or "").strip()
+    if not re.fullmatch(r"meeting-[A-Za-z0-9._:-]{1,160}", value):
+        return ""
+    return value
+
+
+def _meeting_agent_handoff_prompt(record: dict[str, object]) -> str:
+    speaker_turns = list(record.get("speaker_turns") or [])
+    speaker_lines = []
+    for turn in speaker_turns[:80]:
+        if not isinstance(turn, dict):
+            continue
+        speaker = str(turn.get("speaker") or "speaker").strip()
+        text = str(turn.get("text") or "").strip()
+        if text:
+            speaker_lines.append(f"- {speaker}: {text}")
+    speaker_text = "\n".join(speaker_lines) if speaker_lines else "- No speaker-separated turns were returned; treat this as an honest diarization fallback."
+    transcript = str(record.get("transcript_text") or "").strip()
+    if not transcript:
+        transcript = "(No transcript text was returned. Explain the transcription failure and work from the audio artifact if a tool is available.)"
+    return f"""Meeting Recording Agent Handoff
+
+You are processing a saved Pucky meeting recording. Use the audio artifact and transcript below to produce a normal Pucky strict JSON reply with reply_text, card_title, card_icon, html, and attachments.
+
+Meeting metadata:
+- meeting_id: {record.get("meeting_id")}
+- audio_path: {record.get("audio_path")}
+- audio_url: {record.get("audio_url") or ""}
+- device_path: {record.get("device_path") or ""}
+- mime_type: {record.get("mime_type") or ""}
+- duration_ms: {record.get("duration_ms") or 0}
+- transcript_status: {record.get("transcript_status") or ""}
+- diarization_requested: {record.get("diarization_requested")}
+- diarization_status: {record.get("diarization_status") or ""}
+
+Transcript:
+{transcript}
+
+Speaker turns / diarization:
+{speaker_text}
+
+Instructions:
+- Use Deepgram or any available runtime tools if you need to improve transcription or diarization from the audio path/URL.
+- Generate a concise human-facing meeting title.
+- Summarize the meeting, identify likely participants, and extract action items.
+- Explicitly inspect the transcript for Pucky-directed instructions, for example "Pucky, after this meeting...".
+- If the transcript contains follow-up instructions, handle them according to the available agent/runtime/app tools and policy. If action needs confirmation or a recipient is ambiguous, produce a clear draft/confirmation request instead of inventing details.
+- Include links or attachments for the saved audio/transcript when useful.
+- Return only the normal strict Pucky JSON object; no markdown fences and no prose outside JSON.
+""".strip()
 
 
 def _guess_attachment_mime(value: str) -> str:
@@ -2924,6 +3160,24 @@ def make_handler(service: PuckyVoiceService):
             if path == "/api/card-icons":
                 self._json(HTTPStatus.OK, service.card_icons())
                 return
+            if path == "/api/meetings":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                self._json(HTTPStatus.OK, service.meetings_list())
+                return
+            if path.startswith("/api/meetings/") and path.endswith("/audio"):
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                meeting_id = unquote(path.removeprefix("/api/meetings/").removesuffix("/audio")).strip()
+                audio = service.meeting_audio(meeting_id)
+                if audio is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "meeting_audio_not_found"})
+                    return
+                body, mime_type, filename = audio
+                self._bytes(HTTPStatus.OK, body, mime_type, filename=filename)
+                return
             if path.startswith("/api/artifacts/"):
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -3060,6 +3314,23 @@ def make_handler(service: PuckyVoiceService):
                     return
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "card_icon_upsert_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path == "/api/meetings":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(service.config.max_audio_bytes * 2 + 512 * 1024).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("meeting_payload_must_be_object")
+                    result = service.meeting_ingest(payload, base_url=_request_base_url(self))
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_GATEWAY, {"error": "meeting_ingest_failed", "detail": str(exc)})
                     return
                 self._json(HTTPStatus.OK, result)
                 return

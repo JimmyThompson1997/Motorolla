@@ -31,6 +31,21 @@ class FakeSTT:
         self.content_type = content_type
         return "Pucky test turn"
 
+    def transcribe_with_metadata(self, audio: bytes, content_type: str) -> dict[str, object]:
+        self.audio = audio
+        self.content_type = content_type
+        return {
+            "schema": "pucky.deepgram_transcript.v1",
+            "provider": "deepgram",
+            "transcript": "I'm Jimmy and this is Jack. Pucky, after this meeting, prepare follow-up notes for both of us.",
+            "diarization_requested": True,
+            "speaker_turns": [
+                {"speaker": "speaker_0", "text": "I'm Jimmy and this is Jack.", "start": 0.1, "end": 2.2},
+                {"speaker": "speaker_1", "text": "Pucky, after this meeting, prepare follow-up notes for both of us.", "start": 2.4, "end": 5.1},
+            ],
+            "raw": {},
+        }
+
 
 class FakeTTS:
     def synthesize(self, text: str) -> tuple[bytes, str]:
@@ -904,6 +919,53 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 404)
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "card_not_found")
+
+    def test_meeting_ingest_stores_audio_transcribes_and_creates_feed_card(self) -> None:
+        audio = b"RIFFmeeting-audio"
+        payload = self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-120000-device-abc123ef",
+                "started_at": "2026-06-01T12:00:00Z",
+                "stopped_at": "2026-06-01T12:00:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(audio).decode("ascii"),
+            },
+        )
+
+        self.assertEqual(payload["schema"], "pucky.meeting_ingest.v1")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["state"], "completed")
+        self.assertEqual(payload["audio_bytes"], len(audio))
+        self.assertTrue(Path(payload["audio_path"]).is_file())
+        meeting = payload["meeting"]
+        self.assertEqual(meeting["transcript_status"], "completed")
+        self.assertIn("I'm Jimmy", meeting["transcript_text"])
+        self.assertTrue(meeting["diarization_requested"])
+        self.assertEqual(meeting["diarization_status"], "speaker_turns")
+        self.assertGreaterEqual(len(meeting["speaker_turns"]), 2)
+        self.assertEqual(payload["agent"]["card"]["title"], "Quick Help")
+        prompt = self.codex.turns[-1]
+        self.assertIn("Meeting Recording Agent Handoff", prompt)
+        self.assertIn("audio_path:", prompt)
+        self.assertIn("diarization", prompt)
+        self.assertIn("Pucky-directed instructions", prompt)
+        self.assertIn("prepare follow-up notes", prompt)
+
+        feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
+        self.assertTrue(any(item["card_id"] == meeting["card_id"] for item in feed["items"]))
+        meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(meetings["schema"], "pucky.meetings.v1")
+        self.assertEqual(meetings["count"], 1)
+
+    def test_meeting_ingest_requires_authorization(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/meetings")
+
+        self.assertEqual(caught.exception.code, 401)
 
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
