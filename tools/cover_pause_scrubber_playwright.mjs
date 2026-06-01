@@ -6,11 +6,16 @@ import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   basename,
+  emptyPlayerState,
   ensureDir,
   fileUrl,
+  idleTurnStatus,
   installCodexPuckyBridge,
+  openAudioDetail,
   readRuntimeFixtures,
   resolveChromePath,
+  saveScreenshot,
+  writeJsonFile,
   writeAutomationError
 } from "./cover_shared.mjs";
 
@@ -26,53 +31,13 @@ const DEFAULT_DURATION_MS = 15000;
 const DEFAULT_SPEED = 1.25;
 const TARGET_SESSION_ID = "fixture_morning";
 
-function emptyPlayerState() {
-  return {
-    schema: "pucky.player_state.v1",
-    available: true,
-    loaded: false,
-    state: "idle",
-    title: "",
-    source: null,
-    path: null,
-    filename: null,
-    queue_index: -1,
-    queue_count: 0,
-    speed: DEFAULT_SPEED,
-    audio_session_id: 1,
-    can_set_speed: true,
-    is_playing: false,
-    position_ms: 0,
-    duration_ms: 0,
-    can_seek: false
-  };
-}
-
 function createHarnessState() {
   return {
     cardsSnapshot: readRuntimeFixtures(repoRoot),
-    playerState: emptyPlayerState(),
+    playerState: emptyPlayerState({ speed: DEFAULT_SPEED }),
     playStartedAtMs: 0,
     playBasePositionMs: 0,
     nextAudioSessionId: 10
-  };
-}
-
-function idleTurnStatus() {
-  return {
-    schema: "pucky.turn_status.v1",
-    configured: true,
-    last_status: { state: "idle" },
-    voice_capture: { state: "idle", hearing: false },
-    indicator: {
-      schema: "pucky.turn_indicator.v1",
-      state: "idle",
-      mic_on: false,
-      hearing: false,
-      uploading: false,
-      speaking: false,
-      failed: false
-    }
   };
 }
 
@@ -203,43 +168,6 @@ function dispatch(state, message) {
   }
 }
 
-async function screenshot(page, name) {
-  const target = path.join(reportDir, `${name}.png`);
-  await page.screenshot({ path: target, fullPage: true });
-  return target;
-}
-
-async function waitForOpenDetail(page) {
-  await page.waitForFunction(() => {
-    const detail = document.getElementById("detail");
-    return Boolean(detail && (detail.getAttribute("aria-hidden") === "false" || detail.classList.contains("is-open")));
-  });
-}
-
-async function openAudioDetail(page, sessionId) {
-  const opened = await page.evaluate(async (activeSessionId) => {
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    const audio = document.querySelector(`button.action-audio[data-card-session-id="${activeSessionId}"]`);
-    if (!audio) {
-      return false;
-    }
-    audio.click();
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      const wave = document.querySelector(`[data-card-session-id="${activeSessionId}"] .wave-row`);
-      if (wave) {
-        wave.click();
-        return true;
-      }
-      await sleep(50);
-    }
-    return false;
-  }, sessionId);
-  if (!opened) {
-    throw new Error(`Unable to open waveform detail for ${sessionId}`);
-  }
-  await waitForOpenDetail(page);
-}
-
 async function detailState(page) {
   return page.evaluate(() => {
     const detail = document.getElementById("detail");
@@ -310,14 +238,14 @@ async function run() {
     await page.waitForTimeout(1500);
     summary.after_play = await detailState(page);
     summary.player_during_play = dispatch(state, { command: "player.state", args: {} });
-    await screenshot(page, "01-after-play");
+    await saveScreenshot(page, reportDir, "01-after-play");
 
     await page.waitForTimeout(3500);
     await page.locator("#detail .control-play").click();
     await page.waitForTimeout(400);
     summary.after_pause = await detailState(page);
     summary.player_after_pause = dispatch(state, { command: "player.state", args: {} });
-    await screenshot(page, "02-after-pause");
+    await saveScreenshot(page, reportDir, "02-after-pause");
 
     expect(summary.after_pause.playLabel === "Play", `Expected paused control label to be Play, got ${summary.after_pause.playLabel}`);
     expect(summary.after_pause.positionMs >= 3000, `Expected paused scrubber position >= 3000ms, got ${summary.after_pause.positionMs}`);
@@ -329,14 +257,14 @@ async function run() {
     await page.waitForTimeout(400);
     summary.after_resume = await detailState(page);
     summary.player_after_resume = dispatch(state, { command: "player.state", args: {} });
-    await screenshot(page, "03-after-resume");
+    await saveScreenshot(page, reportDir, "03-after-resume");
 
     expect(summary.after_resume.playLabel === "Pause", `Expected resumed control label to be Pause, got ${summary.after_resume.playLabel}`);
     expect(summary.after_resume.positionMs >= summary.after_pause.positionMs, "Expected resumed scrubber position to stay at or beyond the paused position");
     expect(summary.player_after_resume.is_playing === true, "Expected resumed player to be playing");
     expect(summary.player_after_resume.position_ms >= summary.player_after_pause.position_ms, "Expected resumed player position to continue from the paused position");
 
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), "utf8");
+    writeJsonFile(summaryPath, summary);
   } finally {
     await browser.close();
   }

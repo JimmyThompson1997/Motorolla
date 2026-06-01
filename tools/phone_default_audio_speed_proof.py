@@ -4,13 +4,12 @@ import argparse
 import json
 import math
 import os
-import re
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import tools.phone_proof_shared as phone_shared
 import tools.phone_walkie_thread_proof as proof
 import tools.refresh_pucky_html_official as official_html
 
@@ -25,10 +24,6 @@ AUDIO_SPEED_SELECTOR = "#detail .control-speed"
 
 class DefaultAudioSpeedProofError(RuntimeError):
     pass
-
-
-def utc_stamp() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def speed_attr_value(speed: float) -> str:
@@ -88,40 +83,32 @@ def audio_detail_reopen_ops(session_id: str, expected_speed: float) -> list[dict
     ]
 
 
-def operation_text(payload: dict[str, Any]) -> str:
-    for item in reversed(list(payload.get("operations") or [])):
-        if item.get("kind") == "text_content":
-            return str(item.get("text") or "").strip()
-    return ""
-
-
 def settings_xml_text(args: argparse.Namespace, serial: str) -> str:
-    return proof.run_adb(
+    return phone_shared.shared_prefs_xml_text(
+        proof.run_adb,
         args,
         serial,
-        ["shell", "run-as", args.package_name, "cat", "shared_prefs/pucky_settings.xml"],
+        prefs_name="pucky_settings",
         timeout_seconds=30,
     )
 
 
 def parse_default_tile_audio_speed(xml_text: str) -> float | None:
-    match = re.search(r'name="default_tile_audio_speed"\s+value="([^"]+)"', str(xml_text or ""))
-    if not match:
-        return None
-    try:
-        return float(match.group(1))
-    except ValueError:
-        return None
+    return phone_shared.parse_named_float_pref(xml_text, "default_tile_audio_speed")
+
+
+def operation_text(payload: dict[str, Any]) -> str:
+    return phone_shared.operation_text(payload)
 
 
 def relaunch_cover_home(args: argparse.Namespace, serial: str) -> None:
-    proof.run_adb(
+    phone_shared.relaunch_activity(
+        proof.run_adb,
         args,
         serial,
-        ["shell", "am", "start", "-n", f"{args.package_name}/{args.activity_name}"],
         timeout_seconds=30,
+        settle_seconds=2.0,
     )
-    time.sleep(2.0)
 
 
 def refresh_feed_surface(args: argparse.Namespace) -> dict[str, Any]:
@@ -131,21 +118,11 @@ def refresh_feed_surface(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def wait_for_player_speed(args: argparse.Namespace, expected_speed: float) -> dict[str, Any]:
-    def check() -> dict[str, Any] | None:
-        state = proof.run_pucky_command(args, "player.state", {}, timeout_seconds=20)
-        speed = state.get("speed")
-        try:
-            numeric = float(speed)
-        except (TypeError, ValueError):
-            return None
-        if math.isclose(numeric, float(expected_speed), abs_tol=0.01):
-            return state
-        return None
-
-    return proof.wait_for(
-        check,
-        timeout_seconds=20,
-        interval_seconds=0.5,
+    return phone_shared.wait_for_numeric_field(
+        proof.wait_for,
+        lambda: proof.run_pucky_command(args, "player.state", {}, timeout_seconds=20),
+        field_name="speed",
+        expected_value=expected_speed,
         description=f"player speed {expected_speed}",
     )
 
@@ -197,16 +174,11 @@ def relaxed_identity(bundle: dict[str, Any], surface: dict[str, Any], identity: 
 
 
 def route_of(payload: dict[str, Any]) -> str:
-    final_surface = payload.get("final_surface")
-    if isinstance(final_surface, dict):
-        return str(final_surface.get("route") or "").strip()
-    return ""
+    return phone_shared.route_of(payload)
 
 
 def ensure_route(payload: dict[str, Any], expected: str, label: str) -> None:
-    actual = route_of(payload)
-    if actual != expected:
-        raise DefaultAudioSpeedProofError(f"{label} expected route {expected}, got {actual or 'missing'}")
+    phone_shared.ensure_route(payload, expected, label, error_cls=DefaultAudioSpeedProofError)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -356,17 +328,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     checks = proof.scenario_checks(
         {
             "identity_checks": bool(identity_checks.get("passed")),
-            "baseline_shows_1x": operation_text(baseline_settings) == format_speed_text(args.baseline_speed),
-            "updated_shows_default_speed": operation_text(updated_settings) == format_speed_text(args.default_speed),
-            "reloaded_shows_default_speed": operation_text(reloaded_settings) == format_speed_text(args.default_speed),
+            "baseline_shows_1x": phone_shared.operation_text(baseline_settings) == format_speed_text(args.baseline_speed),
+            "updated_shows_default_speed": phone_shared.operation_text(updated_settings) == format_speed_text(args.default_speed),
+            "reloaded_shows_default_speed": phone_shared.operation_text(reloaded_settings) == format_speed_text(args.default_speed),
             "xml_persisted_default_speed": xml_speed is not None and math.isclose(xml_speed, args.default_speed, abs_tol=0.01),
-            "first_tile_ui_default_speed": operation_text(first_audio) == format_speed_text(args.default_speed),
+            "first_tile_ui_default_speed": phone_shared.operation_text(first_audio) == format_speed_text(args.default_speed),
             "first_tile_player_default_speed": math.isclose(float(first_player_state.get("speed") or 0), args.default_speed, abs_tol=0.01),
-            "first_tile_ui_override_speed": operation_text(first_override) == format_speed_text(args.override_speed),
+            "first_tile_ui_override_speed": phone_shared.operation_text(first_override) == format_speed_text(args.override_speed),
             "first_tile_player_override_speed": math.isclose(float(first_override_player_state.get("speed") or 0), args.override_speed, abs_tol=0.01),
-            "first_tile_reopen_ui_override_speed": operation_text(first_reopen) == format_speed_text(args.override_speed),
+            "first_tile_reopen_ui_override_speed": phone_shared.operation_text(first_reopen) == format_speed_text(args.override_speed),
             "first_tile_reopen_player_override_speed": math.isclose(float(first_reopen_player_state.get("speed") or 0), args.override_speed, abs_tol=0.01),
-            "second_tile_ui_default_speed": operation_text(second_audio) == format_speed_text(args.default_speed),
+            "second_tile_ui_default_speed": phone_shared.operation_text(second_audio) == format_speed_text(args.default_speed),
             "second_tile_player_default_speed": math.isclose(float(second_player_state.get("speed") or 0), args.default_speed, abs_tol=0.01),
         }
     )
@@ -375,7 +347,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     report = {
         "schema": RESULT_SCHEMA,
-        "created_at": utc_stamp(),
+        "created_at": phone_shared.utc_stamp(),
         "repo_root": str(args.repo_root),
         "serial": serial,
         "cdp": cdp_after_relaunch,
@@ -390,9 +362,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "baseline_speed": args.baseline_speed,
             "default_speed": args.default_speed,
             "override_speed": args.override_speed,
-            "baseline_ui_text": operation_text(baseline_settings),
-            "updated_ui_text": operation_text(updated_settings),
-            "reloaded_ui_text": operation_text(reloaded_settings),
+            "baseline_ui_text": phone_shared.operation_text(baseline_settings),
+            "updated_ui_text": phone_shared.operation_text(updated_settings),
+            "reloaded_ui_text": phone_shared.operation_text(reloaded_settings),
             "xml_speed": xml_speed,
             "xml_path": str(settings_xml_path),
         },
@@ -418,7 +390,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "checks": checks,
     }
     report_path = scenario_dir / "summary.json"
-    proof.save_json(report_path, report)
+    phone_shared.save_json(report_path, report)
     return {
         "ok": True,
         "schema": RESULT_SCHEMA,

@@ -10,11 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.request import urlopen
 
+import tools.phone_proof_shared as phone_shared
 import tools.refresh_pucky_html_official as official_html
 
 
@@ -27,10 +27,6 @@ RESULT_SCHEMA = "pucky.walkie_thread_phone_proof.v1"
 
 class PhoneProofError(RuntimeError):
     pass
-
-
-def utc_stamp() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def bundled_node_executable() -> Path:
@@ -412,11 +408,6 @@ def generate_tts_fixture(args: argparse.Namespace, text: str, label: str) -> Pat
     return output_path
 
 
-def save_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def capture_browser_phase(
     args: argparse.Namespace,
     *,
@@ -429,7 +420,7 @@ def capture_browser_phase(
     timeout_seconds: int | float = 60,
 ) -> dict[str, Any]:
     payload = run_browser_helper(args, cdp_url, operations, timeout_seconds=timeout_seconds)
-    save_json(scenario_dir / browser_json_name, payload)
+    phone_shared.save_json(scenario_dir / browser_json_name, payload)
     capture_device_screenshot(args, serial, scenario_dir / device_png_name)
     return payload
 
@@ -1068,7 +1059,7 @@ def capture_phase(
     timeout_seconds: int | float,
 ) -> dict[str, Any]:
     result = run_browser_helper(args, cdp_url, operations, timeout_seconds=timeout_seconds)
-    save_json(scenario_dir / browser_name, result)
+    phone_shared.save_json(scenario_dir / browser_name, result)
     capture_device_screenshot(args, serial, scenario_dir / device_name)
     return result
 
@@ -1925,7 +1916,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         evidence = {
             "schema": RESULT_SCHEMA,
-            "created_at": utc_stamp(),
+            "created_at": phone_shared.utc_stamp(),
             "repo_root": str(args.repo_root),
             "local_git": local_git,
             "remote_manifest": remote_manifest or {},
@@ -1945,7 +1936,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "evidence_dir": str(scenario_root),
         }
         evidence_path = scenario_root / "proof.json"
-        save_json(evidence_path, evidence)
+        phone_shared.save_json(evidence_path, evidence)
         if not summary["passed"]:
             raise PhoneProofError(f"one or more scenarios failed: {json.dumps(summary['checks'], sort_keys=True)}")
         return {
