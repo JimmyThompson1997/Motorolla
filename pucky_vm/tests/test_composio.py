@@ -77,6 +77,8 @@ def test_composio_client_logs_compact_actions_without_secrets_or_bodies(monkeypa
     assert "ca_gmail" not in json.dumps(actions)
     assert "gmail/v1/users/me/messages" not in json.dumps(actions)
     assert "ca_gmail" in captured["body"]
+    body = json.loads(captured["body"])
+    assert body["parameters"] == [{"name": "maxResults", "value": "1", "type": "query"}]
 
 
 def test_composio_client_lists_only_active_connected_accounts_with_pagination(monkeypatch) -> None:

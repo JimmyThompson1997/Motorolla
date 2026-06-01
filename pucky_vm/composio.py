@@ -275,7 +275,13 @@ class ComposioClient:
             "method": _safe_name(method, fallback="GET").upper(),
         }
         if parameters:
-            payload["parameters"] = parameters
+            normalized_parameters: list[dict[str, Any]] = []
+            for parameter in parameters:
+                item = dict(parameter)
+                if "type" not in item and "in" in item:
+                    item["type"] = item.pop("in")
+                normalized_parameters.append(item)
+            payload["parameters"] = normalized_parameters
         if body:
             payload["body"] = body
         return self._request_json("POST", "/tools/execute/proxy", payload=payload)

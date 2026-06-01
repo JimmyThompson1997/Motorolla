@@ -75,8 +75,8 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
         connected_account_id=account_id,
         endpoint="/gmail/v1/users/me/messages",
         parameters=[
-            {"name": "maxResults", "value": "1", "in": "query"},
-            {"name": "labelIds", "value": "INBOX", "in": "query"},
+            {"name": "maxResults", "value": "1", "type": "query"},
+            {"name": "labelIds", "value": "INBOX", "type": "query"},
         ],
     )
     message_id = _first_message_id(list_payload)
@@ -87,10 +87,10 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
         connected_account_id=account_id,
         endpoint=f"/gmail/v1/users/me/messages/{message_id}",
         parameters=[
-            {"name": "format", "value": "metadata", "in": "query"},
-            {"name": "metadataHeaders", "value": "Subject", "in": "query"},
-            {"name": "metadataHeaders", "value": "From", "in": "query"},
-            {"name": "metadataHeaders", "value": "Date", "in": "query"},
+            {"name": "format", "value": "metadata", "type": "query"},
+            {"name": "metadataHeaders", "value": "Subject", "type": "query"},
+            {"name": "metadataHeaders", "value": "From", "type": "query"},
+            {"name": "metadataHeaders", "value": "Date", "type": "query"},
         ],
     )
     context_after = service._base_runtime_context()

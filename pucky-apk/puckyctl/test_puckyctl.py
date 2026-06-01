@@ -133,6 +133,25 @@ class BrokerIntegrationTests(unittest.TestCase):
 
         self.assertTrue(response["ok"])
 
+    def test_api_token_is_accepted_even_when_specific_tokens_exist(self):
+        fallback = "personal-api-token"
+        ctx = dict(self.ctx)
+        ctx["operator_token"] = fallback
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PUCKY_OPERATOR_TOKEN": "old-operator-token",
+                "PUCKY_DEVICE_TOKEN": "old-device-token",
+                "PUCKY_API_TOKEN": fallback,
+            },
+            clear=False,
+        ):
+            self.assertEqual(puckyctl.api_devices(ctx), [])
+            response = self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token=fallback)
+
+        self.assertTrue(response["ok"])
+
     def test_send_offline_command_uses_v1_alias(self):
         result = puckyctl.run_command_send(
             self.ctx,
