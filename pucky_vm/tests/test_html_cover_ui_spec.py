@@ -238,19 +238,61 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "function initialMeetingsState()" in app
     assert "meetings: initialMeetingsState()" in app
     assert "async function loadMeetings(options = {})" in app
-    assert 'linksApiRequest("/api/meetings", { cache: "no-store" })' in app
+    assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
+    assert "async function loadMeetingDetail(meeting)" in app
     assert "function meetingsPageView()" in app
     assert "function meetingRowView(meeting)" in app
     assert "function meetingCardFromRecord(meeting)" in app
-    assert "showAudioDetail(meetingCardFromRecord(meeting))" in app
+    assert "showMeetingDetail(meeting)" in app
     assert 'audio_path: String(card.device_path || card.audio_path || card.audio_url || "")' in app
+    assert "function meetingTranscriptSection(meeting)" in app
+    assert "speaker_turns" in app
     assert "Processing..." in app
+    assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
     assert ".meetings-page" in styles
     assert ".meetings-list-card" in styles
-    assert ".meeting-row-icon" in styles
+    assert ".meeting-row-icon" not in styles
+    assert ".meeting-transcript-section" in styles
+    assert ".meeting-speaker-turn" in styles
     assert ".meeting-row-state.is-completed" in styles
     assert ".meetings-empty.is-error" in styles
+
+
+def test_meetings_reuse_swipe_archive_without_feed_card_archive() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "function installFeedLikeSwipeArchive(wrapper, item, config)" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" in app
+    assert "installFeedLikeSwipeArchive(wrapper, card, {" in app
+    assert "function installMeetingArchiveSwipe(wrapper, meeting)" in app
+    assert "installMeetingArchiveSwipe(wrapper, meeting);" in app
+    assert "async function archiveMeetingRecord(meeting)" in app
+    assert 'linksApiRequest("/api/meetings/actions", {' in app
+    assert 'action: "archive"' in app
+    assert 'command: "pucky.feed.action"' not in function_block(app, "archiveMeetingRecord")
+    assert "function applyOptimisticMeetingArchive(meeting)" in app
+    assert "state.meetings.records = state.meetings.records.map" in app
+    assert ".filter(meeting => !Boolean(meeting && meeting.archived))" in app
+    assert 'appendCardSwipeAction(wrapper);' in function_block(app, "meetingRowView")
+    assert ".meeting-row-card" in styles
+    assert ".card-swipe-action" in styles
+
+
+def test_meeting_recording_status_uses_purple_dot() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "meetingRecording: initialMeetingRecordingStatus()" in app
+    assert "async function refreshMeetingRecordingStatus(options = {})" in app
+    assert 'command: "meeting.recording.status"' in app
+    assert "function meetingRecordingVisualState()" in app
+    assert 'return "meeting_recording";' in app
+    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "meeting_recording"]' in app
+    assert ".voice-status-meeting_recording" in styles
+    assert "--voice-color: #a855f7" in css_block(styles, ".voice-status-meeting_recording")
+    assert ".voice-status-recording {\n  --voice-color: #ff3b30" in styles
 
 
 def test_voice_status_dot_is_single_turn_indicator() -> None:
@@ -283,7 +325,8 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function wakeProofVisualState(status)" in app
     assert "proof_indicator: normalizeWakeProof(raw.proof_indicator)" in app
     assert 'const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle"' in app
-    assert 'const label = wakeProofState !== "idle" ? "wake matched" : turnStateLabel(visualState)' in app
+    assert 'const meetingState = meetingRecordingVisualState();' in app
+    assert 'const label = meetingState !== "idle"' in app
     assert "hasNativeVisualState" not in app
     assert "indicator.visual_state = \"thinking\"" not in app
     assert "indicator.visual_state = \"speaking\"" not in app
@@ -331,7 +374,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "indicator.visual_state = \"failed\"" not in app
     assert 'armed: "armed"' in app
     assert 'recording: "recording"' in app
-    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking"]' in app
+    assert '["idle", "armed", "recording", "uploading", "thinking", "speaking", "meeting_recording"]' in app
 
 
 def test_active_home_tab_opens_real_icon_filter_tray() -> None:
@@ -460,7 +503,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
-    swipe = function_block(app, "installCardArchiveSwipe")
+    swipe = function_block(app, "installFeedLikeSwipeArchive")
     can_archive = function_block(app, "canArchiveBySwipe")
     request_mark_read = function_block(app, "requestMarkRead")
 
@@ -489,9 +532,9 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "if (isPendingOutboundCard(card)) {" in can_archive
     assert "return isFailedPendingOutboundCard(card);" in can_archive
     assert "state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;" in swipe
-    assert "const rollback = applyOptimisticArchive(card);" in swipe
+    assert "const rollback = config.optimistic(card);" in swipe
     assert 'wrapper.classList.add("is-card-swiped-away");' in swipe
-    assert "void archiveHomeCard(card).then(result => {" in swipe
+    assert "void config.archive(card).then(result => {" in swipe
     assert "if (result === null)" in swipe
     assert "rollback();" in swipe
     assert 'const usePointerEvents = "PointerEvent" in window;' in swipe
@@ -864,7 +907,7 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     styles = read("styles.css")
     archive = function_block(app, "archiveHomeCard")
     optimistic = function_block(app, "applyOptimisticArchive")
-    swipe = function_block(app, "installCardArchiveSwipe")
+    swipe = function_block(app, "installFeedLikeSwipeArchive")
 
     assert "authoritative: true" in app
     assert "reset_cursor: resetCursor" in app

@@ -21,6 +21,7 @@
   const CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280;
   const CARD_ARCHIVE_SWIPE_EXIT_MS = 320;
   const CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320;
+  const MEETING_STATUS_POLL_MS = 1000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -320,6 +321,7 @@
     waveHistory: new Map(),
     links: initialLinksState(),
     meetings: initialMeetingsState(),
+    meetingRecording: initialMeetingRecordingStatus(),
     drag: null
   };
 
@@ -455,6 +457,9 @@
         action,
         snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards }
       };
+    }
+    if (command === "meeting.recording.status") {
+      return state.meetingRecording;
     }
     if (command === "player.state") {
       return state.player;
@@ -1695,7 +1700,7 @@
       renderFeed();
     }
     try {
-      const payload = await linksApiRequest("/api/meetings", { cache: "no-store" });
+      const payload = await linksApiRequest("/api/meetings?compact=1", { cache: "no-store" });
       state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
       state.meetings.lastRefreshAt = Date.now();
     } catch (error) {
@@ -1706,6 +1711,33 @@
         renderFeed();
       }
     }
+  }
+
+  async function loadMeetingDetail(meeting) {
+    const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    if (!meetingId) {
+      return meeting;
+    }
+    const payload = await linksApiRequest(`/api/meetings/${encodeURIComponent(meetingId)}`, { cache: "no-store" });
+    const detail = payload && payload.meeting && typeof payload.meeting === "object" ? payload.meeting : meeting;
+    state.meetings.records = state.meetings.records.map(item =>
+      String(item && item.meeting_id || "") === meetingId ? { ...item, ...detail } : item
+    );
+    return detail;
+  }
+
+  async function refreshMeetingRecordingStatus(options = {}) {
+    try {
+      state.meetingRecording = normalizeMeetingRecordingStatus(
+        await Pucky.request({ command: "meeting.recording.status", args: {} })
+      );
+    } catch (_) {
+      state.meetingRecording = normalizeMeetingRecordingStatus(state.meetingRecording);
+    }
+    if (options.render) {
+      renderVoiceStatus();
+    }
+    return state.meetingRecording;
   }
 
   function ensureSettingsSurfaceCurrent() {
@@ -1759,8 +1791,17 @@
     }
     const turnState = turnVisualState(state.turn);
     const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle";
-    const visualState = wakeProofState !== "idle" ? wakeProofState : turnState;
-    const label = wakeProofState !== "idle" ? "wake matched" : turnStateLabel(visualState);
+    const meetingState = meetingRecordingVisualState();
+    const visualState = meetingState !== "idle"
+      ? meetingState
+      : wakeProofState !== "idle"
+        ? wakeProofState
+        : turnState;
+    const label = meetingState !== "idle"
+      ? "meeting recording"
+      : wakeProofState !== "idle"
+        ? "wake matched"
+        : turnStateLabel(visualState);
     const turnId = turnStatusTurnId(state.turn);
     if (state.lastRenderedTurnVisualState !== visualState || state.lastRenderedTurnId !== turnId) {
       state.lastRenderedTurnVisualState = visualState;
@@ -2235,6 +2276,15 @@
     };
   }
 
+  function initialMeetingRecordingStatus() {
+    return {
+      schema: "pucky.meeting_recording_status.v1",
+      state: "idle",
+      active_meeting_id: null,
+      meetings: []
+    };
+  }
+
   function initialMapTrackerStatus() {
     return {
       schema: "pucky.location_tracker_status.v1",
@@ -2449,7 +2499,7 @@
 
   function normalizeVisualState(input) {
     const value = String(input || "").trim().toLowerCase();
-    if (["idle", "armed", "recording", "uploading", "thinking", "speaking"].includes(value)) {
+    if (["idle", "armed", "recording", "uploading", "thinking", "speaking", "meeting_recording"].includes(value)) {
       return value;
     }
     if (["stt_running", "tts_running", "upload_received"].includes(value)) return "uploading";
@@ -2471,6 +2521,23 @@
     return normalizeVisualState(proof.visual_state || "armed");
   }
 
+  function normalizeMeetingRecordingStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+      ...initialMeetingRecordingStatus(),
+      ...raw,
+      state: String(raw.state || "idle").trim().toLowerCase()
+    };
+  }
+
+  function meetingRecordingVisualState() {
+    const status = normalizeMeetingRecordingStatus(state.meetingRecording);
+    if (status.state === "recording") {
+      return "meeting_recording";
+    }
+    return "idle";
+  }
+
   function turnStateLabel(visualState) {
     const labels = {
       idle: "idle",
@@ -2478,7 +2545,8 @@
       recording: "recording",
       uploading: "uploading",
       thinking: "thinking",
-      speaking: "speaking"
+      speaking: "speaking",
+      meeting_recording: "meeting recording"
     };
     return labels[visualState] || "idle";
   }
@@ -2530,6 +2598,7 @@
         linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
         loadLinksPortal({ render: true });
       } else if (state.route === "meetings") {
+        refreshMeetingRecordingStatus({ render: true });
         loadMeetings({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
@@ -2949,26 +3018,64 @@
       page.append(el("div", "meetings-empty", "No meeting recordings yet."));
       return page;
     }
+    if (state.meetings.loading) {
+      page.append(el("div", "meetings-refreshing", "Refreshing..."));
+    }
     const list = el("section", "meetings-list-card");
-    list.append(...state.meetings.records.slice().reverse().map(meetingRowView));
+    list.append(...visibleMeetingRecords().slice().reverse().map(meetingRowView));
     page.append(list);
     return page;
   }
 
   function meetingRowView(meeting) {
-    const row = el("button", "meeting-row");
+    const wrapper = el("div", "card-wrap meeting-wrap");
+    const row = el("button", "meeting-row meeting-row-card");
     row.type = "button";
-    const icon = el("span", "meeting-row-icon");
-    icon.innerHTML = iconSvg("mic", { filled: false });
     const copy = el("span", "meeting-row-copy");
     copy.append(
       el("span", "meeting-row-title", meetingTitle(meeting)),
       el("span", "meeting-row-subtitle", meetingSubtitle(meeting))
     );
     const stateBadge = el("span", `meeting-row-state is-${meetingState(meeting)}`, meetingStateLabel(meeting));
-    row.append(icon, copy, stateBadge);
-    row.addEventListener("click", () => showAudioDetail(meetingCardFromRecord(meeting)));
-    return row;
+    row.append(copy, stateBadge);
+    row.addEventListener("click", () => {
+      if (!shouldSuppressCardActivation()) {
+        void showMeetingDetail(meeting);
+      }
+    });
+    appendCardSwipeAction(wrapper);
+    wrapper.append(row);
+    installMeetingArchiveSwipe(wrapper, meeting);
+    return wrapper;
+  }
+
+  function visibleMeetingRecords() {
+    return state.meetings.records.filter(meeting => !Boolean(meeting && meeting.archived));
+  }
+
+  async function showMeetingDetail(meeting) {
+    const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    const initialCard = meetingCardFromRecord(meeting);
+    showAudioDetail(initialCard);
+    if (!meetingId || meetingHasFullDetail(meeting)) {
+      return;
+    }
+    try {
+      const detail = await loadMeetingDetail(meeting);
+      if (state.audioCard && cardSessionId(state.audioCard) === meetingId) {
+        showAudioDetail(meetingCardFromRecord(detail), { scrollTop: state.navDetail?.scroll_top });
+      }
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  function meetingHasFullDetail(meeting) {
+    return Boolean(meeting && (
+      meeting.transcript_text
+      || Array.isArray(meeting.speaker_turns) && meeting.speaker_turns.length
+      || meeting.transcript_result
+    ));
   }
 
   function meetingCardFromRecord(meeting) {
@@ -2984,7 +3091,9 @@
       audio_path: String(card.device_path || card.audio_path || card.audio_url || ""),
       audio_mime_type: String(card.mime_type || "audio/mp4"),
       audio_duration_ms: safeNumber(card.duration_ms),
-      transcript_messages: meetingTranscriptMessages(card)
+      transcript_messages: meetingTranscriptMessages(card),
+      is_meeting_recording: true,
+      meeting_record: card
     };
   }
 
@@ -4847,7 +4956,59 @@
     if (timestamps) {
       content.append(timestamps);
     }
+    if (card?.is_meeting_recording) {
+      content.append(meetingTranscriptSection(card.meeting_record || card));
+    }
     return content;
+  }
+
+  function meetingTranscriptSection(meeting) {
+    const section = el("section", "meeting-transcript-section");
+    section.append(el("h3", "meeting-transcript-title", "Transcript"));
+    const speakerTurns = Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
+    if (speakerTurns.length) {
+      const list = el("div", "meeting-speaker-turns");
+      speakerTurns.forEach(turn => {
+        const row = el("article", "meeting-speaker-turn");
+        row.append(
+          el("div", "meeting-speaker-label", meetingSpeakerLabel(turn)),
+          el("p", "meeting-speaker-text", String(turn?.text || ""))
+        );
+        list.append(row);
+      });
+      section.append(list);
+      return section;
+    }
+    const transcript = String(meeting?.transcript_text || "").trim();
+    if (transcript) {
+      section.append(el("p", "meeting-transcript-text", transcript));
+      if (String(meeting?.diarization_status || "") === "no_speaker_turns") {
+        section.append(el("p", "meeting-transcript-note", "No speaker-separated transcript was returned for this recording."));
+      }
+      return section;
+    }
+    const state = meetingState(meeting);
+    if (state === "processing") {
+      section.append(el("p", "meeting-transcript-note", "Processing transcript and diarization..."));
+    } else if (state === "failed" || meeting?.transcript_error) {
+      section.append(el("p", "meeting-transcript-note is-error", String(meeting?.transcript_error || meeting?.failure_reason || "Transcript failed.")));
+    } else {
+      section.append(el("p", "meeting-transcript-note", "No transcript is available yet."));
+    }
+    return section;
+  }
+
+  function meetingSpeakerLabel(turn) {
+    const speaker = String(turn?.speaker || "speaker").replaceAll("_", " ");
+    const start = Number(turn?.start);
+    return Number.isFinite(start) ? `${speaker} · ${formatSeconds(start)}` : speaker;
+  }
+
+  function formatSeconds(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds || 0)));
+    const minutes = Math.floor(total / 60);
+    const remainder = total % 60;
+    return `${minutes}:${String(remainder).padStart(2, "0")}`;
   }
 
   function refreshAudioDetail(card, existing) {
@@ -5379,6 +5540,26 @@
     return requestFeedAction(freshCard, "archive");
   }
 
+  async function archiveMeetingRecord(meeting) {
+    const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    if (!meetingId) {
+      return null;
+    }
+    const result = await linksApiRequest("/api/meetings/actions", {
+      method: "POST",
+      body: {
+        client_action_id: `meeting_archive_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        meeting_id: meetingId,
+        action: "archive"
+      }
+    });
+    const archivedId = String(result?.meeting?.meeting_id || meetingId);
+    state.meetings.records = state.meetings.records.map(item =>
+      String(item && item.meeting_id || "") === archivedId ? { ...item, archived: true } : item
+    );
+    return result;
+  }
+
   function applyOptimisticArchive(card) {
     const previousCards = state.cards.slice();
     state.cards = applyLocalFeedAction(state.cards, card, "archive");
@@ -5390,6 +5571,18 @@
       reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
+      render();
+    };
+  }
+
+  function applyOptimisticMeetingArchive(meeting) {
+    const previousMeetings = state.meetings.records.slice();
+    const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    state.meetings.records = state.meetings.records.map(item =>
+      meetingId && String(item && item.meeting_id || "") === meetingId ? { ...item, archived: true } : item
+    ).filter(meeting => !Boolean(meeting && meeting.archived));
+    return () => {
+      state.meetings.records = previousMeetings;
       render();
     };
   }
@@ -5407,8 +5600,16 @@
     return Boolean(cardSessionId(card) || String(card?.card_id || ""));
   }
 
-  function installCardArchiveSwipe(wrapper, card) {
-    const cardEl = wrapper?.querySelector(".card");
+  function canArchiveMeetingBySwipe(meeting) {
+    return state.route === "meetings"
+      && !state.meetings.loading
+      && !Boolean(meeting?.archived)
+      && Boolean(String(meeting?.meeting_id || "").trim());
+  }
+
+  function installFeedLikeSwipeArchive(wrapper, item, config) {
+    const card = item;
+    const cardEl = wrapper?.querySelector(".card, .meeting-row-card");
     if (!cardEl) {
       return;
     }
@@ -5497,7 +5698,7 @@
     };
 
     const begin = (x, y, target, pointer = null) => {
-      if (!canArchiveBySwipe(card) || isDragIgnoredTarget(target)) {
+      if (!config.canArchive(card) || isDragIgnoredTarget(target)) {
         return;
       }
       startX = x;
@@ -5557,7 +5758,7 @@
       }
       swiped = true;
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-      const rollback = applyOptimisticArchive(card);
+      const rollback = config.optimistic(card);
       const measuredHeight = wrapper.getBoundingClientRect().height;
       wrapper.style.height = `${Math.max(1, Math.ceil(measuredHeight))}px`;
       wrapper.classList.add("is-card-swiped-away");
@@ -5569,13 +5770,19 @@
           render();
         }, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);
       }, CARD_ARCHIVE_SWIPE_EXIT_MS);
-      void archiveHomeCard(card).then(result => {
+      void config.archive(card).then(result => {
         if (result === null) {
           wrapper.style.height = "";
           wrapper.style.marginBottom = "";
           clearSwipeClasses();
           rollback();
         }
+      }).catch(error => {
+        wrapper.style.height = "";
+        wrapper.style.marginBottom = "";
+        clearSwipeClasses();
+        rollback();
+        showToast(error.message);
       });
     };
 
@@ -5640,6 +5847,22 @@
         return;
       }
       finish();
+    });
+  }
+
+  function installCardArchiveSwipe(wrapper, card) {
+    installFeedLikeSwipeArchive(wrapper, card, {
+      canArchive: canArchiveBySwipe,
+      optimistic: applyOptimisticArchive,
+      archive: archiveHomeCard
+    });
+  }
+
+  function installMeetingArchiveSwipe(wrapper, meeting) {
+    installFeedLikeSwipeArchive(wrapper, meeting, {
+      canArchive: canArchiveMeetingBySwipe,
+      optimistic: applyOptimisticMeetingArchive,
+      archive: archiveMeetingRecord
     });
   }
 
@@ -7911,6 +8134,12 @@
     }
   }, 90);
 
+  setInterval(() => {
+    if (document.visibilityState === "visible") {
+      void refreshMeetingRecordingStatus({ render: true });
+    }
+  }, MEETING_STATUS_POLL_MS);
+
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
@@ -7930,6 +8159,7 @@
       return;
     }
     if (state.route === "meetings") {
+      refreshMeetingRecordingStatus({ render: true });
       loadMeetings({ render: true });
       return;
     }
@@ -7949,6 +8179,7 @@
   installCardMenuOutsideDismiss();
   void syncVoiceThreadScope({ reason: "boot", render: true });
   loadTurnStatus({ render: false });
+  refreshMeetingRecordingStatus({ render: true });
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCardIconRegistry({ render: false });
   loadCards();
@@ -7957,6 +8188,7 @@
     linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
     loadLinksPortal({ render: true });
   } else if (state.route === "meetings") {
+    refreshMeetingRecordingStatus({ render: true });
     loadMeetings({ render: true });
   }
 })();

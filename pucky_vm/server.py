@@ -1300,14 +1300,57 @@ class PuckyVoiceService:
     def artifact(self, artifact_id: str) -> dict[str, object] | None:
         return self.feed.get_artifact(artifact_id)
 
-    def meetings_list(self) -> dict[str, object]:
-        meetings = self._load_meetings()
+    def meetings_list(self, *, include_archived: bool = False, compact: bool = False) -> dict[str, object]:
+        meetings = [
+            self._compact_meeting(item) if compact else dict(item)
+            for item in self._load_meetings()
+            if include_archived or not bool(item.get("archived"))
+        ]
         return {
             "schema": "pucky.meetings.v1",
             "ok": True,
+            "compact": compact,
+            "include_archived": include_archived,
             "count": len(meetings),
             "meetings": meetings,
         }
+
+    def meeting_detail(self, meeting_id: str) -> dict[str, object]:
+        clean_id = _safe_meeting_id(meeting_id)
+        if not clean_id:
+            raise KeyError(meeting_id)
+        for meeting in self._load_meetings():
+            if str(meeting.get("meeting_id") or "") == clean_id:
+                return {
+                    "schema": "pucky.meeting_detail.v1",
+                    "ok": True,
+                    "meeting": dict(meeting),
+                }
+        raise KeyError(meeting_id)
+
+    def meeting_action(self, client_action_id: str, meeting_id: str, action: str) -> dict[str, object]:
+        clean_action = str(action or "").strip().lower()
+        if clean_action != "archive":
+            raise ValueError("meeting action must be archive")
+        clean_id = _safe_meeting_id(meeting_id)
+        if not clean_id:
+            raise KeyError(meeting_id)
+        for meeting in self._load_meetings():
+            if str(meeting.get("meeting_id") or "") == clean_id:
+                updated = dict(meeting)
+                updated["archived"] = True
+                updated["updated_at"] = _iso_time(time.time())
+                if client_action_id:
+                    updated["last_action_id"] = str(client_action_id)
+                self._upsert_meeting(updated)
+                return {
+                    "schema": "pucky.meeting_action_result.v1",
+                    "ok": True,
+                    "action": clean_action,
+                    "meeting": updated,
+                    "meetings": self.meetings_list(compact=True),
+                }
+        raise KeyError(meeting_id)
 
     def meeting_audio(self, meeting_id: str) -> tuple[bytes, str, str] | None:
         clean_id = _safe_meeting_id(meeting_id)
@@ -1363,6 +1406,7 @@ class PuckyVoiceService:
             "diarization_requested": True,
             "diarization_status": "pending",
             "speaker_turns": [],
+            "archived": False,
         }
         self._upsert_meeting(record)
         threading.Thread(
@@ -1478,6 +1522,34 @@ class PuckyVoiceService:
             if not isinstance(rows, list):
                 return []
             return [dict(item) for item in rows if isinstance(item, dict)]
+
+    @staticmethod
+    def _compact_meeting(meeting: dict[str, object]) -> dict[str, object]:
+        keep = (
+            "schema",
+            "meeting_id",
+            "state",
+            "created_at",
+            "updated_at",
+            "started_at",
+            "stopped_at",
+            "duration_ms",
+            "device_id",
+            "device_path",
+            "mime_type",
+            "audio_bytes",
+            "audio_path",
+            "audio_url",
+            "transcript_status",
+            "transcript_error",
+            "diarization_requested",
+            "diarization_status",
+            "card_id",
+            "card",
+            "failure_reason",
+            "archived",
+        )
+        return {key: meeting[key] for key in keep if key in meeting}
 
     def _upsert_meeting(self, record: dict[str, object]) -> None:
         with self._meetings_lock:
@@ -3168,7 +3240,10 @@ def make_handler(service: PuckyVoiceService):
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
-                self._json(HTTPStatus.OK, service.meetings_list())
+                query = parse_qs(parsed.query)
+                include_archived = _truthy_query(query.get("include_archived", ["0"])[0])
+                compact = _truthy_query(query.get("compact", ["0"])[0])
+                self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
                 return
             if path.startswith("/api/meetings/") and path.endswith("/audio"):
                 if not self._is_authorized():
@@ -3181,6 +3256,16 @@ def make_handler(service: PuckyVoiceService):
                     return
                 body, mime_type, filename = audio
                 self._bytes(HTTPStatus.OK, body, mime_type, filename=filename)
+                return
+            if path.startswith("/api/meetings/"):
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                meeting_id = unquote(path.removeprefix("/api/meetings/")).strip()
+                try:
+                    self._json(HTTPStatus.OK, service.meeting_detail(meeting_id))
+                except KeyError:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "meeting_not_found"})
                 return
             if path.startswith("/api/artifacts/"):
                 if not self._is_authorized():
@@ -3335,6 +3420,28 @@ def make_handler(service: PuckyVoiceService):
                     return
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_GATEWAY, {"error": "meeting_ingest_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path == "/api/meetings/actions":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    result = service.meeting_action(
+                        str(payload.get("client_action_id") or ""),
+                        str(payload.get("meeting_id") or ""),
+                        str(payload.get("action") or ""),
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except KeyError:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "meeting_not_found"})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "meeting_action_failed", "detail": str(exc)})
                     return
                 self._json(HTTPStatus.OK, result)
                 return

@@ -12,6 +12,7 @@ import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
+import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
@@ -122,6 +123,8 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).history(args);
             case "pucky.turn.read":
                 return PuckyTurnController.shared(context).read(args);
+            case "meeting.recording.status":
+                return MeetingRecordingController.shared(context).status();
             case "voice.thread_scope.get":
                 return VoiceThreadScopeController.shared(context).get();
             case "voice.thread_scope.set":

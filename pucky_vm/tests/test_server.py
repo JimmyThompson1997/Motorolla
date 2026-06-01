@@ -5,6 +5,7 @@ import json
 import socket
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 import urllib.error
@@ -946,7 +947,10 @@ class ServerTests(unittest.TestCase):
         for _ in range(50):
             meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
             rows = meetings.get("meetings", [])
-            meeting = rows[0] if rows else {}
+            meeting = next(
+                (item for item in rows if item.get("meeting_id") == "meeting-20260601-120000-device-abc123ef"),
+                {},
+            )
             if meeting.get("state") == "completed":
                 break
             time.sleep(0.1)
@@ -964,11 +968,128 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Pucky-directed instructions", prompt)
         self.assertIn("prepare follow-up notes", prompt)
 
-        feed = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
-        self.assertTrue(any(item["card_id"] == meeting["card_id"] for item in feed["items"]))
+        persisted = self.service.feed.get_item(meeting["card_id"])
+        self.assertIsNotNone(persisted)
+        self.assertFalse(persisted["archived"])
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
-        self.assertEqual(meetings["count"], 1)
+        self.assertTrue(any(
+            item["meeting_id"] == "meeting-20260601-120000-device-abc123ef"
+            for item in meetings["meetings"]
+        ))
+
+    def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
+        audio = b"RIFFmeeting-audio"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-121000-device-abc123ef",
+                "started_at": "2026-06-01T12:10:00Z",
+                "stopped_at": "2026-06-01T12:10:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(audio).decode("ascii"),
+            },
+        )
+
+        meeting = {}
+        for _ in range(50):
+            payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"})
+            rows = payload.get("meetings", [])
+            meeting = next(
+                (item for item in rows if item.get("meeting_id") == "meeting-20260601-121000-device-abc123ef"),
+                {},
+            )
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(payload["schema"], "pucky.meetings.v1")
+        self.assertTrue(payload["compact"])
+        self.assertNotIn("transcript_result", meeting)
+        self.assertNotIn("feed_item", meeting)
+        self.assertNotIn("metadata", meeting)
+
+        detail = self.get_json(
+            "/api/meetings/meeting-20260601-121000-device-abc123ef",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(detail["schema"], "pucky.meeting_detail.v1")
+        self.assertEqual(detail["meeting"]["transcript_status"], "completed")
+        self.assertIn("transcript_result", detail["meeting"])
+        self.assertGreaterEqual(len(detail["meeting"]["speaker_turns"]), 2)
+
+    def test_meeting_archive_hides_meeting_without_archiving_feed_card(self) -> None:
+        audio = b"RIFFmeeting-audio"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-122000-device-abc123ef",
+                "started_at": "2026-06-01T12:20:00Z",
+                "stopped_at": "2026-06-01T12:20:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(audio).decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
+            rows = meetings.get("meetings", [])
+            meeting = next(
+                (item for item in rows if item.get("meeting_id") == "meeting-20260601-122000-device-abc123ef"),
+                {},
+            )
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+
+        card_id = meeting["card_id"]
+        archive = self.post_json(
+            "/api/meetings/actions",
+            {
+                "client_action_id": "meeting_archive_once",
+                "meeting_id": "meeting-20260601-122000-device-abc123ef",
+                "action": "archive",
+            },
+        )
+        self.assertTrue(archive["ok"])
+        self.assertTrue(archive["meeting"]["archived"])
+
+        default_list = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
+        self.assertFalse(any(
+            item["meeting_id"] == "meeting-20260601-122000-device-abc123ef"
+            for item in default_list["meetings"]
+        ))
+        archived_list = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"})
+        archived = next(
+            item for item in archived_list["meetings"]
+            if item["meeting_id"] == "meeting-20260601-122000-device-abc123ef"
+        )
+        self.assertTrue(archived["archived"])
+
+        feed_item = self.service.feed.get_item(card_id)
+        self.assertIsNotNone(feed_item)
+        self.assertFalse(feed_item["archived"])
+
+    def test_meeting_archive_missing_meeting_fails_with_not_found(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.post_json(
+                "/api/meetings/actions",
+                {
+                    "client_action_id": "missing_meeting_archive",
+                    "meeting_id": "meeting-20260601-missing-device-abc123ef",
+                    "action": "archive",
+                },
+            )
+
+        self.assertEqual(caught.exception.code, 404)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "meeting_not_found")
 
     def test_meeting_ingest_requires_authorization(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
