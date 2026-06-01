@@ -75,6 +75,11 @@ public final class PlayerController {
         if (startAtMs >= 0) {
             seekTo(startAtMs);
         }
+        double rawSpeed = args.optDouble("speed", args.optDouble("rate", playbackSpeed));
+        if (Double.isNaN(rawSpeed) || Double.isInfinite(rawSpeed)) {
+            rawSpeed = playbackSpeed;
+        }
+        playbackSpeed = (float) Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, rawSpeed));
         try {
             player.start();
             playbackState = "playing";

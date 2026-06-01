@@ -76,6 +76,10 @@ public final class PuckyWebBridge {
         switch (command) {
             case "ui.reply_cards.get":
                 return PuckyFeedController.shared(context).snapshot();
+            case "ui.default_audio_speed.get":
+                return defaultAudioSpeed();
+            case "ui.default_audio_speed.set":
+                return setDefaultAudioSpeed(args);
             case "pucky.feed.sync":
                 return PuckyFeedController.shared(context).sync(args);
             case "pucky.feed.action":
@@ -177,6 +181,23 @@ public final class PuckyWebBridge {
         Json.put(out, "mode", settings.getUiShellMode());
         Json.put(out, "web_cached", settings.isWebCachedUiEnabled());
         return out;
+    }
+
+    private JSONObject defaultAudioSpeed() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.default_audio_speed.v1");
+        Json.put(out, "speed", settings.getDefaultTileAudioSpeed());
+        return out;
+    }
+
+    private JSONObject setDefaultAudioSpeed(JSONObject args) throws CommandException {
+        double raw = args.optDouble("speed", args.optDouble("rate", settings.getDefaultTileAudioSpeed()));
+        if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+            throw new CommandException(CommandErrorCodes.MALFORMED_COMMAND,
+                    "ui.default_audio_speed.set requires a finite speed");
+        }
+        settings.setDefaultTileAudioSpeed((float) raw);
+        return defaultAudioSpeed();
     }
 
     private void resolve(String id, JSONObject result) {

@@ -699,6 +699,25 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert ".settings-selector-overlay" in styles
     assert ".settings-selector-option" in styles
     assert ".settings-nav-card" in styles
+
+
+def test_settings_tab_includes_default_audio_speed_control() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "defaultAudioSpeed" in app
+    assert "defaultAudioSpeedAvailable" in app
+    assert 'ui.default_audio_speed.get' in app
+    assert 'ui.default_audio_speed.set' in app
+    assert "async function loadDefaultAudioSpeed(options = {})" in app
+    assert "function defaultAudioSpeedSettingCard()" in app
+    assert "Default playback speed" in app
+    assert "Device only" in app
+    assert 'data-setting-id", "default-audio-speed"' in app
+    assert 'openSpeedPicker({ kind: "setting"' in app
+    assert ".settings-card-value" in styles
+    assert ".settings-card.is-disabled" in styles
+    assert ".speed-picker-title" in styles
     assert ".settings-toggle" in styles
     assert ".settings-action-button" in styles
     assert ".settings-diagnostics" in styles
@@ -968,6 +987,11 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "function rememberPlayerProgress(player)" in app
     assert "function forgetCompleted(path)" in app
     assert "savedPositionFor(path)" in app
+    assert "function savedSpeedForCard(card)" in app
+    assert "function resolvedStartSpeedForCard(card)" in app
+    assert 'args: { path: card.audio_path, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
+    assert 'args: { start_at_ms: savedPositionFor(current.source || current.path), speed: resolvedStartSpeedForCard(card) }' in app
+    assert 'args: { start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
 
 
 def test_pausing_audio_clears_active_card_preview_lane() -> None:

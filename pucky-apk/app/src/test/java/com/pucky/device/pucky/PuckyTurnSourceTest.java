@@ -315,6 +315,7 @@ public final class PuckyTurnSourceTest {
         assertTrue(store.contains("public JSONObject merge(JSONArray cardsJson)"));
         assertTrue(source.contains("Json.put(args, \"source\", \"pucky.turn\")"));
         assertTrue(source.contains("PlayerController.shared(context).play(args)"));
+        assertTrue(source.contains("Json.put(args, \"speed\", settings.getDefaultTileAudioSpeed())"));
         assertTrue(source.contains("if (spokenReplyEnabledAtUpload)"));
         assertTrue(source.contains("markStatus(\"speaking\", status, null)"));
         assertTrue(source.contains("markStatus(\"completed\", status, null)"));
@@ -405,8 +406,22 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("String brokerToken = getToken();"));
         assertTrue(source.contains("return getPuckyTurnAuthToken();"));
         assertTrue(source.contains("return \"dev-token\".equals(clean) ? \"\" : clean;"));
+        assertTrue(source.contains("DEFAULT_TILE_AUDIO_SPEED"));
+        assertTrue(source.contains("getDefaultTileAudioSpeed()"));
+        assertTrue(source.contains("setDefaultTileAudioSpeed(float speed)"));
         assertFalse(source.contains("prefs.getString(TOKEN, \"dev-token\")"));
         assertFalse(source.contains("nonEmpty(token, \"dev-token\")"));
+    }
+
+    @Test
+    public void playerConsumesOptionalStartSpeedForFreshPlayback() throws Exception {
+        String player = read("src/main/java/com/pucky/device/player/PlayerController.java");
+
+        assertTrue(player.contains("args.optDouble(\"speed\", args.optDouble(\"rate\", playbackSpeed))"));
+        assertTrue(player.contains("Double.isNaN(rawSpeed)"));
+        assertTrue(player.contains("playbackSpeed = (float) Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, rawSpeed))"));
+        assertTrue(player.contains("player.start()"));
+        assertTrue(player.contains("applyPlaybackSpeedForCurrentState()"));
     }
 
     @Test

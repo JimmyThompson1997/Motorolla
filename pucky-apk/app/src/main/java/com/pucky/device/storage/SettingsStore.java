@@ -26,6 +26,7 @@ public final class SettingsStore {
     public static final String PUCKY_TURN_ARRIVAL_CUE_CHIME = "chime";
     public static final String PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME = "haptic_and_chime";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
+    private static final String DEFAULT_TILE_AUDIO_SPEED = "default_tile_audio_speed";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
     private static final String[] LEGACY_REMOTE_ADB_KEYS = new String[] {
@@ -35,6 +36,8 @@ public final class SettingsStore {
             "remote_adb_",
             "tunnel_"
     };
+    private static final float MIN_PLAYBACK_SPEED = 0.5f;
+    private static final float MAX_PLAYBACK_SPEED = 3.0f;
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -140,6 +143,14 @@ public final class SettingsStore {
 
     public void setUiShellMode(String mode) {
         prefs.edit().putString(UI_SHELL_MODE, "web_cached").apply();
+    }
+
+    public float getDefaultTileAudioSpeed() {
+        return clampPlaybackSpeed(prefs.getFloat(DEFAULT_TILE_AUDIO_SPEED, 1.0f));
+    }
+
+    public void setDefaultTileAudioSpeed(float speed) {
+        prefs.edit().putFloat(DEFAULT_TILE_AUDIO_SPEED, clampPlaybackSpeed(speed)).commit();
     }
 
     public boolean isAutoConnectEnabled() {
@@ -298,5 +309,9 @@ public final class SettingsStore {
         }
         int value = input.optInt(jsonKey, min);
         editor.putInt(prefKey, Math.max(min, Math.min(max, value)));
+    }
+
+    private static float clampPlaybackSpeed(float speed) {
+        return Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, speed));
     }
 }

@@ -21,6 +21,9 @@
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
+  const MIN_PLAYBACK_SPEED = 0.5;
+  const MAX_PLAYBACK_SPEED = 3;
+  const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -287,6 +290,8 @@
     uiSurface: initialUiSurfaceStatus(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
+    defaultAudioSpeed: 1,
+    defaultAudioSpeedAvailable: false,
     savedPositions: numberMapFromObject(persistedAudioState.positions),
     completedPaths: new Set(Array.isArray(persistedAudioState.completed) ? persistedAudioState.completed : []),
     speedByPath: numberMapFromObject(persistedAudioState.speeds),
@@ -669,6 +674,10 @@
       const nextSource = args.path ? null : (state.player.source || null);
       state.activePath = nextSource || args.path || state.activePath;
       const start = args.start_at_ms ?? savedPositionFor(nextSource || nextPath) ?? 0;
+      const speed = finiteSpeed(args.speed ?? args.rate)
+        ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === state.activePath) || {})
+        ?? state.player.speed
+        ?? 1;
       state.player = {
         schema: "pucky.player_state.v1",
         loaded: true,
@@ -680,7 +689,7 @@
         duration_ms: mockDurationForPath(nextSource || nextPath),
         queue_index: state.player.queue_index ?? -1,
         queue_count: state.player.queue_count ?? 0,
-        speed: state.speedByPath.get(normalizePath(state.activePath)) || 1,
+        speed,
         can_seek: true,
         audio_session_id: 1
       };
@@ -701,7 +710,7 @@
         duration_ms: mockDurationForPath(playlist || first),
         queue_index: Number(args.index || 0),
         queue_count: playlist ? 83 : ((args.items && args.items.length) || 1),
-        speed: state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
+        speed: finiteSpeed(args.speed ?? args.rate) || state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
         can_seek: true,
         audio_session_id: 1
       };
@@ -921,8 +930,23 @@
     }
   }
 
+  async function loadDefaultAudioSpeed(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "ui.default_audio_speed.get", args: {} });
+      state.defaultAudioSpeed = clampSpeed(snapshot && snapshot.speed);
+      state.defaultAudioSpeedAvailable = true;
+    } catch (_) {
+      state.defaultAudioSpeed = 1;
+      state.defaultAudioSpeedAvailable = false;
+    }
+    if (options.render) {
+      render();
+    }
+  }
+
   async function loadSettingsState(options = {}) {
     await Promise.all([
+      loadDefaultAudioSpeed({ render: false }),
       loadTurnSettings({ render: false }),
       loadWakeStatus({ render: false }),
       loadUiSurfaceStatus({ render: false })
@@ -2701,12 +2725,44 @@
     hero.append(heroIcon, heroCopy);
     page.append(
       hero,
+      defaultAudioSpeedSettingCard(),
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
       arrivalCueSettingsCard(),
       advancedSettingsCard()
     );
     return page;
+  }
+
+  function defaultAudioSpeedSettingCard() {
+    const row = el("button", state.defaultAudioSpeedAvailable ? "settings-card" : "settings-card is-disabled");
+    row.type = "button";
+    row.style.setProperty("--accent", "#72c2ff");
+    row.setAttribute("data-setting-id", "default-audio-speed");
+    row.disabled = !state.defaultAudioSpeedAvailable;
+    const iconEl = el("div", "settings-card-icon");
+    iconEl.innerHTML = iconSvg("book", { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", "Default playback speed"),
+      el(
+        "p",
+        "settings-card-detail",
+        state.defaultAudioSpeedAvailable
+          ? "Applies to future Home tile playback starts unless a tile already has its own saved speed."
+          : "Device only. Connect the Android bridge to change this setting."
+      )
+    );
+    const value = el("span", "settings-card-value", formatSpeed(state.defaultAudioSpeed));
+    row.append(iconEl, copy, value);
+    row.addEventListener("click", event => {
+      event.preventDefault();
+      if (!state.defaultAudioSpeedAvailable) {
+        return;
+      }
+      openSpeedPicker({ kind: "setting" });
+    });
+    return row;
   }
 
   function linksPageView() {
@@ -3324,9 +3380,8 @@
         state.activePath = audioControlKey(card);
         state.player = await Pucky.request({
           command: "player.play",
-          args: { start_at_ms: savedPositionFor(current.source || current.path) }
+          args: { start_at_ms: savedPositionFor(current.source || current.path), speed: resolvedStartSpeedForCard(card) }
         });
-        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       } else if (card.audio_playlist_path) {
         state.activePath = audioControlKey(card);
@@ -3337,9 +3392,8 @@
         const start = savedPositionFor(audioControlKey(card));
         state.player = await Pucky.request({
           command: "player.play",
-          args: { start_at_ms: start }
+          args: { start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
         });
-        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       } else {
         const start = savedPositionFor(card.audio_path);
@@ -3347,9 +3401,8 @@
         forgetCompleted(card.audio_path);
         state.player = await Pucky.request({
           command: "player.play",
-          args: { path: card.audio_path, title: card.title, start_at_ms: start }
+          args: { path: card.audio_path, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
         });
-        await applySavedSpeedForCard(card);
         rememberPlayerProgress(state.player);
       }
       markCardRead(card);
@@ -4770,7 +4823,7 @@
       } else if (!same && card.audio_path) {
         await Pucky.request({
           command: "player.play",
-          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs }
+          args: { path: card.audio_path, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
       state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
@@ -4881,8 +4934,8 @@
 
   function audioControls(card) {
     const controls = el("div", "audio-controls");
-    const speed = isActiveCard(card) ? (state.player.speed || speedForCard(card)) : speedForCard(card);
-    controls.append(control(formatSpeed(speed), () => openSpeedPicker(card), "control-speed", "Playback speed"));
+    const speed = isActiveCard(card) ? (state.player.speed || resolvedStartSpeedForCard(card)) : resolvedStartSpeedForCard(card);
+    controls.append(control(formatSpeed(speed), () => openSpeedPicker({ kind: "card", card }), "control-speed", "Playback speed"));
     const cluster = el("div", "transport-cluster");
     cluster.append(iconControl("replay_15", "Back 15 seconds", () => seekRelative(-15000), "control-skip"));
     cluster.append(iconControl(state.player.is_playing && isActiveCard(card) ? "pause" : "play_arrow", state.player.is_playing && isActiveCard(card) ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
@@ -4989,9 +5042,11 @@
       }
       state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
       if (!state.player.is_playing) {
-        state.player = await Pucky.request({ command: "player.play", args: { start_at_ms: positionMs } });
+        state.player = await Pucky.request({
+          command: "player.play",
+          args: { start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
+        });
       }
-      await applySavedSpeedForCard(card);
       rememberPlayerProgress(state.player);
       render();
     } catch (error) {
@@ -5035,16 +5090,29 @@
     return row;
   }
 
-  function openSpeedPicker(card) {
+  function openSpeedPicker(context) {
     const overlay = document.getElementById("speedOverlay");
-    const current = Number(isActiveCard(card) ? (state.player.speed || speedForCard(card)) : speedForCard(card));
+    const isSetting = context && context.kind === "setting";
+    const card = context && context.kind === "card" ? context.card : context;
+    const current = isSetting
+      ? clampSpeed(state.defaultAudioSpeed)
+      : clampSpeed(state.player.speed || resolvedStartSpeedForCard(card));
     const menu = el("div", "speed-menu");
-    for (const speed of [0.75, 1, 1.25, 1.5, 2, 2.5, 3]) {
-      const button = el("button", speed === current ? "is-active" : "", `${speed}x`);
+    menu.append(el("div", "speed-picker-title", isSetting ? "Default playback speed" : "Playback speed"));
+    for (const speed of SPEED_OPTIONS) {
+      const active = Math.abs(speed - current) < 0.001;
+      const button = el("button", active ? "is-active" : "", formatSpeed(speed));
+      button.setAttribute("data-speed-value", String(speed));
       button.addEventListener("click", async (event) => {
         event.stopPropagation();
-        rememberSpeed(card, speed);
-        state.player = await Pucky.request({ command: "player.speed", args: { speed } });
+        if (isSetting) {
+          const result = await Pucky.request({ command: "ui.default_audio_speed.set", args: { speed } });
+          state.defaultAudioSpeed = clampSpeed(result && result.speed);
+          state.defaultAudioSpeedAvailable = true;
+        } else {
+          rememberSpeed(card, speed);
+          state.player = await Pucky.request({ command: "player.speed", args: { speed } });
+        }
         closeSpeedPicker();
         render();
       });
@@ -6301,12 +6369,17 @@
     persistAudioState();
   }
 
-  function speedForCard(card) {
-    return Number(state.speedByPath.get(audioStateKey(card)) || 1);
+  function savedSpeedForCard(card) {
+    const speed = finiteSpeed(state.speedByPath.get(audioStateKey(card)));
+    return speed ?? null;
+  }
+
+  function resolvedStartSpeedForCard(card) {
+    return savedSpeedForCard(card) ?? clampSpeed(state.defaultAudioSpeed);
   }
 
   function rememberSpeed(card, speed) {
-    state.speedByPath.set(audioStateKey(card), speed);
+    state.speedByPath.set(audioStateKey(card), clampSpeed(speed));
     persistAudioState();
   }
 
@@ -6320,14 +6393,6 @@
     }
     state.selectedTimestampByPath.set(audioStateKey(card), marker.id);
     persistAudioState();
-  }
-
-  async function applySavedSpeedForCard(card) {
-    const speed = speedForCard(card);
-    if (!Number.isFinite(speed) || Math.abs(speed - Number(state.player.speed || 1)) < 0.001) {
-      return;
-    }
-    state.player = await Pucky.request({ command: "player.speed", args: { speed } });
   }
 
   function playbackPositionForCard(card) {
@@ -7365,12 +7430,21 @@
     }
   }
 
-  function formatSpeed(speed) {
-    const value = Number(speed || 1);
-    if (!Number.isFinite(value)) {
-      return "1x";
+  function finiteSpeed(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? clampSpeed(parsed) : null;
+  }
+
+  function clampSpeed(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 1;
     }
-    return `${String(Math.round(value * 100) / 100).replace(/\.0$/, "")}x`;
+    return Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, parsed));
+  }
+
+  function formatSpeed(speed) {
+    return `${Number(clampSpeed(speed).toFixed(2)).toString()}x`;
   }
 
   function normalizeIcon(icon) {

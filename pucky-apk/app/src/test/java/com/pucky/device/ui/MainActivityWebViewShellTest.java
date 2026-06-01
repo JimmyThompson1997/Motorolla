@@ -64,6 +64,8 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("window.Pucky&&window.Pucky.__resolve"));
         assertTrue("HTML bridge should allow explicit UI/player/file commands",
                 bridge.contains("case \"ui.reply_cards.get\"")
+                        && bridge.contains("case \"ui.default_audio_speed.get\"")
+                        && bridge.contains("case \"ui.default_audio_speed.set\"")
                         && bridge.contains("case \"browser.open\"")
                         && bridge.contains("case \"player.play\"")
                         && bridge.contains("case \"player.pause\"")
@@ -153,6 +155,19 @@ public final class MainActivityWebViewShellTest {
                 || activity.contains("emitWebPlayerState();\r\n            emitWebTurnStatus();"));
         assertTrue(activity.contains("emitWebPlayerState();\n        emitWebTurnStatus();")
                 || activity.contains("emitWebPlayerState();\r\n        emitWebTurnStatus();"));
+    }
+
+    @Test
+    public void nativeShellModeAlsoPersistsDefaultTilePlaybackSpeed() throws Exception {
+        String settings = read("src/main/java/com/pucky/device/storage/SettingsStore.java");
+        String bridge = read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java");
+
+        assertTrue(settings.contains("DEFAULT_TILE_AUDIO_SPEED"));
+        assertTrue(settings.contains("getDefaultTileAudioSpeed()"));
+        assertTrue(settings.contains("setDefaultTileAudioSpeed(float speed)"));
+        assertTrue(bridge.contains("case \"ui.default_audio_speed.get\":"));
+        assertTrue(bridge.contains("case \"ui.default_audio_speed.set\":"));
+        assertTrue(bridge.contains("settings.setDefaultTileAudioSpeed"));
     }
 
     @Test

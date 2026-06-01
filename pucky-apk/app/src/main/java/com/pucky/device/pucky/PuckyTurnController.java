@@ -971,6 +971,7 @@ public final class PuckyTurnController {
         Json.put(args, "path", card.optString("audio_path", ""));
         Json.put(args, "title", card.optString("title", "Pucky reply"));
         Json.put(args, "source", "pucky.turn");
+        Json.put(args, "speed", settings.getDefaultTileAudioSpeed());
         return PlayerController.shared(context).play(args);
     }
 
