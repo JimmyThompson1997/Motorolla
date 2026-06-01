@@ -108,6 +108,26 @@ async function clickSelector(page, selector, timeoutMs) {
   await clickLocator(page, locator, timeoutMs);
 }
 
+async function waitForSelector(page, selector, timeoutMs) {
+  await page.waitForSelector(selector, { timeout: timeoutMs });
+  await page.waitForTimeout(120);
+}
+
+async function waitForText(page, selector, expected, timeoutMs) {
+  await page.waitForFunction(({ selector: innerSelector, expected: innerExpected }) => {
+    const node = document.querySelector(innerSelector);
+    return Boolean(node && node.textContent && node.textContent.includes(innerExpected));
+  }, { selector, expected }, { timeout: timeoutMs });
+  await page.waitForTimeout(120);
+}
+
+async function selectorText(page, selector, timeoutMs) {
+  const locator = page.locator(selector).first();
+  await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  const value = await locator.textContent();
+  return (value || "").trim();
+}
+
 async function closeDetailIfOpen(page, timeoutMs) {
   const detail = page.locator("#detail.is-open .detail-back").first();
   if (await detail.count()) {
@@ -215,6 +235,38 @@ async function runOperation(page, request, op) {
       });
     }
     return { kind: op.kind, selector, detail: await describePage(page) };
+  }
+  if (op.kind === "click_selector") {
+    const selector = String(op.selector || "").trim();
+    if (!selector) {
+      throw new Error("click_selector requires selector");
+    }
+    await clickSelector(page, selector, timeoutMs);
+    return { kind: op.kind, selector, detail: await describePage(page) };
+  }
+  if (op.kind === "wait_for_selector") {
+    const selector = String(op.selector || "").trim();
+    if (!selector) {
+      throw new Error("wait_for_selector requires selector");
+    }
+    await waitForSelector(page, selector, timeoutMs);
+    return { kind: op.kind, selector, detail: await describePage(page) };
+  }
+  if (op.kind === "wait_for_text") {
+    const selector = String(op.selector || "").trim();
+    const text = String(op.text || "").trim();
+    if (!selector || !text) {
+      throw new Error("wait_for_text requires selector and text");
+    }
+    await waitForText(page, selector, text, timeoutMs);
+    return { kind: op.kind, selector, text: await selectorText(page, selector, timeoutMs), detail: await describePage(page) };
+  }
+  if (op.kind === "text_content") {
+    const selector = String(op.selector || "").trim();
+    if (!selector) {
+      throw new Error("text_content requires selector");
+    }
+    return { kind: op.kind, selector, text: await selectorText(page, selector, timeoutMs), detail: await describePage(page) };
   }
   if (op.kind === "wait_for_detail") {
     const selector = `#detail.is-open[data-detail-type="${escapeAttribute(op.detail_type || "")}"]`;

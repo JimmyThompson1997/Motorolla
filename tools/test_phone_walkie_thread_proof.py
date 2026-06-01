@@ -183,6 +183,10 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert '[data-card-action="' in source
     assert "data-detail-type" in source
     assert 'if (op.kind === "screenshot")' in source
+    assert 'if (op.kind === "click_selector")' in source
+    assert 'if (op.kind === "wait_for_selector")' in source
+    assert 'if (op.kind === "wait_for_text")' in source
+    assert 'if (op.kind === "text_content")' in source
     assert "page.screenshot" in source
     assert "scrollIntoViewIfNeeded" in source
 
