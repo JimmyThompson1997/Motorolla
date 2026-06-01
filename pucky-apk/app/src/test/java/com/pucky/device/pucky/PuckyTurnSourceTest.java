@@ -318,6 +318,11 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("PuckyFeedController.shared(context).upsertTurnResponse(localSessionId, parsed)"));
         assertTrue(feed.contains("public JSONObject upsertTurnResponse(String fallbackSessionId, PuckyTurnResponse response)"));
         assertTrue(feed.contains("Json.put(card, \"card_id\", response.cardId())"));
+        assertTrue(feed.contains("JSONObject existing = replyCards.find(response.cardId(), response.sessionId()).optJSONObject(\"card\")"));
+        assertTrue(feed.contains("copyForwardIfMissing(card, existing, \"audio_path\")"));
+        assertTrue(feed.contains("copyForwardIfMissing(card, existing, \"audio_playlist_path\")"));
+        assertTrue(feed.contains("copyForwardIfMissing(card, existing, \"audio_timestamps\")"));
+        assertTrue(feed.contains("copyForwardIfMissing(card, existing, \"html_path\")"));
         assertTrue(feed.contains("replyCards.upsert(card)"));
         assertTrue(store.contains("public JSONObject upsert(JSONObject cardJson)"));
         assertTrue(store.contains("public JSONObject merge(JSONArray cardsJson)"));

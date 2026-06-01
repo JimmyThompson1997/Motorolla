@@ -294,6 +294,13 @@ public final class PuckyFeedController {
 
     private JSONObject cacheRemoteItem(PuckyTurnResponse response, boolean prepend) throws Exception {
         JSONObject card = localCardFromResponse(response);
+        JSONObject existing = replyCards.find(response.cardId(), response.sessionId()).optJSONObject("card");
+        if (existing != null) {
+            copyForwardIfMissing(card, existing, "audio_path");
+            copyForwardIfMissing(card, existing, "audio_playlist_path");
+            copyForwardIfMissing(card, existing, "audio_timestamps");
+            copyForwardIfMissing(card, existing, "html_path");
+        }
         replyCards.upsert(card);
         JSONObject lookup = replyCards.find(response.cardId(), response.sessionId());
         JSONObject found = lookup.optJSONObject("card");
