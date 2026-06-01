@@ -126,7 +126,7 @@ def verify_active_sources(recipes_list):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_BASE_URL", "http://127.0.0.1:8787"))
-    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", "operator-dev-token"))
+    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--device", default=os.environ.get("PUCKY_DEVICE_ID", ""))
     parser.add_argument("--bundle", default=str(Path(__file__).resolve().parents[1] / "pucky_vm" / "recipes" / "volume_down_lab_dev_bundle.json"))
     parser.add_argument("--clear-first", action="store_true")

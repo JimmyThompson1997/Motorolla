@@ -60,6 +60,16 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(opts["default_timeout_ms"], 60000)
         self.assertEqual(rest, ["devices"])
 
+    def test_context_falls_back_to_pucky_api_token_for_personal_operator_auth(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"PUCKY_OPERATOR_TOKEN": "", "PUCKY_API_TOKEN": "personal-token"},
+            clear=False,
+        ):
+            ctx = puckyctl.build_context({})
+
+        self.assertEqual(ctx["operator_token"], "personal-token")
+
 
 class BrokerIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -108,6 +118,21 @@ class BrokerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(401, caught.exception.status)
 
+    def test_operator_and_device_auth_accept_explicit_pucky_api_token_fallback(self):
+        fallback = "personal-api-token"
+        ctx = dict(self.ctx)
+        ctx["operator_token"] = fallback
+
+        with mock.patch.dict(
+            "os.environ",
+            {"PUCKY_OPERATOR_TOKEN": "", "PUCKY_DEVICE_TOKEN": "", "PUCKY_API_TOKEN": fallback},
+            clear=False,
+        ):
+            self.assertEqual(puckyctl.api_devices(ctx), [])
+            response = self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token=fallback)
+
+        self.assertTrue(response["ok"])
+
     def test_send_offline_command_uses_v1_alias(self):
         result = puckyctl.run_command_send(
             self.ctx,
@@ -141,7 +166,7 @@ class BrokerIntegrationTests(unittest.TestCase):
         try:
             row = conn.execute(
                 """
-                SELECT user_id, surface, action, tool, status
+                SELECT user_id, surface, action, tool, target, status
                 FROM action_log
                 ORDER BY id DESC
                 LIMIT 1
@@ -151,7 +176,7 @@ class BrokerIntegrationTests(unittest.TestCase):
             conn.close()
         self.assertEqual(
             tuple(row),
-            ("user-1", "apk_broker", "battery.status", "POST /v1/devices/{device_id}/commands", "queued"),
+            ("user-1", "apk_broker", "battery.status", "battery.status", "device=pucky-test", "queued"),
         )
 
     def test_capability_result_is_stored_for_v1_endpoint(self):
@@ -243,7 +268,7 @@ class BrokerIntegrationTests(unittest.TestCase):
         self.assertEqual(400, mismatch.exception.code)
 
     def test_device_token_fails_closed_when_not_configured(self):
-        with mock.patch.dict("os.environ", {"PUCKY_DEVICE_TOKEN": ""}):
+        with mock.patch.dict("os.environ", {"PUCKY_DEVICE_TOKEN": "", "PUCKY_API_TOKEN": ""}):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token="dev-token")
 

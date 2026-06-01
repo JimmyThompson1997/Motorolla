@@ -11,7 +11,7 @@ param(
     [string]$ExpectedBranch = "master",
     [int]$ExpectedVersionCode = -1,
     [string]$ExpectedVersionName = "",
-    [string]$ProvisionToken = "",
+    [string]$ProvisionToken = $(if ($env:PUCKY_DEVICE_TOKEN) { $env:PUCKY_DEVICE_TOKEN } elseif ($env:PUCKY_API_TOKEN) { $env:PUCKY_API_TOKEN } else { "" }),
     [string]$ProvisionTurnUrl = "",
     [string]$ProvisionReplyMode = "",
     [string]$ProvisionBrokerUrl = "",

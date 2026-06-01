@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Callable
 
 
 DEFAULT_COMPOSIO_BASE_URL = "https://backend.composio.dev/api/v3"
@@ -66,9 +66,16 @@ def _slug_matches_app(slug: str, name: str) -> bool:
 
 
 class ComposioClient:
-    def __init__(self, api_key: str, base_url: str = DEFAULT_COMPOSIO_BASE_URL) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = DEFAULT_COMPOSIO_BASE_URL,
+        *,
+        action_logger: Callable[[dict[str, object]], None] | None = None,
+    ) -> None:
         self.api_key = str(api_key or "").strip()
         self.base_url = str(base_url or DEFAULT_COMPOSIO_BASE_URL).rstrip("/")
+        self.action_logger = action_logger
         self._toolkits_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._connected_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._toolkits_cache_ttl_s = 600.0
@@ -247,6 +254,32 @@ class ComposioClient:
         self.invalidate_connected_cache(user_key)
         return {"ok": True, "deleted": connection_key}
 
+    def execute_proxy(
+        self,
+        *,
+        connected_account_id: str,
+        endpoint: str,
+        method: str = "GET",
+        parameters: list[dict[str, Any]] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        account_id = _safe_name(connected_account_id)
+        clean_endpoint = _safe_name(endpoint)
+        if not account_id:
+            raise RuntimeError("connected_account_id is required")
+        if not clean_endpoint.startswith("/"):
+            raise RuntimeError("endpoint must be a path")
+        payload: dict[str, Any] = {
+            "connected_account_id": account_id,
+            "endpoint": clean_endpoint,
+            "method": _safe_name(method, fallback="GET").upper(),
+        }
+        if parameters:
+            payload["parameters"] = parameters
+        if body:
+            payload["body"] = body
+        return self._request_json("POST", "/tools/execute/proxy", payload=payload)
+
     def _list_auth_configs(self, toolkit_slug: str) -> dict[str, Any]:
         return self._request_json(
             "GET",
@@ -327,6 +360,7 @@ class ComposioClient:
     ) -> dict[str, Any]:
         if not self.configured:
             raise RuntimeError("Composio is not configured")
+        method_name = method.upper()
         body = None
         headers = {
             "Accept": "application/json",
@@ -351,15 +385,18 @@ class ComposioClient:
                     parts.append((str(key), str(value)))
             if parts:
                 url += "?" + urllib.parse.urlencode(parts, doseq=True)
-        request = urllib.request.Request(url, data=body, method=method.upper(), headers=headers)
+        request = urllib.request.Request(url, data=body, method=method_name, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
                 data = response.read()
         except urllib.error.HTTPError as exc:
+            self._log_action(method_name, path, f"error:{exc.code}")
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Composio {method.upper()} {path} failed: {exc.code} {detail}".strip()) from exc
+            raise RuntimeError(f"Composio {method_name} {path} failed: {exc.code} {detail}".strip()) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Composio {method.upper()} {path} failed: {exc.reason}") from exc
+            self._log_action(method_name, path, "error")
+            raise RuntimeError(f"Composio {method_name} {path} failed: {exc.reason}") from exc
+        self._log_action(method_name, path, "ok")
         if not data:
             return {}
         decoded = json.loads(data.decode("utf-8"))
@@ -368,3 +405,19 @@ class ComposioClient:
         if isinstance(decoded, list):
             return {"items": decoded}
         raise RuntimeError(f"Unexpected Composio response for {path}")
+
+    def _log_action(self, method: str, path: str, status: str) -> None:
+        if self.action_logger is None:
+            return
+        try:
+            self.action_logger(
+                {
+                    "surface": "composio",
+                    "action": f"{method} {path}",
+                    "tool": method,
+                    "target": path,
+                    "status": status,
+                }
+            )
+        except Exception:
+            pass

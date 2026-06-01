@@ -165,14 +165,50 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str, base_instru
     }
 
 
+def run_tool_action_smoke(service: PuckyVoiceService, *, text: str, compiled_output: str = "") -> dict[str, Any]:
+    service.start()
+    result = service.codex.send_text(text)
+    context = service._base_runtime_context()
+    compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context)
+    if compiled_output:
+        output = Path(compiled_output).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(compiled or "", encoding="utf-8")
+    rows = list((context.get("action_log") or {}).get("rows") or []) if isinstance(context.get("action_log"), dict) else []
+    matching = [
+        row for row in rows
+        if isinstance(row, dict)
+        and str(row.get("surface") or "") == "codex_tool"
+        and str(row.get("tool") or "") == "shell_command"
+        and "rg" in str(row.get("target") or "").lower()
+    ]
+    if not matching:
+        raise RuntimeError("runtime tool smoke missing codex_tool shell_command rg row in next compiled prompt")
+    return {
+        "schema": "pucky.runtime_tool_action_smoke.v1",
+        "thread_id": result.used_thread_id,
+        "thread_mode": result.thread_mode,
+        "reply_chars": len(result.reply_text or ""),
+        "matched_action": matching[0],
+        "compiled_sha256": hashlib.sha256((compiled or "").encode("utf-8")).hexdigest() if compiled else "",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test Pucky runtime context compilation.")
     parser.add_argument("--require-composio", action="store_true")
     parser.add_argument("--require-base", action="store_true")
     parser.add_argument("--min-app-universe-count", type=int, default=0)
     parser.add_argument("--cross-thread", action="store_true")
+    parser.add_argument("--tool-action-smoke", action="store_true")
     parser.add_argument("--compiled-output", default="")
-    parser.add_argument("--text", default="Pucky runtime smoke. Reply with a tiny JSON card.")
+    parser.add_argument(
+        "--text",
+        default=(
+            "Run exactly one shell_command tool call: rg --version. "
+            "Then reply as strict JSON with a short success summary."
+        ),
+    )
     args = parser.parse_args()
 
     service = PuckyVoiceService(Config.from_env())
@@ -192,6 +228,12 @@ def main() -> int:
         output.write_text(compiled or "", encoding="utf-8")
     if args.cross_thread:
         report["cross_thread"] = run_cross_thread_smoke(service, text=args.text, base_instructions=compiled)
+    if args.tool_action_smoke:
+        report["tool_action_smoke"] = run_tool_action_smoke(
+            service,
+            text=args.text,
+            compiled_output=args.compiled_output,
+        )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

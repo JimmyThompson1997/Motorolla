@@ -921,6 +921,15 @@ def compare_token(actual, expected):
     return bool(expected) and hmac.compare_digest(actual, expected)
 
 
+def explicit_token(*names):
+    for name in names:
+        value = os.environ.get(name, "")
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return ""
+
+
 def query_token(path):
     parsed = urlparse(path)
     values = parse_qs(parsed.query).get("token") or []
@@ -1141,14 +1150,14 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def require_operator(self):
-        expected = os.environ.get("PUCKY_OPERATOR_TOKEN", "")
+        expected = explicit_token("PUCKY_OPERATOR_TOKEN", "PUCKY_API_TOKEN")
         if compare_token(bearer_token(self.headers), expected):
             return True
         self.send_json({"error": "UNAUTHORIZED"}, 401)
         return False
 
     def require_device(self):
-        expected = os.environ.get("PUCKY_DEVICE_TOKEN", "")
+        expected = explicit_token("PUCKY_DEVICE_TOKEN", "PUCKY_API_TOKEN")
         actual = bearer_token(self.headers) or query_token(self.path)
         if compare_token(actual, expected):
             return True

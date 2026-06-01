@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import pytest
 
-from tools.smoke_pucky_runtime_context import compile_runtime_report, validate_runtime_report
+from tools.smoke_pucky_runtime_context import compile_runtime_report, run_tool_action_smoke, validate_runtime_report
 
 
 class _FakeConfig:
@@ -34,6 +36,20 @@ Current icon/color choices:
 
 class _FakeService:
     config = _FakeConfig()
+    started = False
+
+    class codex:
+        @staticmethod
+        def send_text(text):
+            class Result:
+                used_thread_id = "thread-tool"
+                thread_mode = "new"
+                reply_text = '{"reply_text":"ok","card_title":"Smoke","card_icon":"mail","html":null,"attachments":null}'
+
+            return Result()
+
+    def start(self):
+        self.started = True
 
     def _base_runtime_context(self):
         return {
@@ -80,6 +96,7 @@ class _FakeService:
                 "limit": 150,
                 "rows": [
                     {"surface": "codex_runtime", "action": "thread/start", "tool": "thread/start", "target": "thread/start"},
+                    {"surface": "codex_tool", "action": "shell_command", "tool": "shell_command", "target": "rg --version"},
                 ]
             },
         }
@@ -109,7 +126,7 @@ def test_compile_runtime_report_counts_required_runtime_blocks():
     assert report["app_universe_count"] == 2
     assert report["available_app_count"] == 1
     assert report["reply_icon_count"] == 1
-    assert report["action_log_row_count"] == 1
+    assert report["action_log_row_count"] == 2
     assert report["action_log_limit"] == 150
 
 
@@ -118,3 +135,14 @@ def test_compile_runtime_report_fails_clearly_when_base_is_required_but_missing(
 
     with pytest.raises(RuntimeError, match="base_config_loaded"):
         validate_runtime_report(report, require_base=True)
+
+
+def test_tool_action_smoke_writes_compiled_prompt_and_requires_tool_row(tmp_path: Path):
+    output = tmp_path / "compiled.md"
+
+    report = run_tool_action_smoke(_FakeService(), text="run rg", compiled_output=str(output))
+
+    assert report["schema"] == "pucky.runtime_tool_action_smoke.v1"
+    assert report["matched_action"]["target"] == "rg --version"
+    assert output.exists()
+    assert "{{PUCKY_" not in output.read_text(encoding="utf-8")

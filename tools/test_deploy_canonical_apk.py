@@ -24,6 +24,8 @@ def test_canonical_deploy_can_import_turn_provisioning_without_secret_logging() 
     assert "run-as $PackageName cp $deviceProvisioningFile files/$appProvisioningFile" in script
     assert "--es provisioning_file $appProvisioningFile --ez connect false" in script
     assert "without printing token values" in script
+    assert "$env:PUCKY_DEVICE_TOKEN" in script
+    assert "$env:PUCKY_API_TOKEN" in script
     assert "Write-Host $ProvisionToken" not in script
 
 

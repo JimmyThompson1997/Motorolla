@@ -604,7 +604,11 @@ class PuckyVoiceService:
             action_logger=self._record_codex_action,
         )
         self.feed = FeedStore(config.feed_db_path)
-        self.composio = composio or ComposioClient(config.composio_api_key, config.composio_base_url)
+        self.composio = composio or ComposioClient(
+            config.composio_api_key,
+            config.composio_base_url,
+            action_logger=self._record_composio_action,
+        )
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
@@ -745,6 +749,15 @@ class PuckyVoiceService:
             status=str(event.get("status") or ""),
             thread_id=thread_id,
             thread_title=thread_title,
+        )
+
+    def _record_composio_action(self, event: dict[str, object]) -> None:
+        self.record_action(
+            surface=str(event.get("surface") or "composio"),
+            action=str(event.get("action") or ""),
+            tool=str(event.get("tool") or event.get("action") or ""),
+            target=str(event.get("target") or event.get("action") or ""),
+            status=str(event.get("status") or ""),
         )
 
     def codex_base_instructions_for_thread(self) -> str | None:

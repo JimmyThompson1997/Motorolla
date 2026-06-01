@@ -47,6 +47,38 @@ def test_composio_client_sends_project_headers(monkeypatch) -> None:
     assert "limit=1000" in captured["url"]
 
 
+def test_composio_client_logs_compact_actions_without_secrets_or_bodies(monkeypatch) -> None:
+    actions: list[dict[str, object]] = []
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout: int = 0):  # type: ignore[no-untyped-def]
+        captured["body"] = request.data.decode("utf-8") if request.data else ""
+        return _FakeResponse({"ok": True})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    client = ComposioClient("secret-api-key", action_logger=actions.append)
+    client.execute_proxy(
+        connected_account_id="ca_gmail",
+        endpoint="/gmail/v1/users/me/messages",
+        parameters=[{"name": "maxResults", "value": "1", "in": "query"}],
+    )
+
+    assert actions == [
+        {
+            "surface": "composio",
+            "action": "POST /tools/execute/proxy",
+            "tool": "POST",
+            "target": "/tools/execute/proxy",
+            "status": "ok",
+        }
+    ]
+    assert "secret-api-key" not in json.dumps(actions)
+    assert "ca_gmail" not in json.dumps(actions)
+    assert "gmail/v1/users/me/messages" not in json.dumps(actions)
+    assert "ca_gmail" in captured["body"]
+
+
 def test_composio_client_lists_only_active_connected_accounts_with_pagination(monkeypatch) -> None:
     client = ComposioClient("test-key")
     client._toolkits_cache = (  # type: ignore[attr-defined]
