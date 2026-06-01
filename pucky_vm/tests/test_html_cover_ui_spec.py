@@ -807,6 +807,8 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     swipe_css = styles[styles.index(".card-swipe-action"):styles.index(".card-wrap .card")]
     assert ".card-wrap::before" not in styles
     assert "color: #fff;" in swipe_css
+    assert "fill: currentColor;" in swipe_css
+    assert "stroke: currentColor;" in swipe_css
     assert "pointer-events: none;" in swipe_css
     assert "background: transparent;" in swipe_css
     assert "border:" not in swipe_css

@@ -1123,6 +1123,13 @@ button {
   width: 19px;
   height: 19px;
   color: currentColor;
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.card-swipe-action svg * {
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 .card-wrap .card {
