@@ -24,16 +24,28 @@ def _payload_data(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _first_message_id(payload: dict[str, Any]) -> str:
     data = _payload_data(payload)
+    if isinstance(data.get("messages"), list):
+        for item in data.get("messages") or []:
+            if isinstance(item, dict) and str(item.get("id") or "").strip():
+                return str(item.get("id")).strip()
     messages = data.get("messages")
     if isinstance(messages, list):
         for item in messages:
             if isinstance(item, dict) and str(item.get("id") or "").strip():
                 return str(item.get("id")).strip()
+    if isinstance(data.get("data"), dict):
+        nested = data.get("data") or {}
+        if isinstance(nested.get("messages"), list):
+            for item in nested.get("messages") or []:
+                if isinstance(item, dict) and str(item.get("id") or "").strip():
+                    return str(item.get("id")).strip()
     return ""
 
 
 def _metadata_summary(payload: dict[str, Any]) -> dict[str, str]:
     data = _payload_data(payload)
+    if isinstance(data.get("data"), dict):
+        data = data.get("data") or {}
     headers = (((data.get("payload") or {}).get("headers") or []) if isinstance(data.get("payload"), dict) else [])
     out = {"subject": "", "from": "", "date": "", "snippet": str(data.get("snippet") or "")[:240]}
     if isinstance(headers, list):
@@ -44,6 +56,57 @@ def _metadata_summary(payload: dict[str, Any]) -> dict[str, str]:
             if name in {"subject", "from", "date"}:
                 out[name] = str(header.get("value") or "")[:240]
     return out
+
+
+def _try_proxy_gmail_metadata(client: Any, account_id: str) -> tuple[str, dict[str, Any]]:
+    list_payload = client.execute_proxy(
+        connected_account_id=account_id,
+        endpoint="/gmail/v1/users/me/messages",
+        parameters=[
+            {"name": "maxResults", "value": "1", "type": "query"},
+            {"name": "labelIds", "value": "INBOX", "type": "query"},
+        ],
+    )
+    message_id = _first_message_id(list_payload)
+    if not message_id:
+        raise RuntimeError("Gmail proxy metadata smoke found no latest message id")
+    metadata_payload = client.execute_proxy(
+        connected_account_id=account_id,
+        endpoint=f"/gmail/v1/users/me/messages/{message_id}",
+        parameters=[
+            {"name": "format", "value": "metadata", "type": "query"},
+            {"name": "metadataHeaders", "value": "Subject", "type": "query"},
+            {"name": "metadataHeaders", "value": "From", "type": "query"},
+            {"name": "metadataHeaders", "value": "Date", "type": "query"},
+        ],
+    )
+    return message_id, metadata_payload
+
+
+def _try_direct_tool_gmail_metadata(client: Any, account_id: str) -> tuple[str, dict[str, Any]]:
+    if not hasattr(client, "execute_tool"):
+        raise RuntimeError("Composio client does not expose execute_tool")
+    list_payload = client.execute_tool(
+        tool_slug="GMAIL_FETCH_EMAILS",
+        connected_account_id=account_id,
+        arguments={
+            "max_results": 1,
+            "label_ids": ["INBOX"],
+            "include_payload": False,
+        },
+    )
+    message_id = _first_message_id(list_payload)
+    if not message_id:
+        raise RuntimeError("Gmail tool metadata smoke found no latest message id")
+    metadata_payload = client.execute_tool(
+        tool_slug="GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+        connected_account_id=account_id,
+        arguments={
+            "message_id": message_id,
+            "format": "metadata",
+        },
+    )
+    return message_id, metadata_payload
 
 
 def run_smoke(compiled_output: str = "") -> dict[str, Any]:
@@ -71,28 +134,15 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
     if not hasattr(client, "execute_proxy"):
         raise RuntimeError("Composio client does not expose execute_proxy")
 
-    list_payload = client.execute_proxy(
-        connected_account_id=account_id,
-        endpoint="/gmail/v1/users/me/messages",
-        parameters=[
-            {"name": "maxResults", "value": "1", "type": "query"},
-            {"name": "labelIds", "value": "INBOX", "type": "query"},
-        ],
-    )
-    message_id = _first_message_id(list_payload)
-    if not message_id:
-        raise RuntimeError("Gmail metadata smoke found no latest message id")
-
-    metadata_payload = client.execute_proxy(
-        connected_account_id=account_id,
-        endpoint=f"/gmail/v1/users/me/messages/{message_id}",
-        parameters=[
-            {"name": "format", "value": "metadata", "type": "query"},
-            {"name": "metadataHeaders", "value": "Subject", "type": "query"},
-            {"name": "metadataHeaders", "value": "From", "type": "query"},
-            {"name": "metadataHeaders", "value": "Date", "type": "query"},
-        ],
-    )
+    execution_mode = "proxy"
+    try:
+        message_id, metadata_payload = _try_proxy_gmail_metadata(client, account_id)
+    except RuntimeError as exc:
+        detail = str(exc)
+        if "403" not in detail and "proxy" not in detail.lower():
+            raise
+        execution_mode = "tool"
+        message_id, metadata_payload = _try_direct_tool_gmail_metadata(client, account_id)
     context_after = service._base_runtime_context()
     compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context_after)
     if compiled_output:
@@ -105,13 +155,17 @@ def run_smoke(compiled_output: str = "") -> dict[str, Any]:
         if isinstance(row, dict)
         and str(row.get("surface") or "") == "composio"
         and str(row.get("tool") or "") == "POST"
-        and str(row.get("target") or "") == "/tools/execute/proxy"
+        and (
+            str(row.get("target") or "") == "/tools/execute/proxy"
+            or str(row.get("target") or "").startswith("/tools/execute/GMAIL_")
+        )
     ]
     if not composio_proxy_rows:
-        raise RuntimeError("Gmail metadata smoke missing Composio proxy row in next compiled prompt")
+        raise RuntimeError("Gmail metadata smoke missing Composio execute row in next compiled prompt")
     return {
         "schema": "pucky.composio_gmail_metadata_smoke.v1",
         "ok": True,
+        "execution_mode": execution_mode,
         "gmail_connected_account_id": account_id,
         "message_id": message_id,
         "metadata": _metadata_summary(metadata_payload),

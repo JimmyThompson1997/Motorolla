@@ -284,7 +284,37 @@ class ComposioClient:
             payload["parameters"] = normalized_parameters
         if body:
             payload["body"] = body
-        return self._request_json("POST", "/tools/execute/proxy", payload=payload)
+        return self._request_json(
+            "POST",
+            "/tools/execute/proxy",
+            payload=payload,
+            base_url=self._tools_base_url(),
+        )
+
+    def execute_tool(
+        self,
+        *,
+        tool_slug: str,
+        connected_account_id: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_tool_slug = _safe_name(tool_slug)
+        account_id = _safe_name(connected_account_id)
+        if not clean_tool_slug:
+            raise RuntimeError("tool_slug is required")
+        if not account_id:
+            raise RuntimeError("connected_account_id is required")
+        payload: dict[str, Any] = {
+            "connected_account_id": account_id,
+        }
+        if arguments:
+            payload["arguments"] = dict(arguments)
+        return self._request_json(
+            "POST",
+            f"/tools/execute/{urllib.parse.quote(clean_tool_slug, safe='_-')}",
+            payload=payload,
+            base_url=self._tools_base_url(),
+        )
 
     def _list_auth_configs(self, toolkit_slug: str) -> dict[str, Any]:
         return self._request_json(
@@ -363,6 +393,7 @@ class ComposioClient:
         path: str,
         payload: dict[str, Any] | None = None,
         query: dict[str, Any] | None = None,
+        base_url: str | None = None,
     ) -> dict[str, Any]:
         if not self.configured:
             raise RuntimeError("Composio is not configured")
@@ -376,7 +407,7 @@ class ComposioClient:
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        url = self.base_url + path
+        url = str(base_url or self.base_url).rstrip("/") + path
         if query:
             parts: list[tuple[str, str]] = []
             for key, value in query.items():
@@ -427,3 +458,11 @@ class ComposioClient:
             )
         except Exception:
             pass
+
+    def _tools_base_url(self) -> str:
+        base = self.base_url.rstrip("/")
+        if base.endswith("/api/v3.1"):
+            return base
+        if base.endswith("/api/v3"):
+            return base[: -len("/api/v3")] + "/api/v3.1"
+        return base

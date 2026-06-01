@@ -32,6 +32,8 @@ Pucky uses Composio.dev so users can connect external apps and agents can act th
 - API key resource = `env:COMPOSIO_API_KEY`
 - Connected apps endpoint = `GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...`
 - App universe endpoint = `GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...`
+- Tool execution endpoint = `POST /api/v3.1/tools/execute/{tool_slug}`
+- Raw proxy execution endpoint = `POST /api/v3.1/tools/execute/proxy`
 
 Connected apps:
 
@@ -51,11 +53,13 @@ Before refreshing the phone cache, run a headless Playwright smoke in a mobile v
 
 Broad accessible areas: device status, permissions, battery/network/location, sensors, camera/photo/torch, notifications, audio/media/player, voice/wake/speech, files/artifacts, contacts/SMS/calls/calendar/settings, UI/feed/bundle.
 
+- List devices = broker `GET /v1/devices`
+- Broker auth = `Authorization: Bearer env:PUCKY_API_TOKEN`
 - Current device state and permissions = APK command `capabilities.get`
 - Exact command names and argument shapes = APK command `command.catalog`
 - Execute one command = broker `POST /v1/devices/{device_id}/commands`
 
-Start with `capabilities.get`; call `command.catalog` when unsure of exact command shape; execute through the broker endpoint.
+For weather or local-context requests, first discover an online device, start with `capabilities.get`, then call `location.get` when location capability and permission are available. Call `command.catalog` when unsure of exact command shape, and execute through the broker endpoint.
 
 ## Reply Format
 

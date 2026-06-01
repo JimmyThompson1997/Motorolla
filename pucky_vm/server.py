@@ -796,9 +796,16 @@ class PuckyVoiceService:
                     "contacts/SMS/calls/calendar/settings",
                     "UI/feed/bundle",
                 ],
+                "list_devices": "GET /v1/devices",
+                "authorization": "Authorization: Bearer env:PUCKY_API_TOKEN",
                 "meta_list": "command.catalog",
                 "capability_summary": "capabilities.get",
                 "command_execution": "POST /v1/devices/{device_id}/commands",
+                "location_guidance": (
+                    "For weather or local-context requests, discover an online device first, "
+                    "start with capabilities.get, then call location.get when location capability "
+                    "and permission are available."
+                ),
             },
         }
 
@@ -817,6 +824,8 @@ class PuckyVoiceService:
             "endpoints": {
                 "connected_apps": "GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...",
                 "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...",
+                "tool_execute": "POST /api/v3.1/tools/execute/{tool_slug}",
+                "proxy_execute": "POST /api/v3.1/tools/execute/proxy",
             },
             "connected_apps": [],
             "connected_app_diagnostics": {

@@ -53,6 +53,7 @@ def test_composio_client_logs_compact_actions_without_secrets_or_bodies(monkeypa
 
     def fake_urlopen(request, timeout: int = 0):  # type: ignore[no-untyped-def]
         captured["body"] = request.data.decode("utf-8") if request.data else ""
+        captured["url"] = request.full_url
         return _FakeResponse({"ok": True})
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -76,9 +77,45 @@ def test_composio_client_logs_compact_actions_without_secrets_or_bodies(monkeypa
     assert "secret-api-key" not in json.dumps(actions)
     assert "ca_gmail" not in json.dumps(actions)
     assert "gmail/v1/users/me/messages" not in json.dumps(actions)
+    assert captured["url"] == "https://backend.composio.dev/api/v3.1/tools/execute/proxy"
     assert "ca_gmail" in captured["body"]
     body = json.loads(captured["body"])
     assert body["parameters"] == [{"name": "maxResults", "value": "1", "type": "query"}]
+
+
+def test_composio_client_executes_tools_on_v31_surface(monkeypatch) -> None:
+    actions: list[dict[str, object]] = []
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout: int = 0):  # type: ignore[no-untyped-def]
+        captured["url"] = request.full_url
+        captured["body"] = request.data.decode("utf-8") if request.data else ""
+        return _FakeResponse({"ok": True, "data": {"message_id": "msg-1"}})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    client = ComposioClient("secret-api-key", action_logger=actions.append)
+    payload = client.execute_tool(
+        tool_slug="GMAIL_FETCH_EMAILS",
+        connected_account_id="ca_gmail",
+        arguments={"max_results": 1},
+    )
+
+    assert payload == {"ok": True, "data": {"message_id": "msg-1"}}
+    assert captured["url"] == "https://backend.composio.dev/api/v3.1/tools/execute/GMAIL_FETCH_EMAILS"
+    assert json.loads(captured["body"]) == {
+        "connected_account_id": "ca_gmail",
+        "arguments": {"max_results": 1},
+    }
+    assert actions == [
+        {
+            "surface": "composio",
+            "action": "POST /tools/execute/GMAIL_FETCH_EMAILS",
+            "tool": "POST",
+            "target": "/tools/execute/GMAIL_FETCH_EMAILS",
+            "status": "ok",
+        }
+    ]
 
 
 def test_composio_client_lists_only_active_connected_accounts_with_pagination(monkeypatch) -> None:

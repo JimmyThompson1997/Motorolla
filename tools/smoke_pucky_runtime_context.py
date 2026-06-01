@@ -197,6 +197,66 @@ def run_tool_action_smoke(service: PuckyVoiceService, *, text: str, compiled_out
     }
 
 
+def default_weather_location_text() -> str:
+    return (
+        "Answer a local-context weather request. Use the repo's puckyctl CLI instead of guessing. "
+        "First run `python pucky-apk/puckyctl/puckyctl.py --json devices` to find an online device_id. "
+        "Then run `python pucky-apk/puckyctl/puckyctl.py --json --device-id <device_id> capabilities --refresh`. "
+        "If location capability and permission are available, run "
+        "`python pucky-apk/puckyctl/puckyctl.py --json --device-id <device_id> location get --timeout-ms 10000`. "
+        "Then return strict JSON with a short answer. Do not say you lack device location unless those commands fail."
+    )
+
+
+def run_weather_location_smoke(service: PuckyVoiceService, *, text: str, compiled_output: str = "") -> dict[str, Any]:
+    service.start()
+    send = getattr(service.codex, "send_turn", None) or getattr(service.codex, "send_text", None)
+    if not callable(send):
+        raise RuntimeError("Codex client does not expose send_turn")
+    result = send(text)
+    context = service._base_runtime_context()
+    compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context)
+    if compiled_output:
+        output = Path(compiled_output).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(compiled or "", encoding="utf-8")
+    rows = list((context.get("action_log") or {}).get("rows") or []) if isinstance(context.get("action_log"), dict) else []
+    capability_rows = [
+        row for row in rows
+        if isinstance(row, dict)
+        and str(row.get("surface") or "") == "apk_broker"
+        and str(row.get("tool") or row.get("action") or "") == "capabilities.get"
+    ]
+    location_rows = [
+        row for row in rows
+        if isinstance(row, dict)
+        and str(row.get("surface") or "") == "apk_broker"
+        and str(row.get("tool") or row.get("action") or "") == "location.get"
+    ]
+    if not capability_rows or not location_rows:
+        raise RuntimeError("weather/location smoke missing apk_broker capabilities.get and location.get rows")
+    reply_text = str(getattr(result, "reply_text", "") or "")
+    lowered_reply = reply_text.lower()
+    if any(
+        phrase in lowered_reply
+        for phrase in (
+            "don't have access to your location",
+            "do not have access to your location",
+            "need your location",
+        )
+    ):
+        raise RuntimeError("weather/location smoke reply still claimed device location was unavailable")
+    return {
+        "schema": "pucky.runtime_weather_location_smoke.v1",
+        "thread_id": result.used_thread_id,
+        "thread_mode": result.thread_mode,
+        "reply_chars": len(reply_text),
+        "matched_capabilities": capability_rows[0],
+        "matched_location": location_rows[0],
+        "compiled_sha256": hashlib.sha256((compiled or "").encode("utf-8")).hexdigest() if compiled else "",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test Pucky runtime context compilation.")
     parser.add_argument("--require-composio", action="store_true")
@@ -204,7 +264,9 @@ def main() -> int:
     parser.add_argument("--min-app-universe-count", type=int, default=0)
     parser.add_argument("--cross-thread", action="store_true")
     parser.add_argument("--tool-action-smoke", action="store_true")
+    parser.add_argument("--weather-location-smoke", action="store_true")
     parser.add_argument("--compiled-output", default="")
+    parser.add_argument("--weather-text", default="")
     parser.add_argument(
         "--text",
         default=(
@@ -235,6 +297,12 @@ def main() -> int:
         report["tool_action_smoke"] = run_tool_action_smoke(
             service,
             text=args.text,
+            compiled_output=args.compiled_output,
+        )
+    if args.weather_location_smoke:
+        report["weather_location_smoke"] = run_weather_location_smoke(
+            service,
+            text=args.weather_text or default_weather_location_text(),
             compiled_output=args.compiled_output,
         )
     print(json.dumps(report, indent=2, sort_keys=True))

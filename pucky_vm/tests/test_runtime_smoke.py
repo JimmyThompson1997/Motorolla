@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from tools.smoke_pucky_runtime_context import compile_runtime_report, run_tool_action_smoke, validate_runtime_report
+from tools.smoke_pucky_runtime_context import (
+    compile_runtime_report,
+    run_tool_action_smoke,
+    run_weather_location_smoke,
+    validate_runtime_report,
+)
 
 
 class _FakeConfig:
@@ -107,6 +112,29 @@ class _NoBaseService(_FakeService):
         codex_base_instructions = None
 
 
+class _WeatherFakeService(_FakeService):
+    class codex:
+        @staticmethod
+        def send_turn(text):
+            class Result:
+                used_thread_id = "thread-weather"
+                thread_mode = "new"
+                reply_text = '{"reply_text":"Weather near you looks mild.","card_title":"Weather","card_icon":"mail","html":null,"attachments":null}'
+
+            return Result()
+
+    def _base_runtime_context(self):
+        context = super()._base_runtime_context()
+        context["action_log"] = {
+            "limit": 150,
+            "rows": [
+                {"surface": "apk_broker", "action": "capabilities.get", "tool": "capabilities.get", "target": "device=razr", "status": "queued"},
+                {"surface": "apk_broker", "action": "location.get", "tool": "location.get", "target": "device=razr", "status": "queued"},
+            ],
+        }
+        return context
+
+
 def test_compile_runtime_report_counts_required_runtime_blocks():
     report = compile_runtime_report(_FakeService())
 
@@ -146,3 +174,18 @@ def test_tool_action_smoke_writes_compiled_prompt_and_requires_tool_row(tmp_path
     assert report["matched_action"]["target"] == "rg --version"
     assert output.exists()
     assert "{{PUCKY_" not in output.read_text(encoding="utf-8")
+
+
+def test_weather_location_smoke_requires_apk_capability_and_location_rows(tmp_path: Path):
+    output = tmp_path / "compiled-weather.md"
+
+    report = run_weather_location_smoke(
+        _WeatherFakeService(),
+        text="use the APK location lane",
+        compiled_output=str(output),
+    )
+
+    assert report["schema"] == "pucky.runtime_weather_location_smoke.v1"
+    assert report["matched_capabilities"]["tool"] == "capabilities.get"
+    assert report["matched_location"]["tool"] == "location.get"
+    assert output.exists()

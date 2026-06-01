@@ -99,6 +99,7 @@ class CodexAppServerClient:
         self._turn_backlog: dict[str, list[dict[str, Any]]] = {}
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
         self._recorded_tool_call_ids: set[str] = set()
+        self._thread_titles: dict[str, str] = {}
         self._last_turn_routing: dict[str, str | bool] = {
             "requested_thread_id": "",
             "used_thread_id": "",
@@ -267,6 +268,8 @@ class CodexAppServerClient:
             {"threadId": resolved_thread_id, "name": clean},
             timeout=self.startup_timeout,
         )
+        with self._lock:
+            self._thread_titles[resolved_thread_id] = clean
 
     def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
         return self._thread_origin(thread_id or self._thread_id or "", retries=retries, delay=delay).as_dict()
@@ -287,7 +290,7 @@ class CodexAppServerClient:
             if row is not None:
                 origin = CodexThreadOrigin(
                     thread_id=clean_thread_id,
-                    thread_title=_clean_optional(row.get("title")),
+                    thread_title=_clean_optional(row.get("title")) or self._cached_thread_title(clean_thread_id),
                     rollout_path=_clean_optional(row.get("rollout_path")),
                     source=_clean_optional(row.get("source")),
                     model=_clean_optional(row.get("model")),
@@ -301,6 +304,26 @@ class CodexAppServerClient:
             if attempt < retries - 1:
                 time.sleep(max(0.0, delay))
         return origin
+
+    def _cached_thread_title(self, thread_id: str) -> str:
+        clean_thread_id = _clean_optional(thread_id)
+        if not clean_thread_id:
+            return ""
+        with self._lock:
+            return _clean_optional(self._thread_titles.get(clean_thread_id))
+
+    def _resolve_thread_title(self, thread_id: str) -> str:
+        clean_thread_id = _clean_optional(thread_id)
+        if not clean_thread_id:
+            return ""
+        cached = self._cached_thread_title(clean_thread_id)
+        if cached:
+            return cached
+        try:
+            origin = self._thread_origin(clean_thread_id, retries=1, delay=0.0)
+        except Exception:
+            return ""
+        return _clean_optional(origin.thread_title)
 
     def _thread_row(self, thread_id: str) -> dict[str, Any] | None:
         state_db = self._state_db_path()
@@ -412,6 +435,7 @@ class CodexAppServerClient:
     def _record_action(self, method: str, params: dict[str, Any], status: str, started_at: float) -> None:
         if self.action_logger is None:
             return
+        thread_id = _clean_optional(params.get("threadId"))
         try:
             self.action_logger(
                 {
@@ -421,7 +445,8 @@ class CodexAppServerClient:
                     "tool": method,
                     "target": method,
                     "status": status,
-                    "thread_id": _clean_optional(params.get("threadId")),
+                    "thread_id": thread_id,
+                    "thread_title": self._resolve_thread_title(thread_id),
                 }
             )
         except Exception:
@@ -527,6 +552,7 @@ class CodexAppServerClient:
             self._recorded_tool_call_ids.add(call_id)
         tool = _clean_optional(item.get("name") or item.get("tool_name") or item.get("tool") or item.get("command") or "tool")
         arguments = item.get("arguments") if "arguments" in item else item.get("args")
+        thread_id = _clean_optional(params.get("threadId"))
         try:
             self.action_logger(
                 {
@@ -536,7 +562,8 @@ class CodexAppServerClient:
                     "tool": tool,
                     "target": compact_tool_target(tool, arguments),
                     "status": status,
-                    "thread_id": _clean_optional(params.get("threadId")),
+                    "thread_id": thread_id,
+                    "thread_title": self._resolve_thread_title(thread_id),
                 }
             )
         except Exception:

@@ -336,10 +336,16 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "limit=200" not in text
     assert "Raw Composio mode" not in text
     assert "Pucky uses Composio.dev" in text
+    assert "POST /api/v3.1/tools/execute/{tool_slug}" in text
+    assert "POST /api/v3.1/tools/execute/proxy" in text
     assert "command.catalog" in text
     assert "capabilities.get" in text
+    assert "GET /v1/devices" in text
+    assert "Authorization: Bearer env:PUCKY_API_TOKEN" in text
     assert "POST /v1/devices/{device_id}/commands" in text
     assert "Current device state and permissions" in text
+    assert "For weather or local-context requests" in text
+    assert "location.get" in text
     assert "## Reply Format" in text
     assert '"card_icon": "mail"' not in text
     assert "use `mail` only as a fallback" in text

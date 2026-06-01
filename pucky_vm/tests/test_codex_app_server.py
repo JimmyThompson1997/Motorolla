@@ -53,6 +53,12 @@ for line in sys.stdin:
         send({"id": request_id, "result": {"ok": True}})
     elif method == "turn/start":
         thread_id = message.get("params", {}).get("threadId", "")
+        input_items = message.get("params", {}).get("input", [])
+        request_text = ""
+        if isinstance(input_items, list) and input_items:
+            first = input_items[0]
+            if isinstance(first, dict):
+                request_text = str(first.get("text") or "")
         if invalid_thread_id and thread_id == invalid_thread_id:
             send({"id": request_id, "error": {"code": -32004, "message": "thread_not_found"}})
             continue
@@ -61,7 +67,7 @@ for line in sys.stdin:
         text = "Hello back " + str(turn_count)
         send({"id": request_id, "result": {"turn": {"id": turn_id}}})
         send({"method": "turn/started", "params": {"threadId": thread_id, "turn": {"id": turn_id}}})
-        if emit_tool_call:
+        if emit_tool_call and "force tool" in request_text.lower():
             args = json.dumps({"command": "rg --version", "workdir": "C:\\repo"})
             send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "function_call", "name": "shell_command", "arguments": args, "call_id": "call-tool-1"}}})
             send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "function_call_output", "call_id": "call-tool-1", "output": "ripgrep 14"}}})
@@ -215,6 +221,7 @@ class CodexAppServerClientTests(unittest.TestCase):
                     "target": "thread/start",
                     "status": "ok",
                     "thread_id": "",
+                    "thread_title": "",
                 },
                 actions,
             )
@@ -265,7 +272,9 @@ class CodexAppServerClientTests(unittest.TestCase):
                 original = os.environ.copy()
                 os.environ.update(env)
                 client.start()
-                client.send_turn("force tool")
+                warmup = client.send_turn("warmup thread")
+                client.set_thread_title("Weather smoke", thread_id=warmup.used_thread_id)
+                client.send_turn("force tool", thread_id=warmup.used_thread_id)
             finally:
                 client.close()
                 os.environ.clear()
@@ -276,6 +285,7 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(tool_rows[0]["tool"], "shell_command")
             self.assertEqual(tool_rows[0]["target"], "rg cwd=C:\\repo")
             self.assertEqual(tool_rows[0]["status"], "ok")
+            self.assertEqual(tool_rows[0]["thread_title"], "Weather smoke")
 
     def test_rollout_jsonl_ingest_records_compact_tool_action_without_output(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
