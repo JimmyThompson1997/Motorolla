@@ -43,6 +43,7 @@ public final class MeetingRecordingController {
     private final SettingsStore settings;
     private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
     private String activeMeetingId = "";
+    private String activeVoiceSessionId = "";
 
     private MeetingRecordingController(Context context) {
         this.context = context.getApplicationContext();
@@ -86,7 +87,9 @@ public final class MeetingRecordingController {
         Json.put(startArgs, "feedback", args.optBoolean("feedback", true));
         JSONObject started = VoiceCaptureController.shared(context).start(startArgs);
         activeMeetingId = meetingId;
-        JSONObject record = meetingRecordFromCapture(meetingId, started.optJSONObject("active_session"), "recording");
+        JSONObject activeSession = started.optJSONObject("active_session");
+        activeVoiceSessionId = activeSession == null ? "" : activeSession.optString("session_id", "");
+        JSONObject record = meetingRecordFromCapture(meetingId, activeSession, "recording");
         appendMeeting(record);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.meeting_recording_start.v1");
@@ -104,12 +107,14 @@ public final class MeetingRecordingController {
             return out;
         }
         String meetingId = activeMeetingId;
+        String voiceSessionId = activeVoiceSessionId.isEmpty() ? meetingId : activeVoiceSessionId;
         JSONObject stopArgs = new JSONObject();
-        Json.put(stopArgs, "session_id", meetingId);
+        Json.put(stopArgs, "session_id", voiceSessionId);
         Json.put(stopArgs, "reason", args.optString("reason", "meeting_recording_stop"));
         Json.put(stopArgs, "feedback", args.optBoolean("feedback", true));
         JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
         activeMeetingId = "";
+        activeVoiceSessionId = "";
         JSONObject capture = stopped.optJSONObject("capture");
         JSONObject record = meetingRecordFromCapture(meetingId, capture, "completed");
         JSONObject upload = uploadCompletedMeeting(record, capture);

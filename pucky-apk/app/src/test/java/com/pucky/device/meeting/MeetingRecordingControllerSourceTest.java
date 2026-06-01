@@ -30,6 +30,10 @@ public final class MeetingRecordingControllerSourceTest {
 
         assertTrue(source.contains("VoiceCaptureController.shared(context).start(startArgs)"));
         assertTrue(source.contains("VoiceCaptureController.shared(context).stop(stopArgs)"));
+        assertTrue(source.contains("activeVoiceSessionId"));
+        assertTrue(source.contains("started.optJSONObject(\"active_session\")"));
+        assertTrue(source.contains("activeSession.optString(\"session_id\", \"\")"));
+        assertTrue(source.contains("activeVoiceSessionId.isEmpty() ? meetingId : activeVoiceSessionId"));
         assertTrue(source.contains("args.optBoolean(\"feedback\", true)"));
         assertTrue(source.contains("sample_tag"));
         assertTrue(source.contains("meeting_recording"));
