@@ -537,7 +537,11 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "void config.archive(card).then(result => {" in swipe
     assert "if (result === null)" in swipe
     assert "rollback();" in swipe
-    assert 'const usePointerEvents = "PointerEvent" in window;' in swipe
+    assert 'const preferTouchEvents = prefersTouchInput();' in swipe
+    assert "function prefersTouchInput()" in app
+    assert "function isTouchPointerEvent(event)" in app
+    assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in swipe
+    assert 'const usePointerEvents = "PointerEvent" in window;' not in swipe
     assert "wrapper.setPointerCapture(pointer);" in swipe
     assert "wrapper.releasePointerCapture(activePointerId);" in swipe
 
@@ -672,14 +676,19 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
     assert 'pullDirection === "top" && refreshArmed' in app
     assert 'pullDirection === "bottom"' in app
-    assert 'const usePointerEvents = "PointerEvent" in window' in app
+    assert 'const preferTouchEvents = prefersTouchInput();' in app
     assert 'feed.addEventListener("pointerdown"' in app
     assert 'feed.addEventListener("pointermove"' in app
     assert 'feed.addEventListener("pointerup"' in app
     assert 'feed.addEventListener("pointercancel"' in app
+    assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in app
     assert "beginPull(event.clientY, event.pointerId)" in app
     assert "movePull(event.clientY, event)" in app
-    assert "} else {\n      feed.addEventListener(\"touchstart\"" in app
+    assert 'feed.addEventListener("touchstart"' in app
+    assert 'feed.addEventListener("touchmove"' in app
+    assert 'feed.addEventListener("touchend", endPull);' in app
+    assert 'feed.addEventListener("touchcancel", cancelPull);' in app
+    assert "} else {\n      feed.addEventListener(\"touchstart\"" not in app
     assert "Math.pow(Math.abs(dy), 0.72)" in app
     assert "Math.min(FEED_REFRESH_MAX_PULL" in app
     assert 'feed.classList.add("is-rubber-banding")' in app
@@ -935,7 +944,8 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     assert "}, CARD_ARCHIVE_SWIPE_EXIT_MS);" in swipe
     assert "}, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);" in swipe
     assert "}, 140);" not in swipe
-    assert "if (usePointerEvents)" in swipe
+    assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in swipe
+    assert "if (usePointerEvents)" not in swipe
     assert "event.preventDefault();" in swipe
     assert "passive: false" in swipe
 

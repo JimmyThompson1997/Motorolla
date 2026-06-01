@@ -5624,7 +5624,7 @@
     let lastAt = 0;
     let velocityX = 0;
     let pointerCaptured = false;
-    const usePointerEvents = "PointerEvent" in window;
+    const preferTouchEvents = prefersTouchInput();
 
     const cardWidth = () => Math.max(1, cardEl.getBoundingClientRect().width || wrapper.getBoundingClientRect().width || 1);
 
@@ -5794,41 +5794,47 @@
       }
     }, true);
     wrapper.addEventListener("pointerdown", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
       begin(event.clientX, event.clientY, event.target, event.pointerId);
       if (active) {
         capturePointer(event.pointerId);
       }
     });
     wrapper.addEventListener("pointermove", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
       move(event.clientX, event.clientY);
     });
     wrapper.addEventListener("pointerup", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
       finish();
     });
     wrapper.addEventListener("pointercancel", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
       finish();
     });
     wrapper.addEventListener("touchstart", event => {
-      if (usePointerEvents) {
-        return;
-      }
       if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
       }
     }, { passive: true });
     wrapper.addEventListener("touchmove", event => {
-      if (usePointerEvents) {
-        return;
-      }
       if (event.touches.length) {
         move(event.touches[0].clientX, event.touches[0].clientY);
         if (horizontal) {
@@ -5837,15 +5843,9 @@
       }
     }, { passive: false });
     wrapper.addEventListener("touchend", () => {
-      if (usePointerEvents) {
-        return;
-      }
       finish();
     });
     wrapper.addEventListener("touchcancel", () => {
-      if (usePointerEvents) {
-        return;
-      }
       finish();
     });
   }
@@ -6071,6 +6071,16 @@
     ));
   }
 
+  function prefersTouchInput() {
+    return ("ontouchstart" in window)
+      || Number(window.navigator?.maxTouchPoints || 0) > 0
+      || Number(window.navigator?.msMaxTouchPoints || 0) > 0;
+  }
+
+  function isTouchPointerEvent(event) {
+    return Boolean(event && String(event.pointerType || "").toLowerCase() === "touch");
+  }
+
   function messagesForCard(card) {
     if (Array.isArray(card.transcript_messages) && card.transcript_messages.length) {
       return card.transcript_messages.map(item => ({
@@ -6261,7 +6271,7 @@
     let pullDirection = "";
     let refreshArmed = false;
     let activePointerId = null;
-    const usePointerEvents = "PointerEvent" in window;
+    const preferTouchEvents = prefersTouchInput();
 
     const atTop = () => feed.scrollTop <= 0;
     const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
@@ -6356,49 +6366,58 @@
       activePointerId = null;
     };
 
-    if (usePointerEvents) {
-      feed.addEventListener("pointerdown", event => {
-        if (event.isPrimary === false) {
-          return;
-        }
-        beginPull(event.clientY, event.pointerId);
-      }, { passive: true });
-      feed.addEventListener("pointermove", event => {
-        if (activePointerId !== null && event.pointerId !== activePointerId) {
-          return;
-        }
-        movePull(event.clientY, event);
-      }, { passive: false });
-      feed.addEventListener("pointerup", event => {
-        if (activePointerId !== null && event.pointerId !== activePointerId) {
-          return;
-        }
-        endPull();
-      });
-      feed.addEventListener("pointercancel", event => {
-        if (activePointerId !== null && event.pointerId !== activePointerId) {
-          return;
-        }
-        cancelPull();
-      });
-    } else {
-      feed.addEventListener("touchstart", event => {
-        if (!event.touches.length) {
-          return;
-        }
-        beginPull(event.touches[0].clientY);
-      }, { passive: true });
+    feed.addEventListener("pointerdown", event => {
+      if (event.isPrimary === false) {
+        return;
+      }
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
+      beginPull(event.clientY, event.pointerId);
+    }, { passive: true });
+    feed.addEventListener("pointermove", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      movePull(event.clientY, event);
+    }, { passive: false });
+    feed.addEventListener("pointerup", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      endPull();
+    });
+    feed.addEventListener("pointercancel", event => {
+      if (preferTouchEvents && isTouchPointerEvent(event)) {
+        return;
+      }
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      cancelPull();
+    });
+    feed.addEventListener("touchstart", event => {
+      if (!event.touches.length) {
+        return;
+      }
+      beginPull(event.touches[0].clientY);
+    }, { passive: true });
 
-      feed.addEventListener("touchmove", event => {
-        if (!event.touches.length) {
-          return;
-        }
-        movePull(event.touches[0].clientY, event);
-      }, { passive: false });
+    feed.addEventListener("touchmove", event => {
+      if (!event.touches.length) {
+        return;
+      }
+      movePull(event.touches[0].clientY, event);
+    }, { passive: false });
 
-      feed.addEventListener("touchend", endPull);
-      feed.addEventListener("touchcancel", cancelPull);
-    }
+    feed.addEventListener("touchend", endPull);
+    feed.addEventListener("touchcancel", cancelPull);
   }
 
   function cardTimestamp(card) {
