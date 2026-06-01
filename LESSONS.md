@@ -42,3 +42,4 @@
 - 2026-05-30 - On the repo-backed Fly VM, leave `PUCKY_UI_VERSION` unset; pinning it in the service environment can leave `ui_version` stale even while `source_commit_full` tracks the current checkout.
 - 2026-05-30 - Fresh scratch or worktree emulator slots may not have an AVD yet; `pucky_emulator_suite.py start` should create the slot AVD on demand and fall back to `MainActivity` when the default cover launcher cannot be resolved during provisioning.
 - 2026-05-31 - On Windows, Python sqlite connection context managers commit but do not close the file handle; explicitly close ledger/test connections before deleting temp directories.
+- 2026-05-31 - `fly ssh console` from Windows can print successful Pucky VM smoke output and then exit with `Error: The handle is invalid`; judge those runs by the remote command output/status JSON, not the wrapper's final handle error.
