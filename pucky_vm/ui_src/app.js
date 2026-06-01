@@ -21,6 +21,9 @@
   const CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280;
   const CARD_ARCHIVE_SWIPE_EXIT_MS = 320;
   const CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320;
+  // Match the current meeting-row collapse distance so taller feed cards
+  // get a proportionally longer collapse instead of visually snapping upward.
+  const CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX = 74;
   const MEETING_STATUS_POLL_MS = 1000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
@@ -5642,6 +5645,18 @@
 
     const maxDragDistance = () => Math.round(cardWidth() * 1.05);
 
+    const collapseDurationMs = () => {
+      const marginBottom = parseFloat(window.getComputedStyle(wrapper).marginBottom || "0") || 0;
+      const collapseDistance = wrapper.getBoundingClientRect().height + marginBottom;
+      return Math.max(
+        CARD_ARCHIVE_SWIPE_COLLAPSE_MS,
+        Math.round(
+          (collapseDistance / CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX)
+          * CARD_ARCHIVE_SWIPE_COLLAPSE_MS
+        )
+      );
+    };
+
     const applyOffset = x => {
       swipeOffset = Math.max(0, Math.min(maxDragDistance(), Math.round(x)));
       wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
@@ -5666,6 +5681,7 @@
       horizontal = false;
       swiped = false;
       activePointerId = null;
+      wrapper.style.removeProperty("--card-archive-collapse-ms");
       if (options.animate && swipeOffset > 0) {
         wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-armed");
         wrapper.classList.add("is-card-snapback");
@@ -5767,7 +5783,9 @@
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
       const rollback = config.optimistic(card);
       const measuredHeight = wrapper.getBoundingClientRect().height;
+      const collapseMs = collapseDurationMs();
       wrapper.style.height = `${Math.max(1, Math.ceil(measuredHeight))}px`;
+      wrapper.style.setProperty("--card-archive-collapse-ms", `${collapseMs}ms`);
       wrapper.classList.add("is-card-swiped-away");
       wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-active", "is-card-swipe-armed", "is-card-snapback");
       applyOffset(maxDragDistance());
@@ -5775,7 +5793,7 @@
         wrapper.classList.add("is-card-collapsing");
         window.setTimeout(() => {
           render();
-        }, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);
+        }, collapseMs);
       }, CARD_ARCHIVE_SWIPE_EXIT_MS);
       void config.archive(card).then(result => {
         if (result === null) {

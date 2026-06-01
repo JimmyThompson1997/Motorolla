@@ -471,6 +471,7 @@ def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
     assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
+    assert "--card-archive-collapse-ms: 320ms;" in css_block(styles, ".card-wrap")
 
 
 def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
@@ -937,15 +938,20 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     assert "CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280" in app
     assert "CARD_ARCHIVE_SWIPE_EXIT_MS = 320" in app
     assert "CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320" in app
+    assert "CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX = 74" in app
     assert 'wrapper.classList.add("is-card-swipe-dragging")' in swipe
     assert 'reset({ animate: horizontal })' in swipe
     assert 'wrapper.classList.add("is-card-snapback")' in swipe
     assert 'wrapper.classList.add("is-card-swiped-away")' in swipe
     assert 'wrapper.classList.add("is-card-collapsing")' in swipe
     assert "wrapper.getBoundingClientRect().height" in swipe
+    assert 'const collapseMs = collapseDurationMs();' in swipe
+    assert 'window.getComputedStyle(wrapper).marginBottom' in swipe
+    assert 'wrapper.style.setProperty("--card-archive-collapse-ms", `${collapseMs}ms`);' in swipe
+    assert 'wrapper.style.removeProperty("--card-archive-collapse-ms");' in swipe
     assert "window.setTimeout(() => {\n        wrapper.classList.add(\"is-card-collapsing\");" in swipe
     assert "}, CARD_ARCHIVE_SWIPE_EXIT_MS);" in swipe
-    assert "}, CARD_ARCHIVE_SWIPE_COLLAPSE_MS);" in swipe
+    assert "}, collapseMs);" in swipe
     assert "}, 140);" not in swipe
     assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in swipe
     assert "if (usePointerEvents)" not in swipe
@@ -956,8 +962,8 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     wrap_css = styles[styles.index(".card-wrap {"):styles.index(".card-swipe-action")]
     motion_start = styles.index(".card-wrap .card {")
     motion_css = styles[motion_start:styles.index("\n.card {", motion_start)]
-    assert "height 320ms" in wrap_css
-    assert "margin-bottom 320ms" in wrap_css
+    assert "height var(--card-archive-collapse-ms)" in wrap_css
+    assert "margin-bottom var(--card-archive-collapse-ms)" in wrap_css
     assert ".card-wrap.is-card-swipe-dragging .card" in motion_css
     assert "transition: none;" in motion_css
     assert ".card-wrap.is-card-snapback .card" in motion_css
