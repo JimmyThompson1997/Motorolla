@@ -23,22 +23,34 @@ def _payload_data(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _first_message_id(payload: dict[str, Any]) -> str:
+    def _extract(item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        for key in ("id", "messageId", "message_id"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
     data = _payload_data(payload)
     if isinstance(data.get("messages"), list):
         for item in data.get("messages") or []:
-            if isinstance(item, dict) and str(item.get("id") or "").strip():
-                return str(item.get("id")).strip()
+            message_id = _extract(item)
+            if message_id:
+                return message_id
     messages = data.get("messages")
     if isinstance(messages, list):
         for item in messages:
-            if isinstance(item, dict) and str(item.get("id") or "").strip():
-                return str(item.get("id")).strip()
+            message_id = _extract(item)
+            if message_id:
+                return message_id
     if isinstance(data.get("data"), dict):
         nested = data.get("data") or {}
         if isinstance(nested.get("messages"), list):
             for item in nested.get("messages") or []:
-                if isinstance(item, dict) and str(item.get("id") or "").strip():
-                    return str(item.get("id")).strip()
+                message_id = _extract(item)
+                if message_id:
+                    return message_id
     return ""
 
 
