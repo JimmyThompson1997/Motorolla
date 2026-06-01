@@ -582,6 +582,14 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
     assert 'pullDirection === "top" && refreshArmed' in app
     assert 'pullDirection === "bottom"' in app
+    assert 'const usePointerEvents = "PointerEvent" in window' in app
+    assert 'feed.addEventListener("pointerdown"' in app
+    assert 'feed.addEventListener("pointermove"' in app
+    assert 'feed.addEventListener("pointerup"' in app
+    assert 'feed.addEventListener("pointercancel"' in app
+    assert "beginPull(event.clientY, event.pointerId)" in app
+    assert "movePull(event.clientY, event)" in app
+    assert "} else {\n      feed.addEventListener(\"touchstart\"" in app
     assert "Math.pow(Math.abs(dy), 0.72)" in app
     assert "Math.min(FEED_REFRESH_MAX_PULL" in app
     assert 'feed.classList.add("is-rubber-banding")' in app

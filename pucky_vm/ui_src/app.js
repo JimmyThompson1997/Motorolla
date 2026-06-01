@@ -5845,6 +5845,8 @@
     let raf = 0;
     let pullDirection = "";
     let refreshArmed = false;
+    let activePointerId = null;
+    const usePointerEvents = "PointerEvent" in window;
 
     const atTop = () => feed.scrollTop <= 0;
     const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
@@ -5871,21 +5873,22 @@
       releaseFeedPull(feed);
     };
 
-    feed.addEventListener("touchstart", event => {
-      if (!event.touches.length || state.route !== "feed" || state.feedRefreshing) {
+    const beginPull = (y, pointer = null) => {
+      if (state.route !== "feed" || state.feedRefreshing) {
         return;
       }
-      startY = event.touches[0].clientY;
+      startY = y;
       active = false;
       pullDirection = "";
       refreshArmed = false;
-    }, { passive: true });
+      activePointerId = pointer;
+    };
 
-    feed.addEventListener("touchmove", event => {
-      if (!event.touches.length || state.route !== "feed" || state.feedRefreshing) {
+    const movePull = (y, event = null) => {
+      if (state.route !== "feed" || state.feedRefreshing) {
         return;
       }
-      const dy = event.touches[0].clientY - startY;
+      const dy = y - startY;
       const topPull = dy > 0 && atTop();
       const bottomPull = dy < 0 && atBottom();
       const edgePull = topPull || bottomPull;
@@ -5895,7 +5898,7 @@
         }
         return;
       }
-      if (event.cancelable) {
+      if (event && event.cancelable) {
         event.preventDefault();
       }
       active = true;
@@ -5909,14 +5912,15 @@
       }
       updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0 });
       apply(Math.sign(dy) * eased);
-    }, { passive: false });
+    };
 
-    feed.addEventListener("touchend", () => {
+    const endPull = () => {
       if (pullDirection === "top" && refreshArmed) {
         active = false;
         offset = 0;
         refreshArmed = false;
         pullDirection = "";
+        activePointerId = null;
         if (raf) {
           cancelAnimationFrame(raf);
           raf = 0;
@@ -5927,12 +5931,59 @@
       if (active) {
         reset();
       }
-    });
-    feed.addEventListener("touchcancel", () => {
+      activePointerId = null;
+    };
+
+    const cancelPull = () => {
       if (active) {
         reset();
       }
-    });
+      activePointerId = null;
+    };
+
+    if (usePointerEvents) {
+      feed.addEventListener("pointerdown", event => {
+        if (event.isPrimary === false) {
+          return;
+        }
+        beginPull(event.clientY, event.pointerId);
+      }, { passive: true });
+      feed.addEventListener("pointermove", event => {
+        if (activePointerId !== null && event.pointerId !== activePointerId) {
+          return;
+        }
+        movePull(event.clientY, event);
+      }, { passive: false });
+      feed.addEventListener("pointerup", event => {
+        if (activePointerId !== null && event.pointerId !== activePointerId) {
+          return;
+        }
+        endPull();
+      });
+      feed.addEventListener("pointercancel", event => {
+        if (activePointerId !== null && event.pointerId !== activePointerId) {
+          return;
+        }
+        cancelPull();
+      });
+    } else {
+      feed.addEventListener("touchstart", event => {
+        if (!event.touches.length) {
+          return;
+        }
+        beginPull(event.touches[0].clientY);
+      }, { passive: true });
+
+      feed.addEventListener("touchmove", event => {
+        if (!event.touches.length) {
+          return;
+        }
+        movePull(event.touches[0].clientY, event);
+      }, { passive: false });
+
+      feed.addEventListener("touchend", endPull);
+      feed.addEventListener("touchcancel", cancelPull);
+    }
   }
 
   function cardTimestamp(card) {
