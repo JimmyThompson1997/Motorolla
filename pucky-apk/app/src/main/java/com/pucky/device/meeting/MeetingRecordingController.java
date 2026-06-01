@@ -120,10 +120,11 @@ public final class MeetingRecordingController {
         activeVoiceSessionId = "";
         JSONObject capture = stopped.optJSONObject("capture");
         JSONObject record = meetingRecordFromCapture(meetingId, capture, "completed");
-        JSONObject upload = uploadCompletedMeeting(record, capture);
+        JSONObject upload = initialUploadState();
         Json.put(record, "upload_status", upload.optString("state", "failed"));
         Json.put(record, "upload", upload);
         appendMeeting(record);
+        startUpload(record, capture);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.meeting_recording_stop.v1");
         Json.put(out, "state", "completed");
@@ -131,6 +132,42 @@ public final class MeetingRecordingController {
         Json.put(out, "recording", record);
         Json.put(out, "voice_capture", stopped);
         Json.put(out, "upload", upload);
+        return out;
+    }
+
+    private void startUpload(JSONObject record, JSONObject capture) {
+        if (!isConfigured()) {
+            return;
+        }
+        JSONObject recordCopy;
+        JSONObject captureCopy;
+        try {
+            recordCopy = new JSONObject(record.toString());
+            captureCopy = capture == null ? null : new JSONObject(capture.toString());
+        } catch (Exception ignored) {
+            return;
+        }
+        new Thread(() -> {
+            try {
+                JSONObject upload = uploadCompletedMeeting(recordCopy, captureCopy);
+                Json.put(recordCopy, "upload_status", upload.optString("state", "failed"));
+                Json.put(recordCopy, "upload", upload);
+            } catch (CommandException exc) {
+                Json.put(recordCopy, "upload_status", "failed");
+                JSONObject upload = new JSONObject();
+                Json.put(upload, "schema", "pucky.meeting_upload.v1");
+                Json.put(upload, "state", "failed");
+                Json.put(upload, "error", exc.getMessage());
+                Json.put(recordCopy, "upload", upload);
+            }
+            appendMeeting(recordCopy);
+        }, "pucky-meeting-upload-" + record.optString("meeting_id", "unknown")).start();
+    }
+
+    private JSONObject initialUploadState() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.meeting_upload.v1");
+        Json.put(out, "state", isConfigured() ? "uploading" : "skipped_not_configured");
         return out;
     }
 

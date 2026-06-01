@@ -1339,6 +1339,51 @@ class PuckyVoiceService:
         audio_path.write_bytes(audio)
         audio_url = f"{base_url.rstrip('/')}/api/meetings/{quote(meeting_id, safe='')}/audio" if base_url else ""
 
+        now = _iso_time(time.time())
+        record: dict[str, object] = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": meeting_id,
+            "state": "processing",
+            "created_at": now,
+            "updated_at": now,
+            "started_at": str(payload.get("started_at") or ""),
+            "stopped_at": str(payload.get("stopped_at") or ""),
+            "duration_ms": int(payload.get("duration_ms") or 0),
+            "device_id": str(payload.get("device_id") or ""),
+            "device_path": str(payload.get("device_path") or ""),
+            "mime_type": mime_type,
+            "audio_bytes": len(audio),
+            "audio_path": str(audio_path),
+            "audio_url": audio_url,
+            "metadata": {key: value for key, value in payload.items() if key != "audio_base64"},
+            "transcript_status": "pending",
+            "transcript_error": "",
+            "transcript_text": "",
+            "transcript_result": {},
+            "diarization_requested": True,
+            "diarization_status": "pending",
+            "speaker_turns": [],
+        }
+        self._upsert_meeting(record)
+        threading.Thread(
+            target=self._process_meeting_record,
+            args=(dict(record), audio, mime_type),
+            name=f"pucky-meeting-{meeting_id}",
+            daemon=True,
+        ).start()
+        return {
+            "schema": "pucky.meeting_ingest.v1",
+            "ok": True,
+            "state": "processing",
+            "meeting_id": meeting_id,
+            "audio_path": str(audio_path),
+            "audio_bytes": len(audio),
+            "meeting": record,
+            "card": {},
+            "agent": {},
+        }
+
+    def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
         transcript_payload: dict[str, object]
         try:
             transcribe_with_metadata = getattr(self.stt, "transcribe_with_metadata", None)
@@ -1365,35 +1410,19 @@ class PuckyVoiceService:
 
         speaker_turns = list(transcript_payload.get("speaker_turns") or [])
         transcript_text = str(transcript_payload.get("transcript") or "").strip()
-        now = _iso_time(time.time())
-        record: dict[str, object] = {
-            "schema": "pucky.meeting.v1",
-            "meeting_id": meeting_id,
-            "state": "processing",
-            "created_at": now,
-            "updated_at": now,
-            "started_at": str(payload.get("started_at") or ""),
-            "stopped_at": str(payload.get("stopped_at") or ""),
-            "duration_ms": int(payload.get("duration_ms") or 0),
-            "device_id": str(payload.get("device_id") or ""),
-            "device_path": str(payload.get("device_path") or ""),
-            "mime_type": mime_type,
-            "audio_bytes": len(audio),
-            "audio_path": str(audio_path),
-            "audio_url": audio_url,
-            "metadata": {key: value for key, value in payload.items() if key != "audio_base64"},
-            "transcript_status": transcript_status,
-            "transcript_error": transcript_error,
-            "transcript_text": transcript_text,
-            "transcript_result": transcript_payload,
-            "diarization_requested": bool(transcript_payload.get("diarization_requested", True)),
-            "diarization_status": "speaker_turns" if speaker_turns else "no_speaker_turns",
-            "speaker_turns": speaker_turns,
-        }
+        record["updated_at"] = _iso_time(time.time())
+        record["transcript_status"] = transcript_status
+        record["transcript_error"] = transcript_error
+        record["transcript_text"] = transcript_text
+        record["transcript_result"] = transcript_payload
+        record["diarization_requested"] = bool(transcript_payload.get("diarization_requested", True))
+        record["diarization_status"] = "speaker_turns" if speaker_turns else "no_speaker_turns"
+        record["speaker_turns"] = speaker_turns
         self._upsert_meeting(record)
 
         prompt = _meeting_agent_handoff_prompt(record)
         total_start = time.perf_counter()
+        meeting_id = str(record.get("meeting_id") or "")
         telemetry: dict[str, object] = {
             "event": "pucky.meeting.agent_handoff",
             "session_id": meeting_id,
@@ -1436,17 +1465,6 @@ class PuckyVoiceService:
             record["failure_reason"] = f"{exc.__class__.__name__}: {exc}"
             result = {}
         self._upsert_meeting(record)
-        return {
-            "schema": "pucky.meeting_ingest.v1",
-            "ok": record.get("state") == "completed",
-            "state": record.get("state"),
-            "meeting_id": meeting_id,
-            "audio_path": str(audio_path),
-            "audio_bytes": len(audio),
-            "meeting": record,
-            "card": result,
-            "agent": result,
-        }
 
     def _load_meetings(self) -> list[dict[str, object]]:
         with self._meetings_lock:

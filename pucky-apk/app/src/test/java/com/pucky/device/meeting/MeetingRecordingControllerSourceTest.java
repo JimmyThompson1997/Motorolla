@@ -35,6 +35,9 @@ public final class MeetingRecordingControllerSourceTest {
         assertTrue(source.contains("activeSession = started"));
         assertTrue(source.contains("activeSession.optString(\"session_id\", \"\")"));
         assertTrue(source.contains("activeVoiceSessionId.isEmpty() ? meetingId : activeVoiceSessionId"));
+        assertTrue(source.contains("startUpload(record, capture)"));
+        assertTrue(source.contains("new Thread(() ->"));
+        assertTrue(source.contains("\"uploading\""));
         assertTrue(source.contains("args.optBoolean(\"feedback\", true)"));
         assertTrue(source.contains("sample_tag"));
         assertTrue(source.contains("meeting_recording"));

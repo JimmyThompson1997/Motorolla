@@ -938,16 +938,25 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(payload["schema"], "pucky.meeting_ingest.v1")
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["state"], "completed")
+        self.assertEqual(payload["state"], "processing")
         self.assertEqual(payload["audio_bytes"], len(audio))
         self.assertTrue(Path(payload["audio_path"]).is_file())
-        meeting = payload["meeting"]
+
+        meeting = {}
+        for _ in range(50):
+            meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
+            rows = meetings.get("meetings", [])
+            meeting = rows[0] if rows else {}
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+        self.assertEqual(meeting["state"], "completed")
         self.assertEqual(meeting["transcript_status"], "completed")
         self.assertIn("I'm Jimmy", meeting["transcript_text"])
         self.assertTrue(meeting["diarization_requested"])
         self.assertEqual(meeting["diarization_status"], "speaker_turns")
         self.assertGreaterEqual(len(meeting["speaker_turns"]), 2)
-        self.assertEqual(payload["agent"]["card"]["title"], "Quick Help")
+        self.assertEqual(meeting["feed_item"]["card"]["title"], "Quick Help")
         prompt = self.codex.turns[-1]
         self.assertIn("Meeting Recording Agent Handoff", prompt)
         self.assertIn("audio_path:", prompt)
