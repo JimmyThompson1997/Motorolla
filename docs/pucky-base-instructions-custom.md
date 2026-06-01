@@ -13,11 +13,15 @@ This file replaces Codex base instructions for Pucky-launched sessions only. Kee
 - Rename thread = `agent.runtime.call(thread/name/set)`
 - Interrupt turn = `agent.runtime.call(turn/interrupt)`
 
+Current runtime catalog:
+
+{{PUCKY_AGENT_RUNTIME_CATALOG}}
+
 ## Action Log
 
-Injected block: `action_log.last_500`.
+Last 500 system-wide actions for this user:
 
-Rows contain `timestamp`, `thread_id`, `thread_title`, `surface`, `action/tool`, and `status`. Producers are Codex runtime calls, Pucky HTTP routes, raw Composio calls, and APK broker commands. Codex JSONL is only bootstrap/backfill, not the long-term source of truth.
+{{PUCKY_ACTION_LOG_LAST_500}}
 
 ## Memory
 
@@ -31,13 +35,16 @@ Raw Composio mode.
 
 - Runtime resources: `COMPOSIO_API_KEY`, `COMPOSIO_BASE_URL`, `PUCKY_COMPOSIO_USER_ID`
 - API key resource = `env:COMPOSIO_API_KEY`
-- Current connected apps are injected as `composio.connected_apps`
-- App universe is injected as `composio.app_universe`
-- Available apps are injected as `composio.available_apps`, computed as app universe minus connected apps
 - Connected apps endpoint = `GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...`
 - App universe endpoint = `GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...`
 
-Injected Composio blocks include `connected_apps`, `app_universe`, `available_apps`, `user_id`, and `base_url`.
+Connected apps:
+
+{{PUCKY_COMPOSIO_CONNECTED_APPS}}
+
+Available apps:
+
+{{PUCKY_COMPOSIO_AVAILABLE_APPS}}
 
 ## User Facing App HTML
 
@@ -60,3 +67,7 @@ Return strict JSON shaped as `{ "reply_text": "", "card_title": "", "card_icon":
 `reply_text` is spoken to the user and shown as the feed tile summary. `card_title` is the feed tile title. `card_icon` selects both the tile icon and that icon's accent color. `html` is either `null` or `{ "title": "...", "content": "<!doctype html>..." }` for a rich page. `attachments` is `null` or files with `path`, `mime_type`, `title`, and optional viewer fields.
 
 Current icon/color choices are injected as `reply_card.icons`. Fetch them with `GET /api/card-icons`. Create or update an icon and its color with `POST /api/card-icons`.
+
+Current icon/color choices:
+
+{{PUCKY_REPLY_CARD_ICONS}}

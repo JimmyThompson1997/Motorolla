@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,39 +12,34 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pucky_vm.server import Config, PuckyVoiceService  # noqa: E402
+from pucky_vm.server import Config, PuckyVoiceService, compose_pucky_base_instructions  # noqa: E402
 
 
-def _parse_compiled_runtime_context(compiled: str | None) -> dict[str, Any] | None:
+def _compiled_markdown_report(compiled: str | None) -> dict[str, Any]:
     text = str(compiled or "")
-    marker = "## Injected Runtime Context"
-    if marker not in text:
-        return None
-    tail = text.split(marker, 1)[1]
-    start = tail.find("```json")
-    if start < 0:
-        return None
-    json_start = tail.find("\n", start)
-    if json_start < 0:
-        return None
-    end = tail.find("```", json_start + 1)
-    if end < 0:
-        return None
-    payload = tail[json_start + 1 : end].strip()
-    decoded = json.loads(payload)
-    return decoded if isinstance(decoded, dict) else None
+    return {
+        "has_injected_runtime_json": "## Injected Runtime Context" in text,
+        "has_json_fence": "```json" in text,
+        "unresolved_placeholders": sorted(set(re.findall(r"\{\{PUCKY_[A-Z0-9_]+\}\}", text))),
+        "has_agent_runtime_catalog": "Current runtime catalog:" in text and "- thread/start" in text,
+        "has_action_log": "## Action Log" in text and "Last 500 system-wide actions for this user:" in text,
+        "has_connected_apps": "Connected apps:" in text and "Connected now:" in text,
+        "has_available_apps": "Available apps:" in text and "Available to connect:" in text,
+        "has_reply_icons": "Current icon/color choices:" in text and "| #" in text,
+    }
 
 
-def compile_runtime_report(service: Any) -> dict[str, Any]:
-    context = service._base_runtime_context()
+def compile_runtime_report(service: Any, *, context: dict[str, Any] | None = None, compiled: str | None = None) -> dict[str, Any]:
+    context = context or service._base_runtime_context()
     composio = context.get("composio") if isinstance(context.get("composio"), dict) else {}
     reply_card = context.get("reply_card") if isinstance(context.get("reply_card"), dict) else {}
     action_log = context.get("action_log") if isinstance(context.get("action_log"), dict) else {}
     agent_runtime = context.get("agent_runtime") if isinstance(context.get("agent_runtime"), dict) else {}
-    compiled = service.codex_base_instructions_for_thread()
-    parsed_context = _parse_compiled_runtime_context(compiled)
     config = getattr(service, "config", None)
     base_config_loaded = bool(getattr(config, "codex_base_instructions", None))
+    if compiled is None and base_config_loaded:
+        compiled = compose_pucky_base_instructions(str(getattr(config, "codex_base_instructions") or ""), context)
+    markdown_report = _compiled_markdown_report(compiled)
     connected_diagnostics = composio.get("connected_app_diagnostics") if isinstance(composio.get("connected_app_diagnostics"), dict) else {}
     return {
         "schema": "pucky.runtime_context_smoke.v1",
@@ -52,7 +48,18 @@ def compile_runtime_report(service: Any) -> dict[str, Any]:
         "compiled_present": bool(compiled),
         "compiled_length": len(compiled or ""),
         "compiled_sha256": hashlib.sha256((compiled or "").encode("utf-8")).hexdigest() if compiled else "",
-        "compiled_context_parse_ok": parsed_context is not None,
+        "compiled_readable_sections_ok": all(
+            bool(markdown_report[key])
+            for key in (
+                "has_agent_runtime_catalog",
+                "has_action_log",
+                "has_connected_apps",
+                "has_available_apps",
+                "has_reply_icons",
+            )
+        ),
+        "compiled_raw_runtime_json_present": bool(markdown_report["has_injected_runtime_json"] or markdown_report["has_json_fence"]),
+        "compiled_unresolved_placeholders": markdown_report["unresolved_placeholders"],
         "thread_start_includes_base": bool(base_config_loaded and compiled),
         "agent_runtime_action_count": len(list(agent_runtime.get("actions") or [])),
         "agent_runtime_actions": [str(item.get("name") or "") for item in list(agent_runtime.get("actions") or []) if isinstance(item, dict)],
@@ -89,8 +96,12 @@ def validate_runtime_report(
         missing.append("base_config_loaded")
     if require_base and not bool(report.get("compiled_present")):
         missing.append("compiled_present")
-    if require_base and not bool(report.get("compiled_context_parse_ok")):
-        missing.append("compiled_context_parse_ok")
+    if require_base and not bool(report.get("compiled_readable_sections_ok")):
+        missing.append("compiled_readable_sections_ok")
+    if require_base and bool(report.get("compiled_raw_runtime_json_present")):
+        missing.append("compiled_raw_runtime_json_absent")
+    if require_base and list(report.get("compiled_unresolved_placeholders") or []):
+        missing.append("compiled_unresolved_placeholders")
     if require_base and not bool(report.get("thread_start_includes_base")):
         missing.append("thread_start_includes_base")
     if int(report.get("agent_runtime_action_count") or 0) < 18:
@@ -113,8 +124,9 @@ def validate_runtime_report(
         raise RuntimeError("runtime smoke missing: " + ", ".join(missing))
 
 
-def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str) -> dict[str, Any]:
+def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str, base_instructions: str | None = None) -> dict[str, Any]:
     service.start()
+    compiled = base_instructions if base_instructions is not None else service.codex_base_instructions_for_thread()
     start = service.agent_runtime_call(
         {
             "method": "thread/start",
@@ -123,7 +135,7 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str) -> dict[str
                 "sandbox": service.config.codex_sandbox,
                 **({"model": service.config.codex_model} if service.config.codex_model else {}),
                 **({"cwd": service.config.codex_cwd} if service.config.codex_cwd else {}),
-                **({"baseInstructions": service.codex_base_instructions_for_thread()} if service.config.codex_base_instructions else {}),
+                **({"baseInstructions": compiled} if service.config.codex_base_instructions and compiled else {}),
                 "developerInstructions": service.config.developer_instructions,
             },
         }
@@ -147,7 +159,7 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str) -> dict[str
     return {
         "schema": "pucky.runtime_cross_thread_smoke.v1",
         "thread_id": thread_id,
-        "thread_start_includes_base": bool(service.config.codex_base_instructions),
+        "thread_start_includes_base": bool(service.config.codex_base_instructions and compiled),
         "turn_started": bool(((turn.get("result") or {}).get("turn") or {}).get("id")),
         "read_ok": bool(read.get("ok")),
     }
@@ -164,7 +176,9 @@ def main() -> int:
     args = parser.parse_args()
 
     service = PuckyVoiceService(Config.from_env())
-    report = compile_runtime_report(service)
+    context = service._base_runtime_context()
+    compiled = compose_pucky_base_instructions(service.config.codex_base_instructions, context)
+    report = compile_runtime_report(service, context=context, compiled=compiled)
     require_base = bool(args.require_base or args.cross_thread)
     validate_runtime_report(
         report,
@@ -175,9 +189,9 @@ def main() -> int:
     if args.compiled_output:
         output = Path(args.compiled_output).expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(service.codex_base_instructions_for_thread() or "", encoding="utf-8")
+        output.write_text(compiled or "", encoding="utf-8")
     if args.cross_thread:
-        report["cross_thread"] = run_cross_thread_smoke(service, text=args.text)
+        report["cross_thread"] = run_cross_thread_smoke(service, text=args.text, base_instructions=compiled)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

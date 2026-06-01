@@ -4,7 +4,32 @@ from tools.smoke_pucky_runtime_context import compile_runtime_report, validate_r
 
 
 class _FakeConfig:
-    codex_base_instructions = "Base"
+    codex_base_instructions = """# Base
+
+## Agent Runtime
+Current runtime catalog:
+
+{{PUCKY_AGENT_RUNTIME_CATALOG}}
+
+## Action Log
+Last 500 system-wide actions for this user:
+
+{{PUCKY_ACTION_LOG_LAST_500}}
+
+## Connected Apps
+Connected apps:
+
+{{PUCKY_COMPOSIO_CONNECTED_APPS}}
+
+Available apps:
+
+{{PUCKY_COMPOSIO_AVAILABLE_APPS}}
+
+## Reply Format
+Current icon/color choices:
+
+{{PUCKY_REPLY_CARD_ICONS}}
+"""
 
 
 class _FakeService:
@@ -58,20 +83,10 @@ class _FakeService:
             },
         }
 
-    def codex_base_instructions_for_thread(self):
-        return (
-            "Base\n\n## Injected Runtime Context\n\n```json\n"
-            '{"schema":"pucky.runtime_context.v1","agent_runtime":{"actions":[{"name":"thread/start"}]}}\n'
-            "```"
-        )
-
 
 class _NoBaseService(_FakeService):
     class config:
         codex_base_instructions = None
-
-    def codex_base_instructions_for_thread(self):
-        return None
 
 
 def test_compile_runtime_report_counts_required_runtime_blocks():
@@ -81,7 +96,9 @@ def test_compile_runtime_report_counts_required_runtime_blocks():
     validate_runtime_report(report, require_composio=True, require_base=True)
     assert report["base_config_loaded"] is True
     assert report["compiled_present"] is True
-    assert report["compiled_context_parse_ok"] is True
+    assert report["compiled_readable_sections_ok"] is True
+    assert report["compiled_raw_runtime_json_present"] is False
+    assert report["compiled_unresolved_placeholders"] == []
     assert report["thread_start_includes_base"] is True
     assert report["agent_runtime_action_count"] == 18
     assert report["connected_app_count"] == 1

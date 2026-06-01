@@ -3,7 +3,46 @@ from pathlib import Path
 
 import pytest
 
-from pucky_vm.server import Config, PuckyVoiceService
+from pucky_vm.server import Config, PuckyVoiceService, compose_pucky_base_instructions
+
+
+_BASE_TEMPLATE = """# Base
+
+## Agent Runtime
+Current runtime catalog:
+
+{{PUCKY_AGENT_RUNTIME_CATALOG}}
+
+## Action Log
+Last 500 system-wide actions for this user:
+
+{{PUCKY_ACTION_LOG_LAST_500}}
+
+## Memory
+Memory.
+
+## Connected Apps
+API key resource = `env:COMPOSIO_API_KEY`
+
+Connected apps:
+
+{{PUCKY_COMPOSIO_CONNECTED_APPS}}
+
+Available apps:
+
+{{PUCKY_COMPOSIO_AVAILABLE_APPS}}
+
+## User Facing App HTML
+HTML.
+
+## Android APK
+APK.
+
+## Reply Format
+Current icon/color choices:
+
+{{PUCKY_REPLY_CARD_ICONS}}
+"""
 
 
 class _FakeSTT:
@@ -103,7 +142,7 @@ def _config(tmp_path: Path) -> Config:
         codex_turn_timeout=1,
         developer_instructions="strict json contract",
         feed_db_path=str(tmp_path / "feed.sqlite"),
-        codex_base_instructions="Base runtime map.",
+        codex_base_instructions=_BASE_TEMPLATE,
         action_ledger_path=str(tmp_path / "actions.sqlite"),
         composio_api_key="secret-api-key",
         composio_base_url="https://composio.test/api/v3",
@@ -155,13 +194,18 @@ def test_runtime_context_injects_composio_summary_without_literal_api_key(tmp_pa
     assert "Slack" in text
     assert "secret-api-key" not in text
     assert "env:COMPOSIO_API_KEY" in text
-    assert "\"agent_runtime\"" in text
+    assert "## Injected Runtime Context" not in text
+    assert "```json" not in text
+    assert "{{PUCKY_" not in text
+    assert "\"agent_runtime\"" not in text
+    assert "\"app_universe\"" not in text
+    assert "- thread/fork | mutation" in text
     assert "thread/fork" in text
-    assert "\"reply_card\"" in text
-    assert "\"accent\"" in text
-    assert "\"app_universe\"" in text
+    assert "- mail | Mail | #72c2ff" in text
+    assert "- Gmail (gmail) | active | 1 account | acct_1" in text
+    assert "Available to connect: 1 of 2 connectable Composio apps." in text
+    assert "- Slack (slack)" in text
     assert "connected_accounts.list" in text
-    assert "\"action_log\"" in text
     assert context["composio"]["connected_apps"] == [
         {
             "slug": "gmail",
@@ -265,9 +309,11 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "created date" in text
     assert "last edited date" in text
     assert "POST /connected_accounts/link" not in text
-    assert "composio.connected_apps" in text
-    assert "composio.app_universe" in text
-    assert "composio.available_apps" in text
+    assert "{{PUCKY_AGENT_RUNTIME_CATALOG}}" in text
+    assert "{{PUCKY_ACTION_LOG_LAST_500}}" in text
+    assert "{{PUCKY_COMPOSIO_CONNECTED_APPS}}" in text
+    assert "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}" in text
+    assert "{{PUCKY_REPLY_CARD_ICONS}}" in text
     assert "statuses=ACTIVE" in text
     assert "limit=1000&cursor=..." in text
     assert "limit=200" not in text
