@@ -9,7 +9,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from pucky_vm.codex_app_server import CodexAppServerClient
+from pucky_vm.codex_app_server import CodexAppServerClient, compact_tool_target
 
 
 FAKE_APP_SERVER = r"""
@@ -21,6 +21,7 @@ thread_count = 0
 turn_count = 0
 capture_path = os.environ.get("CAPTURE_PATH", "")
 invalid_thread_id = os.environ.get("INVALID_THREAD_ID", "")
+emit_tool_call = os.environ.get("EMIT_TOOL_CALL", "") == "1"
 
 def record(message):
     if not capture_path:
@@ -60,6 +61,10 @@ for line in sys.stdin:
         text = "Hello back " + str(turn_count)
         send({"id": request_id, "result": {"turn": {"id": turn_id}}})
         send({"method": "turn/started", "params": {"threadId": thread_id, "turn": {"id": turn_id}}})
+        if emit_tool_call:
+            args = json.dumps({"command": "rg --version", "workdir": "C:\\repo"})
+            send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "function_call", "name": "shell_command", "arguments": args, "call_id": "call-tool-1"}}})
+            send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "function_call_output", "call_id": "call-tool-1", "output": "ripgrep 14"}}})
         send({"method": "item/agentMessage/delta", "params": {"threadId": thread_id, "turnId": turn_id, "itemId": "item-1", "delta": text}})
         send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "agentMessage", "id": "item-1", "text": text}}})
         send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": turn_id, "status": "completed", "items": []}}})
@@ -207,6 +212,7 @@ class CodexAppServerClientTests(unittest.TestCase):
                     "surface": "codex_runtime",
                     "action": "thread/start",
                     "tool": "thread/start",
+                    "target": "thread/start",
                     "status": "ok",
                     "thread_id": "",
                 },
@@ -239,6 +245,110 @@ class CodexAppServerClientTests(unittest.TestCase):
             messages = capture_messages(capture)
             read = next(msg for msg in messages if msg.get("method") == "thread/read")
             self.assertEqual(read["params"], {"threadId": "thread-smoke"})
+
+    def test_streamed_function_call_records_compact_tool_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            env["EMIT_TOOL_CALL"] = "1"
+            actions: list[dict[str, object]] = []
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+                action_logger=actions.append,
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                client.send_turn("force tool")
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            tool_rows = [row for row in actions if row.get("surface") == "codex_tool"]
+            self.assertEqual(len(tool_rows), 1)
+            self.assertEqual(tool_rows[0]["tool"], "shell_command")
+            self.assertEqual(tool_rows[0]["target"], "rg cwd=C:\\repo")
+            self.assertEqual(tool_rows[0]["status"], "ok")
+
+    def test_rollout_jsonl_ingest_records_compact_tool_action_without_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = Path(tempdir) / "codex_home"
+            home.mkdir()
+            rollout = Path(tempdir) / "rollout.jsonl"
+            rollout.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-06-01T01:00:00Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "function_call",
+                                    "name": "shell_command",
+                                    "arguments": json.dumps(
+                                        {"command": "curl -X POST https://backend.composio.dev/api/v3.1/tools/execute/proxy"}
+                                    ),
+                                    "call_id": "call-1",
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-06-01T01:00:01Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "function_call_output",
+                                    "call_id": "call-1",
+                                    "output": "very long output",
+                                },
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            state_db = home / "state_5.sqlite"
+            conn = sqlite3.connect(str(state_db))
+            try:
+                conn.execute(
+                    """CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, rollout_path TEXT, source TEXT, model TEXT, model_provider TEXT, reasoning_effort TEXT, sandbox_policy TEXT, approval_mode TEXT)"""
+                )
+                conn.execute(
+                    """INSERT INTO threads (id, title, rollout_path, source, model, model_provider, reasoning_effort, sandbox_policy, approval_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ("thread-rollout", "Gmail smoke", str(rollout), "test", "", "", "", "", ""),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            actions: list[dict[str, object]] = []
+            client = CodexAppServerClient(codex_home=str(home), action_logger=actions.append)
+
+            self.assertEqual(client.ingest_thread_rollout_actions("thread-rollout"), 1)
+
+            self.assertEqual(actions[0]["surface"], "codex_tool")
+            self.assertEqual(actions[0]["thread_title"], "Gmail smoke")
+            self.assertEqual(actions[0]["target"], "curl POST /tools/execute/proxy")
+            self.assertNotIn("very long output", str(actions[0]))
+
+    def test_compact_tool_target_extracts_shell_paths_and_composio_endpoints(self) -> None:
+        self.assertEqual(
+            compact_tool_target("shell_command", json.dumps({"command": "rg -n foo C:\\repo\\pucky_vm\\server.py"})),
+            "rg C:\\repo\\pucky_vm\\server.py",
+        )
+        self.assertEqual(
+            compact_tool_target(
+                "shell_command",
+                json.dumps({"command": "curl -X POST https://backend.composio.dev/api/v3.1/tools/execute/proxy"}),
+            ),
+            "curl POST /tools/execute/proxy",
+        )
 
     def test_thread_origin_reads_metadata_from_local_codex_state_db(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

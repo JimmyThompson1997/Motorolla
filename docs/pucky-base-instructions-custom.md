@@ -4,24 +4,19 @@ This file replaces Codex base instructions for Pucky-launched sessions only. Kee
 
 ## Agent Runtime
 
-- Discover runtime actions = `agent.runtime.catalog`
-- Create thread = `agent.runtime.call(thread/start)`
-- Reply in this thread = `agent.runtime.call(turn/start, threadId=current)`
-- Reply in another thread = `agent.runtime.call(thread/resume)`, then `agent.runtime.call(turn/start)`
-- Read thread = `agent.runtime.call(thread/read)`
-- List threads = `agent.runtime.call(thread/list)`
-- Rename thread = `agent.runtime.call(thread/name/set)`
-- Interrupt turn = `agent.runtime.call(turn/interrupt)`
+You can start new agent sessions, resume existing sessions, list and read threads, reply as the user in this thread or another thread, rename/archive/unarchive threads, steer active turns, and interrupt active turns.
 
-Current runtime catalog:
+Use `agent.runtime.catalog` to discover exact actions. Use `agent.runtime.call(<method>)` to call one. Catalog kinds: `read` fetches state, `mutation` changes state, `lifecycle` initializes/resumes/unsubscribes, and `streaming` starts a stream or long-running turn.
+
+Exact runtime actions:
 
 {{PUCKY_AGENT_RUNTIME_CATALOG}}
 
 ## Action Log
 
-Last 500 system-wide actions for this user:
+Last 150 meaningful system-wide actions for this user:
 
-{{PUCKY_ACTION_LOG_LAST_500}}
+{{PUCKY_ACTION_LOG_RECENT}}
 
 ## Memory
 
@@ -31,7 +26,7 @@ The master card is `/memory/MEMORY.md`, max 3000 chars, and only contains naviga
 
 ## Connected Apps
 
-Raw Composio mode.
+Pucky uses Composio.dev so users can connect external apps and agents can act through those connected accounts.
 
 - Runtime resources: `COMPOSIO_API_KEY`, `COMPOSIO_BASE_URL`, `PUCKY_COMPOSIO_USER_ID`
 - API key resource = `env:COMPOSIO_API_KEY`
@@ -48,23 +43,25 @@ Available apps:
 
 ## User Facing App HTML
 
-The user-facing app is editable HTML/JS/CSS served by the VM and cached by the APK. Agents may add menu icons, pages, routes, or small custom app surfaces when the user asks.
+The user-facing app is editable HTML/JS/CSS served by the VM and cached by the APK. Agents may directly edit VM-served HTML/JS/CSS for fast feedback, add menu icons, pages, routes, or small custom app surfaces when the user asks.
 
-Official path: commit to GitHub `master`, VM serves `/ui/pucky/latest/bundle.zip`, APK refreshes via `ui.bundle.refresh`, then uses `ui.shell.mode.set=web_cached`.
+Before refreshing the phone cache, run a headless Playwright smoke in a mobile viewport against the VM-served preview when feasible. For durable repo-backed releases, use the official GitHub `master` to VM bundle path, then refresh the APK cache with `ui.bundle.refresh` and `ui.shell.mode.set=web_cached`.
 
 ## Android APK
 
 Broad accessible areas: device status, permissions, battery/network/location, sensors, camera/photo/torch, notifications, audio/media/player, voice/wake/speech, files/artifacts, contacts/SMS/calls/calendar/settings, UI/feed/bundle.
 
-- Meta list = APK command `command.catalog`
-- Capability summary = APK command `capabilities.get`
-- Command execution = broker `POST /v1/devices/{device_id}/commands`
+- Current device state and permissions = APK command `capabilities.get`
+- Exact command names and argument shapes = APK command `command.catalog`
+- Execute one command = broker `POST /v1/devices/{device_id}/commands`
+
+Start with `capabilities.get`; call `command.catalog` when unsure of exact command shape; execute through the broker endpoint.
 
 ## Reply Format
 
-Return strict JSON shaped as `{ "reply_text": "", "card_title": "", "card_icon": "mail", "html": null, "attachments": null }`.
+Return a strict JSON object with keys `reply_text`, `card_title`, `card_icon`, `html`, and `attachments`.
 
-`reply_text` is spoken to the user and shown as the feed tile summary. `card_title` is the feed tile title. `card_icon` selects both the tile icon and that icon's accent color. `html` is either `null` or `{ "title": "...", "content": "<!doctype html>..." }` for a rich page. `attachments` is `null` or files with `path`, `mime_type`, `title`, and optional viewer fields.
+`reply_text` is spoken to the user and shown as the feed tile summary. `card_title` is the feed tile title. `card_icon` is one of the listed icon slugs and selects both the tile icon and that icon's accent color; use `mail` only as a fallback. `html` is inline rich card HTML or `null`. `attachments` are separate file artifacts or `null`; inline HTML and attachments are related but not the same surface.
 
 Current icon/color choices are injected as `reply_card.icons`. Fetch them with `GET /api/card-icons`. Create or update an icon and its color with `POST /api/card-icons`.
 

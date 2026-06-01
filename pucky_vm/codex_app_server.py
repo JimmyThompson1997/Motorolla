@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -11,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 
 class CodexAppServerError(RuntimeError):
@@ -95,6 +97,8 @@ class CodexAppServerClient:
         self._stderr: list[str] = []
         self._turn_notifications: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._turn_backlog: dict[str, list[dict[str, Any]]] = {}
+        self._pending_tool_calls: dict[str, dict[str, Any]] = {}
+        self._recorded_tool_call_ids: set[str] = set()
         self._last_turn_routing: dict[str, str | bool] = {
             "requested_thread_id": "",
             "used_thread_id": "",
@@ -203,6 +207,7 @@ class CodexAppServerClient:
         )
         with self._lock:
             self._last_turn_routing = result.routing()
+        self.ingest_thread_rollout_actions(used_thread_id)
         return result
 
     def _start_turn(self, thread_id: str, text: str) -> str:
@@ -414,6 +419,7 @@ class CodexAppServerClient:
                     "surface": "codex_runtime",
                     "action": method,
                     "tool": method,
+                    "target": method,
                     "status": status,
                     "thread_id": _clean_optional(params.get("threadId")),
                 }
@@ -455,6 +461,7 @@ class CodexAppServerClient:
                 self._respond_to_server_request(int(request_id), str(message.get("method") or ""))
                 continue
             params = message.get("params") or {}
+            self._observe_tool_event(message)
             event_turn_id = params.get("turnId")
             if event_turn_id is None and isinstance(params.get("turn"), dict):
                 event_turn_id = params["turn"].get("id")
@@ -486,11 +493,199 @@ class CodexAppServerClient:
         except CodexAppServerError:
             pass
 
+    def _observe_tool_event(self, message: dict[str, Any]) -> None:
+        if self.action_logger is None:
+            return
+        method = str(message.get("method") or "")
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        if method == "item/completed":
+            item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            item_type = _clean_optional(item.get("type"))
+            if item_type in {"function_call", "tool_call"}:
+                call_id = _tool_call_id(item)
+                if call_id:
+                    self._pending_tool_calls[call_id] = dict(item)
+                else:
+                    self._record_tool_call_item(item, params, "ok")
+                return
+            if item_type in {"function_call_output", "tool_call_output"}:
+                call_id = _tool_call_id(item)
+                tool_item = self._pending_tool_calls.pop(call_id, {}) if call_id else {}
+                if tool_item:
+                    self._record_tool_call_item(tool_item, params, "ok")
+                return
+        if method == "turn/completed":
+            for call_id, item in list(self._pending_tool_calls.items()):
+                self._record_tool_call_item(item, params, "ok")
+                self._pending_tool_calls.pop(call_id, None)
+
+    def _record_tool_call_item(self, item: dict[str, Any], params: dict[str, Any], status: str) -> None:
+        call_id = _tool_call_id(item)
+        if call_id and call_id in self._recorded_tool_call_ids:
+            return
+        if call_id:
+            self._recorded_tool_call_ids.add(call_id)
+        tool = _clean_optional(item.get("name") or item.get("tool_name") or item.get("tool") or item.get("command") or "tool")
+        arguments = item.get("arguments") if "arguments" in item else item.get("args")
+        try:
+            self.action_logger(
+                {
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "surface": "codex_tool",
+                    "action": tool,
+                    "tool": tool,
+                    "target": compact_tool_target(tool, arguments),
+                    "status": status,
+                    "thread_id": _clean_optional(params.get("threadId")),
+                }
+            )
+        except Exception:
+            pass
+
+    def ingest_thread_rollout_actions(self, thread_id: str | None = None) -> int:
+        origin = self._thread_origin(thread_id or self._thread_id or "", retries=1, delay=0.0)
+        path = Path(origin.rollout_path).expanduser() if origin.rollout_path else None
+        if path is None or not path.exists():
+            return 0
+        calls: dict[str, tuple[str, dict[str, Any]]] = {}
+        outputs: set[str] = set()
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("type") != "response_item":
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                payload_type = _clean_optional(payload.get("type"))
+                call_id = _tool_call_id(payload)
+                if payload_type in {"function_call", "tool_call"} and call_id:
+                    calls[call_id] = (_clean_optional(row.get("timestamp")), payload)
+                elif payload_type in {"function_call_output", "tool_call_output"} and call_id:
+                    outputs.add(call_id)
+        except OSError:
+            return 0
+        recorded = 0
+        for call_id, (timestamp, item) in calls.items():
+            if call_id in self._recorded_tool_call_ids:
+                continue
+            self._recorded_tool_call_ids.add(call_id)
+            tool = _clean_optional(item.get("name") or item.get("tool_name") or item.get("tool") or "tool")
+            try:
+                self.action_logger(
+                    {
+                        "timestamp": timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "surface": "codex_tool",
+                        "action": tool,
+                        "tool": tool,
+                        "target": compact_tool_target(tool, item.get("arguments") if "arguments" in item else item.get("args")),
+                        "status": "ok" if call_id in outputs else "started",
+                        "thread_id": origin.thread_id,
+                        "thread_title": origin.thread_title,
+                    }
+                )
+                recorded += 1
+            except Exception:
+                pass
+        return recorded
+
 
 def command_from_env(value: str | None) -> list[str]:
     if value:
         return shlex.split(value)
     return ["codex", "app-server", "--listen", "stdio://"]
+
+
+def compact_tool_target(tool: str, arguments: Any) -> str:
+    tool_name = _clean_optional(tool)
+    args = _parse_tool_arguments(arguments)
+    command = _clean_optional(args.get("command")) or _clean_optional(args.get("cmd")) or _clean_optional(args.get("query"))
+    workdir = _clean_optional(args.get("workdir") or args.get("cwd"))
+    text = command or _clean_optional(arguments)
+    if tool_name == "shell_command":
+        return _compact_shell_command_target(text, workdir)
+    if "composio" in tool_name.lower():
+        return _compact_http_target(text)
+    return _shorten(_compact_http_target(text) or text or tool_name, 180)
+
+
+def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    text = _clean_optional(arguments)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {"command": text}
+    return parsed if isinstance(parsed, dict) else {"command": text}
+
+
+def _compact_shell_command_target(command: str, workdir: str = "") -> str:
+    clean = _clean_optional(command)
+    if not clean:
+        return _shorten(workdir, 180)
+    http_target = _compact_http_target(clean)
+    first_token = _first_command_token(clean)
+    if http_target:
+        return _shorten(f"{first_token} {http_target}".strip(), 180)
+    path = _first_path(clean)
+    if path:
+        return _shorten(f"{first_token} {path}".strip(), 180)
+    if workdir:
+        return _shorten(f"{first_token} cwd={workdir}", 180)
+    first_line = clean.splitlines()[0] if clean.splitlines() else clean
+    return _shorten(first_line, 180)
+
+
+def _compact_http_target(text: str) -> str:
+    clean = _clean_optional(text)
+    url_match = re.search(r"https?://[^\s'\"<>]+", clean)
+    if not url_match:
+        method_match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[^\s'\"<>]+)", clean, re.IGNORECASE)
+        if method_match:
+            return f"{method_match.group(1).upper()} {method_match.group(2)}"
+        return ""
+    url = url_match.group(0).rstrip(").,;")
+    parsed = urlsplit(url)
+    method = "GET"
+    explicit = re.search(r"(?:-X|--request)\s+([A-Z]+)", clean, re.IGNORECASE)
+    if explicit:
+        method = explicit.group(1).upper()
+    elif re.search(r"\b-XPOST\b", clean, re.IGNORECASE):
+        method = "POST"
+    path = re.sub(r"^/api/v[0-9.]+", "", parsed.path or "/") or "/"
+    return f"{method} {path}"
+
+
+def _first_command_token(command: str) -> str:
+    first_line = _clean_optional(command).splitlines()[0] if _clean_optional(command).splitlines() else _clean_optional(command)
+    try:
+        parts = shlex.split(first_line, posix=False)
+    except ValueError:
+        parts = first_line.split()
+    token = parts[0] if parts else ""
+    return token.strip("\"'") or "command"
+
+
+def _first_path(command: str) -> str:
+    match = re.search(r"[A-Za-z]:\\[^\s'\"<>|]+|/[^\s'\"<>|]+", command)
+    return match.group(0).rstrip(").,;") if match else ""
+
+
+def _tool_call_id(item: dict[str, Any]) -> str:
+    return _clean_optional(item.get("call_id") or item.get("callId") or item.get("id"))
+
+
+def _shorten(value: str, limit: int) -> str:
+    clean = _clean_optional(value)
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _clean_optional(value: object) -> str:

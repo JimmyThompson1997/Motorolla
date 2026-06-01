@@ -84,7 +84,7 @@ AGENT_RUNTIME_ACTIONS: tuple[dict[str, str], ...] = (
 AGENT_RUNTIME_ACTION_NAMES = {item["name"] for item in AGENT_RUNTIME_ACTIONS}
 PUCKY_BASE_PLACEHOLDERS = (
     "{{PUCKY_AGENT_RUNTIME_CATALOG}}",
-    "{{PUCKY_ACTION_LOG_LAST_500}}",
+    "{{PUCKY_ACTION_LOG_RECENT}}",
     "{{PUCKY_COMPOSIO_CONNECTED_APPS}}",
     "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}",
     "{{PUCKY_REPLY_CARD_ICONS}}",
@@ -118,7 +118,7 @@ def compose_pucky_base_instructions(base_text: str | None, runtime_context: dict
     rendered = base
     replacements = {
         "{{PUCKY_AGENT_RUNTIME_CATALOG}}": _render_agent_runtime_catalog(runtime_context),
-        "{{PUCKY_ACTION_LOG_LAST_500}}": _render_action_log(runtime_context),
+        "{{PUCKY_ACTION_LOG_RECENT}}": _render_action_log(runtime_context),
         "{{PUCKY_COMPOSIO_CONNECTED_APPS}}": _render_connected_apps(runtime_context),
         "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}": _render_available_apps(runtime_context),
         "{{PUCKY_REPLY_CARD_ICONS}}": _render_reply_card_icons(runtime_context),
@@ -160,22 +160,23 @@ def _render_action_log(context: dict[str, object]) -> str:
     if not rows:
         return "- No actions recorded yet."
     lines = []
-    for row in rows[:500]:
+    for row in rows[:150]:
         if not isinstance(row, dict):
             continue
-        parts = [
-            _prompt_value(row.get("timestamp")),
-            _prompt_value(row.get("surface")),
-            _prompt_value(row.get("action")),
-            _prompt_value(row.get("tool")),
-            _prompt_value(row.get("status")),
-        ]
         thread_title = _prompt_value(row.get("thread_title"))
         thread_id = _prompt_value(row.get("thread_id"))
         if thread_title and thread_id:
-            parts.append(f"thread={thread_title} ({thread_id})")
-        elif thread_title or thread_id:
-            parts.append(f"thread={thread_title or thread_id}")
+            thread = f"{thread_title} ({thread_id})"
+        else:
+            thread = thread_title or thread_id or "-"
+        parts = [
+            _prompt_value(row.get("timestamp")),
+            thread,
+            _prompt_value(row.get("surface")),
+            _prompt_value(row.get("tool")),
+            _prompt_value(row.get("target") or row.get("action")),
+            _prompt_value(row.get("status")),
+        ]
         lines.append("- " + " | ".join(part or "-" for part in parts))
     return "\n".join(lines) if lines else "- No actions recorded yet."
 
@@ -214,7 +215,7 @@ def _render_available_apps(context: dict[str, object]) -> str:
         name = _prompt_value(app.get("name") or app.get("slug"))
         slug = _prompt_value(app.get("slug"))
         if name and slug:
-            lines.append(f"- {name} ({slug})")
+            lines.append(f"- {name} | {slug}")
     return "\n".join(lines)
 
 
@@ -670,14 +671,28 @@ class PuckyVoiceService:
         except TypeError:
             result = runtime_call(method, params)
         except Exception as exc:
-            self.record_action(surface="agent_runtime", action=method, tool="agent.runtime.call", status="error")
+            self.record_action(
+                surface="agent_runtime",
+                action=method,
+                tool="agent.runtime.call",
+                target=method,
+                status="error",
+                thread_id=str(params.get("threadId") or ""),
+            )
             return {
                 "ok": False,
                 "schema": "pucky.agent_runtime.call.v1",
                 "error": str(exc),
                 "method": method,
             }
-        self.record_action(surface="agent_runtime", action=method, tool="agent.runtime.call", status="ok")
+        self.record_action(
+            surface="agent_runtime",
+            action=method,
+            tool="agent.runtime.call",
+            target=method,
+            status="ok",
+            thread_id=str(params.get("threadId") or ""),
+        )
         return {
             "ok": True,
             "schema": "pucky.agent_runtime.call.v1",
@@ -694,6 +709,7 @@ class PuckyVoiceService:
         thread_id: str = "",
         thread_title: str = "",
         tool: str = "",
+        target: str = "",
     ) -> None:
         try:
             self.action_ledger.record(
@@ -703,18 +719,32 @@ class PuckyVoiceService:
                 surface=surface,
                 action=action,
                 tool=tool,
+                target=target,
                 status=status,
             )
         except Exception:
             pass
 
     def _record_codex_action(self, event: dict[str, object]) -> None:
+        thread_id = str(event.get("thread_id") or "")
+        thread_title = str(event.get("thread_title") or "")
+        if thread_id and not thread_title:
+            thread_origin = getattr(self.codex, "thread_origin", None)
+            if callable(thread_origin):
+                try:
+                    origin = thread_origin(thread_id, retries=1, delay=0.0)
+                    if isinstance(origin, dict):
+                        thread_title = str(origin.get("thread_title") or "")
+                except Exception:
+                    thread_title = ""
         self.record_action(
             surface=str(event.get("surface") or "codex_runtime"),
             action=str(event.get("action") or ""),
             tool=str(event.get("tool") or event.get("action") or ""),
+            target=str(event.get("target") or event.get("action") or ""),
             status=str(event.get("status") or ""),
-            thread_id=str(event.get("thread_id") or ""),
+            thread_id=thread_id,
+            thread_title=thread_title,
         )
 
     def codex_base_instructions_for_thread(self) -> str | None:
@@ -727,8 +757,9 @@ class PuckyVoiceService:
             "schema": "pucky.runtime_context.v1",
             "agent_runtime": self.agent_runtime_catalog(),
             "action_log": {
-                "schema": "action_log.last_500.v1",
-                "rows": self.action_ledger.last_500(self.composio_user_id()),
+                "schema": "action_log.recent.v1",
+                "limit": 150,
+                "rows": self.action_ledger.recent(self.composio_user_id(), limit=150, prompt_visible_only=True),
             },
             "composio": composio_context,
             "reply_card": self._reply_card_runtime_context(),
@@ -790,18 +821,26 @@ class PuckyVoiceService:
             self.record_action(
                 surface="composio",
                 action="connected_accounts.list",
-                tool="GET /connected_accounts",
+                tool="GET",
+                target="/connected_accounts",
                 status="ok",
             )
             apps_payload = self.composio.list_apps()
             self.record_action(
                 surface="composio",
                 action="toolkits.list",
-                tool="GET /toolkits",
+                tool="GET",
+                target="/toolkits",
                 status="ok",
             )
         except Exception as exc:
-            self.record_action(surface="composio", action="runtime_context", tool="Composio runtime context", status="error")
+            self.record_action(
+                surface="composio",
+                action="runtime_context",
+                tool="runtime_context",
+                target="Composio runtime context",
+                status="error",
+            )
             context["error"] = str(exc)[:240]
             return context
         active_accounts = [
@@ -3112,7 +3151,8 @@ def make_handler(service: PuckyVoiceService):
             service.record_action(
                 surface="pucky_http",
                 action=f"{self.command} {urlsplit(self.path).path}",
-                tool=f"{self.command} {urlsplit(self.path).path}",
+                tool=self.command,
+                target=urlsplit(self.path).path,
                 status=str(int(status)),
             )
             self.send_response(int(status))

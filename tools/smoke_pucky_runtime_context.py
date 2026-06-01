@@ -21,8 +21,8 @@ def _compiled_markdown_report(compiled: str | None) -> dict[str, Any]:
         "has_injected_runtime_json": "## Injected Runtime Context" in text,
         "has_json_fence": "```json" in text,
         "unresolved_placeholders": sorted(set(re.findall(r"\{\{PUCKY_[A-Z0-9_]+\}\}", text))),
-        "has_agent_runtime_catalog": "Current runtime catalog:" in text and "- thread/start" in text,
-        "has_action_log": "## Action Log" in text and "Last 500 system-wide actions for this user:" in text,
+        "has_agent_runtime_catalog": "Exact runtime actions:" in text and "- thread/start" in text,
+        "has_action_log": "## Action Log" in text and "Last 150 meaningful system-wide actions for this user:" in text,
         "has_connected_apps": "Connected apps:" in text and "Connected now:" in text,
         "has_available_apps": "Available apps:" in text and "Available to connect:" in text,
         "has_reply_icons": "Current icon/color choices:" in text and "| #" in text,
@@ -80,7 +80,7 @@ def compile_runtime_report(service: Any, *, context: dict[str, Any] | None = Non
             if isinstance(item, dict)
         ],
         "action_log_row_count": len(list(action_log.get("rows") or [])),
-        "action_log_limit": 500,
+        "action_log_limit": int(action_log.get("limit") or 150),
     }
 
 
@@ -118,8 +118,8 @@ def validate_runtime_report(
         missing.append("composio.app_universe")
     if min_app_universe_count and int(report.get("app_universe_count") or 0) < min_app_universe_count:
         missing.append(f"composio.app_universe_count>={min_app_universe_count}")
-    if int(report.get("action_log_row_count") or 0) > int(report.get("action_log_limit") or 500):
-        missing.append("action_log.last_500")
+    if int(report.get("action_log_row_count") or 0) > int(report.get("action_log_limit") or 150):
+        missing.append("action_log.recent")
     if missing:
         raise RuntimeError("runtime smoke missing: " + ", ".join(missing))
 

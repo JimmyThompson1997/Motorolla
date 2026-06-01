@@ -9,14 +9,14 @@ from pucky_vm.server import Config, PuckyVoiceService, compose_pucky_base_instru
 _BASE_TEMPLATE = """# Base
 
 ## Agent Runtime
-Current runtime catalog:
+Exact runtime actions:
 
 {{PUCKY_AGENT_RUNTIME_CATALOG}}
 
 ## Action Log
-Last 500 system-wide actions for this user:
+Last 150 meaningful system-wide actions for this user:
 
-{{PUCKY_ACTION_LOG_LAST_500}}
+{{PUCKY_ACTION_LOG_RECENT}}
 
 ## Memory
 Memory.
@@ -204,8 +204,8 @@ def test_runtime_context_injects_composio_summary_without_literal_api_key(tmp_pa
     assert "- mail | Mail | #72c2ff" in text
     assert "- Gmail (gmail) | active | 1 account | acct_1" in text
     assert "Available to connect: 1 of 2 connectable Composio apps." in text
-    assert "- Slack (slack)" in text
-    assert "connected_accounts.list" in text
+    assert "- Slack | slack" in text
+    assert "GET | /connected_accounts | ok" in text
     assert context["composio"]["connected_apps"] == [
         {
             "slug": "gmail",
@@ -268,7 +268,7 @@ def test_runtime_context_injects_full_app_universe_and_unique_active_connected_a
     assert all(item["slug"] not in {"gmail", "notion"} for item in composio["available_apps"])
 
 
-def test_runtime_context_keeps_action_log_last_500_separate_from_runtime_catalog(tmp_path):
+def test_runtime_context_keeps_recent_action_log_separate_from_runtime_catalog(tmp_path):
     service = PuckyVoiceService(
         _config(tmp_path),
         stt=_FakeSTT(),
@@ -276,32 +276,49 @@ def test_runtime_context_keeps_action_log_last_500_separate_from_runtime_catalog
         codex=_FakeCodex(),
         composio=_FakeComposio(),
     )
-    for index in range(505):
+    for index in range(155):
         service.action_ledger.record(
             user_id=service.composio_user_id(),
             timestamp=f"2026-05-31T00:{index % 60:02d}:00Z",
             surface="codex_runtime",
             action="turn/start",
             tool="turn/start",
+            target="turn/start",
             status="ok",
             thread_id=f"thread-{index}",
         )
+    service.action_ledger.record(
+        user_id=service.composio_user_id(),
+        timestamp="2026-05-31T01:00:00Z",
+        surface="pucky_http",
+        action="GET /api/feed",
+        tool="GET",
+        target="/api/feed",
+        status="200",
+    )
 
     context = service._base_runtime_context()
+    text = service.codex_base_instructions_for_thread()
 
-    assert len(context["action_log"]["rows"]) == 500
+    assert len(context["action_log"]["rows"]) == 150
+    assert context["action_log"]["schema"] == "action_log.recent.v1"
+    assert context["action_log"]["limit"] == 150
     assert len(context["agent_runtime"]["actions"]) == 18
     thread_ids = {row["thread_id"] for row in context["action_log"]["rows"]}
-    assert "thread-504" in thread_ids
+    assert "thread-154" in thread_ids
     assert "thread-0" not in thread_ids
+    assert "GET /api/feed" not in text
+    assert "Last 150 meaningful system-wide actions" in text
 
 
 def test_static_custom_base_file_is_generic_and_compact():
     repo = Path(__file__).resolve().parents[2]
     text = (repo / "docs" / "pucky-base-instructions-custom.md").read_text(encoding="utf-8")
 
+    assert "You can start new agent sessions" in text
+    assert "Exact runtime actions:" in text
+    assert "Catalog kinds" in text
     assert "agent.runtime.catalog" in text
-    assert "agent.runtime.call(thread/start)" in text
     assert "/memory/MEMORY.md" in text
     assert "max 3000 chars" in text
     assert "max 1000 words" in text
@@ -310,19 +327,26 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "last edited date" in text
     assert "POST /connected_accounts/link" not in text
     assert "{{PUCKY_AGENT_RUNTIME_CATALOG}}" in text
-    assert "{{PUCKY_ACTION_LOG_LAST_500}}" in text
+    assert "{{PUCKY_ACTION_LOG_RECENT}}" in text
     assert "{{PUCKY_COMPOSIO_CONNECTED_APPS}}" in text
     assert "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}" in text
     assert "{{PUCKY_REPLY_CARD_ICONS}}" in text
     assert "statuses=ACTIVE" in text
     assert "limit=1000&cursor=..." in text
     assert "limit=200" not in text
+    assert "Raw Composio mode" not in text
+    assert "Pucky uses Composio.dev" in text
     assert "command.catalog" in text
     assert "capabilities.get" in text
     assert "POST /v1/devices/{device_id}/commands" in text
+    assert "Current device state and permissions" in text
     assert "## Reply Format" in text
+    assert '"card_icon": "mail"' not in text
+    assert "use `mail` only as a fallback" in text
     assert "reply_card.icons" in text
     assert "POST /api/card-icons" in text
+    assert "directly edit VM-served HTML/JS/CSS" in text
+    assert "headless Playwright smoke in a mobile viewport" in text
     assert "Home/feed" not in text
     assert "Audiobooks" not in text
     assert "Always return strict JSON" not in text

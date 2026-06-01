@@ -207,22 +207,27 @@ def record_action_ledger(item):
                     surface TEXT NOT NULL,
                     action TEXT NOT NULL,
                     tool TEXT NOT NULL DEFAULT '',
+                    target TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            columns = conn.execute("PRAGMA table_info(action_log)").fetchall()
+            if not any(str(row[1]) == "target" for row in columns):
+                conn.execute("ALTER TABLE action_log ADD COLUMN target TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 """
                 INSERT INTO action_log (
-                    timestamp, user_id, thread_id, thread_title, surface, action, tool, status
-                ) VALUES (?, ?, '', '', ?, ?, ?, ?)
+                    timestamp, user_id, thread_id, thread_title, surface, action, tool, target, status
+                ) VALUES (?, ?, '', '', ?, ?, ?, ?, ?)
                 """,
                 (
                     str(item.get("timestamp") or now()),
                     user_id,
                     "apk_broker",
                     action,
-                    "POST /v1/devices/{device_id}/commands",
+                    action,
+                    f"device={str(command.get('device_id') or item.get('device_id') or '').strip() or '-'}",
                     str(command.get("status") or "queued"),
                 ),
             )

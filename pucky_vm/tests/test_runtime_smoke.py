@@ -7,14 +7,14 @@ class _FakeConfig:
     codex_base_instructions = """# Base
 
 ## Agent Runtime
-Current runtime catalog:
+Exact runtime actions:
 
 {{PUCKY_AGENT_RUNTIME_CATALOG}}
 
 ## Action Log
-Last 500 system-wide actions for this user:
+Last 150 meaningful system-wide actions for this user:
 
-{{PUCKY_ACTION_LOG_LAST_500}}
+{{PUCKY_ACTION_LOG_RECENT}}
 
 ## Connected Apps
 Connected apps:
@@ -77,8 +77,9 @@ class _FakeService:
                 ]
             },
             "action_log": {
+                "limit": 150,
                 "rows": [
-                    {"surface": "codex_runtime", "action": "thread/start"},
+                    {"surface": "codex_runtime", "action": "thread/start", "tool": "thread/start", "target": "thread/start"},
                 ]
             },
         }
@@ -109,7 +110,7 @@ def test_compile_runtime_report_counts_required_runtime_blocks():
     assert report["available_app_count"] == 1
     assert report["reply_icon_count"] == 1
     assert report["action_log_row_count"] == 1
-    assert report["action_log_limit"] == 500
+    assert report["action_log_limit"] == 150
 
 
 def test_compile_runtime_report_fails_clearly_when_base_is_required_but_missing():
