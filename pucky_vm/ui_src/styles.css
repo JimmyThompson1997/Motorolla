@@ -1100,31 +1100,28 @@ button {
 
 .card-swipe-action {
   position: absolute;
-  top: 10px;
-  bottom: 10px;
+  inset: 0;
   left: 0;
-  width: min(132px, 36%);
-  border-radius: 20px;
+  width: 100%;
+  border-radius: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
-  padding-left: 18px;
+  gap: 10px;
+  padding-left: 22px;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 820;
   letter-spacing: 0.01em;
   opacity: 0;
-  background:
-    linear-gradient(135deg, rgba(255, 176, 0, 0.24), rgba(255, 89, 94, 0.26)),
-    rgba(245, 249, 255, 0.05);
+  background: transparent;
   transition: opacity 180ms ease;
   pointer-events: none;
 }
 
 .card-swipe-action svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
   color: currentColor;
 }
 
@@ -1137,7 +1134,7 @@ button {
   transition:
     border-color 180ms ease,
     box-shadow 220ms ease,
-    transform 220ms ease;
+    transform 190ms cubic-bezier(0.2, 0.86, 0.18, 1);
 }
 
 .card-wrap.is-card-swipe-active .card-swipe-action {

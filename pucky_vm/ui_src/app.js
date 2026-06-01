@@ -14,8 +14,9 @@
   const FEED_REFRESH_TIMEOUT_MS = 15000;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
-  const CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82;
-  const CARD_ARCHIVE_SWIPE_MAX_PX = 126;
+  const CARD_ARCHIVE_SWIPE_TRIGGER_RATIO = 0.4;
+  const CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX = 96;
+  const CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS = 0.55;
   const CARD_ARCHIVE_SWIPE_SLOP_PX = 12;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
@@ -5111,9 +5112,23 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });
     const freshCard = findCardByIdentity(card) || card;
     return requestFeedAction(freshCard, "archive");
+  }
+
+  function applyOptimisticArchive(card) {
+    const previousCards = state.cards.slice();
+    state.cards = applyLocalFeedAction(state.cards, card, "archive");
+    reconcileFocusedCardSelection();
+    reconcileReadOverrides();
+    clearMissingFeedIconFilter();
+    return () => {
+      state.cards = previousCards;
+      reconcileFocusedCardSelection();
+      reconcileReadOverrides();
+      clearMissingFeedIconFilter();
+      render();
+    };
   }
 
   function canArchiveBySwipe(card) {
@@ -5141,20 +5156,60 @@
     let horizontal = false;
     let swiped = false;
     let swipeOffset = 0;
+    let lastX = 0;
+    let lastAt = 0;
+    let velocityX = 0;
+    let pointerCaptured = false;
+    const usePointerEvents = "PointerEvent" in window;
+
+    const cardWidth = () => Math.max(1, cardEl.getBoundingClientRect().width || wrapper.getBoundingClientRect().width || 1);
+
+    const triggerDistance = () => Math.max(
+      CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX,
+      Math.round(cardWidth() * CARD_ARCHIVE_SWIPE_TRIGGER_RATIO)
+    );
+
+    const maxDragDistance = () => Math.round(cardWidth() * 1.05);
 
     const applyOffset = x => {
-      swipeOffset = Math.max(0, Math.min(CARD_ARCHIVE_SWIPE_MAX_PX, Math.round(x)));
+      swipeOffset = Math.max(0, Math.min(maxDragDistance(), Math.round(x)));
       wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
       wrapper.classList.toggle("is-card-swipe-active", swipeOffset > 0);
-      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= CARD_ARCHIVE_SWIPE_TRIGGER_PX);
+      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= triggerDistance());
     };
 
     const reset = () => {
+      releasePointerCapture();
       active = false;
       horizontal = false;
       swiped = false;
       activePointerId = null;
       applyOffset(0);
+    };
+
+    const capturePointer = pointer => {
+      if (pointer === null || !wrapper.setPointerCapture) {
+        return;
+      }
+      try {
+        wrapper.setPointerCapture(pointer);
+        pointerCaptured = true;
+      } catch (_) {
+        pointerCaptured = false;
+      }
+    };
+
+    const releasePointerCapture = () => {
+      if (!pointerCaptured || activePointerId === null || !wrapper.releasePointerCapture) {
+        pointerCaptured = false;
+        return;
+      }
+      try {
+        wrapper.releasePointerCapture(activePointerId);
+      } catch (_) {
+        // Pointer capture can already be released by WebView on cancel.
+      }
+      pointerCaptured = false;
     };
 
     const begin = (x, y, target, pointer = null) => {
@@ -5163,6 +5218,9 @@
       }
       startX = x;
       startY = y;
+      lastX = x;
+      lastAt = performance.now();
+      velocityX = 0;
       activePointerId = pointer;
       active = true;
       horizontal = false;
@@ -5176,6 +5234,11 @@
       }
       const dx = x - startX;
       const dy = y - startY;
+      const now = performance.now();
+      const dt = Math.max(1, now - lastAt);
+      velocityX = (x - lastX) / dt;
+      lastX = x;
+      lastAt = now;
       if (!horizontal && Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX && Math.abs(dy) < CARD_ARCHIVE_SWIPE_SLOP_PX) {
         return;
       }
@@ -5196,19 +5259,26 @@
         return;
       }
       active = false;
+      releasePointerCapture();
       activePointerId = null;
-      if (!horizontal || swipeOffset < CARD_ARCHIVE_SWIPE_TRIGGER_PX || swiped) {
+      const committed = swipeOffset >= triggerDistance()
+        || (velocityX >= CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS && swipeOffset >= CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX);
+      if (!horizontal || !committed || swiped) {
         reset();
         return;
       }
       swiped = true;
       state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+      const rollback = applyOptimisticArchive(card);
       wrapper.classList.add("is-card-swiped-away");
-      applyOffset(CARD_ARCHIVE_SWIPE_MAX_PX);
+      applyOffset(maxDragDistance());
+      window.setTimeout(() => {
+        render();
+      }, 140);
       void archiveHomeCard(card).then(result => {
-        if (!result) {
+        if (result === null) {
           wrapper.classList.remove("is-card-swiped-away");
-          reset();
+          rollback();
         }
       });
     };
@@ -5222,6 +5292,9 @@
     }, true);
     wrapper.addEventListener("pointerdown", event => {
       begin(event.clientX, event.clientY, event.target, event.pointerId);
+      if (active) {
+        capturePointer(event.pointerId);
+      }
     });
     wrapper.addEventListener("pointermove", event => {
       if (activePointerId !== null && event.pointerId !== activePointerId) {
@@ -5242,19 +5315,34 @@
       finish();
     });
     wrapper.addEventListener("touchstart", event => {
+      if (usePointerEvents) {
+        return;
+      }
       if (event.touches.length) {
         begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
       }
     }, { passive: true });
     wrapper.addEventListener("touchmove", event => {
+      if (usePointerEvents) {
+        return;
+      }
       if (event.touches.length) {
         move(event.touches[0].clientX, event.touches[0].clientY);
+        if (horizontal) {
+          event.preventDefault();
+        }
       }
-    }, { passive: true });
+    }, { passive: false });
     wrapper.addEventListener("touchend", () => {
+      if (usePointerEvents) {
+        return;
+      }
       finish();
     });
     wrapper.addEventListener("touchcancel", () => {
+      if (usePointerEvents) {
+        return;
+      }
       finish();
     });
   }
