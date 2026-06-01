@@ -43,6 +43,59 @@ def test_composio_client_sends_project_headers(monkeypatch) -> None:
     assert captured["headers"]["user-agent"] == COMPOSIO_HTTP_USER_AGENT
     assert captured["url"].startswith("https://backend.composio.dev/api/v3/connected_accounts?")
     assert "user_ids=user-123" in captured["url"]
+    assert "statuses=ACTIVE" in captured["url"]
+    assert "limit=1000" in captured["url"]
+
+
+def test_composio_client_lists_only_active_connected_accounts_with_pagination(monkeypatch) -> None:
+    client = ComposioClient("test-key")
+    client._toolkits_cache = (  # type: ignore[attr-defined]
+        9_999_999_999.0,
+        [
+            {"slug": "gmail", "name": "Gmail", "logo": "", "connectable": True},
+            {"slug": "notion", "name": "Notion", "logo": "", "connectable": True},
+            {"slug": "slack", "name": "Slack", "logo": "", "connectable": True},
+        ],
+    )
+    seen: list[dict[str, Any]] = []
+
+    def fake_request_json(method: str, path: str, payload: dict[str, Any] | None = None, query: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert method == "GET"
+        assert path == "/connected_accounts"
+        assert query is not None
+        seen.append(dict(query))
+        if query.get("statuses") != ["ACTIVE"]:
+            return {
+                "items": [
+                    {"id": "expired-1", "status": "EXPIRED", "toolkit": {"slug": "slack", "name": "Slack"}},
+                ]
+            }
+        if not query.get("cursor"):
+            return {
+                "items": [
+                    {"id": "active-1", "status": "ACTIVE", "toolkit": {"slug": "gmail", "name": "Gmail"}},
+                ],
+                "next_cursor": "page-2",
+            }
+        return {
+            "items": [
+                {"id": "active-2", "status": "ACTIVE", "toolkit": {"slug": "notion", "name": "Notion"}},
+            ],
+            "next_cursor": "",
+        }
+
+    monkeypatch.setattr(client, "_request_json", fake_request_json)
+
+    payload = client.list_connected_apps("user-123", force=True)
+
+    assert seen == [
+        {"user_ids": ["user-123"], "limit": 1000, "statuses": ["ACTIVE"]},
+        {"user_ids": ["user-123"], "limit": 1000, "statuses": ["ACTIVE"], "cursor": "page-2"},
+    ]
+    assert payload["connected_apps"] == [
+        {"slug": "gmail", "name": "Gmail", "logo": "", "status": "active", "id": "active-1", "instance_name": ""},
+        {"slug": "notion", "name": "Notion", "logo": "", "status": "active", "id": "active-2", "instance_name": ""},
+    ]
 
 
 def test_composio_client_start_oauth_creates_managed_auth_config_then_links(monkeypatch) -> None:

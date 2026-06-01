@@ -1,9 +1,18 @@
+import pytest
+
 from tools.smoke_pucky_runtime_context import compile_runtime_report, validate_runtime_report
 
 
+class _FakeConfig:
+    codex_base_instructions = "Base"
+
+
 class _FakeService:
+    config = _FakeConfig()
+
     def _base_runtime_context(self):
         return {
+            "schema": "pucky.runtime_context.v1",
             "agent_runtime": {
                 "actions": [
                     {"name": "initialize"},
@@ -28,7 +37,12 @@ class _FakeService:
             },
             "composio": {
                 "configured": True,
-                "connected_apps": [{"slug": "gmail"}],
+                "connected_apps": [{"slug": "gmail", "active_account_count": 1}],
+                "connected_app_diagnostics": {
+                    "active_account_rows": 1,
+                    "unique_active_app_count": 1,
+                    "status_counts": {"active": 1},
+                },
                 "app_universe": [{"slug": "gmail"}, {"slug": "slack"}],
                 "available_apps": [{"slug": "slack"}],
             },
@@ -44,14 +58,45 @@ class _FakeService:
             },
         }
 
+    def codex_base_instructions_for_thread(self):
+        return (
+            "Base\n\n## Injected Runtime Context\n\n```json\n"
+            '{"schema":"pucky.runtime_context.v1","agent_runtime":{"actions":[{"name":"thread/start"}]}}\n'
+            "```"
+        )
+
+
+class _NoBaseService(_FakeService):
+    class config:
+        codex_base_instructions = None
+
+    def codex_base_instructions_for_thread(self):
+        return None
+
 
 def test_compile_runtime_report_counts_required_runtime_blocks():
     report = compile_runtime_report(_FakeService())
 
     validate_runtime_report(report, require_composio=True)
+    validate_runtime_report(report, require_composio=True, require_base=True)
+    assert report["base_config_loaded"] is True
+    assert report["compiled_present"] is True
+    assert report["compiled_context_parse_ok"] is True
+    assert report["thread_start_includes_base"] is True
     assert report["agent_runtime_action_count"] == 18
     assert report["connected_app_count"] == 1
+    assert report["connected_active_account_row_count"] == 1
+    assert report["connected_unique_active_app_count"] == 1
+    assert report["connected_status_counts"] == {"active": 1}
     assert report["app_universe_count"] == 2
     assert report["available_app_count"] == 1
     assert report["reply_icon_count"] == 1
-    assert report["action_log_count"] == 1
+    assert report["action_log_row_count"] == 1
+    assert report["action_log_limit"] == 500
+
+
+def test_compile_runtime_report_fails_clearly_when_base_is_required_but_missing():
+    report = compile_runtime_report(_NoBaseService())
+
+    with pytest.raises(RuntimeError, match="base_config_loaded"):
+        validate_runtime_report(report, require_base=True)

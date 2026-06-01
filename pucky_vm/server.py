@@ -400,7 +400,38 @@ def _compact_composio_app(item: dict[str, object]) -> dict[str, object]:
             row[key] = value
     if "connectable" in item:
         row["connectable"] = bool(item.get("connectable"))
+    if "active_account_count" in item:
+        row["active_account_count"] = int(item.get("active_account_count") or 0)
+    if "connected_account_ids" in item:
+        ids = [str(value or "").strip() for value in list(item.get("connected_account_ids") or []) if str(value or "").strip()]
+        if ids:
+            row["connected_account_ids"] = ids
     return row
+
+
+def _unique_active_connected_apps(accounts: list[dict[str, object]]) -> list[dict[str, object]]:
+    by_slug: dict[str, dict[str, object]] = {}
+    for account in accounts:
+        slug = str(account.get("slug") or "").strip().lower()
+        if not slug:
+            continue
+        row = by_slug.setdefault(
+            slug,
+            {
+                "slug": slug,
+                "name": str(account.get("name") or slug.title()).strip(),
+                "status": "active",
+                "active_account_count": 0,
+                "connected_account_ids": [],
+            },
+        )
+        row["active_account_count"] = int(row.get("active_account_count") or 0) + 1
+        account_id = str(account.get("id") or "").strip()
+        if account_id:
+            ids = list(row.get("connected_account_ids") or [])
+            ids.append(account_id)
+            row["connected_account_ids"] = ids
+    return sorted((_compact_composio_app(row) for row in by_slug.values()), key=lambda item: str(item.get("name") or item.get("slug") or ""))
 
 
 def agent_runtime_catalog_payload() -> dict[str, object]:
@@ -615,10 +646,15 @@ class PuckyVoiceService:
                 "user_id": "env:PUCKY_COMPOSIO_USER_ID",
             },
             "endpoints": {
-                "connected_apps": "GET /connected_accounts?user_ids=<user_id>&limit=1000",
-                "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=200",
+                "connected_apps": "GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...",
+                "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...",
             },
             "connected_apps": [],
+            "connected_app_diagnostics": {
+                "active_account_rows": 0,
+                "unique_active_app_count": 0,
+                "status_counts": {},
+            },
             "app_universe": [],
             "available_apps": [],
         }
@@ -643,11 +679,16 @@ class PuckyVoiceService:
             self.record_action(surface="composio", action="runtime_context", tool="Composio runtime context", status="error")
             context["error"] = str(exc)[:240]
             return context
-        connected_apps = [
+        active_accounts = [
             _compact_composio_app(item)
             for item in list(connected_payload.get("connected_apps") or [])
             if isinstance(item, dict)
         ]
+        status_counts: dict[str, int] = {}
+        for item in active_accounts:
+            status = str(item.get("status") or "unknown").strip().lower() or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+        connected_apps = _unique_active_connected_apps(active_accounts)
         connected_slugs = {
             str(item.get("slug") or "").strip().lower()
             for item in connected_apps
@@ -661,14 +702,17 @@ class PuckyVoiceService:
             if not slug or slug in connected_slugs:
                 continue
             available_apps.append(_compact_composio_app(item))
-            if len(available_apps) >= 200:
-                break
         context["connected_apps"] = connected_apps
+        context["connected_app_diagnostics"] = {
+            "active_account_rows": len(active_accounts),
+            "unique_active_app_count": len(connected_apps),
+            "status_counts": status_counts,
+        }
         context["app_universe"] = [
             _compact_composio_app(item)
             for item in list(apps_payload.get("apps") or [])
             if isinstance(item, dict) and bool(item.get("connectable"))
-        ][:200]
+        ]
         context["available_apps"] = available_apps
         return context
 

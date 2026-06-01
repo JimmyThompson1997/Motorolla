@@ -63,6 +63,25 @@ class _FakeComposio:
         return {}
 
 
+class _LargeFakeComposio(_FakeComposio):
+    def list_apps(self) -> dict[str, object]:
+        apps = [
+            {"slug": "gmail", "name": "Gmail", "connectable": True},
+            {"slug": "notion", "name": "Notion", "connectable": True},
+        ]
+        apps.extend({"slug": f"app-{index}", "name": f"App {index}", "connectable": True} for index in range(971))
+        return {"apps": apps}
+
+    def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, object]:
+        return {
+            "connected_apps": [
+                {"slug": "gmail", "name": "Gmail", "status": "active", "id": "acct_gmail_1"},
+                {"slug": "gmail", "name": "Gmail", "status": "active", "id": "acct_gmail_2"},
+                {"slug": "notion", "name": "Notion", "status": "active", "id": "acct_notion_1"},
+            ]
+        }
+
+
 def _config(tmp_path: Path) -> Config:
     return Config(
         host="127.0.0.1",
@@ -144,8 +163,19 @@ def test_runtime_context_injects_composio_summary_without_literal_api_key(tmp_pa
     assert "connected_accounts.list" in text
     assert "\"action_log\"" in text
     assert context["composio"]["connected_apps"] == [
-        {"slug": "gmail", "name": "Gmail", "status": "active", "id": "acct_1"}
+        {
+            "slug": "gmail",
+            "name": "Gmail",
+            "status": "active",
+            "active_account_count": 1,
+            "connected_account_ids": ["acct_1"],
+        }
     ]
+    assert context["composio"]["connected_app_diagnostics"] == {
+        "active_account_rows": 1,
+        "unique_active_app_count": 1,
+        "status_counts": {"active": 1},
+    }
     assert context["composio"]["app_universe"] == [
         {"slug": "gmail", "name": "Gmail", "connectable": True},
         {"slug": "slack", "name": "Slack", "connectable": True},
@@ -154,6 +184,72 @@ def test_runtime_context_injects_composio_summary_without_literal_api_key(tmp_pa
         {"slug": "slack", "name": "Slack", "connectable": True}
     ]
     assert "connect_account" not in context["composio"].get("endpoints", {})
+
+
+def test_runtime_context_injects_full_app_universe_and_unique_active_connected_apps(tmp_path):
+    service = PuckyVoiceService(
+        _config(tmp_path),
+        stt=_FakeSTT(),
+        tts=_FakeTTS(),
+        codex=_FakeCodex(),
+        composio=_LargeFakeComposio(),
+    )
+
+    context = service._base_runtime_context()
+    composio = context["composio"]
+
+    assert len(composio["app_universe"]) == 973
+    assert composio["connected_apps"] == [
+        {
+            "slug": "gmail",
+            "name": "Gmail",
+            "status": "active",
+            "active_account_count": 2,
+            "connected_account_ids": ["acct_gmail_1", "acct_gmail_2"],
+        },
+        {
+            "slug": "notion",
+            "name": "Notion",
+            "status": "active",
+            "active_account_count": 1,
+            "connected_account_ids": ["acct_notion_1"],
+        },
+    ]
+    assert composio["connected_app_diagnostics"] == {
+        "active_account_rows": 3,
+        "unique_active_app_count": 2,
+        "status_counts": {"active": 3},
+    }
+    assert len(composio["available_apps"]) == 971
+    assert all(item["slug"] not in {"gmail", "notion"} for item in composio["available_apps"])
+
+
+def test_runtime_context_keeps_action_log_last_500_separate_from_runtime_catalog(tmp_path):
+    service = PuckyVoiceService(
+        _config(tmp_path),
+        stt=_FakeSTT(),
+        tts=_FakeTTS(),
+        codex=_FakeCodex(),
+        composio=_FakeComposio(),
+    )
+    for index in range(505):
+        service.action_ledger.record(
+            user_id=service.composio_user_id(),
+            timestamp=f"2026-05-31T00:{index % 60:02d}:00Z",
+            surface="codex_runtime",
+            action="turn/start",
+            tool="turn/start",
+            status="ok",
+            thread_id=f"thread-{index}",
+        )
+
+    context = service._base_runtime_context()
+
+    assert len(context["action_log"]["rows"]) == 500
+    assert len(context["agent_runtime"]["actions"]) == 18
+    thread_ids = {row["thread_id"] for row in context["action_log"]["rows"]}
+    assert "thread-504" in thread_ids
+    assert "thread-0" not in thread_ids
 
 
 def test_static_custom_base_file_is_generic_and_compact():
@@ -172,6 +268,9 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "composio.connected_apps" in text
     assert "composio.app_universe" in text
     assert "composio.available_apps" in text
+    assert "statuses=ACTIVE" in text
+    assert "limit=1000&cursor=..." in text
+    assert "limit=200" not in text
     assert "command.catalog" in text
     assert "capabilities.get" in text
     assert "POST /v1/devices/{device_id}/commands" in text

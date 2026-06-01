@@ -5,6 +5,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -78,7 +79,10 @@ class ComposioClient:
         return bool(self.api_key)
 
     def invalidate_connected_cache(self, user_id: str) -> None:
-        self._connected_cache.pop(str(user_id or "").strip(), None)
+        user_key = str(user_id or "").strip()
+        for cache_key in list(self._connected_cache):
+            if cache_key == user_key or cache_key.startswith(user_key + "|"):
+                self._connected_cache.pop(cache_key, None)
 
     def list_apps(self) -> dict[str, Any]:
         apps = self._cached_toolkits(force=False)
@@ -90,25 +94,41 @@ class ComposioClient:
             "nonconnectable_count": sum(1 for item in apps if not item.get("connectable")),
         }
 
-    def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, Any]:
+    def list_connected_apps(
+        self,
+        user_id: str,
+        *,
+        force: bool = False,
+        statuses: Sequence[str] | None = ("ACTIVE",),
+    ) -> dict[str, Any]:
         user_key = str(user_id or "").strip()
         if not user_key:
             return {"connected_apps": []}
+        status_values = tuple(str(status or "").strip().upper() for status in list(statuses or []) if str(status or "").strip())
+        cache_key = user_key + "|" + ",".join(status_values)
         if not force:
-            cached = self._connected_cache.get(user_key)
+            cached = self._connected_cache.get(cache_key)
             if cached and (time.time() - cached[0]) < self._connected_cache_ttl_s:
                 return {"connected_apps": list(cached[1])}
         toolkit_meta = {item["slug"]: item for item in self._cached_toolkits(force=False)}
-        payload = self._request_json(
-            "GET",
-            "/connected_accounts",
-            query={"user_ids": [user_key], "limit": 1000},
-        )
-        accounts = list(payload.get("items") or [])
+        accounts: list[dict[str, Any]] = []
+        cursor = ""
+        seen_cursors: set[str] = set()
+        while True:
+            query: dict[str, Any] = {"user_ids": [user_key], "limit": 1000}
+            if status_values:
+                query["statuses"] = list(status_values)
+            if cursor:
+                query["cursor"] = cursor
+            payload = self._request_json("GET", "/connected_accounts", query=query)
+            accounts.extend(item for item in list(payload.get("items") or []) if isinstance(item, dict))
+            next_cursor = _safe_name(payload.get("next_cursor"))
+            if not next_cursor or next_cursor in seen_cursors:
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
         connected_apps: list[dict[str, Any]] = []
         for item in accounts:
-            if not isinstance(item, dict):
-                continue
             toolkit = item.get("toolkit")
             if isinstance(toolkit, dict):
                 slug = _safe_slug(toolkit.get("slug"))
@@ -129,7 +149,7 @@ class ComposioClient:
                     "instance_name": _safe_name(item.get("alias") or item.get("name") or ""),
                 }
             )
-        self._connected_cache[user_key] = (time.time(), connected_apps)
+        self._connected_cache[cache_key] = (time.time(), connected_apps)
         return {"connected_apps": connected_apps}
 
     def start_oauth(self, user_id: str, app_slug: str, redirect_url: str | None = None) -> dict[str, Any]:
@@ -283,7 +303,7 @@ class ComposioClient:
             query: dict[str, Any] = {
                 "managed_by": "composio",
                 "sort_by": "usage",
-                "limit": 200,
+                "limit": 1000,
                 "include_deprecated": "false",
             }
             if cursor:

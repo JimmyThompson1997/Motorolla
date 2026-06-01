@@ -34,8 +34,8 @@ Raw Composio mode.
 - Current connected apps are injected as `composio.connected_apps`
 - App universe is injected as `composio.app_universe`
 - Available apps are injected as `composio.available_apps`, computed as app universe minus connected apps
-- Connected apps endpoint = `GET /connected_accounts?user_ids=<user_id>&limit=1000`
-- App universe endpoint = `GET /toolkits?managed_by=composio&sort_by=usage&limit=200`
+- Connected apps endpoint = `GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...`
+- App universe endpoint = `GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...`
 
 Injected Composio blocks include `connected_apps`, `app_universe`, `available_apps`, `user_id`, and `base_url`.
 

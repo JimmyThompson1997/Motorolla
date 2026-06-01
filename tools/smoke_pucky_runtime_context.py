@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -13,18 +14,52 @@ if str(ROOT) not in sys.path:
 from pucky_vm.server import Config, PuckyVoiceService  # noqa: E402
 
 
+def _parse_compiled_runtime_context(compiled: str | None) -> dict[str, Any] | None:
+    text = str(compiled or "")
+    marker = "## Injected Runtime Context"
+    if marker not in text:
+        return None
+    tail = text.split(marker, 1)[1]
+    start = tail.find("```json")
+    if start < 0:
+        return None
+    json_start = tail.find("\n", start)
+    if json_start < 0:
+        return None
+    end = tail.find("```", json_start + 1)
+    if end < 0:
+        return None
+    payload = tail[json_start + 1 : end].strip()
+    decoded = json.loads(payload)
+    return decoded if isinstance(decoded, dict) else None
+
+
 def compile_runtime_report(service: Any) -> dict[str, Any]:
     context = service._base_runtime_context()
     composio = context.get("composio") if isinstance(context.get("composio"), dict) else {}
     reply_card = context.get("reply_card") if isinstance(context.get("reply_card"), dict) else {}
     action_log = context.get("action_log") if isinstance(context.get("action_log"), dict) else {}
     agent_runtime = context.get("agent_runtime") if isinstance(context.get("agent_runtime"), dict) else {}
+    compiled = service.codex_base_instructions_for_thread()
+    parsed_context = _parse_compiled_runtime_context(compiled)
+    config = getattr(service, "config", None)
+    base_config_loaded = bool(getattr(config, "codex_base_instructions", None))
+    connected_diagnostics = composio.get("connected_app_diagnostics") if isinstance(composio.get("connected_app_diagnostics"), dict) else {}
     return {
         "schema": "pucky.runtime_context_smoke.v1",
         "ok": True,
+        "base_config_loaded": base_config_loaded,
+        "compiled_present": bool(compiled),
+        "compiled_length": len(compiled or ""),
+        "compiled_sha256": hashlib.sha256((compiled or "").encode("utf-8")).hexdigest() if compiled else "",
+        "compiled_context_parse_ok": parsed_context is not None,
+        "thread_start_includes_base": bool(base_config_loaded and compiled),
         "agent_runtime_action_count": len(list(agent_runtime.get("actions") or [])),
         "agent_runtime_actions": [str(item.get("name") or "") for item in list(agent_runtime.get("actions") or []) if isinstance(item, dict)],
         "connected_app_count": len(list(composio.get("connected_apps") or [])),
+        "connected_active_account_row_count": int(connected_diagnostics.get("active_account_rows") or 0),
+        "connected_unique_active_app_count": int(connected_diagnostics.get("unique_active_app_count") or 0),
+        "connected_status_counts": connected_diagnostics.get("status_counts") if isinstance(connected_diagnostics.get("status_counts"), dict) else {},
         "app_universe_count": len(list(composio.get("app_universe") or [])),
         "available_app_count": len(list(composio.get("available_apps") or [])),
         "composio_configured": bool(composio.get("configured")),
@@ -37,12 +72,27 @@ def compile_runtime_report(service: Any) -> dict[str, Any]:
             for item in list(reply_card.get("icons") or [])
             if isinstance(item, dict)
         ],
-        "action_log_count": len(list(action_log.get("rows") or [])),
+        "action_log_row_count": len(list(action_log.get("rows") or [])),
+        "action_log_limit": 500,
     }
 
 
-def validate_runtime_report(report: dict[str, Any], *, require_composio: bool = False) -> None:
+def validate_runtime_report(
+    report: dict[str, Any],
+    *,
+    require_composio: bool = False,
+    require_base: bool = False,
+    min_app_universe_count: int = 0,
+) -> None:
     missing: list[str] = []
+    if require_base and not bool(report.get("base_config_loaded")):
+        missing.append("base_config_loaded")
+    if require_base and not bool(report.get("compiled_present")):
+        missing.append("compiled_present")
+    if require_base and not bool(report.get("compiled_context_parse_ok")):
+        missing.append("compiled_context_parse_ok")
+    if require_base and not bool(report.get("thread_start_includes_base")):
+        missing.append("thread_start_includes_base")
     if int(report.get("agent_runtime_action_count") or 0) < 18:
         missing.append("agent_runtime.catalog")
     if "thread/start" not in set(report.get("agent_runtime_actions") or []):
@@ -55,6 +105,10 @@ def validate_runtime_report(report: dict[str, Any], *, require_composio: bool = 
         missing.append("composio.configured")
     if require_composio and int(report.get("app_universe_count") or 0) <= 0:
         missing.append("composio.app_universe")
+    if min_app_universe_count and int(report.get("app_universe_count") or 0) < min_app_universe_count:
+        missing.append(f"composio.app_universe_count>={min_app_universe_count}")
+    if int(report.get("action_log_row_count") or 0) > int(report.get("action_log_limit") or 500):
+        missing.append("action_log.last_500")
     if missing:
         raise RuntimeError("runtime smoke missing: " + ", ".join(missing))
 
@@ -93,6 +147,7 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str) -> dict[str
     return {
         "schema": "pucky.runtime_cross_thread_smoke.v1",
         "thread_id": thread_id,
+        "thread_start_includes_base": bool(service.config.codex_base_instructions),
         "turn_started": bool(((turn.get("result") or {}).get("turn") or {}).get("id")),
         "read_ok": bool(read.get("ok")),
     }
@@ -101,13 +156,26 @@ def run_cross_thread_smoke(service: PuckyVoiceService, *, text: str) -> dict[str
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test Pucky runtime context compilation.")
     parser.add_argument("--require-composio", action="store_true")
+    parser.add_argument("--require-base", action="store_true")
+    parser.add_argument("--min-app-universe-count", type=int, default=0)
     parser.add_argument("--cross-thread", action="store_true")
+    parser.add_argument("--compiled-output", default="")
     parser.add_argument("--text", default="Pucky runtime smoke. Reply with a tiny JSON card.")
     args = parser.parse_args()
 
     service = PuckyVoiceService(Config.from_env())
     report = compile_runtime_report(service)
-    validate_runtime_report(report, require_composio=args.require_composio)
+    require_base = bool(args.require_base or args.cross_thread)
+    validate_runtime_report(
+        report,
+        require_composio=args.require_composio,
+        require_base=require_base,
+        min_app_universe_count=args.min_app_universe_count,
+    )
+    if args.compiled_output:
+        output = Path(args.compiled_output).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(service.codex_base_instructions_for_thread() or "", encoding="utf-8")
     if args.cross_thread:
         report["cross_thread"] = run_cross_thread_smoke(service, text=args.text)
     print(json.dumps(report, indent=2, sort_keys=True))
