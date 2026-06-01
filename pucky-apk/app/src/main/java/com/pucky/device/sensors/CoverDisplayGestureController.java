@@ -46,7 +46,7 @@ public final class CoverDisplayGestureController {
     private static final long ACCEL_BUFFER_MS = 700L;
     private static final float ACCEL_FACE_UP_Z_MAX = -8.0f;
     private static final float ACCEL_FACE_UP_XY_MAX = 3.0f;
-    private static final float ACCEL_DELTA_SPIKE = 0.75f;
+    private static final float ACCEL_DELTA_SPIKE = 2.25f;
     private static final int MAX_EVENTS = 80;
 
     private static final String SENSOR_AOA = "stk3bfx_aoa";
@@ -266,7 +266,9 @@ public final class CoverDisplayGestureController {
                 }
                 long falseGapMs = now - nearFalseStartedAtMs;
                 if (falseGapMs < MEETING_HOVER_FALSE_GAP_MS) {
+                    long pendingCandidateId = activeCandidateId;
                     addEventLocked("hover_false_gap_ignored", name, falseGapMs, values, null);
+                    scheduleHoverFalseGapCancel(pendingCandidateId, name, values);
                     return;
                 }
             }
@@ -305,6 +307,34 @@ public final class CoverDisplayGestureController {
         handler.postDelayed(
                 () -> evaluateHoverCandidate(candidateId, sourceSensor, capturedValues),
                 MEETING_HOVER_HOLD_MS);
+    }
+
+    private void scheduleHoverFalseGapCancel(long candidateId, String sourceSensor, float[] values) {
+        Handler handler;
+        synchronized (lock) {
+            handler = sensorHandler;
+        }
+        if (handler == null) {
+            return;
+        }
+        float[] capturedValues = values == null ? null : values.clone();
+        handler.postDelayed(
+                () -> cancelHoverIfStillAway(candidateId, sourceSensor, capturedValues),
+                MEETING_HOVER_FALSE_GAP_MS);
+    }
+
+    private void cancelHoverIfStillAway(long candidateId, String sourceSensor, float[] values) {
+        long durationMs;
+        synchronized (lock) {
+            if (candidateId != activeCandidateId || !handNear || proximity.anyNear()) {
+                return;
+            }
+            durationMs = nearStartedAtMs <= 0 ? 0L : SystemClock.elapsedRealtime() - nearStartedAtMs;
+            handNear = false;
+            nearStartedAtMs = 0L;
+            nearFalseStartedAtMs = 0L;
+            addEventLocked("hover_cancelled", sourceSensor, durationMs, values, null);
+        }
     }
 
     private void evaluateHoverCandidate(long candidateId, String sourceSensor, float[] values) {

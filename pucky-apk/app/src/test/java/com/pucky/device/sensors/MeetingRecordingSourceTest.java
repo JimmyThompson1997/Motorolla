@@ -25,7 +25,10 @@ public final class MeetingRecordingSourceTest {
         assertTrue(source.contains("\"meeting_recording_failed\""));
         assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover"));
         assertTrue(source.contains("MEETING_HOVER_FALSE_GAP_MS = 350L"));
+        assertTrue(source.contains("ACCEL_DELTA_SPIKE = 2.25f"));
         assertTrue(source.contains("\"hover_false_gap_ignored\""));
+        assertTrue(source.contains("scheduleHoverFalseGapCancel"));
+        assertTrue(source.contains("cancelHoverIfStillAway"));
         assertFalse(source.contains("maxSwipeMs()"));
         assertFalse(source.contains("minSwipeMs()"));
         assertFalse(source.contains("DEFAULT_MAX_SWIPE_MS = 500L"));
