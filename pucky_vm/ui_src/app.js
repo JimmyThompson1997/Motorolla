@@ -301,6 +301,7 @@
     selectedTimestampByPath: stringMapFromObject(persistedAudioState.selected_timestamps),
     scrubPreviewByPath: new Map(),
     scrubbingAudioKey: "",
+    audioToggleBusyKey: "",
     timestampTap: null,
     audioCard: null,
     traceCard: null,
@@ -3396,13 +3397,18 @@
   }
 
   async function toggleAudio(card) {
+    const busyKey = audioStateKey(card);
+    if (state.audioToggleBusyKey === busyKey) {
+      return;
+    }
+    state.audioToggleBusyKey = busyKey;
     try {
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
       const same = isSameAudioCard(current, card);
       const sameCompleted = same && isCompletePlayback(current);
       if (same && current.is_playing) {
-        state.player = await pauseWithRewind();
+        state.player = await pauseWithRewind(card);
       } else if (same && !sameCompleted) {
         state.activePath = audioControlKey(card);
         state.player = await Pucky.request({
@@ -3436,6 +3442,10 @@
       render();
     } catch (error) {
       showToast(error.message);
+    } finally {
+      if (state.audioToggleBusyKey === busyKey) {
+        state.audioToggleBusyKey = "";
+      }
     }
   }
 
@@ -4961,11 +4971,11 @@
 
   function audioControls(card) {
     const controls = el("div", "audio-controls");
-    const speed = isActiveCard(card) ? (state.player.speed || resolvedStartSpeedForCard(card)) : resolvedStartSpeedForCard(card);
+    const speed = activePlayerMatchesCard(card) ? (state.player.speed || resolvedStartSpeedForCard(card)) : resolvedStartSpeedForCard(card);
     controls.append(control(formatSpeed(speed), () => openSpeedPicker({ kind: "card", card }), "control-speed", "Playback speed"));
     const cluster = el("div", "transport-cluster");
     cluster.append(iconControl("replay_15", "Back 15 seconds", () => seekRelative(-15000), "control-skip"));
-    cluster.append(iconControl(state.player.is_playing && isActiveCard(card) ? "pause" : "play_arrow", state.player.is_playing && isActiveCard(card) ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
+    cluster.append(iconControl(state.player.is_playing && activePlayerMatchesCard(card) ? "pause" : "play_arrow", state.player.is_playing && activePlayerMatchesCard(card) ? "Pause" : "Play", () => toggleAudio(card), "control-play"));
     cluster.append(iconControl("forward_30", "Forward 30 seconds", () => seekRelative(30000), "control-skip"));
     controls.append(cluster, el("span", "control-spacer"));
     return controls;
@@ -5164,12 +5174,12 @@
     render();
   }
 
-  async function pauseWithRewind() {
+  async function pauseWithRewind(card) {
     const paused = await Pucky.request({ command: "player.pause", args: {} });
     const rewindTo = Math.max(0, Number(paused.position_ms || 0) - 1000);
     const rewound = await Pucky.request({ command: "player.seek", args: { position_ms: rewindTo } });
     rememberPlayerProgress(rewound);
-    state.activePath = "";
+    state.activePath = audioControlKey(card);
     return rewound;
   }
 
@@ -6390,10 +6400,14 @@
   }
 
   function isActiveCard(card) {
-    if (state.player.is_playing && playerHasAudioIdentity(state.player)) {
-      return isSameAudioCard(state.player, card);
+    if (activePlayerMatchesCard(card)) {
+      return true;
     }
     return samePath(state.activePath, audioControlKey(card));
+  }
+
+  function activePlayerMatchesCard(card) {
+    return Boolean(playerHasAudioIdentity(state.player) && isSameAudioCard(state.player, card));
   }
 
   function cardOrigin(card) {
@@ -6414,7 +6428,7 @@
   }
 
   function isPlayingCard(card) {
-    return Boolean(state.player.is_playing && playerHasAudioIdentity(state.player) && isSameAudioCard(state.player, card));
+    return Boolean(state.player.is_playing && activePlayerMatchesCard(card));
   }
 
   function hasAudio(card) {
@@ -6446,13 +6460,17 @@
   }
 
   function syncActivePathFromPlayer(player) {
-    if (!playerHasAudioIdentity(player) || !player.is_playing) {
+    if (!playerHasAudioIdentity(player)) {
       state.activePath = "";
       return;
     }
     const matched = state.cards.find(card => isSameAudioCard(player, card));
     if (matched) {
       state.activePath = audioControlKey(matched);
+      return;
+    }
+    if (!samePath(playerStateKey(player), state.activePath)) {
+      state.activePath = "";
     }
   }
 
@@ -6511,7 +6529,7 @@
     if (Number.isFinite(preview)) {
       return preview;
     }
-    if (isActiveCard(card)) {
+    if (activePlayerMatchesCard(card)) {
       return Number(state.player.position_ms || 0);
     }
     return savedPositionFor(audioControlKey(card));
@@ -6551,7 +6569,7 @@
 
   function audioDurationForCard(card) {
     const playerDuration = Number(state.player.duration_ms || 0);
-    if (playerDuration > 0 && isActiveCard(card)) {
+    if (playerDuration > 0 && activePlayerMatchesCard(card)) {
       return playerDuration;
     }
     const markers = audioTimestamps(card);

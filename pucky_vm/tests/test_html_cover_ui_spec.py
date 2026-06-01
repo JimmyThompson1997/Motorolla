@@ -965,6 +965,7 @@ def test_feed_waveform_and_mic_follow_current_playback_only() -> None:
 
     assert 'waveform(card, "wave-row"' in app
     assert '"action action-audio is-playing"' in app
+    assert "function activePlayerMatchesCard(card) {" in app
     assert "function isPlayingCard(card) {" in app
     assert "if (isPlayingCard(card)) {" in app
     click_body = app.split('audio.addEventListener("click", async (event) => {', 1)[1].split(
@@ -980,12 +981,14 @@ def test_feed_waveform_and_mic_follow_current_playback_only() -> None:
     assert ".action-audio.is-playing" in styles
     assert "color: var(--accent" in styles
     active_body = app.split("function isActiveCard(card) {", 1)[1].split("\n  }\n\n  function hasAudio(card)", 1)[0]
-    assert "state.player.is_playing && playerHasAudioIdentity(state.player)" in active_body
+    assert "activePlayerMatchesCard(card)" in active_body
     assert "return samePath(state.activePath, audioControlKey(card));" in active_body
+    match_body = app.split("function activePlayerMatchesCard(card) {", 1)[1].split("\n  }\n\n  function isPlayingCard(card)", 1)[0]
+    assert "playerHasAudioIdentity(state.player)" in match_body
+    assert "isSameAudioCard(state.player, card)" in match_body
     playing_body = app.split("function isPlayingCard(card) {", 1)[1].split("\n  }\n\n  function hasAudio(card)", 1)[0]
     assert "state.player.is_playing" in playing_body
-    assert "playerHasAudioIdentity(state.player)" in playing_body
-    assert "isSameAudioCard(state.player, card)" in playing_body
+    assert "activePlayerMatchesCard(card)" in playing_body
     assert "state.activePath" not in playing_body
 
 
@@ -1024,6 +1027,7 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert "function rememberPlayerProgress(player)" in app
     assert "function forgetCompleted(path)" in app
     assert "savedPositionFor(path)" in app
+    assert "function activePlayerMatchesCard(card)" in app
     assert "function savedSpeedForCard(card)" in app
     assert "function resolvedStartSpeedForCard(card)" in app
     assert 'args: { path: card.audio_path, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
@@ -1031,25 +1035,28 @@ def test_audio_resume_and_completion_reset_are_explicit() -> None:
     assert 'args: { start_at_ms: start, speed: resolvedStartSpeedForCard(card) }' in app
 
 
-def test_pausing_audio_clears_active_card_preview_lane() -> None:
+def test_pausing_audio_keeps_active_card_preview_lane() -> None:
     app = read("app.js")
 
-    pause_body = app.split("async function pauseWithRewind() {", 1)[1].split("\n  }\n\n  function control(", 1)[0]
+    pause_body = app.split("async function pauseWithRewind(card) {", 1)[1].split("\n  }\n\n  function control(", 1)[0]
     assert 'command: "player.pause"' in pause_body
     assert 'command: "player.seek"' in pause_body
     assert "rememberPlayerProgress(rewound);" in pause_body
-    assert 'state.activePath = "";' in pause_body
-    assert "return 0;" in app
+    assert 'state.activePath = audioControlKey(card);' in pause_body
+    assert 'state.activePath = "";' not in pause_body
     assert "rememberPlayerProgress(current)" in app
 
 
-def test_non_playing_player_events_clear_active_card_lane() -> None:
+def test_paused_player_events_keep_active_card_lane_when_identity_matches() -> None:
     app = read("app.js")
 
     sync_body = app.split("function syncActivePathFromPlayer(player) {", 1)[1].split("\n  }\n\n  function samePath(", 1)[0]
-    assert "!playerHasAudioIdentity(player) || !player.is_playing" in sync_body
+    assert "!playerHasAudioIdentity(player)" in sync_body
+    assert "!player.is_playing" not in sync_body
     assert 'state.activePath = "";' in sync_body
     assert "const matched = state.cards.find(card => isSameAudioCard(player, card));" in sync_body
+    assert "state.activePath = audioControlKey(matched);" in sync_body
+    assert "samePath(playerStateKey(player), state.activePath)" in sync_body
 
 
 def test_audiobook_card_uses_single_file_with_timestamps() -> None:
@@ -1067,7 +1074,7 @@ def test_audiobook_card_uses_single_file_with_timestamps() -> None:
     assert "function isSameAudioCard(player, card)" in app
     assert "function playerHasAudioIdentity(player)" in app
     assert "function syncActivePathFromPlayer(player)" in app
-    assert "if (state.player.is_playing && playerHasAudioIdentity(state.player))" in app
+    assert "if (activePlayerMatchesCard(card)) {" in app
     assert "syncActivePathFromPlayer(state.player)" in app
     assert "|| samePath(state.activePath, audioControlKey(card))" not in app
     assert 'command: "player.queue.set"' in app
@@ -1084,13 +1091,25 @@ def test_audiobook_card_uses_single_file_with_timestamps() -> None:
 def test_manual_pause_rewinds_one_second_before_bookmarking() -> None:
     app = read("app.js")
 
-    assert "async function pauseWithRewind()" in app
+    assert "async function pauseWithRewind(card)" in app
     assert 'command: "player.pause"' in app
     assert 'Number(paused.position_ms || 0) - 1000' in app
     assert 'command: "player.seek"' in app
     assert 'position_ms: rewindTo' in app
     assert "rememberPlayerProgress(rewound)" in app
-    assert "state.player = await pauseWithRewind()" in app
+    assert "state.player = await pauseWithRewind(card)" in app
+
+
+def test_paused_audio_detail_uses_live_player_values_for_matched_card() -> None:
+    app = read("app.js")
+
+    position_body = app.split("function playbackPositionForCard(card) {", 1)[1].split("\n  }\n\n  function scrubPreviewForCard(card)", 1)[0]
+    assert "activePlayerMatchesCard(card)" in position_body
+    assert "return Number(state.player.position_ms || 0);" in position_body
+    duration_body = app.split("function audioDurationForCard(card) {", 1)[1].split("\n  }\n\n  function audioTimestamps(card)", 1)[0]
+    assert "activePlayerMatchesCard(card)" in duration_body
+    assert "return playerDuration;" in duration_body
+    assert 'const speed = activePlayerMatchesCard(card) ? (state.player.speed || resolvedStartSpeedForCard(card)) : resolvedStartSpeedForCard(card);' in app
 
 
 def test_transcript_initial_open_scrolls_to_latest_message() -> None:
@@ -1145,7 +1164,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "--sheet-bezel: 82px" not in styles
     assert "--sheet-top: 16px" in styles
     assert 'iconControl("replay_15"' in app
-    assert 'iconControl(state.player.is_playing && isActiveCard(card) ? "pause" : "play_arrow"' in app
+    assert 'iconControl(state.player.is_playing && activePlayerMatchesCard(card) ? "pause" : "play_arrow"' in app
     assert 'iconControl("forward_30"' in app
     assert 'control("15"' not in app
     assert 'control("30"' not in app

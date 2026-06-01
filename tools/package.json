@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test:cover-default-audio-speed": "node ./cover_default_audio_speed_playwright.mjs"
+    "test:cover-default-audio-speed": "node ./cover_default_audio_speed_playwright.mjs",
+    "test:cover-pause-scrubber": "node ./cover_pause_scrubber_playwright.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.54.2"
