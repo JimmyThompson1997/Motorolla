@@ -275,7 +275,10 @@ def test_meetings_reuse_swipe_archive_without_feed_card_archive() -> None:
     assert "function applyOptimisticMeetingArchive(meeting)" in app
     assert "state.meetings.records = state.meetings.records.map" in app
     assert ".filter(meeting => !Boolean(meeting && meeting.archived))" in app
-    assert 'appendCardSwipeAction(wrapper);' in function_block(app, "meetingRowView")
+    assert 'const row = el("div", "meeting-row meeting-row-card");' in app
+    assert 'row.setAttribute("role", "button");' in app
+    assert "row.tabIndex = 0;" in app
+    assert 'appendCardSwipeAction(wrapper);' in app
     assert ".meeting-row-card" in styles
     assert ".card-swipe-action" in styles
 

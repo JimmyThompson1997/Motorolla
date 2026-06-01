@@ -3029,8 +3029,9 @@
 
   function meetingRowView(meeting) {
     const wrapper = el("div", "card-wrap meeting-wrap");
-    const row = el("button", "meeting-row meeting-row-card");
-    row.type = "button";
+    const row = el("div", "meeting-row meeting-row-card");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
     const copy = el("span", "meeting-row-copy");
     copy.append(
       el("span", "meeting-row-title", meetingTitle(meeting)),
@@ -3040,6 +3041,12 @@
     row.append(copy, stateBadge);
     row.addEventListener("click", () => {
       if (!shouldSuppressCardActivation()) {
+        void showMeetingDetail(meeting);
+      }
+    });
+    row.addEventListener("keydown", event => {
+      if ((event.key === "Enter" || event.key === " ") && !shouldSuppressCardActivation()) {
+        event.preventDefault();
         void showMeetingDetail(meeting);
       }
     });
