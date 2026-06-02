@@ -2362,24 +2362,79 @@ def reply_output_schema() -> dict[str, object]:
 
 def meeting_reply_output_schema() -> dict[str, object]:
     schema = json.loads(json.dumps(reply_output_schema()))
+    speaker_turn_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "speaker": {"type": ["string", "null"]},
+            "label": {"type": ["string", "null"]},
+            "text": {"type": ["string", "null"]},
+            "start_ms": {"type": ["number", "null"]},
+            "end_ms": {"type": ["number", "null"]},
+            "start": {"type": ["number", "null"]},
+            "end": {"type": ["number", "null"]},
+            "confidence": {"type": ["number", "null"]},
+        },
+        "required": ["speaker", "label", "text", "start_ms", "end_ms", "start", "end", "confidence"],
+    }
+    action_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "action": {"type": ["string", "null"]},
+            "type": {"type": ["string", "null"]},
+            "recipient": {"type": ["string", "null"]},
+            "status": {"type": ["string", "null"]},
+            "result": {"type": ["string", "null"]},
+            "description": {"type": ["string", "null"]},
+            "reason": {"type": ["string", "null"]},
+            "blocked_on": {"type": ["string", "null"]},
+            "draft": {"type": ["string", "null"]},
+            "error": {"type": ["string", "null"]},
+        },
+        "required": ["action", "type", "recipient", "status", "result", "description", "reason", "blocked_on", "draft", "error"],
+    }
+    speaker_label_keys = [f"speaker_{index}" for index in range(10)]
     schema["properties"]["meeting_result"] = {
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": False,
         "properties": {
             "title": {"type": ["string", "null"]},
             "transcript_status": {"type": ["string", "null"]},
             "transcript_text": {"type": ["string", "null"]},
             "diarization_requested": {"type": ["boolean", "null"]},
             "diarization_status": {"type": ["string", "null"]},
-            "speaker_turns": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
-            "speaker_labels": {"type": ["object", "null"], "additionalProperties": True},
+            "speaker_turns": {"type": ["array", "null"], "items": speaker_turn_schema},
+            "speaker_labels": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    key: {"type": ["string", "null"]} for key in speaker_label_keys
+                },
+                "required": speaker_label_keys,
+            },
             "participants": {"type": ["array", "null"], "items": {"type": "string"}},
             "action_items": {"type": ["array", "null"], "items": {"type": "string"}},
             "pucky_directed_instructions": {"type": ["array", "null"], "items": {"type": "string"}},
-            "executed_actions": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
-            "action_errors": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+            "executed_actions": {"type": ["array", "null"], "items": action_schema},
+            "action_errors": {"type": ["array", "null"], "items": action_schema},
             "transcription_provider": {"type": ["string", "null"]},
         },
+        "required": [
+            "title",
+            "transcript_status",
+            "transcript_text",
+            "diarization_requested",
+            "diarization_status",
+            "speaker_turns",
+            "speaker_labels",
+            "participants",
+            "action_items",
+            "pucky_directed_instructions",
+            "executed_actions",
+            "action_errors",
+            "transcription_provider",
+        ],
     }
     schema["required"] = [*schema["required"], "meeting_result"]
     return schema

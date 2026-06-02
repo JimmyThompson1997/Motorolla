@@ -1678,8 +1678,17 @@ class ServerTests(unittest.TestCase):
 
         self.assertNotIn("meeting_result", normal_schema["required"])
         self.assertIn("meeting_result", meeting_schema["required"])
-        self.assertIn("speaker_turns", meeting_schema["properties"]["meeting_result"]["properties"])
-        self.assertIn("executed_actions", meeting_schema["properties"]["meeting_result"]["properties"])
+        meeting_result = meeting_schema["properties"]["meeting_result"]
+        self.assertFalse(meeting_result["additionalProperties"])
+        self.assertEqual(set(meeting_result["required"]), set(meeting_result["properties"]))
+        self.assertIn("speaker_turns", meeting_result["properties"])
+        self.assertIn("executed_actions", meeting_result["properties"])
+        self.assertFalse(meeting_result["properties"]["speaker_turns"]["items"]["additionalProperties"])
+        self.assertFalse(meeting_result["properties"]["executed_actions"]["items"]["additionalProperties"])
+        self.assertEqual(
+            set(meeting_result["properties"]["speaker_turns"]["items"]["required"]),
+            set(meeting_result["properties"]["speaker_turns"]["items"]["properties"]),
+        )
 
     def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(
