@@ -297,28 +297,39 @@ def test_meeting_transcript_uses_remaining_detail_height() -> None:
     assert "overflow-y: auto;" in transcript
 
 
-def test_meetings_reuse_swipe_archive_without_feed_card_archive() -> None:
+def test_meetings_and_home_reuse_shared_left_reveal_archive_controller() -> None:
     app = read("app.js")
     styles = read("styles.css")
+    reveal = function_block(app, "installArchiveReveal")
 
-    assert "function installFeedLikeSwipeArchive(wrapper, item, config)" in app
-    assert "function installCardArchiveSwipe(wrapper, card)" in app
-    assert "installFeedLikeSwipeArchive(wrapper, card, {" not in app
-    assert "function installMeetingArchiveSwipe(wrapper, meeting)" in app
-    assert "installMeetingArchiveSwipe(wrapper, meeting);" in app
+    assert "function installArchiveReveal(wrapper, item, config)" in app
+    assert "function installFeedLikeSwipeArchive(wrapper, item, config)" not in app
+    assert "function installCardArchiveSwipe(wrapper, card)" not in app
+    assert "function installMeetingArchiveSwipe(wrapper, meeting)" not in app
     assert "async function archiveMeetingRecord(meeting)" in app
+    assert "async function performMeetingArchive(meeting)" in app
+    assert "async function performHomeArchive(card)" in app
     assert 'linksApiRequest("/api/meetings/actions", {' in app
     assert 'action: "archive"' in app
     assert 'command: "pucky.feed.action"' not in function_block(app, "archiveMeetingRecord")
+    assert "function applyOptimisticHomeArchive(card)" in app
     assert "function applyOptimisticMeetingArchive(meeting)" in app
-    assert "state.meetings.records = state.meetings.records.map" in app
-    assert ".filter(meeting => !Boolean(meeting && meeting.archived))" in app
+    assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
+    assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
+    assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
+    assert 'const wrapper = el("div", "card-wrap");' in app
+    assert "appendArchiveRevealAction(wrapper, {" in app
+    assert 'action.innerHTML = iconSvg("delete", { filled: true });' in app
     assert 'const row = el("div", "meeting-row meeting-row-card");' in app
-    assert 'row.setAttribute("role", "button");' in app
-    assert "row.tabIndex = 0;" in app
-    assert 'appendCardSwipeAction(wrapper);' in app
+    assert 'installArchiveReveal(wrapper, meeting, {' in app
+    assert 'installArchiveReveal(wrapper, card, {' in app
+    assert "if (busy || !config.canReveal(item) || isDragIgnoredTarget(target))" in reveal
+    assert "applyOffset(startOffset - dx);" in reveal
+    assert "if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX)" in reveal
+    assert "void config.performArchive(item)" in reveal
+    assert ".archive-reveal-action" in styles
+    assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
     assert ".meeting-row-card" in styles
-    assert ".card-swipe-action" in styles
 
 
 def test_meeting_recording_status_uses_purple_dot() -> None:
@@ -480,22 +491,27 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".feed-filter-empty" in styles
 
 
-def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
+def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     app = read("app.js")
     styles = read("styles.css")
+    reveal = function_block(app, "installArchiveReveal")
 
-    assert "CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82" in app
-    assert "CARD_ARCHIVE_SWIPE_MAX_PX = 126" in app
-    assert "CARD_ARCHIVE_SWIPE_SLOP_PX = 12" in app
+    assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
+    assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
+    assert "const ARCHIVE_REVEAL_SLOP_PX = 12" in app
     assert "showArchivedFeed: false" in app
     assert "async function archiveHomeCard(card)" in app
+    assert "function canRevealHomeArchive(card)" in app
+    assert "function installArchiveReveal(wrapper, item, config)" in app
     assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });' in app
     assert 'return requestFeedAction(freshCard, "archive");' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
-    assert "function installCardArchiveSwipe(wrapper, card)" in app
-    assert "function canArchiveBySwipe(card)" in app
-    assert "installCardArchiveSwipe(wrapper, card);" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" not in app
+    assert "function canArchiveBySwipe(card)" not in app
+    assert "installArchiveReveal(wrapper, card, {" in app
+    assert "if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX)" in reveal
+    assert "actionButton.tabIndex = isOpen ? 0 : -1;" in reveal
     assert "CARD_MENU_LONG_PRESS_MS" not in app
     assert "function toggleCardStar(card)" not in app
     assert "function isCardStarred(card)" not in app
@@ -509,7 +525,7 @@ def test_home_cards_use_safe_area_padding_and_swipe_archive() -> None:
     assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
-    assert "--card-archive-collapse-ms: 320ms;" in css_block(styles, ".card-wrap")
+    assert "--archive-reveal-offset: 0px;" in css_block(styles, ".card-wrap")
 
 
 def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
@@ -545,8 +561,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
-    swipe = function_block(app, "installCardArchiveSwipe")
-    can_archive = function_block(app, "canArchiveBySwipe")
+    can_reveal = function_block(app, "canRevealHomeArchive")
     request_mark_read = function_block(app, "requestMarkRead")
 
     assert "function isPendingOutboundCard(card)" in app
@@ -571,18 +586,14 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "identity" not in outbound
     assert "card-actions" not in outbound
 
-    assert "if (isPendingOutboundCard(card)) {" in can_archive
-    assert "return isFailedPendingOutboundCard(card);" in can_archive
-    assert "state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;" in swipe
-    assert 'wrapper.classList.add("is-card-swiped-away");' in swipe
-    assert "void archiveHomeCard(card).then(result => {" in swipe
-    assert "if (!result)" in swipe
-    assert 'wrapper.classList.remove("is-card-swiped-away");' in swipe
-    assert "reset();" in swipe
+    assert "appendArchiveRevealAction(wrapper, {" not in outbound
+    assert "installArchiveReveal(wrapper, card, {" not in outbound
+    assert "function installArchiveReveal(wrapper, item, config)" in app
+    assert "function canRevealHomeArchive(card)" in app
+    assert "if (Boolean(card?.archived) || isPendingOutboundCard(card)) {" in can_reveal
+    assert "return false;" in can_reveal
     assert "function prefersTouchInput()" in app
     assert "function isTouchPointerEvent(event)" in app
-    assert "wrapper.setPointerCapture(pointer);" not in swipe
-    assert "wrapper.releasePointerCapture(activePointerId);" not in swipe
 
     assert ".card.card-outbound" in styles
     assert ".card.card-outbound.is-failed" in styles
@@ -594,21 +605,14 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert ".card-outbound-status.is-thinking" in styles
     assert ".card-outbound-status.is-failed" in styles
     assert ".card-outbound-time" in styles
-    assert "function installCardArchiveSwipe(wrapper, card)" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function cardLongPressMenu(card)" not in app
     assert "function cardFocusBorder()" not in app
     assert 'wrapper.append(cardFocusBorder());' not in app
     assert "function dismissOpenCardMenu(suppressClick = true)" in app
-    assert "state.showArchivedFeed || state.feedRefreshing" in can_archive
-    assert "Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX" in swipe
-    assert "CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82" in app
-    assert "CARD_ARCHIVE_SWIPE_MAX_PX = 126" in app
     assert "shouldSuppressCardActivation()" in app
     assert "toggleCardStar(card);" not in app
-    assert ".card-swipe-action" in styles
-    assert ".card-wrap.is-card-swipe-active .card-swipe-action" in styles
-    assert ".card-wrap.is-card-swipe-armed .card-swipe-action" in styles
-    assert '.card-wrap.is-card-swiped-away .card' in styles
+    assert ".archive-reveal-action" in styles
 
 
 def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
@@ -632,10 +636,10 @@ def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
     assert "reconcileReadOverrides();" in app
     assert 'identity.addEventListener("click"' in app
     assert "toggleCardRead(card);" in app
-    assert ".card-swipe-action" in styles
-    assert ".card-wrap.is-card-swipe-active .card-swipe-action" in styles
-    assert ".card-wrap.is-card-swipe-armed .card-swipe-action" in styles
-    assert ".card-wrap.is-card-swiped-away .card" in styles
+    assert ".archive-reveal-action" in styles
+    assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
+    assert ".card-wrap.is-card-swipe-active .card-swipe-action" not in styles
+    assert ".card-wrap.is-card-swiped-away .card" not in styles
     assert ".card-longpress-menu" not in styles
     assert ".card-menu-action" not in styles
     assert ".card-wrap.is-card-menu-open .card" not in styles
@@ -950,76 +954,50 @@ def test_card_actions_have_local_read_state() -> None:
     assert "--action-accent" not in styles
 
 
-def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -> None:
+def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classes() -> None:
     app = read("app.js")
     styles = read("styles.css")
     archive = function_block(app, "archiveHomeCard")
-    swipe = function_block(app, "installCardArchiveSwipe")
-    meeting_swipe = function_block(app, "installFeedLikeSwipeArchive")
+    reveal = function_block(app, "installArchiveReveal")
+    optimistic = function_block(app, "applyOptimisticHomeArchive")
 
     assert "authoritative: true" in app
     assert "reset_cursor: resetCursor" in app
     assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
     assert 'const wrapper = el("div", "card-wrap");' in app
     assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
-    assert "appendCardSwipeAction(wrapper);" in app
-    assert 'iconSvg("archive_folder"' in app
-    assert 'el("span", "card-swipe-label", "Archive")' in app
+    assert "appendArchiveRevealAction(wrapper, {" in app
+    assert 'iconSvg("delete", { filled: true })' in app
     assert "result && result.ok === false" in app
     assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });' in archive
     assert "function applyOptimisticArchive(card)" not in app
-    assert "const committed = swipeOffset >= triggerDistance()" not in swipe
-    assert "velocityX >= CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS" not in swipe
-    assert "Math.min(CARD_ARCHIVE_SWIPE_MAX_PX, Math.round(x))" in swipe
-    assert "swipeOffset < CARD_ARCHIVE_SWIPE_TRIGGER_PX" in swipe
-    assert "applyOffset(CARD_ARCHIVE_SWIPE_MAX_PX);" in swipe
-    assert "const committed = swipeOffset >= triggerDistance()" in meeting_swipe
-    assert "CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280" in app
-    assert "CARD_ARCHIVE_SWIPE_EXIT_MS = 320" in app
-    assert "CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320" in app
-    assert "CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX = 74" in app
-    assert 'wrapper.classList.add("is-card-swipe-dragging")' not in swipe
-    assert 'reset({ animate: horizontal })' not in swipe
-    assert 'wrapper.classList.add("is-card-snapback")' not in swipe
-    assert 'wrapper.classList.add("is-card-swiped-away")' in swipe
-    assert 'wrapper.classList.add("is-card-collapsing")' not in swipe
-    assert "wrapper.getBoundingClientRect().height" not in swipe
-    assert 'const collapseMs = collapseDurationMs();' not in swipe
-    assert 'window.getComputedStyle(wrapper).marginBottom' not in swipe
-    assert 'wrapper.style.setProperty("--card-archive-collapse-ms", `${collapseMs}ms`);' not in swipe
-    assert 'wrapper.style.removeProperty("--card-archive-collapse-ms");' not in swipe
-    assert "window.setTimeout(() => {\n        wrapper.classList.add(\"is-card-collapsing\");" not in swipe
-    assert "}, CARD_ARCHIVE_SWIPE_EXIT_MS);" not in swipe
-    assert "}, collapseMs);" not in swipe
-    assert "}, 140);" not in swipe
-    assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' not in swipe
-    assert "passive: false" not in swipe
-
-    swipe_css = styles[styles.index(".card-swipe-action"):styles.index(".card-wrap .card")]
-    wrap_css = styles[styles.index(".card-wrap {"):styles.index(".card-swipe-action")]
-    motion_start = styles.index(".card-wrap .card {")
-    motion_css = styles[motion_start:styles.index("\n.card {", motion_start)]
-    assert "height var(--card-archive-collapse-ms)" in wrap_css
-    assert "margin-bottom var(--card-archive-collapse-ms)" in wrap_css
-    assert ".card-wrap.is-card-swipe-dragging .card" in motion_css
-    assert "transition: none;" in motion_css
-    assert ".card-wrap.is-card-snapback .card" in motion_css
-    assert "transform 280ms" in motion_css
-    assert ".card-wrap.is-card-swiped-away .card" in motion_css
-    assert "transform 320ms" in motion_css
-    assert ".card-wrap.is-card-collapsing" in motion_css
-    assert "height: 0 !important;" in motion_css
-    assert "margin-bottom: 0;" in motion_css
-    assert ".card-wrap::before" not in styles
-    assert "color: #fff;" in swipe_css
-    assert "fill: currentColor;" in swipe_css
-    assert "stroke: currentColor;" in swipe_css
-    assert "pointer-events: none;" in swipe_css
-    assert "background: transparent;" in swipe_css
-    assert ".feed-card-wrap .card-swipe-action" not in styles
-    assert ".feed-card-wrap.is-card-swiped-away .card-swipe-action," not in styles
-    assert ".feed-card-wrap.is-card-collapsing .card-swipe-action" not in styles
-    assert ".card-wrap.is-card-collapsing .card-swipe-action {\n  opacity: 0;\n}" in styles
+    assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
+    assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
+    assert "const ARCHIVE_REVEAL_SLOP_PX = 12" in app
+    assert "function installCardArchiveSwipe(wrapper, card)" not in app
+    assert "function installFeedLikeSwipeArchive(wrapper, item, config)" not in app
+    assert "function installMeetingArchiveSwipe(wrapper, meeting)" not in app
+    assert "function canArchiveBySwipe(card)" not in app
+    assert "function canArchiveMeetingBySwipe(meeting)" not in app
+    assert "Math.abs(dx) < ARCHIVE_REVEAL_SLOP_PX" in reveal
+    assert "applyOffset(startOffset - dx);" in reveal
+    assert "if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX)" in reveal
+    assert "actionButton.tabIndex = isOpen ? 0 : -1;" in reveal
+    assert 'target?.closest(".archive-reveal-action")' in app
+    assert "applyOptimisticHomeArchive(card)" in app
+    assert "state.cards = state.cards.map(item => {" in optimistic
+    assert "archived: true" in optimistic
+    assert 'return sameCardId || sameSession ? { ...item, archived: true } : item;' in optimistic
+    assert 'command: "pucky.feed.action"' in app
+    assert "CARD_ARCHIVE_SWIPE_" not in app
+    assert ".archive-reveal-action" in styles
+    assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
+    assert ".card-wrap.is-archive-reveal-active .archive-reveal-action" in styles
+    assert ".card-wrap.is-card-swipe-dragging .card" not in styles
+    assert ".card-wrap.is-card-swiped-away .card" not in styles
+    assert ".card-wrap.is-card-collapsing" not in styles
+    assert ".card-swipe-action" not in styles
+    assert ".feed-card-wrap" not in styles
 
 
 def test_card_actions_are_aligned_to_content_row() -> None:

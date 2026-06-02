@@ -14,18 +14,9 @@
   const FEED_REFRESH_TIMEOUT_MS = 15000;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
-  const CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82;
-  const CARD_ARCHIVE_SWIPE_MAX_PX = 126;
-  const CARD_ARCHIVE_SWIPE_TRIGGER_RATIO = 0.4;
-  const CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX = 96;
-  const CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS = 0.55;
-  const CARD_ARCHIVE_SWIPE_SLOP_PX = 12;
-  const CARD_ARCHIVE_SWIPE_SNAPBACK_MS = 280;
-  const CARD_ARCHIVE_SWIPE_EXIT_MS = 320;
-  const CARD_ARCHIVE_SWIPE_COLLAPSE_MS = 320;
-  // Match the current meeting-row collapse distance so taller feed cards
-  // get a proportionally longer collapse instead of visually snapping upward.
-  const CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX = 74;
+  const ARCHIVE_REVEAL_WIDTH_PX = 88;
+  const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44;
+  const ARCHIVE_REVEAL_SLOP_PX = 12;
   const MEETING_STATUS_POLL_MS = 1000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
@@ -101,6 +92,10 @@
     pause: {
       filled: '<path d="M7 5h3v14H7V5Zm7 0h3v14h-3V5Z"/>',
       outline: '<path d="M7 5h3v14H7V5ZM14 5h3v14h-3V5Z"/>'
+    },
+    delete: {
+      filled: '<path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7Zm3-4h6l1 2h4v2H4V5h4l1-2Zm1 6v9h2V9h-2Zm4 0v9h2V9h-2Z"/>',
+      outline: '<path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="m8 7 1 12h6l1-12"/><path d="M10 10v6"/><path d="M14 10v6"/>'
     },
     replay_15: {
       filled: '<path d="M12 5V2L7 7l5 5V8.1c3.4 0 6.1 2.7 6.1 6.1 0 1.8-.8 3.4-2 4.5l1.4 1.5c1.6-1.5 2.6-3.6 2.6-6 0-4.5-3.6-8.1-8.1-8.1Z"/><text x="7.2" y="17" font-size="6.5" font-weight="850" fill="currentColor">15</text>',
@@ -335,6 +330,7 @@
   const pending = new Map();
   let seq = 0;
   let feedSyncIntervalId = 0;
+  let activeArchiveReveal = null;
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
@@ -2626,6 +2622,7 @@
   }
 
   function dismissTransientUiForRouteChange() {
+    dismissArchiveReveal({ immediate: true });
     dismissOpenCardMenu(false);
     dismissTraceSheet();
     dismissOriginSheet();
@@ -2699,6 +2696,7 @@
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
     feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked());
+    dismissArchiveReveal({ immediate: true });
     if (state.route === "settings") {
       feed.replaceChildren(settingsPageView());
       return;
@@ -3068,9 +3066,14 @@
         void showMeetingDetail(meeting);
       }
     });
-    appendCardSwipeAction(wrapper);
+    appendArchiveRevealAction(wrapper, {
+      label: `Archive ${meetingTitle(meeting)}`
+    });
     wrapper.append(row);
-    installMeetingArchiveSwipe(wrapper, meeting);
+    installArchiveReveal(wrapper, meeting, {
+      canReveal: canRevealMeetingArchive,
+      performArchive: () => performMeetingArchive(meeting)
+    });
     return wrapper;
   }
 
@@ -3679,9 +3682,14 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    appendCardSwipeAction(wrapper);
+    appendArchiveRevealAction(wrapper, {
+      label: `Archive ${card.title || "reply"}`
+    });
     wrapper.append(cardEl);
-    installCardArchiveSwipe(wrapper, card);
+    installArchiveReveal(wrapper, card, {
+      canReveal: canRevealHomeArchive,
+      performArchive: () => performHomeArchive(card)
+    });
     return wrapper;
   }
 
@@ -3704,17 +3712,17 @@
       meta.append(time);
     }
     cardEl.append(copy, meta);
-    appendCardSwipeAction(wrapper);
     wrapper.append(cardEl);
-    installCardArchiveSwipe(wrapper, card);
     return wrapper;
   }
 
-  function appendCardSwipeAction(wrapper) {
-    const action = el("div", "card-swipe-action");
-    action.setAttribute("aria-hidden", "true");
-    action.innerHTML = iconSvg("archive_folder", { filled: true });
-    action.append(el("span", "card-swipe-label", "Archive"));
+  function appendArchiveRevealAction(wrapper, config = {}) {
+    const action = el("button", "archive-reveal-action");
+    action.type = "button";
+    action.tabIndex = -1;
+    action.dataset.dragIgnore = "true";
+    action.setAttribute("aria-label", config.label || "Archive");
+    action.innerHTML = iconSvg("delete", { filled: true });
     wrapper.append(action);
   }
 
@@ -5689,109 +5697,173 @@
     const meetingId = String(meeting && meeting.meeting_id || "").trim();
     state.meetings.records = state.meetings.records.map(item =>
       meetingId && String(item && item.meeting_id || "") === meetingId ? { ...item, archived: true } : item
-    ).filter(meeting => !Boolean(meeting && meeting.archived));
+    ).filter(record => !Boolean(record && record.archived));
+    render();
     return () => {
       state.meetings.records = previousMeetings;
       render();
     };
   }
 
-  function canArchiveBySwipe(card) {
+  function applyOptimisticHomeArchive(card) {
+    const previousCards = state.cards.slice();
+    const target = findCardByIdentity(card) || card;
+    const targetCardId = String(target && target.card_id || "");
+    const targetSessionId = cardSessionId(target);
+    state.cards = state.cards.map(item => {
+      const sameCardId = targetCardId && String(item && item.card_id || "") === targetCardId;
+      const sameSession = targetSessionId && cardSessionId(item) === targetSessionId;
+      return sameCardId || sameSession ? { ...item, archived: true } : item;
+    });
+    reconcileFocusedCardSelection();
+    reconcileReadOverrides();
+    clearMissingFeedIconFilter();
+    render();
+    return () => {
+      state.cards = previousCards;
+      reconcileFocusedCardSelection();
+      reconcileReadOverrides();
+      clearMissingFeedIconFilter();
+      render();
+    };
+  }
+
+  async function performHomeArchive(card) {
+    const rollback = applyOptimisticHomeArchive(card);
+    const result = await archiveHomeCard(card);
+    if (result === null || result && result.ok === false) {
+      rollback();
+      return null;
+    }
+    return result;
+  }
+
+  async function performMeetingArchive(meeting) {
+    const rollback = applyOptimisticMeetingArchive(meeting);
+    try {
+      const result = await archiveMeetingRecord(meeting);
+      if (result === null || result && result.ok === false) {
+        rollback();
+        return null;
+      }
+      return result;
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  }
+
+  function canRevealHomeArchive(card) {
     if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing) {
       return false;
     }
-    if (Boolean(card?.archived)) {
+    if (Boolean(card?.archived) || isPendingOutboundCard(card)) {
       return false;
-    }
-    if (isPendingOutboundCard(card)) {
-      return isFailedPendingOutboundCard(card);
     }
     return Boolean(cardSessionId(card) || String(card?.card_id || ""));
   }
 
-  function canArchiveMeetingBySwipe(meeting) {
+  function canRevealMeetingArchive(meeting) {
     return state.route === "meetings"
       && !state.meetings.loading
       && !Boolean(meeting?.archived)
       && Boolean(String(meeting?.meeting_id || "").trim());
   }
 
-  function installFeedLikeSwipeArchive(wrapper, item, config) {
-    const card = item;
-    const cardEl = wrapper?.querySelector(".card, .meeting-row-card");
-    if (!cardEl) {
+  function dismissArchiveReveal(options = {}) {
+    if (!activeArchiveReveal) {
+      return false;
+    }
+    const { wrapper, actionButton } = activeArchiveReveal;
+    activeArchiveReveal = null;
+    if (!wrapper || !wrapper.isConnected) {
+      return true;
+    }
+    wrapper.classList.remove(
+      "is-archive-reveal-active",
+      "is-archive-reveal-open",
+      "is-archive-reveal-dragging"
+    );
+    if (options.immediate) {
+      wrapper.classList.add("is-archive-reveal-immediate");
+      window.requestAnimationFrame(() => {
+        wrapper.classList.remove("is-archive-reveal-immediate");
+      });
+    }
+    wrapper.style.setProperty("--archive-reveal-offset", "0px");
+    if (actionButton) {
+      actionButton.tabIndex = -1;
+    }
+    return true;
+  }
+
+  function setActiveArchiveReveal(entry) {
+    if (activeArchiveReveal && activeArchiveReveal.wrapper !== entry.wrapper) {
+      activeArchiveReveal.close({ immediate: false });
+    }
+    activeArchiveReveal = entry;
+  }
+
+  function installArchiveReveal(wrapper, item, config) {
+    const revealTrack = wrapper?.querySelector(".card, .meeting-row-card");
+    const actionButton = wrapper?.querySelector(".archive-reveal-action");
+    if (!revealTrack || !actionButton) {
       return;
     }
     let startX = 0;
     let startY = 0;
+    let startOffset = 0;
     let activePointerId = null;
     let active = false;
     let horizontal = false;
-    let swiped = false;
-    let swipeOffset = 0;
-    let lastX = 0;
-    let lastAt = 0;
-    let velocityX = 0;
     let pointerCaptured = false;
+    let busy = false;
     const preferTouchEvents = prefersTouchInput();
 
-    const cardWidth = () => Math.max(1, cardEl.getBoundingClientRect().width || wrapper.getBoundingClientRect().width || 1);
-
-    const triggerDistance = () => Math.max(
-      CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX,
-      Math.round(cardWidth() * CARD_ARCHIVE_SWIPE_TRIGGER_RATIO)
-    );
-
-    const maxDragDistance = () => Math.round(cardWidth() * 1.05);
-
-    const collapseDurationMs = () => {
-      const marginBottom = parseFloat(window.getComputedStyle(wrapper).marginBottom || "0") || 0;
-      const collapseDistance = wrapper.getBoundingClientRect().height + marginBottom;
-      return Math.max(
-        CARD_ARCHIVE_SWIPE_COLLAPSE_MS,
-        Math.round(
-          (collapseDistance / CARD_ARCHIVE_SWIPE_REFERENCE_COLLAPSE_DISTANCE_PX)
-          * CARD_ARCHIVE_SWIPE_COLLAPSE_MS
-        )
-      );
+    const currentOffset = () => {
+      const raw = wrapper.style.getPropertyValue("--archive-reveal-offset");
+      const parsed = parseFloat(raw || "0");
+      return Number.isFinite(parsed) ? parsed : 0;
     };
 
-    const applyOffset = x => {
-      swipeOffset = Math.max(0, Math.min(maxDragDistance(), Math.round(x)));
-      wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
-      wrapper.classList.toggle("is-card-swipe-active", swipeOffset > 0);
-      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= triggerDistance());
+    const applyOffset = offset => {
+      const nextOffset = Math.max(0, Math.min(ARCHIVE_REVEAL_WIDTH_PX, Math.round(offset)));
+      wrapper.style.setProperty("--archive-reveal-offset", `${nextOffset}px`);
+      wrapper.classList.toggle("is-archive-reveal-active", nextOffset > 0);
+      const isOpen = nextOffset === ARCHIVE_REVEAL_WIDTH_PX;
+      wrapper.classList.toggle("is-archive-reveal-open", isOpen);
+      actionButton.tabIndex = isOpen ? 0 : -1;
+      return nextOffset;
     };
 
-    const clearSwipeClasses = () => {
-      wrapper.classList.remove(
-        "is-card-swipe-active",
-        "is-card-swipe-armed",
-        "is-card-swipe-dragging",
-        "is-card-snapback",
-        "is-card-swiped-away",
-        "is-card-collapsing"
-      );
-    };
-
-    const reset = (options = {}) => {
+    const closeReveal = (options = {}) => {
       releasePointerCapture();
       active = false;
       horizontal = false;
-      swiped = false;
       activePointerId = null;
-      wrapper.style.removeProperty("--card-archive-collapse-ms");
-      if (options.animate && swipeOffset > 0) {
-        wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-armed");
-        wrapper.classList.add("is-card-snapback");
-        applyOffset(0);
-        window.setTimeout(() => {
-          wrapper.classList.remove("is-card-snapback", "is-card-swipe-active");
-        }, CARD_ARCHIVE_SWIPE_SNAPBACK_MS);
-        return;
+      wrapper.classList.remove("is-archive-reveal-dragging");
+      if (options.immediate) {
+        wrapper.classList.add("is-archive-reveal-immediate");
       }
       applyOffset(0);
-      clearSwipeClasses();
+      if (options.immediate) {
+        window.requestAnimationFrame(() => {
+          wrapper.classList.remove("is-archive-reveal-immediate");
+        });
+      }
+      if (activeArchiveReveal && activeArchiveReveal.wrapper === wrapper) {
+        activeArchiveReveal = null;
+      }
+    };
+
+    const openReveal = () => {
+      wrapper.classList.remove("is-archive-reveal-dragging", "is-archive-reveal-immediate");
+      applyOffset(ARCHIVE_REVEAL_WIDTH_PX);
+      setActiveArchiveReveal({
+        wrapper,
+        actionButton,
+        close: closeReveal
+      });
     };
 
     const capturePointer = pointer => {
@@ -5820,22 +5892,19 @@
     };
 
     const begin = (x, y, target, pointer = null) => {
-      if (!config.canArchive(card) || isDragIgnoredTarget(target)) {
+      if (busy || !config.canReveal(item) || isDragIgnoredTarget(target)) {
         return;
+      }
+      if (activeArchiveReveal && activeArchiveReveal.wrapper !== wrapper) {
+        activeArchiveReveal.close({ immediate: false });
       }
       startX = x;
       startY = y;
-      lastX = x;
-      lastAt = performance.now();
-      velocityX = 0;
+      startOffset = currentOffset();
       activePointerId = pointer;
       active = true;
       horizontal = false;
-      swiped = false;
-      wrapper.style.height = "";
-      wrapper.style.marginBottom = "";
-      clearSwipeClasses();
-      applyOffset(0);
+      wrapper.classList.remove("is-archive-reveal-immediate");
     };
 
     const move = (x, y) => {
@@ -5844,25 +5913,16 @@
       }
       const dx = x - startX;
       const dy = y - startY;
-      const now = performance.now();
-      const dt = Math.max(1, now - lastAt);
-      velocityX = (x - lastX) / dt;
-      lastX = x;
-      lastAt = now;
-      if (!horizontal && Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX && Math.abs(dy) < CARD_ARCHIVE_SWIPE_SLOP_PX) {
+      if (!horizontal && Math.abs(dx) < ARCHIVE_REVEAL_SLOP_PX && Math.abs(dy) < ARCHIVE_REVEAL_SLOP_PX) {
         return;
       }
       if (!horizontal && Math.abs(dy) > Math.abs(dx)) {
-        reset();
+        closeReveal({ immediate: true });
         return;
       }
       horizontal = true;
-      wrapper.classList.add("is-card-swipe-dragging");
-      if (dx <= 0) {
-        applyOffset(0);
-        return;
-      }
-      applyOffset(dx);
+      wrapper.classList.add("is-archive-reveal-dragging");
+      applyOffset(startOffset - dx);
     };
 
     const finish = () => {
@@ -5872,45 +5932,28 @@
       active = false;
       releasePointerCapture();
       activePointerId = null;
-      const committed = swipeOffset >= triggerDistance()
-        || (velocityX >= CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS && swipeOffset >= CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX);
-      if (!horizontal || !committed || swiped) {
-        reset({ animate: horizontal });
+      wrapper.classList.remove("is-archive-reveal-dragging");
+      if (!horizontal) {
         return;
       }
-      swiped = true;
-      state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-      const rollback = config.optimistic(card);
-      const measuredHeight = wrapper.getBoundingClientRect().height;
-      const collapseMs = collapseDurationMs();
-      wrapper.style.height = `${Math.max(1, Math.ceil(measuredHeight))}px`;
-      wrapper.style.setProperty("--card-archive-collapse-ms", `${collapseMs}ms`);
-      wrapper.classList.add("is-card-swiped-away");
-      wrapper.classList.remove("is-card-swipe-dragging", "is-card-swipe-active", "is-card-swipe-armed", "is-card-snapback");
-      applyOffset(maxDragDistance());
-      window.setTimeout(() => {
-        wrapper.classList.add("is-card-collapsing");
-        window.setTimeout(() => {
-          render();
-        }, collapseMs);
-      }, CARD_ARCHIVE_SWIPE_EXIT_MS);
-      void config.archive(card).then(result => {
-        if (result === null) {
-          wrapper.style.height = "";
-          wrapper.style.marginBottom = "";
-          clearSwipeClasses();
-          rollback();
-        }
-      }).catch(error => {
-        wrapper.style.height = "";
-        wrapper.style.marginBottom = "";
-        clearSwipeClasses();
-        rollback();
-        showToast(error.message);
-      });
+      if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX) {
+        openReveal();
+        return;
+      }
+      closeReveal({ immediate: false });
     };
 
     wrapper.addEventListener("click", event => {
+      if (wrapper.classList.contains("is-archive-reveal-open")) {
+        const actionTarget = event.target instanceof Element ? event.target.closest(".archive-reveal-action") : null;
+        if (!actionTarget) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          closeReveal({ immediate: false });
+          return;
+        }
+      }
       if (shouldSuppressCardActivation()) {
         event.preventDefault();
         event.stopPropagation();
@@ -5972,143 +6015,19 @@
     wrapper.addEventListener("touchcancel", () => {
       finish();
     });
-  }
-
-  function installCardArchiveSwipe(wrapper, card) {
-    const cardEl = wrapper?.querySelector(".card");
-    if (!cardEl) {
-      return;
-    }
-    let startX = 0;
-    let startY = 0;
-    let activePointerId = null;
-    let active = false;
-    let horizontal = false;
-    let swiped = false;
-    let swipeOffset = 0;
-
-    const applyOffset = x => {
-      swipeOffset = Math.max(0, Math.min(CARD_ARCHIVE_SWIPE_MAX_PX, Math.round(x)));
-      wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
-      wrapper.classList.toggle("is-card-swipe-active", swipeOffset > 0);
-      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= CARD_ARCHIVE_SWIPE_TRIGGER_PX);
-    };
-
-    const reset = () => {
-      active = false;
-      horizontal = false;
-      swiped = false;
-      activePointerId = null;
-      applyOffset(0);
-    };
-
-    const begin = (x, y, target, pointer = null) => {
-      if (!canArchiveBySwipe(card) || isDragIgnoredTarget(target)) {
+    actionButton.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy) {
         return;
       }
-      startX = x;
-      startY = y;
-      activePointerId = pointer;
-      active = true;
-      horizontal = false;
-      swiped = false;
-      applyOffset(0);
-    };
-
-    const move = (x, y) => {
-      if (!active) {
-        return;
-      }
-      const dx = x - startX;
-      const dy = y - startY;
-      if (!horizontal && Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX && Math.abs(dy) < CARD_ARCHIVE_SWIPE_SLOP_PX) {
-        return;
-      }
-      if (!horizontal && Math.abs(dy) > Math.abs(dx)) {
-        reset();
-        return;
-      }
-      horizontal = true;
-      if (dx <= 0) {
-        applyOffset(0);
-        return;
-      }
-      applyOffset(dx);
-    };
-
-    const finish = () => {
-      if (!active) {
-        return;
-      }
-      active = false;
-      activePointerId = null;
-      if (!horizontal || swipeOffset < CARD_ARCHIVE_SWIPE_TRIGGER_PX || swiped) {
-        reset();
-        return;
-      }
-      swiped = true;
-      state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-      wrapper.classList.add("is-card-swiped-away");
-      applyOffset(CARD_ARCHIVE_SWIPE_MAX_PX);
-      void archiveHomeCard(card).then(result => {
-        if (!result) {
-          wrapper.classList.remove("is-card-swiped-away");
-          reset();
-        }
+      busy = true;
+      activeArchiveReveal = null;
+      void config.performArchive(item).catch(error => {
+        showToast(error.message);
+      }).finally(() => {
+        busy = false;
       });
-    };
-
-    wrapper.addEventListener("click", event => {
-      if (shouldSuppressCardActivation()) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      }
-    }, true);
-    wrapper.addEventListener("pointerdown", event => {
-      begin(event.clientX, event.clientY, event.target, event.pointerId);
-    });
-    wrapper.addEventListener("pointermove", event => {
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      move(event.clientX, event.clientY);
-    });
-    wrapper.addEventListener("pointerup", event => {
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      finish();
-    });
-    wrapper.addEventListener("pointercancel", event => {
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      finish();
-    });
-    wrapper.addEventListener("touchstart", event => {
-      if (event.touches.length) {
-        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
-      }
-    }, { passive: true });
-    wrapper.addEventListener("touchmove", event => {
-      if (event.touches.length) {
-        move(event.touches[0].clientX, event.touches[0].clientY);
-      }
-    }, { passive: true });
-    wrapper.addEventListener("touchend", () => {
-      finish();
-    });
-    wrapper.addEventListener("touchcancel", () => {
-      finish();
-    });
-  }
-
-  function installMeetingArchiveSwipe(wrapper, meeting) {
-    installFeedLikeSwipeArchive(wrapper, meeting, {
-      canArchive: canArchiveMeetingBySwipe,
-      optimistic: applyOptimisticMeetingArchive,
-      archive: archiveMeetingRecord
     });
   }
 
@@ -6123,6 +6042,22 @@
         return;
       }
       dismissOpenCardMenu(true);
+    }, true);
+  }
+
+  function installArchiveRevealOutsideDismiss() {
+    document.addEventListener("pointerdown", event => {
+      if (!activeArchiveReveal) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".archive-reveal-action")) {
+        return;
+      }
+      if (target && activeArchiveReveal.wrapper.contains(target)) {
+        return;
+      }
+      dismissArchiveReveal({ immediate: false });
     }, true);
   }
 
@@ -8460,6 +8395,7 @@
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
+  installArchiveRevealOutsideDismiss();
   void syncVoiceThreadScope({ reason: "boot", render: true });
   loadTurnStatus({ render: false });
   refreshMeetingRecordingStatus({ render: true });
