@@ -251,6 +251,14 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
     assert 'value.startsWith("/data/pucky-src/")' in app
     assert "function meetingTranscriptSection(meeting)" in app
+    assert "function meetingTranscriptAction(card)" in app
+    assert 'return "View Transcript";' in function_block(app, "meetingTranscriptLabel")
+    resolve_artifact = function_block(app, "resolveArtifactUrl")
+    assert 'const path = mediaPath(item);' in resolve_artifact
+    assert 'if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {' in resolve_artifact
+    assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_artifact
+    assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
+    assert "async function resolveLocalArtifactPath(path, item, options = {})" in app
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app

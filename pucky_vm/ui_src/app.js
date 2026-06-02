@@ -4795,14 +4795,21 @@
     if (item.url) {
       return String(item.url);
     }
+    const path = mediaPath(item);
+    if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      return resolveLocalArtifactPath(path, item, options);
+    }
     const bundled = bundledArtifactPath(item);
     if (bundled) {
       return bundled;
     }
-    const path = mediaPath(item);
     if (!path) {
       throw new Error("attachment path is missing");
     }
+    return resolveLocalArtifactPath(path, item, options);
+  }
+
+  async function resolveLocalArtifactPath(path, item, options = {}) {
     if (!options.preferDataUrl && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       try {
         const result = await Pucky.request({
@@ -5309,10 +5316,6 @@
   }
 
   function meetingTranscriptLabel(meeting) {
-    const speakerTurns = Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
-    if (speakerTurns.length) {
-      return "View Diarized Transcript";
-    }
     return "View Transcript";
   }
 
