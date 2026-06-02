@@ -3962,6 +3962,14 @@
     wrapper.append(action);
   }
 
+  function preparedAudioFilename(label, fallbackBase = "meeting-audio") {
+    const base = String(label || fallbackBase)
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 72) || fallbackBase;
+    return `${base}.m4a`;
+  }
+
   async function prepareAudioForPlayback(card) {
     if (!card || typeof card !== "object") {
       return "";
@@ -3973,10 +3981,7 @@
     if (!url) {
       return String(card.audio_path || "");
     }
-    const filename = `${String(card.session_id || card.title || "meeting-audio")
-      .replace(/[^A-Za-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 72) || "meeting-audio"}.m4a`;
+    const filename = preparedAudioFilename(card.session_id || card.title || "meeting-audio");
     const result = await Pucky.request({
       command: "player.asset.prepare",
       args: {
@@ -3996,6 +4001,35 @@
       card.meeting_record.device_path = path;
     }
     return path;
+  }
+
+  async function resolveAudioAttachmentSrc(item, options = {}) {
+    const path = String(mediaPath(item) || "").trim();
+    if (path && isAndroidPlayableAudioPath(path)) {
+      return resolveLocalArtifactPath(path, item, options);
+    }
+    if (item && (item.src || item.data_url)) {
+      return String(item.src || item.data_url);
+    }
+    const url = String(item && item.url || "").trim();
+    if (url && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      const result = await Pucky.request({
+        command: "player.asset.prepare",
+        args: {
+          url,
+          title: item && item.title || "Meeting audio",
+          filename: preparedAudioFilename(item && item.title || "meeting-audio"),
+          mime_type: item && item.mime_type || "audio/mp4",
+          max_bytes: options.maxBytes || 96 * 1024 * 1024
+        }
+      });
+      const preparedPath = String(result && (result.device_path || result.path || result.local_path) || "").trim();
+      if (!preparedPath) {
+        throw new Error("Audio unavailable: prepared asset path is missing.");
+      }
+      return resolveLocalArtifactPath(preparedPath, { ...(item || {}), path: preparedPath }, options);
+    }
+    return resolveArtifactUrl(item, options);
   }
 
   async function toggleAudio(card) {
@@ -4557,7 +4591,7 @@
     rememberNavDetail("attachment", card, options);
     void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
     try {
-      audio.src = await resolveArtifactUrl(item, { maxBytes: 32 * 1024 * 1024 });
+      audio.src = await resolveAudioAttachmentSrc(item, { maxBytes: 32 * 1024 * 1024 });
     } catch (error) {
       wrap.append(el("p", "attachment-error", `Audio unavailable: ${error.message}`));
     }

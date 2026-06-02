@@ -7,6 +7,12 @@ import threading
 import time
 from pathlib import Path
 
+from .sqlite_utils import (
+    configure_sqlite_connection,
+    sqlite_retry_busy_timeout_ms,
+    sqlite_retry_timeout_seconds,
+)
+
 
 def _iso_time(epoch_seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
@@ -34,10 +40,17 @@ class FeedStore:
         self.db_path = str(Path(db_path).resolve())
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            timeout=sqlite_retry_timeout_seconds(),
+        )
         self._conn.row_factory = sqlite3.Row
-        with self._conn:
-            self._conn.execute("PRAGMA journal_mode=WAL")
+        configure_sqlite_connection(
+            self._conn,
+            wal=True,
+            busy_timeout_ms=sqlite_retry_busy_timeout_ms(),
+        )
         self._ensure_schema()
 
     def close(self) -> None:

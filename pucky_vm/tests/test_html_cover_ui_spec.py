@@ -246,6 +246,7 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "showMeetingDetail(meeting)" in app
     assert "function meetingPlayablePath(meeting)" in app
     assert "function isAndroidPlayableAudioPath(path)" in app
+    assert "function preparedAudioFilename(label, fallbackBase = \"meeting-audio\")" in app
     assert "audio_path: meetingPlayablePath(card)" in app
     assert 'audio_url: String(card.audio_url || "")' in app
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
@@ -269,6 +270,11 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "Processing..." in app
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
+    resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
+    assert 'if (path && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
+    assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
+    assert 'command: "player.asset.prepare"' in resolve_audio_attachment
+    assert 'return resolveArtifactUrl(item, options);' in resolve_audio_attachment
     assert ".meetings-page" in styles
     assert ".meetings-list-card" in styles
     assert ".card.card-meeting-processing" in styles
@@ -312,6 +318,8 @@ def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
     timestamp = app.split("async function commitTimestamp", 1)[1].split("async function jumpToTimestamp", 1)[0]
     assert "const audioPath = await prepareAudioForPlayback(card);" in timestamp
     assert 'case "player.asset.prepare":' in bridge
+    audio_attachment = function_block(app, "showAudioAttachment")
+    assert "await resolveAudioAttachmentSrc(item, { maxBytes: 32 * 1024 * 1024 })" in audio_attachment
 
 
 def test_meeting_transcript_uses_remaining_detail_height() -> None:

@@ -5,6 +5,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .sqlite_utils import (
+    configure_sqlite_connection,
+    sqlite_retry_busy_timeout_ms,
+    sqlite_retry_timeout_seconds,
+)
+
 DEFAULT_RECENT_LIMIT = 150
 LOW_SIGNAL_ACTIONS = (
     "GET /api/feed",
@@ -156,7 +162,15 @@ class ActionLedger:
             conn.close()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.path), timeout=0.05)
+        conn = sqlite3.connect(
+            str(self.path),
+            timeout=sqlite_retry_timeout_seconds(),
+        )
+        return configure_sqlite_connection(
+            conn,
+            wal=True,
+            busy_timeout_ms=sqlite_retry_busy_timeout_ms(),
+        )
 
 
 def _clean(value: Any) -> str:

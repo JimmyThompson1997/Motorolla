@@ -20,6 +20,7 @@ from unittest.mock import patch
 from pucky_vm.server import (
     Config,
     PuckyVoiceService,
+    _meeting_request_audio_attachment,
     make_handler,
     meeting_reply_output_schema,
     parse_reply_envelope,
@@ -1066,6 +1067,12 @@ class ServerTests(unittest.TestCase):
         messages = persisted["transcript_messages"]
         self.assertEqual(messages[0]["text"], "Meeting recording")
         self.assertNotIn("Meeting Recording Agent Handoff", json.dumps(messages))
+        request_audio_attachment = messages[0]["attachments"][0]
+        self.assertEqual(request_audio_attachment["title"], "Your audio")
+        self.assertEqual(
+            request_audio_attachment["path"],
+            "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+        )
         attachments = messages[1]["attachments"]
         transcript_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript")
         summary_attachment = next(item for item in attachments if item["kind"] == "html")
@@ -1237,12 +1244,15 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(meeting["state"], "failed")
         self.assertEqual(meeting["failure_reason"], "OperationalError: database is locked")
+        self.assertEqual(meeting["failure_stage"], "meeting_agent_call")
         self.assertEqual(meeting["transcript_status"], "failed")
         self.assertEqual(meeting["diarization_status"], "failed")
         self.assertEqual(meeting["card_id"], "pucky_card_" + meeting_id)
         self.assertEqual(meeting["card"]["card_kind"], "meeting_failed")
         self.assertEqual(meeting["card"]["meeting_state"], "failed")
+        self.assertEqual(meeting["card"]["failure_stage"], "meeting_agent_call")
         self.assertEqual(meeting["card"]["title"], "Meeting processing failed")
+        self.assertIn("meeting_agent_call", meeting["card"]["summary"])
         self.assertIn("database is locked", meeting["card"]["summary"])
 
         persisted = self.service.feed.get_item("pucky_card_" + meeting_id)
@@ -1255,6 +1265,105 @@ class ServerTests(unittest.TestCase):
             sum(1 for item in feed.get("items", []) if item.get("card_id") == "pucky_card_" + meeting_id),
             1,
         )
+
+    def test_meeting_agent_retries_transient_sqlite_lock_and_completes(self) -> None:
+        class RetryMeetingCodex(FakeCodex):
+            def __init__(self) -> None:
+                super().__init__()
+                self.failures_remaining = 2
+
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                output_schema: dict[str, object] | None = None,
+            ):
+                if self.failures_remaining > 0:
+                    self.failures_remaining -= 1
+                    raise sqlite3.OperationalError("database is locked")
+                return super().send_turn(text, thread_id=thread_id, output_schema=output_schema)
+
+        self.service.codex = RetryMeetingCodex()
+        meeting_id = "meeting-20260601-121600-device-retrycodex"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:16:00Z",
+                "stopped_at": "2026-06-01T12:16:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_retry.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+
+        meeting = {}
+        for _ in range(50):
+            meetings = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"})
+            meeting = next((item for item in meetings.get("meetings", []) if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(meeting["failure_stage"], "")
+        self.assertEqual(self.service.codex.failures_remaining, 0)
+        self.assertEqual(len(self.service.codex.turns), 1)
+
+    def test_feed_persist_retries_transient_sqlite_lock_and_completes(self) -> None:
+        original_upsert = self.service.feed.upsert_turn_result
+        failures_remaining = {"count": 2}
+
+        def flaky_upsert(*args, **kwargs):
+            title = kwargs.get("title")
+            if title != "Processing meeting recording" and failures_remaining["count"] > 0:
+                failures_remaining["count"] -= 1
+                raise sqlite3.OperationalError("database is locked")
+            return original_upsert(*args, **kwargs)
+
+        with patch.object(self.service.feed, "upsert_turn_result", side_effect=flaky_upsert):
+            meeting_id = "meeting-20260601-121700-device-retrypersist"
+            self.post_json(
+                "/api/meetings",
+                {
+                    "meeting_id": meeting_id,
+                    "started_at": "2026-06-01T12:17:00Z",
+                    "stopped_at": "2026-06-01T12:17:05Z",
+                    "duration_ms": 5000,
+                    "device_id": "device-1",
+                    "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_retry_persist.m4a",
+                    "mime_type": "audio/mp4",
+                    "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+                },
+            )
+
+            meeting = {}
+            for _ in range(50):
+                meetings = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"})
+                meeting = next((item for item in meetings.get("meetings", []) if item.get("meeting_id") == meeting_id), {})
+                if meeting.get("state") == "completed":
+                    break
+                time.sleep(0.1)
+
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(failures_remaining["count"], 0)
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(
+            sum(1 for item in feed.get("items", []) if item.get("card_id") == "pucky_card_" + meeting_id),
+            1,
+        )
+
+    def test_meeting_request_audio_attachment_uses_generic_title_for_seeded_benchmark(self) -> None:
+        attachment = _meeting_request_audio_attachment(
+            {
+                "device_path": "/proof-fixtures/two_intro_once.wav",
+            }
+        )
+        self.assertEqual(attachment["title"], "Meeting audio")
+        self.assertNotIn("path", attachment)
 
     def test_meeting_agent_missing_result_is_not_marked_successful(self) -> None:
         class MissingMeetingResultCodex(FakeCodex):

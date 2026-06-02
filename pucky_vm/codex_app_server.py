@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .sqlite_utils import (
+    configure_sqlite_connection,
+    sqlite_retry_busy_timeout_ms,
+    sqlite_retry_timeout_seconds,
+)
+
 
 class CodexAppServerError(RuntimeError):
     pass
@@ -337,8 +343,15 @@ class CodexAppServerClient:
         if state_db is None or not state_db.exists():
             return None
         try:
-            conn = sqlite3.connect(str(state_db))
+            conn = sqlite3.connect(
+                str(state_db),
+                timeout=sqlite_retry_timeout_seconds(),
+            )
             conn.row_factory = sqlite3.Row
+            configure_sqlite_connection(
+                conn,
+                busy_timeout_ms=sqlite_retry_busy_timeout_ms(),
+            )
             try:
                 row = conn.execute(
                     """

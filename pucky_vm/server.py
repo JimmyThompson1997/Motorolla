@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import hashlib
@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -34,6 +35,7 @@ from .http_surface import (
     text_body,
 )
 from .providers import DeepgramSTT, KokoroTTS
+from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
 
@@ -101,8 +103,33 @@ PUCKY_BASE_PLACEHOLDERS = (
 )
 
 
+class _StagedOperationError(RuntimeError):
+    def __init__(self, stage: str, original: BaseException) -> None:
+        self.stage = str(stage or "").strip() or "unknown"
+        self.original = original
+        super().__init__(str(original))
+
+
 def _truthy_query(value: object) -> bool:
     return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _run_staged_operation(
+    stage: str,
+    operation: Callable[[], object],
+    *,
+    sqlite_retry: bool = False,
+) -> object:
+    delays = SQLITE_LOCK_RETRY_DELAYS_SECONDS if sqlite_retry else ()
+    for attempt in range(len(delays) + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            if sqlite_retry and sqlite_lock_error(exc) and attempt < len(delays):
+                time.sleep(delays[attempt])
+                continue
+            raise _StagedOperationError(stage, exc) from exc
+    raise RuntimeError("unreachable")
 
 
 def load_codex_base_instructions_file(path: str | None) -> str | None:
@@ -1414,13 +1441,18 @@ class PuckyVoiceService:
             "diarization_status": "pending",
             "speaker_turns": [],
             "archived": False,
+            "failure_stage": "",
         }
-        self._upsert_meeting(record)
-        placeholder = self._upsert_meeting_processing_card(record, audio, mime_type)
+        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
+        placeholder = _run_staged_operation(
+            "meeting_processing_card_upsert",
+            lambda: self._upsert_meeting_processing_card(record, audio, mime_type),
+            sqlite_retry=True,
+        )
         record["card_id"] = str(placeholder.get("card_id") or "")
         record["card"] = placeholder.get("card") if isinstance(placeholder.get("card"), dict) else {}
         record["feed_item"] = placeholder
-        self._upsert_meeting(record)
+        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
         threading.Thread(
             target=self._process_meeting_record,
             args=(dict(record), audio, mime_type),
@@ -1484,6 +1516,7 @@ class PuckyVoiceService:
                     turn_id=meeting_id,
                     request_audio_mime_type=mime_type,
                     has_request_audio=True,
+                    request_audio_attachment=_meeting_request_audio_attachment(record),
                 ),
                 _assistant_transcript_message(
                     text=summary,
@@ -1552,6 +1585,7 @@ class PuckyVoiceService:
                     turn_id=meeting_id,
                     request_audio_mime_type=mime_type,
                     has_request_audio=True,
+                    request_audio_attachment=_meeting_request_audio_attachment(record),
                 ),
                 _assistant_transcript_message(
                     text=summary,
@@ -1586,7 +1620,13 @@ class PuckyVoiceService:
         meeting_id = str(record.get("meeting_id") or "")
         title = "Meeting processing failed"
         reason = str(record.get("failure_reason") or "unknown error").strip()
-        summary = f"Processing stopped: {reason}" if reason else "Processing stopped."
+        failure_stage = str(record.get("failure_stage") or "").strip()
+        if failure_stage and reason:
+            summary = f"Processing stopped during {failure_stage}: {reason}"
+        elif reason:
+            summary = f"Processing stopped: {reason}"
+        else:
+            summary = "Processing stopped."
         origin = _normalize_origin(
             {
                 "runtime": "pucky",
@@ -1595,6 +1635,7 @@ class PuckyVoiceService:
                 "meeting_id": meeting_id,
                 "card_kind": "meeting_failed",
                 "meeting_state": "failed",
+                "failure_stage": failure_stage,
             },
             meeting_id,
         )
@@ -1613,6 +1654,7 @@ class PuckyVoiceService:
                 "stage": "meeting_agent_failed",
                 "meeting_id": meeting_id,
                 "failure_reason": reason,
+                "failure_stage": failure_stage,
                 "request_audio_bytes": len(audio),
                 "content_type": mime_type,
             },
@@ -1623,6 +1665,7 @@ class PuckyVoiceService:
                     turn_id=meeting_id,
                     request_audio_mime_type=mime_type,
                     has_request_audio=True,
+                    request_audio_attachment=_meeting_request_audio_attachment(record),
                 ),
                 _assistant_transcript_message(
                     text=summary,
@@ -1647,9 +1690,11 @@ class PuckyVoiceService:
             "origin": origin,
             "card_kind": "meeting_failed",
             "meeting_state": "failed",
+            "failure_stage": failure_stage,
         }
         item["card_kind"] = "meeting_failed"
         item["meeting_state"] = "failed"
+        item["failure_stage"] = failure_stage
         return item
 
     def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
@@ -1661,7 +1706,8 @@ class PuckyVoiceService:
         record["diarization_requested"] = True
         record["diarization_status"] = "agent_pending"
         record["speaker_turns"] = []
-        self._upsert_meeting(record)
+        record["failure_stage"] = ""
+        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
 
         prompt = _meeting_agent_handoff_prompt(record)
         total_start = time.perf_counter()
@@ -1695,6 +1741,7 @@ class PuckyVoiceService:
                 total_start=total_start,
                 request_audio_mime_type=mime_type,
                 request_audio_base64=base64.b64encode(audio).decode("ascii"),
+                request_audio_attachment=_meeting_request_audio_attachment(record),
                 output_schema=meeting_reply_output_schema(),
                 display_transcript_text="Meeting recording",
                 force_unread=True,
@@ -1703,6 +1750,8 @@ class PuckyVoiceService:
                     record=record,
                     envelope=envelope,
                 ),
+                codex_stage="meeting_agent_call",
+                feed_persist_stage="feed_persist",
             )
             record["state"] = "completed"
             record["updated_at"] = _iso_time(time.time())
@@ -1710,27 +1759,47 @@ class PuckyVoiceService:
             record["card"] = result.get("card") if isinstance(result.get("card"), dict) else {}
             record["feed_item"] = result
             record["failure_reason"] = ""
+            record["failure_stage"] = ""
             self._apply_meeting_agent_result(record, result)
             if record.get("transcript_status") == "missing_agent_result":
                 record["state"] = "completed_with_missing_result"
                 record["failure_reason"] = "meeting_agent_missing_result"
-                blocker = self._upsert_meeting_missing_result_card(record, audio, mime_type)
+                record["failure_stage"] = "meeting_result_validation"
+                blocker = _run_staged_operation(
+                    "meeting_missing_result_card_upsert",
+                    lambda: self._upsert_meeting_missing_result_card(record, audio, mime_type),
+                    sqlite_retry=True,
+                )
                 record["card_id"] = str(blocker.get("card_id") or "")
                 record["card"] = blocker.get("card") if isinstance(blocker.get("card"), dict) else {}
                 record["feed_item"] = blocker
         except Exception as exc:
+            stage = exc.stage if isinstance(exc, _StagedOperationError) else "meeting_agent_call"
+            root = exc.original if isinstance(exc, _StagedOperationError) else exc
             record["state"] = "failed"
             record["updated_at"] = _iso_time(time.time())
-            record["failure_reason"] = f"{exc.__class__.__name__}: {exc}"
+            record["failure_stage"] = str(stage or "meeting_agent_call")
+            record["failure_reason"] = f"{root.__class__.__name__}: {root}"
             record["transcript_status"] = "failed"
             record["transcript_error"] = str(record["failure_reason"])
             record["diarization_status"] = "failed"
-            failed = self._upsert_meeting_failed_card(record, audio, mime_type)
-            record["card_id"] = str(failed.get("card_id") or "")
-            record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
-            record["feed_item"] = failed
+            try:
+                failed = _run_staged_operation(
+                    "meeting_failed_card_upsert",
+                    lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
+                    sqlite_retry=True,
+                )
+                record["card_id"] = str(failed.get("card_id") or "")
+                record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
+                record["feed_item"] = failed
+            except Exception as failed_exc:
+                failed_stage = failed_exc.stage if isinstance(failed_exc, _StagedOperationError) else "meeting_failed_card_upsert"
+                record["failed_card_error"] = str(
+                    failed_exc.original if isinstance(failed_exc, _StagedOperationError) else failed_exc
+                )
+                record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
             result = {}
-        self._upsert_meeting(record)
+        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
 
     @staticmethod
     def _apply_meeting_agent_result(record: dict[str, object], result: dict[str, object]) -> None:
@@ -2120,26 +2189,32 @@ class PuckyVoiceService:
         total_start: float,
         request_audio_mime_type: str,
         request_audio_base64: str,
+        request_audio_attachment: dict[str, object] | None = None,
         output_schema: dict[str, object] | None = None,
         display_transcript_text: str | None = None,
         force_unread: bool = False,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
+        codex_stage: str = "codex_turn",
+        feed_persist_stage: str = "feed_persist",
     ) -> dict[str, object]:
         telemetry["stage"] = "codex_running"
         telemetry["codex_start_ms"] = _elapsed_ms(total_start)
         self._update_turn_status(turn_id, "codex_running", "running", telemetry)
         start = time.perf_counter()
         requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
-        try:
-            codex_result = self.codex.send_turn(
-                transcript,
-                thread_id=requested_thread_id or None,
-                output_schema=output_schema,
-            )
-        except TypeError as exc:
-            if "thread_id" not in str(exc) and "output_schema" not in str(exc):
-                raise
-            codex_result = self.codex.send_turn(transcript)  # type: ignore[call-arg]
+        def _send_turn() -> CodexTurnResult | str:
+            try:
+                return self.codex.send_turn(
+                    transcript,
+                    thread_id=requested_thread_id or None,
+                    output_schema=output_schema,
+                )
+            except TypeError as exc:
+                if "thread_id" not in str(exc) and "output_schema" not in str(exc):
+                    raise
+                return self.codex.send_turn(transcript)  # type: ignore[call-arg]
+
+        codex_result = _run_staged_operation(codex_stage, _send_turn, sqlite_retry=True)
         if isinstance(codex_result, str):
             codex_result = CodexTurnResult(
                 reply_text=codex_result,
@@ -2207,6 +2282,7 @@ class PuckyVoiceService:
                 turn_id=turn_id,
                 request_audio_mime_type=request_audio_mime_type,
                 has_request_audio=bool(request_audio_base64),
+                request_audio_attachment=request_audio_attachment,
             ),
             _assistant_transcript_message(
                 text=envelope.reply_text,
@@ -2234,28 +2310,36 @@ class PuckyVoiceService:
         telemetry["status"] = "ok"
         telemetry["feed_db_path"] = self.feed.db_path
         audio_base64 = base64.b64encode(reply_audio).decode("ascii") if reply_audio else ""
-        result = self.feed.upsert_turn_result(
-            turn_id=turn_id,
-            session_id=session_id,
-            reply_mode=reply_mode,
-            reply_text=envelope.reply_text,
-            title=envelope.card_title,
-            summary=envelope.reply_text,
-            icon=envelope.card_icon,
-            origin=origin,
-            telemetry=_public_turn_telemetry(telemetry),
-            transcript_messages=transcript_messages,
-            request_audio_mime_type=request_audio_mime_type,
-            request_audio_base64=request_audio_base64,
-            audio_mime_type=audio_mime_type,
-            audio_base64=audio_base64,
-            html_mime_type=html_mime_type,
-            html_base64=html_base64,
-            force_unread=force_unread,
+        result = _run_staged_operation(
+            feed_persist_stage,
+            lambda: self.feed.upsert_turn_result(
+                turn_id=turn_id,
+                session_id=session_id,
+                reply_mode=reply_mode,
+                reply_text=envelope.reply_text,
+                title=envelope.card_title,
+                summary=envelope.reply_text,
+                icon=envelope.card_icon,
+                origin=origin,
+                telemetry=_public_turn_telemetry(telemetry),
+                transcript_messages=transcript_messages,
+                request_audio_mime_type=request_audio_mime_type,
+                request_audio_base64=request_audio_base64,
+                audio_mime_type=audio_mime_type,
+                audio_base64=audio_base64,
+                html_mime_type=html_mime_type,
+                html_base64=html_base64,
+                force_unread=force_unread,
+            ),
+            sqlite_retry=True,
         )
         card_id = str(result.get("card_id") or "")
         telemetry["card_id"] = card_id
-        verified = self.feed.get_item(card_id)
+        verified = _run_staged_operation(
+            feed_persist_stage,
+            lambda: self.feed.get_item(card_id),
+            sqlite_retry=True,
+        )
         if verified is None:
             telemetry["feed_persisted"] = False
             telemetry["status"] = "failed"
@@ -2658,6 +2742,24 @@ def _assistant_transcript_message(
     return message
 
 
+def _android_app_owned_path(path: object) -> str:
+    value = str(path or "").strip()
+    if not value:
+        return ""
+    if value.startswith("/data/user/0/com.pucky.device") or value.startswith("/data/data/com.pucky.device"):
+        return value
+    return ""
+
+
+def _meeting_request_audio_attachment(record: dict[str, object]) -> dict[str, object]:
+    attachment: dict[str, object] = {"title": "Meeting audio"}
+    device_path = _android_app_owned_path(record.get("device_path"))
+    if device_path:
+        attachment["title"] = "Your audio"
+        attachment["path"] = device_path
+    return attachment
+
+
 def _user_transcript_message(
     *,
     text: str,
@@ -2665,6 +2767,7 @@ def _user_transcript_message(
     turn_id: str,
     request_audio_mime_type: str,
     has_request_audio: bool,
+    request_audio_attachment: dict[str, object] | None = None,
 ) -> dict[str, object]:
     message: dict[str, object] = {
         "role": "user",
@@ -2672,16 +2775,19 @@ def _user_transcript_message(
         "created_at": created_at,
     }
     if has_request_audio:
+        attachment = {
+            "id": f"{turn_id}:request_audio",
+            "artifact": f"pucky_card_{turn_id}:request_audio",
+            "mime_type": request_audio_mime_type or "audio/wav",
+            "title": "Your audio",
+            "kind": "audio",
+        }
+        if isinstance(request_audio_attachment, dict):
+            for key, value in request_audio_attachment.items():
+                if key in {"title", "path", "url", "src", "data_url"} and str(value or "").strip():
+                    attachment[key] = value
         message["attachments"] = [
-            normalize_attachment(
-                {
-                    "id": f"{turn_id}:request_audio",
-                    "artifact": f"pucky_card_{turn_id}:request_audio",
-                    "mime_type": request_audio_mime_type or "audio/wav",
-                    "title": "Your audio",
-                    "kind": "audio",
-                }
-            )
+            normalize_attachment(attachment)
         ]
     return message
 
