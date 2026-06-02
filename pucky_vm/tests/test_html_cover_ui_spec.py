@@ -562,6 +562,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
     can_reveal = function_block(app, "canRevealHomeArchive")
+    filtered = function_block(app, "filteredFeedCards")
     request_mark_read = function_block(app, "requestMarkRead")
 
     assert "function isPendingOutboundCard(card)" in app
@@ -570,7 +571,8 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "function pendingOutboundStatusLabel(card)" in app
     assert "function pendingOutboundStatusClass(card)" in app
     assert "if (isPendingOutboundCard(card)) {\n      return outboundCardView(card);" in app
-    assert "isPendingOutboundCard(card) || isFeedIconIncluded(cardIconKey(card))" in app
+    assert "if (isPendingOutboundCard(card)) {\n        return false;\n      }" in filtered
+    assert "isFeedIconIncluded(cardIconKey(card))" in filtered
     assert "if (!card || card.deleted || isPendingOutboundCard(card))" in app
     assert "card?.session_id || card?.local_session_id || card?.turn_id" in app
     assert "isPendingOutboundCard(card)" in request_mark_read
@@ -983,6 +985,18 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert "applyOffset(startOffset - dx);" in reveal
     assert "if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX)" in reveal
     assert "actionButton.tabIndex = isOpen ? 0 : -1;" in reveal
+    assert 'let activeInputSource = "";' in reveal
+    assert 'if (active && activeInputSource !== source) {' in reveal
+    assert "activeInputSource = source;" in reveal
+    assert "activeInputSource !== source" in reveal
+    assert 'begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");' in reveal
+    assert 'move(event.clientX, event.clientY, "pointer");' in reveal
+    assert 'finish("pointer");' in reveal
+    assert 'begin(event.touches[0].clientX, event.touches[0].clientY, event.target, null, "touch");' in reveal
+    assert 'move(event.touches[0].clientX, event.touches[0].clientY, "touch");' in reveal
+    assert 'finish("touch");' in reveal
+    assert "preferTouchEvents" not in reveal
+    assert "isTouchPointerEvent(event)" not in reveal
     assert 'target?.closest(".archive-reveal-action")' in app
     assert "applyOptimisticHomeArchive(card)" in app
     assert "state.cards = state.cards.map(item => {" in optimistic

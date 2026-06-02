@@ -2746,10 +2746,13 @@
       if (card && card.deleted) {
         return false;
       }
+      if (isPendingOutboundCard(card)) {
+        return false;
+      }
       const archived = Boolean(card && card.archived);
       return state.showArchivedFeed
         ? archived
-        : !archived && (isPendingOutboundCard(card) || isFeedIconIncluded(cardIconKey(card)));
+        : !archived && isFeedIconIncluded(cardIconKey(card));
     });
   }
 
@@ -5816,9 +5819,9 @@
     let activePointerId = null;
     let active = false;
     let horizontal = false;
+    let activeInputSource = "";
     let pointerCaptured = false;
     let busy = false;
-    const preferTouchEvents = prefersTouchInput();
 
     const currentOffset = () => {
       const raw = wrapper.style.getPropertyValue("--archive-reveal-offset");
@@ -5841,6 +5844,7 @@
       active = false;
       horizontal = false;
       activePointerId = null;
+      activeInputSource = "";
       wrapper.classList.remove("is-archive-reveal-dragging");
       if (options.immediate) {
         wrapper.classList.add("is-archive-reveal-immediate");
@@ -5891,8 +5895,14 @@
       pointerCaptured = false;
     };
 
-    const begin = (x, y, target, pointer = null) => {
+    const begin = (x, y, target, pointer = null, source = "") => {
       if (busy || !config.canReveal(item) || isDragIgnoredTarget(target)) {
+        return;
+      }
+      if (active && activeInputSource !== source) {
+        return;
+      }
+      if (active) {
         return;
       }
       if (activeArchiveReveal && activeArchiveReveal.wrapper !== wrapper) {
@@ -5902,13 +5912,14 @@
       startY = y;
       startOffset = currentOffset();
       activePointerId = pointer;
+      activeInputSource = source;
       active = true;
       horizontal = false;
       wrapper.classList.remove("is-archive-reveal-immediate");
     };
 
-    const move = (x, y) => {
-      if (!active) {
+    const move = (x, y, source) => {
+      if (!active || activeInputSource !== source) {
         return;
       }
       const dx = x - startX;
@@ -5925,13 +5936,14 @@
       applyOffset(startOffset - dx);
     };
 
-    const finish = () => {
-      if (!active) {
+    const finish = source => {
+      if (!active || activeInputSource !== source) {
         return;
       }
       active = false;
       releasePointerCapture();
       activePointerId = null;
+      activeInputSource = "";
       wrapper.classList.remove("is-archive-reveal-dragging");
       if (!horizontal) {
         return;
@@ -5961,59 +5973,47 @@
       }
     }, true);
     wrapper.addEventListener("pointerdown", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
-        return;
-      }
-      begin(event.clientX, event.clientY, event.target, event.pointerId);
+      begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");
       if (active) {
         capturePointer(event.pointerId);
       }
     });
     wrapper.addEventListener("pointermove", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
-        return;
-      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      move(event.clientX, event.clientY);
+      move(event.clientX, event.clientY, "pointer");
     });
     wrapper.addEventListener("pointerup", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
-        return;
-      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      finish();
+      finish("pointer");
     });
     wrapper.addEventListener("pointercancel", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
-        return;
-      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      finish();
+      finish("pointer");
     });
     wrapper.addEventListener("touchstart", event => {
       if (event.touches.length) {
-        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
+        begin(event.touches[0].clientX, event.touches[0].clientY, event.target, null, "touch");
       }
     }, { passive: true });
     wrapper.addEventListener("touchmove", event => {
       if (event.touches.length) {
-        move(event.touches[0].clientX, event.touches[0].clientY);
+        move(event.touches[0].clientX, event.touches[0].clientY, "touch");
         if (horizontal) {
           event.preventDefault();
         }
       }
     }, { passive: false });
     wrapper.addEventListener("touchend", () => {
-      finish();
+      finish("touch");
     });
     wrapper.addEventListener("touchcancel", () => {
-      finish();
+      finish("touch");
     });
     actionButton.addEventListener("click", event => {
       event.preventDefault();
