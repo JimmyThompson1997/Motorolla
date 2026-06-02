@@ -2647,8 +2647,8 @@ button {
 }
 
 .meeting-audio-detail {
-  height: 100%;
-  min-height: 100%;
+  height: calc(var(--viewport-safe-h) - 45px);
+  min-height: calc(var(--viewport-safe-h) - 45px);
 }
 
 .audio-player {

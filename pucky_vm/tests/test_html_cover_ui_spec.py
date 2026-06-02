@@ -1308,8 +1308,8 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert 'content.classList.add("meeting-audio-detail")' in app
     assert ".audio-detail" in styles
     meeting_detail = css_block(styles, ".meeting-audio-detail")
-    assert "height: 100%;" in meeting_detail
-    assert "min-height: 100%;" in meeting_detail
+    assert "height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
+    assert "min-height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
     meeting_transcript = css_block(styles, ".meeting-transcript-section")
     assert "flex: 1 1 0;" in meeting_transcript
     assert "min-height: 0;" in meeting_transcript
