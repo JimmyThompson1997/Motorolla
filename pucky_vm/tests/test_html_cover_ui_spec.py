@@ -285,11 +285,15 @@ def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
 def test_meeting_transcript_uses_remaining_detail_height() -> None:
     styles = read("styles.css")
 
+    detail = css_block(styles, ".meeting-transcript-detail")
+    assert "flex: 1 1 0;" in detail
+    assert "min-height: 0;" in detail
+    assert "overflow: hidden;" in detail
     transcript = css_block(styles, ".meeting-transcript-section")
     assert "max-height: 46vh" not in transcript
     assert "flex: 1 1 0;" in transcript
-    assert "height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in transcript
-    assert "min-height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in transcript
+    assert "height: max(260px" not in transcript
+    assert "min-height: 0;" in transcript
     assert "overflow-y: auto;" in transcript
 
 
@@ -1294,19 +1298,28 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "function showAudioDetail(card, options = {})" in app
     assert "function renderAudioDetail()" in app
     assert "function refreshAudioDetail(card, existing)" in app
+    assert "function showMeetingTranscriptDetail(card)" in app
     assert "existing.dataset.audioKey === audioStateKey(card)" in app
     assert "content.dataset.audioKey = audioStateKey(card)" in app
     assert 'openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail)' in app
     assert '"detail-content audio-detail"' in app
     assert 'content.classList.add("meeting-audio-detail")' in app
+    assert "content.append(meetingTranscriptAction(card));" in app
+    assert 'el("button", "meeting-view-transcript", label)' in app
+    assert 'openSideDetail(panel, card.title || "Meeting Transcript", content, () => showAudioDetail(card))' in app
     assert ".audio-detail" in styles
     meeting_detail = css_block(styles, ".meeting-audio-detail")
     assert "height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
     assert "min-height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
+    assert ".meeting-transcript-action" in styles
+    assert ".meeting-view-transcript" in styles
+    transcript_detail = css_block(styles, ".meeting-transcript-detail")
+    assert "flex: 1 1 0;" in transcript_detail
+    assert "overflow: hidden;" in transcript_detail
     meeting_transcript = css_block(styles, ".meeting-transcript-section")
     assert "flex: 1 1 0;" in meeting_transcript
-    assert "height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in meeting_transcript
-    assert "min-height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in meeting_transcript
+    assert "min-height: 0;" in meeting_transcript
+    assert "height: max(260px" not in meeting_transcript
     assert "overflow-y: auto;" in meeting_transcript
     assert ".audio-controls" in styles
     assert "card.summary && audioTimestamps(card).length === 0" in app

@@ -12,21 +12,24 @@ import java.util.regex.Pattern;
 
 public final class PuckyTurnSourceTest {
     @Test
-    public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToLab() throws Exception {
+    public void buttonDefaultsRouteVolumeUpToTurnAndVolumeDownToMeetingToggle() throws Exception {
         String source = read("src/main/java/com/pucky/device/buttons/ButtonController.java");
 
-        assertTrue(source.contains("CONFIG_VERSION = 22"));
+        assertTrue(source.contains("CONFIG_VERSION = 23"));
         assertTrue(source.contains("DEFAULT_LONG_PRESS_MS = 200"));
+        assertTrue(source.contains("VOLUME_DOWN_MEETING_HOLD_MS = 2_000"));
         assertTrue(source.contains("clamp(config.optInt(\"long_press_ms\", DEFAULT_LONG_PRESS_MS), 200, 1200)"));
-        assertTrue(source.contains("\"android_volume_pucky_speech_echo_lab_v22\""));
+        assertTrue(source.contains("\"android_volume_meeting_toggle_v23\""));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold\", \"pucky.turn.start\")"));
         assertTrue(source.contains("Json.put(mappings, \"volume_up_hold_release\", \"pucky.turn.stop\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.lab.start\")"));
-        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.lab.stop\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold\", \"meeting.recording.toggle\")"));
+        assertTrue(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"none\")"));
         assertTrue(source.contains("PuckyTurnController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("PuckyTurnController.shared(context).stop(reasonArgs(\"button_release\"))"));
-        assertTrue(source.contains("SpeechEchoLabController.shared(context).start(new JSONObject())"));
-        assertTrue(source.contains("SpeechEchoLabController.shared(context).stop(reasonArgs(\"button_release\"))"));
+        assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover(\"volume_down_hold\")"));
+        assertTrue(source.contains("\"volume_down_hold\".equals(gesture) && \"meeting.recording.toggle\".equals(action)"));
+        assertFalse(source.contains("Json.put(mappings, \"volume_down_hold\", \"speech.echo.lab.start\")"));
+        assertFalse(source.contains("Json.put(mappings, \"volume_down_hold_release\", \"speech.echo.lab.stop\")"));
         assertTrue(source.contains("SpeechEchoController.shared(context).start(new JSONObject())"));
         assertTrue(source.contains("SpeechEchoController.shared(context).stop(reasonArgs(\"button_release\"))"));
         assertFalse(source.contains("Json.put(mappings, \"volume_up_hold\", \"livekit.ptt.start\")"));

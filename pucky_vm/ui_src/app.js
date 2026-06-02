@@ -5049,14 +5049,43 @@
       content.append(timestamps);
     }
     if (card?.is_meeting_recording) {
-      content.append(meetingTranscriptSection(card.meeting_record || card));
+      content.append(meetingTranscriptAction(card));
     }
     return content;
   }
 
+  function meetingTranscriptAction(card) {
+    const action = el("section", "meeting-transcript-action");
+    const label = meetingTranscriptLabel(card.meeting_record || card);
+    const button = el("button", "meeting-view-transcript", label);
+    button.type = "button";
+    button.addEventListener("click", () => showMeetingTranscriptDetail(card));
+    action.append(button);
+    return action;
+  }
+
+  function meetingTranscriptLabel(meeting) {
+    const speakerTurns = Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
+    if (speakerTurns.length) {
+      return "View Diarized Transcript";
+    }
+    return "View Transcript";
+  }
+
+  function showMeetingTranscriptDetail(card) {
+    const meeting = card.meeting_record || card;
+    const panel = document.getElementById("detail");
+    const content = el("div", "detail-content meeting-transcript-detail");
+    content.append(meetingTranscriptSection(meeting));
+    applyDetailDataAttributes(panel, "transcript", card);
+    openSideDetail(panel, card.title || "Meeting Transcript", content, () => showAudioDetail(card));
+    rememberNavDetail("audio", card, {});
+    installDetailScrollPersistence(content, "meeting-transcript");
+  }
+
   function meetingTranscriptSection(meeting) {
     const section = el("section", "meeting-transcript-section");
-    section.append(el("h3", "meeting-transcript-title", "Transcript"));
+    section.append(el("h3", "meeting-transcript-title", meetingTranscriptLabel(meeting)));
     const speakerTurns = Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
     if (speakerTurns.length) {
       const list = el("div", "meeting-speaker-turns");

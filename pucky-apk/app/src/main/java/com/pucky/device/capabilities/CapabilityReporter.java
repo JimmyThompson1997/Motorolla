@@ -106,9 +106,9 @@ public final class CapabilityReporter {
         Json.add(out, cap("sensor.watch", "sensor.watch", hasAnySensor() ? "implemented_untested" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Bounded multi-sensor watch by exact sensor name/type for physical gesture mapping."));
         Json.add(out, cap("meeting.hover", "meeting.hover.status/meeting.hover.config.set/meeting.recording.trigger_hover",
-                hasAnySensor() ? "implemented_guarded" : "blocked_by_hardware",
+                "disabled_by_policy",
                 "foreground_service", "visible", "android.permission.VIBRATE", "not_recorded",
-                "Three-second cover palm hover toggles Meeting Recording Mode; cover.wave.* remains a deprecated diagnostic alias with no lock or notify action."));
+                "Physical cover palm hover no longer toggles Meeting Recording Mode because it fired accidentally; manual trigger_hover remains a diagnostic toggle with no lock or notify action."));
         Json.add(out, cap("screen.lock", "screen.lock.status/screen.lock.request/screen.lock.open_accessibility_settings",
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
@@ -153,7 +153,7 @@ public final class CapabilityReporter {
         Json.add(out, cap("meeting.recording", "meeting.recording.status/meeting.recording.start/meeting.recording.stop/meeting.recording.trigger_hover",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "microphone_audible_haptic", Manifest.permission.RECORD_AUDIO, "local_artifact",
-                "Three-second cover hover toggles Meeting Recording Mode, saves an app-owned .m4a file, uploads it to the VM, and hands processing to the meeting agent prompt."));
+                "Manual meeting recording commands save an app-owned .m4a file, upload it to the VM, and hand processing to the meeting agent prompt. Physical hover toggle is disabled."));
         Json.add(out, cap("wake.word", "wake.status/wake.config.set/wake.start/wake.stop/wake.simulate",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.RECORD_AUDIO) ? "implemented_untested" : "blocked_by_permission",
                 "foreground_service", "quiet", Manifest.permission.RECORD_AUDIO, "not_recorded",
@@ -211,7 +211,7 @@ public final class CapabilityReporter {
                 "not_recorded", "Stores app-local playback bookmarks for audio/podcast-style resume points."));
         Json.add(out, cap("button.foreground_capture", "button.state/button.config.get/button.config.set/button.events.list/button.simulate/pucky.turn.start/pucky.turn.stop", "implemented_untested",
                 "foreground_only", "quiet", null, "not_recorded",
-                "Captures configurable volume-button gestures while Pucky Activity is foreground. Current policy keeps single volume presses as normal media volume, maps volume-up hold/release to the unified walkie path with local keyword intercept on release, and keeps volume-down hold/release on reserved speech.echo.lab endpoints. Global/screen-off capture remains future Device Owner/root research."));
+                "Captures configurable volume-button gestures while Pucky Activity is foreground. Current policy keeps single volume presses as normal media volume, maps volume-up hold/release to the unified walkie path, and maps a two-second volume-down hold to Meeting Recording Mode toggle. Volume-down release is intentionally inert. Global/screen-off capture remains future Device Owner/root research."));
         Json.add(out, cap("timer.local", "timer.set", notificationStatusForTimer(), "yes", "visible",
                 Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "AlarmManager elapsed timer; notification requires notification permission."));
         Json.add(out, cap("timer.cancel", "timer.cancel", "implemented_untested", "yes", "quiet", null, "not_recorded",

@@ -27,12 +27,18 @@ from pucky_vm.server import (
 
 
 class FakeSTT:
+    def __init__(self) -> None:
+        self.transcribe_calls = 0
+        self.transcribe_with_metadata_calls = 0
+
     def transcribe(self, audio: bytes, content_type: str) -> str:
+        self.transcribe_calls += 1
         self.audio = audio
         self.content_type = content_type
         return "Pucky test turn"
 
     def transcribe_with_metadata(self, audio: bytes, content_type: str) -> dict[str, object]:
+        self.transcribe_with_metadata_calls += 1
         self.audio = audio
         self.content_type = content_type
         return {
@@ -92,21 +98,60 @@ class FakeCodex:
             "reused_existing_thread": bool(requested_thread_id),
             "fallback_reason": "",
         }
+        if "Meeting Recording Agent Handoff" in text:
+            reply = {
+                "reply_text": "Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
+                "card_title": "Jimmy and Jack Follow-ups",
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": "<!doctype html><title>Meeting Summary</title><p>Follow-up notes prepared.</p>",
+                },
+                "attachments": [],
+                "meeting_result": {
+                    "title": "Jimmy and Jack Follow-ups",
+                    "transcript_status": "completed",
+                    "transcript_text": "I'm Jimmy and this is Jack. Pucky, after this meeting, email the transcript to jimmy@example.com.",
+                    "diarization_requested": True,
+                    "diarization_status": "speaker_turns",
+                    "speaker_turns": [
+                        {"speaker": "Jimmy", "text": "I'm Jimmy and this is Jack.", "start": 0.1, "end": 2.2},
+                        {"speaker": "Jack", "text": "Pucky, after this meeting, email the transcript to jimmy@example.com.", "start": 2.4, "end": 5.1},
+                    ],
+                    "speaker_labels": {"speaker_0": "Jimmy", "speaker_1": "Jack"},
+                    "participants": ["Jimmy", "Jack"],
+                    "action_items": ["Prepare follow-up notes."],
+                    "pucky_directed_instructions": ["Email the transcript to jimmy@example.com."],
+                    "executed_actions": [
+                        {
+                            "tool": "email",
+                            "status": "completed",
+                            "recipient": "jimmy@example.com",
+                            "description": "Sent meeting transcript.",
+                        }
+                    ],
+                    "action_errors": [],
+                    "transcription_provider": "deepgram",
+                },
+            }
+            reply_text = json.dumps(reply)
+        else:
+            reply_text = json.dumps(
+                {
+                    "reply_text": "Sure, I can help.",
+                    "card_title": "Quick Help",
+                    "card_icon": "bolt",
+                    "html": {
+                        "title": "Mini Page",
+                        "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
+                    },
+                }
+            )
         return type(
             "FakeTurnResult",
             (),
             {
-                "reply_text": json.dumps(
-                    {
-                        "reply_text": "Sure, I can help.",
-                        "card_title": "Quick Help",
-                        "card_icon": "bolt",
-                        "html": {
-                            "title": "Mini Page",
-                            "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
-                        },
-                    }
-                ),
+                "reply_text": reply_text,
                 "used_thread_id": used_thread_id,
                 "requested_thread_id": requested_thread_id,
                 "thread_mode": "existing" if requested_thread_id else "new",
@@ -921,7 +966,7 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "card_not_found")
 
-    def test_meeting_ingest_stores_audio_transcribes_and_creates_feed_card(self) -> None:
+    def test_meeting_ingest_stores_audio_queues_agent_and_updates_single_feed_card(self) -> None:
         audio = b"RIFFmeeting-audio"
         payload = self.post_json(
             "/api/meetings",
@@ -942,6 +987,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["state"], "processing")
         self.assertEqual(payload["audio_bytes"], len(audio))
         self.assertTrue(Path(payload["audio_path"]).is_file())
+        self.assertEqual(self.stt.transcribe_calls, 0)
+        self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
+        self.assertEqual(payload["card"]["title"], "Processing meeting recording")
+        self.assertEqual(payload["meeting"]["card_id"], "pucky_card_meeting-20260601-120000-device-abc123ef")
 
         meeting = {}
         for _ in range(50):
@@ -957,19 +1006,27 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["state"], "completed")
         self.assertEqual(meeting["transcript_status"], "completed")
         self.assertIn("I'm Jimmy", meeting["transcript_text"])
+        self.assertIn("email the transcript", meeting["transcript_text"])
         self.assertTrue(meeting["diarization_requested"])
         self.assertEqual(meeting["diarization_status"], "speaker_turns")
         self.assertGreaterEqual(len(meeting["speaker_turns"]), 2)
-        self.assertEqual(meeting["feed_item"]["card"]["title"], "Quick Help")
+        self.assertEqual(meeting["speaker_turns"][0]["speaker"], "Jimmy")
+        self.assertEqual(meeting["feed_item"]["card"]["title"], "Jimmy and Jack Follow-ups")
+        self.assertEqual(meeting["card_id"], payload["meeting"]["card_id"])
+        self.assertEqual(self.stt.transcribe_calls, 0)
+        self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
+        self.assertEqual(meeting["executed_actions"][0]["recipient"], "jimmy@example.com")
         prompt = self.codex.turns[-1]
         self.assertIn("Meeting Recording Agent Handoff", prompt)
         self.assertIn("audio_path:", prompt)
-        self.assertIn("diarization", prompt)
-        self.assertIn("Pucky-directed instructions", prompt)
-        self.assertIn("prepare follow-up notes", prompt)
+        self.assertIn("Use Deepgram", prompt)
+        self.assertIn("speaker naming", prompt)
+        self.assertIn("Directly execute explicit and unambiguous Pucky-directed actions", prompt)
+        self.assertNotIn("Transcript:\nI'm Jimmy", prompt)
 
         persisted = self.service.feed.get_item(meeting["card_id"])
         self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["title"], "Jimmy and Jack Follow-ups")
         self.assertFalse(persisted["archived"])
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
@@ -977,6 +1034,33 @@ class ServerTests(unittest.TestCase):
             item["meeting_id"] == "meeting-20260601-120000-device-abc123ef"
             for item in meetings["meetings"]
         ))
+
+    def test_meeting_ingest_creates_processing_feed_card_before_agent_finishes(self) -> None:
+        blocking = BlockingCodex()
+        self.service.codex = blocking
+        meeting_id = "meeting-20260601-120500-device-abc123ef"
+        payload = self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:05:00Z",
+                "stopped_at": "2026-06-01T12:05:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+
+        self.assertTrue(blocking.codex_started.wait(timeout=2))
+        self.assertEqual(payload["meeting"]["card_id"], "pucky_card_" + meeting_id)
+        placeholder = self.service.feed.get_item("pucky_card_" + meeting_id)
+        self.assertIsNotNone(placeholder)
+        self.assertEqual(placeholder["title"], "Processing meeting recording")
+        self.assertEqual(self.stt.transcribe_calls, 0)
+        self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
+        blocking.release_codex.set()
 
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"

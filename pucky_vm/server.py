@@ -333,6 +333,7 @@ class ReplyEnvelope:
     html_title: str = ""
     html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    meeting_result: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1409,6 +1410,11 @@ class PuckyVoiceService:
             "archived": False,
         }
         self._upsert_meeting(record)
+        placeholder = self._upsert_meeting_processing_card(record, audio, mime_type)
+        record["card_id"] = str(placeholder.get("card_id") or "")
+        record["card"] = placeholder.get("card") if isinstance(placeholder.get("card"), dict) else {}
+        record["feed_item"] = placeholder
+        self._upsert_meeting(record)
         threading.Thread(
             target=self._process_meeting_record,
             args=(dict(record), audio, mime_type),
@@ -1423,45 +1429,86 @@ class PuckyVoiceService:
             "audio_path": str(audio_path),
             "audio_bytes": len(audio),
             "meeting": record,
-            "card": {},
+            "card": record.get("card") if isinstance(record.get("card"), dict) else {},
             "agent": {},
         }
 
-    def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
-        transcript_payload: dict[str, object]
-        try:
-            transcribe_with_metadata = getattr(self.stt, "transcribe_with_metadata", None)
-            if callable(transcribe_with_metadata):
-                transcript_payload = dict(transcribe_with_metadata(audio, mime_type))
-            else:
-                transcript_payload = {
-                    "schema": "pucky.deepgram_transcript.v1",
-                    "transcript": self.stt.transcribe(audio, mime_type),
-                    "diarization_requested": True,
-                    "speaker_turns": [],
-                }
-            transcript_status = "completed"
-            transcript_error = ""
-        except Exception as exc:
-            transcript_payload = {
-                "schema": "pucky.deepgram_transcript.v1",
-                "transcript": "",
-                "diarization_requested": True,
-                "speaker_turns": [],
-            }
-            transcript_status = "failed"
-            transcript_error = f"{exc.__class__.__name__}: {exc}"
+    def _upsert_meeting_processing_card(
+        self,
+        record: dict[str, object],
+        audio: bytes,
+        mime_type: str,
+    ) -> dict[str, object]:
+        meeting_id = str(record.get("meeting_id") or "")
+        title = "Processing meeting recording"
+        summary = "Transcribing, diarizing, and checking for follow-up instructions..."
+        origin = _normalize_origin(
+            {
+                "runtime": "pucky",
+                "thread_id": meeting_id,
+                "source": "meeting_recording",
+                "meeting_id": meeting_id,
+            },
+            meeting_id,
+        )
+        telemetry = {
+            "event": "pucky.meeting.processing_placeholder",
+            "status": "processing",
+            "stage": "meeting_agent_queued",
+            "meeting_id": meeting_id,
+            "request_audio_bytes": len(audio),
+            "content_type": mime_type,
+        }
+        item = self.feed.upsert_turn_result(
+            turn_id=meeting_id,
+            session_id=meeting_id,
+            reply_mode=REPLY_MODE_CARD_ONLY,
+            reply_text=summary,
+            title=title,
+            summary=summary,
+            icon="mic",
+            origin=origin,
+            telemetry=telemetry,
+            transcript_messages=[
+                _user_transcript_message(
+                    text="Meeting recording uploaded for processing.",
+                    created_at=str(record.get("created_at") or _iso_time(time.time())),
+                    turn_id=meeting_id,
+                    request_audio_mime_type=mime_type,
+                    has_request_audio=True,
+                ),
+                _assistant_transcript_message(
+                    text=summary,
+                    created_at=str(record.get("created_at") or _iso_time(time.time())),
+                    attachments=[],
+                ),
+            ],
+            request_audio_mime_type=mime_type,
+            request_audio_base64=base64.b64encode(audio).decode("ascii"),
+            audio_mime_type="",
+            audio_base64="",
+            html_mime_type="",
+            html_base64="",
+        )
+        item = self._decorate_feed_item(item)
+        item["card"] = {
+            "title": title,
+            "summary": summary,
+            "icon": "mic",
+            "accent": item.get("accent") or self._card_icon_accent("mic"),
+            "origin": origin,
+        }
+        return item
 
-        speaker_turns = list(transcript_payload.get("speaker_turns") or [])
-        transcript_text = str(transcript_payload.get("transcript") or "").strip()
+    def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
         record["updated_at"] = _iso_time(time.time())
-        record["transcript_status"] = transcript_status
-        record["transcript_error"] = transcript_error
-        record["transcript_text"] = transcript_text
-        record["transcript_result"] = transcript_payload
-        record["diarization_requested"] = bool(transcript_payload.get("diarization_requested", True))
-        record["diarization_status"] = "speaker_turns" if speaker_turns else "no_speaker_turns"
-        record["speaker_turns"] = speaker_turns
+        record["transcript_status"] = "agent_pending"
+        record["transcript_error"] = ""
+        record["transcript_text"] = ""
+        record["transcript_result"] = {}
+        record["diarization_requested"] = True
+        record["diarization_status"] = "agent_pending"
+        record["speaker_turns"] = []
         self._upsert_meeting(record)
 
         prompt = _meeting_agent_handoff_prompt(record)
@@ -1503,12 +1550,52 @@ class PuckyVoiceService:
             record["card"] = result.get("card") if isinstance(result.get("card"), dict) else {}
             record["feed_item"] = result
             record["failure_reason"] = ""
+            self._apply_meeting_agent_result(record, result)
         except Exception as exc:
             record["state"] = "failed"
             record["updated_at"] = _iso_time(time.time())
             record["failure_reason"] = f"{exc.__class__.__name__}: {exc}"
             result = {}
         self._upsert_meeting(record)
+
+    @staticmethod
+    def _apply_meeting_agent_result(record: dict[str, object], result: dict[str, object]) -> None:
+        meeting_result = result.get("meeting_result")
+        if not isinstance(meeting_result, dict):
+            record["transcript_status"] = "missing_agent_result"
+            record["diarization_status"] = "missing_agent_result"
+            return
+        transcript_text = str(
+            meeting_result.get("transcript_text")
+            or meeting_result.get("transcript")
+            or ""
+        ).strip()
+        raw_turns = meeting_result.get("speaker_turns")
+        speaker_turns = [dict(item) for item in raw_turns if isinstance(item, dict)] if isinstance(raw_turns, list) else []
+        record["meeting_result"] = dict(meeting_result)
+        if meeting_result.get("title"):
+            record["title"] = str(meeting_result.get("title") or "").strip()
+        record["transcript_status"] = str(meeting_result.get("transcript_status") or ("completed" if transcript_text else "missing"))
+        record["transcript_error"] = str(meeting_result.get("transcript_error") or "")
+        record["transcript_text"] = transcript_text
+        record["transcript_result"] = dict(meeting_result)
+        record["diarization_requested"] = bool(meeting_result.get("diarization_requested", True))
+        record["diarization_status"] = str(
+            meeting_result.get("diarization_status")
+            or ("speaker_turns" if speaker_turns else "no_speaker_turns")
+        )
+        record["speaker_turns"] = speaker_turns
+        for key in (
+            "speaker_labels",
+            "participants",
+            "action_items",
+            "pucky_directed_instructions",
+            "executed_actions",
+            "action_errors",
+            "transcription_provider",
+        ):
+            if key in meeting_result:
+                record[key] = meeting_result[key]
 
     def _load_meetings(self) -> list[dict[str, object]]:
         with self._meetings_lock:
@@ -1923,6 +2010,8 @@ class PuckyVoiceService:
         result = self._decorate_feed_item(verified)
         result["card"] = card
         result["accent"] = card["accent"]
+        if envelope.meeting_result:
+            result["meeting_result"] = dict(envelope.meeting_result)
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -2115,6 +2204,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         for item in data.get("attachments") or []:
             if isinstance(item, dict):
                 attachments.append(dict(item))
+    meeting_result = data.get("meeting_result") if isinstance(data.get("meeting_result"), dict) else {}
     return ReplyEnvelope(
         reply_text,
         card_title,
@@ -2122,6 +2212,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         html_title,
         html_content,
         tuple(attachments),
+        dict(meeting_result),
     )
 
 
@@ -2306,22 +2397,9 @@ def _safe_meeting_id(raw: object) -> str:
 
 
 def _meeting_agent_handoff_prompt(record: dict[str, object]) -> str:
-    speaker_turns = list(record.get("speaker_turns") or [])
-    speaker_lines = []
-    for turn in speaker_turns[:80]:
-        if not isinstance(turn, dict):
-            continue
-        speaker = str(turn.get("speaker") or "speaker").strip()
-        text = str(turn.get("text") or "").strip()
-        if text:
-            speaker_lines.append(f"- {speaker}: {text}")
-    speaker_text = "\n".join(speaker_lines) if speaker_lines else "- No speaker-separated turns were returned; treat this as an honest diarization fallback."
-    transcript = str(record.get("transcript_text") or "").strip()
-    if not transcript:
-        transcript = "(No transcript text was returned. Explain the transcription failure and work from the audio artifact if a tool is available.)"
     return f"""Meeting Recording Agent Handoff
 
-You are processing a saved Pucky meeting recording. Use the audio artifact and transcript below to produce a normal Pucky strict JSON reply with reply_text, card_title, card_icon, html, and attachments.
+You are the Meeting Recording Agent. The platform has stored the audio file, but you own transcription, diarization, speaker naming, summary, action-item extraction, and Pucky-directed follow-up handling.
 
 Meeting metadata:
 - meeting_id: {record.get("meeting_id")}
@@ -2330,24 +2408,40 @@ Meeting metadata:
 - device_path: {record.get("device_path") or ""}
 - mime_type: {record.get("mime_type") or ""}
 - duration_ms: {record.get("duration_ms") or 0}
-- transcript_status: {record.get("transcript_status") or ""}
-- diarization_requested: {record.get("diarization_requested")}
-- diarization_status: {record.get("diarization_status") or ""}
+- audio_bytes: {record.get("audio_bytes") or 0}
 
-Transcript:
-{transcript}
-
-Speaker turns / diarization:
-{speaker_text}
-
-Instructions:
-- Use Deepgram or any available runtime tools if you need to improve transcription or diarization from the audio path/URL.
-- Generate a concise human-facing meeting title.
-- Summarize the meeting, identify likely participants, and extract action items.
-- Explicitly inspect the transcript for Pucky-directed instructions, for example "Pucky, after this meeting...".
-- If the transcript contains follow-up instructions, handle them according to the available agent/runtime/app tools and policy. If action needs confirmation or a recipient is ambiguous, produce a clear draft/confirmation request instead of inventing details.
+Required workflow:
+- Use Deepgram or another available runtime transcription tool to transcribe the audio artifact.
+- Request diarization / speaker turns. If speaker separation is unavailable, report an honest fallback.
+- If speakers identify themselves or context makes names clear, relabel speaker_0 / speaker_1 to participant names; otherwise keep neutral speaker labels.
+- Generate a concise human-facing meeting title, summary, participants, action items, and a diarized transcript.
+- Explicitly inspect the transcript for instructions addressed to Pucky.
+- Directly execute explicit and unambiguous Pucky-directed actions when the needed runtime/app tool and recipient are available. If a tool is unavailable, the request is ambiguous, or confirmation is required, include a clear draft or blocker instead of silently skipping it.
 - Include links or attachments for the saved audio/transcript when useful.
-- Return only the normal strict Pucky JSON object; no markdown fences and no prose outside JSON.
+
+Return only one strict JSON object, with the normal Pucky reply fields plus meeting_result:
+{{
+  "reply_text": "...",
+  "card_title": "...",
+  "card_icon": "mic",
+  "html": {{"title": "...", "content": "..."}},
+  "attachments": [],
+  "meeting_result": {{
+    "title": "...",
+    "transcript_status": "completed",
+    "transcript_text": "...",
+    "diarization_requested": true,
+    "diarization_status": "speaker_turns",
+    "speaker_turns": [{{"speaker": "Jimmy", "start": 0.0, "end": 1.2, "text": "..."}}],
+    "speaker_labels": {{"speaker_0": "Jimmy"}},
+    "participants": [],
+    "action_items": [],
+    "pucky_directed_instructions": [],
+    "executed_actions": [],
+    "action_errors": [],
+    "transcription_provider": "deepgram"
+  }}
+}}
 """.strip()
 
 

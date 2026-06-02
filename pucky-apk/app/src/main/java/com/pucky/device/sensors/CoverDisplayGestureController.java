@@ -40,6 +40,7 @@ public final class CoverDisplayGestureController {
     private static final int DEVICE_STATE_CLOSED = 1;
     private static final long MEETING_HOVER_HOLD_MS = 3_000L;
     private static final long MEETING_HOVER_FALSE_GAP_MS = 350L;
+    private static final boolean PHYSICAL_MEETING_HOVER_TOGGLE_ENABLED = false;
     private static final long DEFAULT_COOLDOWN_MS = 800L;
     private static final long PREFLIGHT_MAX_AGE_MS = 1_250L;
     private static final long ACCEL_SAMPLE_MAX_AGE_MS = 350L;
@@ -108,6 +109,7 @@ public final class CoverDisplayGestureController {
             Json.put(out, "display_state", displayStateName(readDisplayState()));
             Json.put(out, "meeting_hover_hold_ms", MEETING_HOVER_HOLD_MS);
             Json.put(out, "meeting_hover_false_gap_ms", MEETING_HOVER_FALSE_GAP_MS);
+            Json.put(out, "physical_meeting_hover_toggle_enabled", PHYSICAL_MEETING_HOVER_TOGGLE_ENABLED);
             Json.put(out, "cooldown_ms", cooldownMs());
             Json.put(out, "preflight_max_age_ms", PREFLIGHT_MAX_AGE_MS);
             Json.put(out, "hand_near", handNear);
@@ -377,31 +379,14 @@ public final class CoverDisplayGestureController {
                 addEventLocked("gesture_rejected", "hover_no_longer_active", durationMs, values, gates);
                 return;
             }
-            lastGestureAtMs = SystemClock.elapsedRealtime();
-            addEventLocked("gesture_accepted", "meeting_toggle:" + sourceSensor, durationMs, values, gates);
-        }
-        try {
-            JSONObject result = MeetingRecordingController.shared(context).toggleFromHover("cover_hover_hold");
-            String state = result.optString("state", "");
-            synchronized (lock) {
-                addEventLocked(
-                        "recording".equals(state) ? "meeting_recording_started" : "meeting_recording_stopped",
-                        "cover_hover_hold",
-                        durationMs,
-                        values,
-                        gates,
-                        result);
-            }
-        } catch (CommandException exc) {
-            synchronized (lock) {
-                lastError = exc.getMessage();
-                addEventLocked("meeting_recording_failed", "cover_hover_hold:" + exc.getMessage(),
-                        durationMs, values, gates);
-            }
+            addEventLocked("gesture_rejected", "meeting_hover_disabled", durationMs, values, gates);
         }
     }
 
     private String earlyRejectReason(long durationMs) {
+        if (!PHYSICAL_MEETING_HOVER_TOGGLE_ENABLED) {
+            return "meeting_hover_disabled";
+        }
         long now = SystemClock.elapsedRealtime();
         synchronized (lock) {
             long cooldownRemaining = cooldownMs() - (now - lastGestureAtMs);

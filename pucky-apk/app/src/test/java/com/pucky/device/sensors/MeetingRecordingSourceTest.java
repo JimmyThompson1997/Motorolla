@@ -11,22 +11,21 @@ import java.nio.file.Path;
 
 public final class MeetingRecordingSourceTest {
     @Test
-    public void coverHoverHoldTogglesMeetingRecordingInsteadOfShortWave() throws Exception {
+    public void coverHoverHoldIsDiagnosticOnlyAndDoesNotToggleMeetingRecording() throws Exception {
         String source = read("src/main/java/com/pucky/device/sensors/CoverDisplayGestureController.java");
 
         assertTrue(source.contains("MEETING_HOVER_HOLD_MS = 3_000L"));
+        assertTrue(source.contains("PHYSICAL_MEETING_HOVER_TOGGLE_ENABLED = false"));
         assertTrue(source.contains("scheduleHoverHold"));
         assertTrue(source.contains("evaluateHoverCandidate"));
         assertTrue(source.contains("\"hover_started\""));
         assertTrue(source.contains("\"hover_progress\""));
         assertTrue(source.contains("\"hover_cancelled\""));
-        assertTrue(source.contains("\"meeting_recording_started\""));
-        assertTrue(source.contains("\"meeting_recording_stopped\""));
-        assertTrue(source.contains("\"meeting_recording_failed\""));
-        assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover"));
-        assertTrue(source.contains("JSONObject result = MeetingRecordingController.shared(context).toggleFromHover"));
-        assertTrue(source.contains("addEventLocked(\n                        \"recording\".equals(state) ? \"meeting_recording_started\" : \"meeting_recording_stopped\""));
-        assertTrue(source.contains("result);"));
+        assertTrue(source.contains("\"meeting_hover_disabled\""));
+        assertTrue(source.contains("\"physical_meeting_hover_toggle_enabled\""));
+        assertTrue(source.contains("MeetingRecordingController.shared(context).triggerHover(args)"));
+        assertFalse(source.contains("MeetingRecordingController.shared(context).toggleFromHover(\"cover_hover_hold\")"));
+        assertFalse(source.contains("\"meeting_recording_started\" : \"meeting_recording_stopped\""));
         assertTrue(source.contains("Json.put(event, \"detail\", detail)"));
         assertTrue(source.contains("MEETING_HOVER_FALSE_GAP_MS = 350L"));
         assertTrue(source.contains("ACCEL_DELTA_SPIKE = 2.25f"));
@@ -55,7 +54,8 @@ public final class MeetingRecordingSourceTest {
         assertTrue(executor.contains("MeetingRecordingController.shared(settingsStore.context())"));
         assertTrue(capability.contains("meeting.recording.status/meeting.recording.start/meeting.recording.stop"));
         assertTrue(capability.contains("meeting.hover.status/meeting.hover.config.set/meeting.recording.trigger_hover"));
-        assertTrue(capability.contains("Three-second cover hover toggles Meeting Recording Mode"));
+        assertTrue(capability.contains("Physical cover palm hover no longer toggles Meeting Recording Mode"));
+        assertTrue(capability.contains("Physical hover toggle is disabled"));
         assertTrue(capability.contains("no lock or notify action"));
     }
 

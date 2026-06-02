@@ -2636,6 +2636,33 @@ button {
   min-height: calc(var(--viewport-safe-h) - 45px);
 }
 
+.meeting-transcript-action {
+  flex: 0 0 auto;
+  display: grid;
+}
+
+.meeting-view-transcript {
+  appearance: none;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(168, 85, 247, 0.18);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  min-height: 48px;
+  padding: 0 16px;
+  box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.12);
+}
+
+.meeting-transcript-detail {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  padding: 8px 16px var(--nav-safe);
+  overflow: hidden;
+}
+
 .audio-player {
   flex: 0 0 auto;
   display: grid;
@@ -3232,8 +3259,7 @@ button {
 
 .meeting-transcript-section {
   flex: 1 1 0;
-  height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));
-  min-height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));
+  min-height: 0;
   overflow-y: auto;
   display: grid;
   align-content: start;

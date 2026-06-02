@@ -15,6 +15,7 @@ import com.pucky.device.camera.CameraController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.media.MediaControlController;
+import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
@@ -40,8 +41,9 @@ public final class ButtonController {
     private static final int KEY_VOLUME_UP = KeyEvent.KEYCODE_VOLUME_UP;
     private static final int KEY_VOLUME_DOWN = KeyEvent.KEYCODE_VOLUME_DOWN;
     private static final int MAX_EVENTS = 100;
-    private static final int CONFIG_VERSION = 22;
+    private static final int CONFIG_VERSION = 23;
     private static final int DEFAULT_LONG_PRESS_MS = 200;
+    private static final int VOLUME_DOWN_MEETING_HOLD_MS = 2_000;
 
     private final Context context;
     private final SharedPreferences prefs;
@@ -146,7 +148,7 @@ public final class ButtonController {
             return;
         }
         cancelHoldTimer(keyCode);
-        int delayMs = clamp(config.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 200, 1200);
+        int delayMs = holdDelayMs(gesture, config);
         final int sequence;
         if (keyCode == KEY_VOLUME_UP) {
             sequence = ++volumeUpSequence;
@@ -447,6 +449,10 @@ public final class ButtonController {
                     Json.put(out, "result", PuckyTurnController.shared(context).stop(reasonArgs("button_release")));
                     Json.put(out, "status", "queued");
                     break;
+                case "meeting.recording.toggle":
+                    Json.put(out, "result", MeetingRecordingController.shared(context).toggleFromHover("volume_down_hold"));
+                    Json.put(out, "status", "completed");
+                    break;
                 case "speech.native.start":
                     Json.put(out, "result", NativeSpeechController.shared(context).start(new JSONObject()));
                     Json.put(out, "status", "completed");
@@ -522,7 +528,8 @@ public final class ButtonController {
         Json.put(out, "double_press_ms", 450);
         Json.put(out, "long_press_ms", DEFAULT_LONG_PRESS_MS);
         Json.put(out, "long_press_repeat_count", 1);
-        Json.put(out, "policy", "android_volume_pucky_speech_echo_lab_v22");
+        Json.put(out, "volume_down_meeting_hold_ms", VOLUME_DOWN_MEETING_HOLD_MS);
+        Json.put(out, "policy", "android_volume_meeting_toggle_v23");
         Json.put(out, "mappings", defaultMappings());
         return out;
     }
@@ -533,8 +540,8 @@ public final class ButtonController {
         Json.put(mappings, "volume_up_hold", "pucky.turn.start");
         Json.put(mappings, "volume_up_hold_release", "pucky.turn.stop");
         Json.put(mappings, "volume_down_press", "volume.adjust.down");
-        Json.put(mappings, "volume_down_hold", "speech.echo.lab.start");
-        Json.put(mappings, "volume_down_hold_release", "speech.echo.lab.stop");
+        Json.put(mappings, "volume_down_hold", "meeting.recording.toggle");
+        Json.put(mappings, "volume_down_hold_release", "none");
         Json.put(mappings, "volume_up_double", "none");
         Json.put(mappings, "volume_down_double", "none");
         Json.put(mappings, "volume_both_press", "none");
@@ -567,7 +574,8 @@ public final class ButtonController {
         }
         Json.put(raw, "config_version", CONFIG_VERSION);
         Json.put(raw, "long_press_ms", clamp(raw.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 200, 1200));
-        Json.put(raw, "policy", raw.optString("policy", "android_volume_pucky_speech_echo_lab_v22"));
+        Json.put(raw, "volume_down_meeting_hold_ms", VOLUME_DOWN_MEETING_HOLD_MS);
+        Json.put(raw, "policy", raw.optString("policy", "android_volume_meeting_toggle_v23"));
         Json.put(raw, "mappings", mappings);
         return raw;
     }
@@ -629,6 +637,15 @@ public final class ButtonController {
                 && !"pass_through".equals(action);
     }
 
+    private int holdDelayMs(String gesture, JSONObject config) {
+        JSONObject mappings = config.optJSONObject("mappings");
+        String action = mappings == null ? "" : mappings.optString(gesture, "");
+        if ("volume_down_hold".equals(gesture) && "meeting.recording.toggle".equals(action)) {
+            return VOLUME_DOWN_MEETING_HOLD_MS;
+        }
+        return clamp(config.optInt("long_press_ms", DEFAULT_LONG_PRESS_MS), 200, 1200);
+    }
+
     private boolean isKnownGesture(String gesture) {
         switch (gesture) {
             case "volume_up_press":
@@ -669,6 +686,7 @@ public final class ButtonController {
             case "voice.capture.stop":
             case "pucky.turn.start":
             case "pucky.turn.stop":
+            case "meeting.recording.toggle":
             case "speech.native.start":
             case "speech.native.stop":
             case "speech.echo.start":
