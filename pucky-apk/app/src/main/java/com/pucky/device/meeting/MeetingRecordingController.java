@@ -33,6 +33,8 @@ import okhttp3.Response;
 public final class MeetingRecordingController {
     private static final String PREFS = "pucky_meeting_recordings";
     private static final String MEETINGS = "meetings_json";
+    private static final String ACTIVE_MEETING_ID = "active_meeting_id";
+    private static final String ACTIVE_VOICE_SESSION_ID = "active_voice_session_id";
     private static final int MAX_MEETINGS = 100;
     private static final int DEFAULT_MAX_DURATION_MS = 90 * 60 * 1000;
     private static final int HOVER_START_CHIME_MS = 160;
@@ -64,6 +66,7 @@ public final class MeetingRecordingController {
     }
 
     public synchronized JSONObject status() {
+        restoreActiveFromVoiceCaptureLocked();
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.meeting_recording_status.v1");
         Json.put(out, "state", activeMeetingId.isEmpty() ? "idle" : "recording");
@@ -74,6 +77,7 @@ public final class MeetingRecordingController {
     }
 
     public synchronized JSONObject start(JSONObject args) throws CommandException {
+        restoreActiveFromVoiceCaptureLocked();
         if (!activeMeetingId.isEmpty()) {
             JSONObject out = status();
             Json.put(out, "result", "already_recording");
@@ -97,6 +101,7 @@ public final class MeetingRecordingController {
             activeSession = started;
         }
         activeVoiceSessionId = activeSession == null ? "" : activeSession.optString("session_id", "");
+        persistActiveIds();
         JSONObject record = meetingRecordFromCapture(meetingId, activeSession, "recording");
         appendMeeting(record);
         JSONObject out = new JSONObject();
@@ -109,6 +114,7 @@ public final class MeetingRecordingController {
     }
 
     public synchronized JSONObject stop(JSONObject args) throws CommandException {
+        restoreActiveFromVoiceCaptureLocked();
         if (activeMeetingId.isEmpty()) {
             JSONObject out = status();
             Json.put(out, "result", "no_active_recording");
@@ -123,6 +129,7 @@ public final class MeetingRecordingController {
         JSONObject stopped = VoiceCaptureController.shared(context).stop(stopArgs);
         activeMeetingId = "";
         activeVoiceSessionId = "";
+        clearActiveIds();
         JSONObject capture = stopped.optJSONObject("capture");
         JSONObject record = meetingRecordFromCapture(meetingId, capture, "completed");
         JSONObject upload = initialUploadState();
@@ -183,6 +190,7 @@ public final class MeetingRecordingController {
     }
 
     public synchronized JSONObject toggleFromHover(String reason) throws CommandException {
+        restoreActiveFromVoiceCaptureLocked();
         boolean starting = activeMeetingId.isEmpty();
         JSONObject args = new JSONObject();
         Json.put(args, "reason", reason);
@@ -228,6 +236,45 @@ public final class MeetingRecordingController {
         if (source != null && source.has(key)) {
             Json.put(target, key, source.opt(key));
         }
+    }
+
+    private void persistActiveIds() {
+        prefs.edit()
+                .putString(ACTIVE_MEETING_ID, activeMeetingId)
+                .putString(ACTIVE_VOICE_SESSION_ID, activeVoiceSessionId)
+                .commit();
+    }
+
+    private void clearActiveIds() {
+        prefs.edit()
+                .remove(ACTIVE_MEETING_ID)
+                .remove(ACTIVE_VOICE_SESSION_ID)
+                .commit();
+    }
+
+    private void restoreActiveFromVoiceCaptureLocked() {
+        if (!activeMeetingId.isEmpty()) {
+            return;
+        }
+        JSONObject voice = VoiceCaptureController.shared(context).status();
+        JSONObject activeSession = voice.optJSONObject("active_session");
+        if (activeSession == null || !"meeting_recording".equals(activeSession.optString("sample_tag", ""))) {
+            return;
+        }
+        String storedMeetingId = prefs.getString(ACTIVE_MEETING_ID, "").trim();
+        String voiceSessionId = activeSession.optString("session_id", prefs.getString(ACTIVE_VOICE_SESSION_ID, "")).trim();
+        String meetingId = storedMeetingId.isEmpty() ? meetingIdFromVoiceSession(voiceSessionId) : storedMeetingId;
+        if (meetingId.isEmpty()) {
+            return;
+        }
+        activeMeetingId = meetingId;
+        activeVoiceSessionId = voiceSessionId;
+        persistActiveIds();
+    }
+
+    private static String meetingIdFromVoiceSession(String voiceSessionId) {
+        String value = String.valueOf(voiceSessionId == null ? "" : voiceSessionId).trim();
+        return value.startsWith("vc_") ? value.substring(3) : value;
     }
 
     private String newMeetingId(String rawDeviceId) {

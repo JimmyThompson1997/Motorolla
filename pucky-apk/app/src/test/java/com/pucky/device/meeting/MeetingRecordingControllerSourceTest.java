@@ -45,6 +45,24 @@ public final class MeetingRecordingControllerSourceTest {
     }
 
     @Test
+    public void activeMeetingToggleRestoresFromVoiceCaptureAcrossCommandReentry() throws Exception {
+        String source = read("src/main/java/com/pucky/device/meeting/MeetingRecordingController.java");
+
+        assertTrue(source.contains("ACTIVE_MEETING_ID"));
+        assertTrue(source.contains("ACTIVE_VOICE_SESSION_ID"));
+        assertTrue(source.contains("persistActiveIds()"));
+        assertTrue(source.contains("clearActiveIds()"));
+        assertTrue(source.contains("restoreActiveFromVoiceCaptureLocked()"));
+        assertTrue(source.contains("VoiceCaptureController.shared(context).status()"));
+        assertTrue(source.contains("\"meeting_recording\".equals(activeSession.optString(\"sample_tag\", \"\"))"));
+        assertTrue(source.contains("meetingIdFromVoiceSession"));
+        assertTrue(source.contains("value.startsWith(\"vc_\") ? value.substring(3) : value"));
+        String hoverBody = source.split("public synchronized JSONObject toggleFromHover\\(String reason\\)", 2)[1]
+                .split("private JSONObject playMeetingHoverChime", 2)[0];
+        assertTrue(hoverBody.contains("restoreActiveFromVoiceCaptureLocked()"));
+    }
+
+    @Test
     public void hoverTriggeredRecordingAddsAudibleChimeWithoutChangingPlainStartStop() throws Exception {
         String source = read("src/main/java/com/pucky/device/meeting/MeetingRecordingController.java");
 
