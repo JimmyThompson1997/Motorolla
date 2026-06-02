@@ -3287,15 +3287,26 @@
 
   async function showMeetingDetail(meeting) {
     const meetingId = String(meeting && meeting.meeting_id || "").trim();
-    const initialCard = meetingCardFromRecord(meeting);
-    showAudioDetail(initialCard);
-    if (!meetingId || meetingHasFullDetail(meeting)) {
+    const openDetail = (record, options = {}) => {
+      if (meetingState(record) === "failed") {
+        showMeetingFailedDetail(record, options);
+        return;
+      }
+      showAudioDetail(meetingCardFromRecord(record), options);
+    };
+    openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
+    if (!meetingId) {
+      return;
+    }
+    const shouldLoadDetail = meetingState(meeting) === "failed" || !meetingHasFullDetail(meeting);
+    if (!shouldLoadDetail) {
       return;
     }
     try {
       const detail = await loadMeetingDetail(meeting);
-      if (state.audioCard && cardSessionId(state.audioCard) === meetingId) {
-        showAudioDetail(meetingCardFromRecord(detail), { scrollTop: state.navDetail?.scroll_top });
+      const panel = document.getElementById("detail");
+      if (panel?.classList.contains("is-open") && panel.getAttribute("data-detail-session-id") === meetingId) {
+        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
       }
     } catch (error) {
       showToast(error.message);
@@ -3364,6 +3375,22 @@
       messages.push({ role: "assistant", text: summary, created_at: meeting.updated_at || "" });
     }
     return messages;
+  }
+
+  function meetingFailedSummary(meeting) {
+    const cardSummary = String(meeting && meeting.card && meeting.card.summary || "").trim();
+    if (cardSummary) {
+      return cardSummary;
+    }
+    const transcriptError = String(meeting && meeting.transcript_error || "").trim();
+    if (transcriptError) {
+      return transcriptError;
+    }
+    const failureReason = String(meeting && meeting.failure_reason || "").trim();
+    if (failureReason) {
+      return failureReason;
+    }
+    return "Processing stopped before the meeting agent finished.";
   }
 
   function meetingTitle(meeting) {
@@ -5284,6 +5311,19 @@
     restoreTimestampScroll(content, options.timestampScrollTop);
   }
 
+  function showMeetingFailedDetail(meeting, options = {}) {
+    state.audioCard = null;
+    const panel = document.getElementById("detail");
+    const detailCard = meetingCardFromRecord(meeting);
+    const content = meetingFailedDetailContent(meeting);
+    applyDetailDataAttributes(panel, "meeting_failed", detailCard, { viewer: "meeting_failed" });
+    openSideDetail(panel, meetingTitle(meeting), content, dismissDetail);
+    rememberNavDetail("meeting_failed", detailCard, options);
+    installDetailScrollPersistence(content, "meeting_failed");
+    restoreScrollPosition(content, options.scrollTop);
+    void syncVoiceThreadScope({ reason: "show_meeting_failed_detail", render: true });
+  }
+
   function renderAudioDetail() {
     const card = state.audioCard;
     if (!card) {
@@ -5313,6 +5353,37 @@
     if (nextList) {
       nextList.scrollTop = chapterScroll;
     }
+  }
+
+  function meetingFailedDetailContent(meeting) {
+    const content = el("div", "detail-content meeting-failed-detail");
+    const body = el("section", "meeting-failed-body");
+    body.append(
+      el("p", "meeting-failed-kicker", "Meeting failed"),
+      el("p", "meeting-failed-summary", meetingFailedSummary(meeting))
+    );
+    const meta = el("div", "meeting-failed-meta");
+    const duration = formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
+    if (duration) {
+      meta.append(el("span", "meeting-failed-chip", duration));
+    }
+    const stage = String(meeting && meeting.failure_stage || "").trim();
+    if (stage) {
+      meta.append(el("span", "meeting-failed-chip", stage.replaceAll("_", " ")));
+    }
+    const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    if (meetingId) {
+      meta.append(el("span", "meeting-failed-chip", meetingId));
+    }
+    if (meta.childNodes.length) {
+      body.append(meta);
+    }
+    const transcriptError = String(meeting && meeting.transcript_error || "").trim();
+    if (transcriptError && transcriptError !== meetingFailedSummary(meeting)) {
+      body.append(el("p", "meeting-failed-error", transcriptError));
+    }
+    content.append(body);
+    return content;
   }
 
   function audioDetailContent(card) {

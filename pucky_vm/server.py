@@ -1336,7 +1336,7 @@ class PuckyVoiceService:
 
     def meetings_list(self, *, include_archived: bool = False, compact: bool = False) -> dict[str, object]:
         meetings = [
-            self._compact_meeting(item) if compact else dict(item)
+            self._normalize_meeting_for_client(item, compact=compact)
             for item in self._load_meetings()
             if include_archived or not bool(item.get("archived"))
         ]
@@ -1358,7 +1358,7 @@ class PuckyVoiceService:
                 return {
                     "schema": "pucky.meeting_detail.v1",
                     "ok": True,
-                    "meeting": dict(meeting),
+                    "meeting": self._normalize_meeting_for_client(meeting, compact=False),
                 }
         raise KeyError(meeting_id)
 
@@ -1381,7 +1381,7 @@ class PuckyVoiceService:
                     "schema": "pucky.meeting_action_result.v1",
                     "ok": True,
                     "action": clean_action,
-                    "meeting": updated,
+                    "meeting": self._normalize_meeting_for_client(updated, compact=False),
                     "meetings": self.meetings_list(compact=True),
                 }
         raise KeyError(meeting_id)
@@ -1618,42 +1618,25 @@ class PuckyVoiceService:
         mime_type: str,
     ) -> dict[str, object]:
         meeting_id = str(record.get("meeting_id") or "")
-        title = "Meeting processing failed"
-        reason = str(record.get("failure_reason") or "unknown error").strip()
-        failure_stage = str(record.get("failure_stage") or "").strip()
-        if failure_stage and reason:
-            summary = f"Processing stopped during {failure_stage}: {reason}"
-        elif reason:
-            summary = f"Processing stopped: {reason}"
-        else:
-            summary = "Processing stopped."
-        origin = _normalize_origin(
-            {
-                "runtime": "pucky",
-                "thread_id": meeting_id,
-                "source": "meeting_recording",
-                "meeting_id": meeting_id,
-                "card_kind": "meeting_failed",
-                "meeting_state": "failed",
-                "failure_stage": failure_stage,
-            },
-            meeting_id,
-        )
+        card = self._meeting_failed_card_payload(record)
+        summary = str(card.get("summary") or "Processing stopped.")
+        origin = dict(card.get("origin") or {})
+        failure_stage = str(card.get("failure_stage") or "")
         item = self.feed.upsert_turn_result(
             turn_id=meeting_id,
             session_id=meeting_id,
             reply_mode=REPLY_MODE_CARD_ONLY,
             reply_text=summary,
-            title=title,
+            title=str(card.get("title") or "Meeting processing failed"),
             summary=summary,
-            icon="mic",
+            icon=str(card.get("icon") or "mic"),
             origin=origin,
             telemetry={
                 "event": "pucky.meeting.agent_failed",
                 "status": "failed",
                 "stage": "meeting_agent_failed",
                 "meeting_id": meeting_id,
-                "failure_reason": reason,
+                "failure_reason": str(record.get("failure_reason") or ""),
                 "failure_stage": failure_stage,
                 "request_audio_bytes": len(audio),
                 "content_type": mime_type,
@@ -1682,16 +1665,7 @@ class PuckyVoiceService:
             force_unread=True,
         )
         item = self._decorate_feed_item(item)
-        item["card"] = {
-            "title": title,
-            "summary": summary,
-            "icon": "mic",
-            "accent": item.get("accent") or self._card_icon_accent("mic"),
-            "origin": origin,
-            "card_kind": "meeting_failed",
-            "meeting_state": "failed",
-            "failure_stage": failure_stage,
-        }
+        item["card"] = dict(card)
         item["card_kind"] = "meeting_failed"
         item["meeting_state"] = "failed"
         item["failure_stage"] = failure_stage
@@ -1925,6 +1899,72 @@ class PuckyVoiceService:
                 return []
             return [dict(item) for item in rows if isinstance(item, dict)]
 
+    def _meeting_failed_card_payload(self, meeting: dict[str, object]) -> dict[str, object]:
+        meeting_id = str(meeting.get("meeting_id") or "")
+        reason = str(meeting.get("failure_reason") or "unknown error").strip()
+        failure_stage = str(meeting.get("failure_stage") or "").strip()
+        if failure_stage and reason:
+            summary = f"Processing stopped during {failure_stage}: {reason}"
+        elif reason:
+            summary = f"Processing stopped: {reason}"
+        else:
+            summary = "Processing stopped."
+        origin = _normalize_origin(
+            {
+                "runtime": "pucky",
+                "thread_id": meeting_id,
+                "source": "meeting_recording",
+                "meeting_id": meeting_id,
+                "card_kind": "meeting_failed",
+                "meeting_state": "failed",
+                "failure_stage": failure_stage,
+            },
+            meeting_id,
+        )
+        return {
+            "title": "Meeting processing failed",
+            "summary": summary,
+            "icon": "mic",
+            "accent": self._card_icon_accent("mic"),
+            "origin": origin,
+            "card_kind": "meeting_failed",
+            "meeting_state": "failed",
+            "failure_stage": failure_stage,
+        }
+
+    def _normalize_meeting_for_client(self, meeting: dict[str, object], *, compact: bool) -> dict[str, object]:
+        normalized = dict(meeting)
+        card = normalized.get("card") if isinstance(normalized.get("card"), dict) else {}
+        if isinstance(card, dict):
+            normalized["card"] = dict(card)
+        state = str(normalized.get("state") or "uploaded").strip().lower()
+        meeting_id = str(normalized.get("meeting_id") or "").strip()
+        if state == "failed":
+            failed_card = self._meeting_failed_card_payload(normalized)
+            normalized["card"] = failed_card
+            normalized["card_kind"] = "meeting_failed"
+            normalized["meeting_state"] = "failed"
+            if meeting_id and not str(normalized.get("card_id") or "").strip():
+                normalized["card_id"] = f"pucky_card_{meeting_id}"
+            feed_item = normalized.get("feed_item") if isinstance(normalized.get("feed_item"), dict) else None
+            if feed_item is not None:
+                patched_feed = dict(feed_item)
+                patched_feed["card"] = dict(failed_card)
+                patched_feed["card_kind"] = "meeting_failed"
+                patched_feed["meeting_state"] = "failed"
+                origin = patched_feed.get("origin") if isinstance(patched_feed.get("origin"), dict) else {}
+                patched_origin = dict(origin) if isinstance(origin, dict) else {}
+                patched_origin["card_kind"] = "meeting_failed"
+                patched_origin["meeting_state"] = "failed"
+                failure_stage = str(failed_card.get("failure_stage") or "").strip()
+                if failure_stage:
+                    patched_origin["failure_stage"] = failure_stage
+                else:
+                    patched_origin.pop("failure_stage", None)
+                patched_feed["origin"] = patched_origin
+                normalized["feed_item"] = patched_feed
+        return self._compact_meeting(normalized) if compact else normalized
+
     @staticmethod
     def _compact_meeting(meeting: dict[str, object]) -> dict[str, object]:
         keep = (
@@ -1948,6 +1988,7 @@ class PuckyVoiceService:
             "diarization_status",
             "card_id",
             "card",
+            "failure_stage",
             "failure_reason",
             "archived",
         )

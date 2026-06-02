@@ -283,6 +283,29 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert ".meeting-row-icon" not in styles
 
 
+def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    show_meeting_detail = function_block(app, "showMeetingDetail")
+    failed_detail = function_block(app, "showMeetingFailedDetail")
+    failed_content = function_block(app, "meetingFailedDetailContent")
+
+    assert 'if (meetingState(record) === "failed") {' in show_meeting_detail
+    assert "showMeetingFailedDetail(record, options);" in show_meeting_detail
+    assert 'showAudioDetail(meetingCardFromRecord(record), options);' in show_meeting_detail
+    assert 'applyDetailDataAttributes(panel, "meeting_failed", detailCard, { viewer: "meeting_failed" });' in failed_detail
+    assert 'rememberNavDetail("meeting_failed", detailCard, options);' in failed_detail
+    assert "Meeting failed" in failed_content
+    assert "meeting-failed-summary" in failed_content
+    assert "meeting-failed-chip" in failed_content
+    assert "meetingTranscriptAction" not in failed_content
+    assert "audio-player" not in failed_content
+    assert ".meeting-failed-detail" in styles
+    assert ".meeting-failed-summary" in styles
+    assert ".meeting-failed-chip" in styles
+
+
 def test_attachment_source_filter_hides_placeholders_and_html_path_fallback_opens() -> None:
     app = read("app.js")
     styles = read("styles.css")

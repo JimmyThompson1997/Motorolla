@@ -1266,6 +1266,106 @@ class ServerTests(unittest.TestCase):
             1,
         )
 
+    def test_failed_meetings_list_normalizes_stale_processing_card_metadata(self) -> None:
+        meeting_id = "meeting-20260602-091500-device-diarbench-three-anon"
+        stale_record = {
+            "schema": "pucky.meeting_record.v1",
+            "meeting_id": meeting_id,
+            "state": "failed",
+            "created_at": "2026-06-02T09:15:00Z",
+            "updated_at": "2026-06-02T09:16:00Z",
+            "started_at": "2026-06-02T09:15:00Z",
+            "stopped_at": "2026-06-02T09:16:00Z",
+            "duration_ms": 60000,
+            "device_id": "device-1",
+            "failure_reason": "OperationalError: database is locked",
+            "failure_stage": "meeting_agent_call",
+            "transcript_status": "failed",
+            "diarization_status": "failed",
+            "card_id": f"pucky_card_{meeting_id}",
+            "card": {
+                "title": "Processing meeting recording",
+                "summary": "Transcribing, diarizing, and checking for follow-up instructions...",
+                "icon": "mic",
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
+            },
+            "feed_item": {
+                "card_id": f"pucky_card_{meeting_id}",
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
+                "origin": {
+                    "runtime": "pucky",
+                    "thread_id": meeting_id,
+                    "source": "meeting_recording",
+                    "meeting_id": meeting_id,
+                    "card_kind": "meeting_processing",
+                    "meeting_state": "processing",
+                },
+            },
+        }
+        self.service._upsert_meeting(stale_record)
+
+        payload = self.get_json("/api/meetings?compact=1&include_archived=1", headers={"Authorization": "Bearer secret"})
+        meeting = next(item for item in payload["meetings"] if item["meeting_id"] == meeting_id)
+
+        self.assertEqual(meeting["state"], "failed")
+        self.assertEqual(meeting["card_id"], f"pucky_card_{meeting_id}")
+        self.assertEqual(meeting["card"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["card"]["meeting_state"], "failed")
+        self.assertEqual(meeting["card"]["title"], "Meeting processing failed")
+        self.assertIn("meeting_agent_call", meeting["card"]["summary"])
+        self.assertIn("database is locked", meeting["card"]["summary"])
+
+    def test_failed_meeting_detail_synthesizes_missing_failed_card_metadata(self) -> None:
+        meeting_id = "meeting-20260602-092000-device-real-failure"
+        stale_record = {
+            "schema": "pucky.meeting_record.v1",
+            "meeting_id": meeting_id,
+            "state": "failed",
+            "created_at": "2026-06-02T09:20:00Z",
+            "updated_at": "2026-06-02T09:20:30Z",
+            "started_at": "2026-06-02T09:20:00Z",
+            "stopped_at": "2026-06-02T09:20:30Z",
+            "duration_ms": 30000,
+            "device_id": "device-1",
+            "failure_reason": "Upload completed but meeting agent timed out",
+            "failure_stage": "meeting_agent_call",
+            "transcript_status": "failed",
+            "diarization_status": "failed",
+            "card": None,
+            "feed_item": {
+                "card_id": f"pucky_card_{meeting_id}",
+                "origin": {
+                    "runtime": "pucky",
+                    "thread_id": meeting_id,
+                    "source": "meeting_recording",
+                    "meeting_id": meeting_id,
+                },
+            },
+        }
+        self.service._upsert_meeting(stale_record)
+
+        detail = self.get_json(
+            f"/api/meetings/{meeting_id}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        meeting = detail["meeting"]
+
+        self.assertEqual(meeting["state"], "failed")
+        self.assertEqual(meeting["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["meeting_state"], "failed")
+        self.assertEqual(meeting["card_id"], f"pucky_card_{meeting_id}")
+        self.assertEqual(meeting["card"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["card"]["meeting_state"], "failed")
+        self.assertEqual(meeting["feed_item"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["feed_item"]["meeting_state"], "failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_call")
+        self.assertNotEqual(meeting["card"]["title"], "Processing meeting recording")
+        self.assertIn("timed out", meeting["card"]["summary"])
+
     def test_meeting_agent_retries_transient_sqlite_lock_and_completes(self) -> None:
         class RetryMeetingCodex(FakeCodex):
             def __init__(self) -> None:
