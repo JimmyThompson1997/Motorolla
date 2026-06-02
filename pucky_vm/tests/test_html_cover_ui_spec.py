@@ -288,7 +288,8 @@ def test_meeting_transcript_uses_remaining_detail_height() -> None:
     transcript = css_block(styles, ".meeting-transcript-section")
     assert "max-height: 46vh" not in transcript
     assert "flex: 1 1 0;" in transcript
-    assert "min-height: 0;" in transcript
+    assert "height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in transcript
+    assert "min-height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in transcript
     assert "overflow-y: auto;" in transcript
 
 
@@ -1312,7 +1313,8 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "min-height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
     meeting_transcript = css_block(styles, ".meeting-transcript-section")
     assert "flex: 1 1 0;" in meeting_transcript
-    assert "min-height: 0;" in meeting_transcript
+    assert "height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in meeting_transcript
+    assert "min-height: max(260px, calc(var(--viewport-safe-h) - var(--nav-safe) - 430px));" in meeting_transcript
     assert "overflow-y: auto;" in meeting_transcript
     assert ".audio-controls" in styles
     assert "card.summary && audioTimestamps(card).length === 0" in app
