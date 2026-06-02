@@ -1238,6 +1238,61 @@ button {
     0 0 18px color-mix(in srgb, var(--accent, #72c2ff) 10%, transparent);
 }
 
+.card.card-meeting-processing {
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto;
+  min-height: 64px;
+  padding: 10px 14px;
+  border-color: rgba(114, 194, 255, 0.22);
+  background:
+    linear-gradient(180deg, rgba(114, 194, 255, 0.08), rgba(114, 194, 255, 0.02)),
+    rgba(10, 14, 18, 0.94);
+}
+
+.meeting-processing-mark {
+  display: grid;
+  place-items: center;
+  color: #72c2ff;
+}
+
+.meeting-processing-mark .material-icon {
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.meeting-processing-copy {
+  min-width: 0;
+  padding-right: 52px;
+}
+
+.meeting-processing-status,
+.meeting-processing-subcopy {
+  margin: 0;
+}
+
+.meeting-processing-status {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 820;
+  letter-spacing: -0.01em;
+}
+
+.meeting-processing-subcopy {
+  margin-top: 3px;
+  color: rgba(245, 249, 255, 0.58);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.meeting-processing-timestamp {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  padding: 0;
+}
+
 .card-timestamp {
   grid-column: 3;
   grid-row: 1;

@@ -175,7 +175,13 @@ class CodexAppServerClient:
                 except OSError:
                     pass
 
-    def send_turn(self, text: str, *, thread_id: str | None = None) -> CodexTurnResult:
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, Any] | None = None,
+    ) -> CodexTurnResult:
         if not self.ready:
             raise CodexAppServerError("Codex app-server is not ready")
         clean = text.strip()
@@ -189,14 +195,14 @@ class CodexAppServerClient:
         if not used_thread_id:
             used_thread_id = self._start_thread()
         try:
-            turn_id = self._start_turn(used_thread_id, clean)
+            turn_id = self._start_turn(used_thread_id, clean, output_schema=output_schema)
         except CodexAppServerError as exc:
             if not requested_thread_id:
                 raise
             fallback_reason = str(exc)
             used_thread_id = self._start_thread()
             thread_mode = "new"
-            turn_id = self._start_turn(used_thread_id, clean)
+            turn_id = self._start_turn(used_thread_id, clean, output_schema=output_schema)
         self._thread_id = used_thread_id
         reply_text = self._wait_for_reply(turn_id)
         result = CodexTurnResult(
@@ -211,13 +217,14 @@ class CodexAppServerClient:
         self.ingest_thread_rollout_actions(used_thread_id)
         return result
 
-    def _start_turn(self, thread_id: str, text: str) -> str:
+    def _start_turn(self, thread_id: str, text: str, *, output_schema: dict[str, Any] | None = None) -> str:
+        schema = output_schema if isinstance(output_schema, dict) else self.output_schema
         response = self.request(
             "turn/start",
             {
                 "threadId": thread_id,
                 **({"effort": self.reasoning_effort} if _clean_optional(self.reasoning_effort) else {}),
-                **({"outputSchema": self.output_schema} if isinstance(self.output_schema, dict) else {}),
+                **({"outputSchema": schema} if isinstance(schema, dict) else {}),
                 "input": [
                     {
                         "type": "text",

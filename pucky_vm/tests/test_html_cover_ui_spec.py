@@ -251,13 +251,37 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
     assert 'value.startsWith("/data/pucky-src/")' in app
     assert "function meetingTranscriptSection(meeting)" in app
+    assert "function isMeetingProcessingCard(card)" in app
+    assert "function meetingProcessingCardView(card)" in app
+    assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app
+    assert "Processing meeting..." in app
+    assert "Transcription, diarization, and follow-up checks are running." in app
+    assert "showTranscript(card);" not in function_block(app, "meetingProcessingCardView")
     assert "speaker_turns" in app
     assert "Processing..." in app
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
     assert ".meetings-page" in styles
     assert ".meetings-list-card" in styles
+    assert ".card.card-meeting-processing" in styles
+    assert ".meeting-processing-mark" in styles
+    assert ".meeting-processing-timestamp" in styles
     assert ".meeting-row-icon" not in styles
+
+
+def test_attachment_source_filter_hides_placeholders_and_html_path_fallback_opens() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    has_source = function_block(app, "hasAttachmentSource")
+    meaningful = function_block(app, "hasMeaningfulAttachmentText")
+    html_iframe = function_block(app, "htmlIframeViewer")
+
+    assert "hasMeaningfulAttachmentText(attachment.text || attachment.preview)" in has_source
+    assert "speaker-separated transcript with timestamps" in meaningful
+    assert "playback url:" in meaningful
+    assert "return text.length >= 80 || text.includes(\"\\n\");" in meaningful
+    assert "htmlAttachmentLocalPath(item)" in html_iframe
     assert ".meeting-transcript-section" in styles
     assert ".meeting-speaker-turn" in styles
     assert ".meeting-row-state.is-completed" in styles
@@ -1661,7 +1685,9 @@ def test_paperclip_requires_real_openable_attachment_source() -> None:
     assert 'kind === "text"' in has_source
     assert 'kind === "audio"' not in has_source
     assert "if (!textLike) {\n      return false;\n    }" in has_source
-    assert "return Boolean(attachment.text || attachment.preview);" in has_source
+    assert "hasMeaningfulAttachmentText(attachment.text || attachment.preview)" in has_source
+    assert "speaker-separated transcript with timestamps" in app
+    assert "htmlAttachmentLocalPath(item)" in app
     assert "raw.url" in app
 
 

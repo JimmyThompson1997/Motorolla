@@ -63,6 +63,7 @@ class FeedStore:
         audio_base64: str,
         html_mime_type: str,
         html_base64: str,
+        force_unread: bool = False,
     ) -> dict[str, object]:
         now = time.time()
         now_ms = round(now * 1000)
@@ -171,6 +172,7 @@ class FeedStore:
                         reply_mode=excluded.reply_mode,
                         updated_at=excluded.updated_at,
                         updated_at_ms=excluded.updated_at_ms,
+                        read=CASE WHEN ? THEN 0 ELSE read END,
                         deleted=0,
                         audio_artifact_id=excluded.audio_artifact_id,
                         html_artifact_id=excluded.html_artifact_id,
@@ -190,6 +192,7 @@ class FeedStore:
                         audio_artifact_id,
                         html_artifact_id,
                         origin_json,
+                        1 if force_unread else 0,
                     ),
                 )
             return self._build_item(card_id)

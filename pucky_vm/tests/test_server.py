@@ -20,6 +20,7 @@ from pucky_vm.server import (
     Config,
     PuckyVoiceService,
     make_handler,
+    meeting_reply_output_schema,
     parse_reply_envelope,
     reply_output_schema,
     reset_broker_for_tests,
@@ -67,6 +68,7 @@ class FakeCodex:
     def __init__(self) -> None:
         self.turns: list[str] = []
         self.turn_requests: list[dict[str, str]] = []
+        self.output_schemas: list[dict[str, object] | None] = []
         self.renamed_titles: list[str] = []
         self.last_turn_routing = {
             "requested_thread_id": "",
@@ -79,8 +81,15 @@ class FakeCodex:
     def start(self) -> None:
         self.started = True
 
-    def send_turn(self, text: str, *, thread_id: str | None = None):
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+    ):
         self.turns.append(text)
+        self.output_schemas.append(output_schema)
         requested_thread_id = str(thread_id or "").strip()
         used_thread_id = requested_thread_id or self.thread_id
         self.thread_id = used_thread_id
@@ -187,8 +196,15 @@ class BlockingCodex(FakeCodex):
         self.codex_started = threading.Event()
         self.release_codex = threading.Event()
 
-    def send_turn(self, text: str, *, thread_id: str | None = None):
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+    ):
         self.turns.append(text)
+        self.output_schemas.append(output_schema)
         self.codex_started.set()
         if not self.release_codex.wait(timeout=5):
             raise TimeoutError("test did not release codex")
@@ -360,7 +376,14 @@ class ScriptedCodex(FakeCodex):
         self.invalid_thread_ids = set(invalid_thread_ids or set())
         self.next_thread_number = 100
 
-    def send_turn(self, text: str, *, thread_id: str | None = None):
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+    ):
+        self.output_schemas.append(output_schema)
         requested_thread_id = str(thread_id or "").strip()
         used_thread_id = requested_thread_id or f"thread-{self.next_thread_number}"
         fallback_reason = ""
@@ -425,7 +448,14 @@ class OutOfOrderCodex(FakeCodex):
     def release(self, key: str) -> None:
         self.events[key].set()
 
-    def send_turn(self, text: str, *, thread_id: str | None = None):
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+    ):
+        self.output_schemas.append(output_schema)
         requested_thread_id = str(thread_id or "").strip()
         used_thread_id = requested_thread_id or f"thread-new-{len(self.turn_requests) + 1}"
         key = "turn-a" if "alpha" in text.lower() else ("turn-b" if "fresh" in text.lower() else "turn-c")
@@ -990,6 +1020,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
         self.assertEqual(payload["card"]["title"], "Processing meeting recording")
+        self.assertEqual(payload["card"]["card_kind"], "meeting_processing")
+        self.assertEqual(payload["card"]["meeting_state"], "processing")
         self.assertEqual(payload["meeting"]["card_id"], "pucky_card_meeting-20260601-120000-device-abc123ef")
 
         meeting = {}
@@ -1016,6 +1048,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
         self.assertEqual(meeting["executed_actions"][0]["recipient"], "jimmy@example.com")
+        self.assertIn("meeting_result", self.codex.output_schemas[-1]["required"])
         prompt = self.codex.turns[-1]
         self.assertIn("Meeting Recording Agent Handoff", prompt)
         self.assertIn("audio_path:", prompt)
@@ -1027,7 +1060,11 @@ class ServerTests(unittest.TestCase):
         persisted = self.service.feed.get_item(meeting["card_id"])
         self.assertIsNotNone(persisted)
         self.assertEqual(persisted["title"], "Jimmy and Jack Follow-ups")
+        self.assertFalse(persisted["read"])
         self.assertFalse(persisted["archived"])
+        messages = persisted["transcript_messages"]
+        self.assertEqual(messages[0]["text"], "Meeting recording")
+        self.assertNotIn("Meeting Recording Agent Handoff", json.dumps(messages))
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
         self.assertTrue(any(
@@ -1058,9 +1095,73 @@ class ServerTests(unittest.TestCase):
         placeholder = self.service.feed.get_item("pucky_card_" + meeting_id)
         self.assertIsNotNone(placeholder)
         self.assertEqual(placeholder["title"], "Processing meeting recording")
+        self.assertEqual(placeholder["origin"]["card_kind"], "meeting_processing")
+        self.assertEqual(placeholder["origin"]["meeting_state"], "processing")
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
         blocking.release_codex.set()
+
+    def test_meeting_agent_missing_result_is_not_marked_successful(self) -> None:
+        class MissingMeetingResultCodex(FakeCodex):
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                output_schema: dict[str, object] | None = None,
+            ):
+                self.turns.append(text)
+                self.output_schemas.append(output_schema)
+                return type(
+                    "FakeTurnResult",
+                    (),
+                    {
+                        "reply_text": json.dumps(
+                            {
+                                "reply_text": "I processed the meeting.",
+                                "card_title": "Meeting Summary",
+                                "card_icon": "mic",
+                                "html": None,
+                                "attachments": [],
+                            }
+                        ),
+                        "used_thread_id": "thread-missing-result",
+                        "requested_thread_id": "",
+                        "thread_mode": "new",
+                        "reused_existing_thread": False,
+                        "fallback_reason": "",
+                    },
+                )()
+
+        self.service.codex = MissingMeetingResultCodex()
+        meeting_id = "meeting-20260601-120700-device-abc123ef"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:07:00Z",
+                "stopped_at": "2026-06-01T12:07:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "completed_with_missing_result":
+                break
+            time.sleep(0.1)
+        self.assertEqual(meeting["state"], "completed_with_missing_result")
+        self.assertEqual(meeting["transcript_status"], "missing_agent_result")
+        self.assertEqual(meeting["diarization_status"], "missing_agent_result")
+        self.assertEqual(meeting["failure_reason"], "meeting_agent_missing_result")
+        self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting needs review")
+        self.assertFalse(meeting["feed_item"]["read"])
+        self.assertIn("meeting_result", self.service.codex.output_schemas[-1]["required"])
 
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"
@@ -1562,6 +1663,7 @@ class ServerTests(unittest.TestCase):
         attachments = schema["properties"]["attachments"]
         self.assertEqual(attachments["type"], ["array", "null"])
         self.assertIn("attachments", schema["required"])
+        self.assertNotIn("meeting_result", schema["properties"])
         item_schema = attachments["items"]
         self.assertEqual(
             item_schema["required"],
@@ -1569,6 +1671,15 @@ class ServerTests(unittest.TestCase):
         )
         for key in item_schema["required"]:
             self.assertEqual(item_schema["properties"][key]["type"], ["string", "null"])
+
+    def test_meeting_reply_output_schema_requires_meeting_result_without_changing_normal_schema(self) -> None:
+        normal_schema = reply_output_schema()
+        meeting_schema = meeting_reply_output_schema()
+
+        self.assertNotIn("meeting_result", normal_schema["required"])
+        self.assertIn("meeting_result", meeting_schema["required"])
+        self.assertIn("speaker_turns", meeting_schema["properties"]["meeting_result"]["properties"])
+        self.assertIn("executed_actions", meeting_schema["properties"]["meeting_result"]["properties"])
 
     def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(

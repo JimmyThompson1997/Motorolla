@@ -400,6 +400,21 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
+    public void feedAttachmentLocalizationPreservesHtmlViewerSourcesAndDropsPlaceholders() throws Exception {
+        String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
+
+        assertTrue(feed.contains("preserveNestedViewerArtifact(copy)"));
+        assertTrue(feed.contains("JSONObject viewer = attachment.optJSONObject(\"viewer\")"));
+        assertTrue(feed.contains("viewer.optString(\"artifact\", \"\")"));
+        assertTrue(feed.contains("Json.put(attachment, \"html_artifact\", artifactId)"));
+        assertTrue(feed.contains("Json.put(copy, \"html_viewer_path\", copy.optString(\"path\", \"\"))"));
+        assertTrue(feed.contains("return hasOpenableAttachmentSource(copy) ? copy : null;"));
+        assertTrue(feed.contains("hasMeaningfulAttachmentText(attachment.optString(\"text\", \"\"))"));
+        assertTrue(feed.contains("speaker-separated transcript with timestamps"));
+        assertTrue(feed.contains("lower.startsWith(\"playback url:\")"));
+    }
+
+    @Test
     public void settingsCanProvisionPuckyTurnEndpointWithoutHardcodingSecret() throws Exception {
         String source = read("src/main/java/com/pucky/device/storage/SettingsStore.java");
 

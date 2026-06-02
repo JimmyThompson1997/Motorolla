@@ -301,7 +301,13 @@ class CodexProvider(Protocol):
     @property
     def last_turn_routing(self) -> dict[str, str | bool]: ...
 
-    def send_turn(self, text: str, *, thread_id: str | None = None) -> CodexTurnResult: ...
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+    ) -> CodexTurnResult: ...
 
     def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None: ...
 
@@ -1448,6 +1454,8 @@ class PuckyVoiceService:
                 "thread_id": meeting_id,
                 "source": "meeting_recording",
                 "meeting_id": meeting_id,
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
             },
             meeting_id,
         )
@@ -1489,6 +1497,75 @@ class PuckyVoiceService:
             audio_base64="",
             html_mime_type="",
             html_base64="",
+        )
+        item = self._decorate_feed_item(item)
+        item["card"] = {
+            "title": title,
+            "summary": summary,
+            "icon": "mic",
+            "accent": item.get("accent") or self._card_icon_accent("mic"),
+            "origin": origin,
+            "card_kind": "meeting_processing",
+            "meeting_state": "processing",
+        }
+        item["card_kind"] = "meeting_processing"
+        item["meeting_state"] = "processing"
+        return item
+
+    def _upsert_meeting_missing_result_card(
+        self,
+        record: dict[str, object],
+        audio: bytes,
+        mime_type: str,
+    ) -> dict[str, object]:
+        meeting_id = str(record.get("meeting_id") or "")
+        title = "Meeting needs review"
+        summary = "The meeting agent replied, but did not return structured transcript data yet."
+        origin = _normalize_origin(
+            {
+                "runtime": "pucky",
+                "thread_id": meeting_id,
+                "source": "meeting_recording",
+                "meeting_id": meeting_id,
+            },
+            meeting_id,
+        )
+        item = self.feed.upsert_turn_result(
+            turn_id=meeting_id,
+            session_id=meeting_id,
+            reply_mode=REPLY_MODE_CARD_ONLY,
+            reply_text=summary,
+            title=title,
+            summary=summary,
+            icon="mic",
+            origin=origin,
+            telemetry={
+                "event": "pucky.meeting.missing_agent_result",
+                "status": "blocked",
+                "stage": "meeting_result_validation",
+                "meeting_id": meeting_id,
+            },
+            transcript_messages=[
+                _user_transcript_message(
+                    text="Meeting recording",
+                    created_at=str(record.get("created_at") or _iso_time(time.time())),
+                    turn_id=meeting_id,
+                    request_audio_mime_type=mime_type,
+                    has_request_audio=True,
+                ),
+                _assistant_transcript_message(
+                    text=summary,
+                    created_at=_iso_time(time.time()),
+                    attachments=[],
+                ),
+            ],
+            request_audio_mime_type=mime_type,
+            request_audio_base64=base64.b64encode(audio).decode("ascii"),
+            audio_mime_type="",
+            audio_base64="",
+            html_mime_type="",
+            html_base64="",
+            force_unread=True,
         )
         item = self._decorate_feed_item(item)
         item["card"] = {
@@ -1543,6 +1620,9 @@ class PuckyVoiceService:
                 total_start=total_start,
                 request_audio_mime_type=mime_type,
                 request_audio_base64=base64.b64encode(audio).decode("ascii"),
+                output_schema=meeting_reply_output_schema(),
+                display_transcript_text="Meeting recording",
+                force_unread=True,
             )
             record["state"] = "completed"
             record["updated_at"] = _iso_time(time.time())
@@ -1551,6 +1631,13 @@ class PuckyVoiceService:
             record["feed_item"] = result
             record["failure_reason"] = ""
             self._apply_meeting_agent_result(record, result)
+            if record.get("transcript_status") == "missing_agent_result":
+                record["state"] = "completed_with_missing_result"
+                record["failure_reason"] = "meeting_agent_missing_result"
+                blocker = self._upsert_meeting_missing_result_card(record, audio, mime_type)
+                record["card_id"] = str(blocker.get("card_id") or "")
+                record["card"] = blocker.get("card") if isinstance(blocker.get("card"), dict) else {}
+                record["feed_item"] = blocker
         except Exception as exc:
             record["state"] = "failed"
             record["updated_at"] = _iso_time(time.time())
@@ -1874,6 +1961,9 @@ class PuckyVoiceService:
         total_start: float,
         request_audio_mime_type: str,
         request_audio_base64: str,
+        output_schema: dict[str, object] | None = None,
+        display_transcript_text: str | None = None,
+        force_unread: bool = False,
     ) -> dict[str, object]:
         telemetry["stage"] = "codex_running"
         telemetry["codex_start_ms"] = _elapsed_ms(total_start)
@@ -1881,9 +1971,13 @@ class PuckyVoiceService:
         start = time.perf_counter()
         requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
         try:
-            codex_result = self.codex.send_turn(transcript, thread_id=requested_thread_id or None)
+            codex_result = self.codex.send_turn(
+                transcript,
+                thread_id=requested_thread_id or None,
+                output_schema=output_schema,
+            )
         except TypeError as exc:
-            if "thread_id" not in str(exc):
+            if "thread_id" not in str(exc) and "output_schema" not in str(exc):
                 raise
             codex_result = self.codex.send_turn(transcript)  # type: ignore[call-arg]
         if isinstance(codex_result, str):
@@ -1945,7 +2039,7 @@ class PuckyVoiceService:
 
         transcript_messages = [
             _user_transcript_message(
-                text=transcript,
+                text=(display_transcript_text if display_transcript_text is not None else transcript),
                 created_at=_iso_time(time.time()),
                 turn_id=turn_id,
                 request_audio_mime_type=request_audio_mime_type,
@@ -1994,6 +2088,7 @@ class PuckyVoiceService:
             audio_base64=audio_base64,
             html_mime_type=html_mime_type,
             html_base64=html_base64,
+            force_unread=force_unread,
         )
         card_id = str(result.get("card_id") or "")
         telemetry["card_id"] = card_id
@@ -2263,6 +2358,31 @@ def reply_output_schema() -> dict[str, object]:
         },
         "required": ["reply_text", "card_title", "card_icon", "html", "attachments"],
     }
+
+
+def meeting_reply_output_schema() -> dict[str, object]:
+    schema = json.loads(json.dumps(reply_output_schema()))
+    schema["properties"]["meeting_result"] = {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "title": {"type": ["string", "null"]},
+            "transcript_status": {"type": ["string", "null"]},
+            "transcript_text": {"type": ["string", "null"]},
+            "diarization_requested": {"type": ["boolean", "null"]},
+            "diarization_status": {"type": ["string", "null"]},
+            "speaker_turns": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+            "speaker_labels": {"type": ["object", "null"], "additionalProperties": True},
+            "participants": {"type": ["array", "null"], "items": {"type": "string"}},
+            "action_items": {"type": ["array", "null"], "items": {"type": "string"}},
+            "pucky_directed_instructions": {"type": ["array", "null"], "items": {"type": "string"}},
+            "executed_actions": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+            "action_errors": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+            "transcription_provider": {"type": ["string", "null"]},
+        },
+    }
+    schema["required"] = [*schema["required"], "meeting_result"]
+    return schema
 
 
 def _normalize_card_icon_record(payload: dict[str, object]) -> dict[str, str]:
@@ -2706,6 +2826,10 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
         "sandbox_policy": str(origin.get("sandbox_policy") or "").strip(),
         "approval_mode": str(origin.get("approval_mode") or "").strip(),
     }
+    for key in ("meeting_id", "card_kind", "meeting_state"):
+        value = str(origin.get(key) or "").strip()
+        if value:
+            normalized[key] = value
     return normalized
 
 

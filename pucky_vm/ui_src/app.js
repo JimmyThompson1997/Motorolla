@@ -3598,6 +3598,9 @@
     if (isPendingOutboundCard(card)) {
       return outboundCardView(card);
     }
+    if (isMeetingProcessingCard(card)) {
+      return meetingProcessingCardView(card);
+    }
     const wrapper = el("div", "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
@@ -3693,6 +3696,35 @@
       canReveal: canRevealHomeArchive,
       performArchive: () => performHomeArchive(card)
     });
+    return wrapper;
+  }
+
+  function isMeetingProcessingCard(card) {
+    const origin = card?.origin && typeof card.origin === "object" ? card.origin : {};
+    const nested = card?.card && typeof card.card === "object" ? card.card : {};
+    const nestedOrigin = nested.origin && typeof nested.origin === "object" ? nested.origin : {};
+    return String(card?.card_kind || nested.card_kind || origin.card_kind || nestedOrigin.card_kind || "") === "meeting_processing"
+      || String(card?.meeting_state || nested.meeting_state || origin.meeting_state || nestedOrigin.meeting_state || "") === "processing";
+  }
+
+  function meetingProcessingCardView(card) {
+    const wrapper = el("div", "card-wrap card-wrap-meeting-processing");
+    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
+    const cardEl = el("article", "card card-meeting-processing");
+    applyCardDataAttributes(cardEl, card, "meeting_processing");
+    const mark = el("div", "meeting-processing-mark");
+    mark.innerHTML = iconSvg("mic", { filled: true });
+    const copy = el("div", "meeting-processing-copy");
+    copy.append(el("p", "meeting-processing-status", "Processing meeting..."));
+    copy.append(el("p", "meeting-processing-subcopy", "Transcription, diarization, and follow-up checks are running."));
+    cardEl.append(mark, copy);
+    const cardStamp = cardTimestamp(card);
+    if (cardStamp) {
+      const stamp = el("time", "card-timestamp meeting-processing-timestamp", cardStamp.text);
+      stamp.dateTime = cardStamp.iso;
+      cardEl.append(stamp);
+    }
+    wrapper.append(cardEl);
     return wrapper;
   }
 
@@ -4380,7 +4412,7 @@
   async function htmlIframeViewer(item) {
     const iframe = el("iframe", "document-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-    const path = item.viewer_path || item.html_viewer_path || item.document_html_path;
+    const path = item.viewer_path || item.html_viewer_path || item.document_html_path || htmlAttachmentLocalPath(item);
     const src = documentHtmlSrc(item);
     try {
       if (path) {
@@ -6714,7 +6746,35 @@
     if (!textLike) {
       return false;
     }
-    return Boolean(attachment.text || attachment.preview);
+    return hasMeaningfulAttachmentText(attachment.text || attachment.preview);
+  }
+
+  function hasMeaningfulAttachmentText(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return false;
+    }
+    const lower = text.toLowerCase();
+    const placeholders = [
+      "speaker-separated transcript with timestamps",
+      "meeting transcript",
+      "meeting summary",
+      "playback url:"
+    ];
+    if (placeholders.some(item => lower === item || lower.startsWith(`${item}.`))) {
+      return false;
+    }
+    return text.length >= 80 || text.includes("\n");
+  }
+
+  function htmlAttachmentLocalPath(item) {
+    const kind = String(item?.kind || item?.type || "").toLowerCase();
+    const mime = String(item?.mime_type || item?.mime || "").toLowerCase();
+    const path = String(item?.path || item?.local_path || "").trim();
+    if (!path) {
+      return "";
+    }
+    return kind === "html" || mime.includes("html") ? path : "";
   }
 
   function normalizeAttachment(attachment, index = 0) {

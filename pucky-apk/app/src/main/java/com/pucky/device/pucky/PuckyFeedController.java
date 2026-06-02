@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import okhttp3.MediaType;
@@ -677,11 +678,15 @@ public final class PuckyFeedController {
 
     private JSONObject localizeAttachment(JSONObject attachment, File dir, String filenameBase) throws Exception {
         JSONObject copy = new JSONObject(attachment.toString());
+        preserveNestedViewerArtifact(copy);
         localizeArtifactField(copy, "artifact", "path", dir, filenameBase);
         localizeArtifactField(copy, "viewer_artifact", "viewer_path", dir, filenameBase + "_viewer");
         localizeArtifactField(copy, "html_artifact", "html_viewer_path", dir, filenameBase + "_html");
         localizeArtifactField(copy, "document_html_artifact", "document_html_path", dir, filenameBase + "_document");
         localizeArtifactField(copy, "preview_artifact", "preview_path", dir, filenameBase + "_preview");
+        if (isHtmlAttachment(copy) && isAppOwnedPath(copy.optString("path", "")) && !isAppOwnedPath(copy.optString("html_viewer_path", ""))) {
+            Json.put(copy, "html_viewer_path", copy.optString("path", ""));
+        }
         if (!isAppOwnedPath(copy.optString("path", "")) && !copy.has("text")) {
             copy.remove("path");
         }
@@ -699,7 +704,60 @@ public final class PuckyFeedController {
         }
         copy.remove("viewer");
         copy.remove("preview");
-        return copy;
+        return hasOpenableAttachmentSource(copy) ? copy : null;
+    }
+
+    private void preserveNestedViewerArtifact(JSONObject attachment) throws Exception {
+        JSONObject viewer = attachment.optJSONObject("viewer");
+        if (viewer == null) {
+            return;
+        }
+        String artifactId = safe(viewer.optString("artifact", ""));
+        if (artifactId.isEmpty()) {
+            return;
+        }
+        String viewerType = safe(viewer.optString("type", "")).toLowerCase(Locale.US);
+        if (viewerType.contains("html") || isHtmlAttachment(attachment)) {
+            Json.put(attachment, "html_artifact", artifactId);
+        } else {
+            Json.put(attachment, "viewer_artifact", artifactId);
+        }
+    }
+
+    private boolean hasOpenableAttachmentSource(JSONObject attachment) {
+        if (isAppOwnedPath(attachment.optString("path", ""))
+                || isAppOwnedPath(attachment.optString("viewer_path", ""))
+                || isAppOwnedPath(attachment.optString("html_viewer_path", ""))
+                || isAppOwnedPath(attachment.optString("document_html_path", ""))
+                || isAppOwnedPath(attachment.optString("preview_path", ""))
+                || !safe(attachment.optString("url", "")).isEmpty()
+                || !safe(attachment.optString("src", "")).isEmpty()
+                || !safe(attachment.optString("data_url", "")).isEmpty()) {
+            return true;
+        }
+        return hasMeaningfulAttachmentText(attachment.optString("text", ""));
+    }
+
+    private boolean hasMeaningfulAttachmentText(String value) {
+        String text = safe(value);
+        if (text.isEmpty()) {
+            return false;
+        }
+        String lower = text.toLowerCase(Locale.US);
+        if (lower.equals("speaker-separated transcript with timestamps")
+                || lower.equals("speaker-separated transcript with timestamps.")
+                || lower.equals("meeting transcript")
+                || lower.equals("meeting summary")
+                || lower.startsWith("playback url:")) {
+            return false;
+        }
+        return text.length() >= 80 || text.contains("\n");
+    }
+
+    private boolean isHtmlAttachment(JSONObject attachment) {
+        String kind = safe(attachment.optString("kind", attachment.optString("type", ""))).toLowerCase(Locale.US);
+        String mime = safe(attachment.optString("mime_type", attachment.optString("mime", ""))).toLowerCase(Locale.US);
+        return "html".equals(kind) || mime.contains("html");
     }
 
     private void localizeArtifactField(JSONObject attachment, String artifactField, String pathField, File dir, String filenameBase)
