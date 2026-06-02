@@ -14,6 +14,8 @@
   const FEED_REFRESH_TIMEOUT_MS = 15000;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
+  const CARD_ARCHIVE_SWIPE_TRIGGER_PX = 82;
+  const CARD_ARCHIVE_SWIPE_MAX_PX = 126;
   const CARD_ARCHIVE_SWIPE_TRIGGER_RATIO = 0.4;
   const CARD_ARCHIVE_SWIPE_MIN_TRIGGER_PX = 96;
   const CARD_ARCHIVE_SWIPE_VELOCITY_PX_PER_MS = 0.55;
@@ -3590,7 +3592,7 @@
     if (isPendingOutboundCard(card)) {
       return outboundCardView(card);
     }
-    const wrapper = el("div", "card-wrap feed-card-wrap");
+    const wrapper = el("div", "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
@@ -3684,7 +3686,7 @@
   }
 
   function outboundCardView(card) {
-    const wrapper = el("div", "card-wrap feed-card-wrap");
+    const wrapper = el("div", "card-wrap");
     const cardEl = el("article", isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound");
@@ -5628,6 +5630,7 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
+    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });
     const freshCard = findCardByIdentity(card) || card;
     return requestFeedAction(freshCard, "archive");
   }
@@ -5650,21 +5653,6 @@
       String(item && item.meeting_id || "") === archivedId ? { ...item, archived: true } : item
     );
     return result;
-  }
-
-  function applyOptimisticArchive(card) {
-    const previousCards = state.cards.slice();
-    state.cards = applyLocalFeedAction(state.cards, card, "archive");
-    reconcileFocusedCardSelection();
-    reconcileReadOverrides();
-    clearMissingFeedIconFilter();
-    return () => {
-      state.cards = previousCards;
-      reconcileFocusedCardSelection();
-      reconcileReadOverrides();
-      clearMissingFeedIconFilter();
-      render();
-    };
   }
 
   function applyOptimisticMeetingArchive(meeting) {
@@ -5958,10 +5946,132 @@
   }
 
   function installCardArchiveSwipe(wrapper, card) {
-    installFeedLikeSwipeArchive(wrapper, card, {
-      canArchive: canArchiveBySwipe,
-      optimistic: applyOptimisticArchive,
-      archive: archiveHomeCard
+    const cardEl = wrapper?.querySelector(".card");
+    if (!cardEl) {
+      return;
+    }
+    let startX = 0;
+    let startY = 0;
+    let activePointerId = null;
+    let active = false;
+    let horizontal = false;
+    let swiped = false;
+    let swipeOffset = 0;
+
+    const applyOffset = x => {
+      swipeOffset = Math.max(0, Math.min(CARD_ARCHIVE_SWIPE_MAX_PX, Math.round(x)));
+      wrapper.style.setProperty("--card-swipe-offset", `${swipeOffset}px`);
+      wrapper.classList.toggle("is-card-swipe-active", swipeOffset > 0);
+      wrapper.classList.toggle("is-card-swipe-armed", swipeOffset >= CARD_ARCHIVE_SWIPE_TRIGGER_PX);
+    };
+
+    const reset = () => {
+      active = false;
+      horizontal = false;
+      swiped = false;
+      activePointerId = null;
+      applyOffset(0);
+    };
+
+    const begin = (x, y, target, pointer = null) => {
+      if (!canArchiveBySwipe(card) || isDragIgnoredTarget(target)) {
+        return;
+      }
+      startX = x;
+      startY = y;
+      activePointerId = pointer;
+      active = true;
+      horizontal = false;
+      swiped = false;
+      applyOffset(0);
+    };
+
+    const move = (x, y) => {
+      if (!active) {
+        return;
+      }
+      const dx = x - startX;
+      const dy = y - startY;
+      if (!horizontal && Math.abs(dx) < CARD_ARCHIVE_SWIPE_SLOP_PX && Math.abs(dy) < CARD_ARCHIVE_SWIPE_SLOP_PX) {
+        return;
+      }
+      if (!horizontal && Math.abs(dy) > Math.abs(dx)) {
+        reset();
+        return;
+      }
+      horizontal = true;
+      if (dx <= 0) {
+        applyOffset(0);
+        return;
+      }
+      applyOffset(dx);
+    };
+
+    const finish = () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      activePointerId = null;
+      if (!horizontal || swipeOffset < CARD_ARCHIVE_SWIPE_TRIGGER_PX || swiped) {
+        reset();
+        return;
+      }
+      swiped = true;
+      state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+      wrapper.classList.add("is-card-swiped-away");
+      applyOffset(CARD_ARCHIVE_SWIPE_MAX_PX);
+      void archiveHomeCard(card).then(result => {
+        if (!result) {
+          wrapper.classList.remove("is-card-swiped-away");
+          reset();
+        }
+      });
+    };
+
+    wrapper.addEventListener("click", event => {
+      if (shouldSuppressCardActivation()) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    }, true);
+    wrapper.addEventListener("pointerdown", event => {
+      begin(event.clientX, event.clientY, event.target, event.pointerId);
+    });
+    wrapper.addEventListener("pointermove", event => {
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      move(event.clientX, event.clientY);
+    });
+    wrapper.addEventListener("pointerup", event => {
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      finish();
+    });
+    wrapper.addEventListener("pointercancel", event => {
+      if (activePointerId !== null && event.pointerId !== activePointerId) {
+        return;
+      }
+      finish();
+    });
+    wrapper.addEventListener("touchstart", event => {
+      if (event.touches.length) {
+        begin(event.touches[0].clientX, event.touches[0].clientY, event.target);
+      }
+    }, { passive: true });
+    wrapper.addEventListener("touchmove", event => {
+      if (event.touches.length) {
+        move(event.touches[0].clientX, event.touches[0].clientY);
+      }
+    }, { passive: true });
+    wrapper.addEventListener("touchend", () => {
+      finish();
+    });
+    wrapper.addEventListener("touchcancel", () => {
+      finish();
     });
   }
 
