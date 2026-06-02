@@ -287,7 +287,7 @@ def test_meeting_transcript_uses_remaining_detail_height() -> None:
 
     transcript = css_block(styles, ".meeting-transcript-section")
     assert "max-height: 46vh" not in transcript
-    assert "flex: 1 1 auto;" in transcript
+    assert "flex: 1 1 0;" in transcript
     assert "min-height: 0;" in transcript
     assert "overflow-y: auto;" in transcript
 
@@ -1305,7 +1305,15 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert "content.dataset.audioKey = audioStateKey(card)" in app
     assert 'openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail)' in app
     assert '"detail-content audio-detail"' in app
+    assert 'content.classList.add("meeting-audio-detail")' in app
     assert ".audio-detail" in styles
+    meeting_detail = css_block(styles, ".meeting-audio-detail")
+    assert "height: 100%;" in meeting_detail
+    assert "min-height: 100%;" in meeting_detail
+    meeting_transcript = css_block(styles, ".meeting-transcript-section")
+    assert "flex: 1 1 0;" in meeting_transcript
+    assert "min-height: 0;" in meeting_transcript
+    assert "overflow-y: auto;" in meeting_transcript
     assert ".audio-controls" in styles
     assert "card.summary && audioTimestamps(card).length === 0" in app
     assert "grid-template-columns: minmax(66px, 1fr) auto minmax(66px, 1fr)" in styles

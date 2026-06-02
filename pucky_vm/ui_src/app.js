@@ -5031,6 +5031,9 @@
   function audioDetailContent(card) {
     const content = el("div", "detail-content audio-detail");
     content.dataset.audioKey = audioStateKey(card);
+    if (card?.is_meeting_recording) {
+      content.classList.add("meeting-audio-detail");
+    }
     content.style.setProperty("--accent", card.accent || "#72c2ff");
     const player = el("section", "audio-player");
     if (card.summary && audioTimestamps(card).length === 0) {
