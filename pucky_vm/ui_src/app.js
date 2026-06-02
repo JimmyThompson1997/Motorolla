@@ -17,6 +17,19 @@
   const ARCHIVE_REVEAL_WIDTH_PX = 88;
   const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44;
   const ARCHIVE_REVEAL_SLOP_PX = 12;
+  const ARCHIVE_REVEAL_DEBUG_STORAGE_KEY = "pucky.cover.archive_reveal_debug.v1";
+  const ARCHIVE_REVEAL_DEBUG_TRACE_LIMIT = 160;
+  const ARCHIVE_REVEAL_CLOSE_REASONS = Object.freeze([
+    "threshold_not_met",
+    "outside_dismiss",
+    "click_capture_close",
+    "feed_rubberband_reset",
+    "pointercancel",
+    "touchcancel",
+    "route_change",
+    "busy_archive",
+    "unknown"
+  ]);
   const MEETING_STATUS_POLL_MS = 1000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
@@ -331,6 +344,193 @@
   let seq = 0;
   let feedSyncIntervalId = 0;
   let activeArchiveReveal = null;
+  let archiveRevealGestureSeq = 0;
+  const archiveRevealDebugTrace = [];
+  const archiveRevealDebugState = {
+    enabled: archiveRevealDebugEnabled(),
+    phase: "",
+    source: "",
+    offset: 0,
+    horizontal: false,
+    gesture_id: "",
+    item_id: "",
+    wrapper_class: "",
+    close_reason: "",
+    context: "",
+    trace_count: 0
+  };
+  window.__puckyArchiveRevealDebug = {
+    schema: "pucky.archive_reveal_debug.v1",
+    push(entry) {
+      return archiveRevealDebugRecord(entry);
+    },
+    getTrace() {
+      return archiveRevealDebugTrace.slice();
+    },
+    clearTrace() {
+      archiveRevealDebugTrace.length = 0;
+      archiveRevealDebugState.phase = "";
+      archiveRevealDebugState.source = "";
+      archiveRevealDebugState.offset = 0;
+      archiveRevealDebugState.horizontal = false;
+      archiveRevealDebugState.gesture_id = "";
+      archiveRevealDebugState.item_id = "";
+      archiveRevealDebugState.wrapper_class = "";
+      archiveRevealDebugState.close_reason = "";
+      archiveRevealDebugState.context = "";
+      archiveRevealDebugState.trace_count = 0;
+      syncArchiveRevealDebugBadge();
+      return true;
+    },
+    getState() {
+      return {
+        ...archiveRevealDebugState,
+        close_reasons: ARCHIVE_REVEAL_CLOSE_REASONS.slice()
+      };
+    },
+    setEnabled(enabled) {
+      archiveRevealDebugState.enabled = Boolean(enabled);
+      try {
+        if (archiveRevealDebugState.enabled) {
+          localStorage.setItem(ARCHIVE_REVEAL_DEBUG_STORAGE_KEY, "1");
+        } else {
+          localStorage.removeItem(ARCHIVE_REVEAL_DEBUG_STORAGE_KEY);
+        }
+      } catch (_) {
+        // Ignore localStorage failures in WebView preview and private mode.
+      }
+      syncArchiveRevealDebugBadge();
+      return archiveRevealDebugState.enabled;
+    }
+  };
+
+  function archiveRevealDebugEnabled() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      if (params.get("debug_archive_reveal") === "1") {
+        return true;
+      }
+    } catch (_) {
+      // Ignore malformed URLs in fallback previews.
+    }
+    try {
+      return localStorage.getItem(ARCHIVE_REVEAL_DEBUG_STORAGE_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function archiveRevealDebugItemId(item, wrapper = null) {
+    const meetingId = String(item && item.meeting_id || "").trim();
+    if (meetingId) {
+      return `meeting:${meetingId}`;
+    }
+    const sessionId = cardSessionId(item);
+    if (sessionId) {
+      return `session:${sessionId}`;
+    }
+    const cardId = String(item && item.card_id || "").trim();
+    if (cardId) {
+      return `card:${cardId}`;
+    }
+    const node = wrapper instanceof Element
+      ? wrapper.querySelector("[data-card-session-id], [data-card-id]")
+      : null;
+    if (node instanceof Element) {
+      const wrapperSessionId = String(node.getAttribute("data-card-session-id") || "").trim();
+      if (wrapperSessionId) {
+        return `session:${wrapperSessionId}`;
+      }
+      const wrapperCardId = String(node.getAttribute("data-card-id") || "").trim();
+      if (wrapperCardId) {
+        return `card:${wrapperCardId}`;
+      }
+    }
+    return "";
+  }
+
+  function archiveRevealDebugOffset(wrapper = null) {
+    if (!(wrapper instanceof Element)) {
+      return 0;
+    }
+    const parsed = parseFloat(wrapper.style.getPropertyValue("--archive-reveal-offset") || "0");
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function archiveRevealDebugCloseReason(reason) {
+    const value = String(reason || "").trim();
+    return ARCHIVE_REVEAL_CLOSE_REASONS.includes(value) ? value : "unknown";
+  }
+
+  function nextArchiveRevealGestureId() {
+    archiveRevealGestureSeq += 1;
+    return `archive_reveal_${archiveRevealGestureSeq}`;
+  }
+
+  function syncArchiveRevealDebugBadge() {
+    const badgeId = "archiveRevealDebugBadge";
+    const existing = document.getElementById(badgeId);
+    if (!archiveRevealDebugState.enabled) {
+      existing?.remove();
+      return;
+    }
+    if (!document.body) {
+      return;
+    }
+    const badge = existing || (() => {
+      const node = document.createElement("div");
+      node.id = badgeId;
+      node.className = "archive-reveal-debug-badge";
+      document.body.append(node);
+      return node;
+    })();
+    const source = archiveRevealDebugState.source || "-";
+    const phase = archiveRevealDebugState.phase || "-";
+    const reason = archiveRevealDebugState.close_reason || "-";
+    const offset = Math.round(Number(archiveRevealDebugState.offset || 0));
+    badge.textContent = `${source} ${offset}px ${phase}\n${reason}`;
+  }
+
+  function archiveRevealDebugRecord(entry = {}) {
+    const payload = entry && typeof entry === "object" ? entry : {};
+    const wrapper = payload.wrapper instanceof Element ? payload.wrapper : null;
+    const hasCloseReason = Object.prototype.hasOwnProperty.call(payload, "close_reason")
+      && String(payload.close_reason || "").trim();
+    const next = {
+      schema: "pucky.archive_reveal_debug_entry.v1",
+      seq: archiveRevealDebugTrace.length + 1,
+      timestamp: new Date().toISOString(),
+      gesture_id: String(payload.gesture_id || "").trim(),
+      item_id: String(payload.item_id || archiveRevealDebugItemId(null, wrapper)).trim(),
+      source: String(payload.source || "").trim(),
+      scope: String(payload.scope || "archive_reveal").trim(),
+      phase: String(payload.phase || "").trim(),
+      offset: Number.isFinite(Number(payload.offset)) ? Number(payload.offset) : archiveRevealDebugOffset(wrapper),
+      horizontal: Boolean(payload.horizontal),
+      wrapper_class: String(payload.wrapper_class || (wrapper ? wrapper.className : "")).trim(),
+      close_reason: hasCloseReason ? archiveRevealDebugCloseReason(payload.close_reason) : "",
+      context: String(payload.context || "").trim()
+    };
+    archiveRevealDebugTrace.push(next);
+    if (archiveRevealDebugTrace.length > ARCHIVE_REVEAL_DEBUG_TRACE_LIMIT) {
+      archiveRevealDebugTrace.splice(0, archiveRevealDebugTrace.length - ARCHIVE_REVEAL_DEBUG_TRACE_LIMIT);
+    }
+    archiveRevealDebugState.phase = next.phase;
+    archiveRevealDebugState.source = next.source;
+    archiveRevealDebugState.offset = next.offset;
+    archiveRevealDebugState.horizontal = next.horizontal;
+    archiveRevealDebugState.gesture_id = next.gesture_id;
+    archiveRevealDebugState.item_id = next.item_id;
+    archiveRevealDebugState.wrapper_class = next.wrapper_class;
+    if (next.close_reason) {
+      archiveRevealDebugState.close_reason = next.close_reason;
+    }
+    archiveRevealDebugState.context = next.context;
+    archiveRevealDebugState.trace_count = archiveRevealDebugTrace.length;
+    syncArchiveRevealDebugBadge();
+    return next;
+  }
+
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
@@ -2622,7 +2822,7 @@
   }
 
   function dismissTransientUiForRouteChange() {
-    dismissArchiveReveal({ immediate: true });
+    dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });
     dismissOpenCardMenu(false);
     dismissTraceSheet();
     dismissOriginSheet();
@@ -2696,7 +2896,7 @@
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
     feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked());
-    dismissArchiveReveal({ immediate: true });
+    dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (state.route === "settings") {
       feed.replaceChildren(settingsPageView());
       return;
@@ -5810,7 +6010,23 @@
       return false;
     }
     const { wrapper, actionButton } = activeArchiveReveal;
+    const source = String(options.source || activeArchiveReveal.source || "").trim();
+    const gestureId = String(options.gesture_id || activeArchiveReveal.gestureId || "").trim();
+    const itemId = String(options.item_id || activeArchiveReveal.itemId || archiveRevealDebugItemId(null, wrapper)).trim();
+    const context = String(options.context || "").trim();
+    const closeReason = archiveRevealDebugCloseReason(options.reason);
     activeArchiveReveal = null;
+    archiveRevealDebugRecord({
+      scope: "archive_reveal",
+      phase: "dismiss",
+      source,
+      gesture_id: gestureId,
+      item_id: itemId,
+      wrapper,
+      horizontal: Boolean(options.horizontal ?? true),
+      close_reason: closeReason,
+      context
+    });
     if (!wrapper || !wrapper.isConnected) {
       return true;
     }
@@ -5834,7 +6050,7 @@
 
   function setActiveArchiveReveal(entry) {
     if (activeArchiveReveal && activeArchiveReveal.wrapper !== entry.wrapper) {
-      activeArchiveReveal.close({ immediate: false });
+      activeArchiveReveal.close({ immediate: false, reason: "unknown", context: "switch_active_reveal" });
     }
     activeArchiveReveal = entry;
   }
@@ -5854,12 +6070,29 @@
     let activeInputSource = "";
     let pointerCaptured = false;
     let busy = false;
+    let currentGestureId = "";
+    let currentGestureSource = "";
+    const itemId = archiveRevealDebugItemId(item, wrapper);
 
     const currentOffset = () => {
       const raw = wrapper.style.getPropertyValue("--archive-reveal-offset");
       const parsed = parseFloat(raw || "0");
       return Number.isFinite(parsed) ? parsed : 0;
     };
+
+    const record = (phase, extra = {}) => archiveRevealDebugRecord({
+      scope: "archive_reveal",
+      phase,
+      source: extra.source || currentGestureSource || activeInputSource,
+      gesture_id: extra.gesture_id || currentGestureId,
+      item_id: extra.item_id || itemId,
+      wrapper,
+      offset: extra.offset ?? currentOffset(),
+      horizontal: extra.horizontal ?? horizontal,
+      wrapper_class: extra.wrapper_class || wrapper.className,
+      close_reason: extra.close_reason,
+      context: extra.context
+    });
 
     const applyOffset = offset => {
       const nextOffset = Math.max(0, Math.min(ARCHIVE_REVEAL_WIDTH_PX, Math.round(offset)));
@@ -5872,6 +6105,16 @@
     };
 
     const closeReveal = (options = {}) => {
+      const closeSource = String(options.source || currentGestureSource || activeInputSource || "").trim();
+      const closeGestureId = String(options.gesture_id || currentGestureId || "").trim();
+      const closeReason = archiveRevealDebugCloseReason(options.reason);
+      const context = String(options.context || "").trim();
+      record(options.phase || "close", {
+        source: closeSource,
+        gesture_id: closeGestureId,
+        close_reason: closeReason,
+        context
+      });
       releasePointerCapture();
       active = false;
       horizontal = false;
@@ -5890,6 +6133,8 @@
       if (activeArchiveReveal && activeArchiveReveal.wrapper === wrapper) {
         activeArchiveReveal = null;
       }
+      currentGestureId = "";
+      currentGestureSource = "";
     };
 
     const openReveal = () => {
@@ -5898,8 +6143,12 @@
       setActiveArchiveReveal({
         wrapper,
         actionButton,
-        close: closeReveal
+        close: closeReveal,
+        source: currentGestureSource,
+        gestureId: currentGestureId,
+        itemId
       });
+      record("open");
     };
 
     const capturePointer = pointer => {
@@ -5944,10 +6193,13 @@
       startY = y;
       startOffset = currentOffset();
       activePointerId = pointer;
+      currentGestureId = nextArchiveRevealGestureId();
+      currentGestureSource = source;
       activeInputSource = source;
       active = true;
       horizontal = false;
       wrapper.classList.remove("is-archive-reveal-immediate");
+      record("begin", { source });
     };
 
     const move = (x, y, source) => {
@@ -5965,7 +6217,8 @@
       }
       horizontal = true;
       wrapper.classList.add("is-archive-reveal-dragging");
-      applyOffset(startOffset - dx);
+      const nextOffset = applyOffset(startOffset - dx);
+      record("move", { source, offset: nextOffset });
     };
 
     const finish = source => {
@@ -5977,14 +6230,17 @@
       activePointerId = null;
       activeInputSource = "";
       wrapper.classList.remove("is-archive-reveal-dragging");
+      record("finish", { source });
       if (!horizontal) {
+        currentGestureId = "";
+        currentGestureSource = "";
         return;
       }
       if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX) {
         openReveal();
         return;
       }
-      closeReveal({ immediate: false });
+      closeReveal({ immediate: false, source, reason: "threshold_not_met" });
     };
 
     wrapper.addEventListener("click", event => {
@@ -5994,7 +6250,7 @@
           event.preventDefault();
           event.stopPropagation();
           event.stopImmediatePropagation();
-          closeReveal({ immediate: false });
+          closeReveal({ immediate: false, reason: "click_capture_close", context: "wrapper_click_capture" });
           return;
         }
       }
@@ -6026,6 +6282,7 @@
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
+      record("cancel", { source: "pointer", close_reason: "pointercancel" });
       finish("pointer");
     });
     wrapper.addEventListener("touchstart", event => {
@@ -6045,12 +6302,14 @@
       finish("touch");
     });
     wrapper.addEventListener("touchcancel", () => {
+      record("cancel", { source: "touch", close_reason: "touchcancel" });
       finish("touch");
     });
     actionButton.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
       if (busy) {
+        record("dismiss", { close_reason: "busy_archive", context: "action_busy" });
         return;
       }
       busy = true;
@@ -6089,7 +6348,11 @@
       if (target && activeArchiveReveal.wrapper.contains(target)) {
         return;
       }
-      dismissArchiveReveal({ immediate: false });
+      dismissArchiveReveal({
+        immediate: false,
+        reason: "outside_dismiss",
+        context: "document_pointerdown_outside"
+      });
     }, true);
   }
 
@@ -6485,6 +6748,21 @@
     let refreshArmed = false;
     let activePointerId = null;
     const preferTouchEvents = prefersTouchInput();
+    let gestureId = "";
+    let gestureSource = "";
+
+    const recordFeedPull = (phase, extra = {}) => archiveRevealDebugRecord({
+      scope: "feed_rubberband",
+      phase,
+      source: extra.source || gestureSource,
+      gesture_id: extra.gesture_id || gestureId,
+      wrapper: feed,
+      offset: extra.offset ?? offset,
+      horizontal: false,
+      wrapper_class: extra.wrapper_class || feed.className,
+      close_reason: extra.close_reason,
+      context: extra.context || pullDirection
+    });
 
     const atTop = () => feed.scrollTop <= 0;
     const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
@@ -6499,6 +6777,12 @@
       });
     };
     const reset = () => {
+      if (activeArchiveReveal) {
+        recordFeedPull("dismiss", {
+          close_reason: "feed_rubberband_reset",
+          context: "active_archive_reveal_present"
+        });
+      }
       active = false;
       offset = 0;
       pullDirection = "";
@@ -6509,9 +6793,11 @@
       }
       updateFeedRefreshIndicator({ offset: 0 });
       releaseFeedPull(feed);
+      gestureId = "";
+      gestureSource = "";
     };
 
-    const beginPull = (y, pointer = null) => {
+    const beginPull = (y, pointer = null, source = "") => {
       if (state.route !== "feed" || state.feedRefreshing) {
         return;
       }
@@ -6520,9 +6806,12 @@
       pullDirection = "";
       refreshArmed = false;
       activePointerId = pointer;
+      gestureId = nextArchiveRevealGestureId();
+      gestureSource = source;
+      recordFeedPull("begin", { source, offset: 0, context: "pull_begin" });
     };
 
-    const movePull = (y, event = null) => {
+    const movePull = (y, event = null, source = "") => {
       if (state.route !== "feed" || state.feedRefreshing) {
         return;
       }
@@ -6550,10 +6839,20 @@
       }
       updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0 });
       apply(Math.sign(dy) * eased);
+      recordFeedPull("move", {
+        source,
+        offset: Math.sign(dy) * eased,
+        context: pullDirection || "pull_move"
+      });
     };
 
-    const endPull = () => {
+    const endPull = (source = "") => {
       if (pullDirection === "top" && refreshArmed) {
+        recordFeedPull("finish", {
+          source,
+          offset,
+          context: "refresh_armed"
+        });
         active = false;
         offset = 0;
         refreshArmed = false;
@@ -6564,19 +6863,36 @@
           raf = 0;
         }
         refreshFeedCards();
+        gestureId = "";
+        gestureSource = "";
         return;
       }
       if (active) {
+        recordFeedPull("finish", {
+          source,
+          offset,
+          context: "reset_after_pull"
+        });
         reset();
       }
       activePointerId = null;
+      gestureId = "";
+      gestureSource = "";
     };
 
-    const cancelPull = () => {
+    const cancelPull = (source = "") => {
+      recordFeedPull("cancel", {
+        source,
+        offset,
+        close_reason: source === "touch" ? "touchcancel" : "pointercancel",
+        context: "pull_cancel"
+      });
       if (active) {
         reset();
       }
       activePointerId = null;
+      gestureId = "";
+      gestureSource = "";
     };
 
     feed.addEventListener("pointerdown", event => {
@@ -6586,7 +6902,7 @@
       if (preferTouchEvents && isTouchPointerEvent(event)) {
         return;
       }
-      beginPull(event.clientY, event.pointerId);
+      beginPull(event.clientY, event.pointerId, "pointer");
     }, { passive: true });
     feed.addEventListener("pointermove", event => {
       if (preferTouchEvents && isTouchPointerEvent(event)) {
@@ -6595,7 +6911,7 @@
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      movePull(event.clientY, event);
+      movePull(event.clientY, event, "pointer");
     }, { passive: false });
     feed.addEventListener("pointerup", event => {
       if (preferTouchEvents && isTouchPointerEvent(event)) {
@@ -6604,7 +6920,7 @@
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      endPull();
+      endPull("pointer");
     });
     feed.addEventListener("pointercancel", event => {
       if (preferTouchEvents && isTouchPointerEvent(event)) {
@@ -6613,24 +6929,24 @@
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
-      cancelPull();
+      cancelPull("pointer");
     });
     feed.addEventListener("touchstart", event => {
       if (!event.touches.length) {
         return;
       }
-      beginPull(event.touches[0].clientY);
+      beginPull(event.touches[0].clientY, null, "touch");
     }, { passive: true });
 
     feed.addEventListener("touchmove", event => {
       if (!event.touches.length) {
         return;
       }
-      movePull(event.touches[0].clientY, event);
+      movePull(event.touches[0].clientY, event, "touch");
     }, { passive: false });
 
-    feed.addEventListener("touchend", endPull);
-    feed.addEventListener("touchcancel", cancelPull);
+    feed.addEventListener("touchend", () => endPull("touch"));
+    feed.addEventListener("touchcancel", () => cancelPull("touch"));
   }
 
   function cardTimestamp(card) {

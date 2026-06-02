@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:cover-archive-reveal": "node ./cover_archive_reveal_playwright.mjs",
     "test:cover-default-audio-speed": "node ./cover_default_audio_speed_playwright.mjs",
     "test:cover-pause-scrubber": "node ./cover_pause_scrubber_playwright.mjs"
   },

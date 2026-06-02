@@ -751,13 +751,18 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert 'feed.addEventListener("pointerup"' in app
     assert 'feed.addEventListener("pointercancel"' in app
     assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in app
-    assert "beginPull(event.clientY, event.pointerId)" in app
-    assert "movePull(event.clientY, event)" in app
+    assert 'beginPull(event.clientY, event.pointerId, "pointer")' in app
+    assert 'movePull(event.clientY, event, "pointer")' in app
     assert 'feed.addEventListener("touchstart"' in app
     assert 'feed.addEventListener("touchmove"' in app
-    assert 'feed.addEventListener("touchend", endPull);' in app
-    assert 'feed.addEventListener("touchcancel", cancelPull);' in app
+    assert 'feed.addEventListener("touchend", () => endPull("touch"));' in app
+    assert 'feed.addEventListener("touchcancel", () => cancelPull("touch"));' in app
     assert "} else {\n      feed.addEventListener(\"touchstart\"" not in app
+    assert 'recordFeedPull("begin"' in app
+    assert 'recordFeedPull("move"' in app
+    assert 'recordFeedPull("finish"' in app
+    assert 'recordFeedPull("cancel"' in app
+    assert 'close_reason: "feed_rubberband_reset"' in app
     assert "Math.pow(Math.abs(dy), 0.72)" in app
     assert "Math.min(FEED_REFRESH_MAX_PULL" in app
     assert 'feed.classList.add("is-rubber-banding")' in app
@@ -1000,6 +1005,22 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
     assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
     assert "const ARCHIVE_REVEAL_SLOP_PX = 12" in app
+    assert 'const ARCHIVE_REVEAL_DEBUG_STORAGE_KEY = "pucky.cover.archive_reveal_debug.v1"' in app
+    assert "const ARCHIVE_REVEAL_CLOSE_REASONS = Object.freeze([" in app
+    assert '"threshold_not_met"' in app
+    assert '"outside_dismiss"' in app
+    assert '"click_capture_close"' in app
+    assert '"feed_rubberband_reset"' in app
+    assert '"pointercancel"' in app
+    assert '"touchcancel"' in app
+    assert '"route_change"' in app
+    assert '"busy_archive"' in app
+    assert "window.__puckyArchiveRevealDebug = {" in app
+    assert "getTrace()" in app
+    assert "clearTrace()" in app
+    assert "getState()" in app
+    assert "setEnabled(enabled)" in app
+    assert "archiveRevealDebugRecord({" in app
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function installFeedLikeSwipeArchive(wrapper, item, config)" not in app
     assert "function installMeetingArchiveSwipe(wrapper, meeting)" not in app
@@ -1016,12 +1037,20 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert 'begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");' in reveal
     assert 'move(event.clientX, event.clientY, "pointer");' in reveal
     assert 'finish("pointer");' in reveal
+    assert 'record("cancel", { source: "pointer", close_reason: "pointercancel" });' in reveal
     assert 'begin(event.touches[0].clientX, event.touches[0].clientY, event.target, null, "touch");' in reveal
     assert 'move(event.touches[0].clientX, event.touches[0].clientY, "touch");' in reveal
     assert 'finish("touch");' in reveal
+    assert 'record("cancel", { source: "touch", close_reason: "touchcancel" });' in reveal
     assert "preferTouchEvents" not in reveal
     assert "isTouchPointerEvent(event)" not in reveal
+    assert 'closeReveal({ immediate: false, source, reason: "threshold_not_met" });' in reveal
+    assert 'closeReveal({ immediate: false, reason: "click_capture_close", context: "wrapper_click_capture" });' in reveal
+    assert 'record("open");' in reveal
     assert 'target?.closest(".archive-reveal-action")' in app
+    assert 'dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });' in app
+    assert 'dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });' in app
+    assert 'reason: "outside_dismiss"' in function_block(app, "installArchiveRevealOutsideDismiss")
     assert "applyOptimisticHomeArchive(card)" in app
     assert "state.cards = state.cards.map(item => {" in optimistic
     assert "archived: true" in optimistic
@@ -1031,6 +1060,7 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert ".archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-active .archive-reveal-action" in styles
+    assert ".archive-reveal-debug-badge" in styles
     assert ".card-wrap.is-card-swipe-dragging .card" not in styles
     assert ".card-wrap.is-card-swiped-away .card" not in styles
     assert ".card-wrap.is-card-collapsing" not in styles
