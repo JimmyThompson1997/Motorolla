@@ -44,6 +44,36 @@ public final class MeetingRecordingControllerSourceTest {
         assertTrue(source.contains("max_duration_ms"));
     }
 
+    @Test
+    public void hoverTriggeredRecordingAddsAudibleChimeWithoutChangingPlainStartStop() throws Exception {
+        String source = read("src/main/java/com/pucky/device/meeting/MeetingRecordingController.java");
+
+        assertTrue(source.contains("ToneGenerator"));
+        assertTrue(source.contains("playMeetingHoverChime"));
+        assertTrue(source.contains("\"chime_attempted\""));
+        assertTrue(source.contains("\"chime_played\""));
+        assertTrue(source.contains("\"chime_tone\""));
+        assertTrue(source.contains("\"chime_duration_ms\""));
+        assertTrue(source.contains("TONE_PROP_ACK"));
+        assertTrue(source.contains("TONE_PROP_BEEP2"));
+
+        String startBody = source.split("public synchronized JSONObject start\\(JSONObject args\\)", 2)[1]
+                .split("public synchronized JSONObject stop\\(JSONObject args\\)", 2)[0];
+        String stopBody = source.split("public synchronized JSONObject stop\\(JSONObject args\\)", 2)[1]
+                .split("private void startUpload", 2)[0];
+        String hoverBody = source.split("public synchronized JSONObject toggleFromHover\\(String reason\\)", 2)[1]
+                .split("private String newMeetingId", 2)[0];
+
+        assertTrue(hoverBody.contains("playMeetingHoverChime(starting)"));
+        assertTrue(hoverBody.contains("Json.put(result, \"hover_chime\", chime)"));
+        assertTrue(hoverBody.contains("copyChimeField(result, chime, \"chime_attempted\")"));
+        assertTrue(hoverBody.contains("copyChimeField(result, chime, \"chime_played\")"));
+        assertTrue(hoverBody.contains("copyChimeField(result, chime, \"chime_tone\")"));
+        assertTrue(hoverBody.contains("copyChimeField(result, chime, \"chime_duration_ms\")"));
+        assertTrue(!startBody.contains("playMeetingHoverChime"));
+        assertTrue(!stopBody.contains("playMeetingHoverChime"));
+    }
+
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8).replace("\r\n", "\n");
     }

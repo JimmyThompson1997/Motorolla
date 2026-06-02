@@ -1204,6 +1204,21 @@ button {
   opacity: 0;
 }
 
+.feed-card-wrap .card-swipe-action {
+  border-radius: 18px;
+  color: #ffe4c7;
+  background:
+    linear-gradient(180deg, rgba(78, 42, 24, 0.96), rgba(49, 24, 14, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 214, 176, 0.12),
+    0 14px 28px rgba(8, 4, 2, 0.26);
+}
+
+.feed-card-wrap.is-card-swiped-away .card-swipe-action,
+.feed-card-wrap.is-card-collapsing .card-swipe-action {
+  opacity: 1;
+}
+
 .card {
   position: relative;
   display: grid;

@@ -958,6 +958,8 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     assert "authoritative: true" in app
     assert "reset_cursor: resetCursor" in app
     assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
+    assert 'const wrapper = el("div", "card-wrap feed-card-wrap");' in app
+    assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
     assert "appendCardSwipeAction(wrapper);" in app
     assert 'iconSvg("archive_folder"' in app
     assert 'el("span", "card-swipe-label", "Archive")' in app
@@ -995,6 +997,7 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     wrap_css = styles[styles.index(".card-wrap {"):styles.index(".card-swipe-action")]
     motion_start = styles.index(".card-wrap .card {")
     motion_css = styles[motion_start:styles.index("\n.card {", motion_start)]
+    feed_swipe_css = styles[styles.index(".feed-card-wrap .card-swipe-action"):styles.index("\n.card {", styles.index(".feed-card-wrap .card-swipe-action"))]
     assert "height var(--card-archive-collapse-ms)" in wrap_css
     assert "margin-bottom var(--card-archive-collapse-ms)" in wrap_css
     assert ".card-wrap.is-card-swipe-dragging .card" in motion_css
@@ -1012,10 +1015,14 @@ def test_home_feed_uses_authoritative_sync_and_real_archive_swipe_affordance() -
     assert "stroke: currentColor;" in swipe_css
     assert "pointer-events: none;" in swipe_css
     assert "background: transparent;" in swipe_css
-    assert "border:" not in swipe_css
-    assert "box-shadow:" not in swipe_css
-    assert "rgba(255, 176, 0" not in swipe_css
-    assert "rgba(255, 89, 94" not in swipe_css
+    assert ".feed-card-wrap .card-swipe-action" in styles
+    assert "border-radius: 18px;" in feed_swipe_css
+    assert "linear-gradient(180deg, rgba(78, 42, 24, 0.96), rgba(49, 24, 14, 0.98))" in feed_swipe_css
+    assert "box-shadow:" in feed_swipe_css
+    assert ".feed-card-wrap.is-card-swiped-away .card-swipe-action," in styles
+    assert ".feed-card-wrap.is-card-collapsing .card-swipe-action" in styles
+    assert "opacity: 1;" in feed_swipe_css
+    assert ".card-wrap.is-card-collapsing .card-swipe-action {\n  opacity: 0;\n}" in styles
 
 
 def test_card_actions_are_aligned_to_content_row() -> None:

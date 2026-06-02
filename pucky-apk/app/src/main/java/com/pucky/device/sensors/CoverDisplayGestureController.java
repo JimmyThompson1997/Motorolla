@@ -389,7 +389,8 @@ public final class CoverDisplayGestureController {
                         "cover_hover_hold",
                         durationMs,
                         values,
-                        gates);
+                        gates,
+                        result);
             }
         } catch (CommandException exc) {
             synchronized (lock) {
@@ -676,6 +677,10 @@ public final class CoverDisplayGestureController {
     }
 
     private void addEventLocked(String type, String reason, long durationMs, float[] values, JSONObject gates) {
+        addEventLocked(type, reason, durationMs, values, gates, null);
+    }
+
+    private void addEventLocked(String type, String reason, long durationMs, float[] values, JSONObject gates, JSONObject detail) {
         JSONObject event = new JSONObject();
         Json.put(event, "at", Instant.now().toString());
         Json.put(event, "type", type);
@@ -693,6 +698,9 @@ public final class CoverDisplayGestureController {
         }
         if (gates != null) {
             Json.put(event, "gates", gates);
+        }
+        if (detail != null) {
+            Json.put(event, "detail", detail);
         }
         recentEvents.addLast(event);
         while (recentEvents.size() > MAX_EVENTS) {

@@ -3590,7 +3590,7 @@
     if (isPendingOutboundCard(card)) {
       return outboundCardView(card);
     }
-    const wrapper = el("div", "card-wrap");
+    const wrapper = el("div", "card-wrap feed-card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
@@ -3684,7 +3684,7 @@
   }
 
   function outboundCardView(card) {
-    const wrapper = el("div", "card-wrap");
+    const wrapper = el("div", "card-wrap feed-card-wrap");
     const cardEl = el("article", isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound");

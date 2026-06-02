@@ -24,6 +24,10 @@ public final class MeetingRecordingSourceTest {
         assertTrue(source.contains("\"meeting_recording_stopped\""));
         assertTrue(source.contains("\"meeting_recording_failed\""));
         assertTrue(source.contains("MeetingRecordingController.shared(context).toggleFromHover"));
+        assertTrue(source.contains("JSONObject result = MeetingRecordingController.shared(context).toggleFromHover"));
+        assertTrue(source.contains("addEventLocked(\n                        \"recording\".equals(state) ? \"meeting_recording_started\" : \"meeting_recording_stopped\""));
+        assertTrue(source.contains("result);"));
+        assertTrue(source.contains("Json.put(event, \"detail\", detail)"));
         assertTrue(source.contains("MEETING_HOVER_FALSE_GAP_MS = 350L"));
         assertTrue(source.contains("ACCEL_DELTA_SPIKE = 2.25f"));
         assertTrue(source.contains("\"hover_false_gap_ignored\""));

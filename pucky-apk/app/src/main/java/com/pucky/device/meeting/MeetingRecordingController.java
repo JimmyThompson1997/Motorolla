@@ -2,6 +2,8 @@ package com.pucky.device.meeting;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.util.Base64;
 
 import com.pucky.device.command.CommandErrorCodes;
@@ -33,6 +35,9 @@ public final class MeetingRecordingController {
     private static final String MEETINGS = "meetings_json";
     private static final int MAX_MEETINGS = 100;
     private static final int DEFAULT_MAX_DURATION_MS = 90 * 60 * 1000;
+    private static final int HOVER_START_CHIME_MS = 160;
+    private static final int HOVER_STOP_CHIME_MS = 210;
+    private static final int HOVER_CHIME_VOLUME = 70;
     private static final DateTimeFormatter ID_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
     private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
@@ -178,9 +183,51 @@ public final class MeetingRecordingController {
     }
 
     public synchronized JSONObject toggleFromHover(String reason) throws CommandException {
+        boolean starting = activeMeetingId.isEmpty();
         JSONObject args = new JSONObject();
         Json.put(args, "reason", reason);
-        return activeMeetingId.isEmpty() ? start(args) : stop(args);
+        JSONObject result = starting ? start(args) : stop(args);
+        JSONObject chime = playMeetingHoverChime(starting);
+        Json.put(result, "hover_chime", chime);
+        copyChimeField(result, chime, "chime_attempted");
+        copyChimeField(result, chime, "chime_played");
+        copyChimeField(result, chime, "chime_tone");
+        copyChimeField(result, chime, "chime_duration_ms");
+        return result;
+    }
+
+    private JSONObject playMeetingHoverChime(boolean starting) {
+        int tone = starting ? ToneGenerator.TONE_PROP_ACK : ToneGenerator.TONE_PROP_BEEP2;
+        int durationMs = starting ? HOVER_START_CHIME_MS : HOVER_STOP_CHIME_MS;
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.meeting_hover_chime.v1");
+        Json.put(out, "chime_attempted", true);
+        Json.put(out, "chime_played", false);
+        Json.put(out, "chime_tone", starting ? "TONE_PROP_ACK" : "TONE_PROP_BEEP2");
+        Json.put(out, "chime_duration_ms", durationMs);
+        Json.put(out, "stream", "music");
+        try {
+            ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, HOVER_CHIME_VOLUME);
+            generator.startTone(tone, durationMs);
+            Json.put(out, "chime_played", true);
+            new Thread(() -> {
+                try {
+                    Thread.sleep(durationMs + 120L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                generator.release();
+            }, "pucky-meeting-hover-chime").start();
+        } catch (RuntimeException exc) {
+            Json.put(out, "chime_error", exc.getClass().getSimpleName() + ": " + exc.getMessage());
+        }
+        return out;
+    }
+
+    private static void copyChimeField(JSONObject target, JSONObject source, String key) {
+        if (source != null && source.has(key)) {
+            Json.put(target, key, source.opt(key));
+        }
     }
 
     private String newMeetingId(String rawDeviceId) {
