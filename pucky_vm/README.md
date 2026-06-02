@@ -14,6 +14,36 @@ Optional TTS environment knobs:
 - `PUCKY_TTS_FORMAT` defaults to `wav`
 - `PUCKY_TTS_SPEED` defaults to `1.0`
 
+Optional Codex app-server routing knobs:
+
+- `CODEX_APP_SERVER_COMMAND` fully overrides the command used to launch `codex app-server`
+- `PUCKY_CODEX_PROFILE` appends `--profile`
+- `PUCKY_CODEX_MODEL` appends `--model`
+- `PUCKY_CODEX_PROVIDER` sets `model_provider` via `-c`
+- `PUCKY_CODEX_PROVIDER_BASE_URL` overrides `model_providers.<provider>.base_url`
+- `PUCKY_CODEX_PROVIDER_API_KEY` overrides `model_providers.<provider>.api_key`
+- `PUCKY_CODEX_PROVIDER_SETTINGS` injects additional provider config as JSON
+- `PUCKY_CODEX_APP_SERVER_ARGS` appends raw extra arguments
+
+Example for DeepInfra's OpenAI-compatible lane:
+
+```powershell
+$env:PUCKY_CODEX_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+$env:PUCKY_CODEX_PROVIDER = "openai"
+$env:PUCKY_CODEX_PROVIDER_BASE_URL = "https://api.deepinfra.com/v1/openai"
+$env:PUCKY_CODEX_PROVIDER_API_KEY = $env:DEEPINFRA_API_KEY
+```
+
+Local model battery:
+
+```powershell
+python -m tools.run_codex_model_battery
+```
+
+The battery is local-only. It drives the existing `CodexAppServerClient`
+through env vars, writes machine-readable results under `.tmp\`, and does not
+touch the VM, emulator, or phone lanes.
+
 Each successful turn writes one structured JSON log line with stage timings for
 STT, Codex, and TTS. The log includes character counts and byte counts, but not
 secrets or the full transcript.

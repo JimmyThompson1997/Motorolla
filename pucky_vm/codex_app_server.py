@@ -630,7 +630,37 @@ class CodexAppServerClient:
 def command_from_env(value: str | None) -> list[str]:
     if value:
         return shlex.split(value)
-    return ["codex", "app-server", "--listen", "stdio://"]
+
+    command: list[str] = ["codex", "app-server", "--listen", "stdio://"]
+
+    if profile := _clean_optional(os.environ.get("PUCKY_CODEX_PROFILE")):
+        command.extend(["--profile", profile])
+
+    if model := _clean_optional(os.environ.get("PUCKY_CODEX_MODEL")):
+        command.extend(["--model", model])
+
+    if provider := _clean_optional(os.environ.get("PUCKY_CODEX_PROVIDER")):
+        command.extend(["-c", f"model_provider={json.dumps(provider)}"])
+        if base_url := _clean_optional(os.environ.get("PUCKY_CODEX_PROVIDER_BASE_URL")):
+            command.extend(["-c", f"model_providers.{provider}.base_url={json.dumps(base_url)}"])
+        if provider_api_key := _clean_optional(os.environ.get("PUCKY_CODEX_PROVIDER_API_KEY")):
+            command.extend(["-c", f"model_providers.{provider}.api_key={json.dumps(provider_api_key)}"])
+        if provider_settings := _clean_optional(os.environ.get("PUCKY_CODEX_PROVIDER_SETTINGS")):
+            try:
+                settings = json.loads(provider_settings)
+            except json.JSONDecodeError as exc:
+                raise ValueError("PUCKY_CODEX_PROVIDER_SETTINGS must be valid JSON") from exc
+            if not isinstance(settings, dict):
+                raise ValueError("PUCKY_CODEX_PROVIDER_SETTINGS must be a JSON object")
+            for key, setting_value in sorted(settings.items(), key=lambda item: item[0]):
+                if not key:
+                    continue
+                command.extend(["-c", f"model_providers.{provider}.{key}={json.dumps(setting_value)}"])
+
+    if extra_args := _clean_optional(os.environ.get("PUCKY_CODEX_APP_SERVER_ARGS")):
+        command.extend(shlex.split(extra_args))
+
+    return command
 
 
 def compact_tool_target(tool: str, arguments: Any) -> str:

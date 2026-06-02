@@ -1,0 +1,37 @@
+{
+  "schema": "pucky.codex_model_battery.matrix.v1",
+  "entries": [
+    {
+      "label": "deepseek-v4-pro",
+      "enabled": true,
+      "provider_mode": "openai-compatible",
+      "model": "deepseek-ai/DeepSeek-V4-Pro",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "api_key_env": "DEEPINFRA_API_KEY"
+    },
+    {
+      "label": "deepseek-v4-flash",
+      "enabled": true,
+      "provider_mode": "openai-compatible",
+      "model": "deepseek-ai/DeepSeek-V4-Flash",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "api_key_env": "DEEPINFRA_API_KEY"
+    },
+    {
+      "label": "glm-5.1",
+      "enabled": false,
+      "provider_mode": "openai-compatible",
+      "model": "zai-org/GLM-5.1",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "api_key_env": "DEEPINFRA_API_KEY"
+    },
+    {
+      "label": "kimi-k2.6",
+      "enabled": false,
+      "provider_mode": "openai-compatible",
+      "model": "moonshotai/Kimi-K2.6",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "api_key_env": "DEEPINFRA_API_KEY"
+    }
+  ]
+}

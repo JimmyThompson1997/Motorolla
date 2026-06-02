@@ -9,7 +9,9 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from pucky_vm.codex_app_server import CodexAppServerClient, compact_tool_target
+from unittest.mock import patch
+
+from pucky_vm.codex_app_server import CodexAppServerClient, command_from_env, compact_tool_target
 
 
 FAKE_APP_SERVER = r"""
@@ -417,6 +419,39 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(origin["reasoning_effort"], "high")
             self.assertEqual(origin["sandbox_policy"], "danger-full-access")
             self.assertEqual(origin["approval_mode"], "never")
+
+
+class CommandFromEnvTests(unittest.TestCase):
+    def test_command_from_env_supports_openai_compatible_provider_overrides(self) -> None:
+        env = {
+            "PUCKY_CODEX_MODEL": "deepseek-ai/DeepSeek-V4-Pro",
+            "PUCKY_CODEX_PROVIDER": "openai",
+            "PUCKY_CODEX_PROVIDER_BASE_URL": "https://api.deepinfra.com/v1/openai",
+            "PUCKY_CODEX_PROVIDER_API_KEY": "di-key",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            command = command_from_env(None)
+
+        self.assertIn("--model", command)
+        self.assertIn("deepseek-ai/DeepSeek-V4-Pro", command)
+        self.assertIn(f"model_provider={json.dumps('openai')}", command)
+        self.assertIn(
+            f"model_providers.openai.base_url={json.dumps('https://api.deepinfra.com/v1/openai')}",
+            command,
+        )
+        self.assertIn(f"model_providers.openai.api_key={json.dumps('di-key')}", command)
+
+    def test_command_from_env_rejects_invalid_provider_settings_json(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PUCKY_CODEX_PROVIDER": "openai",
+                "PUCKY_CODEX_PROVIDER_SETTINGS": "not-json",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                command_from_env(None)
 
 
 if __name__ == "__main__":
