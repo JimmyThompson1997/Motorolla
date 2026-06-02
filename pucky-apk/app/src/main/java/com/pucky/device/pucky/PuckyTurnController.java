@@ -52,6 +52,7 @@ public final class PuckyTurnController {
     private static final int RECORDING_STOP_HAPTIC_MS = 40;
     private static final int ARRIVAL_CUE_HAPTIC_MS = 32;
     private static final int HAPTIC_AMPLITUDE = 220;
+    static final long STALE_CODEX_RUNNING_TIMEOUT_MS = 10L * 60L * 1000L;
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -90,7 +91,10 @@ public final class PuckyTurnController {
 
     public JSONObject status() {
         JSONObject voice = WalkieAudioCaptureController.shared(context).status();
-        JSONObject last = maybeRecoverLastStatus(lastStatus(), "status_lookup");
+        JSONObject last = maybeExpireStaleCodexRunning(
+                maybeRecoverLastStatus(lastStatus(), "status_lookup"),
+                voice,
+                "status_lookup");
         JSONObject liveGate = voice.optJSONObject("speech_gate");
         JSONObject activeSession = voice.optJSONObject("active_session");
         if (liveGate != null && activeSession != null
@@ -137,6 +141,8 @@ public final class PuckyTurnController {
         Json.put(out, "response_transport_error", last.optString("response_transport_error", ""));
         Json.put(out, "response_transport_error_at", last.optString("response_transport_error_at", ""));
         Json.put(out, "remote_accepted", statusHasRemoteAcceptance(last));
+        Json.put(out, "stale_codex_running_expired", last.optBoolean("stale_codex_running_expired", false));
+        Json.put(out, "stale_codex_running_age_ms", last.optLong("stale_codex_running_age_ms", 0L));
         return out;
     }
 
@@ -1387,6 +1393,57 @@ public final class PuckyTurnController {
         return isAcceptedRemoteStage(normalizedStatusState(status));
     }
 
+    static boolean shouldExpireStaleCodexRunning(JSONObject status, JSONObject voice, long nowMs) {
+        if (status == null) {
+            return false;
+        }
+        String state = normalizedStatusState(status);
+        String remoteStage = status.optString("remote_stage", "").trim();
+        boolean codexRunning = "codex_running".equals(state)
+                || "codex_running".equals(remoteStage)
+                || status.optBoolean("codex_running", false);
+        if (!codexRunning) {
+            return false;
+        }
+        if (statusHasActiveLocalWork(status, voice)) {
+            return false;
+        }
+        return staleCodexRunningAgeMs(status, nowMs) >= STALE_CODEX_RUNNING_TIMEOUT_MS;
+    }
+
+    static long staleCodexRunningAgeMs(JSONObject status, long nowMs) {
+        if (status == null) {
+            return 0L;
+        }
+        String updatedAt = status.optString("updated_at", "").trim();
+        if (updatedAt.isEmpty()) {
+            return 0L;
+        }
+        try {
+            long updatedMs = Instant.parse(updatedAt).toEpochMilli();
+            return Math.max(0L, nowMs - updatedMs);
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private static boolean statusHasActiveLocalWork(JSONObject status, JSONObject voice) {
+        if (status != null && (status.optBoolean("uploading", false)
+                || status.optBoolean("stt_running", false)
+                || status.optBoolean("tts_running", false)
+                || status.optBoolean("speaking", false))) {
+            return true;
+        }
+        if (voice == null) {
+            return false;
+        }
+        String voiceState = voice.optString("state", "").trim();
+        return voice.optBoolean("mic_on", false)
+                || "armed".equals(voiceState)
+                || "recording".equals(voiceState)
+                || voice.optJSONObject("active_session") != null;
+    }
+
     static boolean shouldRetainPendingAfterLocalTransportFailure(JSONObject status) {
         if (status == null || isLocallyRecovered(status)) {
             return false;
@@ -1439,6 +1496,38 @@ public final class PuckyTurnController {
         }
         JSONObject recovered = maybeRecoverTurnFromCard(last, card, recoverySource);
         return recovered == null ? last : recovered;
+    }
+
+    private JSONObject maybeExpireStaleCodexRunning(JSONObject status, JSONObject voice, String recoverySource) {
+        long nowMs = System.currentTimeMillis();
+        if (!shouldExpireStaleCodexRunning(status, voice, nowMs)) {
+            return status;
+        }
+        JSONObject recovered = copyJsonObject(status);
+        String turnId = recovered.optString("turn_id", "").trim();
+        if (!turnId.isEmpty()) {
+            stopTurnStatusPoll(turnId);
+            clearRemoteAccepted(turnId);
+        }
+        long ageMs = staleCodexRunningAgeMs(status, nowMs);
+        Json.put(recovered, "state", "idle");
+        Json.put(recovered, "visual_state", "idle");
+        Json.put(recovered, "uploading", false);
+        Json.put(recovered, "stt_running", false);
+        Json.put(recovered, "codex_running", false);
+        Json.put(recovered, "tts_running", false);
+        Json.put(recovered, "speaking", false);
+        Json.put(recovered, "failed", false);
+        Json.put(recovered, "stale_codex_running_expired", true);
+        Json.put(recovered, "stale_codex_running_age_ms", ageMs);
+        Json.put(recovered, "stale_codex_running_recovery_source", recoverySource);
+        clearTransportRecoveryFields(recovered);
+        recovered.remove("remote_stage");
+        recovered.remove("server_turn_status");
+        recovered.remove("error");
+        Log.d(TAG, "Expired stale codex_running state after " + ageMs + "ms");
+        markStatus("idle", recovered, null);
+        return lastStatus();
     }
 
     private JSONObject maybeRecoverTurnFromCard(JSONObject currentStatus, JSONObject card, String recoverySource) {

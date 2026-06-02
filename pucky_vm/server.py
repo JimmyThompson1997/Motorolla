@@ -1577,6 +1577,81 @@ class PuckyVoiceService:
         }
         return item
 
+    def _upsert_meeting_failed_card(
+        self,
+        record: dict[str, object],
+        audio: bytes,
+        mime_type: str,
+    ) -> dict[str, object]:
+        meeting_id = str(record.get("meeting_id") or "")
+        title = "Meeting processing failed"
+        reason = str(record.get("failure_reason") or "unknown error").strip()
+        summary = f"Processing stopped: {reason}" if reason else "Processing stopped."
+        origin = _normalize_origin(
+            {
+                "runtime": "pucky",
+                "thread_id": meeting_id,
+                "source": "meeting_recording",
+                "meeting_id": meeting_id,
+                "card_kind": "meeting_failed",
+                "meeting_state": "failed",
+            },
+            meeting_id,
+        )
+        item = self.feed.upsert_turn_result(
+            turn_id=meeting_id,
+            session_id=meeting_id,
+            reply_mode=REPLY_MODE_CARD_ONLY,
+            reply_text=summary,
+            title=title,
+            summary=summary,
+            icon="mic",
+            origin=origin,
+            telemetry={
+                "event": "pucky.meeting.agent_failed",
+                "status": "failed",
+                "stage": "meeting_agent_failed",
+                "meeting_id": meeting_id,
+                "failure_reason": reason,
+                "request_audio_bytes": len(audio),
+                "content_type": mime_type,
+            },
+            transcript_messages=[
+                _user_transcript_message(
+                    text="Meeting recording",
+                    created_at=str(record.get("created_at") or _iso_time(time.time())),
+                    turn_id=meeting_id,
+                    request_audio_mime_type=mime_type,
+                    has_request_audio=True,
+                ),
+                _assistant_transcript_message(
+                    text=summary,
+                    created_at=_iso_time(time.time()),
+                    attachments=[],
+                ),
+            ],
+            request_audio_mime_type=mime_type,
+            request_audio_base64=base64.b64encode(audio).decode("ascii"),
+            audio_mime_type="",
+            audio_base64="",
+            html_mime_type="",
+            html_base64="",
+            force_unread=True,
+        )
+        item = self._decorate_feed_item(item)
+        item["card"] = {
+            "title": title,
+            "summary": summary,
+            "icon": "mic",
+            "accent": item.get("accent") or self._card_icon_accent("mic"),
+            "origin": origin,
+            "card_kind": "meeting_failed",
+            "meeting_state": "failed",
+        }
+        item["card_kind"] = "meeting_failed"
+        item["meeting_state"] = "failed"
+        return item
+
     def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
         record["updated_at"] = _iso_time(time.time())
         record["transcript_status"] = "agent_pending"
@@ -1642,6 +1717,13 @@ class PuckyVoiceService:
             record["state"] = "failed"
             record["updated_at"] = _iso_time(time.time())
             record["failure_reason"] = f"{exc.__class__.__name__}: {exc}"
+            record["transcript_status"] = "failed"
+            record["transcript_error"] = str(record["failure_reason"])
+            record["diarization_status"] = "failed"
+            failed = self._upsert_meeting_failed_card(record, audio, mime_type)
+            record["card_id"] = str(failed.get("card_id") or "")
+            record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
+            record["feed_item"] = failed
             result = {}
         self._upsert_meeting(record)
 

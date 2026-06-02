@@ -48,6 +48,41 @@ public final class PuckyTurnStatePolicyTest {
     }
 
     @Test
+    public void freshCodexRunningDoesNotExpire() throws Exception {
+        long now = 1_799_999L;
+        JSONObject status = new JSONObject()
+                .put("state", "codex_running")
+                .put("updated_at", "1970-01-01T00:20:00Z");
+
+        assertFalse(PuckyTurnController.shouldExpireStaleCodexRunning(status, new JSONObject(), now));
+    }
+
+    @Test
+    public void staleCodexRunningWithoutLocalWorkExpires() throws Exception {
+        long now = 1_800_001L;
+        JSONObject status = new JSONObject()
+                .put("state", "codex_running")
+                .put("updated_at", "1970-01-01T00:20:00Z");
+
+        assertTrue(PuckyTurnController.shouldExpireStaleCodexRunning(status, new JSONObject(), now));
+        assertEquals(600_001L, PuckyTurnController.staleCodexRunningAgeMs(status, now));
+    }
+
+    @Test
+    public void activeLocalWorkKeepsCodexRunningFromExpiring() throws Exception {
+        long now = 1_800_001L;
+        JSONObject status = new JSONObject()
+                .put("state", "codex_running")
+                .put("updated_at", "1970-01-01T00:20:00Z")
+                .put("stt_running", true);
+        JSONObject voice = new JSONObject()
+                .put("state", "recording")
+                .put("mic_on", true);
+
+        assertFalse(PuckyTurnController.shouldExpireStaleCodexRunning(status, voice, now));
+    }
+
+    @Test
     public void acceptedTtsRunningStaysThinkingAfterLocalTransportFailure() throws Exception {
         JSONObject status = new JSONObject()
                 .put("state", "tts_running")

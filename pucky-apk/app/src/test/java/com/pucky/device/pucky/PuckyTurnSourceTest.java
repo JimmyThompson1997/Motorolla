@@ -632,7 +632,8 @@ public final class PuckyTurnSourceTest {
         String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
 
         assertTrue(source.contains("private final ReplyCardStore replyCards;"));
-        assertTrue(source.contains("JSONObject last = maybeRecoverLastStatus(lastStatus(), \"status_lookup\");"));
+        assertTrue(source.contains("JSONObject last = maybeExpireStaleCodexRunning("));
+        assertTrue(source.contains("maybeRecoverLastStatus(lastStatus(), \"status_lookup\")"));
         assertTrue(source.contains("public void onReplyRecovered(JSONObject card, String recoverySource)"));
         assertTrue(source.contains("PuckyFeedController.shared(context).syncAsync(\"accepted_transport_failure\")"));
         assertTrue(source.contains("PuckyFeedController.shared(context).syncAsync(\"remote_completed\")"));
@@ -656,6 +657,12 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("markStatus(nextState, recovered, null)"));
         assertTrue(source.contains("private static boolean shouldAttemptReplyRecovery(JSONObject status)"));
         assertTrue(source.contains("private static boolean isLocallyRecovered(JSONObject status)"));
+        assertTrue(source.contains("STALE_CODEX_RUNNING_TIMEOUT_MS = 10L * 60L * 1000L"));
+        assertTrue(source.contains("private JSONObject maybeExpireStaleCodexRunning"));
+        assertTrue(source.contains("static boolean shouldExpireStaleCodexRunning"));
+        assertTrue(source.contains("static long staleCodexRunningAgeMs"));
+        assertTrue(source.contains("Json.put(out, \"stale_codex_running_expired\""));
+        assertTrue(source.contains("Json.put(out, \"stale_codex_running_age_ms\""));
         assertTrue(source.contains("replyCards.snapshot().optJSONArray(\"cards\")"));
         assertTrue(feed.contains("PuckyTurnController.shared(context).onReplyRecovered(local, \"feed_sync\")"));
     }

@@ -19,6 +19,7 @@
   const ARCHIVE_REVEAL_SLOP_PX = 12;
   const ARCHIVE_REVEAL_DEBUG_STORAGE_KEY = "pucky.cover.archive_reveal_debug.v1";
   const ARCHIVE_REVEAL_DEBUG_TRACE_LIMIT = 160;
+  const ARCHIVE_REVEAL_DEBUG_BADGE_RENDERING_ENABLED = false;
   const ARCHIVE_REVEAL_CLOSE_REASONS = Object.freeze([
     "threshold_not_met",
     "outside_dismiss",
@@ -470,7 +471,7 @@
   function syncArchiveRevealDebugBadge() {
     const badgeId = "archiveRevealDebugBadge";
     const existing = document.getElementById(badgeId);
-    if (!archiveRevealDebugState.enabled) {
+    if (!ARCHIVE_REVEAL_DEBUG_BADGE_RENDERING_ENABLED || !archiveRevealDebugState.enabled) {
       existing?.remove();
       return;
     }

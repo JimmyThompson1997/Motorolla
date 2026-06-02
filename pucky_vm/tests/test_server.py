@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
@@ -1100,6 +1101,65 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
         blocking.release_codex.set()
+
+    def test_failed_meeting_agent_updates_same_feed_card_out_of_processing(self) -> None:
+        class LockedMeetingCodex(FakeCodex):
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                output_schema: dict[str, object] | None = None,
+            ):
+                self.turns.append(text)
+                self.output_schemas.append(output_schema)
+                raise sqlite3.OperationalError("database is locked")
+
+        self.service.codex = LockedMeetingCodex()
+        meeting_id = "meeting-20260601-121500-device-diarbench-two_intro_once"
+        payload = self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:15:00Z",
+                "stopped_at": "2026-06-01T12:15:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        self.assertEqual(payload["meeting"]["card_id"], "pucky_card_" + meeting_id)
+
+        meeting = {}
+        for _ in range(50):
+            meetings = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"})
+            meeting = next((item for item in meetings.get("meetings", []) if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "failed":
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(meeting["state"], "failed")
+        self.assertEqual(meeting["failure_reason"], "OperationalError: database is locked")
+        self.assertEqual(meeting["transcript_status"], "failed")
+        self.assertEqual(meeting["diarization_status"], "failed")
+        self.assertEqual(meeting["card_id"], "pucky_card_" + meeting_id)
+        self.assertEqual(meeting["card"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["card"]["meeting_state"], "failed")
+        self.assertEqual(meeting["card"]["title"], "Meeting processing failed")
+        self.assertIn("database is locked", meeting["card"]["summary"])
+
+        persisted = self.service.feed.get_item("pucky_card_" + meeting_id)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["origin"]["card_kind"], "meeting_failed")
+        self.assertEqual(persisted["origin"]["meeting_state"], "failed")
+        self.assertNotEqual(persisted["origin"]["card_kind"], "meeting_processing")
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(
+            sum(1 for item in feed.get("items", []) if item.get("card_id") == "pucky_card_" + meeting_id),
+            1,
+        )
 
     def test_meeting_agent_missing_result_is_not_marked_successful(self) -> None:
         class MissingMeetingResultCodex(FakeCodex):

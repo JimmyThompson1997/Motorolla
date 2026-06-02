@@ -1060,7 +1060,8 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert ".archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-active .archive-reveal-action" in styles
-    assert ".archive-reveal-debug-badge" in styles
+    assert "ARCHIVE_REVEAL_DEBUG_BADGE_RENDERING_ENABLED = false" in app
+    assert ".archive-reveal-debug-badge" not in styles
     assert ".card-wrap.is-card-swipe-dragging .card" not in styles
     assert ".card-wrap.is-card-swiped-away .card" not in styles
     assert ".card-wrap.is-card-collapsing" not in styles
