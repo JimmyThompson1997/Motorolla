@@ -184,6 +184,10 @@
 
   const TURN_REPLY_MODES = ["card_only", "card_and_spoken"];
   const TURN_ARRIVAL_CUE_MODES = ["none", "haptic", "chime", "haptic_and_chime"];
+  const TURN_MODEL_OPTIONS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"];
+  const TURN_REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "xhigh"];
+  const DEFAULT_TURN_MODEL = "gpt-5.4-mini";
+  const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
   const LINKS_WINDOW_OVERSCAN = 8;
@@ -673,7 +677,9 @@
       return state.turnSettings;
     }
     if (command === "pucky.turn.settings.set") {
-      const mode = normalizeReplyMode(args.reply_mode || args.mode);
+      const mode = args.reply_mode !== undefined || args.mode !== undefined
+        ? normalizeReplyMode(args.reply_mode || args.mode)
+        : normalizeReplyMode(state.turnSettings.reply_mode);
       const arrivalCueMode = normalizeArrivalCueMode(
         args.arrival_cue_mode !== undefined
           ? args.arrival_cue_mode
@@ -681,14 +687,24 @@
             ? (truthy(args.accepted_chime_enabled) ? "chime" : "none")
             : state.turnSettings.arrival_cue_mode
       );
+      const model = normalizeTurnModel(
+        args.model !== undefined ? args.model : state.turnSettings.model
+      );
+      const reasoningEffort = normalizeTurnReasoningEffort(
+        args.reasoning_effort !== undefined ? args.reasoning_effort : state.turnSettings.reasoning_effort
+      );
       state.turnSettings = {
         schema: "pucky.turn_settings.v1",
         reply_mode: mode,
         spoken_reply_enabled: mode === "card_and_spoken",
         arrival_cue_mode: arrivalCueMode,
         accepted_chime_enabled: arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime",
+        model,
+        reasoning_effort: reasoningEffort,
         modes: TURN_REPLY_MODES,
-        arrival_cue_modes: TURN_ARRIVAL_CUE_MODES
+        arrival_cue_modes: TURN_ARRIVAL_CUE_MODES,
+        model_options: TURN_MODEL_OPTIONS,
+        reasoning_effort_options: TURN_REASONING_EFFORT_OPTIONS
       };
       return state.turnSettings;
     }
@@ -2121,8 +2137,12 @@
       spoken_reply_enabled: false,
       arrival_cue_mode: "chime",
       accepted_chime_enabled: true,
+      model: DEFAULT_TURN_MODEL,
+      reasoning_effort: DEFAULT_TURN_REASONING_EFFORT,
       modes: TURN_REPLY_MODES,
-      arrival_cue_modes: TURN_ARRIVAL_CUE_MODES
+      arrival_cue_modes: TURN_ARRIVAL_CUE_MODES,
+      model_options: TURN_MODEL_OPTIONS,
+      reasoning_effort_options: TURN_REASONING_EFFORT_OPTIONS
     };
   }
 
@@ -2522,17 +2542,37 @@
           ? "chime"
           : "none"
     );
+    const model = normalizeTurnModel(raw.model);
+    const reasoningEffort = normalizeTurnReasoningEffort(raw.reasoning_effort);
     return {
       schema: "pucky.turn_settings.v1",
       reply_mode: mode,
       spoken_reply_enabled: mode === "card_and_spoken",
       arrival_cue_mode: arrivalCueMode,
       accepted_chime_enabled: arrivalCueMode === "chime" || arrivalCueMode === "haptic_and_chime",
+      model,
+      reasoning_effort: reasoningEffort,
       modes: Array.isArray(raw.modes) && raw.modes.length ? raw.modes : TURN_REPLY_MODES,
       arrival_cue_modes: Array.isArray(raw.arrival_cue_modes) && raw.arrival_cue_modes.length
         ? raw.arrival_cue_modes
-        : TURN_ARRIVAL_CUE_MODES
+        : TURN_ARRIVAL_CUE_MODES,
+      model_options: Array.isArray(raw.model_options) && raw.model_options.length
+        ? raw.model_options.map(normalizeTurnModel)
+        : TURN_MODEL_OPTIONS,
+      reasoning_effort_options: Array.isArray(raw.reasoning_effort_options) && raw.reasoning_effort_options.length
+        ? raw.reasoning_effort_options.map(normalizeTurnReasoningEffort)
+        : TURN_REASONING_EFFORT_OPTIONS
     };
+  }
+
+  function normalizeTurnModel(model) {
+    const value = String(model || "").trim().toLowerCase();
+    return TURN_MODEL_OPTIONS.includes(value) ? value : DEFAULT_TURN_MODEL;
+  }
+
+  function normalizeTurnReasoningEffort(reasoningEffort) {
+    const value = String(reasoningEffort || "").trim().toLowerCase();
+    return TURN_REASONING_EFFORT_OPTIONS.includes(value) ? value : DEFAULT_TURN_REASONING_EFFORT;
   }
 
   function normalizeWakeStatus(input) {
@@ -3086,6 +3126,8 @@
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
       arrivalCueSettingsCard(),
+      modelSettingsCard(),
+      reasoningEffortSettingsCard(),
       advancedSettingsCard()
     );
     return page;
@@ -3566,6 +3608,92 @@
     }
   }
 
+  function modelSettingsCard() {
+    const options = (state.turnSettings.model_options || TURN_MODEL_OPTIONS).map(model => ({
+      value: normalizeTurnModel(model),
+      label: turnModelLabel(model)
+    }));
+    const currentModel = normalizeTurnModel(state.turnSettings.model);
+    return settingsSelectorCard({
+      settingId: "turn-model",
+      accent: "#63c1a5",
+      icon: "smart_toy",
+      title: "Session model",
+      detail: "Default OpenAI model. Applies to new sessions.",
+      valueLabel: turnModelLabel(currentModel),
+      onOpen: () => openSettingsSelector({
+        title: "Session model",
+        currentValue: currentModel,
+        options,
+        onSelect: setTurnModel
+      })
+    });
+  }
+
+  async function setTurnModel(model) {
+    const nextModel = normalizeTurnModel(model);
+    state.turnSettings = normalizeTurnSettings({
+      ...state.turnSettings,
+      model: nextModel
+    });
+    render();
+    try {
+      const updated = await Pucky.request({
+        command: "pucky.turn.settings.set",
+        args: {
+          model: nextModel
+        }
+      });
+      state.turnSettings = normalizeTurnSettings(updated);
+      render();
+    } catch (_) {
+      // Browser preview keeps the optimistic local value.
+    }
+  }
+
+  function reasoningEffortSettingsCard() {
+    const options = (state.turnSettings.reasoning_effort_options || TURN_REASONING_EFFORT_OPTIONS).map(value => ({
+      value: normalizeTurnReasoningEffort(value),
+      label: reasoningEffortLabel(value)
+    }));
+    const currentEffort = normalizeTurnReasoningEffort(state.turnSettings.reasoning_effort);
+    return settingsSelectorCard({
+      settingId: "turn-reasoning-effort",
+      accent: "#72c2ff",
+      icon: "psychology",
+      title: "Thinking level",
+      detail: "Default reasoning effort. Applies to new sessions.",
+      valueLabel: reasoningEffortLabel(currentEffort),
+      onOpen: () => openSettingsSelector({
+        title: "Thinking level",
+        currentValue: currentEffort,
+        options,
+        onSelect: setTurnReasoningEffort
+      })
+    });
+  }
+
+  async function setTurnReasoningEffort(reasoningEffort) {
+    const nextEffort = normalizeTurnReasoningEffort(reasoningEffort);
+    state.turnSettings = normalizeTurnSettings({
+      ...state.turnSettings,
+      reasoning_effort: nextEffort
+    });
+    render();
+    try {
+      const updated = await Pucky.request({
+        command: "pucky.turn.settings.set",
+        args: {
+          reasoning_effort: nextEffort
+        }
+      });
+      state.turnSettings = normalizeTurnSettings(updated);
+      render();
+    } catch (_) {
+      // Browser preview keeps the optimistic local value.
+    }
+  }
+
   function settingsToggleCard({ accent, icon, title, detail, enabled, onToggle }) {
     const row = el("article", "settings-card");
     row.style.setProperty("--accent", accent || "#72c2ff");
@@ -3583,8 +3711,11 @@
     return row;
   }
 
-  function settingsSelectorCard({ accent, icon, title, detail, valueLabel, onOpen, actionLabel = "", action = null }) {
+  function settingsSelectorCard({ settingId = "", accent, icon, title, detail, valueLabel, onOpen, actionLabel = "", action = null }) {
     const row = el("article", actionLabel ? "settings-card settings-selector-card has-actions" : "settings-card settings-selector-card");
+    if (settingId) {
+      row.setAttribute("data-setting-id", String(settingId));
+    }
     row.style.setProperty("--accent", accent || "#72c2ff");
     const iconEl = el("div", "settings-card-icon");
     iconEl.innerHTML = iconSvg(icon, { filled: true });
@@ -3719,6 +3850,7 @@
       const button = el("button", active ? "settings-selector-option is-active" : "settings-selector-option");
       button.type = "button";
       button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.setAttribute("data-selector-value", String(option.value || ""));
       button.append(
         el("span", "settings-selector-option-label", option.label),
         (() => {
@@ -3819,6 +3951,22 @@
     if (value === "haptic") return "Buzz";
     if (value === "haptic_and_chime") return "Buzz + chime";
     return "Chime";
+  }
+
+  function turnModelLabel(model) {
+    const value = normalizeTurnModel(model);
+    if (value === "gpt-5.4") return "GPT-5.4";
+    if (value === "gpt-5.4-nano") return "GPT-5.4 nano";
+    return "GPT-5.4 mini";
+  }
+
+  function reasoningEffortLabel(reasoningEffort) {
+    const value = normalizeTurnReasoningEffort(reasoningEffort);
+    if (value === "none") return "None";
+    if (value === "medium") return "Medium";
+    if (value === "high") return "High";
+    if (value === "xhigh") return "Extra high";
+    return "Low";
   }
 
 

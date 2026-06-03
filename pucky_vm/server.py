@@ -60,6 +60,10 @@ DEFAULT_CARD_ICON = "mail"
 DEFAULT_CARD_ICON_ACCENT = "#72c2ff"
 REPLY_MODE_CARD_ONLY = "card_only"
 REPLY_MODE_CARD_AND_SPOKEN = "card_and_spoken"
+DEFAULT_OPENAI_TURN_MODEL = "gpt-5.4-mini"
+DEFAULT_OPENAI_TURN_REASONING_EFFORT = "low"
+OPENAI_TURN_MODELS = ("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano")
+OPENAI_TURN_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 MAX_CARD_TITLE_CHARS = 64
 MAX_CARD_ICON_NAME_CHARS = 48
 CARD_ICON_NAME_RE = re.compile(r"^[a-z0-9_]{1,48}$")
@@ -94,12 +98,70 @@ AGENT_RUNTIME_ACTIONS: tuple[dict[str, str], ...] = (
     {"name": "review/start", "kind": "streaming"},
 )
 AGENT_RUNTIME_ACTION_NAMES = {item["name"] for item in AGENT_RUNTIME_ACTIONS}
-PUCKY_BASE_PLACEHOLDERS = (
+REQUIRED_PUCKY_BASE_PLACEHOLDERS = (
     "{{PUCKY_AGENT_RUNTIME_CATALOG}}",
     "{{PUCKY_ACTION_LOG_RECENT}}",
+    "{{PUCKY_REPLY_CARD_ICONS}}",
+)
+OPTIONAL_PUCKY_BASE_PLACEHOLDERS = (
     "{{PUCKY_COMPOSIO_CONNECTED_APPS}}",
     "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}",
-    "{{PUCKY_REPLY_CARD_ICONS}}",
+)
+PUCKY_BASE_PLACEHOLDERS = REQUIRED_PUCKY_BASE_PLACEHOLDERS + OPTIONAL_PUCKY_BASE_PLACEHOLDERS
+COMPOSIO_LIST_CONNECTED_APPS_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
+COMPOSIO_LIST_CONNECTED_APPS_TOOL = {
+    "type": "function",
+    "name": "composio_list_connected_apps",
+    "title": "composio_list_connected_apps",
+    "description": "List all active Composio app connections that are already authorized for this session.",
+    "strict": True,
+    "parameters": COMPOSIO_LIST_CONNECTED_APPS_INPUT_SCHEMA,
+    "inputSchema": COMPOSIO_LIST_CONNECTED_APPS_INPUT_SCHEMA,
+}
+COMPOSIO_CHECK_CONNECTION_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "app_slug": {"type": "string"},
+    },
+    "required": ["app_slug"],
+    "additionalProperties": False,
+}
+COMPOSIO_CHECK_CONNECTION_TOOL = {
+    "type": "function",
+    "name": "composio_check_connection",
+    "title": "composio_check_connection",
+    "description": "Check whether one Composio app currently has an active accessible connection.",
+    "strict": True,
+    "parameters": COMPOSIO_CHECK_CONNECTION_INPUT_SCHEMA,
+    "inputSchema": COMPOSIO_CHECK_CONNECTION_INPUT_SCHEMA,
+}
+COMPOSIO_EXECUTE_ACTION_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action_slug": {"type": "string"},
+        "parameters": {"type": "object", "additionalProperties": True},
+        "connected_account_id": {"type": ["string", "null"]},
+    },
+    "required": ["action_slug", "parameters"],
+    "additionalProperties": False,
+}
+COMPOSIO_EXECUTE_ACTION_TOOL = {
+    "type": "function",
+    "name": "composio_execute_action",
+    "title": "composio_execute_action",
+    "description": "Execute one live Composio action. The backend resolves the right connected account, validates inputs, and returns structured errors when it cannot proceed.",
+    "strict": True,
+    "parameters": COMPOSIO_EXECUTE_ACTION_INPUT_SCHEMA,
+    "inputSchema": COMPOSIO_EXECUTE_ACTION_INPUT_SCHEMA,
+}
+COMPOSIO_DYNAMIC_TOOLS: tuple[dict[str, object], ...] = (
+    COMPOSIO_LIST_CONNECTED_APPS_TOOL,
+    COMPOSIO_CHECK_CONNECTION_TOOL,
+    COMPOSIO_EXECUTE_ACTION_TOOL,
 )
 
 
@@ -149,17 +211,19 @@ def compose_pucky_base_instructions(base_text: str | None, runtime_context: dict
     base = str(base_text or "").strip()
     if not base:
         return None
-    missing = [placeholder for placeholder in PUCKY_BASE_PLACEHOLDERS if placeholder not in base]
+    missing = [placeholder for placeholder in REQUIRED_PUCKY_BASE_PLACEHOLDERS if placeholder not in base]
     if missing:
         raise RuntimeError("Pucky base instructions missing runtime placeholders: " + ", ".join(missing))
     rendered = base
     replacements = {
         "{{PUCKY_AGENT_RUNTIME_CATALOG}}": _render_agent_runtime_catalog(runtime_context),
         "{{PUCKY_ACTION_LOG_RECENT}}": _render_action_log(runtime_context),
-        "{{PUCKY_COMPOSIO_CONNECTED_APPS}}": _render_connected_apps(runtime_context),
-        "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}": _render_available_apps(runtime_context),
         "{{PUCKY_REPLY_CARD_ICONS}}": _render_reply_card_icons(runtime_context),
     }
+    if "{{PUCKY_COMPOSIO_CONNECTED_APPS}}" in base:
+        replacements["{{PUCKY_COMPOSIO_CONNECTED_APPS}}"] = _render_connected_apps(runtime_context)
+    if "{{PUCKY_COMPOSIO_AVAILABLE_APPS}}" in base:
+        replacements["{{PUCKY_COMPOSIO_AVAILABLE_APPS}}"] = _render_available_apps(runtime_context)
     for placeholder, value in replacements.items():
         rendered = rendered.replace(placeholder, value)
     unresolved = sorted(set(re.findall(r"\{\{PUCKY_[A-Z0-9_]+\}\}", rendered)))
@@ -442,8 +506,8 @@ class Config:
             codex_home=os.environ.get("CODEX_HOME") or None,
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
             codex_approval_policy=os.environ.get("PUCKY_CODEX_APPROVAL_POLICY", "never"),
-            codex_model=os.environ.get("PUCKY_CODEX_MODEL", "gpt-5.3-codex-spark").strip() or "gpt-5.3-codex-spark",
-            codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT", "low").strip() or "low",
+            codex_model=os.environ.get("PUCKY_CODEX_MODEL", DEFAULT_OPENAI_TURN_MODEL).strip() or DEFAULT_OPENAI_TURN_MODEL,
+            codex_reasoning_effort=os.environ.get("PUCKY_CODEX_REASONING_EFFORT", DEFAULT_OPENAI_TURN_REASONING_EFFORT).strip() or DEFAULT_OPENAI_TURN_REASONING_EFFORT,
             composio_api_key=os.environ.get("COMPOSIO_API_KEY", "").strip(),
             composio_base_url=os.environ.get("COMPOSIO_BASE_URL", DEFAULT_COMPOSIO_BASE_URL).strip() or DEFAULT_COMPOSIO_BASE_URL,
             composio_default_user_id=os.environ.get("PUCKY_COMPOSIO_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
@@ -604,6 +668,72 @@ def _unique_active_connected_apps(accounts: list[dict[str, object]]) -> list[dic
     return sorted((_compact_composio_app(row) for row in by_slug.values()), key=lambda item: str(item.get("name") or item.get("slug") or ""))
 
 
+def _infer_composio_app_slug_from_action(action_slug: str) -> str:
+    clean = str(action_slug or "").strip().lower()
+    if "_" not in clean:
+        return clean
+    return clean.split("_", 1)[0]
+
+
+def _coerce_json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _group_active_connected_accounts(accounts: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for account in accounts:
+        slug = str(account.get("slug") or "").strip().lower()
+        if not slug:
+            continue
+        row = grouped.setdefault(
+            slug,
+            {
+                "app_slug": slug,
+                "app_name": str(account.get("name") or slug.title()).strip() or slug.title(),
+                "status": "active",
+                "connected_account_ids": [],
+                "display_names": [],
+            },
+        )
+        account_id = str(account.get("id") or "").strip()
+        if account_id:
+            ids = list(row.get("connected_account_ids") or [])
+            if account_id not in ids:
+                ids.append(account_id)
+                row["connected_account_ids"] = ids
+        display_name = str(account.get("instance_name") or "").strip()
+        if display_name:
+            names = list(row.get("display_names") or [])
+            if display_name not in names:
+                names.append(display_name)
+                row["display_names"] = names
+    normalized: list[dict[str, object]] = []
+    for row in grouped.values():
+        connected_ids = [str(value) for value in list(row.get("connected_account_ids") or []) if str(value).strip()]
+        display_names = [str(value) for value in list(row.get("display_names") or []) if str(value).strip()]
+        normalized.append(
+            {
+                "app_slug": str(row.get("app_slug") or ""),
+                "app_name": str(row.get("app_name") or ""),
+                "status": str(row.get("status") or "active"),
+                "connected_account_ids": connected_ids,
+                "display_name": display_names[0] if display_names else str(row.get("app_name") or ""),
+                "display_names": display_names,
+            }
+        )
+    normalized.sort(key=lambda item: (str(item.get("app_name") or ""), str(item.get("app_slug") or "")))
+    return normalized
+
+
 def agent_runtime_catalog_payload() -> dict[str, object]:
     return {
         "schema": "pucky.agent_runtime.catalog.v1",
@@ -646,6 +776,8 @@ class PuckyVoiceService:
             model=config.codex_model,
             reasoning_effort=config.codex_reasoning_effort,
             action_logger=self._record_codex_action,
+            tools_provider=self.codex_tools_for_thread,
+            dynamic_tool_handler=self.handle_codex_dynamic_tool_call,
         )
         self.feed = FeedStore(config.feed_db_path)
         self.composio = composio or ComposioClient(
@@ -751,6 +883,269 @@ class PuckyVoiceService:
             "result": result if isinstance(result, dict) else {},
         }
 
+    def codex_tools_for_thread(self) -> list[dict[str, object]]:
+        return [json.loads(json.dumps(tool)) for tool in COMPOSIO_DYNAMIC_TOOLS]
+
+    def handle_codex_dynamic_tool_call(
+        self,
+        tool: str,
+        arguments: object,
+        *,
+        call_id: str = "",
+        thread_id: str = "",
+        turn_id: str = "",
+    ) -> dict[str, object]:
+        tool_name = str(tool or "").strip()
+        payload = _coerce_json_object(arguments)
+        if tool_name == "composio_list_connected_apps":
+            result = self.composio_list_connected_apps_tool()
+        elif tool_name == "composio_check_connection":
+            result = self.composio_check_connection_tool(str(payload.get("app_slug") or ""))
+        elif tool_name == "composio_execute_action":
+            result = self.composio_execute_action_tool(payload)
+        else:
+            raise RuntimeError(f"unsupported dynamic tool: {tool_name or '<empty>'}")
+        return {
+            "success": bool(result.get("ok")),
+            "contentItems": [
+                {
+                    "type": "inputText",
+                    "text": json.dumps(result, sort_keys=True),
+                }
+            ],
+        }
+
+    def composio_list_connected_apps_tool(self) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        try:
+            apps = self._connected_apps_snapshot(force=True)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        else:
+            result = {
+                "ok": True,
+                "data": {
+                    "apps": apps,
+                    "count": len(apps),
+                    "user_id": self.composio_user_id(),
+                },
+            }
+        self.record_action(
+            surface="composio_tool",
+            action="connected_apps.list",
+            tool="composio_list_connected_apps",
+            target="connected_apps.list",
+            status="ok" if bool(result.get("ok")) else "error",
+        )
+        return result
+
+    def composio_check_connection_tool(self, app_slug: str) -> dict[str, object]:
+        clean_app_slug = str(app_slug or "").strip().lower()
+        if not clean_app_slug:
+            return {
+                "ok": False,
+                "error": "app_slug_required",
+                "suggested_next_step": "Provide app_slug, for example gmail or googlecalendar.",
+            }
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        try:
+            apps = self._connected_apps_snapshot(force=True)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        else:
+            match = next((item for item in apps if str(item.get("app_slug") or "") == clean_app_slug), None)
+            result = {
+                "ok": True,
+                "data": {
+                    "app_slug": clean_app_slug,
+                    "connected": bool(match),
+                    "connection_count": len(list(match.get("connected_account_ids") or [])) if isinstance(match, dict) else 0,
+                    "connected_account_ids": list(match.get("connected_account_ids") or []) if isinstance(match, dict) else [],
+                    "display_names": list(match.get("display_names") or []) if isinstance(match, dict) else [],
+                },
+            }
+        self.record_action(
+            surface="composio_tool",
+            action="check_connection",
+            tool="composio_check_connection",
+            target=clean_app_slug,
+            status="ok" if bool(result.get("ok")) else "error",
+        )
+        return result
+
+    def composio_execute_action_tool(self, payload: dict[str, object]) -> dict[str, object]:
+        if not self.composio.configured:
+            return {"ok": False, "error": "composio_not_configured"}
+        action_slug = str(payload.get("action_slug") or "").strip()
+        if not action_slug:
+            return {
+                "ok": False,
+                "error": "action_slug_required",
+                "suggested_next_step": "Provide one Composio action slug, for example GMAIL_FETCH_EMAILS.",
+            }
+        arguments = payload.get("parameters")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return {"ok": False, "error": "parameters_must_be_object"}
+        app_slug = _infer_composio_app_slug_from_action(action_slug)
+        if not app_slug:
+            return {
+                "ok": False,
+                "error": "cannot_infer_toolkit",
+                "data": {"action_slug": action_slug},
+            }
+        tool_meta: dict[str, object] = {}
+        try:
+            tool_meta = self.composio.get_tool(action_slug)
+        except Exception:
+            tool_meta = {}
+        if not tool_meta:
+            return {
+                "ok": False,
+                "error": "cannot_infer_toolkit",
+                "data": {"action_slug": action_slug, "app_slug": app_slug},
+            }
+        parameter_schema = tool_meta.get("input_parameters") if isinstance(tool_meta.get("input_parameters"), dict) else {}
+        if not parameter_schema and isinstance(tool_meta.get("parameters"), dict):
+            parameter_schema = dict(tool_meta.get("parameters") or {})
+        required = [str(value) for value in list(parameter_schema.get("required") or []) if str(value).strip()]
+        missing = [name for name in required if name not in arguments]
+        if missing:
+            return {
+                "ok": False,
+                "error": "missing_required_parameters",
+                "data": {"app_slug": app_slug, "action_slug": action_slug, "missing_parameters": missing},
+                "suggested_next_step": f"Provide values for: {', '.join(missing)}",
+            }
+        try:
+            apps = self._connected_apps_snapshot(force=True)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        else:
+            matching_app = next((item for item in apps if str(item.get("app_slug") or "") == app_slug), None)
+            candidate_ids = list(matching_app.get("connected_account_ids") or []) if isinstance(matching_app, dict) else []
+            requested_connection_id = str(payload.get("connected_account_id") or "").strip()
+            if requested_connection_id:
+                if requested_connection_id not in candidate_ids:
+                    result = {
+                        "ok": False,
+                        "error": "forbidden_connected_account",
+                        "data": {
+                            "app_slug": app_slug,
+                            "action_slug": action_slug,
+                            "connected_account_id": requested_connection_id,
+                        },
+                    }
+                else:
+                    resolved_connection_id = requested_connection_id
+                    result = self._execute_composio_action(
+                        action_slug=action_slug,
+                        app_slug=app_slug,
+                        connected_account_id=resolved_connection_id,
+                        arguments=dict(arguments),
+                        connection=matching_app if isinstance(matching_app, dict) else {},
+                    )
+            elif not candidate_ids:
+                result = {
+                    "ok": False,
+                    "error": "no_active_connection",
+                    "data": {"app_slug": app_slug, "action_slug": action_slug},
+                    "suggested_next_step": "Use composio_list_connected_apps to inspect what is connected now.",
+                }
+            elif len(candidate_ids) > 1:
+                result = {
+                    "ok": False,
+                    "error": "multiple_active_connections",
+                    "data": {
+                        "app_slug": app_slug,
+                        "action_slug": action_slug,
+                        "candidate_connected_account_ids": candidate_ids,
+                        "display_names": list(matching_app.get("display_names") or []) if isinstance(matching_app, dict) else [],
+                    },
+                    "suggested_next_step": "Call composio_execute_action again with one connected_account_id.",
+                }
+            else:
+                resolved_connection_id = candidate_ids[0]
+                result = self._execute_composio_action(
+                    action_slug=action_slug,
+                    app_slug=app_slug,
+                    connected_account_id=resolved_connection_id,
+                    arguments=dict(arguments),
+                    connection=matching_app if isinstance(matching_app, dict) else {},
+                )
+        self.record_action(
+            surface="composio_tool",
+            action="action.execute",
+            tool="composio_execute_action",
+            target=action_slug or app_slug,
+            status="ok" if bool(result.get("ok")) else "error",
+        )
+        return result
+
+    def _connected_apps_snapshot(self, *, force: bool) -> list[dict[str, object]]:
+        payload = self.composio.list_connected_apps(self.composio_user_id(), force=force)
+        accounts = [
+            _compact_composio_app(item)
+            for item in list(payload.get("connected_apps") or [])
+            if isinstance(item, dict)
+        ]
+        return _group_active_connected_accounts(accounts)
+
+    def _execute_composio_action(
+        self,
+        *,
+        action_slug: str,
+        app_slug: str,
+        connected_account_id: str,
+        arguments: dict[str, object],
+        connection: dict[str, object],
+    ) -> dict[str, object]:
+        normalized_arguments = self._apply_composio_safe_defaults(action_slug, arguments)
+        try:
+            result = self.composio.execute_tool(
+                tool_slug=action_slug,
+                connected_account_id=connected_account_id,
+                user_id=self.composio_user_id(),
+                arguments=normalized_arguments,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "data": {
+                    "action_slug": action_slug,
+                    "app_slug": app_slug,
+                    "connected_account_id": connected_account_id,
+                },
+            }
+        return {
+            "ok": True,
+            "data": {
+                "action_slug": action_slug,
+                "app_slug": app_slug,
+                "connected_account_id": connected_account_id,
+                "connection": {
+                    "app_slug": str(connection.get("app_slug") or app_slug),
+                    "app_name": str(connection.get("app_name") or app_slug.title()),
+                    "display_name": str(connection.get("display_name") or connection.get("app_name") or app_slug.title()),
+                },
+                "result": result,
+            },
+        }
+
+    def _apply_composio_safe_defaults(self, action_slug: str, arguments: dict[str, object]) -> dict[str, object]:
+        normalized = dict(arguments)
+        if str(action_slug or "").strip().upper() == "GMAIL_FETCH_EMAILS":
+            max_results = normalized.get("max_results")
+            if not isinstance(max_results, int) or max_results < 3:
+                normalized["max_results"] = 3
+            normalized.setdefault("verbose", False)
+            normalized.setdefault("include_payload", False)
+        return normalized
+
     def record_action(
         self,
         *,
@@ -808,11 +1203,15 @@ class PuckyVoiceService:
         )
 
     def codex_base_instructions_for_thread(self) -> str | None:
-        runtime_context = self._base_runtime_context()
+        base = str(self.config.codex_base_instructions or "")
+        include_inventory = any(placeholder in base for placeholder in OPTIONAL_PUCKY_BASE_PLACEHOLDERS)
+        runtime_context = self._base_runtime_context(include_composio_inventory=include_inventory)
         return compose_pucky_base_instructions(self.config.codex_base_instructions, runtime_context)
 
-    def _base_runtime_context(self) -> dict[str, object]:
-        composio_context = self._composio_runtime_context()
+    def _base_runtime_context(self, *, include_composio_inventory: bool | None = None) -> dict[str, object]:
+        if include_composio_inventory is None:
+            include_composio_inventory = True
+        composio_context = self._composio_runtime_context(include_inventory=include_composio_inventory)
         return {
             "schema": "pucky.runtime_context.v1",
             "agent_runtime": self.agent_runtime_catalog(),
@@ -856,23 +1255,18 @@ class PuckyVoiceService:
             },
         }
 
-    def _composio_runtime_context(self) -> dict[str, object]:
+    def _composio_runtime_context(self, *, include_inventory: bool) -> dict[str, object]:
         user_id = self.composio_user_id()
         context: dict[str, object] = {
             "schema": "pucky.composio.runtime_context.v1",
             "configured": bool(self.composio.configured),
             "user_id": user_id,
             "base_url": self.config.composio_base_url,
+            "inventory_prefetched": bool(include_inventory),
             "resources": {
                 "api_key": "env:COMPOSIO_API_KEY",
                 "base_url": "env:COMPOSIO_BASE_URL",
                 "user_id": "env:PUCKY_COMPOSIO_USER_ID",
-            },
-            "endpoints": {
-                "connected_apps": "GET /connected_accounts?user_ids=<user_id>&statuses=ACTIVE&limit=1000&cursor=...",
-                "app_universe": "GET /toolkits?managed_by=composio&sort_by=usage&limit=1000&cursor=...",
-                "tool_execute": "POST /api/v3.1/tools/execute/{tool_slug}",
-                "proxy_execute": "POST /api/v3.1/tools/execute/proxy",
             },
             "connected_apps": [],
             "connected_app_diagnostics": {
@@ -883,7 +1277,7 @@ class PuckyVoiceService:
             "app_universe": [],
             "available_apps": [],
         }
-        if not self.composio.configured:
+        if not self.composio.configured or not include_inventory:
             return context
         try:
             connected_payload = self.composio.list_connected_apps(user_id, force=False)
@@ -1443,7 +1837,11 @@ class PuckyVoiceService:
             "archived": False,
             "failure_stage": "",
         }
-        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
         placeholder = _run_staged_operation(
             "meeting_processing_card_upsert",
             lambda: self._upsert_meeting_processing_card(record, audio, mime_type),
@@ -1452,7 +1850,11 @@ class PuckyVoiceService:
         record["card_id"] = str(placeholder.get("card_id") or "")
         record["card"] = placeholder.get("card") if isinstance(placeholder.get("card"), dict) else {}
         record["feed_item"] = placeholder
-        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
         threading.Thread(
             target=self._process_meeting_record,
             args=(dict(record), audio, mime_type),
@@ -1681,7 +2083,11 @@ class PuckyVoiceService:
         record["diarization_status"] = "agent_pending"
         record["speaker_turns"] = []
         record["failure_stage"] = ""
-        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
 
         prompt = _meeting_agent_handoff_prompt(record)
         total_start = time.perf_counter()
@@ -1773,7 +2179,11 @@ class PuckyVoiceService:
                 )
                 record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
             result = {}
-        _run_staged_operation("meeting_index_write", lambda: self._upsert_meeting(record))
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
 
     @staticmethod
     def _apply_meeting_agent_result(record: dict[str, object], result: dict[str, object]) -> None:
@@ -1898,6 +2308,15 @@ class PuckyVoiceService:
             if not isinstance(rows, list):
                 return []
             return [dict(item) for item in rows if isinstance(item, dict)]
+
+    def _meeting_record_by_id(self, meeting_id: str) -> dict[str, object] | None:
+        clean_id = _safe_meeting_id(meeting_id)
+        if not clean_id:
+            return None
+        for meeting in self._load_meetings():
+            if str(meeting.get("meeting_id") or "") == clean_id:
+                return dict(meeting)
+        return None
 
     def _meeting_failed_card_payload(self, meeting: dict[str, object]) -> dict[str, object]:
         meeting_id = str(meeting.get("meeting_id") or "")
@@ -2030,9 +2449,52 @@ class PuckyVoiceService:
             card["accent"] = accent
         return item
 
+    def _reconcile_meeting_feed_item(self, item: dict[str, object]) -> dict[str, object]:
+        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+        if str(origin.get("card_kind") or item.get("card_kind") or "").strip() != "meeting_processing":
+            return item
+
+        meeting_id = _safe_meeting_id(origin.get("meeting_id") or item.get("turn_id") or item.get("session_id"))
+        if not meeting_id:
+            return item
+        meeting = self._meeting_record_by_id(meeting_id)
+        if not isinstance(meeting, dict):
+            return item
+
+        state = str(meeting.get("state") or "").strip().lower()
+        if state == "failed":
+            failed_card = self._meeting_failed_card_payload(meeting)
+            reconciled = dict(item)
+            reconciled["title"] = str(failed_card.get("title") or reconciled.get("title") or "")
+            reconciled["summary"] = str(failed_card.get("summary") or reconciled.get("summary") or "")
+            reconciled["reply_text"] = str(failed_card.get("summary") or reconciled.get("reply_text") or "")
+            reconciled["icon"] = str(failed_card.get("icon") or reconciled.get("icon") or "")
+            reconciled["card"] = dict(failed_card)
+            reconciled["card_kind"] = "meeting_failed"
+            reconciled["meeting_state"] = "failed"
+            reconciled["failure_stage"] = str(failed_card.get("failure_stage") or "")
+            reconciled["origin"] = dict(failed_card.get("origin") or {})
+            return reconciled
+
+        if state in {"completed", "completed_with_missing_result"}:
+            persisted = meeting.get("feed_item") if isinstance(meeting.get("feed_item"), dict) else None
+            if isinstance(persisted, dict):
+                reconciled = dict(persisted)
+                reconciled.setdefault("card_id", item.get("card_id"))
+                reconciled.setdefault("turn_id", item.get("turn_id"))
+                reconciled.setdefault("session_id", item.get("session_id"))
+                reconciled["archived"] = item.get("archived", reconciled.get("archived", False))
+                reconciled["read"] = item.get("read", reconciled.get("read", False))
+                reconciled["deleted"] = item.get("deleted", reconciled.get("deleted", False))
+                return reconciled
+        return item
+
     def _decorate_feed_payload(self, payload: dict[str, object]) -> dict[str, object]:
         for item in list(payload.get("items") or []):
             if isinstance(item, dict):
+                reconciled = dict(self._reconcile_meeting_feed_item(item))
+                item.clear()
+                item.update(reconciled)
                 self._decorate_feed_item(item)
         return payload
 
@@ -2080,6 +2542,8 @@ class PuckyVoiceService:
         content_type: str,
         turn_id: str | None = None,
         reply_mode: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         *,
         thread_mode: str | None = None,
         thread_id: str | None = None,
@@ -2118,6 +2582,12 @@ class PuckyVoiceService:
             card_id=thread_card_id,
         )
         telemetry.update(thread_request)
+        requested_model = _normalize_requested_turn_model(model, fallback="")
+        requested_reasoning_effort = _normalize_requested_turn_reasoning_effort(reasoning_effort, fallback="")
+        if requested_model:
+            telemetry["requested_model"] = requested_model
+        if requested_reasoning_effort:
+            telemetry["requested_reasoning_effort"] = requested_reasoning_effort
         telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
         telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
@@ -2142,6 +2612,8 @@ class PuckyVoiceService:
                 total_start=total_start,
                 request_audio_mime_type=content_type,
                 request_audio_base64=base64.b64encode(audio).decode("ascii"),
+                model=requested_model or None,
+                reasoning_effort=requested_reasoning_effort or None,
             )
         except Exception as exc:
             telemetry["event"] = "pucky.turn.failed"
@@ -2158,6 +2630,8 @@ class PuckyVoiceService:
         text: str,
         turn_id: str | None = None,
         reply_mode: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         *,
         thread_mode: str | None = None,
         thread_id: str | None = None,
@@ -2195,6 +2669,12 @@ class PuckyVoiceService:
             card_id=thread_card_id,
         )
         telemetry.update(thread_request)
+        requested_model = _normalize_requested_turn_model(model, fallback="")
+        requested_reasoning_effort = _normalize_requested_turn_reasoning_effort(reasoning_effort, fallback="")
+        if requested_model:
+            telemetry["requested_model"] = requested_model
+        if requested_reasoning_effort:
+            telemetry["requested_reasoning_effort"] = requested_reasoning_effort
         telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
         telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
@@ -2208,6 +2688,8 @@ class PuckyVoiceService:
                 total_start=total_start,
                 request_audio_mime_type="",
                 request_audio_base64="",
+                model=requested_model or None,
+                reasoning_effort=requested_reasoning_effort or None,
             )
         except Exception as exc:
             telemetry["event"] = "pucky.turn.failed"
@@ -2233,6 +2715,8 @@ class PuckyVoiceService:
         request_audio_attachment: dict[str, object] | None = None,
         output_schema: dict[str, object] | None = None,
         display_transcript_text: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         force_unread: bool = False,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
         codex_stage: str = "codex_turn",
@@ -2243,17 +2727,44 @@ class PuckyVoiceService:
         self._update_turn_status(turn_id, "codex_running", "running", telemetry)
         start = time.perf_counter()
         requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
+        model_override = _normalize_requested_turn_model(model, fallback=self.config.codex_model or "")
+        reasoning_override = _normalize_requested_turn_reasoning_effort(
+            reasoning_effort,
+            fallback=self.config.codex_reasoning_effort or "",
+        )
+        if requested_thread_id:
+            reasoning_override = ""
+            try:
+                existing_origin = self.codex.thread_origin(requested_thread_id, retries=1, delay=0.0)
+            except Exception:
+                existing_origin = {}
+            if isinstance(existing_origin, dict):
+                preserved_reasoning = _normalize_requested_turn_reasoning_effort(
+                    existing_origin.get("reasoning_effort"),
+                    fallback="",
+                )
+                if preserved_reasoning:
+                    reasoning_override = preserved_reasoning
+            model_override = ""
         def _send_turn() -> CodexTurnResult | str:
             try:
                 return self.codex.send_turn(
                     transcript,
                     thread_id=requested_thread_id or None,
+                    model=model_override or None,
+                    reasoning_effort=reasoning_override or None,
                     output_schema=output_schema,
                 )
             except TypeError as exc:
-                if "thread_id" not in str(exc) and "output_schema" not in str(exc):
+                message = str(exc)
+                if all(token not in message for token in ("thread_id", "output_schema", "model", "reasoning_effort")):
                     raise
-                return self.codex.send_turn(transcript)  # type: ignore[call-arg]
+                fallback_kwargs: dict[str, object] = {}
+                if "thread_id" not in message and requested_thread_id:
+                    fallback_kwargs["thread_id"] = requested_thread_id
+                if "output_schema" not in message and isinstance(output_schema, dict):
+                    fallback_kwargs["output_schema"] = output_schema
+                return self.codex.send_turn(transcript, **fallback_kwargs)  # type: ignore[call-arg]
 
         codex_result = _run_staged_operation(codex_stage, _send_turn, sqlite_retry=True)
         if isinstance(codex_result, str):
@@ -2292,6 +2803,7 @@ class PuckyVoiceService:
         origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
         telemetry["origin_thread_id"] = origin.get("thread_id", "")
         telemetry["origin_model"] = origin.get("model", "")
+        telemetry["origin_reasoning_effort"] = origin.get("reasoning_effort", "")
 
         if attachment_builder is not None:
             attachments, attachment_meta = attachment_builder(envelope)
@@ -3029,6 +3541,20 @@ def _normalize_reply_mode(raw: str | None) -> str:
     return REPLY_MODE_CARD_ONLY
 
 
+def _normalize_requested_turn_model(raw: object, fallback: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in OPENAI_TURN_MODELS:
+        return value
+    return str(fallback or "").strip()
+
+
+def _normalize_requested_turn_reasoning_effort(raw: object, fallback: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in OPENAI_TURN_REASONING_EFFORTS:
+        return value
+    return str(fallback or "").strip()
+
+
 def _normalize_thread_request(
     *,
     mode: str | None,
@@ -3181,6 +3707,8 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "request_audio_bytes",
         "input_text_chars",
         "reply_mode",
+        "requested_model",
+        "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
         "thread_scope_source",
@@ -3205,6 +3733,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "codex_ms",
         "codex_thread_id",
         "origin_thread_id",
+        "origin_reasoning_effort",
         "raw_reply_chars",
         "reply_chars",
         "tts_start_ms",
@@ -3233,6 +3762,8 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "content_type",
         "request_audio_bytes",
         "reply_mode",
+        "requested_model",
+        "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
         "thread_scope_source",
@@ -3257,6 +3788,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "codex_thread_id",
         "origin_thread_id",
         "origin_model",
+        "origin_reasoning_effort",
         "raw_reply_chars",
         "reply_chars",
         "tts_start_ms",
@@ -3289,7 +3821,7 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
         "sandbox_policy": str(origin.get("sandbox_policy") or "").strip(),
         "approval_mode": str(origin.get("approval_mode") or "").strip(),
     }
-    for key in ("meeting_id", "card_kind", "meeting_state"):
+    for key in ("meeting_id", "card_kind", "meeting_state", "failure_stage"):
         value = str(origin.get(key) or "").strip()
         if value:
             normalized[key] = value
@@ -4160,6 +4692,12 @@ def make_handler(service: PuckyVoiceService):
                         str(payload.get("text") or ""),
                         str(payload.get("turn_id") or self.headers.get("X-Pucky-Turn-Id", "") or ""),
                         str(payload.get("reply_mode") or self.headers.get("X-Pucky-Reply-Mode", "") or ""),
+                        model=str(payload.get("model") or self.headers.get("X-Pucky-Codex-Model", "") or ""),
+                        reasoning_effort=str(
+                            payload.get("reasoning_effort")
+                            or self.headers.get("X-Pucky-Codex-Reasoning-Effort", "")
+                            or ""
+                        ),
                         thread_mode=str(payload.get("thread_mode") or self.headers.get("X-Pucky-Thread-Mode", "") or ""),
                         thread_id=str(payload.get("thread_id") or self.headers.get("X-Pucky-Thread-Id", "") or ""),
                         thread_scope_source=str(
@@ -4203,6 +4741,8 @@ def make_handler(service: PuckyVoiceService):
                     content_type,
                     self.headers.get("X-Pucky-Turn-Id", ""),
                     self.headers.get("X-Pucky-Reply-Mode", ""),
+                    model=self.headers.get("X-Pucky-Codex-Model", ""),
+                    reasoning_effort=self.headers.get("X-Pucky-Codex-Reasoning-Effort", ""),
                     thread_mode=self.headers.get("X-Pucky-Thread-Mode", ""),
                     thread_id=self.headers.get("X-Pucky-Thread-Id", ""),
                     thread_scope_source=self.headers.get("X-Pucky-Thread-Scope-Source", ""),

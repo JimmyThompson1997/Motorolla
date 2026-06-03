@@ -153,6 +153,8 @@ public final class PuckyTurnController {
         Json.put(out, "spoken_reply_enabled", settings.isPuckyTurnSpokenReplyEnabled());
         Json.put(out, "arrival_cue_mode", settings.getPuckyTurnArrivalCueMode());
         Json.put(out, "accepted_chime_enabled", settings.isPuckyTurnAcceptedChimeEnabled());
+        Json.put(out, "model", settings.getPuckyTurnModel());
+        Json.put(out, "reasoning_effort", settings.getPuckyTurnReasoningEffort());
         JSONArray modes = new JSONArray();
         Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY);
         Json.add(modes, SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN);
@@ -163,16 +165,36 @@ public final class PuckyTurnController {
         Json.add(arrivalCueModes, SettingsStore.PUCKY_TURN_ARRIVAL_CUE_CHIME);
         Json.add(arrivalCueModes, SettingsStore.PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME);
         Json.put(out, "arrival_cue_modes", arrivalCueModes);
+        JSONArray modelOptions = new JSONArray();
+        Json.add(modelOptions, SettingsStore.PUCKY_TURN_MODEL_GPT_5_4);
+        Json.add(modelOptions, SettingsStore.PUCKY_TURN_MODEL_GPT_5_4_MINI);
+        Json.add(modelOptions, SettingsStore.PUCKY_TURN_MODEL_GPT_5_4_NANO);
+        Json.put(out, "model_options", modelOptions);
+        JSONArray reasoningOptions = new JSONArray();
+        Json.add(reasoningOptions, SettingsStore.PUCKY_TURN_REASONING_NONE);
+        Json.add(reasoningOptions, SettingsStore.PUCKY_TURN_REASONING_LOW);
+        Json.add(reasoningOptions, SettingsStore.PUCKY_TURN_REASONING_MEDIUM);
+        Json.add(reasoningOptions, SettingsStore.PUCKY_TURN_REASONING_HIGH);
+        Json.add(reasoningOptions, SettingsStore.PUCKY_TURN_REASONING_XHIGH);
+        Json.put(out, "reasoning_effort_options", reasoningOptions);
         return out;
     }
 
     public JSONObject settingsSet(JSONObject args) {
-        String mode = args.optString("reply_mode", args.optString("mode", SettingsStore.PUCKY_TURN_REPLY_CARD_ONLY));
+        String mode = args.has("reply_mode") || args.has("mode")
+                ? args.optString("reply_mode", args.optString("mode", settings.getPuckyTurnReplyMode()))
+                : settings.getPuckyTurnReplyMode();
         settings.setPuckyTurnReplyMode(mode);
         if (args.has("arrival_cue_mode")) {
             settings.setPuckyTurnArrivalCueMode(args.optString("arrival_cue_mode", SettingsStore.PUCKY_TURN_ARRIVAL_CUE_CHIME));
         } else if (args.has("accepted_chime_enabled")) {
             settings.setPuckyTurnAcceptedChimeEnabled(args.optBoolean("accepted_chime_enabled", true));
+        }
+        if (args.has("model")) {
+            settings.setPuckyTurnModel(args.optString("model", SettingsStore.PUCKY_TURN_MODEL_GPT_5_4_MINI));
+        }
+        if (args.has("reasoning_effort")) {
+            settings.setPuckyTurnReasoningEffort(args.optString("reasoning_effort", SettingsStore.PUCKY_TURN_REASONING_LOW));
         }
         return settingsGet();
     }
@@ -610,6 +632,7 @@ public final class PuckyTurnController {
         final boolean spokenReplyEnabledAtUpload =
                 SettingsStore.PUCKY_TURN_REPLY_CARD_AND_SPOKEN.equals(replyModeAtUpload);
         final JSONObject threadScope = capture == null ? new JSONObject() : capture;
+        final boolean applySessionDefaults = shouldApplySessionDefaults(threadScope);
         Request request = new Request.Builder()
                 .url(settings.getPuckyTurnUrl())
                 .header("Authorization", "Bearer " + settings.getPuckyTurnAuthToken())
@@ -624,6 +647,9 @@ public final class PuckyTurnController {
                         threadScope.optInt("proof_reply_delay_ms", 0) > 0
                                 ? Integer.toString(threadScope.optInt("proof_reply_delay_ms", 0))
                                 : "")
+                .header("X-Pucky-Codex-Model", applySessionDefaults ? settings.getPuckyTurnModel() : "")
+                .header("X-Pucky-Codex-Reasoning-Effort",
+                        applySessionDefaults ? settings.getPuckyTurnReasoningEffort() : "")
                 .post(RequestBody.create(AUDIO_WAV, audioBytes))
                 .build();
         startTurnStatusPoll(clientTurnId);
@@ -2039,6 +2065,15 @@ public final class PuckyTurnController {
         }
         JSONObject scope = VoiceThreadScopeController.shared(context).get();
         return scope == null ? new JSONObject() : scope;
+    }
+
+    private static boolean shouldApplySessionDefaults(JSONObject scope) {
+        if (scope == null) {
+            return true;
+        }
+        String mode = scope.optString("thread_mode", "").trim();
+        String threadId = scope.optString("thread_id", "").trim();
+        return !"existing".equals(mode) || threadId.isEmpty();
     }
 
     private static void applyVoiceThreadScope(JSONObject target, JSONObject scope) {

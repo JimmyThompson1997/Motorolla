@@ -19,12 +19,22 @@ public final class SettingsStore {
     private static final String PUCKY_TURN_REPLY_MODE = "pucky_turn_reply_mode";
     private static final String PUCKY_TURN_ARRIVAL_CUE_MODE = "pucky_turn_arrival_cue_mode";
     private static final String PUCKY_TURN_ACCEPTED_CHIME_ENABLED = "pucky_turn_accepted_chime_enabled";
+    private static final String PUCKY_TURN_MODEL = "pucky_turn_model";
+    private static final String PUCKY_TURN_REASONING_EFFORT = "pucky_turn_reasoning_effort";
     public static final String PUCKY_TURN_REPLY_CARD_ONLY = "card_only";
     public static final String PUCKY_TURN_REPLY_CARD_AND_SPOKEN = "card_and_spoken";
     public static final String PUCKY_TURN_ARRIVAL_CUE_NONE = "none";
     public static final String PUCKY_TURN_ARRIVAL_CUE_HAPTIC = "haptic";
     public static final String PUCKY_TURN_ARRIVAL_CUE_CHIME = "chime";
     public static final String PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME = "haptic_and_chime";
+    public static final String PUCKY_TURN_MODEL_GPT_5_4 = "gpt-5.4";
+    public static final String PUCKY_TURN_MODEL_GPT_5_4_MINI = "gpt-5.4-mini";
+    public static final String PUCKY_TURN_MODEL_GPT_5_4_NANO = "gpt-5.4-nano";
+    public static final String PUCKY_TURN_REASONING_NONE = "none";
+    public static final String PUCKY_TURN_REASONING_LOW = "low";
+    public static final String PUCKY_TURN_REASONING_MEDIUM = "medium";
+    public static final String PUCKY_TURN_REASONING_HIGH = "high";
+    public static final String PUCKY_TURN_REASONING_XHIGH = "xhigh";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String DEFAULT_TILE_AUDIO_SPEED = "default_tile_audio_speed";
     private static final String AUTO_CONNECT = "auto_connect";
@@ -133,6 +143,22 @@ public final class SettingsStore {
         setPuckyTurnArrivalCueMode(enabled ? PUCKY_TURN_ARRIVAL_CUE_CHIME : PUCKY_TURN_ARRIVAL_CUE_NONE);
     }
 
+    public String getPuckyTurnModel() {
+        return normalizePuckyTurnModel(prefs.getString(PUCKY_TURN_MODEL, PUCKY_TURN_MODEL_GPT_5_4_MINI));
+    }
+
+    public void setPuckyTurnModel(String model) {
+        prefs.edit().putString(PUCKY_TURN_MODEL, normalizePuckyTurnModel(model)).commit();
+    }
+
+    public String getPuckyTurnReasoningEffort() {
+        return normalizePuckyTurnReasoningEffort(prefs.getString(PUCKY_TURN_REASONING_EFFORT, PUCKY_TURN_REASONING_LOW));
+    }
+
+    public void setPuckyTurnReasoningEffort(String reasoningEffort) {
+        prefs.edit().putString(PUCKY_TURN_REASONING_EFFORT, normalizePuckyTurnReasoningEffort(reasoningEffort)).commit();
+    }
+
     public String getUiShellMode() {
         return "web_cached";
     }
@@ -192,6 +218,14 @@ public final class SettingsStore {
         putString(editor, input, "pucky_turn_url", PUCKY_TURN_URL);
         putString(editor, input, "pucky_api_token", PUCKY_API_TOKEN);
         putString(editor, input, "pucky_turn_reply_mode", PUCKY_TURN_REPLY_MODE);
+        if (input.has("pucky_turn_model")) {
+            editor.putString(PUCKY_TURN_MODEL, normalizePuckyTurnModel(input.optString("pucky_turn_model", PUCKY_TURN_MODEL_GPT_5_4_MINI)));
+        }
+        if (input.has("pucky_turn_reasoning_effort")) {
+            editor.putString(
+                    PUCKY_TURN_REASONING_EFFORT,
+                    normalizePuckyTurnReasoningEffort(input.optString("pucky_turn_reasoning_effort", PUCKY_TURN_REASONING_LOW)));
+        }
         if (input.has("pucky_turn_arrival_cue_mode")) {
             String arrivalCueMode = normalizePuckyTurnArrivalCueMode(input.optString("pucky_turn_arrival_cue_mode", PUCKY_TURN_ARRIVAL_CUE_CHIME));
             editor.putString(PUCKY_TURN_ARRIVAL_CUE_MODE, arrivalCueMode);
@@ -271,6 +305,28 @@ public final class SettingsStore {
             return PUCKY_TURN_ARRIVAL_CUE_NONE;
         }
         return PUCKY_TURN_ARRIVAL_CUE_CHIME;
+    }
+
+    private static String normalizePuckyTurnModel(String model) {
+        String value = model == null ? "" : model.trim().toLowerCase();
+        if (PUCKY_TURN_MODEL_GPT_5_4.equals(value)
+                || PUCKY_TURN_MODEL_GPT_5_4_MINI.equals(value)
+                || PUCKY_TURN_MODEL_GPT_5_4_NANO.equals(value)) {
+            return value;
+        }
+        return PUCKY_TURN_MODEL_GPT_5_4_MINI;
+    }
+
+    private static String normalizePuckyTurnReasoningEffort(String reasoningEffort) {
+        String value = reasoningEffort == null ? "" : reasoningEffort.trim().toLowerCase();
+        if (PUCKY_TURN_REASONING_NONE.equals(value)
+                || PUCKY_TURN_REASONING_LOW.equals(value)
+                || PUCKY_TURN_REASONING_MEDIUM.equals(value)
+                || PUCKY_TURN_REASONING_HIGH.equals(value)
+                || PUCKY_TURN_REASONING_XHIGH.equals(value)) {
+            return value;
+        }
+        return PUCKY_TURN_REASONING_LOW;
     }
 
     private static boolean arrivalCueModeIncludesChime(String mode) {

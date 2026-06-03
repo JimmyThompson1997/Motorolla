@@ -72,6 +72,7 @@ class FakeCodex:
         self.turn_requests: list[dict[str, str]] = []
         self.output_schemas: list[dict[str, object] | None] = []
         self.renamed_titles: list[str] = []
+        self.thread_defaults: dict[str, dict[str, str]] = {}
         self.last_turn_routing = {
             "requested_thread_id": "",
             "used_thread_id": self.thread_id,
@@ -88,18 +89,34 @@ class FakeCodex:
         text: str,
         *,
         thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         output_schema: dict[str, object] | None = None,
     ):
         self.turns.append(text)
         self.output_schemas.append(output_schema)
         requested_thread_id = str(thread_id or "").strip()
+        requested_model = str(model or "").strip()
+        requested_reasoning_effort = str(reasoning_effort or "").strip()
         used_thread_id = requested_thread_id or self.thread_id
         self.thread_id = used_thread_id
+        if requested_thread_id:
+            self.thread_defaults.setdefault(
+                used_thread_id,
+                {"model": "gpt-5.5", "reasoning_effort": "high"},
+            )
+        else:
+            self.thread_defaults[used_thread_id] = {
+                "model": requested_model or "gpt-5.5",
+                "reasoning_effort": requested_reasoning_effort or "high",
+            }
         self.turn_requests.append(
             {
                 "text": text,
                 "requested_thread_id": requested_thread_id,
                 "used_thread_id": used_thread_id,
+                "model": requested_model,
+                "reasoning_effort": requested_reasoning_effort,
             }
         )
         self.last_turn_routing = {
@@ -178,15 +195,19 @@ class FakeCodex:
 
     def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
         resolved_thread_id = str(thread_id or self.thread_id)
+        defaults = self.thread_defaults.get(
+            resolved_thread_id,
+            {"model": "gpt-5.5", "reasoning_effort": "high"},
+        )
         return {
             "runtime": "codex",
             "thread_id": resolved_thread_id,
             "thread_title": self.renamed_titles[-1] if self.renamed_titles else "thread-1",
             "rollout_path": f"/data/home/codex/sessions/{resolved_thread_id}.jsonl",
             "source": "vscode",
-            "model": "gpt-5.5",
+            "model": defaults["model"],
             "model_provider": "openai",
-            "reasoning_effort": "high",
+            "reasoning_effort": defaults["reasoning_effort"],
             "sandbox_policy": "danger-full-access",
             "approval_mode": "never",
         }
@@ -203,6 +224,8 @@ class BlockingCodex(FakeCodex):
         text: str,
         *,
         thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         output_schema: dict[str, object] | None = None,
     ):
         self.turns.append(text)
@@ -383,6 +406,8 @@ class ScriptedCodex(FakeCodex):
         text: str,
         *,
         thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         output_schema: dict[str, object] | None = None,
     ):
         self.output_schemas.append(output_schema)
@@ -455,6 +480,8 @@ class OutOfOrderCodex(FakeCodex):
         text: str,
         *,
         thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         output_schema: dict[str, object] | None = None,
     ):
         self.output_schemas.append(output_schema)
@@ -581,11 +608,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["deepgram_key"], "present")
         self.assertNotIn("secret", json.dumps(payload))
 
-    def test_config_defaults_codex_model_to_spark_low(self) -> None:
+    def test_config_defaults_codex_model_to_gpt_5_4_mini_low(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
             config = Config.from_env()
 
-        self.assertEqual(config.codex_model, "gpt-5.3-codex-spark")
+        self.assertEqual(config.codex_model, "gpt-5.4-mini")
         self.assertEqual(config.codex_reasoning_effort, "low")
 
     def test_config_env_overrides_codex_defaults(self) -> None:
@@ -1317,6 +1344,82 @@ class ServerTests(unittest.TestCase):
         self.assertIn("meeting_agent_call", meeting["card"]["summary"])
         self.assertIn("database is locked", meeting["card"]["summary"])
 
+    def test_feed_sync_reconciles_failed_meeting_placeholder_card(self) -> None:
+        meeting_id = "meeting-20260602-091700-device-feed-reconcile"
+        stale_record = {
+            "schema": "pucky.meeting_record.v1",
+            "meeting_id": meeting_id,
+            "state": "failed",
+            "created_at": "2026-06-02T09:17:00Z",
+            "updated_at": "2026-06-02T09:17:30Z",
+            "started_at": "2026-06-02T09:17:00Z",
+            "stopped_at": "2026-06-02T09:17:30Z",
+            "duration_ms": 30000,
+            "device_id": "device-1",
+            "failure_reason": "OperationalError: database is locked",
+            "failure_stage": "meeting_agent_call",
+            "transcript_status": "failed",
+            "diarization_status": "failed",
+            "card_id": f"pucky_card_{meeting_id}",
+            "card": {
+                "title": "Processing meeting recording",
+                "summary": "Transcribing, diarizing, and checking for follow-up instructions...",
+                "icon": "mic",
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
+            },
+            "feed_item": {
+                "card_id": f"pucky_card_{meeting_id}",
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
+                "origin": {
+                    "runtime": "pucky",
+                    "thread_id": meeting_id,
+                    "source": "meeting_recording",
+                    "meeting_id": meeting_id,
+                    "card_kind": "meeting_processing",
+                    "meeting_state": "processing",
+                },
+            },
+        }
+        self.service._upsert_meeting(stale_record)
+        self.service.feed.upsert_turn_result(
+            turn_id=meeting_id,
+            session_id=meeting_id,
+            reply_mode="card_only",
+            reply_text="Transcribing, diarizing, and checking for follow-up instructions...",
+            title="Processing meeting recording",
+            summary="Transcribing, diarizing, and checking for follow-up instructions...",
+            icon="mic",
+            origin={
+                "runtime": "pucky",
+                "thread_id": meeting_id,
+                "source": "meeting_recording",
+                "meeting_id": meeting_id,
+                "card_kind": "meeting_processing",
+                "meeting_state": "processing",
+            },
+            telemetry={"event": "pucky.meeting.processing_placeholder"},
+            transcript_messages=[],
+            request_audio_mime_type="audio/mp4",
+            request_audio_base64="",
+            audio_mime_type="",
+            audio_base64="",
+            html_mime_type="",
+            html_base64="",
+        )
+
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
+
+        self.assertEqual(item["title"], "Meeting processing failed")
+        self.assertEqual(item["card_kind"], "meeting_failed")
+        self.assertEqual(item["meeting_state"], "failed")
+        self.assertEqual(item["origin"]["card_kind"], "meeting_failed")
+        self.assertEqual(item["origin"]["meeting_state"], "failed")
+        self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_call")
+        self.assertIn("database is locked", item["summary"])
+
     def test_failed_meeting_detail_synthesizes_missing_failed_card_metadata(self) -> None:
         meeting_id = "meeting-20260602-092000-device-real-failure"
         stale_record = {
@@ -1816,6 +1919,54 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(fallback["telemetry"]["thread_mode"], "new")
         self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
         self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
+
+    def test_text_turn_new_session_applies_requested_model_and_reasoning(self) -> None:
+        body = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Start a fresh planning thread",
+                "turn_id": "model-default-1",
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": "low",
+            },
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "")
+        self.assertEqual(self.codex.turn_requests[-1]["model"], "gpt-5.4-mini")
+        self.assertEqual(self.codex.turn_requests[-1]["reasoning_effort"], "low")
+        self.assertEqual(body["origin"]["model"], "gpt-5.4-mini")
+        self.assertEqual(body["origin"]["reasoning_effort"], "low")
+        self.assertEqual(body["telemetry"]["requested_model"], "gpt-5.4-mini")
+        self.assertEqual(body["telemetry"]["requested_reasoning_effort"], "low")
+        self.assertEqual(body["telemetry"]["origin_reasoning_effort"], "low")
+
+    def test_text_turn_existing_thread_preserves_thread_reasoning_and_ignores_new_session_model(self) -> None:
+        self.codex.thread_defaults["thread-keep"] = {
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+        }
+
+        body = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Continue this conversation",
+                "turn_id": "model-existing-1",
+                "model": "gpt-5.4-mini",
+                "reasoning_effort": "low",
+            },
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-keep",
+            },
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "thread-keep")
+        self.assertEqual(self.codex.turn_requests[-1]["model"], "")
+        self.assertEqual(self.codex.turn_requests[-1]["reasoning_effort"], "high")
+        self.assertEqual(body["origin"]["thread_id"], "thread-keep")
+        self.assertEqual(body["origin"]["model"], "gpt-5.4")
+        self.assertEqual(body["origin"]["reasoning_effort"], "high")
+        self.assertEqual(body["telemetry"]["origin_reasoning_effort"], "high")
     def test_text_turn_proof_reply_delay_is_guarded_and_telemetry_visible(self) -> None:
         delayed_service = PuckyVoiceService(
             make_config(proof_reply_delay_enabled=True),

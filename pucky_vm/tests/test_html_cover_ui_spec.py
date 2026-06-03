@@ -882,6 +882,20 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Wake, walkie, feedback" in app
     assert "Reply playback" in app
     assert "Message sent cue" in app
+    assert "Session model" in app
+    assert "Thinking level" in app
+    assert "Default OpenAI model. Applies to new sessions." in app
+    assert "Default reasoning effort. Applies to new sessions." in app
+    assert 'settingId: "turn-model"' in app
+    assert 'settingId: "turn-reasoning-effort"' in app
+    assert 'row.setAttribute("data-setting-id", String(settingId));' in app
+    assert 'button.setAttribute("data-selector-value", String(option.value || ""));' in app
+    assert 'const TURN_MODEL_OPTIONS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]' in app
+    assert 'const TURN_REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "xhigh"]' in app
+    assert "function normalizeTurnModel(model)" in app
+    assert "function normalizeTurnReasoningEffort(reasoningEffort)" in app
+    assert "function modelSettingsCard()" in app
+    assert "function reasoningEffortSettingsCard()" in app
     assert "Wake word" in app
     assert "Listening while awake and unlocked" in app
     assert "Waiting for screen wake" in app

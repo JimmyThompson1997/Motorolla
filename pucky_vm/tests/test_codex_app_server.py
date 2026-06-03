@@ -22,6 +22,7 @@ turn_count = 0
 capture_path = os.environ.get("CAPTURE_PATH", "")
 invalid_thread_id = os.environ.get("INVALID_THREAD_ID", "")
 emit_tool_call = os.environ.get("EMIT_TOOL_CALL", "") == "1"
+emit_dynamic_tool_call = os.environ.get("EMIT_DYNAMIC_TOOL_CALL", "") == "1"
 
 def record(message):
     if not capture_path:
@@ -67,6 +68,50 @@ for line in sys.stdin:
         text = "Hello back " + str(turn_count)
         send({"id": request_id, "result": {"turn": {"id": turn_id}}})
         send({"method": "turn/started", "params": {"threadId": thread_id, "turn": {"id": turn_id}}})
+        if emit_dynamic_tool_call:
+            lowered = request_text.lower()
+            if "force connected tool" in lowered:
+                send(
+                    {
+                        "id": 9001,
+                        "method": "item/tool/call",
+                        "params": {
+                            "tool": "composio_list_connected_apps",
+                            "arguments": {},
+                            "callId": "call-dynamic-1",
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+            elif "force check tool" in lowered:
+                send(
+                    {
+                        "id": 9002,
+                        "method": "item/tool/call",
+                        "params": {
+                            "tool": "composio_check_connection",
+                            "arguments": {"app_slug": "gmail"},
+                            "callId": "call-dynamic-2",
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+            elif "force execute tool" in lowered:
+                send(
+                    {
+                        "id": 9003,
+                        "method": "item/tool/call",
+                        "params": {
+                            "tool": "composio_execute_action",
+                            "arguments": {"action_slug": "GMAIL_FETCH_EMAILS", "parameters": {"max_results": 1}},
+                            "callId": "call-dynamic-3",
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
         if emit_tool_call and "force tool" in request_text.lower():
             args = json.dumps({"command": "rg --version", "workdir": "C:\\repo"})
             send({"method": "item/completed", "params": {"threadId": thread_id, "turnId": turn_id, "item": {"type": "function_call", "name": "shell_command", "arguments": args, "call_id": "call-tool-1"}}})
@@ -182,6 +227,74 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(turn_starts[1]["params"]["threadId"], "thread-invalid")
             self.assertEqual(turn_starts[2]["params"]["threadId"], "thread-1")
 
+    def test_send_turn_can_override_model_and_reasoning_for_new_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+                model="gpt-5.5",
+                reasoning_effort="high",
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                reply = client.send_turn(
+                    "Use the mini route",
+                    model="gpt-5.4-mini",
+                    reasoning_effort="low",
+                )
+                self.assertEqual(reply.reply_text, "Hello back 1")
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            messages = capture_messages(capture)
+            thread_start = next(msg for msg in messages if msg.get("method") == "thread/start")
+            turn_start = next(msg for msg in messages if msg.get("method") == "turn/start")
+            self.assertEqual(thread_start["params"]["model"], "gpt-5.4-mini")
+            self.assertEqual(turn_start["params"]["effort"], "low")
+
+    def test_thread_origin_falls_back_to_cached_thread_and_turn_start_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+                model="gpt-5.4-mini",
+                reasoning_effort="low",
+                sandbox="danger-full-access",
+                approval_policy="never",
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                reply = client.send_turn("cache origin please")
+                origin = client.thread_origin(reply.used_thread_id, retries=1, delay=0)
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            self.assertEqual(origin["thread_id"], "thread-1")
+            self.assertEqual(origin["model"], "gpt-5.4-mini")
+            self.assertEqual(origin["reasoning_effort"], "low")
+            self.assertEqual(origin["sandbox_policy"], "danger-full-access")
+            self.assertEqual(origin["approval_mode"], "never")
+
     def test_thread_start_sends_base_instructions_separately_from_developer_instructions(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             script = Path(tempdir) / "fake_app_server.py"
@@ -225,6 +338,132 @@ class CodexAppServerClientTests(unittest.TestCase):
                 },
                 actions,
             )
+
+    def test_thread_start_includes_dynamic_tools_and_handles_item_tool_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            script = Path(tempdir) / "fake_app_server.py"
+            capture = Path(tempdir) / "capture.jsonl"
+            script.write_text(textwrap.dedent(FAKE_APP_SERVER), encoding="utf-8")
+            env = os.environ.copy()
+            env["CAPTURE_PATH"] = str(capture)
+            env["EMIT_DYNAMIC_TOOL_CALL"] = "1"
+            actions: list[dict[str, object]] = []
+            handled: list[dict[str, object]] = []
+            client = CodexAppServerClient(
+                command=[sys.executable, str(script)],
+                startup_timeout=5,
+                turn_timeout=5,
+                base_instructions_provider=lambda: "base",
+                tools_provider=lambda: [
+                    {
+                        "type": "function",
+                        "name": "composio_list_connected_apps",
+                        "description": "List connected Composio apps.",
+                        "strict": True,
+                        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                    },
+                    {
+                        "type": "function",
+                        "name": "composio_check_connection",
+                        "description": "Check whether an app is connected.",
+                        "strict": True,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"app_slug": {"type": "string"}},
+                            "required": ["app_slug"],
+                            "additionalProperties": False,
+                        },
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"app_slug": {"type": "string"}},
+                            "required": ["app_slug"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "name": "composio_execute_action",
+                        "description": "Execute one Composio action.",
+                        "strict": True,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "action_slug": {"type": "string"},
+                                "parameters": {"type": "object", "additionalProperties": True},
+                                "connected_account_id": {"type": "string"},
+                            },
+                            "required": ["action_slug", "parameters"],
+                            "additionalProperties": False,
+                        },
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "action_slug": {"type": "string"},
+                                "parameters": {"type": "object", "additionalProperties": True},
+                                "connected_account_id": {"type": "string"},
+                            },
+                            "required": ["action_slug", "parameters"],
+                            "additionalProperties": False,
+                        },
+                    }
+                ],
+                dynamic_tool_handler=lambda tool, arguments, **kwargs: handled.append(
+                    {"tool": tool, "arguments": arguments, **kwargs}
+                )
+                or {
+                    "success": True,
+                    "contentItems": [{"type": "inputText", "text": json.dumps({"ok": True, "tool": tool})}],
+                },
+                action_logger=actions.append,
+            )
+            try:
+                original = os.environ.copy()
+                os.environ.update(env)
+                client.start()
+                client.send_turn("force connected tool")
+                client.send_turn("force check tool")
+                client.send_turn("force execute tool")
+            finally:
+                client.close()
+                os.environ.clear()
+                os.environ.update(original)
+
+            messages = capture_messages(capture)
+            initialize = next(msg for msg in messages if msg.get("method") == "initialize")
+            thread_start = next(msg for msg in messages if msg.get("method") == "thread/start")
+            tool_response = [msg for msg in messages if msg.get("id") in {9001, 9002, 9003} and "result" in msg]
+            self.assertTrue(initialize["params"]["capabilities"]["experimentalApi"])
+            self.assertEqual([tool["name"] for tool in thread_start["params"]["tools"]], [
+                "composio_list_connected_apps",
+                "composio_check_connection",
+                "composio_execute_action",
+            ])
+            self.assertTrue(all(tool["type"] == "function" for tool in thread_start["params"]["tools"]))
+            self.assertTrue(all(tool["strict"] for tool in thread_start["params"]["tools"]))
+            self.assertEqual([tool["name"] for tool in client.last_thread_start_params["tools"]], [
+                "composio_list_connected_apps",
+                "composio_check_connection",
+                "composio_execute_action",
+            ])
+            self.assertEqual([item["tool"] for item in handled], [
+                "composio_list_connected_apps",
+                "composio_check_connection",
+                "composio_execute_action",
+            ])
+            self.assertEqual(handled[0]["arguments"], {})
+            self.assertEqual(handled[1]["arguments"], {"app_slug": "gmail"})
+            self.assertEqual(handled[2]["arguments"], {"action_slug": "GMAIL_FETCH_EMAILS", "parameters": {"max_results": 1}})
+            self.assertTrue(all(msg["result"]["success"] for msg in tool_response))
+            tool_rows = [row for row in actions if row.get("surface") == "codex_tool"]
+            self.assertEqual([row["tool"] for row in tool_rows], [
+                "composio_list_connected_apps",
+                "composio_check_connection",
+                "composio_execute_action",
+            ])
+            self.assertEqual(tool_rows[0]["target"], "composio_list_connected_apps")
+            self.assertEqual(tool_rows[1]["target"], "gmail")
+            self.assertEqual(tool_rows[2]["target"], "GMAIL_FETCH_EMAILS")
 
     def test_runtime_call_forwards_raw_codex_method(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

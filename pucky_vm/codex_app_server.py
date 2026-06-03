@@ -91,6 +91,8 @@ class CodexAppServerClient:
     model: str | None = None
     reasoning_effort: str | None = None
     action_logger: Callable[[dict[str, object]], None] | None = None
+    tools_provider: Callable[[], list[dict[str, Any]]] | None = None
+    dynamic_tool_handler: Callable[..., dict[str, Any] | None] | None = None
 
     def __post_init__(self) -> None:
         self._process: subprocess.Popen[str] | None = None
@@ -106,6 +108,9 @@ class CodexAppServerClient:
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
         self._recorded_tool_call_ids: set[str] = set()
         self._thread_titles: dict[str, str] = {}
+        self._thread_origin_cache: dict[str, dict[str, str]] = {}
+        self._last_thread_start_params: dict[str, Any] = {}
+        self._last_turn_start_params: dict[str, Any] = {}
         self._last_turn_routing: dict[str, str | bool] = {
             "requested_thread_id": "",
             "used_thread_id": "",
@@ -130,6 +135,16 @@ class CodexAppServerClient:
     def last_turn_routing(self) -> dict[str, str | bool]:
         with self._lock:
             return dict(self._last_turn_routing)
+
+    @property
+    def last_thread_start_params(self) -> dict[str, Any]:
+        with self._lock:
+            return json.loads(json.dumps(self._last_thread_start_params))
+
+    @property
+    def last_turn_start_params(self) -> dict[str, Any]:
+        with self._lock:
+            return json.loads(json.dumps(self._last_turn_start_params))
 
     def start(self) -> None:
         if self.ready:
@@ -156,7 +171,8 @@ class CodexAppServerClient:
                     "name": "pucky_v0",
                     "title": "Pucky v0 Voice Turn",
                     "version": "0.1.0",
-                }
+                },
+                **({"capabilities": {"experimentalApi": True}} if self._dynamic_tools() else {}),
             },
             timeout=self.startup_timeout,
         )
@@ -186,6 +202,8 @@ class CodexAppServerClient:
         text: str,
         *,
         thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> CodexTurnResult:
         if not self.ready:
@@ -194,21 +212,33 @@ class CodexAppServerClient:
         if not clean:
             raise CodexAppServerError("cannot send an empty transcript to Codex")
         requested_thread_id = _clean_optional(thread_id)
+        requested_model = _clean_optional(model)
+        requested_reasoning_effort = _clean_optional(reasoning_effort)
         fallback_reason = ""
         thread_mode = "existing" if requested_thread_id else "new"
         used_thread_id = requested_thread_id
 
         if not used_thread_id:
-            used_thread_id = self._start_thread()
+            used_thread_id = self._start_thread(model=requested_model)
         try:
-            turn_id = self._start_turn(used_thread_id, clean, output_schema=output_schema)
+            turn_id = self._start_turn(
+                used_thread_id,
+                clean,
+                output_schema=output_schema,
+                reasoning_effort=requested_reasoning_effort,
+            )
         except CodexAppServerError as exc:
             if not requested_thread_id:
                 raise
             fallback_reason = str(exc)
-            used_thread_id = self._start_thread()
+            used_thread_id = self._start_thread(model=requested_model)
             thread_mode = "new"
-            turn_id = self._start_turn(used_thread_id, clean, output_schema=output_schema)
+            turn_id = self._start_turn(
+                used_thread_id,
+                clean,
+                output_schema=output_schema,
+                reasoning_effort=requested_reasoning_effort,
+            )
         self._thread_id = used_thread_id
         reply_text = self._wait_for_reply(turn_id)
         result = CodexTurnResult(
@@ -223,13 +253,21 @@ class CodexAppServerClient:
         self.ingest_thread_rollout_actions(used_thread_id)
         return result
 
-    def _start_turn(self, thread_id: str, text: str, *, output_schema: dict[str, Any] | None = None) -> str:
+    def _start_turn(
+        self,
+        thread_id: str,
+        text: str,
+        *,
+        output_schema: dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
+    ) -> str:
         schema = output_schema if isinstance(output_schema, dict) else self.output_schema
+        effort = _clean_optional(reasoning_effort) or _clean_optional(self.reasoning_effort)
         response = self.request(
             "turn/start",
             {
                 "threadId": thread_id,
-                **({"effort": self.reasoning_effort} if _clean_optional(self.reasoning_effort) else {}),
+                **({"effort": effort} if effort else {}),
                 **({"outputSchema": schema} if isinstance(schema, dict) else {}),
                 "input": [
                     {
@@ -244,15 +282,23 @@ class CodexAppServerClient:
         turn_id = response.get("turn", {}).get("id")
         if not turn_id:
             raise CodexAppServerError("turn/start did not return a turn id")
+        with self._lock:
+            self._last_turn_start_params = {
+                "threadId": thread_id,
+                **({"effort": effort} if effort else {}),
+                **({"outputSchema": json.loads(json.dumps(schema))} if isinstance(schema, dict) else {}),
+            }
+        self._remember_thread_origin(thread_id, reasoning_effort=effort)
         return str(turn_id)
 
-    def _start_thread(self) -> str:
+    def _start_thread(self, *, model: str | None = None) -> str:
         params: dict[str, Any] = {
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
         }
-        if _clean_optional(self.model):
-            params["model"] = _clean_optional(self.model)
+        chosen_model = _clean_optional(model) or _clean_optional(self.model)
+        if chosen_model:
+            params["model"] = chosen_model
         if self.cwd:
             params["cwd"] = str(Path(self.cwd).resolve())
         if self.developer_instructions:
@@ -260,16 +306,36 @@ class CodexAppServerClient:
         base_instructions = self._base_instructions()
         if base_instructions:
             params["baseInstructions"] = base_instructions
+        dynamic_tools = self._dynamic_tools()
+        if dynamic_tools:
+            params["tools"] = dynamic_tools
+        with self._lock:
+            self._last_thread_start_params = json.loads(json.dumps(params))
         response = self.request("thread/start", params, timeout=self.startup_timeout)
         thread_id = response.get("thread", {}).get("id")
         if not thread_id:
             raise CodexAppServerError("thread/start did not return a thread id")
-        return str(thread_id)
+        clean_thread_id = str(thread_id)
+        self._remember_thread_origin(
+            clean_thread_id,
+            model=chosen_model,
+            sandbox_policy=self.sandbox,
+            approval_mode=self.approval_policy,
+        )
+        return clean_thread_id
 
     def _base_instructions(self) -> str:
         if self.base_instructions_provider is not None:
             return _clean_optional(self.base_instructions_provider())
         return _clean_optional(self.base_instructions)
+
+    def _dynamic_tools(self) -> list[dict[str, Any]]:
+        if self.tools_provider is None:
+            return []
+        tools = self.tools_provider()
+        if not isinstance(tools, list):
+            return []
+        return [dict(item) for item in tools if isinstance(item, dict)]
 
     def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
         clean = _clean_optional(title)
@@ -295,28 +361,64 @@ class CodexAppServerClient:
 
     def _thread_origin(self, thread_id: str, *, retries: int, delay: float) -> CodexThreadOrigin:
         clean_thread_id = _clean_optional(thread_id) or _clean_optional(self._thread_id)
-        origin = CodexThreadOrigin(thread_id=clean_thread_id)
+        origin = self._merge_cached_thread_origin(CodexThreadOrigin(thread_id=clean_thread_id))
         if not clean_thread_id:
             return origin
         for attempt in range(max(1, retries)):
             row = self._thread_row(clean_thread_id)
             if row is not None:
-                origin = CodexThreadOrigin(
-                    thread_id=clean_thread_id,
-                    thread_title=_clean_optional(row.get("title")) or self._cached_thread_title(clean_thread_id),
-                    rollout_path=_clean_optional(row.get("rollout_path")),
-                    source=_clean_optional(row.get("source")),
-                    model=_clean_optional(row.get("model")),
-                    model_provider=_clean_optional(row.get("model_provider")),
-                    reasoning_effort=_clean_optional(row.get("reasoning_effort")),
-                    sandbox_policy=_normalize_sandbox_policy(row.get("sandbox_policy")),
-                    approval_mode=_clean_optional(row.get("approval_mode")),
+                origin = self._merge_cached_thread_origin(
+                    CodexThreadOrigin(
+                        thread_id=clean_thread_id,
+                        thread_title=_clean_optional(row.get("title")) or self._cached_thread_title(clean_thread_id),
+                        rollout_path=_clean_optional(row.get("rollout_path")),
+                        source=_clean_optional(row.get("source")),
+                        model=_clean_optional(row.get("model")),
+                        model_provider=_clean_optional(row.get("model_provider")),
+                        reasoning_effort=_clean_optional(row.get("reasoning_effort")),
+                        sandbox_policy=_normalize_sandbox_policy(row.get("sandbox_policy")),
+                        approval_mode=_clean_optional(row.get("approval_mode")),
+                    )
                 )
                 if origin.rollout_path or attempt == retries - 1:
                     return origin
             if attempt < retries - 1:
                 time.sleep(max(0.0, delay))
         return origin
+
+    def _remember_thread_origin(self, thread_id: str, **fields: str | None) -> None:
+        clean_thread_id = _clean_optional(thread_id)
+        if not clean_thread_id:
+            return
+        with self._lock:
+            cached = dict(self._thread_origin_cache.get(clean_thread_id, {}))
+            cached["thread_id"] = clean_thread_id
+            for key, value in fields.items():
+                clean_value = _clean_optional(value)
+                if clean_value:
+                    cached[key] = clean_value
+            self._thread_origin_cache[clean_thread_id] = cached
+
+    def _merge_cached_thread_origin(self, origin: CodexThreadOrigin) -> CodexThreadOrigin:
+        clean_thread_id = _clean_optional(origin.thread_id)
+        if not clean_thread_id:
+            return origin
+        with self._lock:
+            cached = dict(self._thread_origin_cache.get(clean_thread_id, {}))
+        if not cached:
+            return origin
+        return CodexThreadOrigin(
+            runtime=origin.runtime,
+            thread_id=origin.thread_id or clean_thread_id,
+            thread_title=origin.thread_title or cached.get("thread_title", ""),
+            rollout_path=origin.rollout_path,
+            source=origin.source or cached.get("source", ""),
+            model=origin.model or cached.get("model", ""),
+            model_provider=origin.model_provider or cached.get("model_provider", ""),
+            reasoning_effort=origin.reasoning_effort or cached.get("reasoning_effort", ""),
+            sandbox_policy=origin.sandbox_policy or cached.get("sandbox_policy", ""),
+            approval_mode=origin.approval_mode or cached.get("approval_mode", ""),
+        )
 
     def _cached_thread_title(self, thread_id: str) -> str:
         clean_thread_id = _clean_optional(thread_id)
@@ -503,7 +605,11 @@ class CodexAppServerClient:
                     responses.put(message)
                 continue
             if request_id is not None and "method" in message:
-                self._respond_to_server_request(int(request_id), str(message.get("method") or ""))
+                self._respond_to_server_request(
+                    int(request_id),
+                    str(message.get("method") or ""),
+                    message.get("params") if isinstance(message.get("params"), dict) else {},
+                )
                 continue
             params = message.get("params") or {}
             self._observe_tool_event(message)
@@ -524,7 +630,72 @@ class CodexAppServerClient:
                 self._stderr.append(clean)
                 del self._stderr[:-50]
 
-    def _respond_to_server_request(self, request_id: int, method: str) -> None:
+    def _respond_to_server_request(self, request_id: int, method: str, params: dict[str, Any] | None = None) -> None:
+        clean_params = params if isinstance(params, dict) else {}
+        if method == "item/tool/call" and callable(self.dynamic_tool_handler):
+            tool = _clean_optional(clean_params.get("tool"))
+            arguments = clean_params.get("arguments")
+            thread_id = _clean_optional(clean_params.get("threadId"))
+            try:
+                result = self.dynamic_tool_handler(
+                    tool,
+                    arguments,
+                    call_id=_clean_optional(clean_params.get("callId")),
+                    thread_id=thread_id,
+                    turn_id=_clean_optional(clean_params.get("turnId")),
+                )
+                response = result if isinstance(result, dict) else {"success": True, "contentItems": []}
+                if "success" not in response:
+                    response["success"] = True
+                if "contentItems" not in response:
+                    response["contentItems"] = []
+                self._write({"id": request_id, "result": response})
+                if self.action_logger is not None:
+                    self.action_logger(
+                        {
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "surface": "codex_tool",
+                            "action": tool,
+                            "tool": tool,
+                            "target": compact_tool_target(tool, arguments),
+                            "status": "ok" if bool(response.get("success")) else "error",
+                            "thread_id": thread_id,
+                            "thread_title": self._resolve_thread_title(thread_id),
+                        }
+                    )
+                return
+            except Exception as exc:
+                try:
+                    self._write(
+                        {
+                            "id": request_id,
+                            "result": {
+                                "success": False,
+                                "contentItems": [
+                                    {
+                                        "type": "inputText",
+                                        "text": str(exc),
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                except CodexAppServerError:
+                    pass
+                if self.action_logger is not None:
+                    self.action_logger(
+                        {
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "surface": "codex_tool",
+                            "action": tool,
+                            "tool": tool,
+                            "target": compact_tool_target(tool, arguments),
+                            "status": "error",
+                            "thread_id": thread_id,
+                            "thread_title": self._resolve_thread_title(thread_id),
+                        }
+                    )
+                return
         try:
             self._write(
                 {
@@ -649,6 +820,12 @@ def command_from_env(value: str | None) -> list[str]:
 def compact_tool_target(tool: str, arguments: Any) -> str:
     tool_name = _clean_optional(tool)
     args = _parse_tool_arguments(arguments)
+    if tool_name == "composio_list_connected_apps":
+        return tool_name
+    if tool_name == "composio_check_connection":
+        return _clean_optional(args.get("app_slug")) or tool_name
+    if tool_name == "composio_execute_action":
+        return _clean_optional(args.get("action_slug")) or tool_name
     command = _clean_optional(args.get("command")) or _clean_optional(args.get("cmd")) or _clean_optional(args.get("query"))
     workdir = _clean_optional(args.get("workdir") or args.get("cwd"))
     text = command or _clean_optional(arguments)

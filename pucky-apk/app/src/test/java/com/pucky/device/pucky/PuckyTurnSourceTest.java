@@ -315,6 +315,10 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains(".header(\"X-Pucky-Thread-Id\", threadScope.optString(\"thread_id\", \"\"))"));
         assertTrue(source.contains(".header(\"X-Pucky-Thread-Scope-Source\", threadScope.optString(\"thread_scope_source\", \"\"))"));
         assertTrue(source.contains(".header(\"X-Pucky-Thread-Card-Id\", threadScope.optString(\"thread_card_id\", \"\"))"));
+        assertTrue(source.contains(".header(\"X-Pucky-Codex-Model\", applySessionDefaults ? settings.getPuckyTurnModel() : \"\")"));
+        assertTrue(source.contains(".header(\"X-Pucky-Codex-Reasoning-Effort\","));
+        assertTrue(source.contains("applySessionDefaults ? settings.getPuckyTurnReasoningEffort() : \"\""));
+        assertTrue(source.contains("private static boolean shouldApplySessionDefaults(JSONObject scope)"));
         assertTrue(source.contains("Json.put(out, \"turn_id\", clientTurnId)"));
         assertTrue(source.contains("Json.put(out, \"vad_engine\""));
         assertTrue(source.contains("Json.put(out, \"vad_available\""));
@@ -423,12 +427,22 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("https://pucky.fly.dev/api/turn"));
         assertTrue(source.contains("putString(editor, input, \"pucky_api_token\""));
         assertTrue(source.contains("\"pucky_turn_reply_mode\""));
+        assertTrue(source.contains("\"pucky_turn_model\""));
+        assertTrue(source.contains("\"pucky_turn_reasoning_effort\""));
         assertTrue(source.contains("\"pucky_turn_arrival_cue_mode\""));
         assertTrue(source.contains("\"pucky_turn_accepted_chime_enabled\""));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_ONLY"));
         assertTrue(source.contains("PUCKY_TURN_REPLY_CARD_AND_SPOKEN"));
         assertTrue(source.contains("PUCKY_TURN_ARRIVAL_CUE_HAPTIC_AND_CHIME"));
+        assertTrue(source.contains("PUCKY_TURN_MODEL_GPT_5_4"));
+        assertTrue(source.contains("PUCKY_TURN_MODEL_GPT_5_4_MINI"));
+        assertTrue(source.contains("PUCKY_TURN_MODEL_GPT_5_4_NANO"));
+        assertTrue(source.contains("PUCKY_TURN_REASONING_XHIGH"));
         assertTrue(source.contains("public String getPuckyTurnReplyMode()"));
+        assertTrue(source.contains("public String getPuckyTurnModel()"));
+        assertTrue(source.contains("public void setPuckyTurnModel(String model)"));
+        assertTrue(source.contains("public String getPuckyTurnReasoningEffort()"));
+        assertTrue(source.contains("public void setPuckyTurnReasoningEffort(String reasoningEffort)"));
         assertTrue(source.contains("public String getPuckyTurnArrivalCueMode()"));
         assertTrue(source.contains("public boolean isPuckyTurnSpokenReplyEnabled()"));
         assertTrue(source.contains("public boolean isPuckyTurnAcceptedChimeEnabled()"));
@@ -442,6 +456,8 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("DEFAULT_TILE_AUDIO_SPEED"));
         assertTrue(source.contains("getDefaultTileAudioSpeed()"));
         assertTrue(source.contains("setDefaultTileAudioSpeed(float speed)"));
+        assertTrue(source.contains("normalizePuckyTurnModel"));
+        assertTrue(source.contains("normalizePuckyTurnReasoningEffort"));
         assertFalse(source.contains("prefs.getString(TOKEN, \"dev-token\")"));
         assertFalse(source.contains("nonEmpty(token, \"dev-token\")"));
     }
