@@ -269,6 +269,17 @@ class FeedStore:
                 return None
             return self._build_item(clean_card_id)
 
+    def get_thread_item(self, thread_id: str, *, compact: bool = False) -> dict[str, object] | None:
+        clean_thread_id = str(thread_id or "").strip()
+        if not clean_thread_id:
+            return None
+        group_key = f"thread:{clean_thread_id}"
+        with self._lock:
+            rows = self._card_rows_for_group(group_key)
+            if not rows:
+                return None
+            return self._build_group_item(group_key, compact=compact)
+
     def get_artifact(self, artifact_id: str) -> dict[str, object] | None:
         clean = str(artifact_id or "").strip()
         if not clean:

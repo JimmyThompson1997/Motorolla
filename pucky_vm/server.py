@@ -2758,30 +2758,47 @@ class PuckyVoiceService:
         self._update_turn_status(turn_id, "codex_running", "running", telemetry)
         start = time.perf_counter()
         requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
+        existing_thread_item = self.feed.get_thread_item(requested_thread_id) if requested_thread_id else None
+        backend_thread_id = _thread_item_backend_thread_id(existing_thread_item) or requested_thread_id
+        visible_thread_title = _thread_item_display_title(existing_thread_item)
+        visible_thread_icon = _thread_item_display_icon(existing_thread_item)
+        if backend_thread_id:
+            telemetry["resolved_backend_thread_id"] = backend_thread_id
         model_override = _normalize_requested_turn_model(model, fallback=self.config.codex_model or "")
         reasoning_override = _normalize_requested_turn_reasoning_effort(
             reasoning_effort,
             fallback=self.config.codex_reasoning_effort or "",
         )
+        transcript_for_codex = transcript
         if requested_thread_id:
             reasoning_override = ""
             try:
-                existing_origin = self.codex.thread_origin(requested_thread_id, retries=1, delay=0.0)
+                existing_origin = self.codex.thread_origin(backend_thread_id, retries=1, delay=0.0)
             except Exception:
                 existing_origin = {}
-            if isinstance(existing_origin, dict):
+            if isinstance(existing_origin, dict) and existing_origin:
                 preserved_reasoning = _normalize_requested_turn_reasoning_effort(
                     existing_origin.get("reasoning_effort"),
                     fallback="",
                 )
                 if preserved_reasoning:
                     reasoning_override = preserved_reasoning
+            elif isinstance(existing_thread_item, dict):
+                saved_messages = existing_thread_item.get("transcript_messages")
+                if isinstance(saved_messages, list):
+                    transcript_for_codex = _compose_recovered_thread_prompt(
+                        visible_thread_id=requested_thread_id,
+                        visible_thread_title=visible_thread_title,
+                        transcript=transcript,
+                        transcript_messages=saved_messages,
+                    )
+                    telemetry["thread_context_recovered"] = True
             model_override = ""
         def _send_turn() -> CodexTurnResult | str:
             try:
                 return self.codex.send_turn(
-                    transcript,
-                    thread_id=requested_thread_id or None,
+                    transcript_for_codex,
+                    thread_id=backend_thread_id or None,
                     model=model_override or None,
                     reasoning_effort=reasoning_override or None,
                     output_schema=output_schema,
@@ -2802,8 +2819,8 @@ class PuckyVoiceService:
                     raise
                 fallback_candidates: list[dict[str, object]] = []
                 rich_fallback: dict[str, object] = {}
-                if requested_thread_id:
-                    rich_fallback["thread_id"] = requested_thread_id
+                if backend_thread_id:
+                    rich_fallback["thread_id"] = backend_thread_id
                 if isinstance(output_schema, dict):
                     rich_fallback["output_schema"] = output_schema
                 if developer_instructions:
@@ -2811,20 +2828,20 @@ class PuckyVoiceService:
                 if rich_fallback:
                     fallback_candidates.append(rich_fallback)
                 legacy_fallback: dict[str, object] = {}
-                if requested_thread_id:
-                    legacy_fallback["thread_id"] = requested_thread_id
+                if backend_thread_id:
+                    legacy_fallback["thread_id"] = backend_thread_id
                 if isinstance(output_schema, dict):
                     legacy_fallback["output_schema"] = output_schema
                 if legacy_fallback and legacy_fallback not in fallback_candidates:
                     fallback_candidates.append(legacy_fallback)
-                thread_only = {"thread_id": requested_thread_id} if requested_thread_id else {}
+                thread_only = {"thread_id": backend_thread_id} if backend_thread_id else {}
                 if thread_only and thread_only not in fallback_candidates:
                     fallback_candidates.append(thread_only)
                 if {} not in fallback_candidates:
                     fallback_candidates.append({})
                 for fallback_kwargs in fallback_candidates:
                     try:
-                        return self.codex.send_turn(transcript, **fallback_kwargs)  # type: ignore[call-arg]
+                        return self.codex.send_turn(transcript_for_codex, **fallback_kwargs)  # type: ignore[call-arg]
                     except TypeError as fallback_exc:
                         fallback_message = str(fallback_exc)
                         if "unexpected keyword argument" not in fallback_message:
@@ -2836,7 +2853,7 @@ class PuckyVoiceService:
         if isinstance(codex_result, str):
             codex_result = CodexTurnResult(
                 reply_text=codex_result,
-                used_thread_id=str(self.codex.thread_id or requested_thread_id or ""),
+                used_thread_id=str(self.codex.thread_id or backend_thread_id or requested_thread_id or ""),
                 requested_thread_id=requested_thread_id,
                 thread_mode="existing" if requested_thread_id else "new",
             )
@@ -2851,6 +2868,8 @@ class PuckyVoiceService:
 
         telemetry["stage"] = "envelope"
         envelope = parse_reply_envelope(raw_reply)
+        persisted_title = visible_thread_title or envelope.card_title
+        persisted_icon = visible_thread_icon or envelope.card_icon
         if display_transcript_text == "Meeting recording" and envelope.html_content:
             envelope = ReplyEnvelope(
                 envelope.reply_text,
@@ -2862,10 +2881,10 @@ class PuckyVoiceService:
             )
         telemetry["envelope_parse"] = "ok"
         telemetry["reply_chars"] = len(envelope.reply_text)
-        telemetry["card_icon"] = envelope.card_icon
+        telemetry["card_icon"] = persisted_icon
         telemetry["has_html"] = bool(envelope.html_content)
         try:
-            self.codex.set_thread_title(envelope.card_title, thread_id=codex_result.used_thread_id)
+            self.codex.set_thread_title(persisted_title, thread_id=codex_result.used_thread_id)
             telemetry["codex_thread_title_synced"] = True
         except Exception:
             telemetry["codex_thread_title_synced"] = False
@@ -2876,6 +2895,10 @@ class PuckyVoiceService:
         if not isinstance(origin, dict):
             origin = {}
         origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
+        if requested_thread_id:
+            origin["thread_id"] = requested_thread_id
+            if persisted_title:
+                origin["thread_title"] = persisted_title
         telemetry["origin_thread_id"] = origin.get("thread_id", "")
         telemetry["origin_model"] = origin.get("model", "")
         telemetry["origin_reasoning_effort"] = origin.get("reasoning_effort", "")
@@ -2919,10 +2942,10 @@ class PuckyVoiceService:
             )
         ]
         card: dict[str, object] = {
-            "title": envelope.card_title,
+            "title": persisted_title,
             "summary": envelope.reply_text,
-            "icon": envelope.card_icon,
-            "accent": self._card_icon_accent(envelope.card_icon),
+            "icon": persisted_icon,
+            "accent": self._card_icon_accent(persisted_icon),
             "origin": origin,
         }
         html_mime_type = ""
@@ -2945,9 +2968,9 @@ class PuckyVoiceService:
                 session_id=session_id,
                 reply_mode=reply_mode,
                 reply_text=envelope.reply_text,
-                title=envelope.card_title,
+                title=persisted_title,
                 summary=envelope.reply_text,
-                icon=envelope.card_icon,
+                icon=persisted_icon,
                 origin=origin,
                 telemetry=_public_turn_telemetry(telemetry),
                 transcript_messages=transcript_messages,
@@ -3779,6 +3802,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
+        "resolved_backend_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
         "proof_reply_delay_enabled",
@@ -3789,6 +3813,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
+        "thread_context_recovered",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -3834,6 +3859,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
+        "resolved_backend_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
         "proof_reply_delay_enabled",
@@ -3844,6 +3870,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
+        "thread_context_recovered",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -3894,6 +3921,71 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
         if value:
             normalized[key] = value
     return normalized
+
+
+def _thread_item_backend_thread_id(item: dict[str, object] | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    telemetry = item.get("telemetry")
+    if isinstance(telemetry, dict):
+        for key in ("codex_thread_id", "origin_thread_id"):
+            value = str(telemetry.get(key) or "").strip()
+            if value:
+                return value
+    origin = item.get("origin")
+    if isinstance(origin, dict):
+        return str(origin.get("thread_id") or "").strip()
+    return ""
+
+
+def _thread_item_display_title(item: dict[str, object] | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    origin = item.get("origin")
+    if isinstance(origin, dict):
+        title = str(origin.get("thread_title") or "").strip()
+        if title:
+            return title
+    return str(item.get("title") or "").strip()
+
+
+def _thread_item_display_icon(item: dict[str, object] | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("icon") or "").strip()
+
+
+def _compose_recovered_thread_prompt(
+    *,
+    visible_thread_id: str,
+    visible_thread_title: str,
+    transcript: str,
+    transcript_messages: list[dict[str, object]],
+) -> str:
+    history_lines: list[str] = []
+    for message in transcript_messages[-12:]:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        text = re.sub(r"\s+", " ", str(message.get("text") or "").strip())
+        if not text:
+            continue
+        history_lines.append(f"{role.title()}: {text}")
+    history_block = "\n".join(history_lines) if history_lines else "(no saved conversation history)"
+    title_line = visible_thread_title or visible_thread_id or "Recovered thread"
+    latest_user_message = re.sub(r"\s+", " ", str(transcript or "").strip())
+    return (
+        "The original backend thread for this Pucky conversation could not be reopened. "
+        "Continue the conversation using the recovered visible-thread history below instead of asking the user to repeat context.\n\n"
+        f"Visible thread: {title_line}\n"
+        f"Visible thread id: {visible_thread_id}\n\n"
+        "Recovered conversation history:\n"
+        f"{history_block}\n\n"
+        "Latest user message:\n"
+        f"User: {latest_user_message}"
+    )
 
 
 def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_connected: str = "") -> str:

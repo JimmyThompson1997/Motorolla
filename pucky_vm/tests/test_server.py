@@ -447,6 +447,12 @@ class ScriptedCodex(FakeCodex):
             },
         )()
 
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        resolved_thread_id = str(thread_id or self.thread_id)
+        if resolved_thread_id in self.invalid_thread_ids:
+            raise KeyError("thread_not_found")
+        return super().thread_origin(thread_id=resolved_thread_id, retries=retries, delay=delay)
+
 
 class OutOfOrderCodex(FakeCodex):
     def __init__(self) -> None:
@@ -1859,7 +1865,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("exc", error)
         self.assertIsInstance(result["body"], dict)
 
-    def test_text_turn_reuses_existing_thread_and_falls_back_on_invalid_thread(self) -> None:
+    def test_text_turn_reuses_existing_thread_and_preserves_visible_thread_on_backend_fallback(self) -> None:
         scripted = ScriptedCodex(invalid_thread_ids={"thread-missing"})
         self.service.codex = scripted
 
@@ -1893,9 +1899,67 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(scripted.turn_requests[1]["requested_thread_id"], "thread-missing")
         self.assertEqual(fallback["telemetry"]["requested_thread_id"], "thread-missing")
+        self.assertEqual(fallback["telemetry"]["resolved_backend_thread_id"], "thread-missing")
         self.assertEqual(fallback["telemetry"]["thread_mode"], "new")
         self.assertEqual(fallback["telemetry"]["thread_fallback_reason"], "thread_not_found")
-        self.assertNotEqual(fallback["origin"]["thread_id"], "thread-missing")
+        self.assertEqual(fallback["origin"]["thread_id"], "thread-missing")
+
+    def test_text_turn_backend_fallback_recovers_thread_history_and_reuses_alias_on_later_turns(self) -> None:
+        seed = self.post_json(
+            "/api/turn/text",
+            {"text": "Summarize the Gmail changes for me.", "turn_id": "thread-seed-1"},
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-missing",
+                "X-Pucky-Thread-Scope-Source": "thread_transcript",
+            },
+        )
+        self.assertEqual(seed["origin"]["thread_id"], "thread-missing")
+        seed_title = seed["title"]
+        seed_icon = seed["icon"]
+
+        scripted = ScriptedCodex(invalid_thread_ids={"thread-missing"})
+        self.service.codex = scripted
+
+        recovered = self.post_json(
+            "/api/turn/text",
+            {"text": "Did anything change for search or drafts?", "turn_id": "thread-recover-1"},
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-missing",
+                "X-Pucky-Thread-Scope-Source": "thread_transcript",
+            },
+        )
+
+        self.assertEqual(scripted.turn_requests[0]["requested_thread_id"], "thread-missing")
+        self.assertIn("Recovered conversation history:", scripted.turn_requests[0]["text"])
+        self.assertIn("Summarize the Gmail changes for me.", scripted.turn_requests[0]["text"])
+        self.assertTrue(recovered["telemetry"]["thread_context_recovered"])
+        self.assertEqual(recovered["origin"]["thread_id"], "thread-missing")
+        self.assertEqual(recovered["title"], seed_title)
+        self.assertEqual(recovered["icon"], seed_icon)
+        alias_thread_id = recovered["telemetry"]["codex_thread_id"]
+        self.assertNotEqual(alias_thread_id, "thread-missing")
+
+        continued = self.post_json(
+            "/api/turn/text",
+            {"text": "Keep going on the Gmail thread.", "turn_id": "thread-recover-2"},
+            headers={
+                "X-Pucky-Thread-Mode": "existing",
+                "X-Pucky-Thread-Id": "thread-missing",
+                "X-Pucky-Thread-Scope-Source": "thread_transcript",
+            },
+        )
+
+        self.assertEqual(scripted.turn_requests[1]["requested_thread_id"], alias_thread_id)
+        self.assertEqual(continued["telemetry"]["resolved_backend_thread_id"], alias_thread_id)
+        self.assertEqual(continued["origin"]["thread_id"], "thread-missing")
+        self.assertEqual(continued["title"], seed_title)
+        self.assertEqual(continued["icon"], seed_icon)
+        feed = self.get_json("/api/feed", headers={"Authorization": "Bearer secret"})
+        thread_items = [item for item in feed["items"] if item["origin"].get("thread_id") == "thread-missing"]
+        self.assertEqual(len(thread_items), 1)
+        self.assertEqual(thread_items[0]["thread_history_count"], 3)
 
     def test_text_turn_new_session_applies_requested_model_and_reasoning(self) -> None:
         body = self.post_json(
@@ -2067,8 +2131,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(feed["count"] if "count" in feed else len(feed["items"]), 1)
         item = feed["items"][0]
         self.assertEqual(item["origin"]["thread_id"], "thread-collapse")
-        self.assertEqual(item["title"], "Weather Plan")
-        self.assertEqual(item["icon"], "calendar")
+        self.assertEqual(item["title"], first["title"])
+        self.assertEqual(item["icon"], first["icon"])
         self.assertEqual(item["thread_history_count"], 2)
         self.assertEqual([message["role"] for message in item["transcript_messages"]], ["user", "assistant", "user", "assistant"])
 
