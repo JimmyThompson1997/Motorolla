@@ -175,6 +175,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "width: 28px;" in icon_block
     assert "height: 28px;" in icon_block
     assert "border-radius: 8px;" in icon_block
+    assert ".links-app-logo" not in styles
     name_block = css_block(styles, ".links-app-name")
     assert "font-size: 16px;" in name_block
     auth_block = css_block(styles, ".links-app-auth")
@@ -227,6 +228,9 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "linksVisibleRange(" not in app
     assert "refs.topSpacer.style.height =" not in app
     assert "refs.bottomSpacer.style.height =" not in app
+    assert "links-app-logo" not in app
+    assert "syncVisibleLinksLogos" not in app
+    assert "dataset.logoSrc" not in app
     assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' not in app
     assert 'linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
     assert 'linksPageRefs.scrollport.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app

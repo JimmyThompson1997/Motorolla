@@ -190,7 +190,6 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
-  const LINKS_LOGO_PRELOAD_ROWS = 12;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -1304,23 +1303,6 @@
 
     const icon = el("span", "links-app-icon");
     const fallback = el("span", "links-app-fallback", linksAppInitial(app));
-    if (app.logo) {
-      const img = document.createElement("img");
-      img.className = "links-app-logo";
-      img.dataset.logoSrc = app.logo;
-      img.alt = "";
-      img.loading = "lazy";
-      img.decoding = "async";
-      img.addEventListener("load", () => {
-        icon.classList.add("has-image");
-        state.links.logoLoads += 1;
-      });
-      img.addEventListener("error", () => {
-        state.links.logoErrors += 1;
-        img.remove();
-      });
-      icon.append(img);
-    }
     icon.append(fallback);
 
     const name = el("span", "links-app-name", app.name || app.slug);
@@ -1347,28 +1329,6 @@
         mark.classList.toggle("is-connected", state.links.connectedSlugs.has(slug));
       }
     });
-  }
-
-  function syncVisibleLinksLogos(refs) {
-    if (!refs || !refs.scrollport || !refs.rows || refs.listCard.hidden) {
-      return;
-    }
-    const rows = refs.rows.children;
-    if (!rows || !rows.length) {
-      return;
-    }
-    const scrollTop = Math.max(0, safeNumber(refs.scrollport.scrollTop));
-    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport.clientHeight));
-    const start = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_LOGO_PRELOAD_ROWS);
-    const end = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_LOGO_PRELOAD_ROWS);
-    for (let index = start; index < end; index += 1) {
-      const row = rows[index];
-      const img = row && row.querySelector ? row.querySelector(".links-app-logo[data-logo-src]") : null;
-      if (!img || img.src) {
-        continue;
-      }
-      img.src = img.dataset.logoSrc;
-    }
   }
 
   function linksAuthLabelForApp(app) {
@@ -1558,7 +1518,6 @@
   let linksPageNode = null;
   let linksPageRefs = null;
   let linksSessionPromise = null;
-  let linksLogoRaf = 0;
 
   async function hydrateLinksSession(options = {}) {
     if (linksSessionPromise) {
@@ -1638,17 +1597,6 @@
 
   function linksScrollElement() {
     return linksPageRefs && linksPageRefs.scrollport ? linksPageRefs.scrollport : null;
-  }
-
-  function scheduleLinksLogoSync() {
-    if (linksLogoRaf) {
-      return;
-    }
-    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback, 16);
-    linksLogoRaf = raf(() => {
-      linksLogoRaf = 0;
-      syncVisibleLinksLogos(linksPageRefs);
-    });
   }
 
   function linksMatchesSearch(app, needle) {
@@ -1734,7 +1682,6 @@
       refs.rows.dataset.linksListKey = listKey;
     }
     syncLinksRowStates(refs, handoffLocked);
-    syncVisibleLinksLogos(refs);
     if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
       state.links.firstRowsTelemetrySent = true;
       linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
@@ -3283,7 +3230,6 @@
       listCard.append(listHead);
       const scrollport = el("div", "links-list-scrollport");
       scrollport.id = "linksScrollport";
-      scrollport.addEventListener("scroll", scheduleLinksLogoSync, { passive: true });
       const rows = el("div", "links-list-rows");
       scrollport.append(rows);
       listCard.append(scrollport);

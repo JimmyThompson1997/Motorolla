@@ -922,30 +922,10 @@ button {
   grid-area: 1 / 1;
 }
 
-.links-app-icon.has-image {
-  background: transparent;
-  box-shadow: none;
-}
-
-.links-app-logo {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-
-.links-app-logo:not([src]) {
-  display: none;
-}
-
 .links-app-fallback {
   font-size: 12px;
   font-weight: 800;
   line-height: 1;
-}
-
-.links-app-icon.has-image .links-app-fallback {
-  display: none;
 }
 
 .links-app-name {
