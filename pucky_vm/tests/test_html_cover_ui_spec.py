@@ -162,9 +162,14 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "min-height: 0;" in feed_block
     links_feed_block = css_block(styles, ".feed.is-links-route")
     assert "display: flex;" in links_feed_block
+    assert "flex: 0 0 var(--links-route-h);" in links_feed_block
     assert "flex-direction: column;" in links_feed_block
+    assert "height: var(--links-route-h);" in links_feed_block
+    assert "max-height: var(--links-route-h);" in links_feed_block
     links_page_block = css_block(styles, ".feed.is-links-route > .links-page")
     assert "flex: 1 1 auto;" in links_page_block
+    assert "height: 100%;" in links_page_block
+    assert "max-height: 100%;" in links_page_block
     assert "min-height: 0;" in links_page_block
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
@@ -620,6 +625,7 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
     assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
+    assert "--links-route-h: calc(var(--viewport-safe-h) - 45px);" in styles
     assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
