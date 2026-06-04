@@ -2039,6 +2039,7 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     assert "function resolveNavDetailCard(detail)" in app
     assert "const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;" in app
     assert "function syncOpenThreadDetailAfterCards()" in app
+    assert 'return String(card?.thread_id || card?.session_id || card?.card_id || "").trim();' in app
     assert "const nextCard = resolveNavDetailCard(detail);" in app
     assert 'showTranscript(nextCard, shouldStickToLatest' in app
     assert "function scrollTranscriptToLatest(content)" in app

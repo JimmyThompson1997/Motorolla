@@ -9059,7 +9059,7 @@
   }
 
   function cardSessionKey(card) {
-    return String(card?.session_id || card?.card_id || "").trim();
+    return String(card?.thread_id || card?.session_id || card?.card_id || "").trim();
   }
 
   function loadReadOverrides() {
