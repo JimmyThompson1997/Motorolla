@@ -158,6 +158,14 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-list-spacer" not in styles
     assert ".links-list-scrollport" in styles
     assert ".links-list-rows" in styles
+    feed_block = css_block(styles, ".feed")
+    assert "min-height: 0;" in feed_block
+    links_feed_block = css_block(styles, ".feed.is-links-route")
+    assert "display: flex;" in links_feed_block
+    assert "flex-direction: column;" in links_feed_block
+    links_page_block = css_block(styles, ".feed.is-links-route > .links-page")
+    assert "flex: 1 1 auto;" in links_page_block
+    assert "min-height: 0;" in links_page_block
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
     assert "position: sticky;" in search_wrap
