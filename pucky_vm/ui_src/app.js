@@ -589,9 +589,6 @@
         });
         applyTurnStatus(payload);
         renderVoiceStatus();
-        if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" && state.route === "feed") {
-          void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });
-        }
       }
       if (name === "pucky.feed.updated") {
         const cards = Array.isArray(payload && payload.cards) ? payload.cards : [];
@@ -1079,9 +1076,6 @@
     render();
     restoreNavStateAfterCards();
     void syncVoiceThreadScope({ reason: "load_cards", render: true });
-    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
-      syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true });
-    }
   }
 
   async function refreshCardsFromNativeSnapshot(options = {}) {
@@ -1229,7 +1223,8 @@
     return {
       slug: String(item && item.slug || "").trim(),
       name: String(item && (item.name || item.slug) || "").trim(),
-      logo: String(item && item.logo || "").trim(),
+      logo_path: String(item && item.logo_path || "").trim(),
+      logo_source_url: String(item && item.logo_source_url || item.logo || "").trim(),
       auth_schemes: authSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       managed_auth_schemes: managedAuthSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       auth_label: String(item && item.auth_label || "").trim(),
@@ -1303,8 +1298,20 @@
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
     const icon = el("span", "links-app-icon");
-    const fallback = el("span", "links-app-fallback", linksAppInitial(app));
-    icon.append(fallback);
+    const img = document.createElement("img");
+    img.className = "links-app-logo";
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.addEventListener("load", () => {
+      state.links.logoLoads += 1;
+    });
+    img.addEventListener("error", () => {
+      state.links.logoErrors += 1;
+      img.remove();
+    });
+    img.src = app.logo_path;
+    icon.append(img);
 
     const name = el("span", "links-app-name", app.name || app.slug);
     const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
@@ -2273,7 +2280,8 @@
       card_id: node.getAttribute("data-card-id") || "",
       session_id: node.getAttribute("data-card-session-id") || "",
       thread_id: node.getAttribute("data-card-thread-id") || "",
-      pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound",
+      pending_outbound: node.getAttribute("data-card-pending-outbound") === "true"
+        || node.getAttribute("data-card-kind") === "pending_outbound",
       pending_state: node.getAttribute("data-card-pending-state") || "",
       preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
     }));
@@ -2941,6 +2949,7 @@
   }
 
   function dismissTransientUiForRouteChange() {
+    resetHomeFeedPresentation();
     dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });
     dismissOpenCardMenu(false);
     dismissTraceSheet();
@@ -3014,13 +3023,16 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
+    feed.classList.toggle("is-home-route", state.route === "feed");
     feed.classList.toggle("is-links-route", state.route === "links");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (state.route === "settings") {
+      resetHomeFeedPresentation();
       feed.replaceChildren(settingsPageView());
       return;
     }
     if (state.route === "links") {
+      resetHomeFeedPresentation();
       const page = linksPageView();
       if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
         feed.replaceChildren(page);
@@ -3029,24 +3041,47 @@
       return;
     }
     if (state.route === "meetings") {
+      resetHomeFeedPresentation();
       feed.replaceChildren(meetingsPageView());
       return;
     }
     if (state.route !== "feed") {
+      resetHomeFeedPresentation();
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
-    if (!state.cards.length) {
-      feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
-      return;
-    }
     const cards = filteredFeedCards();
-    if (!cards.length) {
-      feed.replaceChildren(filteredFeedEmptyView());
-      return;
+    const page = homeFeedPageView(cards);
+    if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
+      feed.replaceChildren(page);
     }
-    feed.replaceChildren(...cards.map(cardView));
+    installFeedRubberBand();
+    installFeedScrollPersistence();
+  }
+
+  function homeFeedPageView(cards) {
+    const shell = document.getElementById("homeFeedShell") || el("section", "home-feed-shell");
+    shell.id = "homeFeedShell";
+    let scroll = shell.querySelector("#homeFeedScroll");
+    if (!scroll) {
+      scroll = el("section", "home-feed-scroll");
+      scroll.id = "homeFeedScroll";
+      scroll.setAttribute("aria-label", "Pucky reply feed");
+      shell.append(scroll);
+    }
+    if (!state.cards.length) {
+      const empty = el("div", "empty");
+      empty.innerHTML = "No replies yet.<br>Pucky will place agent replies here.";
+      scroll.replaceChildren(empty);
+      return shell;
+    }
+    if (!cards.length) {
+      scroll.replaceChildren(filteredFeedEmptyView());
+      return shell;
+    }
+    scroll.replaceChildren(...cards.map(cardView));
+    return shell;
   }
 
   function filteredFeedEmptyView() {
@@ -3065,13 +3100,19 @@
       if (card && card.deleted) {
         return false;
       }
+      if (state.showArchivedFeed) {
+        return Boolean(card && card.archived);
+      }
+      if (isStandalonePendingOutboundCard(card)) {
+        return true;
+      }
+      if (isThreadContinuationPendingCard(card)) {
+        return isFeedIconIncluded(cardIconKey(card));
+      }
       if (isPendingOutboundCard(card)) {
         return false;
       }
-      const archived = Boolean(card && card.archived);
-      return state.showArchivedFeed
-        ? archived
-        : !archived && isFeedIconIncluded(cardIconKey(card));
+      return !Boolean(card && card.archived) && isFeedIconIncluded(cardIconKey(card));
     });
   }
 
@@ -3090,7 +3131,7 @@
       filters.push({ ...filter });
     });
     state.cards.forEach(card => {
-      if (!card || card.deleted || isPendingOutboundCard(card)) {
+      if (!card || card.deleted || isStandalonePendingOutboundCard(card)) {
         return;
       }
       const icon = cardIconKey(card);
@@ -3118,6 +3159,21 @@
 
   function isPendingOutboundCard(card) {
     return Boolean(card && card.pending_outbound);
+  }
+
+  function isThreadContinuationPendingCard(card) {
+    if (!isPendingOutboundCard(card)) {
+      return false;
+    }
+    if (card?.pending_thread_continuation === true) {
+      return true;
+    }
+    const title = String(card?.title || "").trim().toLowerCase();
+    return Boolean(cardThreadId(card)) && title !== "sent message" && Boolean(String(card?.icon || "").trim());
+  }
+
+  function isStandalonePendingOutboundCard(card) {
+    return isPendingOutboundCard(card) && !isThreadContinuationPendingCard(card);
   }
 
   function isFailedPendingOutboundCard(card) {
@@ -3546,11 +3602,6 @@
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  function linksAppInitial(app) {
-    const name = String(app && (app.name || app.slug) || "").trim();
-    return name ? name.slice(0, 1).toUpperCase() : "?";
   }
 
   function replyModeSettingsCard() {
@@ -4050,6 +4101,9 @@
 
   function cardView(card) {
     if (isPendingOutboundCard(card)) {
+      if (isThreadContinuationPendingCard(card)) {
+        return threadPendingCardView(card);
+      }
       return outboundCardView(card);
     }
     if (isMeetingProcessingCard(card)) {
@@ -4201,6 +4255,48 @@
       meta.append(time);
     }
     cardEl.append(copy, meta);
+    wrapper.append(cardEl);
+    return wrapper;
+  }
+
+  function threadPendingCardView(card) {
+    const wrapper = el("div", "card-wrap");
+    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
+    const cardEl = el("article", "card card-pending-thread");
+    cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
+    applyCardDataAttributes(cardEl, card, "reply");
+    const identity = el("div", "identity is-read");
+    identity.setAttribute("aria-hidden", "true");
+    identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
+    const body = el("div", "card-body");
+    body.setAttribute("role", "button");
+    body.tabIndex = 0;
+    body.setAttribute("aria-disabled", "false");
+    applyCardActionData(body, "transcript", card, "reply");
+    body.addEventListener("click", () => {
+      if (!shouldSuppressCardActivation()) {
+        showTranscript(card);
+      }
+    });
+    body.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showTranscript(card);
+      }
+    });
+    body.append(
+      el("h2", "title", card.title || "Pucky"),
+      el("p", "preview", pendingOutboundSummary(card))
+    );
+    const meta = el("div", "card-actions card-pending-thread-meta");
+    meta.append(el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card)));
+    const stamp = cardTimestamp(card);
+    if (stamp) {
+      const time = el("time", "card-outbound-time", stamp.text);
+      time.dateTime = stamp.iso;
+      meta.append(time);
+    }
+    cardEl.append(identity, body, meta);
     wrapper.append(cardEl);
     return wrapper;
   }
@@ -7153,12 +7249,8 @@
   }
 
   function finishFeedRefresh() {
-    const feed = document.getElementById("feed");
     resetFeedRefreshIndicator();
-    if (feed) {
-      feed.classList.remove("is-feed-refreshing");
-      releaseFeedPull(feed);
-    }
+    clearFeedRefreshPresentation({ release: true });
   }
 
   async function refreshFeedCards() {
@@ -7178,10 +7270,10 @@
 
     state.feedRefreshPromise = (async () => {
       try {
-        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false, authoritative: true }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
+        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
         state.feedScrollTop = 0;
         render();
-        restoreScrollPosition(document.getElementById("feed"), 0);
+        restoreScrollPosition(homeFeedScrollElement(), 0);
         persistNavState();
       } catch (_) {
         // Keep the existing feed visible when the native card store is briefly unavailable.
@@ -7199,7 +7291,7 @@
   }
 
   function installFeedRubberBand() {
-    const feed = document.getElementById("feed");
+    const feed = homeFeedScrollElement();
     if (!feed || feed.dataset.rubberBandBound) {
       return;
     }
@@ -8303,9 +8395,11 @@
     setDataAttribute(node, "data-card-session-id", cardSessionId(card));
     setDataAttribute(node, "data-card-thread-id", cardThreadId(card));
     if (card?.pending_outbound) {
+      setDataAttribute(node, "data-card-pending-outbound", "true");
       setDataAttribute(node, "data-card-pending-state", card?.pending_state || "sending");
       return;
     }
+    node.removeAttribute("data-card-pending-outbound");
     node.removeAttribute("data-card-pending-state");
   }
 
@@ -8466,7 +8560,7 @@
   }
 
   function rememberFeedScroll() {
-    const feed = document.getElementById("feed");
+    const feed = homeFeedScrollElement();
     if (feed && state.route === "feed") {
       state.feedScrollTop = scrollNumber(feed.scrollTop);
     }
@@ -8474,8 +8568,12 @@
 
   function restoreFeedScroll() {
     if (state.route === "feed") {
-      restoreScrollPosition(document.getElementById("feed"), state.feedScrollTop);
+      restoreScrollPosition(homeFeedScrollElement(), state.feedScrollTop);
     }
+  }
+
+  function homeFeedScrollElement() {
+    return document.getElementById("homeFeedScroll") || document.getElementById("feed");
   }
 
   function captureCurrentDetailScroll() {
@@ -8539,7 +8637,7 @@
   }
 
   function installFeedScrollPersistence() {
-    const feed = document.getElementById("feed");
+    const feed = homeFeedScrollElement();
     if (!feed || feed.dataset.navScrollBound) {
       return;
     }
@@ -8560,6 +8658,25 @@
       }
       syncFeedCards({ reason: "feed_visible_poll", silent: true, render: true });
     }, FEED_SYNC_INTERVAL_MS);
+  }
+
+  function clearFeedRefreshPresentation(options = {}) {
+    const feed = homeFeedScrollElement();
+    if (!feed) {
+      return;
+    }
+    feed.classList.remove("is-rubber-banding", "is-feed-refreshing");
+    if (options.release) {
+      releaseFeedPull(feed);
+      return;
+    }
+    feed.classList.remove("is-rubber-band-release");
+    feed.style.transform = "";
+  }
+
+  function resetHomeFeedPresentation() {
+    resetFeedRefreshIndicator();
+    clearFeedRefreshPresentation();
   }
 
   function installDetailScrollPersistence(content, type) {
@@ -9153,7 +9270,7 @@
   }
 
   setInterval(async () => {
-    if (state.route === "feed" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
+    if (state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
       let changed = false;
       try {
         if (state.activePath) {
@@ -9164,14 +9281,9 @@
           }
           changed = true;
         }
-        if (state.route === "feed" || isTurnActive(state.turn)) {
-          const wasTurnActive = isTurnActive(state.turn);
+        if (isTurnActive(state.turn)) {
           await loadTurnStatus({ render: false });
-          const turnActive = isTurnActive(state.turn);
-          if (state.route === "feed" && (turnActive || wasTurnActive)) {
-            await refreshCardsFromNativeSnapshot({ render: false });
-          }
-          changed = changed || turnActive || wasTurnActive;
+          changed = true;
         }
         if (wakeProofVisualState(state.wakeStatus) !== "idle") {
           await loadWakeStatus({ render: false });
@@ -9201,6 +9313,7 @@
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      resetHomeFeedPresentation();
       if (state.links.handoffLocked) {
         linksDebugRecord("document_hidden", { slug: String(state.links.openingSlug || "") }, "click");
         releaseLinksHandoff({ render: false, reason: "document_hidden" });

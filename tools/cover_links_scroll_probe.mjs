@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +11,7 @@ import {
   installCodexPuckyBridge,
   readRuntimeFixtures,
   resolveChromePath,
+  saveScreenshot,
   writeAutomationError,
   writeJsonFile
 } from "./cover_shared.mjs";
@@ -25,6 +27,12 @@ const DEFAULT_BURST_DURATION_MS = 2000;
 const DEFAULT_TARGET_ROW = 200;
 const VIEWPORT = { width: 430, height: 932 };
 const LINKS_ROW_HEIGHT = 62;
+const REMOTE_LOGO_HOST_PATTERNS = [
+  "logos.composio.dev",
+  "logo.clearbit.com",
+  "google.com/s2/favicons",
+  "t0.gstatic.com/faviconV2",
+];
 
 const GESTURES = [
   { name: "slow-drag", distance: 1800, durationMs: 1200, steps: 18 },
@@ -81,10 +89,7 @@ function sleep(ms) {
 }
 
 async function captureScreenshot(page, reportDir, name) {
-  void page;
-  void reportDir;
-  void name;
-  return "";
+  return saveScreenshot(page, reportDir, name);
 }
 
 function emptyReplyCards() {
@@ -231,7 +236,39 @@ async function readMetrics(page) {
   });
 }
 
-function approxRow(metrics) {
+async function readVisibleLogoState(page) {
+  return page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll(".links-app-row"));
+    const visibleRows = rows.map(row => {
+      const img = row.querySelector(".links-app-logo");
+      const fallback = row.querySelector(".links-app-fallback");
+      return {
+        slug: String(row.getAttribute("data-links-slug") || ""),
+        has_logo: Boolean(img),
+        logo_src: String(img?.getAttribute("src") || ""),
+        fallback_text: String(fallback?.textContent || "").trim(),
+      };
+    });
+    return {
+      visible_row_count: visibleRows.length,
+      visible_logo_count: visibleRows.filter(row => row.has_logo && row.logo_src).length,
+      visible_fallback_count: visibleRows.filter(row => row.fallback_text).length,
+      sample_rows: visibleRows.slice(0, 8),
+    };
+  });
+}
+
+async function readProbeState(page) {
+  const [metrics, logos] = await Promise.all([readMetrics(page), readVisibleLogoState(page)]);
+  return { metrics, logos };
+}
+
+function stateMetrics(state) {
+  return state?.metrics || state;
+}
+
+function approxRow(state) {
+  const metrics = stateMetrics(state);
   const scrollTop = Number(metrics?.list?.scroll_top || 0);
   return Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT));
 }
@@ -239,14 +276,17 @@ function approxRow(metrics) {
 async function waitForLinksReady(page, targetRow) {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
-    const metrics = await readMetrics(page);
+    const probe = await readProbeState(page);
+    const metrics = probe.metrics;
     if (
       metrics
       && metrics.catalog_source === "bundle"
       && Number(metrics.filtered_app_count || 0) >= targetRow
       && metrics.active_scroller === "links-scrollport"
+      && Number(probe.logos?.visible_logo_count || 0) > 0
+      && Number(probe.logos?.visible_fallback_count || 0) === 0
     ) {
-      return metrics;
+      return probe;
     }
     await sleep(250);
   }
@@ -254,23 +294,42 @@ async function waitForLinksReady(page, targetRow) {
 }
 
 async function startBurstScreenshots(page, reportDir, gestureName, everyMs, durationMs) {
-  void page;
-  void reportDir;
-  void gestureName;
-  void everyMs;
-  void durationMs;
-  return [];
+  const shots = [];
+  const startedAt = Date.now();
+  let index = 0;
+  while (Date.now() - startedAt < durationMs) {
+    shots.push(await captureScreenshot(page, reportDir, `${gestureName}-burst-${String(index).padStart(3, "0")}`));
+    index += 1;
+    await sleep(everyMs);
+  }
+  return shots;
+}
+
+async function sampleGesture(page, sampleMs, durationMs) {
+  const samples = [];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < durationMs) {
+    const probe = await readProbeState(page);
+    samples.push({
+      at_ms: Date.now() - startedAt,
+      approx_row: approxRow(probe),
+      metrics: probe.metrics,
+      logos: probe.logos,
+    });
+    await sleep(sampleMs);
+  }
+  return samples;
 }
 
 async function runGesture(page, reportDir, gesture, sampleMs, burstMs, burstDurationMs) {
-  void reportDir;
-  void sampleMs;
-  const before = await readMetrics(page);
+  const before = await readProbeState(page);
+  const beforeScreenshot = await captureScreenshot(page, reportDir, `${gesture.name}-before`);
 
   let burstPromise = null;
   if (gesture.captureBurst) {
     burstPromise = startBurstScreenshots(page, reportDir, gesture.name, burstMs, burstDurationMs);
   }
+  const samplerPromise = sampleGesture(page, sampleMs, gesture.durationMs + 500);
 
   const stepDelay = Math.max(16, Math.round(gesture.durationMs / gesture.steps));
   const stepDistance = gesture.distance / gesture.steps;
@@ -286,14 +345,19 @@ async function runGesture(page, reportDir, gesture, sampleMs, burstMs, burstDura
   }
 
   await sleep(300);
+  const samples = await samplerPromise;
   const burstShots = burstPromise ? await burstPromise : [];
-  const after = await readMetrics(page);
+  const after = await readProbeState(page);
+  const afterScreenshot = await captureScreenshot(page, reportDir, `${gesture.name}-after`);
 
   return {
     name: gesture.name,
     before,
     after,
+    before_screenshot: beforeScreenshot,
+    after_screenshot: afterScreenshot,
     burst_screenshots: burstShots,
+    samples,
     approx_row_before: approxRow(before),
     approx_row_after: approxRow(after)
   };
@@ -303,22 +367,33 @@ async function main() {
   const config = parseArgs(process.argv.slice(2));
   const reportDir = config.reportDir || path.join(repoRoot, ".tmp", "cover-links-scroll-probe", timestampSlug());
   ensureDir(reportDir);
+  const tracePath = path.join(reportDir, "trace.zip");
+  const videoDir = path.join(reportDir, "video");
+  ensureDir(videoDir);
 
   const browser = await chromium.launch({
     executablePath: resolveChromePath(),
     headless: true
   });
 
+  let summaryPath = "";
+  let pageVideo = null;
+  let context = null;
   try {
-    const context = await browser.newContext({
+    context = await browser.newContext({
       viewport: VIEWPORT,
       screen: VIEWPORT,
       hasTouch: true,
-      isMobile: true
+      isMobile: true,
+      recordVideo: {
+        dir: videoDir,
+        size: VIEWPORT
+      }
     });
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 
-    const requestLog = [];
-    await installApiProxy(context, config.apiBase, config.apiToken, requestLog);
+    const apiRequestLog = [];
+    await installApiProxy(context, config.apiBase, config.apiToken, apiRequestLog);
 
     const localPreview = config.pageUrl.startsWith("file://");
     if (localPreview) {
@@ -327,14 +402,28 @@ async function main() {
     }
 
     const page = await context.newPage();
+    pageVideo = page.video();
     const consoleLogPath = path.join(reportDir, "console.log");
     attachPageLogging(page, consoleLogPath);
+    const networkLog = [];
+    page.on("request", request => {
+      networkLog.push({
+        at: new Date().toISOString(),
+        method: request.method(),
+        url: request.url(),
+        resource_type: request.resourceType(),
+        is_navigation: request.isNavigationRequest(),
+      });
+    });
 
     await page.goto(config.pageUrl, { waitUntil: "domcontentloaded" });
     await waitForLinksReady(page, config.targetRow);
     await sleep(400);
 
-    const initialMetrics = await readMetrics(page);
+    const screenshots = {
+      initial: await captureScreenshot(page, reportDir, "00-initial"),
+    };
+    const initialState = await readProbeState(page);
 
     const gestures = [];
     for (const gesture of GESTURES) {
@@ -342,17 +431,29 @@ async function main() {
       gestures.push(result);
     }
 
-    const finalMetrics = await readMetrics(page);
+    screenshots.final = await captureScreenshot(page, reportDir, "99-final");
+    const finalState = await readProbeState(page);
+    const finalMetrics = finalState.metrics;
 
-    const catalogRequests = requestLog.filter(entry => String(entry.url).includes("/api/links/composio/catalog"));
+    const catalogRequests = apiRequestLog.filter(entry => String(entry.url).includes("/api/links/composio/catalog"));
+    const remoteLogoRequests = networkLog.filter(entry => REMOTE_LOGO_HOST_PATTERNS.some(pattern => String(entry.url).includes(pattern)));
     if (catalogRequests.length) {
       throw new Error(`Expected zero runtime catalog requests, saw ${catalogRequests.length}`);
+    }
+    if (remoteLogoRequests.length) {
+      throw new Error(`Expected zero remote logo requests, saw ${remoteLogoRequests.length}`);
     }
     if (String(finalMetrics?.catalog_source || "") !== "bundle") {
       throw new Error(`Expected catalog_source=bundle, saw ${String(finalMetrics?.catalog_source || "") || "<missing>"}`);
     }
     if (String(finalMetrics?.active_scroller || "") !== "links-scrollport") {
       throw new Error(`Expected active_scroller=links-scrollport, saw ${String(finalMetrics?.active_scroller || "") || "<missing>"}`);
+    }
+    if (Number(finalState?.logos?.visible_logo_count || 0) <= 0) {
+      throw new Error("Expected visible Links rows to contain bundled logo images");
+    }
+    if (Number(finalState?.logos?.visible_fallback_count || 0) !== 0) {
+      throw new Error(`Expected zero fallback initials, saw ${Number(finalState?.logos?.visible_fallback_count || 0)}`);
     }
     if (approxRow(finalMetrics) < config.targetRow) {
       throw new Error(`Expected to scroll past row ${config.targetRow}, only reached about row ${approxRow(finalMetrics)}`);
@@ -365,24 +466,51 @@ async function main() {
       api_base: config.apiBase,
       target_row: config.targetRow,
       request_log_path: path.join(reportDir, "requests.json"),
+      api_request_log_path: path.join(reportDir, "api-requests.json"),
       console_log_path: consoleLogPath,
-      initial_metrics: initialMetrics,
+      trace_path: tracePath,
+      initial_metrics: initialState.metrics,
       final_metrics: finalMetrics,
+      initial_logos: initialState.logos,
+      final_logos: finalState.logos,
       route_open: {
         catalog_requests: catalogRequests.length,
-        session_ready: Boolean(initialMetrics?.session_ready || finalMetrics?.session_ready),
+        remote_logo_requests: remoteLogoRequests.length,
+        session_ready: Boolean(initialState.metrics?.session_ready || finalMetrics?.session_ready),
         connected_loaded: Boolean(finalMetrics?.connected_loaded)
       },
+      screenshots,
       gestures
     };
-    writeJsonFile(path.join(reportDir, "requests.json"), requestLog);
-    writeJsonFile(path.join(reportDir, "summary.json"), summary);
+    writeJsonFile(path.join(reportDir, "requests.json"), networkLog);
+    writeJsonFile(path.join(reportDir, "api-requests.json"), apiRequestLog);
+    summaryPath = path.join(reportDir, "summary.json");
+    writeJsonFile(summaryPath, summary);
+    await context.tracing.stop({ path: tracePath }).catch(() => {});
     await context.close();
-    console.log(JSON.stringify(summary, null, 2));
+    context = null;
+    let videoPath = "";
+    if (pageVideo) {
+      videoPath = await pageVideo.path();
+    }
+    if (videoPath && fs.existsSync(summaryPath)) {
+      const persisted = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+      persisted.video_path = videoPath;
+      writeJsonFile(summaryPath, persisted);
+    }
+    console.log(JSON.stringify({ ...summary, video_path: videoPath }, null, 2));
   } catch (error) {
     writeAutomationError(reportDir, error);
     throw error;
   } finally {
+    try {
+      if (context) {
+        await context.tracing.stop({ path: tracePath }).catch(() => {});
+        await context.close().catch(() => {});
+      }
+    } catch (_) {
+      // Best effort during teardown.
+    }
     await Promise.race([browser.close(), sleep(3000)]);
   }
 }

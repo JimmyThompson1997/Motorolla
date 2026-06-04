@@ -30,6 +30,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "fixtures/reply_cards.json" in manifest["files"]
     assert "fixtures/reply_cards_deploy.json" in manifest["files"]
     assert "fixtures/links_catalog.json" in manifest["files"]
+    assert "fixtures/links_logo_overrides.json" in manifest["files"]
 
     with zipfile.ZipFile(result["bundle_path"]) as archive:
         names = set(archive.namelist())
@@ -37,14 +38,18 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert "index.html" in names
         assert "pucky-links-catalog.js" in names
         assert "fixtures/reply_cards.json" in names
+        assert "fixtures/links_logo_overrides.json" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)
         bundled_catalog = json.loads(archive.read("fixtures/links_catalog.json").decode("utf-8"))
+        assert bundled_catalog["apps"][0]["logo_path"]
         catalog_script = archive.read("pucky-links-catalog.js").decode("utf-8")
         assert catalog_script == ui_bundle.links_catalog_script(bundled_catalog)
+        logo_path = bundled_catalog["apps"][0]["logo_path"]
+        assert logo_path in names
 
 
 def test_ui_bundle_embeds_links_catalog_script_from_fixture(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -55,16 +60,22 @@ def test_ui_bundle_embeds_links_catalog_script_from_fixture(tmp_path, monkeypatc
     (source_root / "app.js").write_text("window.PUCKY_LINKS_CATALOG;", encoding="utf-8")
     (source_root / "styles.css").write_text("body{}", encoding="utf-8")
     (fixtures / "reply_cards_deploy.json").write_text('{"schema":"pucky.reply_cards_deploy.v1","cards":[]}', encoding="utf-8")
-    (fixtures / "links_catalog.json").write_text('{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub"}],"total":1,"catalog_version":"fixture-version"}', encoding="utf-8")
+    (fixtures / "links_logo_overrides.json").write_text('{"github":{"source_url":"https://example.com/github.svg"}}', encoding="utf-8")
+    (fixtures / "links_catalog.json").write_text('{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub","logo_path":"fixtures/links_logos/github.svg","logo_source_url":"https://example.com/github.svg"}],"total":1,"catalog_version":"fixture-version"}', encoding="utf-8")
+    logo_dir = fixtures / "links_logos"
+    logo_dir.mkdir(parents=True)
+    (logo_dir / "github.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'></svg>", encoding="utf-8")
     monkeypatch.setattr(ui_bundle, "UI_SRC", source_root)
 
     result = build_ui_bundle(tmp_path / "out", ui_version="test-ui", created_at="2026-05-20T00:00:00+00:00")
 
     with zipfile.ZipFile(Path(result["bundle_path"])) as archive:
         catalog_script = archive.read("pucky-links-catalog.js").decode("utf-8")
+        assert "fixtures/links_logo_overrides.json" in archive.namelist()
+        assert "fixtures/links_logos/github.svg" in archive.namelist()
     assert catalog_script == (
         'window.PUCKY_LINKS_CATALOG='
-        '{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub"}],"total":1,"catalog_version":"fixture-version"};\n'
+        '{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub","logo_path":"fixtures/links_logos/github.svg","logo_source_url":"https://example.com/github.svg"}],"total":1,"catalog_version":"fixture-version"};\n'
     )
 
 

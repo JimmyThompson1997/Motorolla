@@ -1,0 +1,92 @@
+{
+  "cloudlayer": {
+    "source_url": "https://logos.composio.dev/api/cloudlayer"
+  },
+  "genderapi_io": {
+    "source_url": "https://logos.composio.dev/api/genderapi_io"
+  },
+  "geoapify": {
+    "source_url": "https://logos.composio.dev/api/geoapify"
+  },
+  "gladia": {
+    "source_url": "https://logos.composio.dev/api/gladia"
+  },
+  "globalping": {
+    "source_url": "https://logos.composio.dev/api/globalping"
+  },
+  "godial": {
+    "source_url": "https://logos.composio.dev/api/godial"
+  },
+  "goodbits": {
+    "source_url": "https://logos.composio.dev/api/goodbits"
+  },
+  "gosquared": {
+    "source_url": "https://logos.composio.dev/api/gosquared"
+  },
+  "graphhopper": {
+    "source_url": "https://logos.composio.dev/api/graphhopper"
+  },
+  "griptape": {
+    "source_url": "https://logos.composio.dev/api/griptape"
+  },
+  "grist": {
+    "source_url": "https://logos.composio.dev/api/grist"
+  },
+  "here": {
+    "source_url": "https://logos.composio.dev/api/here"
+  },
+  "highergov": {
+    "source_url": "https://logos.composio.dev/api/highergov"
+  },
+  "honeyhive": {
+    "source_url": "https://logos.composio.dev/api/honeyhive"
+  },
+  "html_to_image": {
+    "source_url": "https://logos.composio.dev/api/html_to_image"
+  },
+  "hunter": {
+    "source_url": "https://logos.composio.dev/api/hunter"
+  },
+  "hyperise": {
+    "source_url": "https://logos.composio.dev/api/hyperise"
+  },
+  "icypeas": {
+    "source_url": "https://logos.composio.dev/api/icypeas"
+  },
+  "ignisign": {
+    "source_url": "https://logos.composio.dev/api/ignisign"
+  },
+  "imagekit_io": {
+    "source_url": "https://logos.composio.dev/api/imagekit_io"
+  },
+  "imgbb": {
+    "source_url": "https://logos.composio.dev/api/imgbb"
+  },
+  "imgix": {
+    "source_url": "https://logos.composio.dev/api/imgix"
+  },
+  "influxdb_cloud": {
+    "source_url": "https://logos.composio.dev/api/influxdb_cloud"
+  },
+  "ip2location": {
+    "source_url": "https://logos.composio.dev/api/ip2location"
+  },
+  "ip2whois": {
+    "source_url": "https://logos.composio.dev/api/ip2whois"
+  },
+  "ipdata_co": {
+    "source_url": "https://logos.composio.dev/api/ipdata_co"
+  },
+  "ipinfo_io": {
+    "source_url": "https://logos.composio.dev/api/ipinfo_io"
+  },
+  "polymarket_us": {
+    "source_url": "https://polymarket.com/favicon.ico"
+  },
+  "tapfiliate": {
+    "source_url": "https://logos.composio.dev/api/tapfiliate"
+  },
+  "worksnaps": {
+    "source_url": "https://logos.composio.dev/api/worksnaps"
+  }
+}
