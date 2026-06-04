@@ -8252,7 +8252,7 @@
   }
 
   function markCardRead(card) {
-    if (isPendingOutboundCard(card)) {
+    if (!card) {
       return;
     }
     setCardReadOverride(card, true);
