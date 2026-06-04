@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
-const { chromium } = require("playwright");
+import fs from "node:fs";
+import path from "node:path";
+import { chromium } from "playwright";
 
 function escapeAttribute(value) {
   return String(value || "")

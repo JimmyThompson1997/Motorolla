@@ -386,6 +386,16 @@ public final class PuckyFeedController {
                 Json.put(origin, "thread_id", threadId);
                 Json.put(card, "origin", origin);
             }
+            if (!transcript.isEmpty()) {
+                JSONArray transcriptMessages = new JSONArray();
+                JSONObject userMessage = new JSONObject();
+                Json.put(userMessage, "role", "user");
+                Json.put(userMessage, "text", transcript);
+                Json.put(userMessage, "created_at",
+                        record.optString("updated_at", record.optString("created_at", Instant.now().toString())));
+                Json.add(transcriptMessages, userMessage);
+                Json.put(card, "transcript_messages", transcriptMessages);
+            }
             Json.add(cards, card);
         }
         return cards;

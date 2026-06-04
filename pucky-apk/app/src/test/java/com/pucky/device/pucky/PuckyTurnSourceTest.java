@@ -146,6 +146,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("shouldSynthesizePendingCard(state)"));
         assertTrue(feed.contains("pendingLabelFor(state, placeholder)"));
         assertTrue(feed.contains("Json.put(origin, \"thread_id\", threadId);"));
+        assertTrue(feed.contains("Json.put(userMessage, \"role\", \"user\");"));
+        assertTrue(feed.contains("Json.put(userMessage, \"text\", transcript);"));
+        assertTrue(feed.contains("Json.put(card, \"transcript_messages\", transcriptMessages);"));
         assertTrue(feed.contains("merged = collapseCardsByThread(merged);"));
         assertTrue(feed.contains("if (latest.optBoolean(\"pending_outbound\", false) && !older.optBoolean(\"pending_outbound\", false)) {"));
         assertTrue(feed.contains("Json.put(latest, \"origin\", older.opt(\"origin\"));"));

@@ -20,6 +20,7 @@ def make_args(tmp_path: Path) -> argparse.Namespace:
         broker="https://pucky.fly.dev",
         token="dev-token",
         device_id="pucky-cover-settings-phone",
+        package_name="com.pucky.device.debug",
         command_timeout_seconds=120,
         browser_timeout_seconds=45,
         adb=tmp_path / "adb.exe",
@@ -39,12 +40,51 @@ def test_find_webview_sockets_deduplicates_and_sorts_latest_first() -> None:
     text = "\n".join([
         "00000000: 00000002 00000000 00010000 0001 01 12345 @webview_devtools_remote_27390",
         "00000000: 00000002 00000000 00010000 0001 01 12345 @webview_devtools_remote_20000",
+        "00000000: 00000002 00000000 00010000 0001 01 12345 @com.pucky.device.debug_devtools_remote",
         "00000000: 00000002 00000000 00010000 0001 01 12345 @webview_devtools_remote_27390",
     ])
 
     sockets = proof.find_webview_sockets(text)
 
-    assert sockets == ["webview_devtools_remote_27390", "webview_devtools_remote_20000"]
+    assert sockets == [
+        "webview_devtools_remote_27390",
+        "webview_devtools_remote_20000",
+        "com.pucky.device.debug_devtools_remote",
+    ]
+
+
+def test_discover_cover_cdp_url_launches_cover_and_retries_until_cover_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = make_args(tmp_path)
+    adb_calls: list[list[str]] = []
+    unix_snapshots = iter([
+        "",
+        "00000000: 00000002 00000000 00010000 0001 01 12345 @webview_devtools_remote_15654",
+    ])
+
+    def fake_run_adb(inner_args: argparse.Namespace, serial: str, command: list[str], timeout_seconds: int | float = 30) -> str:
+        adb_calls.append(list(command))
+        if command[:4] == ["shell", "am", "start", "-n"]:
+            return "Starting: Intent"
+        if command == ["shell", "cat", "/proc/net/unix"]:
+            return next(unix_snapshots)
+        if command[:1] == ["forward"]:
+            return ""
+        raise AssertionError(f"unexpected adb command: {command}")
+
+    monkeypatch.setattr(proof, "run_adb", fake_run_adb)
+    monkeypatch.setattr(proof, "pick_free_port", lambda preferred=9222: 9333)
+    monkeypatch.setattr(proof, "fetch_json", lambda url: [{"title": "Pucky Cover", "url": "file:///data/data/com.pucky.device.debug/files/ui_bundles/current/index.html"}])
+    monkeypatch.setattr(proof.time, "sleep", lambda seconds: None)
+
+    result = proof.discover_cover_cdp_url(args, "ZY22JZ26LK")
+
+    assert adb_calls[0] == ["shell", "am", "start", "-n", "com.pucky.device.debug/com.pucky.device.MainActivity"]
+    assert ["shell", "cat", "/proc/net/unix"] in adb_calls
+    assert result == {
+        "socket": "webview_devtools_remote_15654",
+        "cdp_url": "http://127.0.0.1:9333",
+        "forward_port": "9333",
+    }
 
 
 def test_walkie_start_payload_uses_fixture_volume_up_auto_endpoint_defaults() -> None:

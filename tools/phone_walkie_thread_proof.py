@@ -24,6 +24,8 @@ CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
 DEFAULT_PACKAGE_NAME = "com.pucky.device.debug"
 DEFAULT_BROKER_URL = "https://pucky.fly.dev"
 RESULT_SCHEMA = "pucky.walkie_thread_phone_proof.v1"
+COVER_ACTIVITY = "com.pucky.device.MainActivity"
+DEVTOOLS_DISCOVERY_TIMEOUT_SECONDS = 20.0
 
 
 class PhoneProofError(RuntimeError):
@@ -273,7 +275,7 @@ def fetch_json(url: str) -> Any:
 
 
 def find_webview_sockets(text: str) -> list[str]:
-    found = re.findall(r"@((?:webview_)?devtools_remote_[0-9]+|webview_devtools_remote_[0-9]+)", str(text or ""))
+    found = re.findall(r"@([A-Za-z0-9._:-]*devtools_remote(?:_[0-9]+)?)", str(text or ""))
     ordered: list[str] = []
     for socket_name in found:
         if socket_name not in ordered:
@@ -298,30 +300,49 @@ def pick_free_port(preferred: int = 9222) -> int:
         return int(probe.getsockname()[1])
 
 
+def launch_cover_activity(args: argparse.Namespace, serial: str) -> None:
+    component = f"{args.package_name}/{COVER_ACTIVITY}"
+    run_adb(args, serial, ["shell", "am", "start", "-n", component], timeout_seconds=30)
+
+
 def discover_cover_cdp_url(args: argparse.Namespace, serial: str) -> dict[str, str]:
-    sockets_text = run_adb(args, serial, ["shell", "cat", "/proc/net/unix"], timeout_seconds=30)
-    sockets = find_webview_sockets(sockets_text)
-    if not sockets:
-        raise PhoneProofError("Could not find any WebView DevTools sockets on the phone")
-    errors: list[str] = []
-    for socket_name in sockets:
-        port = pick_free_port(args.devtools_port)
-        run_adb(args, serial, ["forward", f"tcp:{port}", f"localabstract:{socket_name}"], timeout_seconds=15)
-        try:
-            pages = fetch_json(f"http://127.0.0.1:{port}/json/list")
-            if any("Pucky Cover" in str(page.get("title", "")) for page in (pages or [])):
-                return {
-                    "socket": socket_name,
-                    "cdp_url": f"http://127.0.0.1:{port}",
-                    "forward_port": str(port),
-                }
-            errors.append(f"{socket_name}: cover page not present")
-        except Exception as exc:
-            errors.append(f"{socket_name}: {exc}")
-            run_subprocess(adb_command(args, serial, ["forward", "--remove", f"tcp:{port}"]), cwd=args.repo_root, timeout=10)
+    launch_cover_activity(args, serial)
+    deadline = time.monotonic() + DEVTOOLS_DISCOVERY_TIMEOUT_SECONDS
+    last_errors: list[str] = []
+    saw_socket = False
+    while time.monotonic() < deadline:
+        sockets_text = run_adb(args, serial, ["shell", "cat", "/proc/net/unix"], timeout_seconds=30)
+        sockets = find_webview_sockets(sockets_text)
+        if not sockets:
+            last_errors = ["waiting for cover WebView DevTools socket"]
+            time.sleep(1.0)
             continue
-        run_subprocess(adb_command(args, serial, ["forward", "--remove", f"tcp:{port}"]), cwd=args.repo_root, timeout=10)
-    raise PhoneProofError("Unable to find Pucky Cover WebView via DevTools sockets: " + "; ".join(errors))
+        saw_socket = True
+        errors: list[str] = []
+        for socket_name in sockets:
+            port = pick_free_port(args.devtools_port)
+            run_adb(args, serial, ["forward", f"tcp:{port}", f"localabstract:{socket_name}"], timeout_seconds=15)
+            keep_forward = False
+            try:
+                pages = fetch_json(f"http://127.0.0.1:{port}/json/list")
+                if any("Pucky Cover" in str(page.get("title", "")) for page in (pages or [])):
+                    keep_forward = True
+                    return {
+                        "socket": socket_name,
+                        "cdp_url": f"http://127.0.0.1:{port}",
+                        "forward_port": str(port),
+                    }
+                errors.append(f"{socket_name}: cover page not present")
+            except Exception as exc:
+                errors.append(f"{socket_name}: {exc}")
+            finally:
+                if not keep_forward:
+                    run_subprocess(adb_command(args, serial, ["forward", "--remove", f"tcp:{port}"]), cwd=args.repo_root, timeout=10)
+        last_errors = errors or last_errors
+        time.sleep(1.0)
+    if not saw_socket:
+        raise PhoneProofError("Could not find any WebView DevTools sockets on the phone after launching the cover app")
+    raise PhoneProofError("Unable to find Pucky Cover WebView via DevTools sockets: " + "; ".join(last_errors or ["no matching cover page found"]))
 
 
 def browser_helper_args(
