@@ -127,6 +127,8 @@ public final class PuckyWebBridge {
                 return PuckyTurnController.shared(context).read(args);
             case "meeting.recording.status":
                 return MeetingRecordingController.shared(context).status();
+            case "meeting.recording.resolve_audio_link":
+                return MeetingRecordingController.shared(context).resolveAudioLink(args);
             case "voice.thread_scope.get":
                 return VoiceThreadScopeController.shared(context).get();
             case "voice.thread_scope.set":

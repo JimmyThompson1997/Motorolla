@@ -6,9 +6,11 @@ import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.util.Base64;
 
+import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
 import com.pucky.device.net.Ipv4FirstDns;
+import com.pucky.device.player.PlayerController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
 import com.pucky.device.voice.VoiceCaptureController;
@@ -73,6 +75,77 @@ public final class MeetingRecordingController {
         Json.put(out, "active_meeting_id", activeMeetingId.isEmpty() ? JSONObject.NULL : activeMeetingId);
         Json.put(out, "voice_capture", VoiceCaptureController.shared(context).status());
         Json.put(out, "meetings", meetingsJson());
+        return out;
+    }
+
+    public synchronized JSONObject resolveAudioLink(JSONObject args) throws CommandException {
+        String meetingId = args.optString("meeting_id", "").trim();
+        JSONObject record = findMeetingRecordLocked(meetingId);
+        String title = firstNonEmpty(
+                args.optString("title", ""),
+                record == null ? "" : record.optString("title", ""));
+        String canonicalBasename = meetingCanonicalBasename(
+                firstNonEmpty(args.optString("canonical_basename", ""),
+                        record == null ? "" : record.optString("canonical_basename", "")),
+                title,
+                firstNonEmpty(args.optString("started_at", ""),
+                        record == null ? "" : record.optString("started_at", "")));
+        String mimeType = firstNonEmpty(
+                args.optString("mime_type", ""),
+                record == null ? "" : record.optString("mime_type", ""),
+                "audio/mp4");
+        File localFile = existingMeetingAudioFile(firstNonEmpty(
+                record == null ? "" : record.optString("device_path", ""),
+                args.optString("device_path", "")));
+        String audioUrl = firstNonEmpty(
+                args.optString("audio_url", ""),
+                record == null ? "" : record.optString("audio_url", ""));
+
+        if (localFile == null && !audioUrl.isEmpty()) {
+            JSONObject prepareArgs = new JSONObject();
+            Json.put(prepareArgs, "url", audioUrl);
+            Json.put(prepareArgs, "title", title.isEmpty() ? "Meeting audio" : title);
+            Json.put(prepareArgs, "filename", canonicalBasename + extensionForAudio(mimeType, "meeting-audio.m4a"));
+            Json.put(prepareArgs, "mime_type", mimeType);
+            Json.put(prepareArgs, "max_bytes", 96L * 1024L * 1024L);
+            JSONObject prepared = PlayerController.shared(context).assetPrepare(prepareArgs);
+            localFile = existingMeetingAudioFile(firstNonEmpty(
+                    prepared.optString("device_path", ""),
+                    prepared.optString("path", ""),
+                    prepared.optString("local_path", "")));
+        }
+        if (localFile == null) {
+            throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE,
+                    "meeting audio is unavailable on this device");
+        }
+
+        File renamed = renameMeetingAudioFile(localFile, canonicalBasename, mimeType, meetingId);
+        if (record == null) {
+            record = new JSONObject();
+            Json.put(record, "meeting_id", meetingId);
+            Json.put(record, "mime_type", mimeType);
+        }
+        Json.put(record, "device_path", renamed.getAbsolutePath());
+        Json.put(record, "canonical_basename", canonicalBasename);
+        if (!title.isEmpty()) {
+            Json.put(record, "title", title);
+        }
+        if (!meetingId.isEmpty()) {
+            appendMeeting(record);
+        }
+        JSONObject artifactArgs = new JSONObject();
+        Json.put(artifactArgs, "path", renamed.getAbsolutePath());
+        JSONObject artifact = new ArtifactController(context).url(artifactArgs);
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.meeting_audio_link.v1");
+        Json.put(out, "meeting_id", meetingId);
+        Json.put(out, "device_path", renamed.getAbsolutePath());
+        Json.put(out, "canonical_basename", canonicalBasename);
+        Json.put(out, "url", artifact.optString("url", ""));
+        Json.put(out, "source", localFile.equals(renamed) ? "local" : "renamed_local");
+        if (!audioUrl.isEmpty()) {
+            Json.put(out, "audio_url", audioUrl);
+        }
         return out;
     }
 
@@ -363,6 +436,144 @@ public final class MeetingRecordingController {
             return base.substring(0, base.length() - "/api/turn".length()) + "/api/meetings";
         }
         return base.replaceAll("/+$", "") + "/api/meetings";
+    }
+
+    private JSONObject findMeetingRecordLocked(String meetingId) {
+        if (meetingId == null || meetingId.trim().isEmpty()) {
+            return null;
+        }
+        JSONArray all = meetingsJson();
+        for (int index = all.length() - 1; index >= 0; index--) {
+            JSONObject item = all.optJSONObject(index);
+            if (item != null && meetingId.equals(item.optString("meeting_id", "").trim())) {
+                try {
+                    return new JSONObject(item.toString());
+                } catch (Exception ignored) {
+                    return item;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            String clean = value == null ? "" : value.trim();
+            if (!clean.isEmpty()) {
+                return clean;
+            }
+        }
+        return "";
+    }
+
+    private static String meetingCanonicalBasename(String explicit, String title, String startedAt) {
+        String cleanExplicit = explicit == null ? "" : explicit.trim();
+        if (!cleanExplicit.isEmpty()) {
+            return cleanExplicit;
+        }
+        String stem = String.valueOf(title == null ? "" : title)
+                .replaceAll("[^A-Za-z0-9]+", "_")
+                .replaceAll("^_+|_+$", "");
+        if (stem.isEmpty()) {
+            stem = "Meeting_Recording";
+        }
+        if (stem.length() > 72) {
+            stem = stem.substring(0, 72);
+        }
+        String date = meetingDateLabel(startedAt);
+        return date.isEmpty() ? stem : stem + "_" + date;
+    }
+
+    private static String meetingDateLabel(String raw) {
+        String value = String.valueOf(raw == null ? "" : raw).trim();
+        if (!value.matches("^\\d{4}-\\d{2}-\\d{2}.*$")) {
+            return "";
+        }
+        return value.substring(5, 7) + "." + value.substring(8, 10) + "." + value.substring(2, 4);
+    }
+
+    private static String extensionForAudio(String mimeType, String fallbackName) {
+        String lower = String.valueOf(mimeType == null ? "" : mimeType).toLowerCase(Locale.US);
+        if (lower.contains("wav")) {
+            return ".wav";
+        }
+        String fallback = String.valueOf(fallbackName == null ? "" : fallbackName).trim().toLowerCase(Locale.US);
+        if (fallback.endsWith(".wav")) {
+            return ".wav";
+        }
+        if (fallback.endsWith(".mp3")) {
+            return ".mp3";
+        }
+        return ".m4a";
+    }
+
+    private File existingMeetingAudioFile(String path) throws CommandException {
+        String clean = String.valueOf(path == null ? "" : path).trim();
+        if (clean.isEmpty()) {
+            return null;
+        }
+        try {
+            File file = new File(clean).getCanonicalFile();
+            if (!isAppOwnedFile(file) || !file.exists() || !file.isFile()) {
+                return null;
+            }
+            return file;
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
+        }
+    }
+
+    private File renameMeetingAudioFile(File source, String canonicalBasename, String mimeType, String meetingId)
+            throws CommandException {
+        try {
+            String base = meetingCanonicalBasename(canonicalBasename, "", "");
+            String suffix = extensionForAudio(mimeType, source.getName());
+            File target = new File(source.getParentFile(), base + suffix).getCanonicalFile();
+            if (source.equals(target)) {
+                return source;
+            }
+            if (target.exists() && !target.equals(source)) {
+                String shortId = String.valueOf(meetingId == null ? "" : meetingId).trim();
+                shortId = shortId.isEmpty() ? "meeting" : shortId.substring(Math.max(0, shortId.length() - 6));
+                int counter = 0;
+                while (target.exists() && !target.equals(source)) {
+                    String suffixLabel = counter == 0 ? "-" + shortId : "-" + shortId + "-" + counter;
+                    target = new File(source.getParentFile(), base + suffixLabel + suffix).getCanonicalFile();
+                    counter += 1;
+                }
+            }
+            if (!source.renameTo(target)) {
+                throw new CommandException(CommandErrorCodes.EXECUTION_FAILED,
+                        "Unable to rename meeting audio to " + target.getName());
+            }
+            return target;
+        } catch (CommandException exc) {
+            throw exc;
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
+        }
+    }
+
+    private boolean isAppOwnedFile(File file) throws CommandException {
+        try {
+            File filesDir = context.getFilesDir() == null ? null : context.getFilesDir().getCanonicalFile();
+            File cacheDir = context.getCacheDir() == null ? null : context.getCacheDir().getCanonicalFile();
+            File externalDir = context.getExternalFilesDir(null) == null ? null : context.getExternalFilesDir(null).getCanonicalFile();
+            String filePath = file.getCanonicalPath();
+            return isWithin(filePath, filesDir) || isWithin(filePath, cacheDir) || isWithin(filePath, externalDir);
+        } catch (Exception exc) {
+            throw new CommandException(CommandErrorCodes.EXECUTION_FAILED, exc.getMessage());
+        }
+    }
+
+    private static boolean isWithin(String filePath, File root) throws Exception {
+        if (root == null) {
+            return false;
+        }
+        String rootPath = root.getCanonicalPath();
+        return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
     }
 
     private JSONArray meetingsJson() {

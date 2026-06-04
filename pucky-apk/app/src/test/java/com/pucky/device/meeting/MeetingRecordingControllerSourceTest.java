@@ -92,6 +92,41 @@ public final class MeetingRecordingControllerSourceTest {
         assertTrue(!stopBody.contains("playMeetingHoverChime"));
     }
 
+    @Test
+    public void resolveAudioLinkRenamesLocalMeetingAudioAndFallsBackToPreparedCache() throws Exception {
+        String source = read("src/main/java/com/pucky/device/meeting/MeetingRecordingController.java");
+
+        assertTrue(source.contains("public synchronized JSONObject resolveAudioLink(JSONObject args)"));
+        assertTrue(source.contains("PlayerController.shared(context).assetPrepare(prepareArgs)"));
+        assertTrue(source.contains("new ArtifactController(context).url(artifactArgs)"));
+        assertTrue(source.contains("\"pucky.meeting_audio_link.v1\""));
+        assertTrue(source.contains("\"meeting audio is unavailable on this device\""));
+        assertTrue(source.contains("meetingCanonicalBasename("));
+        assertTrue(source.contains("renameMeetingAudioFile(localFile, canonicalBasename, mimeType, meetingId)"));
+        assertTrue(source.contains("Json.put(record, \"device_path\", renamed.getAbsolutePath())"));
+        assertTrue(source.contains("Json.put(record, \"canonical_basename\", canonicalBasename)"));
+        assertTrue(source.contains("Json.put(out, \"url\", artifact.optString(\"url\", \"\"))"));
+        assertTrue(source.contains("Json.put(out, \"source\", localFile.equals(renamed) ? \"local\" : \"renamed_local\")"));
+    }
+
+    @Test
+    public void localMeetingAudioRenameStaysInsideAppOwnedStorage() throws Exception {
+        String source = read("src/main/java/com/pucky/device/meeting/MeetingRecordingController.java");
+
+        assertTrue(source.contains("private File existingMeetingAudioFile(String path) throws CommandException"));
+        assertTrue(source.contains("private File renameMeetingAudioFile(File source, String canonicalBasename, String mimeType, String meetingId)"));
+        assertTrue(source.contains("private boolean isAppOwnedFile(File file) throws CommandException"));
+        assertTrue(source.contains("private static boolean isWithin(String filePath, File root) throws Exception"));
+        assertTrue(source.contains("context.getFilesDir()"));
+        assertTrue(source.contains("context.getCacheDir()"));
+        assertTrue(source.contains("context.getExternalFilesDir(null)"));
+        assertTrue(source.contains("source.renameTo(target)"));
+        assertTrue(source.contains("\"Unable to rename meeting audio to \" + target.getName()"));
+        assertTrue(source.contains("while (target.exists() && !target.equals(source))"));
+        assertTrue(source.contains("String suffixLabel = counter == 0 ? \"-\" + shortId : \"-\" + shortId + \"-\" + counter;"));
+        assertTrue(source.contains("base + suffixLabel + suffix"));
+    }
+
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8).replace("\r\n", "\n");
     }

@@ -6,6 +6,7 @@ import android.util.Log;
 
 import com.pucky.device.command.CommandErrorCodes;
 import com.pucky.device.command.CommandException;
+import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.net.Ipv4FirstDns;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
@@ -684,6 +685,7 @@ public final class PuckyFeedController {
         localizeArtifactField(copy, "html_artifact", "html_viewer_path", dir, filenameBase + "_html");
         localizeArtifactField(copy, "document_html_artifact", "document_html_path", dir, filenameBase + "_document");
         localizeArtifactField(copy, "preview_artifact", "preview_path", dir, filenameBase + "_preview");
+        resolveMeetingLocalAudio(copy);
         if (isHtmlAttachment(copy) && isAppOwnedPath(copy.optString("path", "")) && !isAppOwnedPath(copy.optString("html_viewer_path", ""))) {
             Json.put(copy, "html_viewer_path", copy.optString("path", ""));
         }
@@ -705,6 +707,40 @@ public final class PuckyFeedController {
         copy.remove("viewer");
         copy.remove("preview");
         return hasOpenableAttachmentSource(copy) ? copy : null;
+    }
+
+    private void resolveMeetingLocalAudio(JSONObject attachment) {
+        String meetingId = safe(attachment.optString("meeting_id", ""));
+        String canonicalBasename = safe(attachment.optString("canonical_basename", ""));
+        String devicePath = safe(attachment.optString("device_path", ""));
+        if (meetingId.isEmpty() || canonicalBasename.isEmpty() || !isAppOwnedPath(devicePath)) {
+            return;
+        }
+        try {
+            JSONObject args = new JSONObject();
+            Json.put(args, "meeting_id", meetingId);
+            Json.put(args, "canonical_basename", canonicalBasename);
+            Json.put(args, "title", attachment.optString("title", ""));
+            Json.put(args, "device_path", devicePath);
+            Json.put(args, "audio_url", attachment.optString("audio_url", ""));
+            Json.put(args, "mime_type", attachment.optString("mime_type_audio", attachment.optString("mime_type", "")));
+            Json.put(args, "started_at", attachment.optString("started_at", ""));
+            JSONObject resolved = MeetingRecordingController.shared(context).resolveAudioLink(args);
+            String resolvedPath = safe(resolved.optString("device_path", resolved.optString("path", "")));
+            String resolvedUrl = safe(resolved.optString("url", ""));
+            if (isAppOwnedPath(resolvedPath)) {
+                Json.put(attachment, "device_path", resolvedPath);
+            }
+            if (!resolvedUrl.isEmpty()) {
+                Json.put(attachment, "audio_url", resolvedUrl);
+            }
+            String resolvedBasename = safe(resolved.optString("canonical_basename", ""));
+            if (!resolvedBasename.isEmpty()) {
+                Json.put(attachment, "canonical_basename", resolvedBasename);
+            }
+        } catch (Exception exc) {
+            Json.put(attachment, "audio_rename_error", exc.getMessage());
+        }
     }
 
     private void preserveNestedViewerArtifact(JSONObject attachment) throws Exception {

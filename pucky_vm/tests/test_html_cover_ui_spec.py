@@ -263,8 +263,13 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert 'const path = mediaPath(item);' in resolve_artifact
     assert 'if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {' in resolve_artifact
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_artifact
+    assert 'if (item.url) {' in resolve_artifact
     assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
     assert "async function resolveLocalArtifactPath(path, item, options = {})" in app
+    assert "async function resolveMeetingAudioLink(source = {})" in app
+    assert 'command: "meeting.recording.resolve_audio_link"' in app
+    assert "async function rewriteMeetingHtmlContent(htmlText, source = {})" in app
+    assert "{{PUCKY_MEETING_AUDIO_LINK}}" in app
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app
@@ -324,6 +329,7 @@ def test_attachment_source_filter_hides_placeholders_and_html_path_fallback_open
     assert "playback url:" in meaningful
     assert "return text.length >= 80 || text.includes(\"\\n\");" in meaningful
     assert "htmlAttachmentLocalPath(item)" in html_iframe
+    assert "rewriteMeetingHtmlContent" in html_iframe
     assert ".meeting-transcript-section" in styles
     assert ".meeting-speaker-turn" in styles
     assert ".meeting-row-state.is-completed" in styles
@@ -346,6 +352,7 @@ def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
     timestamp = app.split("async function commitTimestamp", 1)[1].split("async function jumpToTimestamp", 1)[0]
     assert "const audioPath = await prepareAudioForPlayback(card);" in timestamp
     assert 'case "player.asset.prepare":' in bridge
+    assert 'case "meeting.recording.resolve_audio_link":' in bridge
     audio_attachment = function_block(app, "showAudioAttachment")
     assert "await resolveAudioAttachmentSrc(item, { maxBytes: 32 * 1024 * 1024 })" in audio_attachment
 
@@ -1180,7 +1187,7 @@ def test_rich_pages_fill_detail_space_and_mock_paths_have_fallback() -> None:
 
     assert "function mockArtifactResult(path)" in app
     assert "function isMockHtmlArtifact(path)" in app
-    assert "function richFrame(result, path = \"\")" in app
+    assert "async function richFrame(result, path = \"\", source = null)" in app
     assert 'if (isMockHtmlArtifact(card.html_path))' in app
     assert "mockArtifactResult(card.html_path)" in app
     assert "height: calc(100vh - 58px - var(--nav-safe))" not in styles
@@ -1640,7 +1647,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert '"media-doc-render"' in app
     assert "Rendered from real local file" in app
     assert "Cached document preview" not in app
-    assert "function richFrame(result, path = \"\")" in app
+    assert "async function richFrame(result, path = \"\", source = null)" in app
     assert "mime === \"application/pdf\"" in app
     assert "mime === \"application/pdf\" ||" in app
     assert "data:application/pdf;base64" in app

@@ -77,6 +77,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "voice.capture.last", "voice.capture.list", "voice.capture.delete",
             "meeting.recording.status", "meeting.recording.start",
             "meeting.recording.stop", "meeting.recording.trigger_hover",
+            "meeting.recording.resolve_audio_link",
             "meeting.hover.status", "meeting.hover.config.set",
             "voice.thread_scope.get", "voice.thread_scope.set", "voice.thread_scope.clear",
             "pucky.turn.status", "pucky.turn.start", "pucky.turn.stop",
@@ -456,6 +457,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return MeetingRecordingController.shared(settingsStore.context()).stop(command.args());
             case "meeting.recording.trigger_hover":
                 return MeetingRecordingController.shared(settingsStore.context()).triggerHover(command.args());
+            case "meeting.recording.resolve_audio_link":
+                return MeetingRecordingController.shared(settingsStore.context()).resolveAudioLink(command.args());
             case "voice.thread_scope.get":
                 return uiController.voiceThreadScopeGet();
             case "voice.thread_scope.set":

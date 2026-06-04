@@ -205,6 +205,7 @@ class CodexAppServerClient:
         model: str | None = None,
         reasoning_effort: str | None = None,
         output_schema: dict[str, Any] | None = None,
+        developer_instructions: str | None = None,
     ) -> CodexTurnResult:
         if not self.ready:
             raise CodexAppServerError("Codex app-server is not ready")
@@ -219,7 +220,10 @@ class CodexAppServerClient:
         used_thread_id = requested_thread_id
 
         if not used_thread_id:
-            used_thread_id = self._start_thread(model=requested_model)
+            used_thread_id = self._start_thread(
+                model=requested_model,
+                developer_instructions=developer_instructions,
+            )
         try:
             turn_id = self._start_turn(
                 used_thread_id,
@@ -231,7 +235,10 @@ class CodexAppServerClient:
             if not requested_thread_id:
                 raise
             fallback_reason = str(exc)
-            used_thread_id = self._start_thread(model=requested_model)
+            used_thread_id = self._start_thread(
+                model=requested_model,
+                developer_instructions=developer_instructions,
+            )
             thread_mode = "new"
             turn_id = self._start_turn(
                 used_thread_id,
@@ -291,7 +298,12 @@ class CodexAppServerClient:
         self._remember_thread_origin(thread_id, reasoning_effort=effort)
         return str(turn_id)
 
-    def _start_thread(self, *, model: str | None = None) -> str:
+    def _start_thread(
+        self,
+        *,
+        model: str | None = None,
+        developer_instructions: str | None = None,
+    ) -> str:
         params: dict[str, Any] = {
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
@@ -301,8 +313,9 @@ class CodexAppServerClient:
             params["model"] = chosen_model
         if self.cwd:
             params["cwd"] = str(Path(self.cwd).resolve())
-        if self.developer_instructions:
-            params["developerInstructions"] = self.developer_instructions
+        chosen_developer_instructions = _clean_optional(developer_instructions) or _clean_optional(self.developer_instructions)
+        if chosen_developer_instructions:
+            params["developerInstructions"] = chosen_developer_instructions
         base_instructions = self._base_instructions()
         if base_instructions:
             params["baseInstructions"] = base_instructions

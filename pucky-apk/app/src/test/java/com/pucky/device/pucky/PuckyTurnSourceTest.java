@@ -416,6 +416,11 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("hasMeaningfulAttachmentText(attachment.optString(\"text\", \"\"))"));
         assertTrue(feed.contains("speaker-separated transcript with timestamps"));
         assertTrue(feed.contains("lower.startsWith(\"playback url:\")"));
+        assertTrue(feed.contains("resolveMeetingLocalAudio(copy)"));
+        assertTrue(feed.contains("MeetingRecordingController.shared(context).resolveAudioLink(args)"));
+        assertTrue(feed.contains("Json.put(attachment, \"device_path\", resolvedPath)"));
+        assertTrue(feed.contains("Json.put(attachment, \"audio_url\", resolvedUrl)"));
+        assertTrue(feed.contains("Json.put(attachment, \"audio_rename_error\", exc.getMessage())"));
     }
 
     @Test

@@ -55,6 +55,10 @@ DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "Do not include markdown fences or any text outside the JSON object."
 )
 BASE_INSTRUCTIONS_FILE_ENV = "PUCKY_CODEX_BASE_INSTRUCTIONS_FILE"
+MEETING_DEVELOPER_INSTRUCTIONS_FILE_ENV = "PUCKY_MEETING_CODEX_DEVELOPER_INSTRUCTIONS_FILE"
+DEFAULT_MEETING_DEVELOPER_INSTRUCTIONS_PATH = (
+    Path(__file__).resolve().parents[1] / "docs" / "pucky-meeting-developer-instructions.txt"
+)
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 DEFAULT_CARD_ICON = "mail"
 DEFAULT_CARD_ICON_ACCENT = "#72c2ff"
@@ -204,6 +208,19 @@ def load_codex_base_instructions_file(path: str | None) -> str | None:
     text = resolved.read_text(encoding="utf-8").strip()
     if not text:
         raise RuntimeError(f"{BASE_INSTRUCTIONS_FILE_ENV} is empty: {resolved}")
+    return text
+
+
+def load_optional_instruction_file(path: str | None, *, env_name: str) -> str | None:
+    clean = str(path or "").strip()
+    if not clean:
+        return None
+    resolved = Path(clean).expanduser()
+    if not resolved.exists():
+        return None
+    text = resolved.read_text(encoding="utf-8").strip()
+    if not text:
+        raise RuntimeError(f"{env_name} is empty: {resolved}")
     return text
 
 
@@ -430,7 +447,6 @@ class ReplyEnvelope:
     html_title: str = ""
     html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    meeting_result: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -469,6 +485,7 @@ class Config:
     connect_portal_ttl_seconds: int = 12 * 60 * 60
     composio_default_auth_mode: str = "browser"
     proof_reply_delay_enabled: bool = False
+    meeting_developer_instructions: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -519,6 +536,10 @@ class Config:
             composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "browser").strip().lower() or "browser",
             proof_reply_delay_enabled=(
                 os.environ.get("PUCKY_PROOF_REPLY_DELAY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            meeting_developer_instructions=load_optional_instruction_file(
+                os.environ.get(MEETING_DEVELOPER_INSTRUCTIONS_FILE_ENV) or str(DEFAULT_MEETING_DEVELOPER_INSTRUCTIONS_PATH),
+                env_name=MEETING_DEVELOPER_INSTRUCTIONS_FILE_ENV,
             ),
         )
 
@@ -1955,7 +1976,7 @@ class PuckyVoiceService:
     ) -> dict[str, object]:
         meeting_id = str(record.get("meeting_id") or "")
         title = "Meeting needs review"
-        summary = "The meeting agent replied, but did not return structured transcript data yet."
+        summary = "The meeting agent replied, but did not return a usable Meeting Transcript attachment yet."
         origin = _normalize_origin(
             {
                 "runtime": "pucky",
@@ -1977,7 +1998,7 @@ class PuckyVoiceService:
             telemetry={
                 "event": "pucky.meeting.missing_agent_result",
                 "status": "blocked",
-                "stage": "meeting_result_validation",
+                "stage": "meeting_transcript_validation",
                 "meeting_id": meeting_id,
             },
             transcript_messages=[
@@ -2099,8 +2120,7 @@ class PuckyVoiceService:
             "content_type": mime_type,
             "request_audio_bytes": len(audio),
             "reply_mode": REPLY_MODE_CARD_ONLY,
-            "stt_provider": "deepgram",
-            "stt_model": getattr(self.stt, "model", ""),
+            "transcription_owner": "meeting_agent",
             "tts_provider": "deepinfra",
             "tts_model": getattr(self.tts, "model", ""),
             "tts_voice": getattr(self.tts, "voice", ""),
@@ -2122,7 +2142,8 @@ class PuckyVoiceService:
                 request_audio_mime_type=mime_type,
                 request_audio_base64=base64.b64encode(audio).decode("ascii"),
                 request_audio_attachment=_meeting_request_audio_attachment(record),
-                output_schema=meeting_reply_output_schema(),
+                output_schema=reply_output_schema(),
+                developer_instructions=self.config.meeting_developer_instructions or self.config.developer_instructions,
                 display_transcript_text="Meeting recording",
                 force_unread=True,
                 attachment_builder=lambda envelope: self._prepare_meeting_reply_attachments(
@@ -2140,11 +2161,11 @@ class PuckyVoiceService:
             record["feed_item"] = result
             record["failure_reason"] = ""
             record["failure_stage"] = ""
-            self._apply_meeting_agent_result(record, result)
-            if record.get("transcript_status") == "missing_agent_result":
+            self._apply_meeting_agent_reply(record, result)
+            if record.get("transcript_status") == "missing_transcript_attachment":
                 record["state"] = "completed_with_missing_result"
-                record["failure_reason"] = "meeting_agent_missing_result"
-                record["failure_stage"] = "meeting_result_validation"
+                record["failure_reason"] = "meeting_agent_missing_transcript_attachment"
+                record["failure_stage"] = "meeting_transcript_validation"
                 blocker = _run_staged_operation(
                     "meeting_missing_result_card_upsert",
                     lambda: self._upsert_meeting_missing_result_card(record, audio, mime_type),
@@ -2186,56 +2207,38 @@ class PuckyVoiceService:
         )
 
     @staticmethod
-    def _apply_meeting_agent_result(record: dict[str, object], result: dict[str, object]) -> None:
-        meeting_result = result.get("meeting_result")
-        if not isinstance(meeting_result, dict):
-            record["transcript_status"] = "missing_agent_result"
-            record["diarization_status"] = "missing_agent_result"
+    def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
+        transcript_attachment = _meeting_transcript_attachment_payload(result)
+        transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
+        if not transcript_text:
+            record["transcript_status"] = "missing_transcript_attachment"
+            record["transcript_error"] = "Meeting Transcript attachment missing or empty."
+            record["diarization_status"] = "missing_transcript_attachment"
+            record["speaker_turns"] = []
             return
-        transcript_text = str(
-            meeting_result.get("transcript_text")
-            or meeting_result.get("transcript")
-            or ""
-        ).strip()
-        raw_turns = meeting_result.get("speaker_turns")
-        speaker_labels = _normalize_meeting_speaker_labels(meeting_result.get("speaker_labels"))
-        speaker_turns = (
-            _normalize_meeting_speaker_turns(raw_turns, speaker_labels)
-            if isinstance(raw_turns, list)
-            else []
-        )
-        canonical_transcript = _canonical_meeting_transcript_text(
-            transcript_text=transcript_text,
-            speaker_turns=speaker_turns,
-        )
-        normalized_result = dict(meeting_result)
-        normalized_result["speaker_labels"] = dict(speaker_labels)
-        normalized_result["speaker_turns"] = [dict(item) for item in speaker_turns]
-        normalized_result["transcript_text"] = canonical_transcript
-        record["meeting_result"] = dict(normalized_result)
-        if normalized_result.get("title"):
-            record["title"] = str(normalized_result.get("title") or "").strip()
-        record["transcript_status"] = str(normalized_result.get("transcript_status") or ("completed" if canonical_transcript else "missing"))
-        record["transcript_error"] = str(meeting_result.get("transcript_error") or "")
-        record["transcript_text"] = canonical_transcript
-        record["transcript_result"] = dict(normalized_result)
-        record["diarization_requested"] = bool(normalized_result.get("diarization_requested", True))
-        record["diarization_status"] = str(
-            normalized_result.get("diarization_status")
-            or ("speaker_turns" if speaker_turns else "no_speaker_turns")
-        )
-        record["speaker_turns"] = speaker_turns
-        record["speaker_labels"] = dict(speaker_labels)
-        for key in (
-            "participants",
-            "action_items",
-            "pucky_directed_instructions",
-            "executed_actions",
-            "action_errors",
-            "transcription_provider",
-        ):
-            if key in normalized_result:
-                record[key] = normalized_result[key]
+        parsed_turns = _parse_meeting_transcript_turns(transcript_text)
+        card = result.get("card") if isinstance(result.get("card"), dict) else {}
+        title = str(card.get("title") or result.get("title") or record.get("title") or "").strip()
+        if title:
+            record["title"] = title
+        record["canonical_basename"] = _meeting_canonical_basename(record, title or str(record.get("title") or "Meeting Recording"))
+        record["transcript_status"] = "completed"
+        record["transcript_error"] = ""
+        record["transcript_text"] = transcript_text
+        record["transcript_result"] = {
+            "schema": "pucky.meeting_transcript_attachment.v1",
+            "title": str(transcript_attachment.get("title") or "Meeting Transcript"),
+            "kind": str(transcript_attachment.get("kind") or "text"),
+            "diarization_status": _meeting_diarization_status_from_text(transcript_text, parsed_turns),
+        }
+        record["diarization_requested"] = True
+        record["diarization_status"] = _meeting_diarization_status_from_text(transcript_text, parsed_turns)
+        record["speaker_turns"] = parsed_turns
+        record["speaker_labels"] = {
+            str(item.get("speaker") or "").strip(): str(item.get("speaker") or "").strip()
+            for item in parsed_turns
+            if str(item.get("speaker") or "").strip()
+        }
 
     def _prepare_meeting_reply_attachments(
         self,
@@ -2245,34 +2248,33 @@ class PuckyVoiceService:
         envelope: ReplyEnvelope,
     ) -> tuple[list[dict[str, object]], dict[str, object]]:
         prepared: list[dict[str, object]] = []
+        canonical_basename = _meeting_canonical_basename(record, envelope.card_title or str(record.get("title") or "Meeting Recording"))
+        record["canonical_basename"] = canonical_basename
+        self._rename_meeting_audio_artifact(record, canonical_basename)
         if envelope.html_content:
+            html_title = envelope.html_title or f"{envelope.card_title or 'Meeting'} Summary"
             prepared.append(
                 normalize_attachment(
                     {
                         "id": f"{meeting_id}:html",
                         "artifact": f"pucky_card_{meeting_id}:html",
                         "mime_type": "text/html",
-                        "title": envelope.html_title or envelope.card_title or "Meeting Summary",
+                        "title": html_title,
                         "kind": "html",
+                        "meeting_id": meeting_id,
+                        "device_path": str(record.get("device_path") or ""),
+                        "audio_url": str(record.get("audio_url") or ""),
+                        "canonical_basename": canonical_basename,
+                        "started_at": str(record.get("started_at") or record.get("created_at") or ""),
+                        "mime_type_audio": str(record.get("mime_type") or ""),
                     }
                 )
             )
-        transcript_text = _canonical_meeting_transcript_text(
-            transcript_text=str(
-                envelope.meeting_result.get("transcript_text")
-                or envelope.meeting_result.get("transcript")
-                or ""
-            ).strip(),
-            speaker_turns=_normalize_meeting_speaker_turns(
-                envelope.meeting_result.get("speaker_turns"),
-                _normalize_meeting_speaker_labels(envelope.meeting_result.get("speaker_labels")),
-            )
-            if isinstance(envelope.meeting_result.get("speaker_turns"), list)
-            else [],
-        )
+        transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
+        transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
         if transcript_text:
-            transcript_path = str(self._write_meeting_text_artifact(meeting_id, "transcript.txt", transcript_text))
+            transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
             prepared.append(
                 normalize_attachment(
@@ -2284,17 +2286,43 @@ class PuckyVoiceService:
                         "title": "Meeting Transcript",
                         "kind": "text",
                         "text": transcript_text,
+                        "meeting_id": meeting_id,
+                        "canonical_basename": canonical_basename,
                     }
                 )
             )
-        return prepared, {"fallback_from_reply_text": False, "transcript_path": transcript_path}
+        return prepared, {
+            "fallback_from_reply_text": False,
+            "transcript_path": transcript_path,
+            "transcript_attachment_present": bool(transcript_text),
+            "canonical_basename": canonical_basename,
+        }
 
-    def _write_meeting_text_artifact(self, meeting_id: str, suffix: str, content: str) -> Path:
+    def _write_meeting_text_artifact(self, meeting_id: str, canonical_basename: str, suffix: str, content: str) -> Path:
         self._meetings_dir.mkdir(parents=True, exist_ok=True)
         safe_suffix = re.sub(r"[^A-Za-z0-9._-]+", "-", str(suffix or "artifact.txt")).strip("-") or "artifact.txt"
-        path = self._meetings_dir / f"{meeting_id}-{safe_suffix}"
+        stem = canonical_basename or meeting_id
+        path = self._meetings_dir / f"{stem}-{safe_suffix}"
         path.write_text(str(content or ""), encoding="utf-8")
         return path
+
+    def _rename_meeting_audio_artifact(self, record: dict[str, object], canonical_basename: str) -> None:
+        current = Path(str(record.get("audio_path") or ""))
+        if not current.is_file():
+            return
+        suffix = current.suffix or (".wav" if "wav" in str(record.get("mime_type") or "").lower() else ".m4a")
+        target = current.with_name(f"{canonical_basename}{suffix}")
+        if current == target:
+            return
+        if target.exists():
+            short_id = str(record.get("meeting_id") or "").rsplit("-", 1)[-1][:6] or "meeting"
+            counter = 0
+            while target.exists() and target != current:
+                suffix_label = f"-{short_id}" if counter == 0 else f"-{short_id}-{counter}"
+                target = current.with_name(f"{canonical_basename}{suffix_label}{suffix}")
+                counter += 1
+        current.rename(target)
+        record["audio_path"] = str(target)
 
     def _load_meetings(self) -> list[dict[str, object]]:
         with self._meetings_lock:
@@ -2401,6 +2429,8 @@ class PuckyVoiceService:
             "audio_bytes",
             "audio_path",
             "audio_url",
+            "title",
+            "canonical_basename",
             "transcript_status",
             "transcript_error",
             "diarization_requested",
@@ -2714,6 +2744,7 @@ class PuckyVoiceService:
         request_audio_base64: str,
         request_audio_attachment: dict[str, object] | None = None,
         output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
         display_transcript_text: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
@@ -2754,17 +2785,52 @@ class PuckyVoiceService:
                     model=model_override or None,
                     reasoning_effort=reasoning_override or None,
                     output_schema=output_schema,
+                    developer_instructions=developer_instructions,
                 )
             except TypeError as exc:
                 message = str(exc)
-                if all(token not in message for token in ("thread_id", "output_schema", "model", "reasoning_effort")):
+                if all(
+                    token not in message
+                    for token in (
+                        "thread_id",
+                        "output_schema",
+                        "model",
+                        "reasoning_effort",
+                        "developer_instructions",
+                    )
+                ):
                     raise
-                fallback_kwargs: dict[str, object] = {}
-                if "thread_id" not in message and requested_thread_id:
-                    fallback_kwargs["thread_id"] = requested_thread_id
-                if "output_schema" not in message and isinstance(output_schema, dict):
-                    fallback_kwargs["output_schema"] = output_schema
-                return self.codex.send_turn(transcript, **fallback_kwargs)  # type: ignore[call-arg]
+                fallback_candidates: list[dict[str, object]] = []
+                rich_fallback: dict[str, object] = {}
+                if requested_thread_id:
+                    rich_fallback["thread_id"] = requested_thread_id
+                if isinstance(output_schema, dict):
+                    rich_fallback["output_schema"] = output_schema
+                if developer_instructions:
+                    rich_fallback["developer_instructions"] = developer_instructions
+                if rich_fallback:
+                    fallback_candidates.append(rich_fallback)
+                legacy_fallback: dict[str, object] = {}
+                if requested_thread_id:
+                    legacy_fallback["thread_id"] = requested_thread_id
+                if isinstance(output_schema, dict):
+                    legacy_fallback["output_schema"] = output_schema
+                if legacy_fallback and legacy_fallback not in fallback_candidates:
+                    fallback_candidates.append(legacy_fallback)
+                thread_only = {"thread_id": requested_thread_id} if requested_thread_id else {}
+                if thread_only and thread_only not in fallback_candidates:
+                    fallback_candidates.append(thread_only)
+                if {} not in fallback_candidates:
+                    fallback_candidates.append({})
+                for fallback_kwargs in fallback_candidates:
+                    try:
+                        return self.codex.send_turn(transcript, **fallback_kwargs)  # type: ignore[call-arg]
+                    except TypeError as fallback_exc:
+                        fallback_message = str(fallback_exc)
+                        if "unexpected keyword argument" not in fallback_message:
+                            raise
+                        continue
+                raise
 
         codex_result = _run_staged_operation(codex_stage, _send_turn, sqlite_retry=True)
         if isinstance(codex_result, str):
@@ -2785,6 +2851,15 @@ class PuckyVoiceService:
 
         telemetry["stage"] = "envelope"
         envelope = parse_reply_envelope(raw_reply)
+        if display_transcript_text == "Meeting recording" and envelope.html_content:
+            envelope = ReplyEnvelope(
+                envelope.reply_text,
+                envelope.card_title,
+                envelope.card_icon,
+                envelope.html_title,
+                _ensure_meeting_audio_link_placeholder(envelope.html_content),
+                envelope.attachments,
+            )
         telemetry["envelope_parse"] = "ok"
         telemetry["reply_chars"] = len(envelope.reply_text)
         telemetry["card_icon"] = envelope.card_icon
@@ -2905,8 +2980,6 @@ class PuckyVoiceService:
         result = self._decorate_feed_item(verified)
         result["card"] = card
         result["accent"] = card["accent"]
-        if envelope.meeting_result:
-            result["meeting_result"] = dict(envelope.meeting_result)
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -3099,7 +3172,6 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         for item in data.get("attachments") or []:
             if isinstance(item, dict):
                 attachments.append(dict(item))
-    meeting_result = data.get("meeting_result") if isinstance(data.get("meeting_result"), dict) else {}
     return ReplyEnvelope(
         reply_text,
         card_title,
@@ -3107,7 +3179,6 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         html_title,
         html_content,
         tuple(attachments),
-        dict(meeting_result),
     )
 
 
@@ -3158,86 +3229,6 @@ def reply_output_schema() -> dict[str, object]:
         },
         "required": ["reply_text", "card_title", "card_icon", "html", "attachments"],
     }
-
-
-def meeting_reply_output_schema() -> dict[str, object]:
-    schema = json.loads(json.dumps(reply_output_schema()))
-    speaker_turn_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "speaker": {"type": ["string", "null"]},
-            "label": {"type": ["string", "null"]},
-            "text": {"type": ["string", "null"]},
-            "start_ms": {"type": ["number", "null"]},
-            "end_ms": {"type": ["number", "null"]},
-            "start": {"type": ["number", "null"]},
-            "end": {"type": ["number", "null"]},
-            "confidence": {"type": ["number", "null"]},
-        },
-        "required": ["speaker", "label", "text", "start_ms", "end_ms", "start", "end", "confidence"],
-    }
-    action_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "action": {"type": ["string", "null"]},
-            "type": {"type": ["string", "null"]},
-            "recipient": {"type": ["string", "null"]},
-            "status": {"type": ["string", "null"]},
-            "result": {"type": ["string", "null"]},
-            "description": {"type": ["string", "null"]},
-            "reason": {"type": ["string", "null"]},
-            "blocked_on": {"type": ["string", "null"]},
-            "draft": {"type": ["string", "null"]},
-            "error": {"type": ["string", "null"]},
-        },
-        "required": ["action", "type", "recipient", "status", "result", "description", "reason", "blocked_on", "draft", "error"],
-    }
-    speaker_label_keys = [f"speaker_{index}" for index in range(10)]
-    schema["properties"]["meeting_result"] = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "title": {"type": ["string", "null"]},
-            "transcript_status": {"type": ["string", "null"]},
-            "transcript_text": {"type": ["string", "null"]},
-            "diarization_requested": {"type": ["boolean", "null"]},
-            "diarization_status": {"type": ["string", "null"]},
-            "speaker_turns": {"type": ["array", "null"], "items": speaker_turn_schema},
-            "speaker_labels": {
-                "type": ["object", "null"],
-                "additionalProperties": False,
-                "properties": {
-                    key: {"type": ["string", "null"]} for key in speaker_label_keys
-                },
-                "required": speaker_label_keys,
-            },
-            "participants": {"type": ["array", "null"], "items": {"type": "string"}},
-            "action_items": {"type": ["array", "null"], "items": {"type": "string"}},
-            "pucky_directed_instructions": {"type": ["array", "null"], "items": {"type": "string"}},
-            "executed_actions": {"type": ["array", "null"], "items": action_schema},
-            "action_errors": {"type": ["array", "null"], "items": action_schema},
-            "transcription_provider": {"type": ["string", "null"]},
-        },
-        "required": [
-            "title",
-            "transcript_status",
-            "transcript_text",
-            "diarization_requested",
-            "diarization_status",
-            "speaker_turns",
-            "speaker_labels",
-            "participants",
-            "action_items",
-            "pucky_directed_instructions",
-            "executed_actions",
-            "action_errors",
-            "transcription_provider",
-        ],
-    }
-    schema["required"] = [*schema["required"], "meeting_result"]
-    return schema
 
 
 def _normalize_card_icon_record(payload: dict[str, object]) -> dict[str, str]:
@@ -3308,7 +3299,7 @@ def _meeting_request_audio_attachment(record: dict[str, object]) -> dict[str, ob
     attachment: dict[str, object] = {"title": "Meeting audio"}
     device_path = _android_app_owned_path(record.get("device_path"))
     if device_path:
-        attachment["title"] = "Your audio"
+        attachment["title"] = "Meeting audio"
         attachment["path"] = device_path
     return attachment
 
@@ -3327,21 +3318,6 @@ def _user_transcript_message(
         "text": text,
         "created_at": created_at,
     }
-    if has_request_audio:
-        attachment = {
-            "id": f"{turn_id}:request_audio",
-            "artifact": f"pucky_card_{turn_id}:request_audio",
-            "mime_type": request_audio_mime_type or "audio/wav",
-            "title": "Your audio",
-            "kind": "audio",
-        }
-        if isinstance(request_audio_attachment, dict):
-            for key, value in request_audio_attachment.items():
-                if key in {"title", "path", "url", "src", "data_url"} and str(value or "").strip():
-                    attachment[key] = value
-        message["attachments"] = [
-            normalize_attachment(attachment)
-        ]
     return message
 
 
@@ -3396,7 +3372,7 @@ def _safe_meeting_id(raw: object) -> str:
 def _meeting_agent_handoff_prompt(record: dict[str, object]) -> str:
     return f"""Meeting Recording Agent Handoff
 
-You are the Meeting Recording Agent. The platform has stored the audio file, but you own transcription, diarization, speaker naming, summary, action-item extraction, and Pucky-directed follow-up handling.
+The platform has stored the audio file and will manage any device-local linking after you reply. Follow your meeting-specific developer instructions plus the universal base instructions.
 
 Meeting metadata:
 - meeting_id: {record.get("meeting_id")}
@@ -3407,38 +3383,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Required workflow:
-- Use Deepgram or another available runtime transcription tool to transcribe the audio artifact.
-- Request diarization / speaker turns. If speaker separation is unavailable, report an honest fallback.
-- If speakers identify themselves or context makes names clear, relabel speaker_0 / speaker_1 to participant names; otherwise keep neutral speaker labels.
-- Generate a concise human-facing meeting title, summary, participants, action items, and a diarized transcript.
-- Explicitly inspect the transcript for instructions addressed to Pucky.
-- Directly execute explicit and unambiguous Pucky-directed actions when the needed runtime/app tool and recipient are available. If a tool is unavailable, the request is ambiguous, or confirmation is required, include a clear draft or blocker instead of silently skipping it.
-- Include links or attachments for the saved audio/transcript when useful.
-
-Return only one strict JSON object, with the normal Pucky reply fields plus meeting_result:
-{{
-  "reply_text": "...",
-  "card_title": "...",
-  "card_icon": "mic",
-  "html": {{"title": "...", "content": "..."}},
-  "attachments": [],
-  "meeting_result": {{
-    "title": "...",
-    "transcript_status": "completed",
-    "transcript_text": "...",
-    "diarization_requested": true,
-    "diarization_status": "speaker_turns",
-    "speaker_turns": [{{"speaker": "Jimmy", "start": 0.0, "end": 1.2, "text": "..."}}],
-    "speaker_labels": {{"speaker_0": "Jimmy"}},
-    "participants": [],
-    "action_items": [],
-    "pucky_directed_instructions": [],
-    "executed_actions": [],
-    "action_errors": [],
-    "transcription_provider": "deepgram"
-  }}
-}}
+Return only the normal strict Pucky reply JSON. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML should include the literal token {{{{PUCKY_MEETING_AUDIO_LINK}}}} where the platform should render audio access.
 """.strip()
 
 
@@ -3694,6 +3639,129 @@ def _canonical_meeting_transcript_text(*, transcript_text: str, speaker_turns: l
         if lines:
             return "\n".join(lines)
     return str(transcript_text or "").strip()
+
+
+def _extract_named_meeting_transcript_attachment(attachments: tuple[dict[str, object], ...]) -> dict[str, object]:
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip().lower()
+        if title == "meeting transcript":
+            return dict(item)
+    return {}
+
+
+def _meeting_transcript_attachment_payload(result: dict[str, object]) -> dict[str, object]:
+    messages = result.get("transcript_messages") if isinstance(result.get("transcript_messages"), list) else []
+    for message in messages:
+        if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+            continue
+        attachments = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("title") or "").strip().lower() == "meeting transcript":
+                return dict(item)
+    return {}
+
+
+def _meeting_transcript_text_from_attachment(item: dict[str, object]) -> str:
+    if not isinstance(item, dict):
+        return ""
+    text = str(item.get("text") or "").replace("\r\n", "\n").strip()
+    return text
+
+
+MEETING_TRANSCRIPT_LINE_RE = re.compile(
+    r"^\s*(?:\[(?P<start>\d{1,2}:\d{2}(?::\d{2})?)(?:-(?P<end>\d{1,2}:\d{2}(?::\d{2})?))?\]\s*)?(?P<speaker>[^:\n]{1,80}):\s*(?P<text>.+?)\s*$"
+)
+
+
+def _meeting_timestamp_to_seconds(label: str) -> float | None:
+    clean = str(label or "").strip()
+    if not clean:
+        return None
+    parts = clean.split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes, seconds = parts
+    elif len(parts) == 3:
+        hours, minutes, seconds = parts
+    else:
+        return None
+    try:
+        return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+    except Exception:
+        return None
+
+
+def _parse_meeting_transcript_turns(transcript_text: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for raw_line in str(transcript_text or "").splitlines():
+        match = MEETING_TRANSCRIPT_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        speaker = str(match.group("speaker") or "").strip()
+        text = str(match.group("text") or "").strip()
+        if not speaker or not text:
+            continue
+        start = _meeting_timestamp_to_seconds(match.group("start") or "")
+        end = _meeting_timestamp_to_seconds(match.group("end") or "")
+        row: dict[str, object] = {
+            "speaker": speaker,
+            "label": speaker,
+            "text": text,
+            "confidence": None,
+        }
+        if start is not None:
+            row["start"] = start
+            row["start_ms"] = round(start * 1000)
+        if end is not None:
+            row["end"] = end
+            row["end_ms"] = round(end * 1000)
+        rows.append(row)
+    return rows
+
+
+def _meeting_diarization_status_from_text(transcript_text: str, speaker_turns: list[dict[str, object]]) -> str:
+    if speaker_turns:
+        return "speaker_turns"
+    return "plain_transcript" if str(transcript_text or "").strip() else "missing_transcript"
+
+
+def _meeting_title_stem(title: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9]+", "_", str(title or "").strip()).strip("_")
+    return clean[:72] or "Meeting_Recording"
+
+
+def _meeting_date_label(record: dict[str, object]) -> str:
+    for key in ("started_at", "created_at"):
+        raw = str(record.get(key) or "").strip()
+        if not raw:
+            continue
+        match = re.match(r"(\d{4})-(\d{2})-(\d{2})", raw)
+        if match:
+            year, month, day = match.groups()
+            return f"{month}.{day}.{year[-2:]}"
+    return ""
+
+
+def _meeting_canonical_basename(record: dict[str, object], title: str) -> str:
+    stem = _meeting_title_stem(title)
+    date_label = _meeting_date_label(record)
+    return f"{stem}_{date_label}" if date_label else stem
+
+
+def _ensure_meeting_audio_link_placeholder(html_content: str) -> str:
+    content = str(html_content or "").strip()
+    if not content:
+        return content
+    if "{{PUCKY_MEETING_AUDIO_LINK}}" in content:
+        return content
+    snippet = "<p><strong>Audio</strong><br>{{PUCKY_MEETING_AUDIO_LINK}}</p>"
+    if "</body>" in content.lower():
+        return re.sub(r"</body>", snippet + "</body>", content, count=1, flags=re.IGNORECASE)
+    return content + snippet
 
 
 def _log_json(payload: dict[str, object]) -> None:

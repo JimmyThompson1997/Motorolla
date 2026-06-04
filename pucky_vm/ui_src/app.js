@@ -3463,7 +3463,7 @@
   }
 
   function meetingTranscriptMessages(meeting) {
-    const transcript = String(meeting && meeting.transcript_text || "").trim();
+    const transcript = meetingTranscriptText(meeting);
     const summary = String(meeting && meeting.card && meeting.card.summary || "").trim();
     const messages = [];
     if (transcript) {
@@ -3473,6 +3473,10 @@
       messages.push({ role: "assistant", text: summary, created_at: meeting.updated_at || "" });
     }
     return messages;
+  }
+
+  function meetingTranscriptText(meeting) {
+    return String(meeting && meeting.transcript_text || "").replace(/\r\n/g, "\n").trim();
   }
 
   function meetingFailedSummary(meeting) {
@@ -4507,10 +4511,10 @@
         command: "artifact.read_base64",
         args: { path: card.html_path, max_bytes: 1024 * 1024 }
       });
-        content.append(richFrame(result, card.html_path), el("div", "rich-swipe-edge"));
+      content.append(await richFrame(result, card.html_path, card), el("div", "rich-swipe-edge"));
     } catch (error) {
       if (isMockHtmlArtifact(card.html_path)) {
-        content.append(richFrame(mockArtifactResult(card.html_path), card.html_path), el("div", "rich-swipe-edge"));
+        content.append(await richFrame(mockArtifactResult(card.html_path), card.html_path, card), el("div", "rich-swipe-edge"));
       } else {
         content.append(el("p", "preview", `Page unavailable: ${error.message}`));
       }
@@ -4527,7 +4531,7 @@
     }
   }
 
-  function richFrame(result, path = "") {
+  async function richFrame(result, path = "", source = null) {
     const iframe = el("iframe", "rich-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
     const mime = String((result && result.mime_type) || "").toLowerCase();
@@ -4535,7 +4539,7 @@
     if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
       iframe.srcdoc = pdfArtifactHtml(result, path, content);
     } else {
-      iframe.srcdoc = atob(content);
+      iframe.srcdoc = await rewriteMeetingHtmlContent(atob(content), source || {});
     }
     return iframe;
   }
@@ -4562,6 +4566,105 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function meetingHtmlSource(source = {}) {
+    const meetingRecord = source && typeof source.meeting_record === "object" ? source.meeting_record : {};
+    return {
+      meeting_id: String(source.meeting_id || meetingRecord.meeting_id || source.session_id || "").trim(),
+      title: String(source.title || meetingRecord.title || "").trim(),
+      canonical_basename: String(source.canonical_basename || meetingRecord.canonical_basename || "").trim(),
+      device_path: String(source.device_path || meetingRecord.device_path || source.audio_path || meetingRecord.audio_path || "").trim(),
+      audio_url: String(source.audio_url || meetingRecord.audio_url || source.url || "").trim(),
+      mime_type: String(source.audio_mime_type || source.mime_type_audio || source.mime_type || meetingRecord.mime_type || "").trim(),
+      started_at: String(source.started_at || meetingRecord.started_at || source.created_at || meetingRecord.created_at || "").trim()
+    };
+  }
+
+  function applyResolvedMeetingAudioSource(source, resolved) {
+    if (!source || typeof source !== "object" || !resolved || typeof resolved !== "object") {
+      return;
+    }
+    const devicePath = String(resolved.device_path || resolved.path || "").trim();
+    const canonicalBasename = String(resolved.canonical_basename || "").trim();
+    const audioUrl = String(resolved.url || "").trim();
+    if (devicePath) {
+      source.device_path = devicePath;
+      source.audio_path = devicePath;
+    }
+    if (canonicalBasename) {
+      source.canonical_basename = canonicalBasename;
+    }
+    if (audioUrl) {
+      source.audio_url = audioUrl;
+    }
+    if (source.meeting_record && typeof source.meeting_record === "object") {
+      if (devicePath) {
+        source.meeting_record.device_path = devicePath;
+      }
+      if (canonicalBasename) {
+        source.meeting_record.canonical_basename = canonicalBasename;
+      }
+    }
+  }
+
+  async function resolveMeetingAudioLink(source = {}) {
+    const context = meetingHtmlSource(source);
+    if (!context.meeting_id && !context.device_path && !context.audio_url) {
+      return {};
+    }
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      try {
+        const resolved = await Pucky.request({
+          command: "meeting.recording.resolve_audio_link",
+          args: context
+        });
+        applyResolvedMeetingAudioSource(source, resolved);
+        return resolved || {};
+      } catch (_) {
+        // Older APKs can still render the page with a non-local fallback.
+      }
+    }
+    if (context.audio_url) {
+      return {
+        url: context.audio_url,
+        canonical_basename: context.canonical_basename
+      };
+    }
+    if (context.device_path) {
+      return {
+        device_path: context.device_path,
+        canonical_basename: context.canonical_basename
+      };
+    }
+    return {};
+  }
+
+  function meetingAudioLinkHtml(href, label = "View/Download Audio") {
+    return `<a class="document-open-link pucky-meeting-audio-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+  }
+
+  async function rewriteMeetingHtmlContent(htmlText, source = {}) {
+    const raw = String(htmlText || "");
+    if (!raw) {
+      return raw;
+    }
+    const hasPlaceholder = raw.includes("{{PUCKY_MEETING_AUDIO_LINK}}");
+    const hasRawMeetingAudioUrl = /\/api\/meetings\/[^"' ]+\/audio/i.test(raw);
+    if (!hasPlaceholder && !hasRawMeetingAudioUrl) {
+      return raw;
+    }
+    const resolved = await resolveMeetingAudioLink(source);
+    const href = String(resolved && resolved.url || "").trim();
+    const replacement = href
+      ? meetingAudioLinkHtml(href)
+      : '<span class="pucky-meeting-audio-link is-unavailable">Audio unavailable on this device.</span>';
+    let output = raw.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
+    if (href) {
+      output = output.replace(/(href=["'])(?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio(["'])/gi, `$1${escapeHtml(href)}$2`);
+      output = output.replace(/(href=["'])\/api\/meetings\/[^"' ]+\/audio(["'])/gi, `$1${escapeHtml(href)}$2`);
+    }
+    return output;
   }
 
   async function showImageReel(card, imageSet = null, options = {}) {
@@ -4886,7 +4989,7 @@
           command: "artifact.read_base64",
           args: { path, max_bytes: 2 * 1024 * 1024 }
         });
-        iframe.srcdoc = atob(String(result.content_base64 || ""));
+        iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item);
       } else if (src) {
         iframe.src = src;
       } else {
@@ -5057,12 +5160,12 @@
     if (item.src || item.data_url) {
       return String(item.src || item.data_url);
     }
-    if (item.url) {
-      return String(item.url);
-    }
     const path = mediaPath(item);
     if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       return resolveLocalArtifactPath(path, item, options);
+    }
+    if (item.url) {
+      return String(item.url);
     }
     const bundled = bundledArtifactPath(item);
     if (bundled) {
@@ -5642,13 +5745,15 @@
   function meetingTranscriptSection(meeting) {
     const section = el("section", "meeting-transcript-section");
     section.append(el("h3", "meeting-transcript-title", meetingTranscriptLabel(meeting)));
-    const speakerTurns = Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
+    const transcript = meetingTranscriptText(meeting);
+    const parsedTurns = parseMeetingTranscriptLines(transcript);
+    const speakerTurns = parsedTurns.length ? parsedTurns : Array.isArray(meeting?.speaker_turns) ? meeting.speaker_turns : [];
     if (speakerTurns.length) {
       const list = el("div", "meeting-speaker-turns");
       speakerTurns.forEach(turn => {
         const row = el("article", "meeting-speaker-turn");
         row.append(
-          el("div", "meeting-speaker-label", meetingSpeakerLabel(turn)),
+          el("div", "meeting-speaker-label", meetingSpeakerDisplayLabel(turn)),
           el("p", "meeting-speaker-text", String(turn?.text || ""))
         );
         list.append(row);
@@ -5656,10 +5761,9 @@
       section.append(list);
       return section;
     }
-    const transcript = String(meeting?.transcript_text || "").trim();
     if (transcript) {
-      section.append(el("p", "meeting-transcript-text", transcript));
-      if (String(meeting?.diarization_status || "") === "no_speaker_turns") {
+      section.append(el("pre", "meeting-transcript-text", transcript));
+      if (String(meeting?.diarization_status || "") === "no_speaker_turns" || String(meeting?.diarization_status || "") === "plain_transcript") {
         section.append(el("p", "meeting-transcript-note", "No speaker-separated transcript was returned for this recording."));
       }
       return section;
@@ -5673,6 +5777,36 @@
       section.append(el("p", "meeting-transcript-note", "No transcript is available yet."));
     }
     return section;
+  }
+
+  function parseMeetingTranscriptLines(transcript) {
+    return String(transcript || "")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const match = line.match(/^(?:\[(?<stamp>[^\]]+)\]\s*)?(?<speaker>[^:]{1,80}):\s*(?<text>.+)$/);
+        if (!match) {
+          return null;
+        }
+        return {
+          speaker: String(match.groups?.speaker || "").trim(),
+          label: String(match.groups?.speaker || "").trim(),
+          text: String(match.groups?.text || "").trim(),
+          stamp: String(match.groups?.stamp || "").trim()
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function meetingSpeakerDisplayLabel(turn) {
+    const speaker = String(turn?.speaker || "speaker").replaceAll("_", " ");
+    const start = Number(turn?.start);
+    if (Number.isFinite(start)) {
+      return `${speaker} - ${formatSeconds(start)}`;
+    }
+    const stamp = String(turn?.stamp || "").trim();
+    return stamp ? `${speaker} - ${stamp}` : speaker;
   }
 
   function meetingSpeakerLabel(turn) {

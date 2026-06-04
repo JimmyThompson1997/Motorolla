@@ -90,6 +90,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"location.tracker.stop\"")
                         && bridge.contains("case \"location.tracker.query\"")
                         && bridge.contains("case \"artifact.url\"")
+                        && bridge.contains("case \"meeting.recording.resolve_audio_link\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("case \"ui.surface.get\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
@@ -197,6 +198,10 @@ public final class MainActivityWebViewShellTest {
         assertTrue("Native command executor should expose artifact.url for device testing too",
                 executor.contains("\"artifact.url\"")
                         && executor.contains("return artifactController.url(command.args())"));
+        assertTrue("Meeting HTML audio rewrite should have a native local-audio bridge",
+                client.contains("TRUSTED_HOST = \"pucky.local\"")
+                        && executor.contains("\"meeting.recording.resolve_audio_link\"")
+                        && read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java").contains("case \"meeting.recording.resolve_audio_link\":"));
     }
 
     @Test

@@ -22,7 +22,6 @@ from pucky_vm.server import (
     PuckyVoiceService,
     _meeting_request_audio_attachment,
     make_handler,
-    meeting_reply_output_schema,
     parse_reply_envelope,
     reply_output_schema,
     reset_broker_for_tests,
@@ -71,6 +70,7 @@ class FakeCodex:
         self.turns: list[str] = []
         self.turn_requests: list[dict[str, str]] = []
         self.output_schemas: list[dict[str, object] | None] = []
+        self.developer_instructions: list[str] = []
         self.renamed_titles: list[str] = []
         self.thread_defaults: dict[str, dict[str, str]] = {}
         self.last_turn_routing = {
@@ -92,9 +92,12 @@ class FakeCodex:
         model: str | None = None,
         reasoning_effort: str | None = None,
         output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
+        **_kwargs,
     ):
         self.turns.append(text)
         self.output_schemas.append(output_schema)
+        self.developer_instructions.append(str(developer_instructions or ""))
         requested_thread_id = str(thread_id or "").strip()
         requested_model = str(model or "").strip()
         requested_reasoning_effort = str(reasoning_effort or "").strip()
@@ -133,34 +136,16 @@ class FakeCodex:
                 "card_icon": "mic",
                 "html": {
                     "title": "Meeting Summary",
-                    "content": "<!doctype html><title>Meeting Summary</title><p>Follow-up notes prepared.</p>",
+                    "content": "<!doctype html><title>Meeting Summary</title><h1>Overview</h1><p>Follow-up notes prepared.</p><h2>Participants</h2><p>Jimmy and Jack</p><h2>Action Items by Person</h2><ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul><h2>Pucky Follow-Up</h2><p>Pucky emailed the transcript.</p><p>{{PUCKY_MEETING_AUDIO_LINK}}</p>",
                 },
-                "attachments": [],
-                "meeting_result": {
-                    "title": "Jimmy and Jack Follow-ups",
-                    "transcript_status": "completed",
-                    "transcript_text": "I'm Jimmy and this is Jack. Pucky, after this meeting, email the transcript to jimmy@example.com.",
-                    "diarization_requested": True,
-                    "diarization_status": "speaker_turns",
-                    "speaker_turns": [
-                        {"speaker": "Jimmy", "text": "I'm Jimmy and this is Jack.", "start": 0.1, "end": 2.2},
-                        {"speaker": "Jack", "text": "Pucky, after this meeting, email the transcript to jimmy@example.com.", "start": 2.4, "end": 5.1},
-                    ],
-                    "speaker_labels": {"speaker_0": "Jimmy", "speaker_1": "Jack"},
-                    "participants": ["Jimmy", "Jack"],
-                    "action_items": ["Prepare follow-up notes."],
-                    "pucky_directed_instructions": ["Email the transcript to jimmy@example.com."],
-                    "executed_actions": [
-                        {
-                            "tool": "email",
-                            "status": "completed",
-                            "recipient": "jimmy@example.com",
-                            "description": "Sent meeting transcript.",
-                        }
-                    ],
-                    "action_errors": [],
-                    "transcription_provider": "deepgram",
-                },
+                "attachments": [
+                    {
+                        "title": "Meeting Transcript",
+                        "mime_type": "text/plain",
+                        "kind": "text",
+                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, email the transcript to jimmy@example.com."
+                    }
+                ],
             }
             reply_text = json.dumps(reply)
         else:
@@ -529,6 +514,9 @@ class OutOfOrderCodex(FakeCodex):
             },
         )()
 def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: bool = False) -> Config:
+    meeting_instructions = (
+        Path(__file__).resolve().parents[2] / "docs" / "pucky-meeting-developer-instructions.txt"
+    ).read_text(encoding="utf-8")
     return Config(
         host="127.0.0.1",
         port=0,
@@ -560,6 +548,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         connect_portal_ttl_seconds=3600,
         composio_default_auth_mode="browser",
         proof_reply_delay_enabled=proof_reply_delay_enabled,
+        meeting_developer_instructions=meeting_instructions,
     )
 
 
@@ -1045,7 +1034,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["state"], "processing")
         self.assertEqual(payload["audio_bytes"], len(audio))
-        self.assertTrue(Path(payload["audio_path"]).is_file())
+        self.assertTrue(str(payload["audio_path"]).endswith(".m4a"))
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
         self.assertEqual(payload["card"]["title"], "Processing meeting recording")
@@ -1074,17 +1063,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["speaker_turns"][0]["speaker"], "Jimmy")
         self.assertEqual(meeting["feed_item"]["card"]["title"], "Jimmy and Jack Follow-ups")
         self.assertEqual(meeting["card_id"], payload["meeting"]["card_id"])
+        self.assertTrue(Path(meeting["audio_path"]).is_file())
         self.assertEqual(self.stt.transcribe_calls, 0)
         self.assertEqual(self.stt.transcribe_with_metadata_calls, 0)
-        self.assertEqual(meeting["executed_actions"][0]["recipient"], "jimmy@example.com")
-        self.assertIn("meeting_result", self.codex.output_schemas[-1]["required"])
+        self.assertNotIn("meeting_result", self.codex.output_schemas[-1]["properties"])
         prompt = self.codex.turns[-1]
         self.assertIn("Meeting Recording Agent Handoff", prompt)
         self.assertIn("audio_path:", prompt)
-        self.assertIn("Use Deepgram", prompt)
-        self.assertIn("speaker naming", prompt)
-        self.assertIn("Directly execute explicit and unambiguous Pucky-directed actions", prompt)
-        self.assertNotIn("Transcript:\nI'm Jimmy", prompt)
+        self.assertIn("Return only the normal strict Pucky reply JSON", prompt)
+        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", prompt)
+        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", self.codex.developer_instructions[-1])
+        self.assertIn("Action Items by Person", self.codex.developer_instructions[-1])
+        self.assertNotIn("meeting_result", self.codex.developer_instructions[-1])
 
         persisted = self.service.feed.get_item(meeting["card_id"])
         self.assertIsNotNone(persisted)
@@ -1094,12 +1084,7 @@ class ServerTests(unittest.TestCase):
         messages = persisted["transcript_messages"]
         self.assertEqual(messages[0]["text"], "Meeting recording")
         self.assertNotIn("Meeting Recording Agent Handoff", json.dumps(messages))
-        request_audio_attachment = messages[0]["attachments"][0]
-        self.assertEqual(request_audio_attachment["title"], "Your audio")
-        self.assertEqual(
-            request_audio_attachment["path"],
-            "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-        )
+        self.assertNotIn("attachments", messages[0])
         attachments = messages[1]["attachments"]
         transcript_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript")
         summary_attachment = next(item for item in attachments if item["kind"] == "html")
@@ -1107,6 +1092,10 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Jimmy:", transcript_attachment["text"])
         self.assertIn("meeting_transcript", transcript_attachment["artifact"])
         self.assertEqual(summary_attachment["title"], "Meeting Summary")
+        self.assertEqual(summary_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
+        self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
+        self.assertEqual(meeting["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
+        self.assertTrue(Path(meeting["audio_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
         self.assertTrue(any(
@@ -1114,93 +1103,81 @@ class ServerTests(unittest.TestCase):
             for item in meetings["meetings"]
         ))
 
-    def test_meeting_result_relabels_named_speakers_in_user_facing_transcript(self) -> None:
-        record = {}
-        PuckyVoiceService._apply_meeting_agent_result(
+    def test_meeting_transcript_attachment_relabels_named_speakers_in_user_facing_transcript(self) -> None:
+        record = {"meeting_id": "meeting-20260601-120000-device-abc123ef", "started_at": "2026-06-01T12:00:00Z"}
+        PuckyVoiceService._apply_meeting_agent_reply(
             record,
             {
-                "meeting_result": {
-                    "title": "Review",
-                    "transcript_status": "completed",
-                    "transcript_text": "speaker_0 and speaker_1 reviewed the migration plan.",
-                    "diarization_requested": True,
-                    "diarization_status": "speaker_turns",
-                    "speaker_turns": [
-                        {"speaker": "speaker_0", "text": "I'm Jimmy and this is Jack.", "start": 0.1, "end": 2.2},
-                        {"speaker": "speaker_1", "text": "Let's ship the migration plan.", "start": 2.4, "end": 5.1},
-                    ],
-                    "speaker_labels": {"speaker_0": "Jimmy", "speaker_1": "Jack"},
-                    "participants": ["Jimmy", "Jack"],
-                    "action_items": [],
-                    "pucky_directed_instructions": [],
-                    "executed_actions": [],
-                    "action_errors": [],
-                    "transcription_provider": "deepgram",
-                }
+                "card": {"title": "Review"},
+                "transcript_messages": [
+                    {
+                        "role": "assistant",
+                        "attachments": [
+                            {
+                                "title": "Meeting Transcript",
+                                "kind": "text",
+                                "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Let's ship the migration plan."
+                            }
+                        ],
+                    }
+                ],
             },
         )
 
         self.assertEqual(record["speaker_turns"][0]["speaker"], "Jimmy")
         self.assertEqual(record["speaker_turns"][1]["speaker"], "Jack")
+        self.assertEqual(record["diarization_status"], "speaker_turns")
         self.assertIn("[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.", record["transcript_text"])
-        self.assertIn("[00:02-00:05] Jack: Let's ship the migration plan.", record["transcript_text"])
 
-    def test_meeting_result_keeps_neutral_speakers_when_names_are_unknown(self) -> None:
-        record = {}
-        PuckyVoiceService._apply_meeting_agent_result(
+    def test_meeting_transcript_attachment_keeps_neutral_speakers_when_names_are_unknown(self) -> None:
+        record = {"meeting_id": "meeting-20260601-120000-device-abc123ef", "started_at": "2026-06-01T12:00:00Z"}
+        PuckyVoiceService._apply_meeting_agent_reply(
             record,
             {
-                "meeting_result": {
-                    "title": "Anonymous Meeting",
-                    "transcript_status": "completed",
-                    "transcript_text": "Two speakers discussed a launch.",
-                    "diarization_requested": True,
-                    "diarization_status": "speaker_turns",
-                    "speaker_turns": [
-                        {"speaker": "speaker_0", "text": "Let's launch on Friday.", "start": 0.0, "end": 1.9},
-                        {"speaker": "speaker_1", "text": "I can own QA coverage.", "start": 2.0, "end": 4.2},
-                    ],
-                    "speaker_labels": {},
-                    "participants": [],
-                    "action_items": [],
-                    "pucky_directed_instructions": [],
-                    "executed_actions": [],
-                    "action_errors": [],
-                    "transcription_provider": "deepgram",
-                }
+                "card": {"title": "Anonymous Meeting"},
+                "transcript_messages": [
+                    {
+                        "role": "assistant",
+                        "attachments": [
+                            {
+                                "title": "Meeting Transcript",
+                                "kind": "text",
+                                "text": "[00:00-00:02] speaker_0: Let's launch on Friday.\n[00:02-00:04] speaker_1: I can own QA coverage."
+                            }
+                        ],
+                    }
+                ],
             },
         )
 
         self.assertEqual(record["speaker_turns"][0]["speaker"], "speaker_0")
         self.assertEqual(record["speaker_turns"][1]["speaker"], "speaker_1")
-        self.assertIn("[00:00-00:02] speaker_0: Let's launch on Friday.", record["transcript_text"])
-        self.assertIn("[00:02-00:04] speaker_1: I can own QA coverage.", record["transcript_text"])
+        self.assertEqual(record["diarization_status"], "speaker_turns")
 
-    def test_meeting_result_falls_back_to_plain_transcript_without_speaker_turns(self) -> None:
-        record = {}
-        PuckyVoiceService._apply_meeting_agent_result(
+    def test_meeting_transcript_attachment_falls_back_to_plain_transcript_without_speaker_turns(self) -> None:
+        record = {"meeting_id": "meeting-20260601-120000-device-abc123ef", "started_at": "2026-06-01T12:00:00Z"}
+        PuckyVoiceService._apply_meeting_agent_reply(
             record,
             {
-                "meeting_result": {
-                    "title": "Plain Transcript",
-                    "transcript_status": "completed",
-                    "transcript_text": "Plain transcript only.",
-                    "diarization_requested": True,
-                    "diarization_status": "no_speaker_turns",
-                    "speaker_turns": [],
-                    "speaker_labels": {},
-                    "participants": [],
-                    "action_items": [],
-                    "pucky_directed_instructions": [],
-                    "executed_actions": [],
-                    "action_errors": [],
-                    "transcription_provider": "deepgram",
-                }
+                "card": {"title": "Plain Transcript"},
+                "transcript_messages": [
+                    {
+                        "role": "assistant",
+                        "attachments": [
+                            {
+                                "title": "Meeting Transcript",
+                                "kind": "text",
+                                "text": "Plain transcript only."
+                            }
+                        ],
+                    }
+                ],
             },
         )
 
         self.assertEqual(record["transcript_text"], "Plain transcript only.")
         self.assertEqual(record["speaker_turns"], [])
+        self.assertEqual(record["diarization_status"], "plain_transcript")
 
     def test_meeting_ingest_creates_processing_feed_card_before_agent_finishes(self) -> None:
         blocking = BlockingCodex()
@@ -1623,12 +1600,12 @@ class ServerTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertEqual(meeting["state"], "completed_with_missing_result")
-        self.assertEqual(meeting["transcript_status"], "missing_agent_result")
-        self.assertEqual(meeting["diarization_status"], "missing_agent_result")
-        self.assertEqual(meeting["failure_reason"], "meeting_agent_missing_result")
+        self.assertEqual(meeting["transcript_status"], "missing_transcript_attachment")
+        self.assertEqual(meeting["diarization_status"], "missing_transcript_attachment")
+        self.assertEqual(meeting["failure_reason"], "meeting_agent_missing_transcript_attachment")
         self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting needs review")
         self.assertFalse(meeting["feed_item"]["read"])
-        self.assertIn("meeting_result", self.service.codex.output_schemas[-1]["required"])
+        self.assertNotIn("meeting_result", self.service.codex.output_schemas[-1]["properties"])
 
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"
@@ -2056,16 +2033,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "user")
         self.assertEqual(messages[0]["text"], "Pucky test turn")
         self.assertEqual(messages[1]["role"], "assistant")
-        user_attachments = messages[0]["attachments"]
-        self.assertEqual(user_attachments[0]["kind"], "audio")
-        artifact_id = user_attachments[0]["artifact"]
-        request = urllib.request.Request(
-            self.base_url + "/api/artifacts/" + urllib.parse.quote(artifact_id, safe=""),
-            headers={"Authorization": "Bearer secret"},
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            self.assertEqual(response.headers.get_content_type(), "audio/wav")
-            self.assertEqual(response.read(), b"RIFFdemo")
+        self.assertNotIn("attachments", messages[0])
 
     def test_audio_turn_allows_debug_fixture_transcript_override_for_proof_lane(self) -> None:
         body = self.post_audio(
@@ -2187,23 +2155,11 @@ class ServerTests(unittest.TestCase):
         for key in item_schema["required"]:
             self.assertEqual(item_schema["properties"][key]["type"], ["string", "null"])
 
-    def test_meeting_reply_output_schema_requires_meeting_result_without_changing_normal_schema(self) -> None:
+    def test_meeting_turns_share_the_normal_reply_schema(self) -> None:
         normal_schema = reply_output_schema()
-        meeting_schema = meeting_reply_output_schema()
 
         self.assertNotIn("meeting_result", normal_schema["required"])
-        self.assertIn("meeting_result", meeting_schema["required"])
-        meeting_result = meeting_schema["properties"]["meeting_result"]
-        self.assertFalse(meeting_result["additionalProperties"])
-        self.assertEqual(set(meeting_result["required"]), set(meeting_result["properties"]))
-        self.assertIn("speaker_turns", meeting_result["properties"])
-        self.assertIn("executed_actions", meeting_result["properties"])
-        self.assertFalse(meeting_result["properties"]["speaker_turns"]["items"]["additionalProperties"])
-        self.assertFalse(meeting_result["properties"]["executed_actions"]["items"]["additionalProperties"])
-        self.assertEqual(
-            set(meeting_result["properties"]["speaker_turns"]["items"]["required"]),
-            set(meeting_result["properties"]["speaker_turns"]["items"]["properties"]),
-        )
+        self.assertNotIn("meeting_result", normal_schema["properties"])
 
     def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(
