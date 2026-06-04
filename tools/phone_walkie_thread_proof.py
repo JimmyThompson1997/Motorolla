@@ -363,6 +363,16 @@ def browser_helper_args(
     return argv, env
 
 
+def browser_helper_should_rediscover(error_text: str) -> bool:
+    message = str(error_text or "").strip().lower()
+    return (
+        "connect econnrefused" in message
+        or "connectovercdp" in message
+        or "target page, context or browser has been closed" in message
+        or "could not find cover page" in message
+    )
+
+
 def run_browser_helper(
     args: argparse.Namespace,
     cdp_url: str,
@@ -370,29 +380,39 @@ def run_browser_helper(
     *,
     timeout_seconds: int | float | None = None,
 ) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="pucky-phone-proof-") as temp_dir:
-        temp_root = Path(temp_dir)
-        request_path = temp_root / "request.json"
-        output_path = temp_root / "output.json"
-        request = {
-            "cdp_url": cdp_url,
-            "page_title": "Pucky Cover",
-            "page_url_contains": "index.html",
-            "timeout_ms": int((timeout_seconds or args.browser_timeout_seconds) * 1000),
-            "operations": operations,
-            "output_path": str(output_path),
-        }
-        request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
-        argv, env = browser_helper_args(args, cdp_url=cdp_url, request_path=request_path, output_path=output_path)
-        completed = run_subprocess(argv, cwd=args.repo_root, env=env, timeout=(timeout_seconds or args.browser_timeout_seconds) + 10)
-        if completed.returncode != 0 and not output_path.exists():
-            raise PhoneProofError(
-                f"Browser helper failed: {(completed.stderr or completed.stdout).strip()}"
-            )
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
-        if not payload.get("ok", False):
-            raise PhoneProofError(f"Browser helper reported failure: {payload.get('error', 'unknown')}")
-        return payload
+    current_cdp_url = cdp_url
+    serial = str(getattr(args, "serial", "") or "").strip()
+    for attempt in range(2):
+        with tempfile.TemporaryDirectory(prefix="pucky-phone-proof-") as temp_dir:
+            temp_root = Path(temp_dir)
+            request_path = temp_root / "request.json"
+            output_path = temp_root / "output.json"
+            request = {
+                "cdp_url": current_cdp_url,
+                "page_title": "Pucky Cover",
+                "page_url_contains": "index.html",
+                "timeout_ms": int((timeout_seconds or args.browser_timeout_seconds) * 1000),
+                "operations": operations,
+                "output_path": str(output_path),
+            }
+            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+            argv, env = browser_helper_args(args, cdp_url=current_cdp_url, request_path=request_path, output_path=output_path)
+            completed = run_subprocess(argv, cwd=args.repo_root, env=env, timeout=(timeout_seconds or args.browser_timeout_seconds) + 10)
+            raw_error = (completed.stderr or completed.stdout).strip()
+            if completed.returncode != 0 and not output_path.exists():
+                if attempt == 0 and browser_helper_should_rediscover(raw_error):
+                    current_cdp_url = discover_cover_cdp_url(args, serial or resolve_adb_serial(args))["cdp_url"]
+                    continue
+                raise PhoneProofError(f"Browser helper failed: {raw_error}")
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            if payload.get("ok", False):
+                return payload
+            payload_error = str(payload.get("error", "unknown"))
+            if attempt == 0 and browser_helper_should_rediscover(payload_error):
+                current_cdp_url = discover_cover_cdp_url(args, serial or resolve_adb_serial(args))["cdp_url"]
+                continue
+            raise PhoneProofError(f"Browser helper reported failure: {payload_error}")
+    raise PhoneProofError("Browser helper could not reconnect to the cover WebView")
 
 
 def shell_quote(value: str) -> str:
