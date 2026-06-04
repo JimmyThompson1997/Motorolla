@@ -169,8 +169,13 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "fill: none;" in active_tab_icon
     assert "stroke: currentColor;" in active_tab_icon
     app_row = css_block(styles, ".links-app-row")
+    assert "position: absolute;" in app_row
+    assert "height: 62px;" in app_row
     assert "grid-template-columns: 30px minmax(0, 1fr) auto 18px;" in app_row
     assert "padding: 0 16px;" in app_row
+    rows_block = css_block(styles, ".links-list-rows")
+    assert "position: relative;" in rows_block
+    assert "contain: layout paint;" in rows_block
     icon_block = css_block(styles, ".links-app-icon")
     assert "width: 28px;" in icon_block
     assert "height: 28px;" in icon_block
@@ -226,6 +231,12 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "scrollport.scrollTop = 0;" in app
     assert "noteLinksScrollActivity();" not in app
     assert "linksVisibleRange(" not in app
+    assert "const LINKS_WINDOW_OVERSCAN_ROWS = 8;" in app
+    assert "function linksWindowRange(" in app
+    assert "function syncLinksVisibleWindow(" in app
+    assert "filtered.slice(range.start, range.end).forEach" in app
+    assert "scrollport.addEventListener(\"scroll\", () => scheduleLinksWindowSync(linksPageRefs), { passive: true });" in app
+    assert "row.style.transform = `translate3d(0, ${index * LINKS_ROW_HEIGHT}px, 0)`;" in app
     assert "refs.topSpacer.style.height =" not in app
     assert "refs.bottomSpacer.style.height =" not in app
     assert "links-app-logo" not in app

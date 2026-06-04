@@ -862,8 +862,14 @@ button {
 }
 
 .links-list-rows {
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  min-height: 100%;
+  contain: layout paint;
+}
+
+.links-list-rows.is-empty {
+  height: auto !important;
+  contain: none;
 }
 
 .links-list-scrollport {
@@ -880,7 +886,11 @@ button {
 }
 
 .links-app-row {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
+  height: 62px;
   min-height: 62px;
   padding: 0 16px;
   display: grid;

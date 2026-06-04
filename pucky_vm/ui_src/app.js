@@ -190,6 +190,7 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
+  const LINKS_WINDOW_OVERSCAN_ROWS = 8;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -1331,6 +1332,33 @@
     });
   }
 
+  function linksWindowRange(filteredLength, scrollTop, viewportHeight) {
+    if (!filteredLength) {
+      return { start: 0, end: 0 };
+    }
+    const visibleStart = Math.max(0, Math.floor(Math.max(0, scrollTop) / LINKS_ROW_HEIGHT));
+    const visibleEnd = Math.max(
+      visibleStart + 1,
+      Math.ceil((Math.max(0, scrollTop) + Math.max(LINKS_ROW_HEIGHT, viewportHeight)) / LINKS_ROW_HEIGHT)
+    );
+    return {
+      start: Math.max(0, visibleStart - LINKS_WINDOW_OVERSCAN_ROWS),
+      end: Math.min(filteredLength, visibleEnd + LINKS_WINDOW_OVERSCAN_ROWS)
+    };
+  }
+
+  function linksListKey(filtered) {
+    const first = filtered[0] || null;
+    const last = filtered[filtered.length - 1] || null;
+    return [
+      state.links.catalogVersion || "",
+      state.links.search || "",
+      filtered.length,
+      first && first.slug || "",
+      last && last.slug || ""
+    ].join("\u001f");
+  }
+
   function linksAuthLabelForApp(app) {
     const fromPayload = String(app && app.auth_label || "").trim();
     if (fromPayload) {
@@ -1663,29 +1691,71 @@
     }
   }
 
+  function syncLinksVisibleWindow(refs, filtered, handoffLocked) {
+    const scrollTop = Math.max(0, safeNumber(refs.scrollport && refs.scrollport.scrollTop));
+    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport && refs.scrollport.clientHeight));
+    const range = linksWindowRange(filtered.length, scrollTop, viewportHeight);
+    const windowKey = `${range.start}:${range.end}`;
+    if (refs.rows.dataset.linksWindowKey !== windowKey) {
+      const fragment = document.createDocumentFragment();
+      filtered.slice(range.start, range.end).forEach((app, offset) => {
+        const index = range.start + offset;
+        const row = createLinksRow(app, index, handoffLocked);
+        row.style.transform = `translate3d(0, ${index * LINKS_ROW_HEIGHT}px, 0)`;
+        fragment.append(row);
+      });
+      refs.rows.replaceChildren(fragment);
+      refs.rows.dataset.linksWindowKey = windowKey;
+    }
+    syncLinksRowStates(refs, handoffLocked);
+    if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
+      state.links.firstRowsTelemetrySent = true;
+      linksDebugRecord(
+        "first_rows_rendered",
+        {
+          rendered_rows: range.end - range.start,
+          filtered_count: filtered.length,
+          window_start: range.start,
+          window_end: range.end
+        },
+        "route"
+      );
+    }
+  }
+
+  function scheduleLinksWindowSync(refs) {
+    if (!refs || refs.windowRaf) {
+      return;
+    }
+    refs.windowRaf = requestAnimationFrame(() => {
+      refs.windowRaf = 0;
+      if (linksPageRefs !== refs) {
+        return;
+      }
+      syncLinksVisibleWindow(refs, linksFilteredApps(), linksHandoffLocked());
+    });
+  }
+
   function syncLinksListContents(refs) {
     const filtered = linksFilteredApps();
     refs.listCount.textContent = linksCountLabel(filtered);
     if (!filtered.length) {
       refs.rows.dataset.linksListKey = "";
+      refs.rows.dataset.linksWindowKey = "";
+      refs.rows.style.height = "";
+      refs.rows.classList.add("is-empty");
       refs.rows.replaceChildren(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
       return;
     }
     const handoffLocked = linksHandoffLocked();
-    const listKey = filtered.map(app => String(app.slug || "")).join("\u001f");
+    const listKey = linksListKey(filtered);
     if (refs.rows.dataset.linksListKey !== listKey) {
-      const fragment = document.createDocumentFragment();
-      filtered.forEach((app, index) => {
-        fragment.append(createLinksRow(app, index, handoffLocked));
-      });
-      refs.rows.replaceChildren(fragment);
+      refs.rows.classList.remove("is-empty");
+      refs.rows.style.height = `${filtered.length * LINKS_ROW_HEIGHT}px`;
       refs.rows.dataset.linksListKey = listKey;
+      refs.rows.dataset.linksWindowKey = "";
     }
-    syncLinksRowStates(refs, handoffLocked);
-    if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
-      state.links.firstRowsTelemetrySent = true;
-      linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
-    }
+    syncLinksVisibleWindow(refs, filtered, handoffLocked);
   }
 
   function syncLinksPage() {
@@ -3232,6 +3302,7 @@
       scrollport.id = "linksScrollport";
       const rows = el("div", "links-list-rows");
       scrollport.append(rows);
+      scrollport.addEventListener("scroll", () => scheduleLinksWindowSync(linksPageRefs), { passive: true });
       listCard.append(scrollport);
       page.append(listCard);
 
@@ -3249,7 +3320,8 @@
         listCard,
         scrollport,
         listCount,
-        rows
+        rows,
+        windowRaf: 0
       };
       linksPageNode = page;
     }
