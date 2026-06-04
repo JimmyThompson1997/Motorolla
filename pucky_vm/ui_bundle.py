@@ -17,6 +17,7 @@ from pucky_vm.cover_fixtures import write_runtime_fixture
 UI_SRC = Path(__file__).with_name("ui_src")
 UI_DIST = Path(__file__).with_name("ui_dist")
 DEFAULT_CREATED_AT = os.environ.get("PUCKY_UI_CREATED_AT")
+LINKS_CATALOG_PATH = Path("fixtures") / "links_catalog.json"
 
 
 def default_version() -> str:
@@ -113,6 +114,7 @@ def build_ui_bundle(
             staging / "fixtures" / "reply_cards.json",
         )
         write_bundle_config(staging)
+        write_links_catalog_script(staging)
         manifest = manifest_for(
             staging,
             ui_version=ui_version,
@@ -143,7 +145,29 @@ def bundle_config_script() -> str:
 
 def write_bundle_config(root: Path) -> None:
     text = bundle_config_script()
-    (root / "pucky-config.js").write_text(text, encoding="utf-8")
+    (root / "pucky-config.js").write_text(text, encoding="utf-8", newline="\n")
+
+
+def read_links_catalog(root: Path) -> dict[str, object]:
+    path = root / LINKS_CATALOG_PATH
+    if not path.exists():
+        return {
+            "schema": "pucky.links_catalog_bundle.v1",
+            "apps": [],
+            "total": 0,
+            "generated_at": "",
+            "catalog_version": "",
+        }
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def links_catalog_script(payload: dict[str, object]) -> str:
+    return "window.PUCKY_LINKS_CATALOG=" + json.dumps(payload, separators=(",", ":")) + ";\n"
+
+
+def write_links_catalog_script(root: Path) -> None:
+    payload = read_links_catalog(root)
+    (root / "pucky-links-catalog.js").write_text(links_catalog_script(payload), encoding="utf-8", newline="\n")
 
 
 def manifest_for(

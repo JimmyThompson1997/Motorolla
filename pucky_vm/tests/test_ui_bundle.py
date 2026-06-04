@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -25,19 +26,46 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
+    assert "pucky-links-catalog.js" in manifest["files"]
     assert "fixtures/reply_cards.json" in manifest["files"]
     assert "fixtures/reply_cards_deploy.json" in manifest["files"]
+    assert "fixtures/links_catalog.json" in manifest["files"]
 
     with zipfile.ZipFile(result["bundle_path"]) as archive:
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "index.html" in names
+        assert "pucky-links-catalog.js" in names
         assert "fixtures/reply_cards.json" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)
+        bundled_catalog = json.loads(archive.read("fixtures/links_catalog.json").decode("utf-8"))
+        catalog_script = archive.read("pucky-links-catalog.js").decode("utf-8")
+        assert catalog_script == ui_bundle.links_catalog_script(bundled_catalog)
+
+
+def test_ui_bundle_embeds_links_catalog_script_from_fixture(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    source_root = tmp_path / "ui_src"
+    fixtures = source_root / "fixtures"
+    fixtures.mkdir(parents=True)
+    (source_root / "index.html").write_text("<!doctype html><script src='./pucky-config.js'></script><script src='./pucky-links-catalog.js'></script><script src='./app.js'></script>", encoding="utf-8")
+    (source_root / "app.js").write_text("window.PUCKY_LINKS_CATALOG;", encoding="utf-8")
+    (source_root / "styles.css").write_text("body{}", encoding="utf-8")
+    (fixtures / "reply_cards_deploy.json").write_text('{"schema":"pucky.reply_cards_deploy.v1","cards":[]}', encoding="utf-8")
+    (fixtures / "links_catalog.json").write_text('{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub"}],"total":1,"catalog_version":"fixture-version"}', encoding="utf-8")
+    monkeypatch.setattr(ui_bundle, "UI_SRC", source_root)
+
+    result = build_ui_bundle(tmp_path / "out", ui_version="test-ui", created_at="2026-05-20T00:00:00+00:00")
+
+    with zipfile.ZipFile(Path(result["bundle_path"])) as archive:
+        catalog_script = archive.read("pucky-links-catalog.js").decode("utf-8")
+    assert catalog_script == (
+        'window.PUCKY_LINKS_CATALOG='
+        '{"schema":"pucky.links_catalog_bundle.v1","apps":[{"slug":"github","name":"GitHub"}],"total":1,"catalog_version":"fixture-version"};\n'
+    )
 
 
 def test_ui_bundle_can_embed_explicit_source_provenance(tmp_path, monkeypatch: pytest.MonkeyPatch):

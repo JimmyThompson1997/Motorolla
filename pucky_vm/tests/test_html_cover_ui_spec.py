@@ -105,9 +105,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "init.headers.Authorization = `Bearer ${state.links.apiToken}`;" in app
     assert 'state.links.token = payload.token;' in app
     assert "const LINKS_ROW_HEIGHT = 62;" in app
-    assert "const LINKS_WINDOW_OVERSCAN = 8;" in app
-    assert "async function loadLinksCatalog(options = {})" in app
-    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' in app
+    assert "const LINKS_WINDOW_OVERSCAN = 8;" not in app
+    assert "async function loadLinksCatalog(options = {})" not in app
+    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' not in app
     assert "window.location.assign(href);" not in app
     assert "Links did not return a valid auth URL." in app
     assert "Opened " not in app
@@ -145,8 +145,8 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-app-mark.is-connected" in styles
     assert ".links-open-button" in styles
     assert ".links-search" in styles
-    assert ".links-loading-footer" in styles
-    assert ".feed.is-links-handoff-locked" in styles
+    assert ".links-loading-footer" not in styles
+    assert ".feed.is-links-route" in styles
     assert ".links-page.is-handoff-lock" in styles
     assert ".links-app-row.is-opening" in styles
     assert "@keyframes linksHandoffPulse" in styles
@@ -155,7 +155,8 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "min-height: 52px" in styles
     assert "min-height: 62px" in styles
     assert "font-size: 17px" in styles
-    assert ".links-list-spacer" in styles
+    assert ".links-list-spacer" not in styles
+    assert ".links-list-scrollport" in styles
     assert ".links-list-rows" in styles
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
@@ -182,21 +183,25 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
 
 
 def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
+    html = read("index.html")
     app = read("app.js")
 
+    assert 'src="./pucky-links-catalog.js"' in html
     assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" not in app
     assert 'return "https://www.klavis.ai/home";' not in app
     assert 'BUNDLE_CONFIG.links_url' not in app
+    assert "window.PUCKY_LINKS_CATALOG" in app
     assert 'fetch(`${linksApiBaseUrl()}${path}`' in app
     assert "loadLinksPortal({ render: true });" in app
     assert "function routeQueryParam()" in app
     assert "const queryRoute = routeQueryParam();" in app
     assert "return queryRoute;" in app
     assert '"/api/links/composio/portal-url"' in app
-    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' in app
+    assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' not in app
     assert '/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}' in app
-    assert '"catalog_start"' in app
-    assert '"catalog_end"' in app
+    assert '"catalog_loaded_from_bundle"' in app
+    assert '"catalog_start"' not in app
+    assert '"catalog_end"' not in app
     assert '"full_catalog_hydrated"' not in app
     assert '"oauth_start_start"' in app
     assert '"oauth_start_end"' in app
@@ -207,24 +212,24 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "button.disabled = linksHandoffLocked();" in app
     assert "refs.search.disabled = handoffLocked;" in app
     assert "row.disabled = handoffLocked;" in app
-    assert "const connectedPromise = loadLinksConnected({ render: false })" in app
-    assert "await loadLinksCatalog({ render: false });" in app
-    assert "if (!state.links.firstPageReady || !state.links.apps.length)" in app
+    assert "const connectedPromise = loadLinksConnected({ render: false })" not in app
+    assert "await loadLinksConnected({ render: false, force: Boolean(options.force) });" in app
+    assert "void hydrateLinksSession({ render: false });" in app
+    assert "await loadLinksCatalog({ render: false });" not in app
     assert "state.links.totalAvailable = 0;" in app
     assert "state.links.catalogVersion = \"\";" in app
     assert "state.links.catalogGeneratedAt = \"\";" in app
+    assert "state.links.catalogSource = \"bundle\";" in app
     assert "const onSearchInput = () => {" in app
-    assert "const feed = linksFeedElement();" in app
-    assert "feed.scrollTop = 0;" in app
-    assert "noteLinksScrollActivity();" in app
-    assert "const unclampedStartIndex =" in app
-    assert "const maxStartIndex = Math.max(0, totalCount - 1);" in app
-    assert "const startIndex = Math.min(unclampedStartIndex, maxStartIndex);" in app
-    assert "const { startIndex, endIndex } = linksVisibleRange(filtered.length);" in app
-    assert "refs.topSpacer.style.height =" in app
-    assert "refs.bottomSpacer.style.height =" in app
-    assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' in app
+    assert 'scrollport.id = "linksScrollport";' in app
+    assert "scrollport.scrollTop = 0;" in app
+    assert "noteLinksScrollActivity();" not in app
+    assert "linksVisibleRange(" not in app
+    assert "refs.topSpacer.style.height =" not in app
+    assert "refs.bottomSpacer.style.height =" not in app
+    assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' not in app
     assert 'linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
+    assert 'linksPageRefs.scrollport.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
     assert "window.location.assign(payload.portal_url);" not in app
     assert '"/api/links/apps"' not in app
     assert '"/api/links/status"' not in app

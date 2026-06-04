@@ -190,8 +190,7 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
-  const LINKS_WINDOW_OVERSCAN = 8;
-  const LINKS_SCROLL_SETTLE_MS = 80;
+  const LINKS_LOGO_PRELOAD_ROWS = 12;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -1201,70 +1200,6 @@
     }
   }
 
-  async function loadLinksPortal(options = {}) {
-    if (state.links.loading) {
-      return;
-    }
-    linksDebugEnsureRouteSession(options.force ? "force_reload" : "route_open");
-    if (options.force) {
-      resetLinksCatalogState({ keepSearch: true });
-    }
-    state.links.loading = true;
-    state.links.error = "";
-    state.links.message = "";
-    state.links.messageKind = "";
-    if (options.render) {
-      render();
-    }
-    try {
-      let payload = null;
-      if (!state.links.token || options.force === true) {
-        linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
-        await ensureLinksApiConfig();
-        payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
-        state.links.portal_url = payload.portal_url;
-        state.links.token = payload.token;
-        state.links.auth_mode = payload.auth_mode;
-        state.links.available = payload.available;
-        linksDebugRecord(
-          "portal_url_end",
-          {
-            auth_mode: payload.auth_mode,
-            available: payload.available,
-            server_timing: String(payload && payload._server_timing || "")
-          },
-          "route"
-        );
-      }
-      if (!state.links.token) {
-        state.links.error = payload.error || "Links portal unavailable";
-      } else {
-        const connectedPromise = loadLinksConnected({ render: false })
-          .then(() => {
-            if (optionsShouldRenderLinksPage()) {
-              render();
-            }
-          })
-          .catch(() => {
-            // Keep the list usable even if connection badges arrive later.
-          });
-        if (!state.links.firstPageReady || !state.links.apps.length) {
-          await loadLinksCatalog({ render: false });
-        }
-        void connectedPromise;
-      }
-    } catch (error) {
-      state.links.available = false;
-      state.links.error = String(error && error.message ? error.message : "Unable to open Links");
-      linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
-    } finally {
-      state.links.loading = false;
-      if (options.render !== false) {
-        render();
-      }
-    }
-  }
-
   function normalizeLinksPortalPayload(payload) {
     return {
       portal_url: String(payload && (payload.portal_url || payload.url) || ""),
@@ -1275,12 +1210,16 @@
     };
   }
 
-  function normalizeLinksCatalogPayload(payload) {
+  function bundledLinksCatalogPayload() {
+    const payload = window.PUCKY_LINKS_CATALOG && typeof window.PUCKY_LINKS_CATALOG === "object"
+      ? window.PUCKY_LINKS_CATALOG
+      : {};
     return {
       apps: Array.isArray(payload && payload.apps) ? payload.apps : [],
       total: safeNumber(payload && payload.total),
       generated_at: String(payload && payload.generated_at || ""),
-      catalog_version: String(payload && payload.catalog_version || "")
+      catalog_version: String(payload && payload.catalog_version || ""),
+      schema: String(payload && payload.schema || "pucky.links_catalog_bundle.v1")
     };
   }
 
@@ -1299,19 +1238,49 @@
     };
   }
 
+  function hydrateBundledLinksCatalog(options = {}) {
+    if (!options.force && state.links.firstPageReady && state.links.apps.length) {
+      return;
+    }
+    const payload = bundledLinksCatalogPayload();
+    const apps = payload.apps.map(normalizeLinksApp).filter(item => item.slug && item.name);
+    apps.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
+    state.links.apps = apps;
+    state.links.totalAvailable = Math.max(payload.total, apps.length);
+    state.links.catalogVersion = payload.catalog_version;
+    state.links.catalogGeneratedAt = payload.generated_at;
+    state.links.catalogSource = "bundle";
+    state.links.firstPageReady = true;
+    if (!state.links.catalogTelemetrySent) {
+      state.links.catalogTelemetrySent = true;
+      linksDebugRecord(
+        "catalog_loaded_from_bundle",
+        {
+          total_count: state.links.totalAvailable,
+          catalog_version: state.links.catalogVersion,
+          generated_at: state.links.catalogGeneratedAt,
+          catalog_source: state.links.catalogSource,
+          catalog_schema: payload.schema
+        },
+        "route"
+      );
+    }
+  }
+
   function resetLinksCatalogState(options = {}) {
-    clearLinksScrollSettleTimer();
     state.links.apps = [];
     if (options.clearConnected === true) {
       state.links.connectedApps = [];
       state.links.connectedSlugs = new Set();
+      state.links.connectedLoaded = false;
     }
     state.links.totalAvailable = 0;
-    state.links.scrolling = false;
     state.links.lastRefreshAt = 0;
     state.links.firstPageReady = false;
     state.links.catalogVersion = "";
     state.links.catalogGeneratedAt = "";
+    state.links.catalogSource = "";
+    state.links.catalogTelemetrySent = false;
     if (options.keepSearch !== true) {
       state.links.search = "";
     }
@@ -1325,19 +1294,11 @@
     return filtered.length || totalAvailable ? String(filtered.length || totalAvailable) : "";
   }
 
-  function linksFooterText(filtered) {
-    if (!state.links.firstPageReady && state.links.loading) {
-      return "";
-    }
-    if (state.links.search && !filtered.length) {
-      return "";
-    }
-    return "";
-  }
-
-  function createLinksRow(app, handoffLocked) {
+  function createLinksRow(app, index, handoffLocked) {
     const row = el("button", "links-app-row");
     row.type = "button";
+    row.dataset.linksSlug = String(app.slug || "");
+    row.dataset.linksIndex = String(index);
     row.disabled = handoffLocked;
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
@@ -1346,7 +1307,7 @@
     if (app.logo) {
       const img = document.createElement("img");
       img.className = "links-app-logo";
-      img.src = app.logo;
+      img.dataset.logoSrc = app.logo;
       img.alt = "";
       img.loading = "lazy";
       img.decoding = "async";
@@ -1373,25 +1334,41 @@
     return row;
   }
 
-  function renderLinksListContents(list, listCount, footer, handoffLocked) {
-    const filtered = linksFilteredApps();
-    listCount.textContent = linksCountLabel(filtered);
-    list.replaceChildren();
-    footer.textContent = linksFooterText(filtered);
-    footer.classList.toggle("is-visible", Boolean(footer.textContent));
-    if (!filtered.length) {
-      list.append(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
+  function syncLinksRowStates(refs, handoffLocked) {
+    if (!refs || !refs.rows) {
       return;
     }
-    if (!state.links.firstRowsTelemetrySent) {
-      state.links.firstRowsTelemetrySent = true;
-      linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
-    }
-    const fragment = document.createDocumentFragment();
-    filtered.forEach(app => {
-      fragment.append(createLinksRow(app, handoffLocked));
+    refs.rows.querySelectorAll(".links-app-row").forEach(row => {
+      const slug = String(row.dataset.linksSlug || "");
+      row.disabled = handoffLocked;
+      row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === slug);
+      const mark = row.querySelector(".links-app-mark");
+      if (mark) {
+        mark.classList.toggle("is-connected", state.links.connectedSlugs.has(slug));
+      }
     });
-    list.append(fragment);
+  }
+
+  function syncVisibleLinksLogos(refs) {
+    if (!refs || !refs.scrollport || !refs.rows || refs.listCard.hidden) {
+      return;
+    }
+    const rows = refs.rows.children;
+    if (!rows || !rows.length) {
+      return;
+    }
+    const scrollTop = Math.max(0, safeNumber(refs.scrollport.scrollTop));
+    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport.clientHeight));
+    const start = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_LOGO_PRELOAD_ROWS);
+    const end = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_LOGO_PRELOAD_ROWS);
+    for (let index = start; index < end; index += 1) {
+      const row = rows[index];
+      const img = row && row.querySelector ? row.querySelector(".links-app-logo[data-logo-src]") : null;
+      if (!img || img.src) {
+        continue;
+      }
+      img.src = img.dataset.logoSrc;
+    }
   }
 
   function linksAuthLabelForApp(app) {
@@ -1461,6 +1438,10 @@
         loading: Boolean(state.links.loading),
         total_hydrated_apps: Array.isArray(state.links.apps) ? state.links.apps.length : 0,
         rendered_rows: renderedRows,
+        catalog_source: String(state.links.catalogSource || ""),
+        catalog_version: String(state.links.catalogVersion || ""),
+        session_ready: Boolean(state.links.token),
+        connected_loaded: Boolean(state.links.connectedLoaded),
         connected_count: Array.isArray(state.links.connectedApps) ? state.links.connectedApps.length : 0,
         logo_loads: safeNumber(state.links.logoLoads),
         logo_errors: safeNumber(state.links.logoErrors),
@@ -1554,6 +1535,7 @@
     active.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
     state.links.connectedApps = active;
     state.links.connectedSlugs = slugs;
+    state.links.connectedLoaded = true;
     state.links.lastRefreshAt = Date.now();
     linksDebugRecord(
       "my_apps_end",
@@ -1575,45 +1557,98 @@
 
   let linksPageNode = null;
   let linksPageRefs = null;
-  let linksScrollSettleTimer = 0;
-  let linksScrollRaf = 0;
+  let linksSessionPromise = null;
+  let linksLogoRaf = 0;
 
-  function clearLinksScrollSettleTimer() {
-    if (linksScrollSettleTimer) {
-      clearTimeout(linksScrollSettleTimer);
-      linksScrollSettleTimer = 0;
+  async function hydrateLinksSession(options = {}) {
+    if (linksSessionPromise) {
+      return linksSessionPromise;
     }
+    linksSessionPromise = (async () => {
+      state.links.loading = true;
+      if (options.render) {
+        render();
+      }
+      try {
+        let payload = null;
+        if (options.force === true) {
+          state.links.portal_url = "";
+          state.links.token = "";
+          state.links.connectedApps = [];
+          state.links.connectedSlugs = new Set();
+          state.links.connectedLoaded = false;
+          state.links.lastRefreshAt = 0;
+        }
+        if (!state.links.token) {
+          linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
+          await ensureLinksApiConfig();
+          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+          state.links.portal_url = payload.portal_url;
+          state.links.token = payload.token;
+          state.links.auth_mode = payload.auth_mode;
+          state.links.available = payload.available;
+          linksDebugRecord(
+            "portal_url_end",
+            {
+              auth_mode: payload.auth_mode,
+              available: payload.available,
+              server_timing: String(payload && payload._server_timing || "")
+            },
+            "route"
+          );
+        }
+        if (!state.links.token) {
+          state.links.error = payload && payload.error ? payload.error : "Links portal unavailable";
+          return;
+        }
+        await loadLinksConnected({ render: false, force: Boolean(options.force) });
+      } catch (error) {
+        state.links.available = false;
+        state.links.error = String(error && error.message ? error.message : "Unable to open Links");
+        linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
+      } finally {
+        state.links.loading = false;
+        linksSessionPromise = null;
+        if (optionsShouldRenderLinksPage()) {
+          render();
+        }
+      }
+    })();
+    return linksSessionPromise;
   }
 
-  async function loadLinksCatalog(options = {}) {
-    if (!state.links.token) {
-      return;
+  async function loadLinksPortal(options = {}) {
+    linksDebugEnsureRouteSession(options.force ? "force_reload" : "route_open");
+    if (options.force) {
+      resetLinksCatalogState({ keepSearch: true, clearConnected: true });
     }
-    linksDebugRecord("catalog_start", {}, "route");
-    const payload = normalizeLinksCatalogPayload(
-      await linksApiRequest(`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`, { cache: "default" })
-    );
-    state.links.apps = payload.apps.map(normalizeLinksApp).filter(item => item.slug && item.name);
-    state.links.totalAvailable = Math.max(payload.total, state.links.apps.length);
-    state.links.catalogVersion = payload.catalog_version;
-    state.links.catalogGeneratedAt = payload.generated_at;
-    state.links.firstPageReady = state.links.apps.length > 0 || state.links.totalAvailable === 0;
-    linksDebugRecord(
-      "catalog_end",
-      {
-        total_count: state.links.totalAvailable,
-        catalog_version: state.links.catalogVersion,
-        generated_at: state.links.catalogGeneratedAt
-      },
-      "route"
-    );
+    hydrateBundledLinksCatalog({ force: Boolean(options.force) });
+    state.links.error = "";
+    state.links.message = "";
+    state.links.messageKind = "";
     if (options.render) {
       render();
     }
+    if (options.force) {
+      void hydrateLinksSession({ render: false, force: true });
+      return;
+    }
+    void hydrateLinksSession({ render: false });
   }
 
-  function linksFeedElement() {
-    return document.getElementById("feed");
+  function linksScrollElement() {
+    return linksPageRefs && linksPageRefs.scrollport ? linksPageRefs.scrollport : null;
+  }
+
+  function scheduleLinksLogoSync() {
+    if (linksLogoRaf) {
+      return;
+    }
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback, 16);
+    linksLogoRaf = raf(() => {
+      linksLogoRaf = 0;
+      syncVisibleLinksLogos(linksPageRefs);
+    });
   }
 
   function linksMatchesSearch(app, needle) {
@@ -1628,23 +1663,6 @@
       return apps;
     }
     return apps.filter(app => linksMatchesSearch(app, needle));
-  }
-
-  function linksVisibleRange(totalCount) {
-    const feed = linksFeedElement();
-    const scrollTop = Math.max(0, safeNumber(feed && feed.scrollTop));
-    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(feed && feed.clientHeight));
-    const unclampedStartIndex = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_WINDOW_OVERSCAN);
-    const maxStartIndex = Math.max(0, totalCount - 1);
-    const startIndex = Math.min(unclampedStartIndex, maxStartIndex);
-    const endIndex = Math.min(
-      totalCount,
-      Math.max(
-        startIndex + 1,
-        Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_WINDOW_OVERSCAN
-      )
-    );
-    return { startIndex, endIndex };
   }
 
   function syncLinksMessage(refs) {
@@ -1700,26 +1718,26 @@
   function syncLinksListContents(refs) {
     const filtered = linksFilteredApps();
     refs.listCount.textContent = linksCountLabel(filtered);
-    refs.footer.textContent = linksFooterText(filtered);
-    refs.footer.classList.toggle("is-visible", Boolean(refs.footer.textContent));
     if (!filtered.length) {
-      refs.topSpacer.style.height = "0px";
-      refs.bottomSpacer.style.height = "0px";
+      refs.rows.dataset.linksListKey = "";
       refs.rows.replaceChildren(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
       return;
     }
-    const { startIndex, endIndex } = linksVisibleRange(filtered.length);
-    refs.topSpacer.style.height = `${startIndex * LINKS_ROW_HEIGHT}px`;
-    refs.bottomSpacer.style.height = `${Math.max(0, (filtered.length - endIndex) * LINKS_ROW_HEIGHT)}px`;
     const handoffLocked = linksHandoffLocked();
-    const fragment = document.createDocumentFragment();
-    filtered.slice(startIndex, endIndex).forEach(app => {
-      fragment.append(createLinksRow(app, handoffLocked));
-    });
-    refs.rows.replaceChildren(fragment);
-    if (!state.links.firstRowsTelemetrySent && (endIndex - startIndex) > 0) {
+    const listKey = filtered.map(app => String(app.slug || "")).join("\u001f");
+    if (refs.rows.dataset.linksListKey !== listKey) {
+      const fragment = document.createDocumentFragment();
+      filtered.forEach((app, index) => {
+        fragment.append(createLinksRow(app, index, handoffLocked));
+      });
+      refs.rows.replaceChildren(fragment);
+      refs.rows.dataset.linksListKey = listKey;
+    }
+    syncLinksRowStates(refs, handoffLocked);
+    syncVisibleLinksLogos(refs);
+    if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
       state.links.firstRowsTelemetrySent = true;
-      linksDebugRecord("first_rows_rendered", { rendered_rows: endIndex - startIndex }, "route");
+      linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
     }
   }
 
@@ -1727,7 +1745,9 @@
     if (!linksPageRefs) {
       return;
     }
+    hydrateBundledLinksCatalog();
     linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());
+    linksPageRefs.scrollport.classList.toggle("is-handoff-lock", linksHandoffLocked());
     syncLinksMessage(linksPageRefs);
     if (syncLinksEmptyState(linksPageRefs)) {
       return;
@@ -1737,27 +1757,9 @@
     syncLinksListContents(linksPageRefs);
   }
 
-  function noteLinksScrollActivity() {
-    if (state.route !== "links") {
-      return;
-    }
-    state.links.scrolling = true;
-    clearLinksScrollSettleTimer();
-    if (!linksScrollRaf) {
-      linksScrollRaf = requestAnimationFrame(() => {
-        linksScrollRaf = 0;
-        syncLinksPage();
-      });
-    }
-    linksScrollSettleTimer = window.setTimeout(() => {
-      linksScrollSettleTimer = 0;
-      state.links.scrolling = false;
-      syncLinksPage();
-    }, LINKS_SCROLL_SETTLE_MS);
-  }
-
   async function refreshLinksConnectedSoon(options = {}) {
     if (!state.links.token) {
+      await hydrateLinksSession({ render: false, force: Boolean(options.force) });
       return;
     }
     const age = Date.now() - safeNumber(state.links.lastRefreshAt);
@@ -1820,8 +1822,16 @@
 
   async function openLinksAuthFlow(app) {
     const slug = String(app && app.slug || "").trim();
-    if (!slug || !state.links.token || linksHandoffLocked()) {
+    if (!slug || linksHandoffLocked()) {
       return;
+    }
+    if (!state.links.token) {
+      await hydrateLinksSession({ render: false });
+      if (!state.links.token) {
+        state.links.error = state.links.error || "Links portal unavailable";
+        render();
+        return;
+      }
     }
     linksDebugStartClickSession(slug);
     startLinksHandoff(slug);
@@ -2286,6 +2296,16 @@
     if (action === "goto_home") {
       return uiDebugGotoHome();
     }
+    if (action === "links_metrics") {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: true,
+        action,
+        handled: true,
+        metrics: linksDebugMetrics(),
+        surface: describeUiSurface()
+      };
+    }
     if (action === "back") {
       return {
         schema: "pucky.ui_debug_action.v1",
@@ -2352,6 +2372,45 @@
       handled: true,
       pending: true,
       surface: describeUiSurface()
+    };
+  }
+
+  function linksDebugMetrics() {
+    const feed = document.getElementById("feed");
+    const scrollport = linksScrollElement();
+    const filtered = linksFilteredApps();
+    const scrollTop = Math.max(0, safeNumber(scrollport && scrollport.scrollTop));
+    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(scrollport && scrollport.clientHeight));
+    const startIndex = filtered.length ? Math.min(filtered.length - 1, Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT))) : 0;
+    const endIndex = filtered.length ? Math.min(filtered.length, Math.max(startIndex + 1, Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT))) : 0;
+    const firstVisible = filtered[startIndex] || null;
+    const lastVisible = filtered[Math.max(startIndex, endIndex - 1)] || null;
+    return {
+      schema: "pucky.links_debug_metrics.v1",
+      route: state.route,
+      links_route_active: state.route === "links",
+      active_scroller: scrollport ? "links-scrollport" : "feed",
+      catalog_source: String(state.links.catalogSource || ""),
+      catalog_version: String(state.links.catalogVersion || ""),
+      filtered_app_count: filtered.length,
+      rendered_row_count: linksPageRefs?.rows ? linksPageRefs.rows.querySelectorAll(".links-app-row").length : 0,
+      connected_loaded: Boolean(state.links.connectedLoaded),
+      session_ready: Boolean(state.links.token),
+      loading: Boolean(state.links.loading),
+      logo_loads: safeNumber(state.links.logoLoads),
+      logo_errors: safeNumber(state.links.logoErrors),
+      first_visible_slug: String(firstVisible && firstVisible.slug || ""),
+      last_visible_slug: String(lastVisible && lastVisible.slug || ""),
+      feed: {
+        scroll_top: Math.max(0, safeNumber(feed && feed.scrollTop)),
+        client_height: Math.max(0, safeNumber(feed && feed.clientHeight)),
+        scroll_height: Math.max(0, safeNumber(feed && feed.scrollHeight))
+      },
+      list: {
+        scroll_top: scrollTop,
+        client_height: Math.max(0, safeNumber(scrollport && scrollport.clientHeight)),
+        scroll_height: Math.max(0, safeNumber(scrollport && scrollport.scrollHeight))
+      }
     };
   }
 
@@ -2488,9 +2547,11 @@
       handoffDeadlineAt: 0,
       firstPageReady: false,
       totalAvailable: 0,
-      scrolling: false,
+      connectedLoaded: false,
       catalogVersion: "",
       catalogGeneratedAt: "",
+      catalogSource: "",
+      catalogTelemetrySent: false,
       debugRouteSessionId: "",
       debugClickSessionId: "",
       firstRowsTelemetrySent: false,
@@ -2936,7 +2997,7 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
-    feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked());
+    feed.classList.toggle("is-links-route", state.route === "links");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (state.route === "settings") {
       feed.replaceChildren(settingsPageView());
@@ -3202,9 +3263,9 @@
       search.value = state.links.search;
       const onSearchInput = () => {
         state.links.search = search.value;
-        const feed = linksFeedElement();
-        if (feed && safeNumber(feed.scrollTop) > 0) {
-          feed.scrollTop = 0;
+        const scrollport = linksScrollElement();
+        if (scrollport && safeNumber(scrollport.scrollTop) > 0) {
+          scrollport.scrollTop = 0;
         }
         linksDebugRecord("search_input", { search_value: state.links.search }, "route");
         syncLinksPage();
@@ -3220,14 +3281,12 @@
       const listCount = el("span", "links-list-count", "");
       listHead.append(listLabel, listCount);
       listCard.append(listHead);
-      const list = el("div", "links-list");
-      const topSpacer = el("div", "links-list-spacer");
+      const scrollport = el("div", "links-list-scrollport");
+      scrollport.id = "linksScrollport";
+      scrollport.addEventListener("scroll", scheduleLinksLogoSync, { passive: true });
       const rows = el("div", "links-list-rows");
-      const bottomSpacer = el("div", "links-list-spacer");
-      list.append(topSpacer, rows, bottomSpacer);
-      listCard.append(list);
-      const footer = el("div", "links-loading-footer", "");
-      listCard.append(footer);
+      scrollport.append(rows);
+      listCard.append(scrollport);
       page.append(listCard);
 
       linksPageRefs = {
@@ -3242,12 +3301,9 @@
         searchWrap,
         search,
         listCard,
-        list,
+        scrollport,
         listCount,
-        footer,
-        topSpacer,
-        rows,
-        bottomSpacer
+        rows
       };
       linksPageNode = page;
     }
@@ -8339,7 +8395,6 @@
     feed.addEventListener("scroll", debounce(() => {
       rememberFeedScroll();
       persistNavState();
-      noteLinksScrollActivity();
     }, 120), { passive: true });
   }
 
@@ -9022,7 +9077,8 @@
   window.PuckyHandleAndroidBack = handleAndroidBack;
   window.PuckyUiDebug = {
     describe: describeUiSurface,
-    dispatch: uiDebugDispatch
+    dispatch: uiDebugDispatch,
+    linksMetrics: linksDebugMetrics
   };
   installFeedRubberBand();
   installFeedScrollPersistence();

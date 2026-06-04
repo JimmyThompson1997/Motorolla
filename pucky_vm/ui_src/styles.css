@@ -450,9 +450,9 @@ button {
   will-change: transform;
 }
 
-.feed.is-links-handoff-locked {
+.feed.is-links-route {
   overflow: hidden;
-  touch-action: none;
+  padding-bottom: 0;
 }
 
 .feed-refresh {
@@ -743,7 +743,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 9px;
+  min-height: 100%;
+  height: 100%;
   padding: 0 0 var(--nav-safe);
+  overflow: hidden;
 }
 
 .links-page.is-handoff-lock {
@@ -838,20 +841,11 @@ button {
 }
 
 .links-list-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-}
-
-.links-loading-footer {
-  display: none;
-  min-height: 32px;
-  padding: 0 16px 10px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.links-loading-footer.is-visible {
-  display: block;
 }
 
 .links-list-head {
@@ -867,19 +861,22 @@ button {
   font-size: 11px;
 }
 
-.links-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.links-list-spacer {
-  width: 100%;
-  flex: 0 0 auto;
-}
-
 .links-list-rows {
   display: flex;
   flex-direction: column;
+}
+
+.links-list-scrollport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.links-list-scrollport.is-handoff-lock {
+  overflow: hidden;
+  touch-action: none;
 }
 
 .links-app-row {
@@ -921,6 +918,10 @@ button {
   box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.08);
 }
 
+.links-app-icon > * {
+  grid-area: 1 / 1;
+}
+
 .links-app-icon.has-image {
   background: transparent;
   box-shadow: none;
@@ -931,6 +932,10 @@ button {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+
+.links-app-logo:not([src]) {
+  display: none;
 }
 
 .links-app-fallback {
