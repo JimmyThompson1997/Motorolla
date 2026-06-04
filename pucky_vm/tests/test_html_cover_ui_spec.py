@@ -175,6 +175,16 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "padding: 0 16px;" in search_wrap
     assert "position: sticky;" in search_wrap
     assert "top: 0;" in search_wrap
+    list_head = css_block(styles, ".links-list-head")
+    assert "display: flex;" in list_head
+    assert "justify-content: space-between;" in list_head
+    assert "display: none;" not in list_head
+    assert "@media (max-width: 520px) and (max-height: 520px) and (min-aspect-ratio: 9 / 10) and (max-aspect-ratio: 11 / 10)" in styles
+    assert re.search(
+        r"@media \(max-width: 520px\) and \(max-height: 520px\) and \(min-aspect-ratio: 9 / 10\) and \(max-aspect-ratio: 11 / 10\)\s*\{\s*\.links-list-head\s*\{\s*display: none;\s*\}\s*\}",
+        styles,
+        re.S,
+    )
     search_input = css_block(styles, ".links-search")
     assert "min-height: 50px;" in search_input
     assert "font-size: 17px;" in search_input
