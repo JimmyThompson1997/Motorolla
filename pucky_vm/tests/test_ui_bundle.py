@@ -50,6 +50,14 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert catalog_script == ui_bundle.links_catalog_script(bundled_catalog)
         logo_path = bundled_catalog["apps"][0]["logo_path"]
         assert logo_path in names
+        raster_logo_paths = [
+            app["logo_path"]
+            for app in bundled_catalog["apps"]
+            if Path(app["logo_path"]).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        ]
+        assert raster_logo_paths
+        for raster_logo_path in raster_logo_paths:
+            assert raster_logo_path in names
 
 
 def test_ui_bundle_embeds_links_catalog_script_from_fixture(tmp_path, monkeypatch: pytest.MonkeyPatch):
