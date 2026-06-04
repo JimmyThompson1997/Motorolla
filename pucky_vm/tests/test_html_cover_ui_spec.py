@@ -2039,6 +2039,10 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     assert "function syncOpenThreadDetailAfterCards()" in app
     assert "const nextCard = resolveNavDetailCard(detail);" in app
     assert 'showTranscript(nextCard, shouldStickToLatest' in app
+    assert "function scrollTranscriptToLatest(content)" in app
+    assert "window.setTimeout(apply, 60);" in app
+    assert "if (!isPendingOutboundCard(nextCard)) {" in app
+    assert "markCardRead(nextCard);" in app
     assert 'recordTurnUiEvent("thread_detail_rebound", {' in app
 
 def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:

@@ -7150,8 +7150,16 @@
   }
 
   function scrollTranscriptToLatest(content) {
-    requestAnimationFrame(() => {
+    const apply = () => {
+      if (!content) {
+        return;
+      }
       content.scrollTop = content.scrollHeight;
+    };
+    apply();
+    requestAnimationFrame(() => {
+      apply();
+      window.setTimeout(apply, 60);
     });
   }
 
@@ -7189,6 +7197,9 @@
     showTranscript(nextCard, shouldStickToLatest
       ? {}
       : { restoring: true, scrollTop: state.navDetail?.scroll_top });
+    if (!isPendingOutboundCard(nextCard)) {
+      markCardRead(nextCard);
+    }
     recordTurnUiEvent("thread_detail_rebound", {
       turn_id: turnStatusTurnId(state.turn),
       detail_type: detail.type,
