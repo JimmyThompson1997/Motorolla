@@ -2273,6 +2273,14 @@
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
     const detail = document.getElementById("detail");
+    const navDetail = normalizeNavDetail(state.navDetail);
+    const detailCard = resolveNavDetailCard(navDetail);
+    const detailMessages = detailCard && detail?.classList.contains("is-open")
+      ? messagesForCard(detailCard).map(message => ({
+        role: message.role === "user" ? "user" : "assistant",
+        text: String(message.text || "")
+      }))
+      : [];
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
     const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
@@ -2283,6 +2291,7 @@
       pending_outbound: node.getAttribute("data-card-pending-outbound") === "true"
         || node.getAttribute("data-card-kind") === "pending_outbound",
       pending_state: node.getAttribute("data-card-pending-state") || "",
+      read: !node.classList.contains("card-unread"),
       preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
     }));
     return {
@@ -2294,7 +2303,8 @@
         card_id: detail?.getAttribute("data-detail-card-id") || "",
         session_id: detail?.getAttribute("data-detail-session-id") || "",
         thread_id: detail?.getAttribute("data-detail-thread-id") || "",
-        viewer: detail?.getAttribute("data-detail-viewer") || ""
+        viewer: detail?.getAttribute("data-detail-viewer") || "",
+        messages: detailMessages
       },
         focused_card: {
           active: Boolean(focusedCard),

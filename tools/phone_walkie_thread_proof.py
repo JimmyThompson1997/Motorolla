@@ -917,6 +917,68 @@ def wait_for_turn_reply_saved(args: argparse.Namespace, turn_id: str) -> dict[st
     return wait_for(check, timeout_seconds=180, interval_seconds=1.0, description=f"reply for {turn_id}")
 
 
+def latest_transcript_message_text(card: dict[str, Any], role: str) -> str:
+    clean_role = str(role or "").strip().lower()
+    for message in reversed(transcript_messages(card)):
+        if str(message.get("role") or "").strip().lower() == clean_role:
+            return str(message.get("text") or "")
+    return ""
+
+
+def describe_browser_surface(
+    args: argparse.Namespace,
+    cdp_url: str,
+    *,
+    timeout_seconds: int | float = 30,
+) -> dict[str, Any]:
+    return run_browser_helper(args, cdp_url, [{"kind": "describe"}], timeout_seconds=timeout_seconds)
+
+
+def wait_for_detail_message(
+    args: argparse.Namespace,
+    *,
+    cdp_url: str,
+    thread_id: str,
+    expected_count: int,
+    expected_role: str,
+    expected_text: str,
+    timeout_seconds: int | float,
+) -> dict[str, Any]:
+    clean_thread_id = str(thread_id or "").strip()
+    clean_role = str(expected_role or "").strip().lower()
+    clean_text = str(expected_text or "").strip()
+
+    def check() -> dict[str, Any] | None:
+        surface_result = describe_browser_surface(
+            args,
+            cdp_url,
+            timeout_seconds=min(timeout_seconds, max(15, int(args.browser_timeout_seconds))),
+        )
+        detail = detail_surface(surface_result)
+        if not bool(detail.get("open")):
+            return None
+        if str(detail.get("type") or "") != "transcript":
+            return None
+        if str(detail.get("thread_id") or "").strip() != clean_thread_id:
+            return None
+        messages = detail_messages(surface_result)
+        if len(messages) < int(expected_count):
+            return None
+        latest = messages[-1] if messages else {}
+        if clean_role and str(latest.get("role") or "").strip().lower() != clean_role:
+            return None
+        if clean_text and str(latest.get("text") or "").strip() != clean_text:
+            return None
+        return surface_result
+
+    return wait_for(
+        check,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=0.75,
+        description=f"detail message {expected_role} on {thread_id}",
+    )
+
+
 def browser_ops_for_card_open(card: dict[str, Any], action: str, expected_detail_type: str) -> list[dict[str, Any]]:
     return [
         {"kind": "goto_home"},
@@ -985,6 +1047,32 @@ def visible_thread_card(surface_result: dict[str, Any], thread_id: str) -> dict[
         if str(card.get("thread_id") or "").strip() == str(thread_id or "").strip():
             return card
     return None
+
+
+def detail_surface(surface_result: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(surface_result, dict):
+        return {}
+    final_surface = surface_result.get("final_surface")
+    if isinstance(final_surface, dict):
+        detail = final_surface.get("detail")
+        return detail if isinstance(detail, dict) else {}
+    detail = surface_result.get("detail")
+    return detail if isinstance(detail, dict) else {}
+
+
+def detail_messages(surface_result: dict[str, Any]) -> list[dict[str, str]]:
+    messages = detail_surface(surface_result).get("messages")
+    if not isinstance(messages, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({
+            "role": str(item.get("role") or ""),
+            "text": str(item.get("text") or ""),
+        })
+    return normalized
 
 
 def scenario_checks(checks: dict[str, bool]) -> dict[str, Any]:
@@ -1214,6 +1302,168 @@ def run_continuation_scenario(
         "final_card": final_card,
         "home_after_start": home_after_start,
         "home_with_transcript": home_with_transcript,
+        "home_after_reply": home_after_reply,
+        "checks": checks,
+    }
+
+
+def run_transcript_live_scenario(
+    args: argparse.Namespace,
+    *,
+    serial: str,
+    cdp_url: str,
+    card: dict[str, Any],
+    text: str,
+    proof_reply_delay_ms: int,
+    scenario_dir: Path,
+) -> dict[str, Any]:
+    before_cards = snapshot_cards(args)
+    before_surface = snapshot_surface(args)
+    source_thread_id = origin_thread_id(card)
+    if not source_thread_id:
+        raise PhoneProofError("transcript live source card is missing origin.thread_id")
+    open_result = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=browser_ops_for_card_open(card, "transcript", "transcript")
+        + [screenshot_operation(scenario_dir / "01-thread-open-before-send-browser.png")],
+        scenario_dir=scenario_dir,
+        browser_name="before-send.json",
+        device_name="01-thread-open-before-send.png",
+        timeout_seconds=60,
+    )
+    open_detail = detail_surface(open_result)
+    open_messages = detail_messages(open_result)
+    scope_before = wait_for_scope(args, source_thread_id, "thread_transcript")
+    turn_status_before = turn_status(args)
+    fixture = put_fixture_for_text(args, text, "transcript-live")
+    start = start_fixture_turn(
+        args,
+        str(fixture["remote"]["path"]),
+        text,
+        proof_reply_delay_ms=proof_reply_delay_ms,
+    )
+    turn_id = str(start.get("turn_id") or "")
+    if not turn_id:
+        raise PhoneProofError("transcript live scenario did not return a turn_id")
+
+    transcript_turn = wait_for_turn_transcript(args, turn_id)
+    transcript_text = str(transcript_turn.get("user_transcript") or text).strip()
+    wait_for_detail_message(
+        args,
+        cdp_url=cdp_url,
+        thread_id=source_thread_id,
+        expected_count=len(open_messages) + 1,
+        expected_role="user",
+        expected_text=transcript_text,
+        timeout_seconds=60,
+    )
+    transcript_capture = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[screenshot_operation(scenario_dir / "02-user-bubble-while-thinking-browser.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="transcript-known.json",
+        device_name="02-user-bubble-while-thinking.png",
+        timeout_seconds=45,
+    )
+    turn_status_transcript = turn_status(args)
+
+    final_turn = wait_for_turn_reply_saved(args, turn_id)
+    final_snapshot = snapshot_cards(args)
+    final_card = final_thread_card(final_snapshot, source_thread_id)
+    if final_card is None:
+        raise PhoneProofError(f"transcript live scenario did not leave a final visible tile on thread {source_thread_id}")
+    assistant_text = latest_transcript_message_text(final_card, "assistant").strip()
+    if not assistant_text:
+        raise PhoneProofError("transcript live scenario could not resolve the assistant reply text")
+    wait_for_detail_message(
+        args,
+        cdp_url=cdp_url,
+        thread_id=source_thread_id,
+        expected_count=len(open_messages) + 2,
+        expected_role="assistant",
+        expected_text=assistant_text,
+        timeout_seconds=90,
+    )
+    live_reply_capture = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[screenshot_operation(scenario_dir / "03-assistant-bubble-live-browser.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="reply-complete.json",
+        device_name="03-assistant-bubble-live.png",
+        timeout_seconds=45,
+    )
+    turn_status_final = turn_status(args)
+    home_after_reply = capture_phase(
+        args,
+        serial=serial,
+        cdp_url=cdp_url,
+        operations=[{"kind": "goto_home"}, screenshot_operation(scenario_dir / "04-home-feed-read-browser.png"), {"kind": "describe"}],
+        scenario_dir=scenario_dir,
+        browser_name="home-feed-read.json",
+        device_name="04-home-feed-read.png",
+        timeout_seconds=45,
+    )
+
+    transcript_detail = detail_surface(transcript_capture)
+    transcript_messages_live = detail_messages(transcript_capture)
+    reply_detail = detail_surface(live_reply_capture)
+    reply_messages_live = detail_messages(live_reply_capture)
+    home_cards = visible_cards(home_after_reply)
+    top_home_card = home_cards[0] if home_cards else {}
+    top_home_matches_thread = visible_thread_index(home_after_reply, source_thread_id) == 0
+    checks = scenario_checks(
+        {
+            "before_detail_open": bool(open_detail.get("open")),
+            "before_detail_type_transcript": str(open_detail.get("type") or "") == "transcript",
+            "before_detail_thread_matches": str(open_detail.get("thread_id") or "") == source_thread_id,
+            "scope_matches_thread": str(scope_before.get("thread_id") or "") == source_thread_id,
+            "scope_matches_surface": str(scope_before.get("source_surface") or "") == "thread_transcript",
+            "transcript_stage_thread_open": bool(transcript_detail.get("open")) and str(transcript_detail.get("thread_id") or "") == source_thread_id,
+            "transcript_stage_new_user_message": len(transcript_messages_live) >= len(open_messages) + 1,
+            "transcript_stage_last_message_is_user": bool(transcript_messages_live)
+            and str(transcript_messages_live[-1].get("role") or "") == "user",
+            "transcript_stage_last_text_matches": bool(transcript_messages_live)
+            and str(transcript_messages_live[-1].get("text") or "").strip() == transcript_text,
+            "reply_stage_thread_still_open": bool(reply_detail.get("open")) and str(reply_detail.get("thread_id") or "") == source_thread_id,
+            "reply_stage_new_assistant_message": len(reply_messages_live) >= len(open_messages) + 2,
+            "reply_stage_last_message_is_assistant": bool(reply_messages_live)
+            and str(reply_messages_live[-1].get("role") or "") == "assistant",
+            "reply_stage_last_text_matches": bool(reply_messages_live)
+            and str(reply_messages_live[-1].get("text") or "").strip() == assistant_text,
+            "home_top_tile_same_thread": top_home_matches_thread,
+            "home_single_visible_tile": len(thread_cards(final_snapshot, source_thread_id)) == 1,
+            "home_tile_is_read": bool(top_home_card.get("read")) if top_home_matches_thread else False,
+            "home_tile_not_pending": not bool(top_home_card.get("pending_outbound")) if top_home_matches_thread else False,
+            "no_duplicate_visible_tile": sum(1 for item in cards_from_snapshot(final_snapshot) if origin_thread_id(item) == source_thread_id) == 1,
+        }
+    )
+    if not checks["passed"]:
+        raise PhoneProofError(f"transcript live checks failed: {json.dumps(checks['checks'], sort_keys=True)}")
+    return {
+        "scenario": "transcript_live",
+        "source_card": card,
+        "source_thread_id": source_thread_id,
+        "before_surface": before_surface,
+        "before_cards": before_cards,
+        "open_result": open_result,
+        "scope_before": scope_before,
+        "turn_status_before": turn_status_before,
+        "fixture": fixture,
+        "turn_start": start,
+        "turn_with_transcript": transcript_turn,
+        "transcript_capture": transcript_capture,
+        "turn_status_transcript": turn_status_transcript,
+        "turn_final": final_turn,
+        "final_snapshot": final_snapshot,
+        "final_card": final_card,
+        "live_reply_capture": live_reply_capture,
+        "turn_status_final": turn_status_final,
         "home_after_reply": home_after_reply,
         "checks": checks,
     }
@@ -1706,11 +1956,11 @@ def run_final_boss_scenario(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run real-phone Walkie thread-continuation proof against the Pucky cover WebView.")
-    parser.add_argument("--scenario", choices=("feed_focus", "transcript", "page", "negative", "history", "all", "final_boss"), default="all")
+    parser.add_argument("--scenario", choices=("feed_focus", "transcript", "transcript_live", "page", "negative", "history", "all", "final_boss"), default="all")
     parser.add_argument("--serial", default=os.environ.get("PUCKY_PHONE_SERIAL", ""))
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", DEFAULT_BROKER_URL))
-    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN", ""))
+    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--package-name", default=DEFAULT_PACKAGE_NAME)
     parser.add_argument("--vm-base-url", default=official_html.DEFAULT_VM_BASE_URL)
     parser.add_argument("--manifest-url", default="")
@@ -1838,6 +2088,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             cards = cards_from_snapshot(snapshot_cards(args))
 
+        if args.scenario == "transcript_live":
+            transcript_live_card = select_card(
+                cards,
+                title_contains=args.transcript_card_title_contains,
+                required_thread_id=args.transcript_thread_id,
+                require_thread=True,
+            )
+            scenarios.append(
+                run_transcript_live_scenario(
+                    args,
+                    serial=serial,
+                    cdp_url=cdp["cdp_url"],
+                    card=transcript_live_card,
+                    text=args.transcript_text,
+                    proof_reply_delay_ms=args.continuation_delay_ms or 6000,
+                    scenario_dir=scenario_root / "transcript-live",
+                )
+            )
+            cards = cards_from_snapshot(snapshot_cards(args))
+
         if args.scenario in {"page", "all"}:
             page_card = select_card(
                 cards,
@@ -1936,13 +2206,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "evidence_dir": str(scenario_root),
         }
         evidence_path = scenario_root / "proof.json"
+        summary_path = scenario_root / "summary.json"
         phone_shared.save_json(evidence_path, evidence)
+        phone_shared.save_json(summary_path, evidence)
         if not summary["passed"]:
             raise PhoneProofError(f"one or more scenarios failed: {json.dumps(summary['checks'], sort_keys=True)}")
         return {
             "ok": True,
             "schema": RESULT_SCHEMA,
             "evidence_path": str(evidence_path),
+            "summary_path": str(summary_path),
             "scenario_count": len(scenarios),
             "serial": serial,
             "ui_version": str(bundle.get("ui_version") or surface_before.get("ui_version") or ""),

@@ -236,6 +236,28 @@ def test_visible_cards_accepts_direct_surface_snapshot() -> None:
     assert proof.visible_cards(surface) == surface["visible_cards"]
 
 
+def test_detail_helpers_extract_messages_from_final_surface() -> None:
+    surface = {
+        "final_surface": {
+            "detail": {
+                "open": True,
+                "thread_id": "thread-a",
+                "messages": [
+                    {"role": "user", "text": "hello"},
+                    {"role": "assistant", "text": "world", "extra": "ignored"},
+                    "skip-me",
+                ],
+            }
+        }
+    }
+
+    assert proof.detail_surface(surface)["thread_id"] == "thread-a"
+    assert proof.detail_messages(surface) == [
+        {"role": "user", "text": "hello"},
+        {"role": "assistant", "text": "world"},
+    ]
+
+
 def test_scenario_checks_reports_overall_pass() -> None:
     passing = proof.scenario_checks({"one": True, "two": True})
     failing = proof.scenario_checks({"one": True, "two": False})
@@ -455,7 +477,7 @@ def test_thread_scope_status_falls_back_to_surface_when_command_not_allowed(
     }
 
 
-def test_phone_proof_parser_includes_feed_focus_history_and_all_final_boss(tmp_path: Path) -> None:
+def test_phone_proof_parser_includes_feed_focus_transcript_live_history_and_all_final_boss(tmp_path: Path) -> None:
     args = proof.parse_args([
         "--repo-root",
         str(tmp_path),
@@ -472,9 +494,18 @@ def test_phone_proof_parser_includes_feed_focus_history_and_all_final_boss(tmp_p
         "--scenario",
         "history",
     ])
+    transcript_live = proof.parse_args([
+        "--repo-root",
+        str(tmp_path),
+        "--canonical-root",
+        str(tmp_path),
+        "--scenario",
+        "transcript_live",
+    ])
 
     assert args.scenario == "feed_focus"
     assert history.scenario == "history"
+    assert transcript_live.scenario == "transcript_live"
     assert args.feed_focus_text
     assert history.history_text
 

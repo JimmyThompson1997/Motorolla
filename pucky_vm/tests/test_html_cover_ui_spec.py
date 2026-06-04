@@ -2083,10 +2083,12 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "dispatch: uiDebugDispatch" in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
+    assert "messages: detailMessages" in app
     assert "thread_scope: {" in app
     assert "visible_cards: cards" in app
     assert 'pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound"' in app
     assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
+    assert 'read: !node.classList.contains("card-unread")' in app
     assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app
     assert "handleAndroidBack()" in app
     assert '[data-route="feed"]' in app
@@ -2157,6 +2159,7 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "dispatch: uiDebugDispatch" in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
+    assert "messages: detailMessages" in app
     assert "focused_card: {" in app
     assert "thread_scope: {" in app
     assert "turn_timing: currentTurnUiTiming()," in app
@@ -2166,6 +2169,7 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "openCardMenuThreadId" in app
     assert 'pending_outbound: node.getAttribute("data-card-pending-outbound") === "true"' in app
     assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
+    assert 'read: !node.classList.contains("card-unread")' in app
     assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app
     assert "handleAndroidBack()" in app
     assert '[data-route="feed"]' in app
