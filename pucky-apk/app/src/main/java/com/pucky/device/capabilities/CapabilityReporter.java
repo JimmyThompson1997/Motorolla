@@ -278,9 +278,9 @@ public final class CapabilityReporter {
                 "App connection and command state snapshot."));
         Json.add(out, cap("ui.dashboard", "ui.dashboard.show", "implemented", "yes", "visible", null, "self_reported",
                 "Brings the Pucky dashboard activity to the foreground."));
-        Json.add(out, cap("ui.reply_cards", "ui.reply_cards.set/ui.reply_cards.merge/ui.reply_cards.get/ui.reply_cards.clear",
+        Json.add(out, cap("ui.reply_cards", "ui.reply_cards.set/ui.reply_cards.merge/ui.reply_cards.get/ui.reply_cards.clear/pucky.feed.cache.get",
                 "implemented", "yes", "visible", null, "self_reported",
-                "Replaces, merges, or reads the local reply-card metadata consumed by the cached WebView UI."));
+                "Replaces, merges, or reads the local reply-card metadata consumed by the cached WebView UI; pucky.feed.cache.get is the web fallback read alias."));
         Json.add(out, cap("launcher.home_activity", "launcher.capability.get", "requires_user_mediated_intent",
                 "user_mediated", "visible", null, "manual_required",
                 "Manifest advertises a reversible Home activity; the user must choose and can undo the default Home app."));

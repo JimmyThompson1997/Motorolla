@@ -158,33 +158,10 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert ".links-list-spacer" not in styles
     assert ".links-list-scrollport" in styles
     assert ".links-list-rows" in styles
-    feed_block = css_block(styles, ".feed")
-    assert "min-height: 0;" in feed_block
-    links_feed_block = css_block(styles, ".feed.is-links-route")
-    assert "display: flex;" in links_feed_block
-    assert "flex: 0 0 var(--links-route-h);" in links_feed_block
-    assert "flex-direction: column;" in links_feed_block
-    assert "height: var(--links-route-h);" in links_feed_block
-    assert "max-height: var(--links-route-h);" in links_feed_block
-    links_page_block = css_block(styles, ".feed.is-links-route > .links-page")
-    assert "flex: 1 1 auto;" in links_page_block
-    assert "height: 100%;" in links_page_block
-    assert "max-height: 100%;" in links_page_block
-    assert "min-height: 0;" in links_page_block
     search_wrap = css_block(styles, ".links-search-wrap")
     assert "padding: 0 16px;" in search_wrap
     assert "position: sticky;" in search_wrap
     assert "top: 0;" in search_wrap
-    list_head = css_block(styles, ".links-list-head")
-    assert "display: flex;" in list_head
-    assert "justify-content: space-between;" in list_head
-    assert "display: none;" not in list_head
-    assert "@media (max-width: 520px) and (max-height: 520px)" in styles
-    assert re.search(
-        r"@media \(max-width: 520px\) and \(max-height: 520px\)\s*\{\s*\.links-list-head\s*\{\s*display: none;\s*padding: 0;\s*margin: 0;\s*min-height: 0;\s*height: 0;\s*overflow: hidden;\s*\}\s*\}",
-        styles,
-        re.S,
-    )
     search_input = css_block(styles, ".links-search")
     assert "min-height: 50px;" in search_input
     assert "font-size: 17px;" in search_input
@@ -192,19 +169,12 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "fill: none;" in active_tab_icon
     assert "stroke: currentColor;" in active_tab_icon
     app_row = css_block(styles, ".links-app-row")
-    assert "position: absolute;" in app_row
-    assert "height: 62px;" in app_row
     assert "grid-template-columns: 30px minmax(0, 1fr) auto 18px;" in app_row
     assert "padding: 0 16px;" in app_row
-    rows_block = css_block(styles, ".links-list-rows")
-    assert "position: relative;" in rows_block
-    assert "contain: layout paint;" in rows_block
     icon_block = css_block(styles, ".links-app-icon")
     assert "width: 28px;" in icon_block
     assert "height: 28px;" in icon_block
     assert "border-radius: 8px;" in icon_block
-    assert ".links-app-logo" in styles
-    assert ".links-app-fallback" not in styles
     name_block = css_block(styles, ".links-app-name")
     assert "font-size: 16px;" in name_block
     auth_block = css_block(styles, ".links-app-auth")
@@ -255,22 +225,8 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "scrollport.scrollTop = 0;" in app
     assert "noteLinksScrollActivity();" not in app
     assert "linksVisibleRange(" not in app
-    assert "const LINKS_WINDOW_OVERSCAN_ROWS = 8;" in app
-    assert "function linksWindowRange(" in app
-    assert "function syncLinksVisibleWindow(" in app
-    assert "filtered.slice(range.start, range.end).forEach" in app
-    assert "scrollport.addEventListener(\"scroll\", () => scheduleLinksWindowSync(linksPageRefs), { passive: true });" in app
-    assert "row.style.transform = `translate3d(0, ${index * LINKS_ROW_HEIGHT}px, 0)`;" in app
     assert "refs.topSpacer.style.height =" not in app
     assert "refs.bottomSpacer.style.height =" not in app
-    assert "links-app-logo" in app
-    assert "links-app-fallback" not in app
-    assert "linksAppInitial(" not in app
-    assert "img.src = app.logo_path;" in app
-    assert "img.loading = \"lazy\";" in app
-    assert "img.decoding = \"async\";" in app
-    assert "syncVisibleLinksLogos" not in app
-    assert "dataset.logoSrc" not in app
     assert 'feed.classList.toggle("is-links-handoff-locked", linksHandoffLocked())' not in app
     assert 'linksPageRefs.page.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
     assert 'linksPageRefs.scrollport.classList.toggle("is-handoff-lock", linksHandoffLocked());' in app
@@ -278,25 +234,16 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/apps"' not in app
     assert '"/api/links/status"' not in app
     assert '"/api/links/connect"' not in app
-    assert "logo_path: String(item && item.logo_path || \"\").trim()," in app
-    assert "logo_source_url: String(item && item.logo_source_url || item.logo || \"\").trim()," in app
 
 
-def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
+def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "function initialMeetingsState(cache = null)" in app
-    assert 'const MEETINGS_CACHE_KEY = "pucky.cover.meetings_cache.v1";' in app
-    assert 'const MEETINGS_CACHE_MAX_AGE_MS = 30000;' in app
-    assert "const persistedMeetingsCache = loadMeetingsCache();" in app
-    assert "meetings: initialMeetingsState(persistedMeetingsCache)" in app
+    assert "function initialMeetingsState()" in app
+    assert "meetings: initialMeetingsState()" in app
     assert "async function loadMeetings(options = {})" in app
     assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
-    assert "function shouldRefreshMeetings(options = {})" in app
-    assert "function warmMeetingsRoute(options = {})" in app
-    assert "function loadMeetingsCache()" in app
-    assert "function persistMeetingsCache()" in app
     assert "async function loadMeetingDetail(meeting)" in app
     assert "function meetingsPageView()" in app
     assert "function meetingRowView(meeting)" in app
@@ -320,9 +267,22 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
     assert "async function resolveLocalArtifactPath(path, item, options = {})" in app
     assert "async function resolveMeetingAudioLink(source = {})" in app
+    assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
     assert 'command: "meeting.recording.resolve_audio_link"' in app
-    assert "async function rewriteMeetingHtmlContent(htmlText, source = {})" in app
+    assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app
+    assert "{{PUCKY_MEETING_TRANSCRIPT_LINK}}" in app
     assert "{{PUCKY_MEETING_AUDIO_LINK}}" in app
+    assert "function meetingTranscriptLinkHtml(href, label = \"Open Transcript\")" in app
+    assert "function meetingAudioLinkHtml(href, label = \"Listen To Audio\")" in app
+    assert "function installMeetingHtmlActionBridge(iframe, { card, attachments, summaryIndex } = {})" in app
+    assert 'data-pucky-meeting-action="${escapeHtml(action)}"' in app
+    assert 'target="_blank"' not in function_block(app, "meetingAudioLinkHtml")
+    bridge = function_block(app, "installMeetingHtmlActionBridge")
+    assert "iframe.addEventListener(\"load\", bind);" in bridge
+    assert "bind();" in bridge
+    assert "requestAnimationFrame(bind);" in bridge
+    assert "event.target instanceof Element" not in bridge
+    assert "target instanceof HTMLAnchorElement" not in bridge
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app
@@ -332,8 +292,7 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "speaker_turns" in app
     assert "Processing..." in app
     assert "Refreshing..." in app
-    assert 'warmMeetingsRoute({ render: true });' in app
-    assert 'loadMeetings({ render: true, force: true })' in app
+    assert 'loadMeetings({ render: true });' in app
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'if (path && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
@@ -347,29 +306,6 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert ".meeting-row-icon" not in styles
 
 
-def test_meetings_route_uses_cached_first_refresh_and_debug_metrics() -> None:
-    app = read("app.js")
-
-    initial = function_block(app, "initialMeetingsState")
-    assert "const records = normalizeMeetingsCacheRecords(cache && cache.records);" in initial
-    assert "records," in initial
-    assert "cacheSource: cache && Array.isArray(cache.records) && cache.records.length ? \"storage\" : \"empty\"" in initial
-    assert "hasResolvedInitialLoad: Boolean(cache && Array.isArray(cache.records) && cache.records.length)" in initial
-    assert "lastFetchMs: 0" in initial
-    assert "lastHttpStatus: 0" in initial
-    assert "lastRenderReadyMs: 0" in initial
-    assert "function meetingsDebugMetrics()" in app
-    metrics = function_block(app, "meetingsDebugMetrics")
-    assert 'cache_source: String(state.meetings.cacheSource || "empty")' in metrics
-    assert "cache_age_ms:" in metrics
-    assert "records_count:" in metrics
-    assert "refresh_in_flight:" in metrics
-    assert "last_fetch_ms:" in metrics
-    assert "last_http_status:" in metrics
-    assert "last_render_ready_ms:" in metrics
-    assert "meetingsMetrics: meetingsDebugMetrics" in app
-
-
 def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -380,7 +316,7 @@ def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> No
 
     assert 'if (meetingState(record) === "failed") {' in show_meeting_detail
     assert "showMeetingFailedDetail(record, options);" in show_meeting_detail
-    assert 'showAudioDetail(meetingCardFromRecord(record), options);' in show_meeting_detail
+    assert 'showTranscript(meetingCardFromRecord(record), options);' in show_meeting_detail
     assert 'applyDetailDataAttributes(panel, "meeting_failed", detailCard, { viewer: "meeting_failed" });' in failed_detail
     assert 'rememberNavDetail("meeting_failed", detailCard, options);' in failed_detail
     assert "Meeting failed" in failed_content
@@ -407,6 +343,8 @@ def test_attachment_source_filter_hides_placeholders_and_html_path_fallback_open
     assert "return text.length >= 80 || text.includes(\"\\n\");" in meaningful
     assert "htmlAttachmentLocalPath(item)" in html_iframe
     assert "rewriteMeetingHtmlContent" in html_iframe
+    assert "resolveMeetingTranscriptLink" in html_iframe
+    assert "installMeetingHtmlActionBridge" in html_iframe
     assert ".meeting-transcript-section" in styles
     assert ".meeting-speaker-turn" in styles
     assert ".meeting-row-state.is-completed" in styles
@@ -519,8 +457,8 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert 'if (name === "pucky.turn.status")' in app
     assert 'command === "pucky.turn.status"' in app
     assert 'command: "pucky.turn.status"' in app
-    assert 'if (isTurnActive(state.turn)) {' in app
-    assert 'await refreshCardsFromNativeSnapshot({ render: false });' not in app
+    assert 'if (state.route === "feed") {' in app
+    assert 'await refreshCardsFromNativeSnapshot({ render: false });' in app
     assert "function renderVoiceStatus()" in app
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
@@ -611,7 +549,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "state.showArchivedFeed = false;" in app
     assert "state.excludedFeedIcons = new Set(uniqueFeedIcons().filter(icon => icon !== filter.key));" in app
     assert "const selected = !state.showArchivedFeed && isFeedIconIncluded(filter.key);" in app
-    assert "if (state.showArchivedFeed) {" in app
+    assert "? archived" in app
     assert 'label: "All replies"' not in app
     assert 'data-filter-icon="all"' not in app
     assert "button.style.setProperty(\"--filter-accent\"" in app
@@ -623,8 +561,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "state.excludedFeedIcons.delete(key)" in app
     assert "state.openTrayRoute = null;\n        render();\n        return;" not in app
     assert "state.feedIconFilter" not in app
-    assert "const page = homeFeedPageView(cards);" in app
-    assert "function homeFeedPageView(cards)" in app
+    assert "feed.replaceChildren(...cards.map(cardView))" in app
     assert "No selected replies." in app
     assert ".route-tray" in styles
     assert "position: absolute;" in styles
@@ -656,8 +593,9 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert "async function archiveHomeCard(card)" in app
     assert "function canRevealHomeArchive(card)" in app
     assert "function installArchiveReveal(wrapper, item, config)" in app
-    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false });' in app
+    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });' in app
     assert 'return requestFeedAction(freshCard, "archive");' in app
+    assert 'feedApiRequest("/api/feed/actions"' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
@@ -675,7 +613,6 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
     assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
-    assert "--links-route-h: calc(var(--viewport-safe-h) - 45px);" in styles
     assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
@@ -715,25 +652,19 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
-    thread_pending = function_block(app, "threadPendingCardView")
-    can_archive = function_block(app, "canArchiveHomeCard")
     can_reveal = function_block(app, "canRevealHomeArchive")
     filtered = function_block(app, "filteredFeedCards")
     request_mark_read = function_block(app, "requestMarkRead")
 
     assert "function isPendingOutboundCard(card)" in app
-    assert "function isThreadContinuationPendingCard(card)" in app
-    assert "function isStandalonePendingOutboundCard(card)" in app
     assert "function isFailedPendingOutboundCard(card)" in app
     assert "function pendingOutboundSummary(card)" in app
     assert "function pendingOutboundStatusLabel(card)" in app
     assert "function pendingOutboundStatusClass(card)" in app
-    assert "return threadPendingCardView(card);" in app
-    assert "return outboundCardView(card);" in app
-    assert "if (isStandalonePendingOutboundCard(card)) {" in filtered
-    assert "if (isThreadContinuationPendingCard(card)) {" in filtered
+    assert "if (isPendingOutboundCard(card)) {\n      return outboundCardView(card);" in app
+    assert "if (isPendingOutboundCard(card)) {\n        return false;\n      }" in filtered
     assert "isFeedIconIncluded(cardIconKey(card))" in filtered
-    assert "if (!card || card.deleted || isStandalonePendingOutboundCard(card))" in app
+    assert "if (!card || card.deleted || isPendingOutboundCard(card))" in app
     assert "card?.session_id || card?.local_session_id || card?.turn_id" in app
     assert "isPendingOutboundCard(card)" in request_mark_read
 
@@ -747,29 +678,18 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "showRichPage(card)" not in outbound
     assert "identity" not in outbound
     assert "card-actions" not in outbound
-    assert "function threadPendingCardView(card)" in app
-    assert "buildHomeArchiveButton(card, \"pending_outbound\")" in outbound
-    assert "card-outbound-actions" in outbound
-    assert "appendArchiveRevealAction(wrapper, {" in outbound
-    assert "installArchiveReveal(wrapper, card, {" in outbound
-    assert "buildHomeArchiveButton(card, \"reply\")" in thread_pending
-    assert "card-pending-thread-actions" in thread_pending
-    assert "appendArchiveRevealAction(wrapper, {" in thread_pending
-    assert "installArchiveReveal(wrapper, card, {" in thread_pending
+
+    assert "appendArchiveRevealAction(wrapper, {" not in outbound
+    assert "installArchiveReveal(wrapper, card, {" not in outbound
     assert "function installArchiveReveal(wrapper, item, config)" in app
-    assert "function canArchiveHomeCard(card)" in app
     assert "function canRevealHomeArchive(card)" in app
-    assert "if (Boolean(card?.archived)) {" in can_archive
-    assert "if (isPendingOutboundCard(card) && !isFailedPendingOutboundCard(card)) {" in can_archive
-    assert "return canArchiveHomeCard(card);" in can_reveal
+    assert "if (Boolean(card?.archived) || isPendingOutboundCard(card)) {" in can_reveal
+    assert "return false;" in can_reveal
     assert "function prefersTouchInput()" in app
-    assert "function isTouchPointerEvent(event)" in app
+    assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
 
     assert ".card.card-outbound" in styles
     assert ".card.card-outbound.is-failed" in styles
-    assert ".card-outbound-actions" in styles
-    assert ".card-pending-thread-actions" in styles
-    assert ".action.action-archive" in styles
     assert ".card-outbound-copy" in styles
     assert ".card-outbound-preview" in styles
     assert "-webkit-line-clamp: 2" in css_block(styles, ".card-outbound-preview")
@@ -889,7 +809,12 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert '"Pull to refresh"' not in app
     assert "const visible = Boolean(options.refreshing);" in app
     assert 'indicator.classList.toggle("is-armed"' not in app
-    assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' in app
+    assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' not in app
+    assert 'command === "ui.reply_cards.get"' not in app
+    assert 'fetch("/ui/pucky/fixtures/reply_cards.json"' not in app
+    assert "function fetchVmFeedSnapshot(options = {})" in app
+    assert "return `/api/feed?${params.toString()}`;" in app
+    assert 'command: "pucky.feed.cache.get"' in app
     assert 'pullDirection === "top" && refreshArmed' in app
     assert 'pullDirection === "bottom"' in app
     assert 'const preferTouchEvents = prefersTouchInput();' in app
@@ -897,7 +822,10 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert 'feed.addEventListener("pointermove"' in app
     assert 'feed.addEventListener("pointerup"' in app
     assert 'feed.addEventListener("pointercancel"' in app
-    assert 'if (preferTouchEvents && isTouchPointerEvent(event)) {' in app
+    assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
+    assert 'pointerType === "mouse" || pointerType === "pen"' in app
+    assert 'if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {' in app
+    assert 'isTouchPointerEvent(event)' not in app
     assert 'beginPull(event.clientY, event.pointerId, "pointer")' in app
     assert 'movePull(event.clientY, event, "pointer")' in app
     assert 'feed.addEventListener("touchstart"' in app
@@ -1153,15 +1081,15 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     reveal = function_block(app, "installArchiveReveal")
     optimistic = function_block(app, "applyOptimisticHomeArchive")
 
-    assert "authoritative: true" not in app
+    assert "authoritative: true" in app
     assert "reset_cursor: resetCursor" in app
-    assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' not in app
+    assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
     assert 'const wrapper = el("div", "card-wrap");' in app
     assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
     assert "appendArchiveRevealAction(wrapper, {" in app
     assert 'iconSvg("delete", { filled: true })' in app
     assert "result && result.ok === false" in app
-    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false });' in archive
+    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });' in archive
     assert "function applyOptimisticArchive(card)" not in app
     assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
     assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
@@ -1195,6 +1123,7 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert 'if (active && activeInputSource !== source) {' in reveal
     assert "activeInputSource = source;" in reveal
     assert "activeInputSource !== source" in reveal
+    assert 'if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {' in reveal
     assert 'begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");' in reveal
     assert 'move(event.clientX, event.clientY, "pointer");' in reveal
     assert 'finish("pointer");' in reveal
@@ -1203,7 +1132,7 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert 'move(event.touches[0].clientX, event.touches[0].clientY, "touch");' in reveal
     assert 'finish("touch");' in reveal
     assert 'record("cancel", { source: "touch", close_reason: "touchcancel" });' in reveal
-    assert "preferTouchEvents" not in reveal
+    assert "preferTouchEvents" in reveal
     assert "isTouchPointerEvent(event)" not in reveal
     assert 'closeReveal({ immediate: false, source, reason: "threshold_not_met" });' in reveal
     assert 'closeReveal({ immediate: false, reason: "click_capture_close", context: "wrapper_click_capture" });' in reveal
@@ -1213,11 +1142,9 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert 'dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });' in app
     assert 'reason: "outside_dismiss"' in function_block(app, "installArchiveRevealOutsideDismiss")
     assert "applyOptimisticHomeArchive(card)" in app
-    assert "function cardsShareIdentity(left, right)" in app
     assert "state.cards = state.cards.map(item => {" in optimistic
     assert "archived: true" in optimistic
-    assert "const target = findCardByIdentity(card) || card;" in optimistic
-    assert 'return cardsShareIdentity(item, target) ? { ...item, archived: true } : item;' in optimistic
+    assert 'return sameCardId || sameSession ? { ...item, archived: true } : item;' in optimistic
     assert 'command: "pucky.feed.action"' in app
     assert "CARD_ARCHIVE_SWIPE_" not in app
     assert ".archive-reveal-action" in styles
@@ -2075,11 +2002,6 @@ def test_walkie_thread_scope_badge_tracks_detail_views_and_feed_focus() -> None:
 
 def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() -> None:
     app = read("app.js")
-    mark_read = function_block(app, "markCardRead")
-    request_mark_read = function_block(app, "requestMarkRead")
-    sync_rebind = function_block(app, "syncOpenThreadDetailAfterCards")
-    show_transcript = function_block(app, "showTranscript")
-    install_detail_scroll = function_block(app, "installDetailScrollPersistence")
 
     assert "function attachmentPromotesToChatMedia(item)" in app
     assert 'return ["image_gallery", "video_player", "document_html", "html_iframe"].includes(viewerType);' in app
@@ -2087,36 +2009,8 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     assert "function resolveNavDetailCard(detail)" in app
     assert "const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;" in app
     assert "function syncOpenThreadDetailAfterCards()" in app
-    assert "function transcriptMessageSignature(card)" in app
-    assert "detailStickToLatest: true," in app
-    assert "function findCardByCardId(cardId)" in app
-    assert 'return String(card?.thread_id || card?.session_id || card?.card_id || "").trim();' in app
     assert "const nextCard = resolveNavDetailCard(detail);" in app
-    assert 'const currentCardId = String(panel.getAttribute("data-detail-card-id") || "");' in sync_rebind
-    assert "const currentCard = currentCardId ? findCardByCardId(currentCardId) : null;" in sync_rebind
-    assert "const currentSignature = currentCard ? transcriptMessageSignature(currentCard) : \"\";" in sync_rebind
-    assert "const nextSignature = nextCard ? transcriptMessageSignature(nextCard) : \"\";" in sync_rebind
-    assert "const shouldRebind = Boolean(" in sync_rebind
-    assert "|| nextCardId !== currentCardId" in sync_rebind
-    assert "|| nextSignature !== currentSignature" in sync_rebind
     assert 'showTranscript(nextCard, shouldStickToLatest' in app
-    assert '? { stickToLatest: true }' in sync_rebind
-    assert "state.detailStickToLatest" in sync_rebind
-    assert "|| !canScrollUp(content)" in sync_rebind
-    assert "function scrollTranscriptToLatest(content)" in app
-    assert "window.setTimeout(apply, 60);" in app
-    assert "if (!isPendingOutboundCard(nextCard)) {" in app
-    assert "markCardRead(nextCard);" in app
-    assert "setCardReadOverride(card, true);" in mark_read
-    assert "if (isPendingOutboundCard(card)) {" not in mark_read
-    assert "requestMarkRead(card);" in mark_read
-    assert "if (isPendingOutboundCard(card)) {" in request_mark_read
-    assert "const stickToLatest = !options.restoring || Boolean(options.stickToLatest);" in show_transcript
-    assert "state.detailStickToLatest = stickToLatest;" in show_transcript
-    assert "if (stickToLatest) {" in show_transcript
-    assert "state.detailStickToLatest = true;" in app
-    assert 'if (type === "transcript") {' in install_detail_scroll
-    assert "state.detailStickToLatest = isNearBottom(content);" in install_detail_scroll
     assert 'recordTurnUiEvent("thread_detail_rebound", {' in app
 
 def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:
@@ -2171,12 +2065,10 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "dispatch: uiDebugDispatch" in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
-    assert "messages: detailMessages" in app
     assert "thread_scope: {" in app
     assert "visible_cards: cards" in app
     assert 'pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound"' in app
     assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
-    assert 'read: !node.classList.contains("card-unread")' in app
     assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app
     assert "handleAndroidBack()" in app
     assert '[data-route="feed"]' in app
@@ -2247,7 +2139,6 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "dispatch: uiDebugDispatch" in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
-    assert "messages: detailMessages" in app
     assert "focused_card: {" in app
     assert "thread_scope: {" in app
     assert "turn_timing: currentTurnUiTiming()," in app
@@ -2255,9 +2146,8 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert 'active: Boolean(focusedCard)' in app
     assert 'menu_open: Boolean(focusedCard)' in app
     assert "openCardMenuThreadId" in app
-    assert 'pending_outbound: node.getAttribute("data-card-pending-outbound") === "true"' in app
+    assert 'pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound"' in app
     assert 'pending_state: node.getAttribute("data-card-pending-state") || ""' in app
-    assert 'read: !node.classList.contains("card-unread")' in app
     assert 'preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()' in app
     assert "handleAndroidBack()" in app
     assert '[data-route="feed"]' in app
@@ -2281,3 +2171,4 @@ def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_
     chip = css_block(styles, ".bubble-attachment-chip")
     assert "border-radius: 999px;" in chip
     assert "display: inline-flex;" in chip
+

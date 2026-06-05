@@ -377,8 +377,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(ui.contains("replyCards.merge(cards)"));
         assertTrue(store.contains("public JSONObject merge(JSONArray cardsJson)"));
         assertTrue(commands.contains("\"ui.reply_cards.merge\""));
+        assertTrue(commands.contains("\"pucky.feed.cache.get\""));
         assertTrue(commands.contains("return uiController.replyCardsMerge(command.args())"));
-        assertTrue(caps.contains("ui.reply_cards.set/ui.reply_cards.merge/ui.reply_cards.get/ui.reply_cards.clear"));
+        assertTrue(caps.contains("ui.reply_cards.set/ui.reply_cards.merge/ui.reply_cards.get/ui.reply_cards.clear/pucky.feed.cache.get"));
     }
 
     @Test

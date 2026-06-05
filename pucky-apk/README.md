@@ -44,6 +44,7 @@ launch, capture logs, and forward local broker traffic during development.
 - `ui.dashboard.show`
 - `ui.reply_cards.set`
 - `ui.reply_cards.get`
+- `pucky.feed.cache.get`
 - `ui.reply_cards.clear`
 - `launcher.capability.get`
 - `runtime.stats`

@@ -64,6 +64,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("window.Pucky&&window.Pucky.__resolve"));
         assertTrue("HTML bridge should allow explicit UI/player/file commands",
                 bridge.contains("case \"ui.reply_cards.get\"")
+                        && bridge.contains("case \"pucky.feed.cache.get\"")
                         && bridge.contains("case \"ui.default_audio_speed.get\"")
                         && bridge.contains("case \"ui.default_audio_speed.set\"")
                         && bridge.contains("case \"browser.open\"")
@@ -331,10 +332,12 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("\"ui.reply_cards.set\""));
         assertTrue(source.contains("\"ui.reply_cards.merge\""));
         assertTrue(source.contains("\"ui.reply_cards.get\""));
+        assertTrue(source.contains("\"pucky.feed.cache.get\""));
         assertTrue(source.contains("\"ui.reply_cards.clear\""));
         assertTrue(source.contains("uiController.replyCardsSet"));
         assertTrue(source.contains("uiController.replyCardsMerge"));
         assertTrue(source.contains("uiController.replyCardsGet"));
+        assertTrue(source.contains("PuckyFeedController.shared(settingsStore.context()).snapshot()"));
         assertTrue(source.contains("uiController.replyCardsClear"));
         assertTrue(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));
         assertTrue(uiController.contains("return PuckyFeedController.shared(context).snapshot();"));

@@ -86,7 +86,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.turn.received_cue.test", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read", "pucky.turn.debug.inject_history",
             "pucky.turn.debug.response_fault",
-            "pucky.feed.sync", "pucky.feed.action",
+            "pucky.feed.sync", "pucky.feed.action", "pucky.feed.cache.get",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -495,6 +495,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return PuckyFeedController.shared(settingsStore.context()).sync(command.args());
             case "pucky.feed.action":
                 return PuckyFeedController.shared(settingsStore.context()).action(command.args());
+            case "pucky.feed.cache.get":
+                return PuckyFeedController.shared(settingsStore.context()).snapshot();
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":

@@ -75,6 +75,8 @@ public final class PuckyWebBridge {
     private JSONObject execute(String command, JSONObject args) throws CommandException {
         PlayerController player = PlayerController.shared(context);
         switch (command) {
+            case "pucky.feed.cache.get":
+                return PuckyFeedController.shared(context).snapshot();
             case "ui.reply_cards.get":
                 return PuckyFeedController.shared(context).snapshot();
             case "ui.default_audio_speed.get":

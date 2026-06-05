@@ -81,13 +81,16 @@ public final class MeetingRecordingController {
     public synchronized JSONObject resolveAudioLink(JSONObject args) throws CommandException {
         String meetingId = args.optString("meeting_id", "").trim();
         JSONObject record = findMeetingRecordLocked(meetingId);
+        String recordingTitle = firstNonEmpty(
+                args.optString("recording_title", ""),
+                record == null ? "" : record.optString("recording_title", ""));
         String title = firstNonEmpty(
                 args.optString("title", ""),
                 record == null ? "" : record.optString("title", ""));
         String canonicalBasename = meetingCanonicalBasename(
                 firstNonEmpty(args.optString("canonical_basename", ""),
                         record == null ? "" : record.optString("canonical_basename", "")),
-                title,
+                firstNonEmpty(recordingTitle, title),
                 firstNonEmpty(args.optString("started_at", ""),
                         record == null ? "" : record.optString("started_at", "")));
         String mimeType = firstNonEmpty(
@@ -104,7 +107,7 @@ public final class MeetingRecordingController {
         if (localFile == null && !audioUrl.isEmpty()) {
             JSONObject prepareArgs = new JSONObject();
             Json.put(prepareArgs, "url", audioUrl);
-            Json.put(prepareArgs, "title", title.isEmpty() ? "Meeting audio" : title);
+            Json.put(prepareArgs, "title", firstNonEmpty(recordingTitle, title).isEmpty() ? "Meeting audio" : firstNonEmpty(recordingTitle, title));
             Json.put(prepareArgs, "filename", canonicalBasename + extensionForAudio(mimeType, "meeting-audio.m4a"));
             Json.put(prepareArgs, "mime_type", mimeType);
             Json.put(prepareArgs, "max_bytes", 96L * 1024L * 1024L);
@@ -130,6 +133,9 @@ public final class MeetingRecordingController {
         if (!title.isEmpty()) {
             Json.put(record, "title", title);
         }
+        if (!recordingTitle.isEmpty()) {
+            Json.put(record, "recording_title", recordingTitle);
+        }
         if (!meetingId.isEmpty()) {
             appendMeeting(record);
         }
@@ -141,6 +147,9 @@ public final class MeetingRecordingController {
         Json.put(out, "meeting_id", meetingId);
         Json.put(out, "device_path", renamed.getAbsolutePath());
         Json.put(out, "canonical_basename", canonicalBasename);
+        if (!recordingTitle.isEmpty()) {
+            Json.put(out, "recording_title", recordingTitle);
+        }
         Json.put(out, "url", artifact.optString("url", ""));
         Json.put(out, "source", localFile.equals(renamed) ? "local" : "renamed_local");
         if (!audioUrl.isEmpty()) {
@@ -603,3 +612,4 @@ public final class MeetingRecordingController {
         prefs.edit().putString(MEETINGS, trimmed.toString()).commit();
     }
 }
+

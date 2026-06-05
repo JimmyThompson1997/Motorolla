@@ -8,7 +8,8 @@
     "test:cover-default-audio-speed": "node ./cover_default_audio_speed_playwright.mjs",
     "test:cover-pause-scrubber": "node ./cover_pause_scrubber_playwright.mjs",
     "test:session-model-defaults": "node ./session_model_defaults_playwright.mjs",
-    "test:cover-links-scroll-probe": "node ./cover_links_scroll_probe.mjs"
+    "test:cover-links-scroll-probe": "node ./cover_links_scroll_probe.mjs",
+    "test:meeting-mode-real-vm": "node ./meeting_mode_agent_real_vm_playwright.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.54.2"

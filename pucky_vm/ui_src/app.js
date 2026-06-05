@@ -4,9 +4,6 @@
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
-  const MEETINGS_CACHE_KEY = "pucky.cover.meetings_cache.v1";
-  const MEETINGS_CACHE_SCHEMA = "pucky.cover.meetings_cache.v1";
-  const MEETINGS_CACHE_MAX_AGE_MS = 30000;
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -193,7 +190,7 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
-  const LINKS_WINDOW_OVERSCAN_ROWS = 8;
+  const LINKS_LOGO_PRELOAD_ROWS = 12;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -202,100 +199,8 @@
     NO_AUTH: "No auth"
   };
 
-  const MOCK_CARDS = [
-    {
-      session_id: "mock_morning",
-      title: "Morning launch",
-      icon: "clock",
-      accent: "#ffb000",
-      created_at: "2026-05-20T06:33:00-07:00",
-      summary: "Brief me, triage the inbox, scan the weather, surface the one thing that cannot slip.",
-      transcript_messages: [
-        { role: "user", text: "Pucky, start my morning.", created_at: "2026-05-20T06:31:00-07:00" },
-        { role: "assistant", text: "Weather is clear until early afternoon. Your inbox has three messages that look decision-relevant, and one calendar collision at 11.", created_at: "2026-05-20T06:31:00-07:00" },
-        { role: "user", text: "Give me the one thing that cannot slip.", created_at: "2026-05-20T06:32:00-07:00" },
-        { role: "assistant", text: "The funding memo. It blocks the contractor reply and the finance sync. I would do that before anything tactical.", created_at: "2026-05-20T06:32:00-07:00" },
-        { role: "user", text: "Any landmines?", created_at: "2026-05-20T06:33:00-07:00" },
-        { role: "assistant", text: "Two. First, the team thread drifted into scope without a decision owner. Second, the weather window for errands is smaller than yesterday's forecast suggested.", created_at: "2026-05-20T06:33:00-07:00" }
-      ],
-      audio_path: "/mock/morning.wav",
-      html_path: "/mock/morning.html"
-    },
-    {
-      session_id: "mock_leave",
-      title: "Leaving home",
-      icon: "bolt",
-      accent: "#50d86a",
-      created_at: "2026-05-20T08:08:00-07:00",
-      summary: "Start commute, queue a drive mix, notify ETA, check garage state, and keep it light.",
-      transcript_messages: [
-        { role: "user", text: "Leaving home.", time: "8:07 AM" },
-        { role: "assistant", text: "Drive mode is ready. I queued a low-distraction mix, checked the garage action, and prepared an ETA note if traffic gets worse.", time: "8:07 AM" },
-        { role: "assistant", text: "One small warning: the north route has a slowdown near the merge, but it is still faster than the alternate by six minutes.", time: "8:08 AM" }
-      ],
-      audio_path: "/mock/leaving.wav",
-      html_path: "/mock/leaving.html"
-    },
-    {
-      session_id: "mock_meeting",
-      title: "Meeting prep",
-      icon: "calendar",
-      accent: "#3a84ff",
-      created_at: "2026-05-19T09:46:00-07:00",
-      summary: "Pull agenda notes, summarize the last thread, identify likely decisions, and prep follow-ups.",
-      transcript_messages: [
-        { role: "user", text: "What do I need before the meeting?", time: "9:45 AM" },
-        { role: "assistant", text: "The decision is narrower than the thread makes it look: approve the lightweight pilot, or defer until analytics can support a larger rollout.", time: "9:45 AM" },
-        { role: "assistant", text: "I pulled the three likely objections into a short prep note: cost, support burden, and whether the pilot result will be credible.", time: "9:46 AM" },
-        { role: "user", text: "Give me a good first sentence.", time: "9:46 AM" },
-        { role: "assistant", text: "Try: 'I think we can make this decision smaller and safer by treating the first release as an instrumentation pilot, not a product commitment.'", time: "9:46 AM" }
-      ],
-      audio_path: "/mock/meeting.wav",
-      html_path: "/mock/meeting.html"
-    },
-    {
-      session_id: "mock_night",
-      title: "Night wrap",
-      icon: "moon",
-      accent: "#8b63ff",
-      created_at: "2026-05-18T23:01:00-07:00",
-      summary: "Summarize the day, capture loose tasks, set tomorrow priorities, dim notifications.",
-      transcript_messages: [
-        { role: "user", text: "Wrap my day.", time: "11:00 PM" },
-        { role: "assistant", text: "You closed two loops, left one thread waiting on confirmation, and created one new task that should not be handled tonight.", time: "11:00 PM" },
-        { role: "assistant", text: "Tomorrow's first move should be the contractor reply. I put it above inbox triage because it unlocks the rest of the workday.", time: "11:01 PM" },
-        { role: "user", text: "Dim everything except urgent calls.", time: "11:01 PM" },
-        { role: "assistant", text: "Done. Quiet mode is staged, and urgent callers remain allowed.", time: "11:01 PM" }
-      ],
-      audio_path: "/mock/night.wav",
-      html_path: "/mock/night.html"
-    },
-    {
-      session_id: "mock_book",
-      title: "Pocket Computers",
-      icon: "book",
-      accent: "#72c2ff",
-      created_at: "2026-05-09T16:13:00-07:00",
-      summary: "From Pocket Computers to Planetary Platforms. Complete George narration, ready to resume.",
-      transcript_messages: [
-        { role: "assistant", text: "Chapter narration is ready at the last saved position.", time: "4:12 PM" },
-        { role: "assistant", text: "The next section traces the leap from tiny personal machines to always-connected pocket infrastructure.", time: "4:12 PM" },
-        { role: "user", text: "Resume softly and keep the speed where I left it.", time: "4:13 PM" },
-        { role: "assistant", text: "Ready. Playback will resume with the saved position and speed.", time: "4:13 PM" }
-      ],
-      audio_path: "/mock/pocket-computers.wav",
-      audio_timestamps: [
-        { id: "chapter-01", title: "Prologue - The Phone Before the Phone", start_ms: 0, end_ms: 403260, detail: "6:43", kind: "prologue" },
-        { id: "chapter-03", title: "Chapter 1 - The Portable Future Before It Fit in a Pocket", start_ms: 406080, end_ms: 2741520, detail: "38:55 across 3 segments", kind: "chapter" },
-        { id: "chapter-14", title: "Chapter 10 - The iPhone Demo and the Reframing of the Phone", start_ms: 22422900, end_ms: 24921850, detail: "41:39 across 3 segments", kind: "chapter" },
-        { id: "chapter-31", title: "Postscript - The Runtime Phone", start_ms: 66065430, end_ms: 69897470, detail: "1:03:52 across 4 segments", kind: "postscript" }
-      ],
-      html_path: "/mock/pocket-computers.html"
-    }
-  ];
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
-  const persistedMeetingsCache = loadMeetingsCache();
   const state = {
     cards: [],
     cardIconRegistry: {},
@@ -329,11 +234,11 @@
     audioCard: null,
     traceCard: null,
     metaCard: null,
+    feedLoadError: "",
     feedRefreshPromise: null,
     feedRefreshing: false,
     nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
-    detailStickToLatest: true,
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
@@ -342,7 +247,7 @@
     lastRenderedTurnId: "",
     waveHistory: new Map(),
     links: initialLinksState(),
-    meetings: initialMeetingsState(persistedMeetingsCache),
+    meetings: initialMeetingsState(),
     meetingRecording: initialMeetingRecordingStatus(),
     drag: null
   };
@@ -594,6 +499,9 @@
         });
         applyTurnStatus(payload);
         renderVoiceStatus();
+        if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" && state.route === "feed") {
+          void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });
+        }
       }
       if (name === "pucky.feed.updated") {
         const cards = Array.isArray(payload && payload.cards) ? payload.cards : [];
@@ -610,20 +518,6 @@
   };
 
   async function browserRequest(command, args) {
-    if (command === "ui.reply_cards.get") {
-      try {
-        const response = await fetch("/ui/pucky/fixtures/reply_cards.json", { cache: "no-store" });
-        if (response.ok) {
-          return response.json();
-        }
-      } catch (_) {
-        // Local file and static preview mode intentionally fall back to fixtures.
-      }
-      return { schema: "pucky.reply_cards.v1", count: MOCK_CARDS.length, cards: MOCK_CARDS };
-    }
-    if (command === "pucky.feed.sync") {
-      return { schema: "pucky.feed_sync_result.v1", configured: true, reason: args.reason || "browser_mock", snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards } };
-    }
     if (command === "voice.thread_scope.get") {
       return normalizeThreadScope(state.threadScope);
     }
@@ -634,36 +528,6 @@
     if (command === "voice.thread_scope.clear") {
       state.threadScope = initialThreadScope();
       return state.threadScope;
-    }
-    if (command === "pucky.feed.action") {
-      const action = String(args.action || "").trim();
-      const cardId = String(args.card_id || "");
-      const sessionId = String(args.session_id || "");
-      state.cards = state.cards
-        .map(card => {
-          const same = (card.card_id && card.card_id === cardId)
-            || (!cardId && card.session_id && card.session_id === sessionId);
-          if (!same) {
-            return card;
-          }
-          if (action === "archive") {
-            return { ...card, archived: true };
-          }
-          if (action === "mark_read") {
-            return { ...card, read: true };
-          }
-          if (action === "delete") {
-            return { ...card, deleted: true };
-          }
-          return card;
-        })
-        .filter(card => !card.deleted);
-      return {
-        schema: "pucky.feed_action_result.v1",
-        ok: true,
-        action,
-        snapshot: { schema: "pucky.reply_cards.v1", count: state.cards.length, cards: state.cards }
-      };
     }
     if (command === "meeting.recording.status") {
       return state.meetingRecording;
@@ -1035,50 +899,163 @@
     return /^\/mock\/[^/]+\.html$/i.test(String(path || ""));
   }
 
-  async function fetchReplyCards() {
-    const snapshot = await Pucky.request({ command: "ui.reply_cards.get", args: {} });
-    return Array.isArray(snapshot.cards) ? snapshot.cards : [];
+  const HOME_FEED_LIMIT = 100;
+
+  function hasAndroidBridge() {
+    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+  }
+
+  function feedApiBaseUrl() {
+    if (state.links.apiBaseUrl) {
+      return state.links.apiBaseUrl;
+    }
+    if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
+      return String(window.location.origin || "").replace(/\/$/, "");
+    }
+    return DEFAULT_LINKS_API_BASE;
+  }
+
+  function feedApiPath(options = {}) {
+    const params = new URLSearchParams();
+    params.set("limit", String(Math.max(1, Number(options.limit || HOME_FEED_LIMIT) || HOME_FEED_LIMIT)));
+    params.set("include_archived", options.includeArchived ? "1" : "0");
+    params.set("compact", "1");
+    if (options.cursor) {
+      params.set("cursor", String(options.cursor));
+    }
+    return `/api/feed?${params.toString()}`;
+  }
+
+  async function feedApiRequest(path, options = {}) {
+    await ensureLinksApiConfig();
+    const method = String(options.method || "GET").toUpperCase();
+    const init = {
+      method,
+      cache: String(options.cache || "no-store"),
+      headers: { Accept: "application/json" }
+    };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    if (options.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
+    }
+    return payload;
+  }
+
+  function normalizeFeedSnapshot(payload, source = "vm") {
+    const cards = Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.cards)
+        ? payload.cards
+        : [];
+    return {
+      schema: "pucky.reply_cards.v1",
+      source,
+      count: cards.length,
+      cards,
+      next_cursor: String(payload?.next_cursor || ""),
+      has_more: Boolean(payload?.has_more)
+    };
+  }
+
+  function applyFeedSnapshot(snapshot, options = {}) {
+    state.cards = Array.isArray(snapshot?.cards) ? snapshot.cards : [];
+    state.feedLoadError = "";
+    reconcileReadOverrides();
+    reconcileFocusedCardSelection();
+    clearMissingFeedIconFilter();
+    if (options.render !== false) {
+      render();
+    }
+    return {
+      schema: "pucky.reply_cards.v1",
+      source: String(snapshot?.source || "unknown"),
+      count: state.cards.length,
+      cards: state.cards,
+      next_cursor: String(snapshot?.next_cursor || ""),
+      has_more: Boolean(snapshot?.has_more)
+    };
+  }
+
+  async function fetchVmFeedSnapshot(options = {}) {
+    const payload = await feedApiRequest(feedApiPath(options));
+    return normalizeFeedSnapshot(payload, "vm");
+  }
+
+  async function fetchAndroidFeedCacheSnapshot(reason = "feed_cache_fallback") {
+    if (!hasAndroidBridge()) {
+      throw new Error("Android feed cache is not available");
+    }
+    const snapshot = await Pucky.request({
+      command: "pucky.feed.cache.get",
+      args: { reason }
+    });
+    return normalizeFeedSnapshot(snapshot, "android_cache");
+  }
+
+  async function mirrorVmFeedToAndroidCache(reason = "feed_mirror") {
+    if (!hasAndroidBridge()) {
+      return null;
+    }
+    const resetCursor = true;
+    const result = await Pucky.request({
+      command: "pucky.feed.sync",
+      args: {
+        reason,
+        reset_cursor: resetCursor,
+        authoritative: true
+      }
+    });
+    const snapshot = result && result.snapshot ? normalizeFeedSnapshot(result.snapshot, "android_localized") : null;
+    if (snapshot && Array.isArray(snapshot.cards) && snapshot.cards.length) {
+      applyFeedSnapshot(snapshot, { render: true });
+      restoreNavStateAfterCards();
+      syncOpenThreadDetailAfterCards();
+    }
+    return result;
   }
 
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
-    const authoritative = options.authoritative === true;
-    const resetCursor = options.resetCursor === true || authoritative;
     try {
-      const result = await Pucky.request({
-        command: "pucky.feed.sync",
-        args: { reason, reset_cursor: resetCursor, authoritative }
-      });
-      const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
-        ? result.snapshot
-        : { cards: await fetchReplyCards() };
-      state.cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
-      reconcileReadOverrides();
-      reconcileFocusedCardSelection();
-      clearMissingFeedIconFilter();
-      if (options.render !== false) {
-        render();
+      const snapshot = await fetchVmFeedSnapshot({ includeArchived: false });
+      const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
+      if (options.androidMirror !== false) {
+        void mirrorVmFeedToAndroidCache(reason).catch(() => {});
       }
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
-      return snapshot;
+      return applied;
     } catch (error) {
+      if (hasAndroidBridge()) {
+        try {
+          const fallback = await fetchAndroidFeedCacheSnapshot(reason);
+          const applied = applyFeedSnapshot(fallback, { render: options.render !== false });
+          await syncVoiceThreadScope({ reason: `feed_cache:${reason}`, render: true });
+          return applied;
+        } catch (_) {
+          // Fall through to the browser-style unavailable state below.
+        }
+      }
+      state.feedLoadError = error instanceof Error ? error.message : String(error || "Feed unavailable");
       if (!options.silent) {
         throw error;
       }
-      return { cards: state.cards };
+      if (options.render !== false) {
+        render();
+      }
+      return { schema: "pucky.reply_cards.v1", source: "error", count: state.cards.length, cards: state.cards };
     }
   }
 
   async function loadCards() {
-    try {
-      state.cards = await fetchReplyCards();
-    } catch (error) {
-      state.cards = MOCK_CARDS;
-    }
-    reconcileReadOverrides();
-    reconcileFocusedCardSelection();
-    clearMissingFeedIconFilter();
-    render();
+    await syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true });
     restoreNavStateAfterCards();
     void syncVoiceThreadScope({ reason: "load_cards", render: true });
   }
@@ -1097,11 +1074,8 @@
     });
     state.nativeFeedSnapshotPromise = (async () => {
       try {
-        const cards = await fetchReplyCards();
-        state.cards = Array.isArray(cards) ? cards : state.cards;
-        reconcileReadOverrides();
-        reconcileFocusedCardSelection();
-        clearMissingFeedIconFilter();
+        const snapshot = await fetchAndroidFeedCacheSnapshot(String(options.reason || "native_snapshot"));
+        applyFeedSnapshot(snapshot, { render: false });
         if (options.render !== false) {
           render();
           restoreNavStateAfterCards();
@@ -1228,8 +1202,7 @@
     return {
       slug: String(item && item.slug || "").trim(),
       name: String(item && (item.name || item.slug) || "").trim(),
-      logo_path: String(item && item.logo_path || "").trim(),
-      logo_source_url: String(item && item.logo_source_url || item.logo || "").trim(),
+      logo: String(item && item.logo || "").trim(),
       auth_schemes: authSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       managed_auth_schemes: managedAuthSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       auth_label: String(item && item.auth_label || "").trim(),
@@ -1303,20 +1276,25 @@
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
     const icon = el("span", "links-app-icon");
-    const img = document.createElement("img");
-    img.className = "links-app-logo";
-    img.alt = "";
-    img.loading = "lazy";
-    img.decoding = "async";
-    img.addEventListener("load", () => {
-      state.links.logoLoads += 1;
-    });
-    img.addEventListener("error", () => {
-      state.links.logoErrors += 1;
-      img.remove();
-    });
-    img.src = app.logo_path;
-    icon.append(img);
+    const fallback = el("span", "links-app-fallback", linksAppInitial(app));
+    if (app.logo) {
+      const img = document.createElement("img");
+      img.className = "links-app-logo";
+      img.dataset.logoSrc = app.logo;
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.addEventListener("load", () => {
+        icon.classList.add("has-image");
+        state.links.logoLoads += 1;
+      });
+      img.addEventListener("error", () => {
+        state.links.logoErrors += 1;
+        img.remove();
+      });
+      icon.append(img);
+    }
+    icon.append(fallback);
 
     const name = el("span", "links-app-name", app.name || app.slug);
     const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
@@ -1344,31 +1322,26 @@
     });
   }
 
-  function linksWindowRange(filteredLength, scrollTop, viewportHeight) {
-    if (!filteredLength) {
-      return { start: 0, end: 0 };
+  function syncVisibleLinksLogos(refs) {
+    if (!refs || !refs.scrollport || !refs.rows || refs.listCard.hidden) {
+      return;
     }
-    const visibleStart = Math.max(0, Math.floor(Math.max(0, scrollTop) / LINKS_ROW_HEIGHT));
-    const visibleEnd = Math.max(
-      visibleStart + 1,
-      Math.ceil((Math.max(0, scrollTop) + Math.max(LINKS_ROW_HEIGHT, viewportHeight)) / LINKS_ROW_HEIGHT)
-    );
-    return {
-      start: Math.max(0, visibleStart - LINKS_WINDOW_OVERSCAN_ROWS),
-      end: Math.min(filteredLength, visibleEnd + LINKS_WINDOW_OVERSCAN_ROWS)
-    };
-  }
-
-  function linksListKey(filtered) {
-    const first = filtered[0] || null;
-    const last = filtered[filtered.length - 1] || null;
-    return [
-      state.links.catalogVersion || "",
-      state.links.search || "",
-      filtered.length,
-      first && first.slug || "",
-      last && last.slug || ""
-    ].join("\u001f");
+    const rows = refs.rows.children;
+    if (!rows || !rows.length) {
+      return;
+    }
+    const scrollTop = Math.max(0, safeNumber(refs.scrollport.scrollTop));
+    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport.clientHeight));
+    const start = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_LOGO_PRELOAD_ROWS);
+    const end = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_LOGO_PRELOAD_ROWS);
+    for (let index = start; index < end; index += 1) {
+      const row = rows[index];
+      const img = row && row.querySelector ? row.querySelector(".links-app-logo[data-logo-src]") : null;
+      if (!img || img.src) {
+        continue;
+      }
+      img.src = img.dataset.logoSrc;
+    }
   }
 
   function linksAuthLabelForApp(app) {
@@ -1558,6 +1531,7 @@
   let linksPageNode = null;
   let linksPageRefs = null;
   let linksSessionPromise = null;
+  let linksLogoRaf = 0;
 
   async function hydrateLinksSession(options = {}) {
     if (linksSessionPromise) {
@@ -1639,6 +1613,17 @@
     return linksPageRefs && linksPageRefs.scrollport ? linksPageRefs.scrollport : null;
   }
 
+  function scheduleLinksLogoSync() {
+    if (linksLogoRaf) {
+      return;
+    }
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback, 16);
+    linksLogoRaf = raf(() => {
+      linksLogoRaf = 0;
+      syncVisibleLinksLogos(linksPageRefs);
+    });
+  }
+
   function linksMatchesSearch(app, needle) {
     return String(app && app.name || "").toLowerCase().includes(needle)
       || String(app && app.slug || "").toLowerCase().includes(needle);
@@ -1703,71 +1688,30 @@
     }
   }
 
-  function syncLinksVisibleWindow(refs, filtered, handoffLocked) {
-    const scrollTop = Math.max(0, safeNumber(refs.scrollport && refs.scrollport.scrollTop));
-    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport && refs.scrollport.clientHeight));
-    const range = linksWindowRange(filtered.length, scrollTop, viewportHeight);
-    const windowKey = `${range.start}:${range.end}`;
-    if (refs.rows.dataset.linksWindowKey !== windowKey) {
-      const fragment = document.createDocumentFragment();
-      filtered.slice(range.start, range.end).forEach((app, offset) => {
-        const index = range.start + offset;
-        const row = createLinksRow(app, index, handoffLocked);
-        row.style.transform = `translate3d(0, ${index * LINKS_ROW_HEIGHT}px, 0)`;
-        fragment.append(row);
-      });
-      refs.rows.replaceChildren(fragment);
-      refs.rows.dataset.linksWindowKey = windowKey;
-    }
-    syncLinksRowStates(refs, handoffLocked);
-    if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
-      state.links.firstRowsTelemetrySent = true;
-      linksDebugRecord(
-        "first_rows_rendered",
-        {
-          rendered_rows: range.end - range.start,
-          filtered_count: filtered.length,
-          window_start: range.start,
-          window_end: range.end
-        },
-        "route"
-      );
-    }
-  }
-
-  function scheduleLinksWindowSync(refs) {
-    if (!refs || refs.windowRaf) {
-      return;
-    }
-    refs.windowRaf = requestAnimationFrame(() => {
-      refs.windowRaf = 0;
-      if (linksPageRefs !== refs) {
-        return;
-      }
-      syncLinksVisibleWindow(refs, linksFilteredApps(), linksHandoffLocked());
-    });
-  }
-
   function syncLinksListContents(refs) {
     const filtered = linksFilteredApps();
     refs.listCount.textContent = linksCountLabel(filtered);
     if (!filtered.length) {
       refs.rows.dataset.linksListKey = "";
-      refs.rows.dataset.linksWindowKey = "";
-      refs.rows.style.height = "";
-      refs.rows.classList.add("is-empty");
       refs.rows.replaceChildren(el("div", "links-empty", state.links.apps.length ? "No apps match your search." : "No connectable apps are available right now."));
       return;
     }
     const handoffLocked = linksHandoffLocked();
-    const listKey = linksListKey(filtered);
+    const listKey = filtered.map(app => String(app.slug || "")).join("\u001f");
     if (refs.rows.dataset.linksListKey !== listKey) {
-      refs.rows.classList.remove("is-empty");
-      refs.rows.style.height = `${filtered.length * LINKS_ROW_HEIGHT}px`;
+      const fragment = document.createDocumentFragment();
+      filtered.forEach((app, index) => {
+        fragment.append(createLinksRow(app, index, handoffLocked));
+      });
+      refs.rows.replaceChildren(fragment);
       refs.rows.dataset.linksListKey = listKey;
-      refs.rows.dataset.linksWindowKey = "";
     }
-    syncLinksVisibleWindow(refs, filtered, handoffLocked);
+    syncLinksRowStates(refs, handoffLocked);
+    syncVisibleLinksLogos(refs);
+    if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
+      state.links.firstRowsTelemetrySent = true;
+      linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
+    }
   }
 
   function syncLinksPage() {
@@ -1955,62 +1899,26 @@
       payload._http_status = response.status;
     }
     if (!response.ok) {
-      const error = new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
-      error.httpStatus = response.status;
-      error.serverTiming = String(response.headers.get("Server-Timing") || "");
-      throw error;
+      throw new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
     }
     return payload;
-  }
-
-  function shouldRefreshMeetings(options = {}) {
-    if (options.force) {
-      return true;
-    }
-    if (state.meetings.loading) {
-      return false;
-    }
-    if (!state.meetings.records.length) {
-      return true;
-    }
-    return Date.now() - safeNumber(state.meetings.lastRefreshAt) >= MEETINGS_CACHE_MAX_AGE_MS;
-  }
-
-  function warmMeetingsRoute(options = {}) {
-    const shouldRefresh = shouldRefreshMeetings(options);
-    if (options.render && state.route === "meetings" && !state.meetings.records.length && !state.meetings.hasResolvedInitialLoad) {
-      renderFeed();
-    }
-    if (!shouldRefresh) {
-      return Promise.resolve(state.meetings.records);
-    }
-    return loadMeetings(options);
   }
 
   async function loadMeetings(options = {}) {
     if (state.meetings.loading) {
       return;
     }
-    const fetchStartedAt = performance.now();
     state.meetings.loading = true;
     state.meetings.error = "";
-    if (options.render && state.route === "meetings" && (!state.meetings.records.length || options.force)) {
+    if (options.render) {
       renderFeed();
     }
     try {
       const payload = await linksApiRequest("/api/meetings?compact=1", { cache: "no-store" });
-      state.meetings.records = normalizeMeetingsCacheRecords(payload && payload.meetings);
+      state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
       state.meetings.lastRefreshAt = Date.now();
-      state.meetings.cacheSource = "network";
-      state.meetings.lastFetchMs = Math.max(0, Math.round(performance.now() - fetchStartedAt));
-      state.meetings.lastHttpStatus = safeNumber(payload && payload._http_status);
-      state.meetings.hasResolvedInitialLoad = true;
-      persistMeetingsCache();
     } catch (error) {
       state.meetings.error = String(error && error.message ? error.message : "Unable to load meetings");
-      state.meetings.lastFetchMs = Math.max(0, Math.round(performance.now() - fetchStartedAt));
-      state.meetings.lastHttpStatus = safeNumber(error && error.httpStatus);
-      state.meetings.hasResolvedInitialLoad = true;
     } finally {
       state.meetings.loading = false;
       if (options.render) {
@@ -2029,7 +1937,6 @@
     state.meetings.records = state.meetings.records.map(item =>
       String(item && item.meeting_id || "") === meetingId ? { ...item, ...detail } : item
     );
-    persistMeetingsCache();
     return detail;
   }
 
@@ -2315,14 +2222,6 @@
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
     const detail = document.getElementById("detail");
-    const navDetail = normalizeNavDetail(state.navDetail);
-    const detailCard = resolveNavDetailCard(navDetail);
-    const detailMessages = detailCard && detail?.classList.contains("is-open")
-      ? messagesForCard(detailCard).map(message => ({
-        role: message.role === "user" ? "user" : "assistant",
-        text: String(message.text || "")
-      }))
-      : [];
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
     const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
@@ -2330,10 +2229,8 @@
       card_id: node.getAttribute("data-card-id") || "",
       session_id: node.getAttribute("data-card-session-id") || "",
       thread_id: node.getAttribute("data-card-thread-id") || "",
-      pending_outbound: node.getAttribute("data-card-pending-outbound") === "true"
-        || node.getAttribute("data-card-kind") === "pending_outbound",
+      pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound",
       pending_state: node.getAttribute("data-card-pending-state") || "",
-      read: !node.classList.contains("card-unread"),
       preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
     }));
     return {
@@ -2345,8 +2242,7 @@
         card_id: detail?.getAttribute("data-detail-card-id") || "",
         session_id: detail?.getAttribute("data-detail-session-id") || "",
         thread_id: detail?.getAttribute("data-detail-thread-id") || "",
-        viewer: detail?.getAttribute("data-detail-viewer") || "",
-        messages: detailMessages
+        viewer: detail?.getAttribute("data-detail-viewer") || ""
       },
         focused_card: {
           active: Boolean(focusedCard),
@@ -2640,19 +2536,12 @@
     };
   }
 
-  function initialMeetingsState(cache = null) {
-    const records = normalizeMeetingsCacheRecords(cache && cache.records);
+  function initialMeetingsState() {
     return {
       loading: false,
       error: "",
-      records,
-      lastRefreshAt: safeNumber(cache && cache.updated_at),
-      cacheSource: cache && Array.isArray(cache.records) && cache.records.length ? "storage" : "empty",
-      hasResolvedInitialLoad: Boolean(cache && Array.isArray(cache.records) && cache.records.length),
-      lastFetchMs: 0,
-      lastHttpStatus: 0,
-      lastRenderReadyMs: 0,
-      routeEnteredAt: 0
+      records: [],
+      lastRefreshAt: 0
     };
   }
 
@@ -2985,10 +2874,6 @@
       } else {
         dismissTransientUiForRouteChange();
         state.route = tab.route;
-        if (state.route === "meetings") {
-          state.meetings.routeEnteredAt = 0;
-          state.meetings.lastRenderReadyMs = 0;
-        }
         state.openTrayRoute = null;
       }
       persistNavState();
@@ -3003,7 +2888,7 @@
         loadLinksPortal({ render: true });
       } else if (state.route === "meetings") {
         refreshMeetingRecordingStatus({ render: true });
-        warmMeetingsRoute({ render: true });
+        loadMeetings({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
       }
@@ -3012,7 +2897,6 @@
   }
 
   function dismissTransientUiForRouteChange() {
-    resetHomeFeedPresentation();
     dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });
     dismissOpenCardMenu(false);
     dismissTraceSheet();
@@ -3086,16 +2970,13 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
-    feed.classList.toggle("is-home-route", state.route === "feed");
     feed.classList.toggle("is-links-route", state.route === "links");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (state.route === "settings") {
-      resetHomeFeedPresentation();
       feed.replaceChildren(settingsPageView());
       return;
     }
     if (state.route === "links") {
-      resetHomeFeedPresentation();
       const page = linksPageView();
       if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
         feed.replaceChildren(page);
@@ -3104,47 +2985,33 @@
       return;
     }
     if (state.route === "meetings") {
-      resetHomeFeedPresentation();
       feed.replaceChildren(meetingsPageView());
       return;
     }
     if (state.route !== "feed") {
-      resetHomeFeedPresentation();
       const current = PAGE_TABS.find(tab => tab.route === state.route);
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
-    const cards = filteredFeedCards();
-    const page = homeFeedPageView(cards);
-    if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
-      feed.replaceChildren(page);
-    }
-    installFeedRubberBand();
-    installFeedScrollPersistence();
-  }
-
-  function homeFeedPageView(cards) {
-    const shell = document.getElementById("homeFeedShell") || el("section", "home-feed-shell");
-    shell.id = "homeFeedShell";
-    let scroll = shell.querySelector("#homeFeedScroll");
-    if (!scroll) {
-      scroll = el("section", "home-feed-scroll");
-      scroll.id = "homeFeedScroll";
-      scroll.setAttribute("aria-label", "Pucky reply feed");
-      shell.append(scroll);
+    if (state.feedLoadError && !state.cards.length) {
+      const empty = el("div", "empty feed-load-error");
+      empty.append(
+        el("strong", "", "Could not load the Home feed."),
+        el("span", "", state.feedLoadError)
+      );
+      feed.replaceChildren(empty);
+      return;
     }
     if (!state.cards.length) {
-      const empty = el("div", "empty");
-      empty.innerHTML = "No replies yet.<br>Pucky will place agent replies here.";
-      scroll.replaceChildren(empty);
-      return shell;
+      feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
+      return;
     }
+    const cards = filteredFeedCards();
     if (!cards.length) {
-      scroll.replaceChildren(filteredFeedEmptyView());
-      return shell;
+      feed.replaceChildren(filteredFeedEmptyView());
+      return;
     }
-    scroll.replaceChildren(...cards.map(cardView));
-    return shell;
+    feed.replaceChildren(...cards.map(cardView));
   }
 
   function filteredFeedEmptyView() {
@@ -3160,23 +3027,16 @@
 
   function filteredFeedCards() {
     return state.cards.filter(card => {
-      const archived = Boolean(card && card.archived);
       if (card && card.deleted) {
         return false;
-      }
-      if (state.showArchivedFeed) {
-        return archived;
-      }
-      if (isStandalonePendingOutboundCard(card)) {
-        return !archived;
-      }
-      if (isThreadContinuationPendingCard(card)) {
-        return !archived && isFeedIconIncluded(cardIconKey(card));
       }
       if (isPendingOutboundCard(card)) {
         return false;
       }
-      return !archived && isFeedIconIncluded(cardIconKey(card));
+      const archived = Boolean(card && card.archived);
+      return state.showArchivedFeed
+        ? archived
+        : !archived && isFeedIconIncluded(cardIconKey(card));
     });
   }
 
@@ -3195,7 +3055,7 @@
       filters.push({ ...filter });
     });
     state.cards.forEach(card => {
-      if (!card || card.deleted || isStandalonePendingOutboundCard(card)) {
+      if (!card || card.deleted || isPendingOutboundCard(card)) {
         return;
       }
       const icon = cardIconKey(card);
@@ -3223,21 +3083,6 @@
 
   function isPendingOutboundCard(card) {
     return Boolean(card && card.pending_outbound);
-  }
-
-  function isThreadContinuationPendingCard(card) {
-    if (!isPendingOutboundCard(card)) {
-      return false;
-    }
-    if (card?.pending_thread_continuation === true) {
-      return true;
-    }
-    const title = String(card?.title || "").trim().toLowerCase();
-    return Boolean(cardThreadId(card)) && title !== "sent message" && Boolean(String(card?.icon || "").trim());
-  }
-
-  function isStandalonePendingOutboundCard(card) {
-    return isPendingOutboundCard(card) && !isThreadContinuationPendingCard(card);
   }
 
   function isFailedPendingOutboundCard(card) {
@@ -3420,9 +3265,9 @@
       listCard.append(listHead);
       const scrollport = el("div", "links-list-scrollport");
       scrollport.id = "linksScrollport";
+      scrollport.addEventListener("scroll", scheduleLinksLogoSync, { passive: true });
       const rows = el("div", "links-list-rows");
       scrollport.append(rows);
-      scrollport.addEventListener("scroll", () => scheduleLinksWindowSync(linksPageRefs), { passive: true });
       listCard.append(scrollport);
       page.append(listCard);
 
@@ -3440,8 +3285,7 @@
         listCard,
         scrollport,
         listCount,
-        rows,
-        windowRaf: 0
+        rows
       };
       linksPageNode = page;
     }
@@ -3451,9 +3295,6 @@
 
   function meetingsPageView() {
     const page = el("section", "meetings-page");
-    if (!state.meetings.routeEnteredAt) {
-      state.meetings.routeEnteredAt = performance.now();
-    }
     const header = el("div", "meetings-header");
     header.append(
       el("div", "meetings-kicker", "Meeting Recording Mode"),
@@ -3461,11 +3302,11 @@
     );
     const refresh = el("button", "meetings-refresh", "Refresh");
     refresh.type = "button";
-    refresh.addEventListener("click", () => loadMeetings({ render: true, force: true }));
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
     header.append(refresh);
     page.append(header);
 
-    if (!state.meetings.hasResolvedInitialLoad && !state.meetings.records.length) {
+    if (state.meetings.loading && !state.meetings.records.length) {
       page.append(el("div", "meetings-empty", "Loading meetings..."));
       return page;
     }
@@ -3482,9 +3323,6 @@
     }
     const list = el("section", "meetings-list-card");
     list.append(...visibleMeetingRecords().slice().reverse().map(meetingRowView));
-    if (!state.meetings.lastRenderReadyMs) {
-      state.meetings.lastRenderReadyMs = Math.max(0, Math.round(performance.now() - state.meetings.routeEnteredAt));
-    }
     page.append(list);
     return page;
   }
@@ -3527,19 +3365,6 @@
     return state.meetings.records.filter(meeting => !Boolean(meeting && meeting.archived));
   }
 
-  function meetingsDebugMetrics() {
-    return {
-      schema: "pucky.meetings_metrics.v1",
-      cache_source: String(state.meetings.cacheSource || "empty"),
-      cache_age_ms: state.meetings.lastRefreshAt ? Math.max(0, Date.now() - safeNumber(state.meetings.lastRefreshAt)) : 0,
-      records_count: visibleMeetingRecords().length,
-      refresh_in_flight: Boolean(state.meetings.loading),
-      last_fetch_ms: Math.max(0, safeNumber(state.meetings.lastFetchMs)),
-      last_http_status: Math.max(0, safeNumber(state.meetings.lastHttpStatus)),
-      last_render_ready_ms: Math.max(0, safeNumber(state.meetings.lastRenderReadyMs))
-    };
-  }
-
   async function showMeetingDetail(meeting) {
     const meetingId = String(meeting && meeting.meeting_id || "").trim();
     const openDetail = (record, options = {}) => {
@@ -3547,7 +3372,7 @@
         showMeetingFailedDetail(record, options);
         return;
       }
-      showAudioDetail(meetingCardFromRecord(record), options);
+      showTranscript(meetingCardFromRecord(record), options);
     };
     openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
     if (!meetingId) {
@@ -3621,15 +3446,32 @@
 
   function meetingTranscriptMessages(meeting) {
     const transcript = meetingTranscriptText(meeting);
-    const summary = String(meeting && meeting.card && meeting.card.summary || "").trim();
+    const summary = String(
+      meeting && meeting.card && meeting.card.summary
+      || meeting && meeting.feed_item && meeting.feed_item.summary
+      || ""
+    ).trim();
+    const persistedMessages = Array.isArray(meeting?.feed_item?.transcript_messages)
+      ? meeting.feed_item.transcript_messages
+      : [];
+    const persistedUser = persistedMessages.find(item => String(item?.role || "").toLowerCase() === "user") || null;
+    const persistedAssistant = persistedMessages.find(item => String(item?.role || "").toLowerCase() === "assistant") || null;
+    const assistantAttachments = normalizedAttachments(persistedAssistant?.attachments);
     const messages = [];
-    if (transcript) {
-      messages.push({ role: "user", text: transcript, created_at: meeting.started_at || meeting.created_at || "" });
+    const transcriptText = transcript || String(persistedUser?.text || "").trim();
+    if (transcriptText) {
+      messages.push({ role: "user", text: transcriptText, created_at: meeting.started_at || meeting.created_at || persistedUser?.created_at || "" });
     }
-    if (summary) {
-      messages.push({ role: "assistant", text: summary, created_at: meeting.updated_at || "" });
+    const assistantText = summary || String(persistedAssistant?.text || "").trim();
+    if (assistantText || assistantAttachments.length) {
+      messages.push({
+        role: "assistant",
+        text: assistantText || "Meeting processed.",
+        created_at: meeting.updated_at || persistedAssistant?.created_at || "",
+        attachments: assistantAttachments
+      });
     }
-    return messages;
+    return messages.length ? messages : [{ role: "assistant", text: "No transcript is attached to this meeting yet." }];
   }
 
   function meetingTranscriptText(meeting) {
@@ -3685,6 +3527,11 @@
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function linksAppInitial(app) {
+    const name = String(app && (app.name || app.slug) || "").trim();
+    return name ? name.slice(0, 1).toUpperCase() : "?";
   }
 
   function replyModeSettingsCard() {
@@ -4184,9 +4031,6 @@
 
   function cardView(card) {
     if (isPendingOutboundCard(card)) {
-      if (isThreadContinuationPendingCard(card)) {
-        return threadPendingCardView(card);
-      }
       return outboundCardView(card);
     }
     if (isMeetingProcessingCard(card)) {
@@ -4272,10 +4116,6 @@
       });
       actions.append(file);
     }
-    const archive = buildHomeArchiveButton(card, "reply");
-    if (archive) {
-      actions.append(archive);
-    }
 
     cardEl.append(identity, body, actions);
     if (cardStamp) {
@@ -4334,105 +4174,16 @@
     copy.append(preview);
     const meta = el("div", "card-outbound-meta");
     const status = el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card));
-    const metaCopy = el("div", "card-outbound-meta-copy");
-    metaCopy.append(status);
+    meta.append(status);
     const stamp = cardTimestamp(card);
     if (stamp) {
       const time = el("time", "card-outbound-time", stamp.text);
       time.dateTime = stamp.iso;
-      metaCopy.append(time);
-    }
-    meta.append(metaCopy);
-    const archive = buildHomeArchiveButton(card, "pending_outbound");
-    if (archive) {
-      const archiveActions = el("div", "card-outbound-actions");
-      archiveActions.append(archive);
-      meta.append(archiveActions);
+      meta.append(time);
     }
     cardEl.append(copy, meta);
-    appendArchiveRevealAction(wrapper, {
-      label: `Archive ${card.title || "reply"}`
-    });
     wrapper.append(cardEl);
-    installArchiveReveal(wrapper, card, {
-      canReveal: canRevealHomeArchive,
-      performArchive: () => performHomeArchive(card)
-    });
     return wrapper;
-  }
-
-  function threadPendingCardView(card) {
-    const wrapper = el("div", "card-wrap");
-    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", "card card-pending-thread");
-    cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
-    applyCardDataAttributes(cardEl, card, "reply");
-    const identity = el("div", "identity is-read");
-    identity.setAttribute("aria-hidden", "true");
-    identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
-    const body = el("div", "card-body");
-    body.setAttribute("role", "button");
-    body.tabIndex = 0;
-    body.setAttribute("aria-disabled", "false");
-    applyCardActionData(body, "transcript", card, "reply");
-    body.addEventListener("click", () => {
-      if (!shouldSuppressCardActivation()) {
-        showTranscript(card);
-      }
-    });
-    body.addEventListener("keydown", event => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        showTranscript(card);
-      }
-    });
-    body.append(
-      el("h2", "title", card.title || "Pucky"),
-      el("p", "preview", pendingOutboundSummary(card))
-    );
-    const meta = el("div", "card-actions card-pending-thread-meta");
-    const metaCopy = el("div", "card-pending-thread-meta-copy");
-    metaCopy.append(el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card)));
-    const stamp = cardTimestamp(card);
-    if (stamp) {
-      const time = el("time", "card-outbound-time", stamp.text);
-      time.dateTime = stamp.iso;
-      metaCopy.append(time);
-    }
-    meta.append(metaCopy);
-    const archive = buildHomeArchiveButton(card, "reply");
-    if (archive) {
-      const actions = el("div", "card-pending-thread-actions");
-      actions.append(archive);
-      meta.append(actions);
-    }
-    cardEl.append(identity, body, meta);
-    appendArchiveRevealAction(wrapper, {
-      label: `Archive ${card.title || "reply"}`
-    });
-    wrapper.append(cardEl);
-    installArchiveReveal(wrapper, card, {
-      canReveal: canRevealHomeArchive,
-      performArchive: () => performHomeArchive(card)
-    });
-    return wrapper;
-  }
-
-  function buildHomeArchiveButton(card, kind = "") {
-    if (!canArchiveHomeCard(card)) {
-      return null;
-    }
-    const button = el("button", `action action-archive ${actionStateClass(card, "archive")}`);
-    button.type = "button";
-    applyCardActionData(button, "archive", card, kind || (card?.pending_outbound ? "pending_outbound" : "reply"));
-    button.innerHTML = iconSvg("delete", { filled: true });
-    button.setAttribute("aria-label", `Archive ${card?.title || "reply"}`);
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      void performHomeArchive(card);
-    });
-    return button;
   }
 
   function appendArchiveRevealAction(wrapper, config = {}) {
@@ -4487,6 +4238,17 @@
   }
 
   async function resolveAudioAttachmentSrc(item, options = {}) {
+    const meetingId = String(item && item.meeting_id || "").trim();
+    if (meetingId) {
+      const resolvedMeetingAudio = await resolveMeetingAudioLink(item);
+      const resolvedPath = String(resolvedMeetingAudio && (resolvedMeetingAudio.device_path || resolvedMeetingAudio.path) || "").trim();
+      if (resolvedPath && isAndroidPlayableAudioPath(resolvedPath)) {
+        return resolveLocalArtifactPath(resolvedPath, { ...(item || {}), path: resolvedPath }, options);
+      }
+      if (resolvedMeetingAudio && resolvedMeetingAudio.url) {
+        item = { ...(item || {}), url: String(resolvedMeetingAudio.url) };
+      }
+    }
     const path = String(mediaPath(item) || "").trim();
     if (path && isAndroidPlayableAudioPath(path)) {
       return resolveLocalArtifactPath(path, item, options);
@@ -4626,12 +4388,10 @@
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
-    const stickToLatest = !options.restoring || Boolean(options.stickToLatest);
-    state.detailStickToLatest = stickToLatest;
-    if (stickToLatest) {
-      scrollTranscriptToLatest(content);
-    } else {
+    if (options.restoring) {
       restoreScrollPosition(content, options.scrollTop);
+    } else {
+      scrollTranscriptToLatest(content);
     }
   }
 
@@ -4786,10 +4546,13 @@
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
     const mime = String((result && result.mime_type) || "").toLowerCase();
     const content = String((result && result.content_base64) || "");
+    const transcriptContext = source ? await resolveMeetingTranscriptLink(source, source) : { href: "" };
     if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
       iframe.srcdoc = pdfArtifactHtml(result, path, content);
     } else {
-      iframe.srcdoc = await rewriteMeetingHtmlContent(atob(content), source || {});
+      iframe.srcdoc = await rewriteMeetingHtmlContent(atob(content), source || {}, {
+        transcriptHref: String(transcriptContext.href || "")
+      });
     }
     return iframe;
   }
@@ -4823,9 +4586,11 @@
     return {
       meeting_id: String(source.meeting_id || meetingRecord.meeting_id || source.session_id || "").trim(),
       title: String(source.title || meetingRecord.title || "").trim(),
+      recording_title: String(source.recording_title || meetingRecord.recording_title || "").trim(),
       canonical_basename: String(source.canonical_basename || meetingRecord.canonical_basename || "").trim(),
       device_path: String(source.device_path || meetingRecord.device_path || source.audio_path || meetingRecord.audio_path || "").trim(),
       audio_url: String(source.audio_url || meetingRecord.audio_url || source.url || "").trim(),
+      transcript_path: String(source.transcript_path || meetingRecord.transcript_path || "").trim(),
       mime_type: String(source.audio_mime_type || source.mime_type_audio || source.mime_type || meetingRecord.mime_type || "").trim(),
       started_at: String(source.started_at || meetingRecord.started_at || source.created_at || meetingRecord.created_at || "").trim()
     };
@@ -4838,12 +4603,16 @@
     const devicePath = String(resolved.device_path || resolved.path || "").trim();
     const canonicalBasename = String(resolved.canonical_basename || "").trim();
     const audioUrl = String(resolved.url || "").trim();
+    const recordingTitle = String(resolved.recording_title || "").trim();
     if (devicePath) {
       source.device_path = devicePath;
       source.audio_path = devicePath;
     }
     if (canonicalBasename) {
       source.canonical_basename = canonicalBasename;
+    }
+    if (recordingTitle) {
+      source.recording_title = recordingTitle;
     }
     if (audioUrl) {
       source.audio_url = audioUrl;
@@ -4854,6 +4623,9 @@
       }
       if (canonicalBasename) {
         source.meeting_record.canonical_basename = canonicalBasename;
+      }
+      if (recordingTitle) {
+        source.meeting_record.recording_title = recordingTitle;
       }
     }
   }
@@ -4875,44 +4647,199 @@
         // Older APKs can still render the page with a non-local fallback.
       }
     }
+    if (context.device_path) {
+        return {
+          device_path: context.device_path,
+          url: context.audio_url,
+          canonical_basename: context.canonical_basename,
+          recording_title: context.recording_title
+        };
+      }
     if (context.audio_url) {
       return {
         url: context.audio_url,
-        canonical_basename: context.canonical_basename
-      };
-    }
-    if (context.device_path) {
-      return {
-        device_path: context.device_path,
-        canonical_basename: context.canonical_basename
+        canonical_basename: context.canonical_basename,
+        recording_title: context.recording_title
       };
     }
     return {};
   }
 
-  function meetingAudioLinkHtml(href, label = "View/Download Audio") {
-    return `<a class="document-open-link pucky-meeting-audio-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+  function assistantAttachmentsForCard(card) {
+    const messages = Array.isArray(card?.transcript_messages) ? card.transcript_messages : [];
+    const assistant = messages.find(item => String(item?.role || "").toLowerCase() === "assistant") || {};
+    return normalizedAttachments(assistant.attachments);
   }
 
-  async function rewriteMeetingHtmlContent(htmlText, source = {}) {
+  function meetingAttachmentIndexByTitle(attachments, title) {
+    const needle = String(title || "").trim().toLowerCase();
+    return attachments.findIndex(item => String(item?.title || "").trim().toLowerCase() === needle);
+  }
+
+  function meetingSummaryAttachmentIndex(attachments, summaryItem) {
+    if (!summaryItem) {
+      return -1;
+    }
+    const matchId = String(summaryItem.id || "").trim();
+    const matchArtifact = String(summaryItem.artifact || "").trim();
+    return attachments.findIndex(item => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      if (matchId && String(item.id || "").trim() === matchId) {
+        return true;
+      }
+      if (matchArtifact && String(item.artifact || "").trim() === matchArtifact) {
+        return true;
+      }
+      return String(item.title || "").trim() === String(summaryItem.title || "").trim()
+        && String(item.kind || "").trim() === String(summaryItem.kind || "").trim();
+    });
+  }
+
+  async function resolveMeetingTranscriptLink(card, summaryItem = null) {
+    const attachments = assistantAttachmentsForCard(card);
+    const transcriptIndex = meetingAttachmentIndexByTitle(attachments, "Meeting Transcript");
+    const transcriptAttachment = transcriptIndex >= 0 ? attachments[transcriptIndex] : null;
+    if (transcriptAttachment) {
+      try {
+        return {
+          href: await resolveArtifactUrl(transcriptAttachment, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true }),
+          attachments,
+          transcriptIndex,
+          summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
+          transcriptAttachment
+        };
+      } catch (_) {
+        return {
+          href: "",
+          attachments,
+          transcriptIndex,
+          summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
+          transcriptAttachment
+        };
+      }
+    }
+    return {
+      href: "",
+      attachments,
+      transcriptIndex: -1,
+      summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
+      transcriptAttachment: null
+    };
+  }
+
+  function meetingLinkHtml(href, label, className, action) {
+    const safeHref = String(href || "#").trim() || "#";
+    return `<a class="document-open-link ${escapeHtml(className)}" href="${escapeHtml(safeHref)}" data-pucky-meeting-action="${escapeHtml(action)}">${escapeHtml(label)}</a>`;
+  }
+
+  function meetingTranscriptLinkHtml(href, label = "Open Transcript") {
+    return meetingLinkHtml(href, label, "pucky-meeting-transcript-link", "transcript");
+  }
+
+  function meetingAudioLinkHtml(href, label = "Listen To Audio") {
+    return meetingLinkHtml(href, label, "pucky-meeting-audio-link", "audio");
+  }
+
+  function reopenMeetingSummaryAttachment(card, attachments, summaryIndex) {
+    if (summaryIndex >= 0) {
+      showAttachmentViewer(card, attachments, {
+        initialIndex: summaryIndex,
+        onDismiss: () => showTranscript(card)
+      });
+      return true;
+    }
+    showTranscript(card);
+    return false;
+  }
+
+  function openMeetingAttachmentFromHtml(card, attachments, summaryIndex, targetTitle) {
+    const targetIndex = meetingAttachmentIndexByTitle(attachments, targetTitle);
+    if (targetIndex < 0) {
+      return false;
+    }
+    showAttachmentViewer(card, attachments, {
+      initialIndex: targetIndex,
+      onDismiss: () => reopenMeetingSummaryAttachment(card, attachments, summaryIndex)
+    });
+    return true;
+  }
+
+  function installMeetingHtmlActionBridge(iframe, { card, attachments, summaryIndex } = {}) {
+    if (!(iframe instanceof HTMLIFrameElement) || !card || !Array.isArray(attachments) || summaryIndex < 0) {
+      return;
+    }
+    const bind = () => {
+      const doc = iframe.contentDocument;
+      if (!doc || !doc.body || doc.__puckyMeetingLinksBound) {
+        return;
+      }
+      doc.__puckyMeetingLinksBound = true;
+      doc.addEventListener("click", event => {
+        const eventTarget = event.target;
+        const candidate = eventTarget && typeof eventTarget === "object" && "nodeType" in eventTarget && Number(eventTarget.nodeType) === 3
+          ? eventTarget.parentElement
+          : eventTarget;
+        const target = candidate && typeof candidate.closest === "function"
+          ? candidate.closest("a[data-pucky-meeting-action]")
+          : null;
+        if (!target || String(target.tagName || "").toLowerCase() !== "a") {
+          return;
+        }
+        const action = String(target.dataset.puckyMeetingAction || "").trim().toLowerCase();
+        if (action === "transcript") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, "Meeting Transcript")) {
+            target.removeAttribute("data-pucky-meeting-action");
+            target.click();
+          }
+          return;
+        }
+        if (action === "audio") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, "Meeting Audio")) {
+            target.removeAttribute("data-pucky-meeting-action");
+            target.click();
+          }
+        }
+      });
+    };
+    iframe.addEventListener("load", bind);
+    bind();
+    requestAnimationFrame(bind);
+  }
+
+  async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {}) {
     const raw = String(htmlText || "");
     if (!raw) {
       return raw;
     }
+    const transcriptHref = String(options.transcriptHref || "").trim();
+    const hasTranscriptPlaceholder = raw.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}");
     const hasPlaceholder = raw.includes("{{PUCKY_MEETING_AUDIO_LINK}}");
     const hasRawMeetingAudioUrl = /\/api\/meetings\/[^"' ]+\/audio/i.test(raw);
-    if (!hasPlaceholder && !hasRawMeetingAudioUrl) {
+    if (!hasTranscriptPlaceholder && !hasPlaceholder && !hasRawMeetingAudioUrl) {
       return raw;
+    }
+    let output = raw;
+    if (hasTranscriptPlaceholder) {
+      const transcriptReplacement = transcriptHref
+        ? meetingTranscriptLinkHtml(transcriptHref)
+        : '<span class="pucky-meeting-transcript-link is-unavailable">Transcript unavailable on this device.</span>';
+      output = output.replace(/\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}/g, transcriptReplacement);
     }
     const resolved = await resolveMeetingAudioLink(source);
     const href = String(resolved && resolved.url || "").trim();
     const replacement = href
       ? meetingAudioLinkHtml(href)
       : '<span class="pucky-meeting-audio-link is-unavailable">Audio unavailable on this device.</span>';
-    let output = raw.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
+    output = output.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
     if (href) {
-      output = output.replace(/(href=["'])(?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio(["'])/gi, `$1${escapeHtml(href)}$2`);
-      output = output.replace(/(href=["'])\/api\/meetings\/[^"' ]+\/audio(["'])/gi, `$1${escapeHtml(href)}$2`);
+      output = output.replace(/<a([^>]*?)href=["'](?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(href, "Listen To Audio"));
+      output = output.replace(/<a([^>]*?)href=["']\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(href, "Listen To Audio"));
     }
     return output;
   }
@@ -5013,12 +4940,12 @@
       return showImageReel(card, images, { ...restoreOptions, initialIndex: imageIndex });
     }
     if (viewerType === "video_player") {
-      return showVideoAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+      return showVideoAttachment(card, item, { ...restoreOptions, initialIndex: startIndex, attachmentSet: attachments });
     }
     if (viewerType === "audio_player") {
-      return showAudioAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+      return showAudioAttachment(card, item, { ...restoreOptions, initialIndex: startIndex, attachmentSet: attachments });
     }
-    return showDocumentAttachment(card, item, { ...restoreOptions, initialIndex: startIndex });
+    return showDocumentAttachment(card, item, { ...restoreOptions, initialIndex: startIndex, attachmentSet: attachments });
   }
 
   async function showVideoAttachment(card, item, options = {}) {
@@ -5187,7 +5114,7 @@
     const dismissAttachment = detailDismissHandler(options);
     const kind = attachmentKind(item);
     const content = el("div", `detail-content attachment-detail document-detail document-${kind}`);
-    const viewer = await documentViewer(item);
+    const viewer = await documentViewer(card, item, options);
     content.append(viewer);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });
     openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
@@ -5197,10 +5124,10 @@
     restoreScrollPosition(content, options.scrollTop);
   }
 
-  async function documentViewer(item) {
+  async function documentViewer(card, item, options = {}) {
     const viewerType = attachmentViewerType(item);
     if (viewerType === "html_iframe") {
-      return htmlIframeViewer(item);
+      return htmlIframeViewer(card, item, options);
     }
     if (viewerType === "table") {
       return tableViewer(item);
@@ -5228,23 +5155,31 @@
     return wrap;
   }
 
-  async function htmlIframeViewer(item) {
+  async function htmlIframeViewer(card, item, options = {}) {
     const iframe = el("iframe", "document-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
     const path = item.viewer_path || item.html_viewer_path || item.document_html_path || htmlAttachmentLocalPath(item);
     const src = documentHtmlSrc(item);
     try {
+      const transcriptContext = await resolveMeetingTranscriptLink(card, item);
       if (path) {
         const result = await Pucky.request({
           command: "artifact.read_base64",
           args: { path, max_bytes: 2 * 1024 * 1024 }
         });
-        iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item);
+        iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item, {
+          transcriptHref: transcriptContext.href
+        });
       } else if (src) {
         iframe.src = src;
       } else {
         throw new Error("HTML attachment source is missing");
       }
+      installMeetingHtmlActionBridge(iframe, {
+        card,
+        attachments: Array.isArray(options.attachmentSet) ? options.attachmentSet : assistantAttachmentsForCard(card),
+        summaryIndex: Number.isFinite(Number(options.initialIndex)) ? Number(options.initialIndex) : meetingSummaryAttachmentIndex(assistantAttachmentsForCard(card), item)
+      });
     } catch (error) {
       const fallback = el("section", "document-fallback");
       fallback.append(attachmentMeta(item, "HTML"));
@@ -5804,7 +5739,6 @@
   function dismissDetail() {
     const panel = document.getElementById("detail");
     state.navDetail = null;
-    state.detailStickToLatest = true;
     persistNavState();
     panel.style.transform = "";
     panel.classList.remove("is-open", "is-dragging");
@@ -5984,13 +5918,7 @@
 
   function showMeetingTranscriptDetail(card) {
     const meeting = card.meeting_record || card;
-    const panel = document.getElementById("detail");
-    const content = el("div", "detail-content meeting-transcript-detail");
-    content.append(meetingTranscriptSection(meeting));
-    applyDetailDataAttributes(panel, "transcript", card);
-    openSideDetail(panel, card.title || "Meeting Transcript", content, () => showAudioDetail(card));
-    rememberNavDetail("audio", card, {});
-    installDetailScrollPersistence(content, "meeting-transcript");
+    showTranscript(meetingCardFromRecord(meeting));
   }
 
   function meetingTranscriptSection(meeting) {
@@ -6014,7 +5942,7 @@
     }
     if (transcript) {
       section.append(el("pre", "meeting-transcript-text", transcript));
-      if (String(meeting?.diarization_status || "") === "no_speaker_turns" || String(meeting?.diarization_status || "") === "plain_transcript") {
+      if (String(meeting?.diarization_status || "") === "no_speaker_turns" || String(meeting?.diarization_status || "") === "plain_transcript" || String(meeting?.diarization_status || "") === "no_transcript") {
         section.append(el("p", "meeting-transcript-note", "No speaker-separated transcript was returned for this recording."));
       }
       return section;
@@ -6600,7 +6528,7 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await syncFeedCards({ reason: "pre_archive", silent: true, render: false });
+    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });
     const freshCard = findCardByIdentity(card) || card;
     return requestFeedAction(freshCard, "archive");
   }
@@ -6622,7 +6550,6 @@
     state.meetings.records = state.meetings.records.map(item =>
       String(item && item.meeting_id || "") === archivedId ? { ...item, archived: true } : item
     );
-    persistMeetingsCache();
     return result;
   }
 
@@ -6642,8 +6569,12 @@
   function applyOptimisticHomeArchive(card) {
     const previousCards = state.cards.slice();
     const target = findCardByIdentity(card) || card;
+    const targetCardId = String(target && target.card_id || "");
+    const targetSessionId = cardSessionId(target);
     state.cards = state.cards.map(item => {
-      return cardsShareIdentity(item, target) ? { ...item, archived: true } : item;
+      const sameCardId = targetCardId && String(item && item.card_id || "") === targetCardId;
+      const sameSession = targetSessionId && cardSessionId(item) === targetSessionId;
+      return sameCardId || sameSession ? { ...item, archived: true } : item;
     });
     reconcileFocusedCardSelection();
     reconcileReadOverrides();
@@ -6683,21 +6614,14 @@
     }
   }
 
-  function canArchiveHomeCard(card) {
+  function canRevealHomeArchive(card) {
     if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing) {
       return false;
     }
-    if (Boolean(card?.archived)) {
+    if (Boolean(card?.archived) || isPendingOutboundCard(card)) {
       return false;
     }
-    if (isPendingOutboundCard(card) && !isFailedPendingOutboundCard(card)) {
-      return false;
-    }
-    return Boolean(cardThreadId(card) || cardSessionId(card) || String(card?.card_id || "").trim());
-  }
-
-  function canRevealHomeArchive(card) {
-    return canArchiveHomeCard(card);
+    return Boolean(cardSessionId(card) || String(card?.card_id || ""));
   }
 
   function canRevealMeetingArchive(meeting) {
@@ -6775,6 +6699,7 @@
     let currentGestureId = "";
     let currentGestureSource = "";
     const itemId = archiveRevealDebugItemId(item, wrapper);
+    const preferTouchEvents = prefersTouchInput();
 
     const currentOffset = () => {
       const raw = wrapper.style.getPropertyValue("--archive-reveal-offset");
@@ -6963,24 +6888,36 @@
       }
     }, true);
     wrapper.addEventListener("pointerdown", event => {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
+        return;
+      }
       begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");
       if (active) {
         capturePointer(event.pointerId);
       }
     });
     wrapper.addEventListener("pointermove", event => {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
       move(event.clientX, event.clientY, "pointer");
     });
     wrapper.addEventListener("pointerup", event => {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
       finish("pointer");
     });
     wrapper.addEventListener("pointercancel", event => {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
+        return;
+      }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
         return;
       }
@@ -7255,8 +7192,21 @@
       || Number(window.navigator?.msMaxTouchPoints || 0) > 0;
   }
 
-  function isTouchPointerEvent(event) {
-    return Boolean(event && String(event.pointerType || "").toLowerCase() === "touch");
+  function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false) {
+    if (!event || event.isPrimary === false) {
+      return false;
+    }
+    const pointerType = String(event.pointerType || "").toLowerCase();
+    if (pointerType === "mouse" || pointerType === "pen") {
+      return false;
+    }
+    if (preferTouchEvents && pointerType === "touch") {
+      return false;
+    }
+    if (!pointerType && window.matchMedia && window.matchMedia("(pointer: fine)").matches) {
+      return false;
+    }
+    return true;
   }
 
   function messagesForCard(card) {
@@ -7280,24 +7230,9 @@
     return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
   }
 
-  function transcriptMessageSignature(card) {
-    return messagesForCard(card).map(message => {
-      const role = message.role === "user" ? "user" : "assistant";
-      return `${role}\u241f${String(message.text || "")}`;
-    }).join("\u241e");
-  }
-
   function scrollTranscriptToLatest(content) {
-    const apply = () => {
-      if (!content) {
-        return;
-      }
-      content.scrollTop = content.scrollHeight;
-    };
-    apply();
     requestAnimationFrame(() => {
-      apply();
-      window.setTimeout(apply, 60);
+      content.scrollTop = content.scrollHeight;
     });
   }
 
@@ -7324,39 +7259,17 @@
     if (!panel || !panel.classList.contains("is-open")) {
       return null;
     }
-    const currentCardId = String(panel.getAttribute("data-detail-card-id") || "");
-    const currentCard = currentCardId ? findCardByCardId(currentCardId) : null;
     const nextCard = resolveNavDetailCard(detail);
     const nextSessionId = cardSessionId(nextCard);
-    const nextCardId = String(nextCard?.card_id || "");
-    const currentSignature = currentCard ? transcriptMessageSignature(currentCard) : "";
-    const nextSignature = nextCard ? transcriptMessageSignature(nextCard) : "";
-    const shouldRebind = Boolean(
-      nextCard
-      && nextSessionId
-      && (
-        nextSessionId !== detail.session_id
-        || nextCardId !== currentCardId
-        || nextSignature !== currentSignature
-      )
-    );
-    if (!shouldRebind) {
+    if (!nextCard || !nextSessionId || nextSessionId === detail.session_id) {
       return null;
     }
     const content = panel.querySelector(".detail-content");
     captureCurrentDetailScroll();
-    const shouldStickToLatest = Boolean(
-      state.detailStickToLatest
-      || isTurnActive(state.turn)
-      || !canScrollUp(content)
-      || isNearBottom(content)
-    );
+    const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(content);
     showTranscript(nextCard, shouldStickToLatest
-      ? { stickToLatest: true }
+      ? {}
       : { restoring: true, scrollTop: state.navDetail?.scroll_top });
-    if (!isPendingOutboundCard(nextCard)) {
-      markCardRead(nextCard);
-    }
     recordTurnUiEvent("thread_detail_rebound", {
       turn_id: turnStatusTurnId(state.turn),
       detail_type: detail.type,
@@ -7427,8 +7340,12 @@
   }
 
   function finishFeedRefresh() {
+    const feed = document.getElementById("feed");
     resetFeedRefreshIndicator();
-    clearFeedRefreshPresentation({ release: true });
+    if (feed) {
+      feed.classList.remove("is-feed-refreshing");
+      releaseFeedPull(feed);
+    }
   }
 
   async function refreshFeedCards() {
@@ -7448,10 +7365,10 @@
 
     state.feedRefreshPromise = (async () => {
       try {
-        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
+        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false, authoritative: true }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
         state.feedScrollTop = 0;
         render();
-        restoreScrollPosition(homeFeedScrollElement(), 0);
+        restoreScrollPosition(document.getElementById("feed"), 0);
         persistNavState();
       } catch (_) {
         // Keep the existing feed visible when the native card store is briefly unavailable.
@@ -7469,7 +7386,7 @@
   }
 
   function installFeedRubberBand() {
-    const feed = homeFeedScrollElement();
+    const feed = document.getElementById("feed");
     if (!feed || feed.dataset.rubberBandBound) {
       return;
     }
@@ -7631,16 +7548,13 @@
     };
 
     feed.addEventListener("pointerdown", event => {
-      if (event.isPrimary === false) {
-        return;
-      }
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
         return;
       }
       beginPull(event.clientY, event.pointerId, "pointer");
     }, { passive: true });
     feed.addEventListener("pointermove", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
         return;
       }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
@@ -7649,7 +7563,7 @@
       movePull(event.clientY, event, "pointer");
     }, { passive: false });
     feed.addEventListener("pointerup", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
         return;
       }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
@@ -7658,7 +7572,7 @@
       endPull("pointer");
     });
     feed.addEventListener("pointercancel", event => {
-      if (preferTouchEvents && isTouchPointerEvent(event)) {
+      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
         return;
       }
       if (activePointerId !== null && event.pointerId !== activePointerId) {
@@ -8066,7 +7980,7 @@
           kind: "thinking",
           title: `Checking ${title}.`,
           items: [
-            { label: "ui_reply_cards_get", status: "completed" },
+            { label: "feed_api_get", status: "completed" },
             { label: "artifact_read_base64", status: "completed" }
           ]
         },
@@ -8363,29 +8277,37 @@
   async function requestFeedAction(card, action, options = {}) {
     const cardId = String(card && card.card_id || "");
     const sessionId = cardSessionId(card);
-    if (!cardId && !sessionId) {
+    if (!cardId) {
       return null;
     }
+    const clientActionId = `feed_${action}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
     try {
-      const result = await Pucky.request({
-        command: "pucky.feed.action",
-        args: {
+      const result = await feedApiRequest("/api/feed/actions", {
+        method: "POST",
+        body: {
+          client_action_id: clientActionId,
           card_id: cardId,
-          session_id: sessionId,
-          action,
-          client_action_id: `feed_${action}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
+          action
         }
       });
-      const snapshot = result && result.snapshot && Array.isArray(result.snapshot.cards)
-        ? result.snapshot
-        : { cards: await fetchReplyCards() };
       state.cards = result && result.ok === false
-        ? (Array.isArray(snapshot.cards) ? snapshot.cards : state.cards)
-        : applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);
+        ? state.cards
+        : applyLocalFeedAction(state.cards, card, action);
       reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
+      if (hasAndroidBridge() && result && result.ok !== false) {
+        void Pucky.request({
+          command: "pucky.feed.action",
+          args: {
+            card_id: cardId,
+            session_id: sessionId,
+            action,
+            client_action_id: clientActionId
+          }
+        }).catch(() => {});
+      }
       if (result && result.ok === false && !options.silent) {
         showToast(result.error || "Feed refreshed");
       }
@@ -8409,7 +8331,7 @@
   }
 
   function markCardRead(card) {
-    if (!card) {
+    if (isPendingOutboundCard(card)) {
       return;
     }
     setCardReadOverride(card, true);
@@ -8467,46 +8389,6 @@
     } catch (_) {
       return {};
     }
-  }
-
-  function loadMeetingsCache() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(MEETINGS_CACHE_KEY) || "null");
-      if (!parsed || typeof parsed !== "object") {
-        return null;
-      }
-      if (String(parsed.schema || "") !== MEETINGS_CACHE_SCHEMA) {
-        return null;
-      }
-      return {
-        schema: MEETINGS_CACHE_SCHEMA,
-        updated_at: safeNumber(parsed.updated_at),
-        records: normalizeMeetingsCacheRecords(parsed.records)
-      };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function persistMeetingsCache() {
-    try {
-      localStorage.setItem(MEETINGS_CACHE_KEY, JSON.stringify({
-        schema: MEETINGS_CACHE_SCHEMA,
-        updated_at: safeNumber(state.meetings.lastRefreshAt),
-        records: normalizeMeetingsCacheRecords(state.meetings.records)
-      }));
-    } catch (_) {
-      // Meetings cache is opportunistic; the route should still work without storage.
-    }
-  }
-
-  function normalizeMeetingsCacheRecords(records) {
-    if (!Array.isArray(records)) {
-      return [];
-    }
-    return records
-      .filter(item => item && typeof item === "object")
-      .map(item => ({ ...item }));
   }
 
   function shouldResetNavState() {
@@ -8613,11 +8495,9 @@
     setDataAttribute(node, "data-card-session-id", cardSessionId(card));
     setDataAttribute(node, "data-card-thread-id", cardThreadId(card));
     if (card?.pending_outbound) {
-      setDataAttribute(node, "data-card-pending-outbound", "true");
       setDataAttribute(node, "data-card-pending-state", card?.pending_state || "sending");
       return;
     }
-    node.removeAttribute("data-card-pending-outbound");
     node.removeAttribute("data-card-pending-state");
   }
 
@@ -8733,29 +8613,14 @@
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
   }
 
-  function findCardByCardId(cardId) {
-    const target = String(cardId || "");
-    return target ? state.cards.find(card => String(card?.card_id || "") === target) || null : null;
-  }
-
-  function cardsShareIdentity(left, right) {
-    const leftThreadId = cardThreadId(left);
-    const rightThreadId = cardThreadId(right);
-    if (leftThreadId && rightThreadId && leftThreadId === rightThreadId) {
-      return true;
-    }
-    const leftCardId = String(left && left.card_id || "");
-    const rightCardId = String(right && right.card_id || "");
-    if (leftCardId && rightCardId && leftCardId === rightCardId) {
-      return true;
-    }
-    const leftSessionId = cardSessionId(left);
-    const rightSessionId = cardSessionId(right);
-    return Boolean(leftSessionId && rightSessionId && leftSessionId === rightSessionId);
-  }
-
   function findCardByIdentity(sourceCard) {
-    return state.cards.find(card => cardsShareIdentity(card, sourceCard)) || null;
+    const cardId = String(sourceCard && sourceCard.card_id || "");
+    const sessionId = cardSessionId(sourceCard);
+    return state.cards.find(card => {
+      const sameCard = cardId && String(card && card.card_id || "") === cardId;
+      const sameSession = sessionId && cardSessionId(card) === sessionId;
+      return sameCard || sameSession;
+    }) || null;
   }
 
   function findCardByThreadId(threadId) {
@@ -8793,7 +8658,7 @@
   }
 
   function rememberFeedScroll() {
-    const feed = homeFeedScrollElement();
+    const feed = document.getElementById("feed");
     if (feed && state.route === "feed") {
       state.feedScrollTop = scrollNumber(feed.scrollTop);
     }
@@ -8801,12 +8666,8 @@
 
   function restoreFeedScroll() {
     if (state.route === "feed") {
-      restoreScrollPosition(homeFeedScrollElement(), state.feedScrollTop);
+      restoreScrollPosition(document.getElementById("feed"), state.feedScrollTop);
     }
-  }
-
-  function homeFeedScrollElement() {
-    return document.getElementById("homeFeedScroll") || document.getElementById("feed");
   }
 
   function captureCurrentDetailScroll() {
@@ -8870,7 +8731,7 @@
   }
 
   function installFeedScrollPersistence() {
-    const feed = homeFeedScrollElement();
+    const feed = document.getElementById("feed");
     if (!feed || feed.dataset.navScrollBound) {
       return;
     }
@@ -8893,25 +8754,6 @@
     }, FEED_SYNC_INTERVAL_MS);
   }
 
-  function clearFeedRefreshPresentation(options = {}) {
-    const feed = homeFeedScrollElement();
-    if (!feed) {
-      return;
-    }
-    feed.classList.remove("is-rubber-banding", "is-feed-refreshing");
-    if (options.release) {
-      releaseFeedPull(feed);
-      return;
-    }
-    feed.classList.remove("is-rubber-band-release");
-    feed.style.transform = "";
-  }
-
-  function resetHomeFeedPresentation() {
-    resetFeedRefreshIndicator();
-    clearFeedRefreshPresentation();
-  }
-
   function installDetailScrollPersistence(content, type) {
     if (!content || content.dataset.navScrollBound) {
       return;
@@ -8920,9 +8762,6 @@
     const save = debounce(() => {
       if (!state.navDetail || state.navDetail.type !== type) {
         return;
-      }
-      if (type === "transcript") {
-        state.detailStickToLatest = isNearBottom(content);
       }
       captureCurrentDetailScroll();
       persistNavState();
@@ -9274,7 +9113,7 @@
   }
 
   function cardSessionKey(card) {
-    return String(card?.thread_id || card?.session_id || card?.card_id || "").trim();
+    return String(card?.session_id || card?.card_id || "").trim();
   }
 
   function loadReadOverrides() {
@@ -9506,7 +9345,7 @@
   }
 
   setInterval(async () => {
-    if (state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
+    if (state.route === "feed" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
       let changed = false;
       try {
         if (state.activePath) {
@@ -9517,9 +9356,14 @@
           }
           changed = true;
         }
-        if (isTurnActive(state.turn)) {
+        if (state.route === "feed" || isTurnActive(state.turn)) {
+          const wasTurnActive = isTurnActive(state.turn);
           await loadTurnStatus({ render: false });
-          changed = true;
+          const turnActive = isTurnActive(state.turn);
+          if (state.route === "feed" && (turnActive || wasTurnActive)) {
+            await refreshCardsFromNativeSnapshot({ render: false });
+          }
+          changed = changed || turnActive || wasTurnActive;
         }
         if (wakeProofVisualState(state.wakeStatus) !== "idle") {
           await loadWakeStatus({ render: false });
@@ -9549,7 +9393,6 @@
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
-      resetHomeFeedPresentation();
       if (state.links.handoffLocked) {
         linksDebugRecord("document_hidden", { slug: String(state.links.openingSlug || "") }, "click");
         releaseLinksHandoff({ render: false, reason: "document_hidden" });
@@ -9567,7 +9410,7 @@
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
-      warmMeetingsRoute({ render: true });
+      loadMeetings({ render: true });
       return;
     }
     if (state.route === "settings") {
@@ -9579,8 +9422,7 @@
   window.PuckyUiDebug = {
     describe: describeUiSurface,
     dispatch: uiDebugDispatch,
-    linksMetrics: linksDebugMetrics,
-    meetingsMetrics: meetingsDebugMetrics
+    linksMetrics: linksDebugMetrics
   };
   installFeedRubberBand();
   installFeedScrollPersistence();
@@ -9599,6 +9441,7 @@
     loadLinksPortal({ render: true });
   } else if (state.route === "meetings") {
     refreshMeetingRecordingStatus({ render: true });
-    warmMeetingsRoute({ render: true });
+    loadMeetings({ render: true });
   }
 })();
+

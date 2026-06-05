@@ -1,7 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
-import copy
 import hashlib
 import html
 import hmac
@@ -167,6 +166,55 @@ COMPOSIO_DYNAMIC_TOOLS: tuple[dict[str, object], ...] = (
     COMPOSIO_LIST_CONNECTED_APPS_TOOL,
     COMPOSIO_CHECK_CONNECTION_TOOL,
     COMPOSIO_EXECUTE_ACTION_TOOL,
+)
+MEETING_DEEPGRAM_TRANSCRIBE_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "meeting_id": {"type": "string"},
+    },
+    "required": ["meeting_id"],
+    "additionalProperties": False,
+}
+MEETING_DEEPGRAM_TRANSCRIBE_TOOL = {
+    "type": "function",
+    "name": "meeting_deepgram_transcribe",
+    "title": "meeting_deepgram_transcribe",
+    "description": "Transcribe one stored meeting recording with Deepgram diarization and return structured speaker turns plus a transcript attachment draft.",
+    "strict": True,
+    "parameters": MEETING_DEEPGRAM_TRANSCRIBE_INPUT_SCHEMA,
+    "inputSchema": MEETING_DEEPGRAM_TRANSCRIBE_INPUT_SCHEMA,
+}
+MEETING_RECORD_UPDATE_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "meeting_id": {"type": "string"},
+        "title": {"type": ["string", "null"]},
+        "recording_title": {"type": ["string", "null"]},
+        "transcript_text": {"type": ["string", "null"]},
+        "speaker_turns": {
+            "type": ["array", "null"],
+            "items": {
+                "type": "object",
+                "additionalProperties": True,
+            },
+        },
+        "summary_html": {"type": ["string", "null"]},
+    },
+    "required": ["meeting_id"],
+    "additionalProperties": False,
+}
+MEETING_RECORD_UPDATE_TOOL = {
+    "type": "function",
+    "name": "meeting_record_update",
+    "title": "meeting_record_update",
+    "description": "Update persisted meeting metadata, transcript, and summary artifacts after a meeting has been processed.",
+    "strict": True,
+    "parameters": MEETING_RECORD_UPDATE_INPUT_SCHEMA,
+    "inputSchema": MEETING_RECORD_UPDATE_INPUT_SCHEMA,
+}
+MEETING_DYNAMIC_TOOLS: tuple[dict[str, object], ...] = (
+    MEETING_DEEPGRAM_TRANSCRIBE_TOOL,
+    MEETING_RECORD_UPDATE_TOOL,
 )
 
 
@@ -445,6 +493,7 @@ class ReplyEnvelope:
     reply_text: str
     card_title: str
     card_icon: str
+    recording_title: str = ""
     html_title: str = ""
     html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
@@ -772,6 +821,7 @@ class PuckyVoiceService:
         stt: STTProvider | None = None,
         tts: TTSProvider | None = None,
         codex: CodexProvider | None = None,
+        meeting_codex: CodexProvider | None = None,
         composio: ComposioProvider | None = None,
     ) -> None:
         self.config = config
@@ -784,23 +834,8 @@ class PuckyVoiceService:
             response_format=config.tts_response_format,
             speed=config.tts_speed,
         )
-        self.codex = codex or CodexAppServerClient(
-            command=config.codex_command,
-            cwd=config.codex_cwd,
-            startup_timeout=config.codex_startup_timeout,
-            turn_timeout=config.codex_turn_timeout,
-            developer_instructions=config.developer_instructions,
-            base_instructions_provider=self.codex_base_instructions_for_thread,
-            output_schema=reply_output_schema(),
-            codex_home=config.codex_home,
-            sandbox=config.codex_sandbox,
-            approval_policy=config.codex_approval_policy,
-            model=config.codex_model,
-            reasoning_effort=config.codex_reasoning_effort,
-            action_logger=self._record_codex_action,
-            tools_provider=self.codex_tools_for_thread,
-            dynamic_tool_handler=self.handle_codex_dynamic_tool_call,
-        )
+        self.codex = codex or self._build_codex_client(meeting=False)
+        self.meeting_codex = meeting_codex or self._build_codex_client(meeting=True)
         self.feed = FeedStore(config.feed_db_path)
         self.composio = composio or ComposioClient(
             config.composio_api_key,
@@ -817,16 +852,45 @@ class PuckyVoiceService:
         self._meetings_lock = threading.Lock()
         self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
         self._meetings_index_path = self._meetings_dir / "meetings.json"
-        self._meetings_rows_cache: list[dict[str, object]] | None = None
-        self._meetings_compact_cache: dict[bool, list[dict[str, object]]] = {}
+        self._meeting_agent_state_lock = threading.Lock()
+        self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
+
+    def _build_codex_client(self, *, meeting: bool) -> CodexAppServerClient:
+        role = "meeting" if meeting else "default"
+        developer_instructions = (
+            self.config.meeting_developer_instructions or self.config.developer_instructions
+            if meeting
+            else self.config.developer_instructions
+        )
+        tools_provider = self.meeting_codex_tools_for_thread if meeting else self.codex_tools_for_thread
+        return CodexAppServerClient(
+            command=self.config.codex_command,
+            cwd=self.config.codex_cwd,
+            startup_timeout=self.config.codex_startup_timeout,
+            turn_timeout=self.config.codex_turn_timeout,
+            developer_instructions=developer_instructions,
+            base_instructions_provider=self.codex_base_instructions_for_thread,
+            output_schema=reply_output_schema(),
+            codex_home=self.config.codex_home,
+            sandbox=self.config.codex_sandbox,
+            approval_policy=self.config.codex_approval_policy,
+            model=self.config.codex_model,
+            reasoning_effort=self.config.codex_reasoning_effort,
+            action_logger=lambda event, role=role: self._record_codex_action(event, role=role),
+            tools_provider=tools_provider,
+            dynamic_tool_handler=self.handle_codex_dynamic_tool_call,
+        )
 
     def start(self) -> None:
         self.codex.start()
+        if self.meeting_codex is not self.codex:
+            self.meeting_codex.start()
 
     def health(self) -> dict[str, object]:
         return {
-            "ok": self.codex.ready,
+            "ok": bool(self.codex.ready and self.meeting_codex.ready),
             "codex_app_server": "ready" if self.codex.ready else "not_ready",
+            "meeting_codex_app_server": "ready" if self.meeting_codex.ready else "not_ready",
             "thread": "per_turn",
             "feed_store": "ready",
             "feed_items_count": self.feed.count_items(),
@@ -910,6 +974,10 @@ class PuckyVoiceService:
     def codex_tools_for_thread(self) -> list[dict[str, object]]:
         return [json.loads(json.dumps(tool)) for tool in COMPOSIO_DYNAMIC_TOOLS]
 
+    def meeting_codex_tools_for_thread(self) -> list[dict[str, object]]:
+        tools = COMPOSIO_DYNAMIC_TOOLS + MEETING_DYNAMIC_TOOLS
+        return [json.loads(json.dumps(tool)) for tool in tools]
+
     def handle_codex_dynamic_tool_call(
         self,
         tool: str,
@@ -927,8 +995,21 @@ class PuckyVoiceService:
             result = self.composio_check_connection_tool(str(payload.get("app_slug") or ""))
         elif tool_name == "composio_execute_action":
             result = self.composio_execute_action_tool(payload)
+        elif tool_name == "meeting_deepgram_transcribe":
+            result = self.meeting_deepgram_transcribe_tool(payload, thread_id=thread_id, turn_id=turn_id)
+        elif tool_name == "meeting_record_update":
+            result = self.meeting_record_update_tool(payload, thread_id=thread_id, turn_id=turn_id)
         else:
             raise RuntimeError(f"unsupported dynamic tool: {tool_name or '<empty>'}")
+        if tool_name.startswith("meeting_"):
+            self.record_action(
+                surface="meeting_tool",
+                action=tool_name,
+                tool=tool_name,
+                target=str(payload.get("meeting_id") or tool_name),
+                status="ok" if bool(result.get("ok")) else "error",
+                thread_id=thread_id,
+            )
         return {
             "success": bool(result.get("ok")),
             "contentItems": [
@@ -938,6 +1019,43 @@ class PuckyVoiceService:
                 }
             ],
         }
+
+    def _remember_meeting_agent_state(self, meeting_id: str, updates: dict[str, object]) -> dict[str, object]:
+        clean_meeting_id = _safe_meeting_id(meeting_id)
+        if not clean_meeting_id:
+            return {}
+        with self._meeting_agent_state_lock:
+            current = dict(self._meeting_agent_state_by_id.get(clean_meeting_id) or {})
+            for key, value in updates.items():
+                if value is None:
+                    current.pop(key, None)
+                else:
+                    current[key] = value
+            self._meeting_agent_state_by_id[clean_meeting_id] = current
+            return dict(current)
+
+    def _apply_meeting_agent_state(self, record: dict[str, object]) -> dict[str, object]:
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+        if meeting_id:
+            with self._meeting_agent_state_lock:
+                cached = dict(self._meeting_agent_state_by_id.get(meeting_id) or {})
+            if cached:
+                agent.update(cached)
+        if agent:
+            record["agent"] = agent
+        elif "agent" not in record:
+            record["agent"] = {}
+        return dict(record.get("agent") or {})
+
+    def _persist_meeting_agent_state(self, meeting_id: str, updates: dict[str, object]) -> dict[str, object]:
+        merged = self._remember_meeting_agent_state(meeting_id, updates)
+        record = self._meeting_record_by_id(meeting_id)
+        if isinstance(record, dict):
+            record["agent"] = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+            record["agent"].update(merged)
+            self._upsert_meeting(record)
+        return merged
 
     def composio_list_connected_apps_tool(self) -> dict[str, object]:
         if not self.composio.configured:
@@ -1195,11 +1313,12 @@ class PuckyVoiceService:
         except Exception:
             pass
 
-    def _record_codex_action(self, event: dict[str, object]) -> None:
+    def _record_codex_action(self, event: dict[str, object], *, role: str = "default") -> None:
         thread_id = str(event.get("thread_id") or "")
         thread_title = str(event.get("thread_title") or "")
         if thread_id and not thread_title:
-            thread_origin = getattr(self.codex, "thread_origin", None)
+            codex_client = self.meeting_codex if role == "meeting" else self.codex
+            thread_origin = getattr(codex_client, "thread_origin", None)
             if callable(thread_origin):
                 try:
                     origin = thread_origin(thread_id, retries=1, delay=0.0)
@@ -1753,14 +1872,11 @@ class PuckyVoiceService:
         return self.feed.get_artifact(artifact_id)
 
     def meetings_list(self, *, include_archived: bool = False, compact: bool = False) -> dict[str, object]:
-        if compact:
-            meetings = self._compact_meetings_list(include_archived=include_archived)
-        else:
-            meetings = [
-                self._normalize_meeting_for_client(item, compact=False)
-                for item in self._load_meetings()
-                if include_archived or not bool(item.get("archived"))
-            ]
+        meetings = [
+            self._normalize_meeting_for_client(item, compact=compact)
+            for item in self._load_meetings()
+            if include_archived or not bool(item.get("archived"))
+        ]
         return {
             "schema": "pucky.meetings.v1",
             "ok": True,
@@ -1817,6 +1933,257 @@ class PuckyVoiceService:
                 return path.read_bytes(), str(meeting.get("mime_type") or "audio/mp4"), path.name
         return None
 
+    def meeting_deepgram_transcribe_tool(
+        self,
+        payload: dict[str, object],
+        *,
+        thread_id: str = "",
+        turn_id: str = "",
+    ) -> dict[str, object]:
+        meeting_id = _safe_meeting_id(payload.get("meeting_id"))
+        if not meeting_id:
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_deepgram_transcribe.v1",
+                "error": "meeting_id_required",
+            }
+        record = self._meeting_record_by_id(meeting_id)
+        if not isinstance(record, dict):
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_deepgram_transcribe.v1",
+                "meeting_id": meeting_id,
+                "error": "meeting_not_found",
+            }
+        audio_path = Path(str(record.get("audio_path") or ""))
+        if not audio_path.is_file():
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_deepgram_transcribe.v1",
+                "meeting_id": meeting_id,
+                "error": "meeting_audio_missing",
+            }
+        mime_type = str(record.get("mime_type") or "application/octet-stream")
+        try:
+            result = self.stt.transcribe_with_metadata(audio_path.read_bytes(), mime_type)
+        except Exception as exc:
+            now = _iso_time(time.time())
+            agent = self._persist_meeting_agent_state(
+                meeting_id,
+                {
+                    "label": "Meeting Mode Agent",
+                    "transcription_owner": "meeting_agent_tool",
+                    "transcription_tool": "meeting_deepgram_transcribe",
+                    "last_meeting_tool_name": "meeting_deepgram_transcribe",
+                    "last_meeting_tool_at": now,
+                    "last_meeting_tool_call_at": now,
+                    "last_meeting_tool_thread_id": thread_id,
+                    "last_meeting_tool_turn_id": turn_id,
+                    "last_tool_error": str(exc),
+                },
+            )
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_deepgram_transcribe.v1",
+                "meeting_id": meeting_id,
+                "error": str(exc),
+                "agent": agent,
+            }
+        transcript_text = str(result.get("transcript") or "").strip()
+        speaker_turns = _normalize_meeting_speaker_turns(result.get("speaker_turns"), {})
+        attachment_text = _canonical_meeting_transcript_text(
+            transcript_text=transcript_text,
+            speaker_turns=speaker_turns,
+        )
+        now = _iso_time(time.time())
+        agent = self._persist_meeting_agent_state(
+            meeting_id,
+            {
+                "label": "Meeting Mode Agent",
+                "transcription_owner": "meeting_agent_tool",
+                "transcription_tool": "meeting_deepgram_transcribe",
+                "transcription_provider": str(result.get("provider") or "deepgram"),
+                "transcription_model": str(result.get("model") or getattr(self.stt, "model", "")),
+                "diarization_requested": bool(result.get("diarization_requested", True)),
+                "diarization_status": _meeting_diarization_status_from_text(attachment_text, speaker_turns),
+                "tool_transcript_chars": len(transcript_text),
+                "tool_transcript_attachment_chars": len(attachment_text),
+                "transcript_attachment_present": True,
+                "transcript_attachment_chars": len(attachment_text),
+                "tool_speaker_turn_count": len(speaker_turns),
+                "last_meeting_tool_name": "meeting_deepgram_transcribe",
+                "last_meeting_tool_at": now,
+                "last_meeting_tool_call_at": now,
+                "last_meeting_tool_thread_id": thread_id,
+                "last_meeting_tool_turn_id": turn_id,
+                "last_tool_error": "",
+            },
+        )
+        return {
+            "ok": True,
+            "schema": "pucky.meeting_deepgram_transcribe.v1",
+            "meeting_id": meeting_id,
+            "provider": str(result.get("provider") or "deepgram"),
+            "model": str(result.get("model") or getattr(self.stt, "model", "")),
+            "diarization_requested": bool(result.get("diarization_requested", True)),
+            "diarization_status": _meeting_diarization_status_from_text(attachment_text, speaker_turns),
+            "transcript": transcript_text,
+            "transcript_chars": len(transcript_text),
+            "speaker_turns": speaker_turns,
+            "transcript_attachment_text": attachment_text,
+            "audio_path": str(audio_path),
+            "mime_type": mime_type,
+            "agent": agent,
+        }
+
+    def meeting_record_update_tool(
+        self,
+        payload: dict[str, object],
+        *,
+        thread_id: str = "",
+        turn_id: str = "",
+    ) -> dict[str, object]:
+        meeting_id = _safe_meeting_id(payload.get("meeting_id"))
+        if not meeting_id:
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_record_update.v1",
+                "error": "meeting_id_required",
+            }
+        record = self._meeting_record_by_id(meeting_id)
+        if not isinstance(record, dict):
+            return {
+                "ok": False,
+                "schema": "pucky.meeting_record_update.v1",
+                "meeting_id": meeting_id,
+                "error": "meeting_not_found",
+            }
+        current_item = self.feed.get_item(str(record.get("card_id") or "")) if str(record.get("card_id") or "").strip() else None
+        feed_item = current_item if isinstance(current_item, dict) else (record.get("feed_item") if isinstance(record.get("feed_item"), dict) else {})
+        title = str(payload.get("title") or "").strip()
+        recording_title = str(payload.get("recording_title") or "").strip()
+        summary_html = str(payload.get("summary_html") or "").strip()
+        transcript_override = str(payload.get("transcript_text") or "").replace("\r\n", "\n").strip()
+        speaker_turns_payload = payload.get("speaker_turns")
+        speaker_labels = _normalize_meeting_speaker_labels(record.get("speaker_labels"))
+        incoming_turns = _normalize_meeting_speaker_turns(speaker_turns_payload, speaker_labels) if isinstance(speaker_turns_payload, list) else []
+        existing_turns = _normalize_meeting_speaker_turns(record.get("speaker_turns"), speaker_labels)
+        transcript_text = transcript_override or str(record.get("transcript_text") or "").strip()
+        speaker_turns = incoming_turns or existing_turns
+        canonical_transcript = _canonical_meeting_transcript_text(
+            transcript_text=transcript_text,
+            speaker_turns=speaker_turns,
+        )
+        if title:
+            record["title"] = title
+        if recording_title:
+            record["recording_title"] = recording_title
+            record["recording_title_source"] = "meeting_record_update"
+        elif title and not str(record.get("recording_title") or "").strip():
+            record["recording_title"] = title
+            record["recording_title_source"] = "meeting_record_update_title_fallback"
+        canonical_basename = _meeting_canonical_basename(
+            record,
+            str(record.get("recording_title") or record.get("title") or "Meeting Recording"),
+        )
+        record["canonical_basename"] = canonical_basename
+        self._apply_meeting_basename_sync(record, canonical_basename, owner="meeting_record_update", rename_transcript=True)
+        if canonical_transcript:
+            transcript_path = str(
+                self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", canonical_transcript)
+            )
+            previous = Path(str(record.get("transcript_path") or ""))
+            if previous.is_file() and previous != Path(transcript_path):
+                try:
+                    previous.unlink()
+                except Exception:
+                    pass
+            record["transcript_path"] = transcript_path
+            record["transcript_text"] = canonical_transcript
+            record["transcript_status"] = "completed"
+            record["transcript_error"] = ""
+            record["transcript_result"] = {
+                "schema": "pucky.meeting_transcript_attachment.v1",
+                "title": "Meeting Transcript",
+                "kind": "text",
+                "diarization_status": _meeting_diarization_status_from_text(canonical_transcript, speaker_turns),
+            }
+            record["diarization_requested"] = True
+            record["diarization_status"] = _meeting_diarization_status_from_text(canonical_transcript, speaker_turns)
+            record["speaker_turns"] = speaker_turns
+            record["speaker_labels"] = {
+                str(item.get("speaker") or "").strip(): str(item.get("speaker") or "").strip()
+                for item in speaker_turns
+                if str(item.get("speaker") or "").strip()
+            }
+        transcript_messages = self._updated_meeting_transcript_messages(
+            feed_item,
+            record=record,
+            meeting_id=meeting_id,
+            canonical_basename=canonical_basename,
+            transcript_text=canonical_transcript,
+            transcript_path=str(record.get("transcript_path") or ""),
+        )
+        html_base64 = str(feed_item.get("html_base64") or "")
+        if summary_html:
+            html_base64 = base64.b64encode(summary_html.encode("utf-8")).decode("ascii")
+        if isinstance(feed_item, dict) and str(record.get("card_id") or "").strip():
+            assistant_audio_b64 = str(feed_item.get("audio_base64") or "")
+            request_audio_b64 = ""
+            audio_path = Path(str(record.get("audio_path") or ""))
+            if audio_path.is_file():
+                request_audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+            updated_item = self.feed.upsert_turn_result(
+                turn_id=meeting_id,
+                session_id=meeting_id,
+                reply_mode=str(feed_item.get("reply_mode") or REPLY_MODE_CARD_ONLY),
+                reply_text=str(feed_item.get("summary") or record.get("summary") or ""),
+                title=str(record.get("title") or feed_item.get("title") or "Meeting"),
+                summary=str(feed_item.get("summary") or record.get("summary") or ""),
+                icon=str(feed_item.get("icon") or "mic"),
+                origin=feed_item.get("origin") if isinstance(feed_item.get("origin"), dict) else {},
+                telemetry=feed_item.get("telemetry") if isinstance(feed_item.get("telemetry"), dict) else {},
+                transcript_messages=transcript_messages,
+                request_audio_mime_type=str(record.get("mime_type") or "audio/mp4"),
+                request_audio_base64=request_audio_b64,
+                audio_mime_type=str(feed_item.get("audio_mime_type") or "audio/wav"),
+                audio_base64=assistant_audio_b64,
+                html_mime_type="text/html" if html_base64 else "",
+                html_base64=html_base64,
+            )
+            record["feed_item"] = self._decorate_feed_item(updated_item)
+            record["card"] = record["feed_item"].get("card") if isinstance(record["feed_item"].get("card"), dict) else {}
+        now = _iso_time(time.time())
+        agent = self._persist_meeting_agent_state(
+            meeting_id,
+            {
+                "label": "Meeting Mode Agent",
+                "last_meeting_tool_name": "meeting_record_update",
+                "last_meeting_tool_at": now,
+                "last_meeting_tool_call_at": now,
+                "last_meeting_tool_thread_id": thread_id,
+                "last_meeting_tool_turn_id": turn_id,
+                "title_quality": _meeting_title_quality(record.get("title"), meeting_id),
+                "recording_title": str(record.get("recording_title") or ""),
+                "recording_title_source": str(record.get("recording_title_source") or ""),
+                "recording_title_quality": _meeting_title_quality(record.get("recording_title"), meeting_id),
+                "diarization_requested": True,
+                "transcript_attachment_present": True,
+                "transcript_attachment_chars": len(canonical_transcript),
+            },
+        )
+        record["updated_at"] = now
+        record["agent"] = agent
+        self._apply_meeting_agent_state_to_feed_item(record)
+        self._upsert_meeting(record)
+        return {
+            "ok": True,
+            "schema": "pucky.meeting_record_update.v1",
+            "meeting_id": meeting_id,
+            "meeting": self._normalize_meeting_for_client(record, compact=False),
+            "agent": agent,
+        }
+
     def meeting_ingest(self, payload: dict[str, object], *, base_url: str = "") -> dict[str, object]:
         meeting_id = _safe_meeting_id(payload.get("meeting_id"))
         if not meeting_id:
@@ -1861,6 +2228,11 @@ class PuckyVoiceService:
             "diarization_requested": True,
             "diarization_status": "pending",
             "speaker_turns": [],
+            "agent": {
+                "label": "Meeting Mode Agent",
+                "transcription_owner": "meeting_agent",
+                "basename_sync_status": "pending",
+            },
             "archived": False,
             "failure_stage": "",
         }
@@ -2152,6 +2524,7 @@ class PuckyVoiceService:
                 developer_instructions=self.config.meeting_developer_instructions or self.config.developer_instructions,
                 display_transcript_text="Meeting recording",
                 force_unread=True,
+                codex_client=self.meeting_codex,
                 attachment_builder=lambda envelope: self._prepare_meeting_reply_attachments(
                     meeting_id=meeting_id,
                     record=record,
@@ -2168,6 +2541,8 @@ class PuckyVoiceService:
             record["failure_reason"] = ""
             record["failure_stage"] = ""
             self._apply_meeting_agent_reply(record, result)
+            self._apply_meeting_agent_state(record)
+            self._apply_meeting_agent_state_to_feed_item(record)
             if record.get("transcript_status") == "missing_transcript_attachment":
                 record["state"] = "completed_with_missing_result"
                 record["failure_reason"] = "meeting_agent_missing_transcript_attachment"
@@ -2206,6 +2581,8 @@ class PuckyVoiceService:
                 )
                 record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
             result = {}
+        self._apply_meeting_agent_state(record)
+        self._apply_meeting_agent_state_to_feed_item(record)
         _run_staged_operation(
             "meeting_index_write",
             lambda: self._upsert_meeting(record),
@@ -2215,19 +2592,27 @@ class PuckyVoiceService:
     @staticmethod
     def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
         transcript_attachment = _meeting_transcript_attachment_payload(result)
-        transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
-        if not transcript_text:
+        if not transcript_attachment:
             record["transcript_status"] = "missing_transcript_attachment"
             record["transcript_error"] = "Meeting Transcript attachment missing or empty."
             record["diarization_status"] = "missing_transcript_attachment"
             record["speaker_turns"] = []
             return
+        transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
         parsed_turns = _parse_meeting_transcript_turns(transcript_text)
         card = result.get("card") if isinstance(result.get("card"), dict) else {}
         title = str(card.get("title") or result.get("title") or record.get("title") or "").strip()
         if title:
             record["title"] = title
-        record["canonical_basename"] = _meeting_canonical_basename(record, title or str(record.get("title") or "Meeting Recording"))
+        recording_title = str(result.get("recording_title") or record.get("recording_title") or "").strip()
+        if recording_title:
+            record["recording_title"] = recording_title
+        if not str(record.get("recording_title_source") or "").strip():
+            record["recording_title_source"] = "agent" if recording_title else "card_title_fallback"
+        record["canonical_basename"] = _meeting_canonical_basename(
+            record,
+            str(record.get("recording_title") or title or record.get("title") or "Meeting Recording"),
+        )
         record["transcript_status"] = "completed"
         record["transcript_error"] = ""
         record["transcript_text"] = transcript_text
@@ -2245,6 +2630,117 @@ class PuckyVoiceService:
             for item in parsed_turns
             if str(item.get("speaker") or "").strip()
         }
+        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+        agent.update(
+            {
+                "title_quality": _meeting_title_quality(record.get("title"), record.get("meeting_id")),
+                "recording_title": str(record.get("recording_title") or ""),
+                "recording_title_source": str(record.get("recording_title_source") or ""),
+                "recording_title_quality": _meeting_title_quality(record.get("recording_title"), record.get("meeting_id")),
+                "diarization_requested": True,
+                "transcript_attachment_present": True,
+                "transcript_attachment_chars": len(transcript_text),
+            }
+        )
+        record["agent"] = agent
+
+    def _apply_meeting_agent_state_to_feed_item(self, record: dict[str, object]) -> None:
+        feed_item = record.get("feed_item")
+        if not isinstance(feed_item, dict):
+            return
+        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+        if not agent:
+            return
+        telemetry = dict(feed_item.get("telemetry") or {}) if isinstance(feed_item.get("telemetry"), dict) else {}
+        for source_key, target_key in (
+            ("transcription_provider", "transcription_provider"),
+            ("transcription_model", "transcription_model"),
+            ("diarization_requested", "meeting_diarization_requested"),
+            ("diarization_status", "meeting_diarization_status"),
+            ("recording_title", "meeting_recording_title"),
+            ("recording_title_source", "meeting_recording_title_source"),
+            ("recording_title_quality", "meeting_recording_title_quality"),
+            ("transcript_attachment_present", "meeting_transcript_attachment_present"),
+            ("transcript_attachment_chars", "meeting_transcript_attachment_chars"),
+            ("tool_transcript_chars", "meeting_tool_transcript_chars"),
+            ("last_meeting_tool_name", "last_meeting_tool_name"),
+            ("last_meeting_tool_at", "last_meeting_tool_at"),
+            ("last_meeting_tool_call_at", "last_meeting_tool_call_at"),
+            ("basename_sync_status", "basename_sync_status"),
+            ("basename_sync_at", "basename_sync_at"),
+            ("title_quality", "meeting_title_quality"),
+        ):
+            value = agent.get(source_key)
+            if value not in (None, ""):
+                telemetry[target_key] = value
+        feed_item["telemetry"] = telemetry
+
+    def _updated_meeting_transcript_messages(
+        self,
+        feed_item: dict[str, object],
+        *,
+        record: dict[str, object],
+        meeting_id: str,
+        canonical_basename: str,
+        transcript_text: str,
+        transcript_path: str,
+    ) -> list[dict[str, object]]:
+        messages = [dict(item) for item in list(feed_item.get("transcript_messages") or []) if isinstance(item, dict)]
+        assistant = next((item for item in messages if str(item.get("role") or "") == "assistant"), None)
+        if assistant is None:
+            assistant = _assistant_transcript_message(
+                text=str(feed_item.get("summary") or ""),
+                created_at=_iso_time(time.time()),
+                attachments=[],
+            )
+            messages.append(assistant)
+        attachments = [dict(item) for item in list(assistant.get("attachments") or []) if isinstance(item, dict)]
+        for attachment in attachments:
+            attachment["meeting_id"] = meeting_id
+            attachment["canonical_basename"] = canonical_basename
+            attachment["recording_title"] = str(record.get("recording_title") or "")
+            if str(attachment.get("kind") or "") == "text" and str(attachment.get("title") or "").strip().lower() == "meeting transcript":
+                attachment["text"] = transcript_text
+                if transcript_path:
+                    attachment["path"] = transcript_path
+            elif str(attachment.get("title") or "").strip().lower() == "meeting audio":
+                device_path = _android_app_owned_path(record.get("device_path"))
+                audio_path = str(record.get("audio_path") or "").strip()
+                audio_url = str(record.get("audio_url") or "").strip()
+                if device_path:
+                    attachment["path"] = device_path
+                elif audio_path:
+                    attachment["path"] = audio_path
+                if audio_url:
+                    attachment["url"] = audio_url
+        assistant["attachments"] = attachments
+        return messages
+
+    def _apply_meeting_basename_sync(
+        self,
+        record: dict[str, object],
+        canonical_basename: str,
+        *,
+        owner: str,
+        rename_transcript: bool = False,
+    ) -> None:
+        audio_sync = self._rename_meeting_audio_artifact(record, canonical_basename)
+        if rename_transcript:
+            self._rename_meeting_text_artifact(record, "transcript_path", canonical_basename, "transcript.txt")
+        now = _iso_time(time.time())
+        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+        agent.update(
+            {
+                "label": "Meeting Mode Agent",
+                "basename_sync_status": str(audio_sync.get("status") or "unchanged"),
+                "basename_sync_at": now,
+                "basename_sync_owner": owner,
+            }
+        )
+        record["agent"] = agent
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        if meeting_id:
+            self._remember_meeting_agent_state(meeting_id, agent)
 
     def _prepare_meeting_reply_attachments(
         self,
@@ -2254,32 +2750,32 @@ class PuckyVoiceService:
         envelope: ReplyEnvelope,
     ) -> tuple[list[dict[str, object]], dict[str, object]]:
         prepared: list[dict[str, object]] = []
-        canonical_basename = _meeting_canonical_basename(record, envelope.card_title or str(record.get("title") or "Meeting Recording"))
+        requested_recording_title = str(envelope.recording_title or "").strip()
+        existing_recording_title = str(record.get("recording_title") or "").strip()
+        if requested_recording_title:
+            recording_title = requested_recording_title
+            recording_title_source = "agent"
+        elif existing_recording_title:
+            recording_title = existing_recording_title
+            recording_title_source = "existing"
+        elif str(envelope.card_title or "").strip():
+            recording_title = str(envelope.card_title or "").strip()
+            recording_title_source = "card_title_fallback"
+        elif str(record.get("title") or "").strip():
+            recording_title = str(record.get("title") or "").strip()
+            recording_title_source = "existing_title_fallback"
+        else:
+            recording_title = "Meeting Recording"
+            recording_title_source = "default_fallback"
+        record["recording_title"] = recording_title
+        record["recording_title_source"] = recording_title_source
+        canonical_basename = _meeting_canonical_basename(record, recording_title)
         record["canonical_basename"] = canonical_basename
-        self._rename_meeting_audio_artifact(record, canonical_basename)
-        if envelope.html_content:
-            html_title = envelope.html_title or f"{envelope.card_title or 'Meeting'} Summary"
-            prepared.append(
-                normalize_attachment(
-                    {
-                        "id": f"{meeting_id}:html",
-                        "artifact": f"pucky_card_{meeting_id}:html",
-                        "mime_type": "text/html",
-                        "title": html_title,
-                        "kind": "html",
-                        "meeting_id": meeting_id,
-                        "device_path": str(record.get("device_path") or ""),
-                        "audio_url": str(record.get("audio_url") or ""),
-                        "canonical_basename": canonical_basename,
-                        "started_at": str(record.get("started_at") or record.get("created_at") or ""),
-                        "mime_type_audio": str(record.get("mime_type") or ""),
-                    }
-                )
-            )
+        self._apply_meeting_basename_sync(record, canonical_basename, owner="meeting_agent_recording_title", rename_transcript=False)
         transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
         transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
-        if transcript_text:
+        if transcript_source:
             transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
             prepared.append(
@@ -2294,13 +2790,48 @@ class PuckyVoiceService:
                         "text": transcript_text,
                         "meeting_id": meeting_id,
                         "canonical_basename": canonical_basename,
+                        "recording_title": recording_title,
                     }
+                )
+            )
+        if envelope.html_content:
+            html_title = envelope.html_title or f"{envelope.card_title or 'Meeting'} Summary"
+            html_artifact = f"pucky_card_{meeting_id}:html"
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{meeting_id}:html",
+                        "artifact": html_artifact,
+                        "viewer_artifact": html_artifact,
+                        "html_artifact": html_artifact,
+                        "html_viewer_path": f"fixtures/artifacts/{html_artifact}",
+                        "mime_type": "text/html",
+                        "title": html_title,
+                        "kind": "html",
+                        "meeting_id": meeting_id,
+                        "device_path": str(record.get("device_path") or ""),
+                        "audio_url": str(record.get("audio_url") or ""),
+                        "canonical_basename": canonical_basename,
+                        "recording_title": recording_title,
+                        "started_at": str(record.get("started_at") or record.get("created_at") or ""),
+                        "mime_type_audio": str(record.get("mime_type") or ""),
+                        "transcript_path": transcript_path,
+                    }
+                )
+            )
+        audio_attachment = _meeting_audio_attachment_payload(record, canonical_basename)
+        if audio_attachment:
+            prepared.append(
+                normalize_attachment(
+                    audio_attachment
                 )
             )
         return prepared, {
             "fallback_from_reply_text": False,
             "transcript_path": transcript_path,
-            "transcript_attachment_present": bool(transcript_text),
+            "transcript_attachment_present": bool(transcript_source),
+            "recording_title": recording_title,
+            "recording_title_source": recording_title_source,
             "canonical_basename": canonical_basename,
         }
 
@@ -2312,14 +2843,15 @@ class PuckyVoiceService:
         path.write_text(str(content or ""), encoding="utf-8")
         return path
 
-    def _rename_meeting_audio_artifact(self, record: dict[str, object], canonical_basename: str) -> None:
+    def _rename_meeting_audio_artifact(self, record: dict[str, object], canonical_basename: str) -> dict[str, object]:
         current = Path(str(record.get("audio_path") or ""))
         if not current.is_file():
-            return
+            return {"status": "missing_audio", "changed": False, "path": str(current)}
         suffix = current.suffix or (".wav" if "wav" in str(record.get("mime_type") or "").lower() else ".m4a")
         target = current.with_name(f"{canonical_basename}{suffix}")
         if current == target:
-            return
+            record["audio_path"] = str(current)
+            return {"status": "unchanged", "changed": False, "path": str(current)}
         if target.exists():
             short_id = str(record.get("meeting_id") or "").rsplit("-", 1)[-1][:6] or "meeting"
             counter = 0
@@ -2329,40 +2861,46 @@ class PuckyVoiceService:
                 counter += 1
         current.rename(target)
         record["audio_path"] = str(target)
+        return {"status": "renamed", "changed": True, "path": str(target)}
+
+    def _rename_meeting_text_artifact(
+        self,
+        record: dict[str, object],
+        key: str,
+        canonical_basename: str,
+        suffix: str,
+    ) -> dict[str, object]:
+        current = Path(str(record.get(key) or ""))
+        if not current.is_file():
+            return {"status": "missing_text_artifact", "changed": False, "path": str(current)}
+        safe_suffix = re.sub(r"[^A-Za-z0-9._-]+", "-", str(suffix or "artifact.txt")).strip("-") or "artifact.txt"
+        target = current.with_name(f"{canonical_basename}-{safe_suffix}")
+        if current == target:
+            record[key] = str(current)
+            return {"status": "unchanged", "changed": False, "path": str(current)}
+        if target.exists():
+            short_id = str(record.get("meeting_id") or "").rsplit("-", 1)[-1][:6] or "meeting"
+            counter = 0
+            while target.exists() and target != current:
+                suffix_label = f"-{short_id}" if counter == 0 else f"-{short_id}-{counter}"
+                target = current.with_name(f"{canonical_basename}{suffix_label}-{safe_suffix}")
+                counter += 1
+        current.rename(target)
+        record[key] = str(target)
+        return {"status": "renamed", "changed": True, "path": str(target)}
 
     def _load_meetings(self) -> list[dict[str, object]]:
         with self._meetings_lock:
-            return self._load_meetings_locked()
-
-    def _load_meetings_locked(self) -> list[dict[str, object]]:
-        if self._meetings_rows_cache is None:
             if not self._meetings_index_path.exists():
-                self._meetings_rows_cache = []
-            else:
-                try:
-                    payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
-                except Exception:
-                    self._meetings_rows_cache = []
-                else:
-                    rows = payload.get("meetings") if isinstance(payload, dict) else payload
-                    if not isinstance(rows, list):
-                        self._meetings_rows_cache = []
-                    else:
-                        self._meetings_rows_cache = [dict(item) for item in rows if isinstance(item, dict)]
-        return [dict(item) for item in self._meetings_rows_cache]
-
-    def _compact_meetings_list(self, *, include_archived: bool = False) -> list[dict[str, object]]:
-        with self._meetings_lock:
-            cache_key = bool(include_archived)
-            cached = self._meetings_compact_cache.get(cache_key)
-            if cached is None:
-                cached = [
-                    self._normalize_meeting_for_client(item, compact=True)
-                    for item in self._load_meetings_locked()
-                    if include_archived or not bool(item.get("archived"))
-                ]
-                self._meetings_compact_cache[cache_key] = [copy.deepcopy(item) for item in cached]
-            return [copy.deepcopy(item) for item in self._meetings_compact_cache.get(cache_key, [])]
+                return []
+            try:
+                payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
+            except Exception:
+                return []
+            rows = payload.get("meetings") if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                return []
+            return [dict(item) for item in rows if isinstance(item, dict)]
 
     def _meeting_record_by_id(self, meeting_id: str) -> dict[str, object] | None:
         clean_id = _safe_meeting_id(meeting_id)
@@ -2408,6 +2946,7 @@ class PuckyVoiceService:
 
     def _normalize_meeting_for_client(self, meeting: dict[str, object], *, compact: bool) -> dict[str, object]:
         normalized = dict(meeting)
+        self._apply_meeting_agent_state(normalized)
         card = normalized.get("card") if isinstance(normalized.get("card"), dict) else {}
         if isinstance(card, dict):
             normalized["card"] = dict(card)
@@ -2437,7 +2976,6 @@ class PuckyVoiceService:
                     patched_origin.pop("failure_stage", None)
                 patched_feed["origin"] = patched_origin
                 normalized["feed_item"] = patched_feed
-        normalized["title"] = str(normalized.get("title") or (normalized.get("card") or {}).get("title") or meeting_id or "Meeting Recording")
         return self._compact_meeting(normalized) if compact else normalized
 
     @staticmethod
@@ -2451,12 +2989,23 @@ class PuckyVoiceService:
             "started_at",
             "stopped_at",
             "duration_ms",
+            "device_id",
+            "device_path",
+            "mime_type",
+            "audio_bytes",
+            "audio_path",
+            "audio_url",
             "title",
+            "recording_title",
+            "recording_title_source",
+            "canonical_basename",
             "transcript_status",
             "transcript_error",
             "diarization_requested",
             "diarization_status",
+            "agent",
             "card_id",
+            "card",
             "failure_stage",
             "failure_reason",
             "archived",
@@ -2466,15 +3015,21 @@ class PuckyVoiceService:
     def _upsert_meeting(self, record: dict[str, object]) -> None:
         with self._meetings_lock:
             self._meetings_dir.mkdir(parents=True, exist_ok=True)
-            rows = self._load_meetings_locked()
+            rows: list[dict[str, object]] = []
+            if self._meetings_index_path.exists():
+                try:
+                    payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
+                    raw_rows = payload.get("meetings") if isinstance(payload, dict) else payload
+                    if isinstance(raw_rows, list):
+                        rows = [dict(item) for item in raw_rows if isinstance(item, dict)]
+                except Exception:
+                    rows = []
             meeting_id = str(record.get("meeting_id") or "")
             rows = [item for item in rows if str(item.get("meeting_id") or "") != meeting_id]
             rows.append(dict(record))
             rows = rows[-200:]
             payload = {"schema": "pucky.meetings_index.v1", "meetings": rows}
             self._meetings_index_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-            self._meetings_rows_cache = [dict(item) for item in rows]
-            self._meetings_compact_cache.clear()
 
     def _card_icon_accent(self, icon: object) -> str:
         name = normalize_card_icon(icon)
@@ -2763,56 +3318,41 @@ class PuckyVoiceService:
         model: str | None = None,
         reasoning_effort: str | None = None,
         force_unread: bool = False,
+        codex_client: CodexProvider | None = None,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
         codex_stage: str = "codex_turn",
         feed_persist_stage: str = "feed_persist",
     ) -> dict[str, object]:
+        client = codex_client or self.codex
         telemetry["stage"] = "codex_running"
         telemetry["codex_start_ms"] = _elapsed_ms(total_start)
         self._update_turn_status(turn_id, "codex_running", "running", telemetry)
         start = time.perf_counter()
         requested_thread_id = str(telemetry.get("requested_thread_id") or "").strip()
-        existing_thread_item = self.feed.get_thread_item(requested_thread_id) if requested_thread_id else None
-        backend_thread_id = _thread_item_backend_thread_id(existing_thread_item) or requested_thread_id
-        visible_thread_title = _thread_item_display_title(existing_thread_item)
-        visible_thread_icon = _thread_item_display_icon(existing_thread_item)
-        if backend_thread_id:
-            telemetry["resolved_backend_thread_id"] = backend_thread_id
         model_override = _normalize_requested_turn_model(model, fallback=self.config.codex_model or "")
         reasoning_override = _normalize_requested_turn_reasoning_effort(
             reasoning_effort,
             fallback=self.config.codex_reasoning_effort or "",
         )
-        transcript_for_codex = transcript
         if requested_thread_id:
             reasoning_override = ""
             try:
-                existing_origin = self.codex.thread_origin(backend_thread_id, retries=1, delay=0.0)
+                existing_origin = client.thread_origin(requested_thread_id, retries=1, delay=0.0)
             except Exception:
                 existing_origin = {}
-            if isinstance(existing_origin, dict) and existing_origin:
+            if isinstance(existing_origin, dict):
                 preserved_reasoning = _normalize_requested_turn_reasoning_effort(
                     existing_origin.get("reasoning_effort"),
                     fallback="",
                 )
                 if preserved_reasoning:
                     reasoning_override = preserved_reasoning
-            elif isinstance(existing_thread_item, dict):
-                saved_messages = existing_thread_item.get("transcript_messages")
-                if isinstance(saved_messages, list):
-                    transcript_for_codex = _compose_recovered_thread_prompt(
-                        visible_thread_id=requested_thread_id,
-                        visible_thread_title=visible_thread_title,
-                        transcript=transcript,
-                        transcript_messages=saved_messages,
-                    )
-                    telemetry["thread_context_recovered"] = True
             model_override = ""
         def _send_turn() -> CodexTurnResult | str:
             try:
-                return self.codex.send_turn(
-                    transcript_for_codex,
-                    thread_id=backend_thread_id or None,
+                return client.send_turn(
+                    transcript,
+                    thread_id=requested_thread_id or None,
                     model=model_override or None,
                     reasoning_effort=reasoning_override or None,
                     output_schema=output_schema,
@@ -2833,8 +3373,8 @@ class PuckyVoiceService:
                     raise
                 fallback_candidates: list[dict[str, object]] = []
                 rich_fallback: dict[str, object] = {}
-                if backend_thread_id:
-                    rich_fallback["thread_id"] = backend_thread_id
+                if requested_thread_id:
+                    rich_fallback["thread_id"] = requested_thread_id
                 if isinstance(output_schema, dict):
                     rich_fallback["output_schema"] = output_schema
                 if developer_instructions:
@@ -2842,20 +3382,20 @@ class PuckyVoiceService:
                 if rich_fallback:
                     fallback_candidates.append(rich_fallback)
                 legacy_fallback: dict[str, object] = {}
-                if backend_thread_id:
-                    legacy_fallback["thread_id"] = backend_thread_id
+                if requested_thread_id:
+                    legacy_fallback["thread_id"] = requested_thread_id
                 if isinstance(output_schema, dict):
                     legacy_fallback["output_schema"] = output_schema
                 if legacy_fallback and legacy_fallback not in fallback_candidates:
                     fallback_candidates.append(legacy_fallback)
-                thread_only = {"thread_id": backend_thread_id} if backend_thread_id else {}
+                thread_only = {"thread_id": requested_thread_id} if requested_thread_id else {}
                 if thread_only and thread_only not in fallback_candidates:
                     fallback_candidates.append(thread_only)
                 if {} not in fallback_candidates:
                     fallback_candidates.append({})
                 for fallback_kwargs in fallback_candidates:
                     try:
-                        return self.codex.send_turn(transcript_for_codex, **fallback_kwargs)  # type: ignore[call-arg]
+                        return client.send_turn(transcript, **fallback_kwargs)  # type: ignore[call-arg]
                     except TypeError as fallback_exc:
                         fallback_message = str(fallback_exc)
                         if "unexpected keyword argument" not in fallback_message:
@@ -2867,7 +3407,7 @@ class PuckyVoiceService:
         if isinstance(codex_result, str):
             codex_result = CodexTurnResult(
                 reply_text=codex_result,
-                used_thread_id=str(self.codex.thread_id or backend_thread_id or requested_thread_id or ""),
+                used_thread_id=str(client.thread_id or requested_thread_id or ""),
                 requested_thread_id=requested_thread_id,
                 thread_mode="existing" if requested_thread_id else "new",
             )
@@ -2882,37 +3422,23 @@ class PuckyVoiceService:
 
         telemetry["stage"] = "envelope"
         envelope = parse_reply_envelope(raw_reply)
-        persisted_title = visible_thread_title or envelope.card_title
-        persisted_icon = visible_thread_icon or envelope.card_icon
-        if display_transcript_text == "Meeting recording" and envelope.html_content:
-            envelope = ReplyEnvelope(
-                envelope.reply_text,
-                envelope.card_title,
-                envelope.card_icon,
-                envelope.html_title,
-                _ensure_meeting_audio_link_placeholder(envelope.html_content),
-                envelope.attachments,
-            )
         telemetry["envelope_parse"] = "ok"
         telemetry["reply_chars"] = len(envelope.reply_text)
-        telemetry["card_icon"] = persisted_icon
+        telemetry["card_icon"] = envelope.card_icon
+        telemetry["recording_title"] = envelope.recording_title
         telemetry["has_html"] = bool(envelope.html_content)
         try:
-            self.codex.set_thread_title(persisted_title, thread_id=codex_result.used_thread_id)
+            client.set_thread_title(envelope.card_title, thread_id=codex_result.used_thread_id)
             telemetry["codex_thread_title_synced"] = True
         except Exception:
             telemetry["codex_thread_title_synced"] = False
         try:
-            origin = self.codex.thread_origin(codex_result.used_thread_id)
+            origin = client.thread_origin(codex_result.used_thread_id)
         except Exception:
             origin = {}
         if not isinstance(origin, dict):
             origin = {}
         origin = _normalize_origin(origin, telemetry.get("codex_thread_id"))
-        if requested_thread_id:
-            origin["thread_id"] = requested_thread_id
-            if persisted_title:
-                origin["thread_title"] = persisted_title
         telemetry["origin_thread_id"] = origin.get("thread_id", "")
         telemetry["origin_model"] = origin.get("model", "")
         telemetry["origin_reasoning_effort"] = origin.get("reasoning_effort", "")
@@ -2956,10 +3482,10 @@ class PuckyVoiceService:
             )
         ]
         card: dict[str, object] = {
-            "title": persisted_title,
+            "title": envelope.card_title,
             "summary": envelope.reply_text,
-            "icon": persisted_icon,
-            "accent": self._card_icon_accent(persisted_icon),
+            "icon": envelope.card_icon,
+            "accent": self._card_icon_accent(envelope.card_icon),
             "origin": origin,
         }
         html_mime_type = ""
@@ -2982,9 +3508,9 @@ class PuckyVoiceService:
                 session_id=session_id,
                 reply_mode=reply_mode,
                 reply_text=envelope.reply_text,
-                title=persisted_title,
+                title=envelope.card_title,
                 summary=envelope.reply_text,
-                icon=persisted_icon,
+                icon=envelope.card_icon,
                 origin=origin,
                 telemetry=_public_turn_telemetry(telemetry),
                 transcript_messages=transcript_messages,
@@ -3017,6 +3543,8 @@ class PuckyVoiceService:
         result = self._decorate_feed_item(verified)
         result["card"] = card
         result["accent"] = card["accent"]
+        if envelope.recording_title:
+            result["recording_title"] = envelope.recording_title
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -3198,6 +3726,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         return ReplyEnvelope(clean, fallback_title(clean), DEFAULT_CARD_ICON)
     reply_text = str(data.get("reply_text") or "").strip() or clean
     card_title = (str(data.get("card_title") or "").strip() or fallback_title(reply_text))[:MAX_CARD_TITLE_CHARS].strip() or "Pucky"
+    recording_title = str(data.get("recording_title") or "").strip()[:MAX_CARD_TITLE_CHARS].strip()
     html_title = ""
     html_content = ""
     html = data.get("html")
@@ -3213,6 +3742,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         reply_text,
         card_title,
         normalize_card_icon(data.get("card_icon")),
+        recording_title,
         html_title,
         html_content,
         tuple(attachments),
@@ -3237,6 +3767,7 @@ def reply_output_schema() -> dict[str, object]:
             "reply_text": {"type": "string"},
             "card_title": {"type": "string"},
             "card_icon": {"type": "string"},
+            "recording_title": {"type": ["string", "null"]},
             "html": {
                 "type": ["object", "null"],
                 "additionalProperties": False,
@@ -3333,10 +3864,10 @@ def _android_app_owned_path(path: object) -> str:
 
 
 def _meeting_request_audio_attachment(record: dict[str, object]) -> dict[str, object]:
-    attachment: dict[str, object] = {"title": "Meeting audio"}
+    attachment: dict[str, object] = {"title": "Meeting Audio"}
     device_path = _android_app_owned_path(record.get("device_path"))
     if device_path:
-        attachment["title"] = "Meeting audio"
+        attachment["title"] = "Meeting Audio"
         attachment["path"] = device_path
     return attachment
 
@@ -3407,9 +3938,9 @@ def _safe_meeting_id(raw: object) -> str:
 
 
 def _meeting_agent_handoff_prompt(record: dict[str, object]) -> str:
-    return f"""Meeting Recording Agent Handoff
+    return f"""Meeting Mode Agent Handoff
 
-The platform has stored the audio file and will manage any device-local linking after you reply. Follow your meeting-specific developer instructions plus the universal base instructions.
+Follow your meeting-specific developer instructions plus the shared base instructions. Use the meeting tools to do the transcript and diarization work.
 
 Meeting metadata:
 - meeting_id: {record.get("meeting_id")}
@@ -3420,7 +3951,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Return only the normal strict Pucky reply JSON. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML should include the literal token {{{{PUCKY_MEETING_AUDIO_LINK}}}} where the platform should render audio access.
+Produce both a card_title for the feed tile and a separate recording_title for the correlated saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
@@ -3763,7 +4294,7 @@ def _parse_meeting_transcript_turns(transcript_text: str) -> list[dict[str, obje
 def _meeting_diarization_status_from_text(transcript_text: str, speaker_turns: list[dict[str, object]]) -> str:
     if speaker_turns:
         return "speaker_turns"
-    return "plain_transcript" if str(transcript_text or "").strip() else "missing_transcript"
+    return "plain_transcript" if str(transcript_text or "").strip() else "no_transcript"
 
 
 def _meeting_title_stem(title: str) -> str:
@@ -3789,16 +4320,44 @@ def _meeting_canonical_basename(record: dict[str, object], title: str) -> str:
     return f"{stem}_{date_label}" if date_label else stem
 
 
-def _ensure_meeting_audio_link_placeholder(html_content: str) -> str:
-    content = str(html_content or "").strip()
-    if not content:
-        return content
-    if "{{PUCKY_MEETING_AUDIO_LINK}}" in content:
-        return content
-    snippet = "<p><strong>Audio</strong><br>{{PUCKY_MEETING_AUDIO_LINK}}</p>"
-    if "</body>" in content.lower():
-        return re.sub(r"</body>", snippet + "</body>", content, count=1, flags=re.IGNORECASE)
-    return content + snippet
+def _meeting_title_quality(title: object, meeting_id: object) -> str:
+    value = str(title or "").strip()
+    if not value:
+        return "machine_like"
+    lower = value.lower()
+    clean_meeting_id = str(meeting_id or "").strip().lower()
+    if clean_meeting_id and lower == clean_meeting_id:
+        return "machine_like"
+    if re.fullmatch(r"meeting[-_][a-z0-9._:-]{6,}", lower):
+        return "machine_like"
+    if re.search(r"\b[0-9a-f]{8,}\b", lower):
+        return "machine_like"
+    return "human_like"
+
+
+def _meeting_audio_attachment_payload(record: dict[str, object], canonical_basename: str) -> dict[str, object]:
+    meeting_id = str(record.get("meeting_id") or "").strip()
+    device_path = _android_app_owned_path(record.get("device_path"))
+    audio_path = str(record.get("audio_path") or "").strip()
+    audio_url = str(record.get("audio_url") or "").strip()
+    if not device_path and not audio_path and not audio_url:
+        return {}
+    payload: dict[str, object] = {
+        "id": f"{meeting_id}:audio" if meeting_id else "meeting-audio",
+        "title": "Meeting Audio",
+        "kind": "audio",
+        "mime_type": str(record.get("mime_type") or "audio/mp4"),
+        "meeting_id": meeting_id,
+        "canonical_basename": canonical_basename,
+        "recording_title": str(record.get("recording_title") or ""),
+    }
+    if device_path:
+        payload["path"] = device_path
+    elif audio_path:
+        payload["path"] = audio_path
+    if audio_url:
+        payload["url"] = audio_url
+    return payload
 
 
 def _log_json(payload: dict[str, object]) -> None:
@@ -3816,7 +4375,6 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
-        "resolved_backend_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
         "proof_reply_delay_enabled",
@@ -3827,7 +4385,6 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
-        "thread_context_recovered",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -3873,7 +4430,6 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "requested_reasoning_effort",
         "requested_thread_mode",
         "requested_thread_id",
-        "resolved_backend_thread_id",
         "thread_scope_source",
         "thread_scope_card_id",
         "proof_reply_delay_enabled",
@@ -3884,7 +4440,6 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
-        "thread_context_recovered",
         "upload_received_ms",
         "stt_start_ms",
         "stt_end_ms",
@@ -3935,71 +4490,6 @@ def _normalize_origin(origin: dict[str, object], fallback_thread_id: object) -> 
         if value:
             normalized[key] = value
     return normalized
-
-
-def _thread_item_backend_thread_id(item: dict[str, object] | None) -> str:
-    if not isinstance(item, dict):
-        return ""
-    telemetry = item.get("telemetry")
-    if isinstance(telemetry, dict):
-        for key in ("codex_thread_id", "origin_thread_id"):
-            value = str(telemetry.get(key) or "").strip()
-            if value:
-                return value
-    origin = item.get("origin")
-    if isinstance(origin, dict):
-        return str(origin.get("thread_id") or "").strip()
-    return ""
-
-
-def _thread_item_display_title(item: dict[str, object] | None) -> str:
-    if not isinstance(item, dict):
-        return ""
-    origin = item.get("origin")
-    if isinstance(origin, dict):
-        title = str(origin.get("thread_title") or "").strip()
-        if title:
-            return title
-    return str(item.get("title") or "").strip()
-
-
-def _thread_item_display_icon(item: dict[str, object] | None) -> str:
-    if not isinstance(item, dict):
-        return ""
-    return str(item.get("icon") or "").strip()
-
-
-def _compose_recovered_thread_prompt(
-    *,
-    visible_thread_id: str,
-    visible_thread_title: str,
-    transcript: str,
-    transcript_messages: list[dict[str, object]],
-) -> str:
-    history_lines: list[str] = []
-    for message in transcript_messages[-12:]:
-        if not isinstance(message, dict):
-            continue
-        role = str(message.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        text = re.sub(r"\s+", " ", str(message.get("text") or "").strip())
-        if not text:
-            continue
-        history_lines.append(f"{role.title()}: {text}")
-    history_block = "\n".join(history_lines) if history_lines else "(no saved conversation history)"
-    title_line = visible_thread_title or visible_thread_id or "Recovered thread"
-    latest_user_message = re.sub(r"\s+", " ", str(transcript or "").strip())
-    return (
-        "The original backend thread for this Pucky conversation could not be reopened. "
-        "Continue the conversation using the recovered visible-thread history below instead of asking the user to repeat context.\n\n"
-        f"Visible thread: {title_line}\n"
-        f"Visible thread id: {visible_thread_id}\n\n"
-        "Recovered conversation history:\n"
-        f"{history_block}\n\n"
-        "Latest user message:\n"
-        f"User: {latest_user_message}"
-    )
 
 
 def _links_portal_document(*, token: str, auth_mode: str, back_url: str, just_connected: str = "") -> str:
@@ -4676,9 +5166,6 @@ def make_handler(service: PuckyVoiceService):
                 )
                 return
             if path == "/api/feed":
-                if not self._is_authorized():
-                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                    return
                 query = parse_qs(parsed.query)
                 cursor = query.get("cursor", [""])[0]
                 limit = query.get("limit", ["20"])[0]
@@ -4833,9 +5320,6 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, result)
                 return
             if path == "/api/feed/actions":
-                if not self._is_authorized():
-                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                    return
                 try:
                     payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
                     result = service.feed_action(
@@ -5045,3 +5529,4 @@ def _strip_json_fence(text: str) -> str:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return text
+
