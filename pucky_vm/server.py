@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import html
 import hmac
@@ -816,6 +817,8 @@ class PuckyVoiceService:
         self._meetings_lock = threading.Lock()
         self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
         self._meetings_index_path = self._meetings_dir / "meetings.json"
+        self._meetings_rows_cache: list[dict[str, object]] | None = None
+        self._meetings_compact_cache: dict[bool, list[dict[str, object]]] = {}
 
     def start(self) -> None:
         self.codex.start()
@@ -1750,11 +1753,14 @@ class PuckyVoiceService:
         return self.feed.get_artifact(artifact_id)
 
     def meetings_list(self, *, include_archived: bool = False, compact: bool = False) -> dict[str, object]:
-        meetings = [
-            self._normalize_meeting_for_client(item, compact=compact)
-            for item in self._load_meetings()
-            if include_archived or not bool(item.get("archived"))
-        ]
+        if compact:
+            meetings = self._compact_meetings_list(include_archived=include_archived)
+        else:
+            meetings = [
+                self._normalize_meeting_for_client(item, compact=False)
+                for item in self._load_meetings()
+                if include_archived or not bool(item.get("archived"))
+            ]
         return {
             "schema": "pucky.meetings.v1",
             "ok": True,
@@ -2326,16 +2332,37 @@ class PuckyVoiceService:
 
     def _load_meetings(self) -> list[dict[str, object]]:
         with self._meetings_lock:
+            return self._load_meetings_locked()
+
+    def _load_meetings_locked(self) -> list[dict[str, object]]:
+        if self._meetings_rows_cache is None:
             if not self._meetings_index_path.exists():
-                return []
-            try:
-                payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
-            except Exception:
-                return []
-            rows = payload.get("meetings") if isinstance(payload, dict) else payload
-            if not isinstance(rows, list):
-                return []
-            return [dict(item) for item in rows if isinstance(item, dict)]
+                self._meetings_rows_cache = []
+            else:
+                try:
+                    payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
+                except Exception:
+                    self._meetings_rows_cache = []
+                else:
+                    rows = payload.get("meetings") if isinstance(payload, dict) else payload
+                    if not isinstance(rows, list):
+                        self._meetings_rows_cache = []
+                    else:
+                        self._meetings_rows_cache = [dict(item) for item in rows if isinstance(item, dict)]
+        return [dict(item) for item in self._meetings_rows_cache]
+
+    def _compact_meetings_list(self, *, include_archived: bool = False) -> list[dict[str, object]]:
+        with self._meetings_lock:
+            cache_key = bool(include_archived)
+            cached = self._meetings_compact_cache.get(cache_key)
+            if cached is None:
+                cached = [
+                    self._normalize_meeting_for_client(item, compact=True)
+                    for item in self._load_meetings_locked()
+                    if include_archived or not bool(item.get("archived"))
+                ]
+                self._meetings_compact_cache[cache_key] = [copy.deepcopy(item) for item in cached]
+            return [copy.deepcopy(item) for item in self._meetings_compact_cache.get(cache_key, [])]
 
     def _meeting_record_by_id(self, meeting_id: str) -> dict[str, object] | None:
         clean_id = _safe_meeting_id(meeting_id)
@@ -2410,6 +2437,7 @@ class PuckyVoiceService:
                     patched_origin.pop("failure_stage", None)
                 patched_feed["origin"] = patched_origin
                 normalized["feed_item"] = patched_feed
+        normalized["title"] = str(normalized.get("title") or (normalized.get("card") or {}).get("title") or meeting_id or "Meeting Recording")
         return self._compact_meeting(normalized) if compact else normalized
 
     @staticmethod
@@ -2423,20 +2451,12 @@ class PuckyVoiceService:
             "started_at",
             "stopped_at",
             "duration_ms",
-            "device_id",
-            "device_path",
-            "mime_type",
-            "audio_bytes",
-            "audio_path",
-            "audio_url",
             "title",
-            "canonical_basename",
             "transcript_status",
             "transcript_error",
             "diarization_requested",
             "diarization_status",
             "card_id",
-            "card",
             "failure_stage",
             "failure_reason",
             "archived",
@@ -2446,21 +2466,15 @@ class PuckyVoiceService:
     def _upsert_meeting(self, record: dict[str, object]) -> None:
         with self._meetings_lock:
             self._meetings_dir.mkdir(parents=True, exist_ok=True)
-            rows: list[dict[str, object]] = []
-            if self._meetings_index_path.exists():
-                try:
-                    payload = json.loads(self._meetings_index_path.read_text(encoding="utf-8"))
-                    raw_rows = payload.get("meetings") if isinstance(payload, dict) else payload
-                    if isinstance(raw_rows, list):
-                        rows = [dict(item) for item in raw_rows if isinstance(item, dict)]
-                except Exception:
-                    rows = []
+            rows = self._load_meetings_locked()
             meeting_id = str(record.get("meeting_id") or "")
             rows = [item for item in rows if str(item.get("meeting_id") or "") != meeting_id]
             rows.append(dict(record))
             rows = rows[-200:]
             payload = {"schema": "pucky.meetings_index.v1", "meetings": rows}
             self._meetings_index_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            self._meetings_rows_cache = [dict(item) for item in rows]
+            self._meetings_compact_cache.clear()
 
     def _card_icon_accent(self, icon: object) -> str:
         name = normalize_card_icon(icon)

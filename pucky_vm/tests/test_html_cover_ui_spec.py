@@ -286,10 +286,17 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "function initialMeetingsState()" in app
-    assert "meetings: initialMeetingsState()" in app
+    assert "function initialMeetingsState(cache = null)" in app
+    assert 'const MEETINGS_CACHE_KEY = "pucky.cover.meetings_cache.v1";' in app
+    assert 'const MEETINGS_CACHE_MAX_AGE_MS = 30000;' in app
+    assert "const persistedMeetingsCache = loadMeetingsCache();" in app
+    assert "meetings: initialMeetingsState(persistedMeetingsCache)" in app
     assert "async function loadMeetings(options = {})" in app
     assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
+    assert "function shouldRefreshMeetings(options = {})" in app
+    assert "function warmMeetingsRoute(options = {})" in app
+    assert "function loadMeetingsCache()" in app
+    assert "function persistMeetingsCache()" in app
     assert "async function loadMeetingDetail(meeting)" in app
     assert "function meetingsPageView()" in app
     assert "function meetingRowView(meeting)" in app
@@ -325,7 +332,8 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert "speaker_turns" in app
     assert "Processing..." in app
     assert "Refreshing..." in app
-    assert 'loadMeetings({ render: true });' in app
+    assert 'warmMeetingsRoute({ render: true });' in app
+    assert 'loadMeetings({ render: true, force: true })' in app
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'if (path && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
@@ -337,6 +345,29 @@ def test_meetings_route_lists_recordings_and_opens_audio_detail() -> None:
     assert ".meeting-processing-mark" in styles
     assert ".meeting-processing-timestamp" in styles
     assert ".meeting-row-icon" not in styles
+
+
+def test_meetings_route_uses_cached_first_refresh_and_debug_metrics() -> None:
+    app = read("app.js")
+
+    initial = function_block(app, "initialMeetingsState")
+    assert "const records = normalizeMeetingsCacheRecords(cache && cache.records);" in initial
+    assert "records," in initial
+    assert "cacheSource: cache && Array.isArray(cache.records) && cache.records.length ? \"storage\" : \"empty\"" in initial
+    assert "hasResolvedInitialLoad: Boolean(cache && Array.isArray(cache.records) && cache.records.length)" in initial
+    assert "lastFetchMs: 0" in initial
+    assert "lastHttpStatus: 0" in initial
+    assert "lastRenderReadyMs: 0" in initial
+    assert "function meetingsDebugMetrics()" in app
+    metrics = function_block(app, "meetingsDebugMetrics")
+    assert 'cache_source: String(state.meetings.cacheSource || "empty")' in metrics
+    assert "cache_age_ms:" in metrics
+    assert "records_count:" in metrics
+    assert "refresh_in_flight:" in metrics
+    assert "last_fetch_ms:" in metrics
+    assert "last_http_status:" in metrics
+    assert "last_render_ready_ms:" in metrics
+    assert "meetingsMetrics: meetingsDebugMetrics" in app
 
 
 def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> None:

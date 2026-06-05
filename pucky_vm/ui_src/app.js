@@ -4,6 +4,9 @@
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
+  const MEETINGS_CACHE_KEY = "pucky.cover.meetings_cache.v1";
+  const MEETINGS_CACHE_SCHEMA = "pucky.cover.meetings_cache.v1";
+  const MEETINGS_CACHE_MAX_AGE_MS = 30000;
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -292,6 +295,7 @@
   ];
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
+  const persistedMeetingsCache = loadMeetingsCache();
   const state = {
     cards: [],
     cardIconRegistry: {},
@@ -337,7 +341,7 @@
     lastRenderedTurnId: "",
     waveHistory: new Map(),
     links: initialLinksState(),
-    meetings: initialMeetingsState(),
+    meetings: initialMeetingsState(persistedMeetingsCache),
     meetingRecording: initialMeetingRecordingStatus(),
     drag: null
   };
@@ -1950,26 +1954,62 @@
       payload._http_status = response.status;
     }
     if (!response.ok) {
-      throw new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
+      const error = new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
+      error.httpStatus = response.status;
+      error.serverTiming = String(response.headers.get("Server-Timing") || "");
+      throw error;
     }
     return payload;
+  }
+
+  function shouldRefreshMeetings(options = {}) {
+    if (options.force) {
+      return true;
+    }
+    if (state.meetings.loading) {
+      return false;
+    }
+    if (!state.meetings.records.length) {
+      return true;
+    }
+    return Date.now() - safeNumber(state.meetings.lastRefreshAt) >= MEETINGS_CACHE_MAX_AGE_MS;
+  }
+
+  function warmMeetingsRoute(options = {}) {
+    const shouldRefresh = shouldRefreshMeetings(options);
+    if (options.render && state.route === "meetings" && !state.meetings.records.length && !state.meetings.hasResolvedInitialLoad) {
+      renderFeed();
+    }
+    if (!shouldRefresh) {
+      return Promise.resolve(state.meetings.records);
+    }
+    return loadMeetings(options);
   }
 
   async function loadMeetings(options = {}) {
     if (state.meetings.loading) {
       return;
     }
+    const fetchStartedAt = performance.now();
     state.meetings.loading = true;
     state.meetings.error = "";
-    if (options.render) {
+    if (options.render && state.route === "meetings" && (!state.meetings.records.length || options.force)) {
       renderFeed();
     }
     try {
       const payload = await linksApiRequest("/api/meetings?compact=1", { cache: "no-store" });
-      state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
+      state.meetings.records = normalizeMeetingsCacheRecords(payload && payload.meetings);
       state.meetings.lastRefreshAt = Date.now();
+      state.meetings.cacheSource = "network";
+      state.meetings.lastFetchMs = Math.max(0, Math.round(performance.now() - fetchStartedAt));
+      state.meetings.lastHttpStatus = safeNumber(payload && payload._http_status);
+      state.meetings.hasResolvedInitialLoad = true;
+      persistMeetingsCache();
     } catch (error) {
       state.meetings.error = String(error && error.message ? error.message : "Unable to load meetings");
+      state.meetings.lastFetchMs = Math.max(0, Math.round(performance.now() - fetchStartedAt));
+      state.meetings.lastHttpStatus = safeNumber(error && error.httpStatus);
+      state.meetings.hasResolvedInitialLoad = true;
     } finally {
       state.meetings.loading = false;
       if (options.render) {
@@ -1988,6 +2028,7 @@
     state.meetings.records = state.meetings.records.map(item =>
       String(item && item.meeting_id || "") === meetingId ? { ...item, ...detail } : item
     );
+    persistMeetingsCache();
     return detail;
   }
 
@@ -2598,12 +2639,19 @@
     };
   }
 
-  function initialMeetingsState() {
+  function initialMeetingsState(cache = null) {
+    const records = normalizeMeetingsCacheRecords(cache && cache.records);
     return {
       loading: false,
       error: "",
-      records: [],
-      lastRefreshAt: 0
+      records,
+      lastRefreshAt: safeNumber(cache && cache.updated_at),
+      cacheSource: cache && Array.isArray(cache.records) && cache.records.length ? "storage" : "empty",
+      hasResolvedInitialLoad: Boolean(cache && Array.isArray(cache.records) && cache.records.length),
+      lastFetchMs: 0,
+      lastHttpStatus: 0,
+      lastRenderReadyMs: 0,
+      routeEnteredAt: 0
     };
   }
 
@@ -2936,6 +2984,10 @@
       } else {
         dismissTransientUiForRouteChange();
         state.route = tab.route;
+        if (state.route === "meetings") {
+          state.meetings.routeEnteredAt = 0;
+          state.meetings.lastRenderReadyMs = 0;
+        }
         state.openTrayRoute = null;
       }
       persistNavState();
@@ -2950,7 +3002,7 @@
         loadLinksPortal({ render: true });
       } else if (state.route === "meetings") {
         refreshMeetingRecordingStatus({ render: true });
-        loadMeetings({ render: true });
+        warmMeetingsRoute({ render: true });
       } else if (state.route === "settings") {
         loadSettingsState({ render: true });
       }
@@ -3397,6 +3449,9 @@
 
   function meetingsPageView() {
     const page = el("section", "meetings-page");
+    if (!state.meetings.routeEnteredAt) {
+      state.meetings.routeEnteredAt = performance.now();
+    }
     const header = el("div", "meetings-header");
     header.append(
       el("div", "meetings-kicker", "Meeting Recording Mode"),
@@ -3404,11 +3459,11 @@
     );
     const refresh = el("button", "meetings-refresh", "Refresh");
     refresh.type = "button";
-    refresh.addEventListener("click", () => loadMeetings({ render: true }));
+    refresh.addEventListener("click", () => loadMeetings({ render: true, force: true }));
     header.append(refresh);
     page.append(header);
 
-    if (state.meetings.loading && !state.meetings.records.length) {
+    if (!state.meetings.hasResolvedInitialLoad && !state.meetings.records.length) {
       page.append(el("div", "meetings-empty", "Loading meetings..."));
       return page;
     }
@@ -3425,6 +3480,9 @@
     }
     const list = el("section", "meetings-list-card");
     list.append(...visibleMeetingRecords().slice().reverse().map(meetingRowView));
+    if (!state.meetings.lastRenderReadyMs) {
+      state.meetings.lastRenderReadyMs = Math.max(0, Math.round(performance.now() - state.meetings.routeEnteredAt));
+    }
     page.append(list);
     return page;
   }
@@ -3465,6 +3523,19 @@
 
   function visibleMeetingRecords() {
     return state.meetings.records.filter(meeting => !Boolean(meeting && meeting.archived));
+  }
+
+  function meetingsDebugMetrics() {
+    return {
+      schema: "pucky.meetings_metrics.v1",
+      cache_source: String(state.meetings.cacheSource || "empty"),
+      cache_age_ms: state.meetings.lastRefreshAt ? Math.max(0, Date.now() - safeNumber(state.meetings.lastRefreshAt)) : 0,
+      records_count: visibleMeetingRecords().length,
+      refresh_in_flight: Boolean(state.meetings.loading),
+      last_fetch_ms: Math.max(0, safeNumber(state.meetings.lastFetchMs)),
+      last_http_status: Math.max(0, safeNumber(state.meetings.lastHttpStatus)),
+      last_render_ready_ms: Math.max(0, safeNumber(state.meetings.lastRenderReadyMs))
+    };
   }
 
   async function showMeetingDetail(meeting) {
@@ -6495,6 +6566,7 @@
     state.meetings.records = state.meetings.records.map(item =>
       String(item && item.meeting_id || "") === archivedId ? { ...item, archived: true } : item
     );
+    persistMeetingsCache();
     return result;
   }
 
@@ -8312,6 +8384,46 @@
     }
   }
 
+  function loadMeetingsCache() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(MEETINGS_CACHE_KEY) || "null");
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      if (String(parsed.schema || "") !== MEETINGS_CACHE_SCHEMA) {
+        return null;
+      }
+      return {
+        schema: MEETINGS_CACHE_SCHEMA,
+        updated_at: safeNumber(parsed.updated_at),
+        records: normalizeMeetingsCacheRecords(parsed.records)
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistMeetingsCache() {
+    try {
+      localStorage.setItem(MEETINGS_CACHE_KEY, JSON.stringify({
+        schema: MEETINGS_CACHE_SCHEMA,
+        updated_at: safeNumber(state.meetings.lastRefreshAt),
+        records: normalizeMeetingsCacheRecords(state.meetings.records)
+      }));
+    } catch (_) {
+      // Meetings cache is opportunistic; the route should still work without storage.
+    }
+  }
+
+  function normalizeMeetingsCacheRecords(records) {
+    if (!Array.isArray(records)) {
+      return [];
+    }
+    return records
+      .filter(item => item && typeof item === "object")
+      .map(item => ({ ...item }));
+  }
+
   function shouldResetNavState() {
     try {
       const params = new URLSearchParams(window.location.search || "");
@@ -9352,7 +9464,7 @@
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
-      loadMeetings({ render: true });
+      warmMeetingsRoute({ render: true });
       return;
     }
     if (state.route === "settings") {
@@ -9364,7 +9476,8 @@
   window.PuckyUiDebug = {
     describe: describeUiSurface,
     dispatch: uiDebugDispatch,
-    linksMetrics: linksDebugMetrics
+    linksMetrics: linksDebugMetrics,
+    meetingsMetrics: meetingsDebugMetrics
   };
   installFeedRubberBand();
   installFeedScrollPersistence();
@@ -9383,6 +9496,6 @@
     loadLinksPortal({ render: true });
   } else if (state.route === "meetings") {
     refreshMeetingRecordingStatus({ render: true });
-    loadMeetings({ render: true });
+    warmMeetingsRoute({ render: true });
   }
 })();

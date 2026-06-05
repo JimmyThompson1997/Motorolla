@@ -1321,11 +1321,10 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(meeting["state"], "failed")
         self.assertEqual(meeting["card_id"], f"pucky_card_{meeting_id}")
-        self.assertEqual(meeting["card"]["card_kind"], "meeting_failed")
-        self.assertEqual(meeting["card"]["meeting_state"], "failed")
-        self.assertEqual(meeting["card"]["title"], "Meeting processing failed")
-        self.assertIn("meeting_agent_call", meeting["card"]["summary"])
-        self.assertIn("database is locked", meeting["card"]["summary"])
+        self.assertEqual(meeting["title"], "Meeting processing failed")
+        self.assertEqual(meeting["failure_stage"], "meeting_agent_call")
+        self.assertIn("database is locked", meeting["failure_reason"])
+        self.assertNotIn("card", meeting)
 
     def test_feed_sync_reconciles_failed_meeting_placeholder_card(self) -> None:
         meeting_id = "meeting-20260602-091700-device-feed-reconcile"
@@ -1646,6 +1645,11 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("transcript_result", meeting)
         self.assertNotIn("feed_item", meeting)
         self.assertNotIn("metadata", meeting)
+        self.assertNotIn("card", meeting)
+        self.assertNotIn("device_path", meeting)
+        self.assertNotIn("audio_bytes", meeting)
+        self.assertNotIn("audio_path", meeting)
+        self.assertNotIn("audio_url", meeting)
 
         detail = self.get_json(
             "/api/meetings/meeting-20260601-121000-device-abc123ef",
@@ -1654,7 +1658,69 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(detail["schema"], "pucky.meeting_detail.v1")
         self.assertEqual(detail["meeting"]["transcript_status"], "completed")
         self.assertIn("transcript_result", detail["meeting"])
+        self.assertIn("card", detail["meeting"])
+        self.assertIn("audio_path", detail["meeting"])
+        self.assertIn("audio_url", detail["meeting"])
         self.assertGreaterEqual(len(detail["meeting"]["speaker_turns"]), 2)
+
+    def test_compact_meetings_list_reuses_in_memory_cache_until_write(self) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        first = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": f"meeting-cache-a-{suffix}",
+            "state": "completed",
+            "created_at": "2026-06-01T12:00:00Z",
+            "updated_at": "2026-06-01T12:00:00Z",
+            "started_at": "2026-06-01T12:00:00Z",
+            "stopped_at": "2026-06-01T12:01:00Z",
+            "duration_ms": 60000,
+            "title": "Cached Meeting A",
+            "transcript_status": "completed",
+            "diarization_requested": False,
+            "diarization_status": "completed",
+            "archived": False,
+        }
+        second = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": f"meeting-cache-b-{suffix}",
+            "state": "completed",
+            "created_at": "2026-06-01T13:00:00Z",
+            "updated_at": "2026-06-01T13:00:00Z",
+            "started_at": "2026-06-01T13:00:00Z",
+            "stopped_at": "2026-06-01T13:01:00Z",
+            "duration_ms": 60000,
+            "title": "Cached Meeting B",
+            "transcript_status": "completed",
+            "diarization_requested": False,
+            "diarization_status": "completed",
+            "archived": False,
+        }
+
+        baseline = self.service.meetings_list(compact=True)
+        baseline_ids = {item["meeting_id"] for item in baseline["meetings"]}
+
+        self.service._upsert_meeting(first)
+        initial = self.service.meetings_list(compact=True)
+        initial_ids = {item["meeting_id"] for item in initial["meetings"]}
+        self.assertIn(first["meeting_id"], initial_ids)
+        self.assertEqual(len(initial_ids - baseline_ids), 1)
+
+        payload = {
+            "schema": "pucky.meetings_index.v1",
+            "meetings": [dict(item) for item in self.service._load_meetings()] + [second],
+        }
+        self.service._meetings_dir.mkdir(parents=True, exist_ok=True)
+        self.service._meetings_index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        cached = self.service.meetings_list(compact=True)
+        cached_ids = {item["meeting_id"] for item in cached["meetings"]}
+        self.assertIn(first["meeting_id"], cached_ids)
+        self.assertNotIn(second["meeting_id"], cached_ids)
+
+        self.service._upsert_meeting(second)
+        refreshed = self.service.meetings_list(compact=True)
+        refreshed_ids = {item["meeting_id"] for item in refreshed["meetings"]}
+        self.assertIn(second["meeting_id"], refreshed_ids)
 
     def test_meeting_archive_hides_meeting_without_archiving_feed_card(self) -> None:
         audio = b"RIFFmeeting-audio"
