@@ -250,6 +250,7 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
 
     monkeypatch.setattr(official, "wait_for_broker_command_channel", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(official, "run_pucky_command_resilient", fake_command)
+    monkeypatch.setattr(official, "verify_live_shell_after_refresh", lambda _args: {"surface": {"route": "feed"}})
 
     args = argparse.Namespace(
         bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
@@ -267,6 +268,48 @@ def test_refresh_target_uses_only_official_bundle_refresh_commands(monkeypatch: 
     assert calls == ["ui.bundle.refresh", "ui.shell.mode.set", "ui.bundle.status"]
     assert result["broker_channel"]["ok"] is True
     assert result["bundle_status"]["ui_version"] == "git-abcdef0"
+    assert result["live_shell"]["surface"]["route"] == "feed"
+
+
+def test_verify_live_shell_after_refresh_force_stops_relaunches_and_reads_surface(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    adb_calls: list[list[str]] = []
+    channel_waits: list[float] = []
+    args = argparse.Namespace(
+        repo_root=tmp_path,
+        adb=Path("adb.exe"),
+        device_id="ZY22JZ26LK",
+        package_name="com.pucky.device.debug",
+        activity_name="com.pucky.device.MainActivity",
+        command_timeout_seconds=120,
+        relaunch_settle_seconds=0.0,
+        surface_timeout_seconds=30,
+    )
+
+    monkeypatch.setattr(
+        official,
+        "run_adb",
+        lambda _args, _serial, adb_args, *, timeout_seconds=30: adb_calls.append(adb_args) or "",
+    )
+    monkeypatch.setattr(
+        official,
+        "wait_for_broker_command_channel",
+        lambda _args, *, timeout_seconds=None, sleep_seconds=2.0: channel_waits.append(float(timeout_seconds or 0.0)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        official,
+        "wait_for_live_surface",
+        lambda _args, *, timeout_seconds=None, interval_seconds=2.0: {"route": "links", "ui_version": "git-abcdef0"},
+    )
+    monkeypatch.setattr(official.phone_shared.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = official.verify_live_shell_after_refresh(args)
+
+    assert adb_calls == [
+        ["shell", "am", "force-stop", "com.pucky.device.debug"],
+        ["shell", "am", "start", "-n", "com.pucky.device.debug/com.pucky.device.MainActivity"],
+    ]
+    assert channel_waits == [60.0]
+    assert result["surface"]["route"] == "links"
 
 
 def test_run_cache_busts_manifest_and_bundle_urls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -304,6 +347,7 @@ def test_run_cache_busts_manifest_and_bundle_urls(monkeypatch: pytest.MonkeyPatc
                 "source_branch": "master",
                 "source_dirty": False,
             },
+            "live_shell": {"surface": {"route": "feed"}},
         }
 
     monkeypatch.setattr(official, "require_official_local_repo", lambda root, canonical_root: local_git)
@@ -360,12 +404,36 @@ def test_puckyctl_args_forward_explicit_wait_timeout() -> None:
     assert "--device-id" in command
 
 
+def test_parse_args_accepts_hidden_adb_and_surface_settings(tmp_path: Path) -> None:
+    args = official.parse_args(
+        [
+            "--target",
+            "emulator",
+            "--device-id",
+            "pucky-emulator-slot-02",
+            "--repo-root",
+            str(tmp_path),
+            "--adb",
+            str(tmp_path / "adb.exe"),
+            "--surface-timeout-seconds",
+            "90",
+            "--relaunch-settle-seconds",
+            "1.5",
+        ]
+    )
+
+    assert args.adb == (tmp_path / "adb.exe").resolve()
+    assert args.surface_timeout_seconds == 90
+    assert args.relaunch_settle_seconds == 1.5
+
+
 def test_official_helper_source_does_not_reference_low_level_local_install_commands() -> None:
     source = Path(official.__file__).read_text(encoding="utf-8")
 
     assert "ui.bundle.refresh" in source
     assert "ui.bundle.status" in source
     assert "ui.shell.mode.set" in source
+    assert "ui.surface.get" in source
     assert "file.put_base64" not in source
     assert "ui.bundle.install_downloaded" not in source
 

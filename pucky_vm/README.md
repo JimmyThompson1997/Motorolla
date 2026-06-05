@@ -95,7 +95,13 @@ Serve the latest source/bundle from the VM service:
 
 Official HTML refresh flow is:
 
-`GitHub master -> VM pull/build/serve -> emulator refresh/verify -> phone refresh/verify`
+`GitHub master -> VM sync helper -> manifest verification -> emulator refresh/verify -> phone refresh/verify`
+
+Sync the VM source checkout and verify the served manifest first:
+
+```powershell
+python .\tools\sync_pucky_vm_official.py --app pucky
+```
 
 Use the official helper from the canonical deploy repo for bundle refreshes:
 
@@ -116,3 +122,8 @@ the VM manifest matches that exact commit, and phone refreshes have matching
 emulator evidence for the same `ui_version`. Local bundle builds and local
 cache pushes are not official deploy state. Do not seed fixture state with
 direct `adb push`, `run-as`, or SharedPreferences edits.
+
+The device refresh helper also force-stops and relaunches the app, then
+verifies `ui.surface.get` before screenshots or route-specific checks should be
+trusted. Installed bundle identity alone is not enough proof if the WebView is
+still holding an older in-memory page.

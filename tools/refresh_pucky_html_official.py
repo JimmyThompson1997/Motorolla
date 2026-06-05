@@ -12,11 +12,16 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
+import tools.phone_proof_shared as phone_shared
+
 
 CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
 DEFAULT_VM_BASE_URL = "https://pucky.fly.dev"
 DEFAULT_BUNDLE_PATH = "/ui/pucky/latest/bundle.zip"
 DEFAULT_MANIFEST_PATH = "/ui/pucky/latest/manifest.json"
+DEFAULT_ADB = Path(r"C:\Users\jimmy\Desktop\Android\tools\android-sdk\platform-tools\adb.exe")
+DEFAULT_PACKAGE_NAME = "com.pucky.device.debug"
+DEFAULT_ACTIVITY_NAME = "com.pucky.device.MainActivity"
 RESULT_SCHEMA = "pucky.ui_bundle_refresh_evidence.v1"
 TRANSIENT_PUCKY_FAILURE_MARKERS = (
     "WINERROR 10053",
@@ -202,6 +207,85 @@ def run_pucky_command_resilient(
     raise last_error or OfficialRefreshError(f"Command {command_type} failed")
 
 
+def run_adb(
+    args: argparse.Namespace,
+    serial: str,
+    adb_args: list[str],
+    *,
+    timeout_seconds: int | float = 30,
+) -> str:
+    command = [str(args.adb), "-s", serial, *adb_args]
+    completed = subprocess.run(
+        command,
+        cwd=args.repo_root,
+        text=True,
+        capture_output=True,
+        timeout=timeout_seconds,
+    )
+    combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    if completed.returncode != 0:
+        raise OfficialRefreshError(f"ADB command failed: {combined}")
+    return combined.strip()
+
+
+def wait_for_live_surface(
+    args: argparse.Namespace,
+    *,
+    timeout_seconds: int | float | None = None,
+    interval_seconds: float = 2.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + float(timeout_seconds or max(15, args.command_timeout_seconds))
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            surface = run_pucky_command_resilient(args, "ui.surface.get", {}, attempts=1)
+            if surface:
+                return surface
+        except OfficialRefreshError as exc:
+            last_error = str(exc)
+            if not is_transient_pucky_failure(last_error):
+                raise
+        time.sleep(interval_seconds)
+    raise OfficialRefreshError(f"Timed out waiting for ui.surface.get after relaunch: {last_error}")
+
+
+def verify_live_shell_after_refresh(args: argparse.Namespace) -> dict[str, Any]:
+    force_stop_output = run_adb(
+        args,
+        args.device_id,
+        ["shell", "am", "force-stop", args.package_name],
+        timeout_seconds=max(30, args.command_timeout_seconds),
+    )
+    phone_shared.relaunch_activity(
+        run_adb,
+        args,
+        args.device_id,
+        timeout_seconds=max(30, args.command_timeout_seconds),
+        settle_seconds=max(0.0, float(args.relaunch_settle_seconds)),
+    )
+    broker_channel = wait_for_broker_command_channel(
+        args,
+        timeout_seconds=min(max(15, args.command_timeout_seconds), 60),
+    )
+    surface = wait_for_live_surface(
+        args,
+        timeout_seconds=max(20, float(args.surface_timeout_seconds)),
+    )
+    return {
+        "force_stop": {
+            "package_name": args.package_name,
+            "output": force_stop_output,
+        },
+        "relaunch": {
+            "package_name": args.package_name,
+            "activity_name": args.activity_name,
+            "settle_seconds": float(args.relaunch_settle_seconds),
+        },
+        "broker_channel": broker_channel,
+        "surface": surface,
+    }
+
+
 def verify_bundle_status(bundle_status: dict[str, Any], remote_manifest: dict[str, Any], local_git: dict[str, object]) -> dict[str, Any]:
     if not bundle_status.get("installed"):
         raise OfficialRefreshError("Target did not report an installed UI bundle")
@@ -263,11 +347,13 @@ def refresh_target(
     shell_mode = run_pucky_command_resilient(args, "ui.shell.mode.set", {"mode": "web_cached"})
     bundle_status = run_pucky_command_resilient(args, "ui.bundle.status", {})
     verify_bundle_status(bundle_status, remote_manifest, local_git)
+    live_shell = verify_live_shell_after_refresh(args)
     return {
         "broker_channel": broker_channel,
         "bundle_install": bundle_install,
         "shell_mode": shell_mode,
         "bundle_status": bundle_status,
+        "live_shell": live_shell,
     }
 
 
@@ -293,6 +379,7 @@ def build_evidence(
         "bundle_install": refresh_result["bundle_install"],
         "shell_mode": refresh_result["shell_mode"],
         "bundle_status": refresh_result["bundle_status"],
+        "live_shell": refresh_result["live_shell"],
     }
     if emulator_evidence is not None:
         evidence["emulator_evidence"] = {
@@ -349,14 +436,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--emulator-evidence", type=Path)
     parser.add_argument("--max-bundle-bytes", type=int, default=10 * 1024 * 1024)
     parser.add_argument("--command-timeout-seconds", type=int, default=120)
+    parser.add_argument("--surface-timeout-seconds", type=int, default=60)
+    parser.add_argument("--relaunch-settle-seconds", type=float, default=2.0)
     parser.add_argument("--evidence-dir", type=Path, default=root / ".tmp" / "pucky-html-refresh")
     parser.add_argument("--repo-root", type=Path, default=root, help=argparse.SUPPRESS)
     parser.add_argument("--canonical-root", type=Path, default=CANONICAL_REPO_ROOT, help=argparse.SUPPRESS)
     parser.add_argument("--puckyctl", type=Path, default=root / "pucky-apk" / "puckyctl" / "puckyctl.py", help=argparse.SUPPRESS)
+    parser.add_argument("--adb", type=Path, default=DEFAULT_ADB, help=argparse.SUPPRESS)
+    parser.add_argument("--package-name", default=DEFAULT_PACKAGE_NAME, help=argparse.SUPPRESS)
+    parser.add_argument("--activity-name", default=DEFAULT_ACTIVITY_NAME, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.repo_root = args.repo_root.resolve()
     args.canonical_root = args.canonical_root.resolve()
     args.puckyctl = args.puckyctl.resolve()
+    args.adb = args.adb.resolve()
     if not args.device_id:
         raise OfficialRefreshError("Official HTML refresh requires --device-id or PUCKY_DEVICE_ID")
     args.vm_base_url = args.vm_base_url.rstrip("/")
