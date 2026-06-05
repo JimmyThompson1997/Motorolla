@@ -80,6 +80,16 @@ function runProcess(executable, args, options = {}) {
   return String(result.stdout || "").trim();
 }
 
+function runProcessResult(executable, args, options = {}) {
+  return spawnSync(executable, args, {
+    cwd: options.cwd || repoRoot,
+    env: options.env || process.env,
+    windowsHide: true,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 50
+  });
+}
+
 function gitOutput(args) {
   return runProcess("git", args, { cwd: repoRoot });
 }
@@ -130,7 +140,11 @@ function resolveFlyctl() {
 
 function loadFlyEnvironment() {
   const flyctl = resolveFlyctl();
-  const envText = runProcess(flyctl, ["ssh", "console", "-a", "pucky", "--command", "env"], { cwd: repoRoot });
+  const processResult = runProcessResult(flyctl, ["ssh", "console", "-a", "pucky", "--command", "env"], { cwd: repoRoot });
+  const envText = String(processResult.stdout || "").trim();
+  if (!envText) {
+    throw new Error(String(processResult.stderr || processResult.stdout || "Could not read live Fly environment"));
+  }
   const result = {};
   for (const line of envText.split(/\r?\n/)) {
     const index = line.indexOf("=");
@@ -199,7 +213,31 @@ async function fetchFeedSnapshot(baseUrl, apiToken) {
 }
 
 async function browserFeedSnapshot(page) {
-  return page.evaluate(() => window.Pucky.request({ command: "ui.reply_cards.get", args: {} }));
+  return page.evaluate(() => {
+    if (window.PuckyUiDebug && typeof window.PuckyUiDebug.describe === "function") {
+      return window.PuckyUiDebug.describe();
+    }
+    const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map((node) => ({
+      kind: node.getAttribute("data-card-kind") || "",
+      card_id: node.getAttribute("data-card-id") || "",
+      session_id: node.getAttribute("data-card-session-id") || "",
+      thread_id: node.getAttribute("data-card-thread-id") || "",
+      preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
+    }));
+    return {
+      schema: "pucky.ui_surface.v1",
+      route: document.querySelector(".app-shell")?.getAttribute("data-view") || "",
+      detail: {
+        open: false,
+        type: "",
+        card_id: "",
+        session_id: "",
+        thread_id: "",
+        viewer: ""
+      },
+      visible_cards: cards
+    };
+  });
 }
 
 async function fetchMeetingDetail(baseUrl, apiToken, meetingId) {
@@ -604,8 +642,8 @@ async function runScenario({
     browser: feedAfterBrowser
   });
 
-  const feedCard = Array.isArray(feedAfterBrowser?.cards)
-    ? feedAfterBrowser.cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
+  const feedCard = Array.isArray(feedAfterBrowser?.visible_cards)
+    ? feedAfterBrowser.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
     : null;
   if (!feedCard) {
     throw new Error(`Could not find completed feed card for ${scenario.meetingId}`);
