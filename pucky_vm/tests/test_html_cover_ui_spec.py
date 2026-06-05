@@ -1052,7 +1052,7 @@ def test_card_actions_have_local_read_state() -> None:
     assert "function isActionRead(card, action)" in app
     assert 'requestFeedAction(card, "mark_read", { silent: true });' in app
     assert "result && result.ok === false" in app
-    assert ": applyLocalFeedAction(Array.isArray(snapshot.cards) ? snapshot.cards : state.cards, card, action);" in app
+    assert ": applyLocalFeedAction(state.cards, card, action);" in app
     assert "return { ...card, archived: true };" in app
     assert "return Boolean(card && card.read);" in app
     assert 'if (!options.restoring) {\n      markCardRead(card);' in app
@@ -2171,4 +2171,3 @@ def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_
     chip = css_block(styles, ".bubble-attachment-chip")
     assert "border-radius: 999px;" in chip
     assert "display: inline-flex;" in chip
-
