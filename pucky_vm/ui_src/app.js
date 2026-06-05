@@ -333,6 +333,7 @@
     feedRefreshing: false,
     nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
+    detailStickToLatest: true,
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
@@ -4625,10 +4626,12 @@
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
-    if (options.restoring) {
-      restoreScrollPosition(content, options.scrollTop);
-    } else {
+    const stickToLatest = !options.restoring || Boolean(options.stickToLatest);
+    state.detailStickToLatest = stickToLatest;
+    if (stickToLatest) {
       scrollTranscriptToLatest(content);
+    } else {
+      restoreScrollPosition(content, options.scrollTop);
     }
   }
 
@@ -5801,6 +5804,7 @@
   function dismissDetail() {
     const panel = document.getElementById("detail");
     state.navDetail = null;
+    state.detailStickToLatest = true;
     persistNavState();
     panel.style.transform = "";
     panel.classList.remove("is-open", "is-dragging");
@@ -7276,6 +7280,13 @@
     return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
   }
 
+  function transcriptMessageSignature(card) {
+    return messagesForCard(card).map(message => {
+      const role = message.role === "user" ? "user" : "assistant";
+      return `${role}\u241f${String(message.text || "")}`;
+    }).join("\u241e");
+  }
+
   function scrollTranscriptToLatest(content) {
     const apply = () => {
       if (!content) {
@@ -7313,16 +7324,35 @@
     if (!panel || !panel.classList.contains("is-open")) {
       return null;
     }
+    const currentCardId = String(panel.getAttribute("data-detail-card-id") || "");
+    const currentCard = currentCardId ? findCardByCardId(currentCardId) : null;
     const nextCard = resolveNavDetailCard(detail);
     const nextSessionId = cardSessionId(nextCard);
-    if (!nextCard || !nextSessionId || nextSessionId === detail.session_id) {
+    const nextCardId = String(nextCard?.card_id || "");
+    const currentSignature = currentCard ? transcriptMessageSignature(currentCard) : "";
+    const nextSignature = nextCard ? transcriptMessageSignature(nextCard) : "";
+    const shouldRebind = Boolean(
+      nextCard
+      && nextSessionId
+      && (
+        nextSessionId !== detail.session_id
+        || nextCardId !== currentCardId
+        || nextSignature !== currentSignature
+      )
+    );
+    if (!shouldRebind) {
       return null;
     }
     const content = panel.querySelector(".detail-content");
     captureCurrentDetailScroll();
-    const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(content);
+    const shouldStickToLatest = Boolean(
+      state.detailStickToLatest
+      || isTurnActive(state.turn)
+      || !canScrollUp(content)
+      || isNearBottom(content)
+    );
     showTranscript(nextCard, shouldStickToLatest
-      ? {}
+      ? { stickToLatest: true }
       : { restoring: true, scrollTop: state.navDetail?.scroll_top });
     if (!isPendingOutboundCard(nextCard)) {
       markCardRead(nextCard);
@@ -8703,6 +8733,11 @@
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
   }
 
+  function findCardByCardId(cardId) {
+    const target = String(cardId || "");
+    return target ? state.cards.find(card => String(card?.card_id || "") === target) || null : null;
+  }
+
   function cardsShareIdentity(left, right) {
     const leftThreadId = cardThreadId(left);
     const rightThreadId = cardThreadId(right);
@@ -8885,6 +8920,9 @@
     const save = debounce(() => {
       if (!state.navDetail || state.navDetail.type !== type) {
         return;
+      }
+      if (type === "transcript") {
+        state.detailStickToLatest = isNearBottom(content);
       }
       captureCurrentDetailScroll();
       persistNavState();

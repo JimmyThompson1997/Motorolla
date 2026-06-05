@@ -2077,6 +2077,9 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     app = read("app.js")
     mark_read = function_block(app, "markCardRead")
     request_mark_read = function_block(app, "requestMarkRead")
+    sync_rebind = function_block(app, "syncOpenThreadDetailAfterCards")
+    show_transcript = function_block(app, "showTranscript")
+    install_detail_scroll = function_block(app, "installDetailScrollPersistence")
 
     assert "function attachmentPromotesToChatMedia(item)" in app
     assert 'return ["image_gallery", "video_player", "document_html", "html_iframe"].includes(viewerType);' in app
@@ -2084,9 +2087,22 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     assert "function resolveNavDetailCard(detail)" in app
     assert "const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;" in app
     assert "function syncOpenThreadDetailAfterCards()" in app
+    assert "function transcriptMessageSignature(card)" in app
+    assert "detailStickToLatest: true," in app
+    assert "function findCardByCardId(cardId)" in app
     assert 'return String(card?.thread_id || card?.session_id || card?.card_id || "").trim();' in app
     assert "const nextCard = resolveNavDetailCard(detail);" in app
+    assert 'const currentCardId = String(panel.getAttribute("data-detail-card-id") || "");' in sync_rebind
+    assert "const currentCard = currentCardId ? findCardByCardId(currentCardId) : null;" in sync_rebind
+    assert "const currentSignature = currentCard ? transcriptMessageSignature(currentCard) : \"\";" in sync_rebind
+    assert "const nextSignature = nextCard ? transcriptMessageSignature(nextCard) : \"\";" in sync_rebind
+    assert "const shouldRebind = Boolean(" in sync_rebind
+    assert "|| nextCardId !== currentCardId" in sync_rebind
+    assert "|| nextSignature !== currentSignature" in sync_rebind
     assert 'showTranscript(nextCard, shouldStickToLatest' in app
+    assert '? { stickToLatest: true }' in sync_rebind
+    assert "state.detailStickToLatest" in sync_rebind
+    assert "|| !canScrollUp(content)" in sync_rebind
     assert "function scrollTranscriptToLatest(content)" in app
     assert "window.setTimeout(apply, 60);" in app
     assert "if (!isPendingOutboundCard(nextCard)) {" in app
@@ -2095,6 +2111,12 @@ def test_transcript_promotes_only_visual_media_and_rebinds_latest_thread_card() 
     assert "if (isPendingOutboundCard(card)) {" not in mark_read
     assert "requestMarkRead(card);" in mark_read
     assert "if (isPendingOutboundCard(card)) {" in request_mark_read
+    assert "const stickToLatest = !options.restoring || Boolean(options.stickToLatest);" in show_transcript
+    assert "state.detailStickToLatest = stickToLatest;" in show_transcript
+    assert "if (stickToLatest) {" in show_transcript
+    assert "state.detailStickToLatest = true;" in app
+    assert 'if (type === "transcript") {' in install_detail_scroll
+    assert "state.detailStickToLatest = isNearBottom(content);" in install_detail_scroll
     assert 'recordTurnUiEvent("thread_detail_rebound", {' in app
 
 def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surfaces() -> None:
