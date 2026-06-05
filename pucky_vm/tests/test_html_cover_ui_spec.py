@@ -715,6 +715,8 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
+    thread_pending = function_block(app, "threadPendingCardView")
+    can_archive = function_block(app, "canArchiveHomeCard")
     can_reveal = function_block(app, "canRevealHomeArchive")
     filtered = function_block(app, "filteredFeedCards")
     request_mark_read = function_block(app, "requestMarkRead")
@@ -746,18 +748,28 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "identity" not in outbound
     assert "card-actions" not in outbound
     assert "function threadPendingCardView(card)" in app
-
-    assert "appendArchiveRevealAction(wrapper, {" not in outbound
-    assert "installArchiveReveal(wrapper, card, {" not in outbound
+    assert "buildHomeArchiveButton(card, \"pending_outbound\")" in outbound
+    assert "card-outbound-actions" in outbound
+    assert "appendArchiveRevealAction(wrapper, {" in outbound
+    assert "installArchiveReveal(wrapper, card, {" in outbound
+    assert "buildHomeArchiveButton(card, \"reply\")" in thread_pending
+    assert "card-pending-thread-actions" in thread_pending
+    assert "appendArchiveRevealAction(wrapper, {" in thread_pending
+    assert "installArchiveReveal(wrapper, card, {" in thread_pending
     assert "function installArchiveReveal(wrapper, item, config)" in app
+    assert "function canArchiveHomeCard(card)" in app
     assert "function canRevealHomeArchive(card)" in app
-    assert "if (Boolean(card?.archived) || isPendingOutboundCard(card)) {" in can_reveal
-    assert "return false;" in can_reveal
+    assert "if (Boolean(card?.archived)) {" in can_archive
+    assert "if (isPendingOutboundCard(card) && !isFailedPendingOutboundCard(card)) {" in can_archive
+    assert "return canArchiveHomeCard(card);" in can_reveal
     assert "function prefersTouchInput()" in app
     assert "function isTouchPointerEvent(event)" in app
 
     assert ".card.card-outbound" in styles
     assert ".card.card-outbound.is-failed" in styles
+    assert ".card-outbound-actions" in styles
+    assert ".card-pending-thread-actions" in styles
+    assert ".action.action-archive" in styles
     assert ".card-outbound-copy" in styles
     assert ".card-outbound-preview" in styles
     assert "-webkit-line-clamp: 2" in css_block(styles, ".card-outbound-preview")
@@ -1201,9 +1213,11 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert 'dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });' in app
     assert 'reason: "outside_dismiss"' in function_block(app, "installArchiveRevealOutsideDismiss")
     assert "applyOptimisticHomeArchive(card)" in app
+    assert "function cardsShareIdentity(left, right)" in app
     assert "state.cards = state.cards.map(item => {" in optimistic
     assert "archived: true" in optimistic
-    assert 'return sameCardId || sameSession ? { ...item, archived: true } : item;' in optimistic
+    assert "const target = findCardByIdentity(card) || card;" in optimistic
+    assert 'return cardsShareIdentity(item, target) ? { ...item, archived: true } : item;' in optimistic
     assert 'command: "pucky.feed.action"' in app
     assert "CARD_ARCHIVE_SWIPE_" not in app
     assert ".archive-reveal-action" in styles

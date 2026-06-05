@@ -23,8 +23,15 @@ const reportDir = path.join(repoRoot, ".tmp", "cover-archive-reveal");
 const summaryPath = path.join(reportDir, "summary.json");
 const consoleLogPath = path.join(reportDir, "console.log");
 const VIEWPORT = { width: 430, height: 932 };
-const TARGET_SESSION_ID = "fixture_morning";
+
+const REPLY_BUTTON_SESSION_ID = "reply_archive_button_debug";
+const REPLY_SWIPE_SESSION_ID = "reply_archive_swipe_debug";
 const PENDING_SESSION_ID = "pending_archive_debug";
+const FAILED_PENDING_BUTTON_SESSION_ID = "failed_pending_archive_button_debug";
+const FAILED_PENDING_SWIPE_SESSION_ID = "failed_pending_archive_swipe_debug";
+const PENDING_THREAD_SESSION_ID = "pending_thread_archive_debug";
+const FAILED_THREAD_BUTTON_SESSION_ID = "failed_thread_archive_button_debug";
+const FAILED_THREAD_SWIPE_SESSION_ID = "failed_thread_archive_swipe_debug";
 
 function initialTurnSettings() {
   return {
@@ -79,23 +86,139 @@ function initialUiSurface(entrypointUrl) {
   };
 }
 
-function createHarnessState(entrypointUrl) {
-  const deployPath = path.join(repoRoot, "pucky_vm", "ui_src", "fixtures", "reply_cards_deploy.json");
-  const deployFixture = JSON.parse(fs.readFileSync(deployPath, "utf8"));
-  const pendingCard = {
+function replyCard({ cardId, sessionId, title, summary, createdAt, icon = "mail", accent = "#72c2ff" }) {
+  return {
     schema: "pucky.reply_card.v1",
-    card_id: "pending-debug-card",
-    session_id: PENDING_SESSION_ID,
-    local_session_id: PENDING_SESSION_ID,
-    pending_outbound: true,
-    pending_state: "codex_running",
-    pending_label: "Thinking",
-    summary: "Pending reveal debug card",
-    created_at: "2026-06-01T12:00:00Z",
-    icon: "mail",
-    accent: "#72c2ff"
+    card_id: cardId,
+    session_id: sessionId,
+    thread_id: `${sessionId}_thread`,
+    title,
+    summary,
+    transcript: summary,
+    created_at: createdAt,
+    icon,
+    accent,
+    read: false
   };
-  const cards = [pendingCard, ...(Array.isArray(deployFixture.cards) ? deployFixture.cards : [])];
+}
+
+function pendingCard({
+  cardId,
+  sessionId,
+  title,
+  summary,
+  createdAt,
+  pendingState,
+  pendingLabel,
+  failed = false,
+  threadContinuation = false,
+  threadId = "",
+  icon = "mail",
+  accent = "#72c2ff"
+}) {
+  return {
+    schema: "pucky.reply_card.v1",
+    card_id: cardId,
+    session_id: sessionId,
+    local_session_id: sessionId,
+    thread_id: threadId,
+    title,
+    summary,
+    transcript: summary,
+    created_at: createdAt,
+    icon,
+    accent,
+    pending_outbound: true,
+    pending_state: pendingState,
+    pending_label: pendingLabel,
+    pending_thread_continuation: threadContinuation,
+    read: false,
+    ...(failed ? { error: "Fixture failure" } : {})
+  };
+}
+
+function createHarnessState(entrypointUrl) {
+  const cards = [
+    replyCard({
+      cardId: "reply-archive-button-card",
+      sessionId: REPLY_BUTTON_SESSION_ID,
+      title: "Reply archive button",
+      summary: "Completed reply archived via the visible button.",
+      createdAt: "2026-06-01T12:00:00Z"
+    }),
+    replyCard({
+      cardId: "reply-archive-swipe-card",
+      sessionId: REPLY_SWIPE_SESSION_ID,
+      title: "Reply archive swipe",
+      summary: "Completed reply archived from the left-swipe reveal.",
+      createdAt: "2026-06-01T12:01:00Z"
+    }),
+    pendingCard({
+      cardId: "pending-inflight-card",
+      sessionId: PENDING_SESSION_ID,
+      title: "Sending message",
+      summary: "In-flight standalone pending card",
+      createdAt: "2026-06-01T12:02:00Z",
+      pendingState: "codex_running",
+      pendingLabel: "Thinking"
+    }),
+    pendingCard({
+      cardId: "failed-pending-button-card",
+      sessionId: FAILED_PENDING_BUTTON_SESSION_ID,
+      title: "Failed standalone pending button",
+      summary: "Failed standalone pending card archived via button.",
+      createdAt: "2026-06-01T12:03:00Z",
+      pendingState: "failed",
+      pendingLabel: "Failed",
+      failed: true
+    }),
+    pendingCard({
+      cardId: "failed-pending-swipe-card",
+      sessionId: FAILED_PENDING_SWIPE_SESSION_ID,
+      title: "Failed standalone pending swipe",
+      summary: "Failed standalone pending card archived via swipe.",
+      createdAt: "2026-06-01T12:04:00Z",
+      pendingState: "failed",
+      pendingLabel: "Failed",
+      failed: true
+    }),
+    pendingCard({
+      cardId: "pending-thread-inflight-card",
+      sessionId: PENDING_THREAD_SESSION_ID,
+      title: "Gmail Updated",
+      summary: "In-flight thread continuation pending card",
+      createdAt: "2026-06-01T12:05:00Z",
+      pendingState: "codex_running",
+      pendingLabel: "Thinking",
+      threadContinuation: true,
+      threadId: "gmail_thread_live"
+    }),
+    pendingCard({
+      cardId: "failed-thread-button-card",
+      sessionId: FAILED_THREAD_BUTTON_SESSION_ID,
+      title: "Failed thread pending button",
+      summary: "Failed thread-continuation pending card archived via button.",
+      createdAt: "2026-06-01T12:06:00Z",
+      pendingState: "failed",
+      pendingLabel: "Failed",
+      failed: true,
+      threadContinuation: true,
+      threadId: "failed_thread_button_live"
+    }),
+    pendingCard({
+      cardId: "failed-thread-swipe-card",
+      sessionId: FAILED_THREAD_SWIPE_SESSION_ID,
+      title: "Failed thread pending swipe",
+      summary: "Failed thread-continuation pending card archived via swipe.",
+      createdAt: "2026-06-01T12:07:00Z",
+      pendingState: "failed",
+      pendingLabel: "Failed",
+      failed: true,
+      threadContinuation: true,
+      threadId: "failed_thread_swipe_live"
+    })
+  ];
+
   return {
     cardsSnapshot: {
       schema: "pucky.reply_cards.v1",
@@ -120,15 +243,17 @@ function createHarnessState(entrypointUrl) {
   };
 }
 
+function sameCardIdentity(card, args) {
+  const targetCardId = String(args.card_id || "");
+  const targetSessionId = String(args.session_id || "");
+  const cardId = String(card?.card_id || "");
+  const sessionId = String(card?.session_id || card?.local_session_id || card?.turn_id || "");
+  return Boolean((targetCardId && cardId === targetCardId) || (targetSessionId && sessionId === targetSessionId));
+}
+
 function markArchived(snapshot, args) {
-  const cardId = String(args.card_id || "");
-  const sessionId = String(args.session_id || "");
   const cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
-  const nextCards = cards.map((card) => {
-    const sameCardId = cardId && String(card.card_id || "") === cardId;
-    const sameSessionId = sessionId && String(card.session_id || card.turn_id || "") === sessionId;
-    return sameCardId || sameSessionId ? { ...card, archived: true } : card;
-  });
+  const nextCards = cards.map(card => (sameCardIdentity(card, args) ? { ...card, archived: true } : card));
   return {
     schema: snapshot.schema || "pucky.reply_cards.v1",
     count: nextCards.length,
@@ -231,11 +356,34 @@ async function dispatchTouchDrag(client, { startX, startY, endX, endY, steps = 1
   });
 }
 
+function cardSelector(sessionId) {
+  return `article[data-card-session-id="${sessionId}"]`;
+}
+
+function wrapperSelector(sessionId) {
+  return `xpath=//*[@data-card-session-id="${sessionId}"]/ancestor::*[contains(@class, "card-wrap")][1]`;
+}
+
+function revealActionSelector(sessionId) {
+  return `${wrapperSelector(sessionId)}//*[contains(@class, "archive-reveal-action")]`;
+}
+
+function archiveButtonSelector(sessionId) {
+  return `${cardSelector(sessionId)} [data-card-action="archive"]`;
+}
+
+async function ensureCardVisible(page, sessionId) {
+  const card = page.locator(cardSelector(sessionId));
+  await card.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(120);
+}
+
 async function dragLeftOnCard(page, client, sessionId) {
-  const body = page.locator(`[data-card-session-id="${sessionId}"] .card-body`);
-  const box = await body.boundingBox();
+  await ensureCardVisible(page, sessionId);
+  const card = page.locator(cardSelector(sessionId));
+  const box = await card.boundingBox();
   if (!box) {
-    throw new Error(`No card body bounding box for ${sessionId}`);
+    throw new Error(`No card bounding box for ${sessionId}`);
   }
   const y = box.y + box.height / 2;
   const startX = box.x + box.width * 0.82;
@@ -261,6 +409,14 @@ async function wrapperOpen(page, sessionId) {
   }, sessionId);
 }
 
+async function cardVisibleCount(page, sessionId) {
+  return page.locator(cardSelector(sessionId)).count();
+}
+
+async function archiveButtonCount(page, sessionId) {
+  return page.locator(archiveButtonSelector(sessionId)).count();
+}
+
 async function debugTrace(page) {
   return page.evaluate(() => window.__puckyArchiveRevealDebug?.getTrace?.() || []);
 }
@@ -279,8 +435,129 @@ function expect(condition, message) {
   }
 }
 
+async function captureVisibleCards(page) {
+  return page.evaluate(() => window.PuckyUiDebug?.describe?.()?.visible_cards || []);
+}
+
+async function runPositiveButtonArchive(page, summary, key, sessionId, screenshotPrefix) {
+  const result = { session_id: sessionId, method: "button" };
+  await ensureCardVisible(page, sessionId);
+  result.before_visible = await cardVisibleCount(page, sessionId);
+  result.archive_button_count = await archiveButtonCount(page, sessionId);
+  expect(result.before_visible === 1, `${key}: expected card to be visible before archive`);
+  expect(result.archive_button_count === 1, `${key}: expected visible archive button`);
+  result.before_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-before`);
+  await page.locator(archiveButtonSelector(sessionId)).click();
+  await page.waitForFunction((innerSessionId) => !document.querySelector(`[data-card-session-id="${innerSessionId}"]`), sessionId);
+  result.after_visible = await cardVisibleCount(page, sessionId);
+  expect(result.after_visible === 0, `${key}: archived card should disappear from the visible feed`);
+  result.after_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-after`);
+  result.visible_cards_after = await captureVisibleCards(page);
+  summary.cases[key] = result;
+}
+
+async function runPositiveSwipeArchive(page, client, summary, key, sessionId, screenshotPrefix, options = {}) {
+  const result = { session_id: sessionId, method: "swipe" };
+  await ensureCardVisible(page, sessionId);
+  result.archive_button_count = await archiveButtonCount(page, sessionId);
+  expect(result.archive_button_count === 1, `${key}: expected archive button before swipe test`);
+  result.before_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-before`);
+
+  await clearDebugTrace(page);
+  const box = await dragLeftOnCard(page, client, sessionId);
+  await page.waitForFunction((innerSessionId) => {
+    const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
+    return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
+  }, sessionId);
+  result.reveal_open = await wrapperOpen(page, sessionId);
+  expect(result.reveal_open, `${key}: expected swipe reveal to open`);
+  result.trace_after_open = await debugTrace(page);
+  result.state_after_open = await debugState(page);
+  expect(result.trace_after_open.some(entry => entry.phase === "open"), `${key}: expected open trace event`);
+  expect(result.state_after_open.offset === 88, `${key}: expected open offset 88`);
+  result.open_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-open`);
+
+  if (options.exerciseClosePaths) {
+    await page.locator(`${cardSelector(sessionId)} .card-body`).click();
+    await page.waitForFunction((innerSessionId) => {
+      const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
+      return !row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open");
+    }, sessionId);
+    result.detail_hidden_after_body_close = await detailHidden(page);
+    expect(result.detail_hidden_after_body_close, `${key}: body click while reveal is open should not open detail`);
+    result.after_body_close_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-body-close`);
+
+    await dragLeftOnCard(page, client, sessionId);
+    await page.waitForFunction((innerSessionId) => {
+      const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
+      return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
+    }, sessionId);
+    await page.mouse.click(4, Math.max(4, Math.round(box.y + 12)));
+    await page.waitForFunction((innerSessionId) => {
+      const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
+      return !row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open");
+    }, sessionId);
+    result.trace_after_outside_close = await debugTrace(page);
+    expect(result.trace_after_outside_close.some(entry => entry.close_reason === "outside_dismiss"), `${key}: expected outside dismiss close reason`);
+    result.after_outside_close_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-outside-close`);
+
+    await clearDebugTrace(page);
+    await dragLeftOnCard(page, client, sessionId);
+    await page.waitForFunction((innerSessionId) => {
+      const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
+      return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
+    }, sessionId);
+  }
+
+  await page.locator(revealActionSelector(sessionId)).click({ force: true });
+  await page.waitForFunction((innerSessionId) => !document.querySelector(`[data-card-session-id="${innerSessionId}"]`), sessionId);
+  result.after_visible = await cardVisibleCount(page, sessionId);
+  expect(result.after_visible === 0, `${key}: archived card should disappear after swipe archive`);
+  result.trace_after_archive = await debugTrace(page);
+  result.after_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-after`);
+  result.visible_cards_after = await captureVisibleCards(page);
+  summary.cases[key] = result;
+}
+
+async function runNegativePendingCase(page, client, summary, key, sessionId, screenshotPrefix) {
+  const result = { session_id: sessionId, method: "negative" };
+  await ensureCardVisible(page, sessionId);
+  result.before_visible = await cardVisibleCount(page, sessionId);
+  result.archive_button_count = await archiveButtonCount(page, sessionId);
+  expect(result.before_visible === 1, `${key}: expected pending card to stay visible`);
+  expect(result.archive_button_count === 0, `${key}: in-flight pending card should not show an archive button`);
+  await clearDebugTrace(page);
+  await dragLeftOnCard(page, client, sessionId);
+  await page.waitForTimeout(250);
+  result.reveal_open = await wrapperOpen(page, sessionId);
+  result.trace = await debugTrace(page);
+  expect(!result.reveal_open, `${key}: in-flight pending card should not open archive reveal`);
+  expect(!result.trace.some(entry => entry.phase === "open"), `${key}: in-flight pending card should not record open trace`);
+  result.screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-negative`);
+  summary.cases[key] = result;
+}
+
+async function runVerticalDragSpotCheck(page, client, summary) {
+  await clearDebugTrace(page);
+  await dispatchTouchDrag(client, {
+    startX: 8,
+    startY: 210,
+    endX: 8,
+    endY: 280,
+    steps: 8
+  });
+  summary.vertical_drag = {
+    trace: await debugTrace(page),
+    screenshot: await saveScreenshot(page, reportDir, "99-vertical-drag")
+  };
+  expect(summary.vertical_drag.trace.some(entry => entry.scope === "feed_rubberband"), "Expected feed rubber-band telemetry after vertical drag");
+}
+
 async function run() {
   ensureDir(reportDir);
+  for (const entry of fs.readdirSync(reportDir, { withFileTypes: true })) {
+    fs.rmSync(path.join(reportDir, entry.name), { recursive: true, force: true });
+  }
   fs.writeFileSync(consoleLogPath, "", "utf8");
 
   const chromePath = resolveChromePath();
@@ -300,13 +577,22 @@ async function run() {
     chrome_path: chromePath,
     ui_path: uiPath,
     ui_url: uiUrl,
-    target_session_id: TARGET_SESSION_ID,
-    pending_session_id: PENDING_SESSION_ID
+    session_ids: {
+      reply_button: REPLY_BUTTON_SESSION_ID,
+      reply_swipe: REPLY_SWIPE_SESSION_ID,
+      pending_inflight: PENDING_SESSION_ID,
+      failed_pending_button: FAILED_PENDING_BUTTON_SESSION_ID,
+      failed_pending_swipe: FAILED_PENDING_SWIPE_SESSION_ID,
+      pending_thread_inflight: PENDING_THREAD_SESSION_ID,
+      failed_thread_button: FAILED_THREAD_BUTTON_SESSION_ID,
+      failed_thread_swipe: FAILED_THREAD_SWIPE_SESSION_ID
+    },
+    cases: {}
   };
 
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
-    await installCodexPuckyBridge(context, (message) => dispatch(state, message));
+    await installCodexPuckyBridge(context, message => dispatch(state, message));
 
     const page = await context.newPage();
     const client = await context.newCDPSession(page);
@@ -314,90 +600,33 @@ async function run() {
 
     await page.goto(uiUrl, { waitUntil: "load", timeout: 30000 });
     await page.waitForSelector('[data-route="feed"]');
-    await page.waitForSelector(`[data-card-session-id="${TARGET_SESSION_ID}"]`);
+    await page.waitForSelector(cardSelector(REPLY_BUTTON_SESSION_ID));
+    summary.initial_visible_cards = await captureVisibleCards(page);
+    summary.initial_screenshot = await saveScreenshot(page, reportDir, "01-initial");
 
-    summary.screenshots = {
-      initial: await saveScreenshot(page, reportDir, "01-initial")
-    };
-    summary.pending_visible_count = await page.locator(`[data-card-session-id="${PENDING_SESSION_ID}"]`).count();
-    expect(summary.pending_visible_count === 0, "Pending outbound rows should stay hidden in feed rendering");
+    await runPositiveButtonArchive(page, summary, "reply_button", REPLY_BUTTON_SESSION_ID, "02-reply-button");
+    await runPositiveSwipeArchive(page, client, summary, "reply_swipe", REPLY_SWIPE_SESSION_ID, "03-reply-swipe", { exerciseClosePaths: true });
+    await runNegativePendingCase(page, client, summary, "pending_inflight", PENDING_SESSION_ID, "04-pending-inflight");
+    await runPositiveButtonArchive(page, summary, "failed_pending_button", FAILED_PENDING_BUTTON_SESSION_ID, "05-failed-pending-button");
+    await runPositiveSwipeArchive(page, client, summary, "failed_pending_swipe", FAILED_PENDING_SWIPE_SESSION_ID, "06-failed-pending-swipe");
+    await runNegativePendingCase(page, client, summary, "pending_thread_inflight", PENDING_THREAD_SESSION_ID, "07-pending-thread-inflight");
+    await runPositiveButtonArchive(page, summary, "failed_thread_button", FAILED_THREAD_BUTTON_SESSION_ID, "08-failed-thread-button");
+    await runPositiveSwipeArchive(page, client, summary, "failed_thread_swipe", FAILED_THREAD_SWIPE_SESSION_ID, "09-failed-thread-swipe");
+    await runVerticalDragSpotCheck(page, client, summary);
 
-    await clearDebugTrace(page);
-    const targetBox = await dragLeftOnCard(page, client, TARGET_SESSION_ID);
-    await page.waitForTimeout(250);
-    summary.screenshots.reveal_open = await saveScreenshot(page, reportDir, "02-reveal-open");
-    summary.trace_after_open = await debugTrace(page);
-    summary.state_after_open = await debugState(page);
-    summary.reveal_open_after_swipe = await wrapperOpen(page, TARGET_SESSION_ID);
-    const tracePhases = new Set(summary.trace_after_open.map((entry) => entry.phase));
-    const closeReasons = summary.trace_after_open.map((entry) => entry.close_reason).filter(Boolean);
-    expect(tracePhases.has("begin"), "Expected archive reveal trace to record begin");
-    expect(tracePhases.has("move"), "Expected archive reveal trace to record move");
-    expect(tracePhases.has("finish"), "Expected archive reveal trace to record finish");
-
-    if (summary.reveal_open_after_swipe) {
-      expect(summary.trace_after_open.some((entry) => entry.phase === "open"), "Expected debug trace to record reveal open");
-      expect(summary.state_after_open.offset === 88, `Expected open reveal offset 88, got ${summary.state_after_open.offset}`);
-
-      await page.locator(`[data-card-session-id="${TARGET_SESSION_ID}"] .card-body`).click();
-      await page.waitForFunction((innerSessionId) => {
-        const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
-        return !row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open");
-      }, TARGET_SESSION_ID);
-      summary.screenshots.after_body_close = await saveScreenshot(page, reportDir, "03-after-body-close");
-      summary.detail_hidden_after_body_close = await detailHidden(page);
-      expect(summary.detail_hidden_after_body_close, "Body tap while open should close reveal without opening detail");
-
-      await dragLeftOnCard(page, client, TARGET_SESSION_ID);
-      await page.waitForFunction((innerSessionId) => {
-        const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
-        return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
-      }, TARGET_SESSION_ID);
-      await page.mouse.click(4, Math.round(targetBox.y + 12));
-      await page.waitForFunction((innerSessionId) => {
-        const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
-        return !row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open");
-      }, TARGET_SESSION_ID);
-      summary.screenshots.after_outside_close = await saveScreenshot(page, reportDir, "04-after-outside-close");
-      summary.trace_after_outside_close = await debugTrace(page);
-      expect(summary.trace_after_outside_close.some((entry) => entry.close_reason === "outside_dismiss"), "Expected outside dismiss close reason in trace");
-
-      await dragLeftOnCard(page, client, TARGET_SESSION_ID);
-      await page.waitForFunction((innerSessionId) => {
-        const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
-        return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
-      }, TARGET_SESSION_ID);
-      await page.locator(`xpath=//*[@data-card-session-id="${TARGET_SESSION_ID}"]/ancestor::*[contains(@class, "card-wrap")][1]//*[contains(@class, "archive-reveal-action")]`).click();
-      await page.waitForFunction((innerSessionId) => !document.querySelector(`[data-card-session-id="${innerSessionId}"]`), TARGET_SESSION_ID);
-      summary.screenshots.after_archive = await saveScreenshot(page, reportDir, "05-after-archive");
-      summary.trace_after_archive = await debugTrace(page);
-      summary.target_visible_after_archive = await page.locator(`[data-card-session-id="${TARGET_SESSION_ID}"]`).count();
-      expect(summary.target_visible_after_archive === 0, "Archived card should be removed from visible feed");
-    } else {
-      expect(closeReasons.length > 0, "Expected a failing reveal swipe to report an explicit close reason");
-      summary.close_reasons_after_failed_swipe = closeReasons;
-    }
-
-    await clearDebugTrace(page);
-    await dispatchTouchDrag(client, {
-      startX: 4,
-      startY: 210,
-      endX: 4,
-      endY: 260,
-      steps: 8
-    });
-    summary.trace_after_vertical_drag = await debugTrace(page);
-    summary.screenshots.after_vertical_drag = await saveScreenshot(page, reportDir, "06-after-vertical-drag");
-    expect(summary.trace_after_vertical_drag.some((entry) => entry.scope === "feed_rubberband"), "Expected feed rubber-band telemetry after vertical drag");
-
+    summary.final_visible_cards = await captureVisibleCards(page);
     writeJsonFile(summaryPath, summary);
   } finally {
-    await browser.close();
+    void browser.close().catch(() => {});
   }
 }
 
-run().catch((error) => {
-  writeAutomationError(reportDir, error);
-  console.error(error.stack || error.message);
-  process.exit(1);
-});
+run()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    writeAutomationError(reportDir, error);
+    console.error(error.stack || error.message);
+    process.exit(1);
+  });

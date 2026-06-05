@@ -3159,22 +3159,23 @@
 
   function filteredFeedCards() {
     return state.cards.filter(card => {
+      const archived = Boolean(card && card.archived);
       if (card && card.deleted) {
         return false;
       }
       if (state.showArchivedFeed) {
-        return Boolean(card && card.archived);
+        return archived;
       }
       if (isStandalonePendingOutboundCard(card)) {
-        return true;
+        return !archived;
       }
       if (isThreadContinuationPendingCard(card)) {
-        return isFeedIconIncluded(cardIconKey(card));
+        return !archived && isFeedIconIncluded(cardIconKey(card));
       }
       if (isPendingOutboundCard(card)) {
         return false;
       }
-      return !Boolean(card && card.archived) && isFeedIconIncluded(cardIconKey(card));
+      return !archived && isFeedIconIncluded(cardIconKey(card));
     });
   }
 
@@ -4270,6 +4271,10 @@
       });
       actions.append(file);
     }
+    const archive = buildHomeArchiveButton(card, "reply");
+    if (archive) {
+      actions.append(archive);
+    }
 
     cardEl.append(identity, body, actions);
     if (cardStamp) {
@@ -4328,15 +4333,30 @@
     copy.append(preview);
     const meta = el("div", "card-outbound-meta");
     const status = el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card));
-    meta.append(status);
+    const metaCopy = el("div", "card-outbound-meta-copy");
+    metaCopy.append(status);
     const stamp = cardTimestamp(card);
     if (stamp) {
       const time = el("time", "card-outbound-time", stamp.text);
       time.dateTime = stamp.iso;
-      meta.append(time);
+      metaCopy.append(time);
+    }
+    meta.append(metaCopy);
+    const archive = buildHomeArchiveButton(card, "pending_outbound");
+    if (archive) {
+      const archiveActions = el("div", "card-outbound-actions");
+      archiveActions.append(archive);
+      meta.append(archiveActions);
     }
     cardEl.append(copy, meta);
+    appendArchiveRevealAction(wrapper, {
+      label: `Archive ${card.title || "reply"}`
+    });
     wrapper.append(cardEl);
+    installArchiveReveal(wrapper, card, {
+      canReveal: canRevealHomeArchive,
+      performArchive: () => performHomeArchive(card)
+    });
     return wrapper;
   }
 
@@ -4370,16 +4390,48 @@
       el("p", "preview", pendingOutboundSummary(card))
     );
     const meta = el("div", "card-actions card-pending-thread-meta");
-    meta.append(el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card)));
+    const metaCopy = el("div", "card-pending-thread-meta-copy");
+    metaCopy.append(el("span", `card-outbound-status ${pendingOutboundStatusClass(card)}`, pendingOutboundStatusLabel(card)));
     const stamp = cardTimestamp(card);
     if (stamp) {
       const time = el("time", "card-outbound-time", stamp.text);
       time.dateTime = stamp.iso;
-      meta.append(time);
+      metaCopy.append(time);
+    }
+    meta.append(metaCopy);
+    const archive = buildHomeArchiveButton(card, "reply");
+    if (archive) {
+      const actions = el("div", "card-pending-thread-actions");
+      actions.append(archive);
+      meta.append(actions);
     }
     cardEl.append(identity, body, meta);
+    appendArchiveRevealAction(wrapper, {
+      label: `Archive ${card.title || "reply"}`
+    });
     wrapper.append(cardEl);
+    installArchiveReveal(wrapper, card, {
+      canReveal: canRevealHomeArchive,
+      performArchive: () => performHomeArchive(card)
+    });
     return wrapper;
+  }
+
+  function buildHomeArchiveButton(card, kind = "") {
+    if (!canArchiveHomeCard(card)) {
+      return null;
+    }
+    const button = el("button", `action action-archive ${actionStateClass(card, "archive")}`);
+    button.type = "button";
+    applyCardActionData(button, "archive", card, kind || (card?.pending_outbound ? "pending_outbound" : "reply"));
+    button.innerHTML = iconSvg("delete", { filled: true });
+    button.setAttribute("aria-label", `Archive ${card?.title || "reply"}`);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      void performHomeArchive(card);
+    });
+    return button;
   }
 
   function appendArchiveRevealAction(wrapper, config = {}) {
@@ -6544,7 +6596,7 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });
+    await syncFeedCards({ reason: "pre_archive", silent: true, render: false });
     const freshCard = findCardByIdentity(card) || card;
     return requestFeedAction(freshCard, "archive");
   }
@@ -6586,12 +6638,8 @@
   function applyOptimisticHomeArchive(card) {
     const previousCards = state.cards.slice();
     const target = findCardByIdentity(card) || card;
-    const targetCardId = String(target && target.card_id || "");
-    const targetSessionId = cardSessionId(target);
     state.cards = state.cards.map(item => {
-      const sameCardId = targetCardId && String(item && item.card_id || "") === targetCardId;
-      const sameSession = targetSessionId && cardSessionId(item) === targetSessionId;
-      return sameCardId || sameSession ? { ...item, archived: true } : item;
+      return cardsShareIdentity(item, target) ? { ...item, archived: true } : item;
     });
     reconcileFocusedCardSelection();
     reconcileReadOverrides();
@@ -6631,14 +6679,21 @@
     }
   }
 
-  function canRevealHomeArchive(card) {
+  function canArchiveHomeCard(card) {
     if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing) {
       return false;
     }
-    if (Boolean(card?.archived) || isPendingOutboundCard(card)) {
+    if (Boolean(card?.archived)) {
       return false;
     }
-    return Boolean(cardSessionId(card) || String(card?.card_id || ""));
+    if (isPendingOutboundCard(card) && !isFailedPendingOutboundCard(card)) {
+      return false;
+    }
+    return Boolean(cardThreadId(card) || cardSessionId(card) || String(card?.card_id || "").trim());
+  }
+
+  function canRevealHomeArchive(card) {
+    return canArchiveHomeCard(card);
   }
 
   function canRevealMeetingArchive(meeting) {
@@ -8648,14 +8703,24 @@
     return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
   }
 
+  function cardsShareIdentity(left, right) {
+    const leftThreadId = cardThreadId(left);
+    const rightThreadId = cardThreadId(right);
+    if (leftThreadId && rightThreadId && leftThreadId === rightThreadId) {
+      return true;
+    }
+    const leftCardId = String(left && left.card_id || "");
+    const rightCardId = String(right && right.card_id || "");
+    if (leftCardId && rightCardId && leftCardId === rightCardId) {
+      return true;
+    }
+    const leftSessionId = cardSessionId(left);
+    const rightSessionId = cardSessionId(right);
+    return Boolean(leftSessionId && rightSessionId && leftSessionId === rightSessionId);
+  }
+
   function findCardByIdentity(sourceCard) {
-    const cardId = String(sourceCard && sourceCard.card_id || "");
-    const sessionId = cardSessionId(sourceCard);
-    return state.cards.find(card => {
-      const sameCard = cardId && String(card && card.card_id || "") === cardId;
-      const sameSession = sessionId && cardSessionId(card) === sessionId;
-      return sameCard || sameSession;
-    }) || null;
+    return state.cards.find(card => cardsShareIdentity(card, sourceCard)) || null;
   }
 
   function findCardByThreadId(threadId) {
