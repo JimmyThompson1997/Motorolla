@@ -898,7 +898,7 @@ button {
   padding: 13px 16px 11px;
 }
 
-@media (max-width: 1200px) and (max-height: 1200px) and (min-aspect-ratio: 9 / 10) and (max-aspect-ratio: 11 / 10) {
+@media (max-width: 520px) and (max-height: 520px) {
   .links-list-head {
     display: none;
     padding: 0;

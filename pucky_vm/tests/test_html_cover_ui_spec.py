@@ -179,9 +179,9 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "display: flex;" in list_head
     assert "justify-content: space-between;" in list_head
     assert "display: none;" not in list_head
-    assert "@media (max-width: 1200px) and (max-height: 1200px) and (min-aspect-ratio: 9 / 10) and (max-aspect-ratio: 11 / 10)" in styles
+    assert "@media (max-width: 520px) and (max-height: 520px)" in styles
     assert re.search(
-        r"@media \(max-width: 1200px\) and \(max-height: 1200px\) and \(min-aspect-ratio: 9 / 10\) and \(max-aspect-ratio: 11 / 10\)\s*\{\s*\.links-list-head\s*\{\s*display: none;\s*padding: 0;\s*margin: 0;\s*min-height: 0;\s*height: 0;\s*overflow: hidden;\s*\}\s*\}",
+        r"@media \(max-width: 520px\) and \(max-height: 520px\)\s*\{\s*\.links-list-head\s*\{\s*display: none;\s*padding: 0;\s*margin: 0;\s*min-height: 0;\s*height: 0;\s*overflow: hidden;\s*\}\s*\}",
         styles,
         re.S,
     )
