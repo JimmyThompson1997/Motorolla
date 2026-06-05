@@ -10,15 +10,17 @@ import tools.sync_pucky_vm_official as sync
 
 
 def test_sync_helper_uses_flyctl_ssh_console_command() -> None:
+    remote_command = sync.build_remote_sync_shell_command("/data/pucky-src")
     command = sync.fly_ssh_command(
         flyctl=Path("flyctl"),
         app="pucky",
-        remote_command="cd /data/pucky-src && git fetch origin",
+        remote_command=remote_command,
     )
 
     assert command[:4] == ["flyctl", "ssh", "console", "-a"]
     assert "--command" in command
     assert "pucky" in command
+    assert remote_command.startswith("sh -lc ")
 
 
 def test_choose_machine_id_prefers_started_machine() -> None:

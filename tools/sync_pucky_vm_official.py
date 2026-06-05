@@ -37,7 +37,7 @@ def utc_stamp() -> str:
 
 
 def build_remote_sync_shell_command(vm_repo_path: str) -> str:
-    return " && ".join(
+    inner = " && ".join(
         [
             f"cd {shlex.quote(vm_repo_path)}",
             "git fetch origin",
@@ -46,6 +46,7 @@ def build_remote_sync_shell_command(vm_repo_path: str) -> str:
             "git rev-parse HEAD",
         ]
     )
+    return f"sh -lc {shlex.quote(inner)}"
 
 
 def fly_ssh_command(*, flyctl: Path, app: str, remote_command: str) -> list[str]:
