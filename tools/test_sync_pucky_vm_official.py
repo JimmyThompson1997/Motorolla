@@ -34,6 +34,18 @@ def test_choose_machine_id_prefers_started_machine() -> None:
     assert sync.choose_machine_id(stdout) == "started-2"
 
 
+def test_has_only_ignorable_fly_stderr_accepts_known_console_noise() -> None:
+    stderr = "\n".join(
+        [
+            "Warning: Metrics token unavailable: context canceled",
+            "Error: The handle is invalid.",
+        ]
+    )
+
+    assert sync.has_only_ignorable_fly_stderr(stderr) is True
+    assert sync.has_only_ignorable_fly_stderr("Error: ssh shell: ssh: command failed") is False
+
+
 def test_wait_for_manifest_match_times_out_on_commit_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     args = argparse.Namespace(
         manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",

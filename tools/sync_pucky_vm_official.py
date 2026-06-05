@@ -22,6 +22,10 @@ import tools.refresh_pucky_html_official as official_html
 DEFAULT_FLY_APP = "pucky"
 DEFAULT_VM_REPO_PATH = "/data/pucky-src"
 RESULT_SCHEMA = "pucky.vm_sync_evidence.v1"
+IGNORABLE_FLY_STDERR_PREFIXES = (
+    "Warning: Metrics token unavailable:",
+    "Error: The handle is invalid.",
+)
 
 
 class OfficialVmSyncError(RuntimeError):
@@ -81,6 +85,7 @@ def run_fly_command(
     command: list[str],
     *,
     timeout_seconds: int | float,
+    allow_ignorable_stderr: bool = False,
 ) -> dict[str, Any]:
     completed = run_subprocess(command, cwd=args.repo_root, timeout_seconds=timeout_seconds)
     payload = {
@@ -89,10 +94,19 @@ def run_fly_command(
         "stdout": completed.stdout,
         "stderr": completed.stderr,
     }
-    if completed.returncode != 0:
+    if completed.returncode != 0 and not (
+        allow_ignorable_stderr and has_only_ignorable_fly_stderr(completed.stderr)
+    ):
         combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part.strip())
         raise OfficialVmSyncError(f"Fly command failed: {combined or 'unknown flyctl failure'}")
     return payload
+
+
+def has_only_ignorable_fly_stderr(stderr_text: str) -> bool:
+    lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    return all(any(line.startswith(prefix) for prefix in IGNORABLE_FLY_STDERR_PREFIXES) for line in lines)
 
 
 def parse_machine_list(stdout: str) -> list[dict[str, Any]]:
@@ -125,6 +139,7 @@ def sync_vm_source(args: argparse.Namespace) -> dict[str, Any]:
         args,
         fly_ssh_command(flyctl=args.flyctl, app=args.app, remote_command=remote_command),
         timeout_seconds=args.sync_timeout_seconds,
+        allow_ignorable_stderr=True,
     )
     lines = [line.strip() for line in str(sync_result.get("stdout") or "").splitlines() if line.strip()]
     remote_head = lines[-1] if lines else ""
