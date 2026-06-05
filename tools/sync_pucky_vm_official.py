@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import tools.refresh_pucky_html_official as official_html
 
 
