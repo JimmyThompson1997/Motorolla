@@ -261,6 +261,27 @@ function markArchived(snapshot, args) {
   };
 }
 
+function markRead(snapshot, args) {
+  const cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+  const nextCards = cards.map(card => (sameCardIdentity(card, args) ? { ...card, read: true } : card));
+  return {
+    schema: snapshot.schema || "pucky.reply_cards.v1",
+    count: nextCards.length,
+    cards: nextCards
+  };
+}
+
+function feedItemsFromSnapshot(snapshot, includeArchived = false) {
+  const cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+  return cards.filter(card => {
+    if (!card || card.deleted) {
+      return false;
+    }
+    const archived = Boolean(card.archived);
+    return includeArchived ? archived : !archived;
+  });
+}
+
 function dispatch(state, message) {
   const command = String(message.command || "");
   const args = message.args && typeof message.args === "object" ? message.args : {};
@@ -369,16 +390,27 @@ function revealActionSelector(sessionId) {
 }
 
 function archiveButtonSelector(sessionId) {
-  return `${cardSelector(sessionId)} [data-card-action="archive"]`;
+  return `[data-card-session-id="${sessionId}"][data-card-action="archive"]`;
 }
 
 async function ensureCardVisible(page, sessionId) {
-  const card = page.locator(cardSelector(sessionId));
-  await card.scrollIntoViewIfNeeded();
-  await page.waitForTimeout(120);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const card = page.locator(cardSelector(sessionId)).first();
+    await card.waitFor({ state: "attached", timeout: 5000 });
+    try {
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(120);
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(120);
+    }
+  }
+  throw lastError || new Error(`Could not keep ${sessionId} attached while scrolling into view`);
 }
 
-async function dragLeftOnCard(page, client, sessionId) {
+async function dragLeftOnCard(page, client, sessionId, options = {}) {
   await ensureCardVisible(page, sessionId);
   const card = page.locator(cardSelector(sessionId));
   const box = await card.boundingBox();
@@ -386,15 +418,36 @@ async function dragLeftOnCard(page, client, sessionId) {
     throw new Error(`No card bounding box for ${sessionId}`);
   }
   const y = box.y + box.height / 2;
-  const startX = box.x + box.width * 0.82;
-  const endX = box.x + box.width * 0.22;
+  const startRatio = Number.isFinite(options.startRatio) ? options.startRatio : 0.58;
+  const endRatio = Number.isFinite(options.endRatio) ? options.endRatio : 0.12;
+  const startX = box.x + box.width * startRatio;
+  const endX = box.x + box.width * endRatio;
   await dispatchTouchDrag(client, {
     startX,
     startY: y,
     endX,
     endY: y,
-    steps: 12
+    steps: Number.isFinite(options.steps) ? options.steps : 12
   });
+  return box;
+}
+
+async function mouseDragOnCard(page, sessionId, options = {}) {
+  await ensureCardVisible(page, sessionId);
+  const card = page.locator(cardSelector(sessionId));
+  const box = await card.boundingBox();
+  if (!box) {
+    throw new Error(`No card bounding box for ${sessionId}`);
+  }
+  const y = box.y + box.height / 2;
+  const startRatio = Number.isFinite(options.startRatio) ? options.startRatio : 0.58;
+  const endRatio = Number.isFinite(options.endRatio) ? options.endRatio : 0.12;
+  const startX = box.x + box.width * startRatio;
+  const endX = box.x + box.width * endRatio;
+  await page.mouse.move(startX, y);
+  await page.mouse.down();
+  await page.mouse.move(endX, y, { steps: Number.isFinite(options.steps) ? options.steps : 12 });
+  await page.mouse.up();
   return box;
 }
 
@@ -439,7 +492,7 @@ async function captureVisibleCards(page) {
   return page.evaluate(() => window.PuckyUiDebug?.describe?.()?.visible_cards || []);
 }
 
-async function runPositiveButtonArchive(page, summary, key, sessionId, screenshotPrefix) {
+async function runPositiveButtonArchive(page, summary, key, sessionId, screenshotPrefix, options = {}) {
   const result = { session_id: sessionId, method: "button" };
   await ensureCardVisible(page, sessionId);
   result.before_visible = await cardVisibleCount(page, sessionId);
@@ -447,6 +500,18 @@ async function runPositiveButtonArchive(page, summary, key, sessionId, screensho
   expect(result.before_visible === 1, `${key}: expected card to be visible before archive`);
   expect(result.archive_button_count === 1, `${key}: expected visible archive button`);
   result.before_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-before`);
+  if (options.exerciseFinePointerNegative) {
+    await clearDebugTrace(page);
+    await mouseDragOnCard(page, sessionId);
+    await page.waitForTimeout(250);
+    result.fine_pointer_negative = {
+      reveal_open: await wrapperOpen(page, sessionId),
+      trace: await debugTrace(page),
+      screenshot: await saveScreenshot(page, reportDir, `${screenshotPrefix}-fine-pointer-negative`)
+    };
+    expect(!result.fine_pointer_negative.reveal_open, `${key}: mouse drag should not open archive reveal`);
+    expect(!result.fine_pointer_negative.trace.some(entry => entry.phase === "open"), `${key}: mouse drag should not record open trace`);
+  }
   await page.locator(archiveButtonSelector(sessionId)).click();
   await page.waitForFunction((innerSessionId) => !document.querySelector(`[data-card-session-id="${innerSessionId}"]`), sessionId);
   result.after_visible = await cardVisibleCount(page, sessionId);
@@ -459,9 +524,27 @@ async function runPositiveButtonArchive(page, summary, key, sessionId, screensho
 async function runPositiveSwipeArchive(page, client, summary, key, sessionId, screenshotPrefix, options = {}) {
   const result = { session_id: sessionId, method: "swipe" };
   await ensureCardVisible(page, sessionId);
+  await page.waitForTimeout(250);
   result.archive_button_count = await archiveButtonCount(page, sessionId);
   expect(result.archive_button_count === 1, `${key}: expected archive button before swipe test`);
   result.before_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-before`);
+
+  if (options.exerciseThresholdClose) {
+    await clearDebugTrace(page);
+    await dragLeftOnCard(page, client, sessionId, {
+      startRatio: 0.58,
+      endRatio: 0.53,
+      steps: 6
+    });
+    await page.waitForTimeout(250);
+    result.threshold_close = {
+      reveal_open: await wrapperOpen(page, sessionId),
+      trace: await debugTrace(page),
+      screenshot: await saveScreenshot(page, reportDir, `${screenshotPrefix}-threshold-close`)
+    };
+    expect(!result.threshold_close.reveal_open, `${key}: short swipe should not open archive reveal`);
+    expect(!result.threshold_close.trace.some(entry => entry.phase === "open"), `${key}: short swipe should not record open trace`);
+  }
 
   await clearDebugTrace(page);
   const box = await dragLeftOnCard(page, client, sessionId);
@@ -477,7 +560,7 @@ async function runPositiveSwipeArchive(page, client, summary, key, sessionId, sc
   expect(result.state_after_open.offset === 88, `${key}: expected open offset 88`);
   result.open_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-open`);
 
-  if (options.exerciseClosePaths) {
+  if (options.exerciseBodyClose) {
     await page.locator(`${cardSelector(sessionId)} .card-body`).click();
     await page.waitForFunction((innerSessionId) => {
       const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
@@ -486,12 +569,17 @@ async function runPositiveSwipeArchive(page, client, summary, key, sessionId, sc
     result.detail_hidden_after_body_close = await detailHidden(page);
     expect(result.detail_hidden_after_body_close, `${key}: body click while reveal is open should not open detail`);
     result.after_body_close_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-body-close`);
+    await page.waitForTimeout(250);
 
+    await clearDebugTrace(page);
     await dragLeftOnCard(page, client, sessionId);
     await page.waitForFunction((innerSessionId) => {
       const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
       return Boolean(row?.closest(".card-wrap")?.classList.contains("is-archive-reveal-open"));
     }, sessionId);
+  }
+
+  if (options.exerciseOutsideDismiss) {
     await page.mouse.click(4, Math.max(4, Math.round(box.y + 12)));
     await page.waitForFunction((innerSessionId) => {
       const row = document.querySelector(`[data-card-session-id="${innerSessionId}"]`);
@@ -500,6 +588,7 @@ async function runPositiveSwipeArchive(page, client, summary, key, sessionId, sc
     result.trace_after_outside_close = await debugTrace(page);
     expect(result.trace_after_outside_close.some(entry => entry.close_reason === "outside_dismiss"), `${key}: expected outside dismiss close reason`);
     result.after_outside_close_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-outside-close`);
+    await page.waitForTimeout(250);
 
     await clearDebugTrace(page);
     await dragLeftOnCard(page, client, sessionId);
@@ -538,12 +627,18 @@ async function runNegativePendingCase(page, client, summary, key, sessionId, scr
 }
 
 async function runVerticalDragSpotCheck(page, client, summary) {
+  await ensureCardVisible(page, PENDING_SESSION_ID);
+  const card = page.locator(cardSelector(PENDING_SESSION_ID));
+  const box = await card.boundingBox();
+  if (!box) {
+    throw new Error("Could not locate the in-flight pending card for vertical drag");
+  }
   await clearDebugTrace(page);
   await dispatchTouchDrag(client, {
-    startX: 8,
-    startY: 210,
-    endX: 8,
-    endY: 280,
+    startX: box.x + box.width * 0.5,
+    startY: box.y + box.height * 0.35,
+    endX: box.x + box.width * 0.5,
+    endY: box.y + box.height * 0.35 + 92,
     steps: 8
   });
   summary.vertical_drag = {
@@ -592,6 +687,74 @@ async function run() {
 
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
+    await context.exposeBinding("__codexFeedApiRequest", async (_source, raw) => {
+      const request = JSON.parse(String(raw || "{}"));
+      const url = new URL(String(request.url || "https://pucky.fly.dev/api/feed"));
+      if (url.pathname === "/api/feed/actions") {
+        const payload = request.body && typeof request.body === "object" ? request.body : {};
+        const action = String(payload.action || "");
+        if (action === "archive") {
+          state.cardsSnapshot = markArchived(state.cardsSnapshot, payload);
+        } else if (action === "mark_read") {
+          state.cardsSnapshot = markRead(state.cardsSnapshot, payload);
+        }
+        return {
+          status: 200,
+          body: {
+            schema: "pucky.feed_action_result.v1",
+            ok: true,
+            action
+          }
+        };
+      }
+      const includeArchived = url.searchParams.get("include_archived") === "1";
+      const items = feedItemsFromSnapshot(state.cardsSnapshot, includeArchived);
+      return {
+        status: 200,
+        body: {
+          schema: "pucky.feed.v1",
+          ok: true,
+          items,
+          count: items.length,
+          next_cursor: "",
+          has_more: false
+        }
+      };
+    });
+    await context.addInitScript(() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init = undefined) => {
+        const requestUrl = typeof input === "string"
+          ? input
+          : (input && typeof input === "object" && "url" in input ? String(input.url || "") : String(input || ""));
+        const resolvedUrl = new URL(requestUrl, window.location.href);
+        if (resolvedUrl.pathname === "/api/feed" || resolvedUrl.pathname === "/api/feed/actions") {
+          let parsedBody = null;
+          if (init && typeof init === "object" && "body" in init) {
+            const rawBody = init.body;
+            if (typeof rawBody === "string") {
+              try {
+                parsedBody = JSON.parse(rawBody);
+              } catch (_) {
+                parsedBody = rawBody;
+              }
+            } else {
+              parsedBody = rawBody ?? null;
+            }
+          }
+          const response = await window.__codexFeedApiRequest(JSON.stringify({
+            url: resolvedUrl.toString(),
+            method: String((init && init.method) || (typeof input === "object" && input && "method" in input ? input.method : "GET")).toUpperCase(),
+            body: parsedBody
+          }));
+          return new Response(JSON.stringify(response.body || {}), {
+            status: Number(response.status || 200),
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        return nativeFetch(input, init);
+      };
+    });
     await installCodexPuckyBridge(context, message => dispatch(state, message));
 
     const page = await context.newPage();
@@ -604,11 +767,16 @@ async function run() {
     summary.initial_visible_cards = await captureVisibleCards(page);
     summary.initial_screenshot = await saveScreenshot(page, reportDir, "01-initial");
 
-    await runPositiveButtonArchive(page, summary, "reply_button", REPLY_BUTTON_SESSION_ID, "02-reply-button");
-    await runPositiveSwipeArchive(page, client, summary, "reply_swipe", REPLY_SWIPE_SESSION_ID, "03-reply-swipe", { exerciseClosePaths: true });
+    await runPositiveButtonArchive(page, summary, "reply_button", REPLY_BUTTON_SESSION_ID, "02-reply-button", { exerciseFinePointerNegative: true });
+    await runPositiveSwipeArchive(page, client, summary, "reply_swipe", REPLY_SWIPE_SESSION_ID, "03-reply-swipe", {
+      exerciseThresholdClose: true,
+      exerciseBodyClose: true
+    });
     await runNegativePendingCase(page, client, summary, "pending_inflight", PENDING_SESSION_ID, "04-pending-inflight");
     await runPositiveButtonArchive(page, summary, "failed_pending_button", FAILED_PENDING_BUTTON_SESSION_ID, "05-failed-pending-button");
-    await runPositiveSwipeArchive(page, client, summary, "failed_pending_swipe", FAILED_PENDING_SWIPE_SESSION_ID, "06-failed-pending-swipe");
+    await runPositiveSwipeArchive(page, client, summary, "failed_pending_swipe", FAILED_PENDING_SWIPE_SESSION_ID, "06-failed-pending-swipe", {
+      exerciseOutsideDismiss: true
+    });
     await runNegativePendingCase(page, client, summary, "pending_thread_inflight", PENDING_THREAD_SESSION_ID, "07-pending-thread-inflight");
     await runPositiveButtonArchive(page, summary, "failed_thread_button", FAILED_THREAD_BUTTON_SESSION_ID, "08-failed-thread-button");
     await runPositiveSwipeArchive(page, client, summary, "failed_thread_swipe", FAILED_THREAD_SWIPE_SESSION_ID, "09-failed-thread-swipe");
