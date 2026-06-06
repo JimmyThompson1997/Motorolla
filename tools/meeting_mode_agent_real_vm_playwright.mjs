@@ -521,15 +521,15 @@ function ensureGeneratedFixtures(reportDir) {
   ensureDir(fixtureDir);
   ensureDir(segmentDir);
 
-  const silencePath = path.join(segmentDir, "silence.wav");
+  const silencePath = path.join(segmentDir, "silence-1200ms.wav");
   if (!fs.existsSync(silencePath)) {
-    fs.writeFileSync(silencePath, createSilenceWavBuffer(500));
+    fs.writeFileSync(silencePath, createSilenceWavBuffer(1200));
   }
 
-  const namedDuoOut = path.join(fixtureDir, "named-duo-generated.wav");
-  const anonymousDuoOut = path.join(fixtureDir, "anonymous-duo-generated.wav");
-  const namedTrioOut = path.join(fixtureDir, "named-trio-generated.wav");
-  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-generated.wav");
+  const namedDuoOut = path.join(fixtureDir, "named-duo-generated-v2.wav");
+  const anonymousDuoOut = path.join(fixtureDir, "anonymous-duo-generated-v2.wav");
+  const namedTrioOut = path.join(fixtureDir, "named-trio-generated-v2.wav");
+  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-generated-v2.wav");
 
   const buildFixture = (name, segments) => {
     const wavParts = [];
@@ -553,9 +553,9 @@ function ensureGeneratedFixtures(reportDir) {
 
   if (!fs.existsSync(namedDuoOut)) {
     const namedDuoParts = buildFixture("named-duo", [
-      { voice: "en-US-GuyNeural", text: "Hi, I'm Jimmy. We are reviewing the launch follow up." },
-      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I will schedule the Friday partner check in." },
-      { voice: "en-US-GuyNeural", text: "Great. I will send the deck tonight." }
+      { voice: "en-US-GuyNeural", text: "Hi Maya, I'm Jimmy speaking about the launch follow up." },
+      { voice: "en-US-AriaNeural", text: "Hi Jimmy, this is Maya. I will schedule the Friday partner check in." },
+      { voice: "en-US-GuyNeural", text: "Thanks Maya. Jimmy will send the deck tonight." }
     ]);
     concatWavFiles(ffmpegPath, namedDuoParts, namedDuoOut, fixtureDir);
   }
@@ -563,7 +563,7 @@ function ensureGeneratedFixtures(reportDir) {
   if (!fs.existsSync(anonymousDuoOut)) {
     const anonymousDuoParts = buildFixture("anonymous-duo", [
       { voice: "en-US-GuyNeural", text: "We are reviewing the launch follow up." },
-      { voice: "en-US-ChristopherNeural", text: "I will schedule the Friday partner check in." },
+      { voice: "en-US-AriaNeural", text: "I will schedule the Friday partner check in." },
       { voice: "en-US-GuyNeural", text: "Please send the deck tonight." }
     ]);
     concatWavFiles(ffmpegPath, anonymousDuoParts, anonymousDuoOut, fixtureDir);
@@ -571,10 +571,10 @@ function ensureGeneratedFixtures(reportDir) {
 
   if (!fs.existsSync(namedTrioOut)) {
     const namedParts = buildFixture("named-trio", [
-      { voice: "en-US-GuyNeural", text: "Hi, I'm Jimmy. We need to finalize the launch deck today." },
-      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I'll schedule the Friday partner check in." },
-      { voice: "en-US-AriaNeural", text: "I'm Maya. I'll update the budget table and send the revised numbers." },
-      { voice: "en-US-GuyNeural", text: "Great. I'll send the deck tonight." }
+      { voice: "en-US-GuyNeural", text: "Hi Jack and Maya, I'm Jimmy. We need to finalize the launch deck today." },
+      { voice: "en-US-ChristopherNeural", text: "Hi Jimmy, this is Jack. I will schedule the Friday partner check in." },
+      { voice: "en-US-AriaNeural", text: "Hi Jimmy and Jack, this is Maya. I will update the budget table and send the revised numbers." },
+      { voice: "en-US-GuyNeural", text: "Thanks Maya. Jimmy will send the deck tonight." }
     ]);
     concatWavFiles(ffmpegPath, namedParts, namedTrioOut, fixtureDir);
   }
@@ -607,11 +607,11 @@ function buildScenarios(reportDir, namesFilter = []) {
         startedAt: namedDuo.startedAt,
         audioPath: fixtures.namedDuoOut
       }),
-      expectedNames: ["Jimmy", "Jack"],
+      expectedNames: ["Jimmy", "Maya"],
       forbiddenNeutralLabels: ["speaker_0", "speaker_1"],
       expectedSummarySnippets: [
         "Jimmy",
-        "Jack",
+        "Maya",
         "launch",
         "Friday",
         "deck"
