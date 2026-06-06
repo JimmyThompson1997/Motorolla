@@ -4479,7 +4479,7 @@
   }
 
   function messageAttachmentRow(card, message, index) {
-    const attachments = normalizedAttachments(message?.attachments);
+    const attachments = preferredDisplayAttachments(card, message?.attachments);
     const chips = attachments.filter(item => {
       if (String(message?.role || "").toLowerCase() === "user") {
         return true;
@@ -4679,6 +4679,34 @@
     const messages = Array.isArray(card?.transcript_messages) ? card.transcript_messages : [];
     const assistant = messages.find(item => String(item?.role || "").toLowerCase() === "assistant") || {};
     return normalizedAttachments(assistant.attachments);
+  }
+
+  function isMeetingAttachmentItem(item) {
+    return Boolean(String(item?.meeting_id || "").trim());
+  }
+
+  function meetingAttachmentDisplayRank(item) {
+    const id = String(item?.id || "").trim().toLowerCase();
+    const title = String(item?.title || "").trim().toLowerCase();
+    if (id.endsWith(":html")) return 0;
+    if (title === "meeting transcript html") return 1;
+    if (title === "meeting transcript") return 2;
+    if (title === "meeting audio") return 3;
+    return 4;
+  }
+
+  function preferredDisplayAttachments(card, attachments) {
+    const items = normalizedAttachments(attachments);
+    if (!items.length) {
+      return items;
+    }
+    if (!items.some(isMeetingAttachmentItem)) {
+      return items;
+    }
+    return items
+      .map((item, index) => ({ item, index, rank: meetingAttachmentDisplayRank(item) }))
+      .sort((left, right) => left.rank - right.rank || left.index - right.index)
+      .map(entry => entry.item);
   }
 
   function meetingAttachmentIndexByTitle(attachments, title) {
@@ -7702,13 +7730,13 @@
       if (String(messages[index]?.role || "").toLowerCase() === "user") {
         continue;
       }
-      const attachments = normalizedAttachments(messages[index]?.attachments);
+      const attachments = preferredDisplayAttachments(card, messages[index]?.attachments);
       if (attachments.length) {
         sets.push(attachments);
         break;
       }
     }
-    const cardLevel = normalizedAttachments(card?.attachments);
+    const cardLevel = preferredDisplayAttachments(card, card?.attachments);
     if (cardLevel.length) {
       sets.push(cardLevel);
     }

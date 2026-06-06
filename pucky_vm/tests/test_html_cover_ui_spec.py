@@ -2011,11 +2011,15 @@ def test_html_uses_normalized_attachment_contract_for_future_files() -> None:
     assert ".attachment-audio-card" in styles
 
 
-def test_feed_tile_uses_first_displayable_transcript_attachment_when_no_html_path() -> None:
+def test_feed_tile_prefers_meeting_summary_attachment_when_no_html_path() -> None:
     app = read("app.js")
 
     assert "function firstDisplayableAttachmentInfo(card)" in app
-    assert "normalizedAttachments(messages[index]?.attachments)" in app
+    assert "function preferredDisplayAttachments(card, attachments)" in app
+    assert 'if (id.endsWith(":html")) return 0;' in app
+    assert 'if (title === "meeting transcript html") return 1;' in app
+    assert "preferredDisplayAttachments(card, messages[index]?.attachments)" in app
+    assert "preferredDisplayAttachments(card, card?.attachments)" in app
     assert '["html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"]' in app
     assert "const attachmentInfo = firstDisplayableAttachmentInfo(card);" in app
     assert 'showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });' in app
@@ -2242,6 +2246,7 @@ def test_transcript_history_keeps_clickable_attachment_chips_for_user_audio_and_
 
     assert "const attachments = messageAttachmentRow(card, message, index);" in app
     assert "function messageAttachmentRow(card, message, index)" in app
+    assert "const attachments = preferredDisplayAttachments(card, message?.attachments);" in app
     assert "function attachmentChipIcon(item)" in app
     assert "function attachmentChipLabel(item)" in app
     assert 'showAttachmentViewer(card, attachments, { initialIndex, onDismiss: () => showTranscript(card) });' in app

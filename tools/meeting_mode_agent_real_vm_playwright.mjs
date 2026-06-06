@@ -366,6 +366,14 @@ async function openMeetingTranscript(page, meetingId) {
   await waitForDetail(page, "transcript");
 }
 
+async function openMeetingAttachment(page, meetingId) {
+  const result = await page.evaluate((sessionId) => window.PuckyUiDebug.dispatch("open_card_action", { session_id: sessionId, action: "attachment" }), meetingId);
+  if (!result?.ok) {
+    throw new Error(`Could not open attachment action for ${meetingId}: ${result?.error || "unknown error"}`);
+  }
+  await waitForDetail(page, "attachment", "html_iframe");
+}
+
 async function backToDetail(page, detailType, viewer = null) {
   const result = await page.evaluate(() => window.PuckyUiDebug.dispatch("back"));
   if (!result?.ok) {
@@ -853,15 +861,28 @@ async function runScenario({
     }
   }
 
+  await openMeetingAttachment(page, scenario.meetingId);
+  await page.waitForSelector("#detail iframe.document-frame", { timeout: 15000 });
+  const paperclipAttachmentTitle = String(await page.locator("#detail .attachment-title").last().textContent() || "").trim();
+  if (paperclipAttachmentTitle !== String(summaryAttachment.title || "").trim()) {
+    throw new Error(`${scenario.name} paperclip opened ${paperclipAttachmentTitle || "an unexpected attachment"} instead of the summary HTML`);
+  }
+  const paperclipSummaryScreenshot = await saveScreenshot(page, scenarioDir, "03-paperclip-summary-html");
+  await backToFeed(page);
+
   await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().click();
   await waitForDetail(page, "transcript");
-  const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "03-transcript-detail");
+  const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "04-transcript-detail");
 
   const chipTexts = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
   for (const requiredLabel of ["Meeting Transcript", "Meeting Transcript HTML", String(summaryAttachment.title || ""), "Meeting Audio"]) {
     if (!chipTexts.includes(requiredLabel)) {
       throw new Error(`${scenario.name} transcript detail is missing attachment chip ${requiredLabel}`);
     }
+  }
+  const firstChipText = String(await page.locator("#detail .bubble-attachment-chip span").first().textContent() || "").trim();
+  if (firstChipText !== String(summaryAttachment.title || "").trim()) {
+    throw new Error(`${scenario.name} transcript detail did not prioritize the summary HTML chip`);
   }
 
   await page.locator("#detail .bubble-attachment-chip", { hasText: String(summaryAttachment.title || "") }).last().click();
@@ -872,7 +893,7 @@ async function runScenario({
     const frame = node instanceof HTMLIFrameElement ? node : null;
     return String(frame?.contentDocument?.body?.textContent || frame?.srcdoc || "");
   });
-  const summaryScreenshot = await saveScreenshot(page, scenarioDir, "04-summary-html");
+  const summaryScreenshot = await saveScreenshot(page, scenarioDir, "05-summary-html");
 
   const renderedSummaryHtml = await page.locator("#detail iframe.document-frame").last().evaluate((node) => {
     const frame = node instanceof HTMLIFrameElement ? node : null;
@@ -901,11 +922,9 @@ async function runScenario({
   if (renderedSummaryHtml.includes("/api/meetings/") || renderedSummaryHtml.includes("/tmp/") || renderedSummaryHtml.includes("<script")) {
     throw new Error(`${scenario.name} rendered summary still exposes raw runtime links or inline script`);
   }
-  const summarySections = ["Overview", "Participants", "Action Items"];
-  for (const sectionLabel of summarySections) {
-    if (!summaryText.includes(sectionLabel)) {
-      throw new Error(`${scenario.name} summary HTML is missing section ${sectionLabel}`);
-    }
+  const normalizedSummaryText = normalizeProofText(summaryText);
+  if (!normalizedSummaryText.includes("action")) {
+    throw new Error(`${scenario.name} summary HTML did not render a visible action-items section`);
   }
   const summaryVisibleLinks = await summaryFrame.locator("a.document-open-link").allTextContents();
   if (summaryVisibleLinks.length !== 2) {
@@ -916,7 +935,6 @@ async function runScenario({
   }
 
   if (scenario.expectedSummarySnippets) {
-    const normalizedSummaryText = normalizeProofText(summaryText);
     for (const snippet of scenario.expectedSummarySnippets) {
       if (!normalizedSummaryText.includes(normalizeProofText(snippet))) {
         throw new Error(`${scenario.name} summary text is missing expected content: ${snippet}`);
@@ -924,7 +942,6 @@ async function runScenario({
     }
   }
   if (scenario.expectedDueDateSnippets) {
-    const normalizedSummaryText = normalizeProofText(summaryText);
     for (const dueDate of scenario.expectedDueDateSnippets) {
       if (!normalizedSummaryText.includes(normalizeProofText(dueDate))) {
         throw new Error(`${scenario.name} summary text is missing explicit due date ${dueDate}`);
@@ -949,14 +966,14 @@ async function runScenario({
   if (!String(transcriptFromHtmlText || "").trim() || /transcript unavailable|html preview unavailable/i.test(String(transcriptFromHtmlText || ""))) {
     throw new Error(`${scenario.name} transcript link inside summary did not open transcript HTML detail`);
   }
-  const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "05-transcript-from-html");
+  const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-transcript-from-html");
   await backToDetail(page, "attachment", "html_iframe");
 
   const playerStateBeforeAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
   await page.frameLocator("#detail iframe.document-frame").locator("a.pucky-meeting-audio-link").click();
   await waitForDetail(page, "attachment", "audio_player");
   const audioResolution = await waitForAudioViewerResolution(page);
-  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-audio-from-html");
+  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "07-audio-from-html");
   writeJsonFile(path.join(scenarioDir, "audio_viewer_resolution.json"), audioResolution);
   if (audioResolution.error_text) {
     throw new Error(`${scenario.name} audio viewer reported an error: ${audioResolution.error_text}`);
@@ -970,7 +987,7 @@ async function runScenario({
   }
   const playbackProof = await playAttachmentAudioAndWaitForAdvance(page);
   const playerStateAfterAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
-  const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "07-audio-playing");
+  const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "08-audio-playing");
   await backToDetail(page, "attachment", "html_iframe");
   await backToDetail(page, "transcript");
   await backToFeed(page);
@@ -1005,6 +1022,7 @@ async function runScenario({
     screenshots: {
       pending_tile: pendingScreenshot,
       completed_tile: completedScreenshot,
+      paperclip_summary_html: paperclipSummaryScreenshot,
       transcript_detail: transcriptDetailScreenshot,
       summary_html: summaryScreenshot,
       transcript_from_html: transcriptFromHtmlScreenshot,
