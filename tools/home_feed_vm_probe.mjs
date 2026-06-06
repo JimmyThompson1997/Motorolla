@@ -121,7 +121,12 @@ async function mouseDragDoesNotRevealArchive(page) {
 
 async function wheelStillScrolls(page) {
   const feed = page.locator("#feed");
+  const box = await feed.boundingBox();
+  if (!box) {
+    throw new Error("Could not locate #feed for wheel test");
+  }
   await feed.evaluate(node => { node.scrollTop = 0; });
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
   await page.mouse.wheel(0, 600);
   await page.waitForTimeout(300);
   const after = await feed.evaluate(node => node.scrollTop);
