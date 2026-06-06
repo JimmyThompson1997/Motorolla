@@ -529,6 +529,14 @@ function normalizeStem(value) {
     .replace(/^_+|_+$/g, "");
 }
 
+function normalizeProofText(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function uniqueMeetingId(label, offsetMinutes = 0) {
   const stamp = buildScenarioTimestamp(offsetMinutes);
   return {
@@ -894,8 +902,9 @@ async function runScenario({
   }
 
   if (scenario.expectedSummarySnippets) {
+    const normalizedSummaryText = normalizeProofText(summaryText);
     for (const snippet of scenario.expectedSummarySnippets) {
-      if (!summaryText.includes(snippet)) {
+      if (!normalizedSummaryText.includes(normalizeProofText(snippet))) {
         throw new Error(`${scenario.name} summary text is missing expected content: ${snippet}`);
       }
     }

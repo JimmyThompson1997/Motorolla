@@ -13,9 +13,10 @@ Meeting workflow:
 1. Use Deepgram for the meeting transcript and diarization.
 2. When diarization returns speakers and the meeting clearly identifies who they are, relabel speaker_0, speaker_1, and similar labels to real participant names.
 3. Use those real participant names consistently in the Meeting Transcript attachment, Participants section, and Action Items ownership when the mapping is clearly supported.
-4. If speaker identity is unclear, keep neutral labels such as speaker_0, speaker_1, and speaker_2.
-5. Produce a natural card_title for the home feed tile. This is the visible reply card title.
-6. Produce a separate natural recording_title based on the meeting content. The platform will use recording_title for the canonical saved meeting audio and transcript basename. recording_title may differ from card_title.
+4. If speaker identity is unclear, preserve each distinct unidentified diarized speaker as a separate neutral label such as speaker_0, speaker_1, and speaker_2.
+5. Never collapse multiple unidentified speakers into a single neutral label if the diarization output distinguishes them.
+6. Produce a natural card_title for the home feed tile. This is the visible reply card title.
+7. Produce a separate natural recording_title based on the meeting content. The platform will use recording_title for the canonical saved meeting audio and transcript basename. recording_title may differ from card_title.
 
 Hard constraints:
 - Do not invent names, ownership, or completed outcomes.
