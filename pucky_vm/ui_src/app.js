@@ -3368,11 +3368,26 @@
   }
 
   function meetingHasFullDetail(meeting) {
-    return Boolean(meeting && (
+    if (!meeting || typeof meeting !== "object") {
+      return false;
+    }
+    const hasTranscriptDetail = Boolean(
       meeting.transcript_text
       || Array.isArray(meeting.speaker_turns) && meeting.speaker_turns.length
       || meeting.transcript_result
-    ));
+    );
+    if (!hasTranscriptDetail) {
+      return false;
+    }
+    if (meetingState(meeting) !== "completed") {
+      return true;
+    }
+    const persistedMessages = Array.isArray(meeting?.feed_item?.transcript_messages)
+      ? meeting.feed_item.transcript_messages
+      : [];
+    const persistedAssistant = persistedMessages.find(item => String(item?.role || "").toLowerCase() === "assistant") || null;
+    const assistantAttachments = Array.isArray(persistedAssistant?.attachments) ? persistedAssistant.attachments : [];
+    return assistantAttachments.length > 0;
   }
 
   function meetingCardFromRecord(meeting) {

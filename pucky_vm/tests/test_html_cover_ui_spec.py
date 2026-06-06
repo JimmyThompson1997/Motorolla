@@ -268,6 +268,10 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "function meetingRowView(meeting)" in app
     assert "function meetingCardFromRecord(meeting)" in app
     assert "showMeetingDetail(meeting)" in app
+    meeting_full_detail = function_block(app, "meetingHasFullDetail")
+    assert "meetingState(meeting) !== \"completed\"" in meeting_full_detail
+    assert "persistedAssistant" in meeting_full_detail
+    assert "assistantAttachments.length > 0" in meeting_full_detail
     assert "function meetingPlayablePath(meeting)" in app
     assert "function isAndroidPlayableAudioPath(path)" in app
     assert "function preparedAudioFilename(label, fallbackBase = \"meeting-audio\")" in app
