@@ -4273,7 +4273,7 @@
     if (item && (item.src || item.data_url)) {
       return String(item.src || item.data_url);
     }
-    if (artifactId && !hasNativeBridge) {
+    if (artifactId) {
       return resolveArtifactUrl(item, options);
     }
     if (url && hasNativeBridge) {
