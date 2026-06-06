@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -104,9 +105,11 @@ def run_fly_command(
         "stdout": completed.stdout,
         "stderr": completed.stderr,
     }
-    if completed.returncode != 0 and not (
-        allow_ignorable_stderr and has_only_ignorable_fly_stderr(completed.stderr)
-    ):
+    tolerated_stderr = allow_ignorable_stderr and (
+        has_only_ignorable_fly_stderr(completed.stderr)
+        or has_successful_git_head_with_handle_noise(completed.stdout, completed.stderr)
+    )
+    if completed.returncode != 0 and not tolerated_stderr:
         combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part.strip())
         raise OfficialVmSyncError(f"Fly command failed: {combined or 'unknown flyctl failure'}")
     return payload
@@ -117,6 +120,13 @@ def has_only_ignorable_fly_stderr(stderr_text: str) -> bool:
     if not lines:
         return False
     return all(any(line.startswith(prefix) for prefix in IGNORABLE_FLY_STDERR_PREFIXES) for line in lines)
+
+
+def has_successful_git_head_with_handle_noise(stdout_text: str, stderr_text: str) -> bool:
+    if "Error: The handle is invalid." not in str(stderr_text or ""):
+        return False
+    lines = [line.strip() for line in str(stdout_text or "").splitlines() if line.strip()]
+    return bool(lines and re.fullmatch(r"[0-9a-f]{40}", lines[-1]))
 
 
 def parse_machine_list(stdout: str) -> list[dict[str, Any]]:

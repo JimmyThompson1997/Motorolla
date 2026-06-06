@@ -51,6 +51,25 @@ def test_has_only_ignorable_fly_stderr_accepts_known_console_noise() -> None:
     assert sync.has_only_ignorable_fly_stderr("Error: ssh shell: ssh: command failed") is False
 
 
+def test_handle_noise_is_tolerated_only_when_stdout_ends_in_commit_sha() -> None:
+    stderr = "\n".join(
+        [
+            "From https://github.com/JimmyThompson1997/Motorolla",
+            "   cd4d9e4..53bf0d2  master     -> origin/master",
+            "Error: The handle is invalid.",
+        ]
+    )
+    stdout = "\n".join(
+        [
+            "Updating cd4d9e4..53bf0d2",
+            "53bf0d218f5608389df95cf6eaec8e100bb7a51c",
+        ]
+    )
+
+    assert sync.has_successful_git_head_with_handle_noise(stdout, stderr) is True
+    assert sync.has_successful_git_head_with_handle_noise("Already up to date.", stderr) is False
+
+
 def test_wait_for_manifest_match_times_out_on_commit_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     args = argparse.Namespace(
         manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",
