@@ -915,9 +915,8 @@ button {
 }
 
 .links-list-rows {
-  position: relative;
   min-height: 100%;
-  contain: layout paint;
+  contain: paint;
 }
 
 .links-list-rows.is-empty {
@@ -939,9 +938,6 @@ button {
 }
 
 .links-app-row {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
   height: 62px;
   min-height: 62px;

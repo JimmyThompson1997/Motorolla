@@ -5114,12 +5114,12 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, service.card_icons())
                 return
             if path == "/api/meetings":
-                if not self._is_authorized():
-                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                    return
                 query = parse_qs(parsed.query)
                 include_archived = _truthy_query(query.get("include_archived", ["0"])[0])
                 compact = _truthy_query(query.get("compact", ["0"])[0])
+                if not compact and not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
                 self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
                 return
             if path.startswith("/api/meetings/") and path.endswith("/audio"):

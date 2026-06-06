@@ -169,6 +169,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "fill: none;" in active_tab_icon
     assert "stroke: currentColor;" in active_tab_icon
     app_row = css_block(styles, ".links-app-row")
+    assert "position: absolute;" not in app_row
     assert "grid-template-columns: 30px minmax(0, 1fr) auto 18px;" in app_row
     assert "padding: 0 16px;" in app_row
     icon_block = css_block(styles, ".links-app-icon")
@@ -180,6 +181,24 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     auth_block = css_block(styles, ".links-app-auth")
     assert "font-size: 12px;" in auth_block
     assert 'src="./pucky-config.js"' in html
+
+
+def test_links_rows_use_static_logo_paths_without_initial_fallback() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    row = function_block(app, "createLinksRow")
+    normalizer = function_block(app, "normalizeLinksApp")
+    assert "app.logo_path" in row
+    assert "links-app-logo" in row
+    assert 'img.src = String(app.logo_path || "");' in row
+    assert 'logo_path: String(item && item.logo_path || "").trim(),' in normalizer
+    assert "links-app-fallback" not in app
+    assert "linksAppInitial" not in app
+
+    icon_block = css_block(styles, ".links-app-icon")
+    assert "overflow: hidden;" in icon_block
+    assert ".links-app-logo" in styles
 
 
 def test_links_route_uses_local_catalog_and_query_route_restore() -> None:

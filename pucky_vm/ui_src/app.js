@@ -190,7 +190,6 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
-  const LINKS_LOGO_PRELOAD_ROWS = 12;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -1203,6 +1202,8 @@
       slug: String(item && item.slug || "").trim(),
       name: String(item && (item.name || item.slug) || "").trim(),
       logo: String(item && item.logo || "").trim(),
+      logo_path: String(item && item.logo_path || "").trim(),
+      logo_source_url: String(item && item.logo_source_url || item.logo || "").trim(),
       auth_schemes: authSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       managed_auth_schemes: managedAuthSchemes.map(value => String(value || "").trim().toUpperCase()).filter(Boolean),
       auth_label: String(item && item.auth_label || "").trim(),
@@ -1276,11 +1277,10 @@
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
     const icon = el("span", "links-app-icon");
-    const fallback = el("span", "links-app-fallback", linksAppInitial(app));
-    if (app.logo) {
+    if (app.logo_path) {
       const img = document.createElement("img");
       img.className = "links-app-logo";
-      img.dataset.logoSrc = app.logo;
+      img.src = String(app.logo_path || "");
       img.alt = "";
       img.loading = "lazy";
       img.decoding = "async";
@@ -1294,7 +1294,6 @@
       });
       icon.append(img);
     }
-    icon.append(fallback);
 
     const name = el("span", "links-app-name", app.name || app.slug);
     const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
@@ -1320,28 +1319,6 @@
         mark.classList.toggle("is-connected", state.links.connectedSlugs.has(slug));
       }
     });
-  }
-
-  function syncVisibleLinksLogos(refs) {
-    if (!refs || !refs.scrollport || !refs.rows || refs.listCard.hidden) {
-      return;
-    }
-    const rows = refs.rows.children;
-    if (!rows || !rows.length) {
-      return;
-    }
-    const scrollTop = Math.max(0, safeNumber(refs.scrollport.scrollTop));
-    const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(refs.scrollport.clientHeight));
-    const start = Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT) - LINKS_LOGO_PRELOAD_ROWS);
-    const end = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / LINKS_ROW_HEIGHT) + LINKS_LOGO_PRELOAD_ROWS);
-    for (let index = start; index < end; index += 1) {
-      const row = rows[index];
-      const img = row && row.querySelector ? row.querySelector(".links-app-logo[data-logo-src]") : null;
-      if (!img || img.src) {
-        continue;
-      }
-      img.src = img.dataset.logoSrc;
-    }
   }
 
   function linksAuthLabelForApp(app) {
@@ -1531,8 +1508,6 @@
   let linksPageNode = null;
   let linksPageRefs = null;
   let linksSessionPromise = null;
-  let linksLogoRaf = 0;
-
   async function hydrateLinksSession(options = {}) {
     if (linksSessionPromise) {
       return linksSessionPromise;
@@ -1576,8 +1551,10 @@
         }
         await loadLinksConnected({ render: false, force: Boolean(options.force) });
       } catch (error) {
+        const detail = String(error && error.message ? error.message : "Unable to open Links");
+        const bridgeLikelyPresent = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
         state.links.available = false;
-        state.links.error = String(error && error.message ? error.message : "Unable to open Links");
+        state.links.error = !bridgeLikelyPresent && /unauthorized|401/i.test(detail) ? "" : detail;
         linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
       } finally {
         state.links.loading = false;
@@ -1611,17 +1588,6 @@
 
   function linksScrollElement() {
     return linksPageRefs && linksPageRefs.scrollport ? linksPageRefs.scrollport : null;
-  }
-
-  function scheduleLinksLogoSync() {
-    if (linksLogoRaf) {
-      return;
-    }
-    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback, 16);
-    linksLogoRaf = raf(() => {
-      linksLogoRaf = 0;
-      syncVisibleLinksLogos(linksPageRefs);
-    });
   }
 
   function linksMatchesSearch(app, needle) {
@@ -1707,7 +1673,6 @@
       refs.rows.dataset.linksListKey = listKey;
     }
     syncLinksRowStates(refs, handoffLocked);
-    syncVisibleLinksLogos(refs);
     if (!state.links.firstRowsTelemetrySent && filtered.length > 0) {
       state.links.firstRowsTelemetrySent = true;
       linksDebugRecord("first_rows_rendered", { rendered_rows: filtered.length }, "route");
@@ -3265,7 +3230,6 @@
       listCard.append(listHead);
       const scrollport = el("div", "links-list-scrollport");
       scrollport.id = "linksScrollport";
-      scrollport.addEventListener("scroll", scheduleLinksLogoSync, { passive: true });
       const rows = el("div", "links-list-rows");
       scrollport.append(rows);
       listCard.append(scrollport);
@@ -3527,11 +3491,6 @@
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  function linksAppInitial(app) {
-    const name = String(app && (app.name || app.slug) || "").trim();
-    return name ? name.slice(0, 1).toUpperCase() : "?";
   }
 
   function replyModeSettingsCard() {

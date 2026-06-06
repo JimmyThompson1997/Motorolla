@@ -2192,9 +2192,13 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "meeting_not_found")
 
-    def test_meeting_ingest_requires_authorization(self) -> None:
+    def test_meetings_compact_list_is_browser_readable_but_detail_requires_auth(self) -> None:
+        payload = self.get_json("/api/meetings?compact=1")
+        self.assertEqual(payload["schema"], "pucky.meetings.v1")
+        self.assertTrue(payload["compact"])
+
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            self.get_json("/api/meetings")
+            self.get_json("/api/meetings/missing-meeting")
 
         self.assertEqual(caught.exception.code, 401)
 
