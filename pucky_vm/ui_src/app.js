@@ -4175,12 +4175,60 @@
     wrapper.append(action);
   }
 
-  function preparedAudioFilename(label, fallbackBase = "meeting-audio") {
-    const base = String(label || fallbackBase)
-      .replace(/[^A-Za-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 72) || fallbackBase;
-    return `${base}.m4a`;
+  function audioCacheMediaId(source) {
+    const meetingId = String(source && source.meeting_id || "").trim();
+    if (meetingId) {
+      return `meeting:${meetingId}:audio`;
+    }
+    const sessionId = String(source && source.session_id || "").trim();
+    if (source && source.is_meeting_recording && sessionId) {
+      return `meeting:${sessionId}:audio`;
+    }
+    const explicit = String(source && source.media_id || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    const cardId = String(source && source.card_id || "").trim();
+    if (cardId) {
+      return `feed:${cardId}:audio`;
+    }
+    return sessionId ? `feed:${sessionId}:audio` : "";
+  }
+
+  async function ensureAudioCacheForPlayback(source, options = {}) {
+    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    const url = String(source && (source.audio_url || source.url) || "").trim();
+    if (!hasNativeBridge || !url) {
+      return "";
+    }
+    const mediaId = audioCacheMediaId(source);
+    if (!mediaId) {
+      return "";
+    }
+    const result = await Pucky.request({
+      command: "media.cache.ensure",
+      args: {
+        media_id: mediaId,
+        owner_type: source && (source.is_meeting_recording || source.meeting_id) ? "meeting" : "feed",
+        owner_id: String(source && (source.meeting_id || source.card_id || source.session_id) || ""),
+        kind: "audio",
+        title: source && source.title || "Audio",
+        url,
+        mime_type: source && (source.audio_mime_type || source.mime_type) || "audio/mp4",
+        bytes: safeNumber(source && (source.audio_bytes || source.bytes)),
+        sha256: String(source && (source.audio_sha256 || source.media_sha256 || source.sha256) || ""),
+        max_bytes: options.maxBytes || 96 * 1024 * 1024
+      }
+    });
+    const path = String(result && (result.device_path || result.path || result.local_path) || "").trim();
+    if (!path) {
+      throw new Error("Audio unavailable: cached asset path is missing.");
+    }
+    source.audio_path = path;
+    if (source.meeting_record && typeof source.meeting_record === "object") {
+      source.meeting_record.device_path = path;
+    }
+    return path;
   }
 
   async function prepareAudioForPlayback(card) {
@@ -4194,33 +4242,18 @@
     if (!url) {
       return String(card.audio_path || "");
     }
-    const filename = preparedAudioFilename(card.session_id || card.title || "meeting-audio");
-    const result = await Pucky.request({
-      command: "player.asset.prepare",
-      args: {
-        url,
-        title: card.title,
-        filename,
-        mime_type: card.audio_mime_type || "audio/mp4",
-        max_bytes: 96 * 1024 * 1024
-      }
-    });
-    const path = String(result && (result.device_path || result.path || result.local_path) || "").trim();
-    if (!path) {
-      throw new Error("Meeting audio could not be prepared for playback.");
+    const cachedPath = await ensureAudioCacheForPlayback(card);
+    if (cachedPath) {
+      return cachedPath;
     }
-    card.audio_path = path;
-    if (card.meeting_record && typeof card.meeting_record === "object") {
-      card.meeting_record.device_path = path;
-    }
-    return path;
+    return url;
   }
 
   async function resolveAudioAttachmentSrc(item, options = {}) {
     const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     const meetingId = String(item && item.meeting_id || "").trim();
     const artifactId = attachmentArtifactId(item);
-    const url = String(item && item.url || "").trim();
+    let url = String(item && item.url || "").trim();
     const hasCanonicalAttachmentSource = Boolean(artifactId || url);
     if (meetingId && !hasCanonicalAttachmentSource) {
       const resolvedMeetingAudio = await resolveMeetingAudioLink(item);
@@ -4229,7 +4262,8 @@
         return resolveLocalArtifactPath(resolvedPath, { ...(item || {}), path: resolvedPath }, options);
       }
       if (resolvedMeetingAudio && resolvedMeetingAudio.url) {
-        item = { ...(item || {}), url: String(resolvedMeetingAudio.url) };
+        url = String(resolvedMeetingAudio.url);
+        item = { ...(item || {}), url };
       }
     }
     const path = String(mediaPath(item) || "").trim();
@@ -4243,20 +4277,7 @@
       return resolveArtifactUrl(item, options);
     }
     if (url && hasNativeBridge) {
-      const result = await Pucky.request({
-        command: "player.asset.prepare",
-        args: {
-          url,
-          title: item && item.title || "Meeting audio",
-          filename: preparedAudioFilename(item && item.title || "meeting-audio"),
-          mime_type: item && item.mime_type || "audio/mp4",
-          max_bytes: options.maxBytes || 96 * 1024 * 1024
-        }
-      });
-      const preparedPath = String(result && (result.device_path || result.path || result.local_path) || "").trim();
-      if (!preparedPath) {
-        throw new Error("Audio unavailable: prepared asset path is missing.");
-      }
+      const preparedPath = await ensureAudioCacheForPlayback({ ...(item || {}), audio_url: url }, options);
       return resolveLocalArtifactPath(preparedPath, { ...(item || {}), path: preparedPath }, options);
     }
     if (url) {

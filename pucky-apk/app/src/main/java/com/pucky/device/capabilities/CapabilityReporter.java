@@ -189,6 +189,8 @@ public final class CapabilityReporter {
                 null, "not_recorded", "Lists Pucky-exported public Android audio media."));
         Json.add(out, cap("media.export_delete", "media.export.delete", "implemented_untested", "yes", "privacy_sensitive",
                 null, "not_recorded", "Deletes a public Android media item by content URI or id."));
+        Json.add(out, cap("media.cache", "media.cache.status/media.cache.ensure", "implemented_untested", "yes", "privacy_sensitive",
+                Manifest.permission.INTERNET, "local_app_private", "Checks or downloads VM-owned media into app-private cache before local playback."));
         Json.add(out, cap("player.asset_prepare", "player.asset.prepare", "implemented_untested", "yes", "privacy_sensitive",
                 Manifest.permission.INTERNET, "not_recorded", "Downloads an HTTP/HTTPS audio asset into app-owned storage for Pucky-native playback."));
         Json.add(out, cap("player.load", "player.load", "implemented_untested", "yes", "quiet", null,

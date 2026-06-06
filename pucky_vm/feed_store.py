@@ -298,6 +298,42 @@ class FeedStore:
                 "updated_at": str(row["updated_at"]),
             }
 
+    def list_media_artifacts(self, limit: int = 50) -> list[dict[str, object]]:
+        safe_limit = max(1, min(100, int(limit or 50)))
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    artifacts.artifact_id,
+                    artifacts.card_id,
+                    artifacts.kind,
+                    artifacts.mime_type,
+                    artifacts.content_base64,
+                    artifacts.updated_at,
+                    feed_cards.title
+                FROM artifacts
+                JOIN feed_cards ON feed_cards.card_id = artifacts.card_id
+                WHERE feed_cards.archived = 0
+                  AND feed_cards.deleted = 0
+                  AND artifacts.kind IN ('audio', 'html', 'image', 'video', 'text')
+                ORDER BY artifacts.updated_at_ms DESC, artifacts.artifact_id ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+            return [
+                {
+                    "artifact_id": str(row["artifact_id"]),
+                    "card_id": str(row["card_id"]),
+                    "kind": str(row["kind"]),
+                    "mime_type": str(row["mime_type"]),
+                    "content_base64": str(row["content_base64"]),
+                    "updated_at": str(row["updated_at"]),
+                    "title": str(row["title"]),
+                }
+                for row in rows
+            ]
+
     def count_items(self) -> int:
         with self._lock:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM feed_cards").fetchone()

@@ -95,6 +95,8 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"location.tracker.stop\"")
                         && bridge.contains("case \"location.tracker.query\"")
                         && bridge.contains("case \"artifact.url\"")
+                        && bridge.contains("case \"media.cache.status\"")
+                        && bridge.contains("case \"media.cache.ensure\"")
                         && bridge.contains("case \"meeting.recording.resolve_audio_link\"")
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("case \"ui.surface.get\"")
@@ -208,6 +210,11 @@ public final class MainActivityWebViewShellTest {
         assertTrue("Native command executor should expose artifact.url for device testing too",
                 executor.contains("\"artifact.url\"")
                         && executor.contains("return artifactController.url(command.args())"));
+        assertTrue("Media cache commands should be exposed to both HTML and command broker",
+                executor.contains("\"media.cache.status\"")
+                        && executor.contains("\"media.cache.ensure\"")
+                        && executor.contains("new MediaCacheController(settingsStore.context(), settingsStore).status(command.args())")
+                        && executor.contains("new MediaCacheController(settingsStore.context(), settingsStore).ensure(command.args())"));
         assertTrue("Meeting HTML audio rewrite should have a native local-audio bridge",
                 client.contains("TRUSTED_HOST = \"pucky.local\"")
                         && executor.contains("\"meeting.recording.resolve_audio_link\"")

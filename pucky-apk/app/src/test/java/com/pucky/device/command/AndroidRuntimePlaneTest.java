@@ -85,7 +85,7 @@ public final class AndroidRuntimePlaneTest {
         String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         List<String> commands = commandNames(executor);
 
-        assertEquals(237, commands.size());
+        assertEquals(239, commands.size());
         assertEquals(commands.size(), new HashSet<>(commands).size());
         assertFalse(commands.contains("shell.exec"));
         assertFalse(commands.contains("android.content.query"));
@@ -104,6 +104,8 @@ public final class AndroidRuntimePlaneTest {
         assertFalse(commands.contains("pucky.feed.sync"));
         assertFalse(commands.contains("pucky.feed.action"));
         assertFalse(commands.contains("ui.reply_cards.get"));
+        assertTrue(commands.contains("media.cache.status"));
+        assertTrue(commands.contains("media.cache.ensure"));
         assertTrue(commands.contains("meeting.hover.status"));
         assertTrue(commands.contains("meeting.hover.config.set"));
         assertTrue(commands.contains("meeting.recording.resolve_audio_link"));

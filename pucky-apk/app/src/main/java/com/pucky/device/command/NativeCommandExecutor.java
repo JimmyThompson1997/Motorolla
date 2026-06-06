@@ -14,6 +14,7 @@ import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.media.MediaControlController;
+import com.pucky.device.media.MediaCacheController;
 import com.pucky.device.media.MediaExportController;
 import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.network.NetworkProvider;
@@ -66,7 +67,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "notify.channels.get", "notify.listener.status", "notify.listener.messages",
             "audio.tone", "audio.route.get", "audio.volume.set",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
-            "media.export.list", "media.export.delete", "player.asset.prepare", "player.load",
+            "media.export.list", "media.export.delete", "media.cache.status", "media.cache.ensure",
+            "player.asset.prepare", "player.load",
             "player.play", "player.pause", "player.stop", "player.seek", "player.state",
             "player.speed", "player.queue.set", "player.queue.next", "player.queue.previous",
             "player.bookmark.save", "player.bookmark.list", "button.state",
@@ -394,6 +396,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return mediaExportController.list(command.args());
             case "media.export.delete":
                 return mediaExportController.delete(command.args());
+            case "media.cache.status":
+                return new MediaCacheController(settingsStore.context(), settingsStore).status(command.args());
+            case "media.cache.ensure":
+                return new MediaCacheController(settingsStore.context(), settingsStore).ensure(command.args());
             case "player.asset.prepare":
                 return playerController.assetPrepare(command.args());
             case "player.load":

@@ -278,7 +278,7 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "assistantAttachments.length > 0" in meeting_full_detail
     assert "function meetingPlayablePath(meeting)" in app
     assert "function isAndroidPlayableAudioPath(path)" in app
-    assert "function preparedAudioFilename(label, fallbackBase = \"meeting-audio\")" in app
+    assert "function preparedAudioFilename(" not in app
     assert "audio_path: meetingPlayablePath(card)" in app
     assert 'audio_url: String(card.audio_url || "")' in app
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
@@ -331,12 +331,14 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
     assert 'const artifactId = attachmentArtifactId(item);' in resolve_audio_attachment
-    assert 'const url = String(item && item.url || "").trim();' in resolve_audio_attachment
+    assert 'let url = String(item && item.url || "").trim();' in resolve_audio_attachment
     assert 'const hasCanonicalAttachmentSource = Boolean(artifactId || url);' in resolve_audio_attachment
     assert 'if (path && hasNativeBridge && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
     assert 'if (artifactId && !hasNativeBridge) {' in resolve_audio_attachment
-    assert 'command: "player.asset.prepare"' in resolve_audio_attachment
+    assert 'url = String(resolvedMeetingAudio.url);' in resolve_audio_attachment
+    assert "await ensureAudioCacheForPlayback({ ...(item || {}), audio_url: url }, options)" in resolve_audio_attachment
+    assert 'command: "player.asset.prepare"' not in resolve_audio_attachment
     assert 'return resolveArtifactUrl(item, options);' in resolve_audio_attachment
     assert ".meetings-page" in styles
     assert ".meetings-list-card" in styles
@@ -395,10 +397,23 @@ def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
     app = read("app.js")
     bridge = (ROOT.parent / "pucky-apk" / "app" / "src" / "main" / "java" / "com" / "pucky" / "device" / "ui" / "PuckyWebBridge.java").read_text(encoding="utf-8")
 
+    assert "async function ensureAudioCacheForPlayback(source, options = {})" in app
+    media_id = function_block(app, "audioCacheMediaId")
+    assert "const meetingId = String(source && source.meeting_id || \"\").trim();" in media_id
+    assert "return `meeting:${meetingId}:audio`;" in media_id
+    cache = function_block(app, "ensureAudioCacheForPlayback")
+    assert 'command: "media.cache.ensure"' in cache
+    assert "media_id: mediaId" in cache
+    assert "url," in cache
+    assert 'owner_type: source && (source.is_meeting_recording || source.meeting_id) ? "meeting" : "feed"' in cache
+    assert 'sha256: String(source && (source.audio_sha256 || source.media_sha256 || source.sha256) || "")' in cache
+    assert "max_bytes: options.maxBytes || 96 * 1024 * 1024" in cache
+    assert "source.audio_path = path;" in cache
     assert "async function prepareAudioForPlayback(card)" in app
     prepare = app.split("async function prepareAudioForPlayback", 1)[1].split("async function toggleAudio", 1)[0]
-    assert 'command: "player.asset.prepare"' in prepare
-    assert "card.audio_path = path;" in prepare
+    assert "const cachedPath = await ensureAudioCacheForPlayback(card);" in prepare
+    assert "return url;" in prepare
+    assert 'command: "player.asset.prepare"' not in prepare
     toggle = app.split("async function toggleAudio", 1)[1].split("function showTranscript", 1)[0]
     assert "const audioPath = await prepareAudioForPlayback(card);" in toggle
     assert "args: { path: audioPath, title: card.title" in toggle
@@ -406,6 +421,8 @@ def test_meeting_audio_url_is_prepared_before_native_playback() -> None:
     assert "const audioPath = await prepareAudioForPlayback(card);" in scrub
     timestamp = app.split("async function commitTimestamp", 1)[1].split("async function jumpToTimestamp", 1)[0]
     assert "const audioPath = await prepareAudioForPlayback(card);" in timestamp
+    assert 'case "media.cache.ensure":' in bridge
+    assert 'case "media.cache.status":' in bridge
     assert 'case "player.asset.prepare":' in bridge
     assert 'case "meeting.recording.resolve_audio_link":' in bridge
     audio_attachment = function_block(app, "showAudioAttachment")

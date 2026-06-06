@@ -1871,6 +1871,96 @@ class PuckyVoiceService:
     def artifact(self, artifact_id: str) -> dict[str, object] | None:
         return self.feed.get_artifact(artifact_id)
 
+    def media_manifest(self, *, scopes: list[str] | tuple[str, ...], limit: int = 50, base_url: str = "") -> dict[str, object]:
+        safe_limit = max(1, min(100, int(limit or 50)))
+        clean_scopes = [
+            scope
+            for scope in (str(item or "").strip().lower() for item in scopes)
+            if scope in {"meetings", "feed"}
+        ]
+        if not clean_scopes:
+            clean_scopes = ["meetings", "feed"]
+        root = str(base_url or "").rstrip("/")
+        items: list[dict[str, object]] = []
+
+        for scope in clean_scopes:
+            if len(items) >= safe_limit:
+                break
+            if scope == "meetings":
+                items.extend(self._meeting_media_manifest_items(root, safe_limit - len(items)))
+            elif scope == "feed":
+                items.extend(self._feed_media_manifest_items(root, safe_limit - len(items)))
+
+        return {
+            "schema": "pucky.media_manifest.v1",
+            "ok": True,
+            "scopes": clean_scopes,
+            "limit": safe_limit,
+            "count": len(items),
+            "items": items[:safe_limit],
+        }
+
+    def _meeting_media_manifest_items(self, base_url: str, limit: int) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        for meeting in sorted(
+            self._load_meetings(),
+            key=lambda item: str(item.get("updated_at") or item.get("stopped_at") or item.get("started_at") or ""),
+            reverse=True,
+        ):
+            if len(out) >= limit:
+                break
+            meeting_id = _safe_meeting_id(meeting.get("meeting_id"))
+            if not meeting_id:
+                continue
+            audio_path = Path(str(meeting.get("audio_path") or ""))
+            if not audio_path.is_file():
+                continue
+            body = audio_path.read_bytes()
+            title = str(meeting.get("recording_title") or meeting.get("title") or "Meeting Audio").strip()
+            out.append(
+                {
+                    "media_id": f"meeting:{meeting_id}:audio",
+                    "owner_type": "meeting",
+                    "owner_id": meeting_id,
+                    "kind": "audio",
+                    "title": title or "Meeting Audio",
+                    "url": f"{base_url}/api/meetings/{quote(meeting_id, safe='')}/audio" if base_url else f"/api/meetings/{quote(meeting_id, safe='')}/audio",
+                    "mime_type": str(meeting.get("mime_type") or "audio/mp4"),
+                    "bytes": len(body),
+                    "sha256": hashlib.sha256(body).hexdigest(),
+                    "updated_at": str(meeting.get("updated_at") or meeting.get("stopped_at") or meeting.get("started_at") or ""),
+                }
+            )
+        return out
+
+    def _feed_media_manifest_items(self, base_url: str, limit: int) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        for artifact in self.feed.list_media_artifacts(limit):
+            if len(out) >= limit:
+                break
+            artifact_id = str(artifact.get("artifact_id") or "").strip()
+            if not artifact_id:
+                continue
+            try:
+                body = base64.b64decode(str(artifact.get("content_base64") or ""), validate=True)
+            except Exception:
+                continue
+            out.append(
+                {
+                    "media_id": f"feed:{artifact_id}",
+                    "owner_type": "feed",
+                    "owner_id": str(artifact.get("card_id") or ""),
+                    "kind": str(artifact.get("kind") or "artifact"),
+                    "title": str(artifact.get("title") or artifact_id),
+                    "url": f"{base_url}/api/artifacts/{quote(artifact_id, safe='')}" if base_url else f"/api/artifacts/{quote(artifact_id, safe='')}",
+                    "mime_type": str(artifact.get("mime_type") or "application/octet-stream"),
+                    "bytes": len(body),
+                    "sha256": hashlib.sha256(body).hexdigest(),
+                    "updated_at": str(artifact.get("updated_at") or ""),
+                }
+            )
+        return out
+
     def meetings_list(self, *, include_archived: bool = False, compact: bool = False) -> dict[str, object]:
         meetings = [
             self._normalize_meeting_for_client(item, compact=compact)
@@ -5106,6 +5196,27 @@ def make_handler(service: PuckyVoiceService):
                 return
             if path == "/api/card-icons":
                 self._json(HTTPStatus.OK, service.card_icons())
+                return
+            if path == "/api/media/manifest":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                query = parse_qs(parsed.query)
+                raw_scopes = query.get("scope", ["meetings,feed"])[0]
+                scopes = [item.strip() for item in raw_scopes.split(",")]
+                try:
+                    limit = int(query.get("limit", ["50"])[0])
+                except ValueError:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_limit"})
+                    return
+                self._json(
+                    HTTPStatus.OK,
+                    service.media_manifest(
+                        scopes=scopes,
+                        limit=limit,
+                        base_url=request_base_url(self.headers, self.server.server_address),
+                    ),
+                )
                 return
             if path == "/api/meetings":
                 query = parse_qs(parsed.query)

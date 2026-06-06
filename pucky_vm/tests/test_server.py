@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import json
 import socket
@@ -785,7 +786,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         codex_startup_timeout=1.0,
         codex_turn_timeout=1.0,
         developer_instructions="test",
-        feed_db_path=str(tempfile.gettempdir()) + f"/pucky-feed-tests-{uuid.uuid4().hex}.sqlite3",
+        feed_db_path=str(Path(tempfile.gettempdir()) / f"pucky-feed-tests-{uuid.uuid4().hex}" / "feed.sqlite3"),
         codex_sandbox="danger-full-access",
         codex_approval_policy="never",
         codex_model="gpt-5.5",
@@ -1291,6 +1292,93 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 404)
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "card_not_found")
+
+    def test_media_manifest_lists_meeting_and_feed_media_without_raw_paths(self) -> None:
+        meeting_audio = b"RIFFmeeting-cache-audio"
+        meeting_id = "meeting-20260601-120000-device-abc123ef"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:00:00Z",
+                "stopped_at": "2026-06-01T12:00:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(meeting_audio).decode("ascii"),
+            },
+        )
+        turn = self.post_audio(b"feed request audio", "audio/mp4", turn_id="media_manifest_turn")
+
+        payload = self.get_json(
+            "/api/media/manifest?scope=meetings,feed&limit=20",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+        self.assertEqual(payload["schema"], "pucky.media_manifest.v1")
+        self.assertEqual(payload["scopes"], ["meetings", "feed"])
+        items = payload["items"]
+        meeting_item = next(item for item in items if item["media_id"] == f"meeting:{meeting_id}:audio")
+        self.assertEqual(meeting_item["owner_type"], "meeting")
+        self.assertEqual(meeting_item["owner_id"], meeting_id)
+        self.assertEqual(meeting_item["kind"], "audio")
+        self.assertEqual(meeting_item["bytes"], len(meeting_audio))
+        self.assertEqual(meeting_item["sha256"], hashlib.sha256(meeting_audio).hexdigest())
+        self.assertTrue(meeting_item["url"].endswith(f"/api/meetings/{meeting_id}/audio"))
+
+        feed_item = next(item for item in items if item["media_id"] == f"feed:{turn['card_id']}:audio")
+        self.assertEqual(feed_item["owner_type"], "feed")
+        self.assertEqual(feed_item["owner_id"], turn["card_id"])
+        self.assertEqual(feed_item["kind"], "audio")
+        self.assertEqual(feed_item["bytes"], len(b"RIFFaudio"))
+        self.assertEqual(feed_item["sha256"], hashlib.sha256(b"RIFFaudio").hexdigest())
+        self.assertIn("/api/artifacts/", feed_item["url"])
+
+        dumped = json.dumps(payload)
+        self.assertNotIn(str(Path(self.tmp.name)), dumped)
+        self.assertNotIn("/data/user/0/com.pucky.device.debug/files", dumped)
+        for item in items:
+            self.assertEqual(
+                set(item),
+                {"media_id", "owner_type", "owner_id", "kind", "title", "url", "mime_type", "bytes", "sha256", "updated_at"},
+            )
+
+    def test_media_manifest_and_media_bytes_are_authorized(self) -> None:
+        audio = b"RIFFauthorized-meeting-audio"
+        meeting_id = "meeting-20260601-121000-device-abc123ef"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:10:00Z",
+                "duration_ms": 3000,
+                "device_id": "device-1",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(audio).decode("ascii"),
+            },
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as manifest_error:
+            self.get_json("/api/media/manifest?scope=meetings")
+        self.assertEqual(manifest_error.exception.code, 401)
+
+        manifest = self.get_json(
+            "/api/media/manifest?scope=meetings",
+            headers={"Authorization": "Bearer secret"},
+        )
+        media_url = manifest["items"][0]["url"]
+        media_path = urllib.parse.urlsplit(media_url).path
+        with self.assertRaises(urllib.error.HTTPError) as media_error:
+            urllib.request.urlopen(self.base_url + media_path, timeout=10)
+        self.assertEqual(media_error.exception.code, 401)
+
+        request = urllib.request.Request(
+            self.base_url + media_path,
+            headers={"Authorization": "Bearer secret"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.read(), audio)
 
     def test_meeting_ingest_stores_audio_queues_agent_and_updates_single_feed_card(self) -> None:
         audio = b"RIFFmeeting-audio"

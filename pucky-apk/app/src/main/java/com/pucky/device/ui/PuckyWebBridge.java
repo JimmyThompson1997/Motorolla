@@ -12,6 +12,7 @@ import com.pucky.device.command.CommandException;
 import com.pucky.device.files.FileDownloadController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
+import com.pucky.device.media.MediaCacheController;
 import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.player.PlayerController;
 import com.pucky.device.pucky.PuckyTurnController;
@@ -150,6 +151,10 @@ public final class PuckyWebBridge {
                 return new LocationController(context).trackerExport(args);
             case "file.download":
                 return new FileDownloadController(context).download(args);
+            case "media.cache.status":
+                return new MediaCacheController(context, settings).status(args);
+            case "media.cache.ensure":
+                return new MediaCacheController(context, settings).ensure(args);
             case "artifact.read_base64":
                 return new ArtifactController(context).readBase64(args);
             case "artifact.url":
