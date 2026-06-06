@@ -4732,7 +4732,7 @@
       card,
       summaryItem,
       "Meeting Audio",
-      attachment => resolveAudioAttachmentSrc(attachment, { maxBytes: 32 * 1024 * 1024 })
+      attachment => resolveArtifactUrl(attachment, { maxBytes: 32 * 1024 * 1024 })
     );
     return {
       ...context,
