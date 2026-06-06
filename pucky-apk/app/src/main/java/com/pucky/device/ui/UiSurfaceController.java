@@ -11,6 +11,7 @@ import java.time.Instant;
 
 public final class UiSurfaceController {
     private static final String PREFS = "pucky_ui_surface";
+    private static final String HOSTED_UI_PREFIX = "https://pucky.fly.dev/ui/pucky/latest/index.html";
     private static final String REQUESTED_URL = "requested_url";
     private static final String ACTIVE_URL = "active_url";
     private static final String REQUESTED_AT = "requested_at";
@@ -49,7 +50,9 @@ public final class UiSurfaceController {
         Json.put(out, "active_url", activeUrl);
         Json.put(out, "entrypoint_url", entrypointUrl);
         Json.put(out, "fallback_asset_url", fallbackAssetUrl);
-        Json.put(out, "ui_version", bundle.optString("ui_version", ""));
+        Json.put(out, "ui_version", live.optString("ui_version", bundle.optString("ui_version", "")));
+        Json.put(out, "bundle_ui_version", bundle.optString("ui_version", ""));
+        Json.put(out, "live_ui_version", live.optString("ui_version", ""));
         Json.put(out, "source_kind", sourceKind(activeUrl, requestedUrl, entrypointUrl, fallbackAssetUrl));
         Json.put(out, "requested_at", prefs.getString(REQUESTED_AT, ""));
         Json.put(out, "loaded_at", prefs.getString(LOADED_AT, ""));
@@ -70,6 +73,9 @@ public final class UiSurfaceController {
         String expectedFallback = comparableUrl(fallbackAssetUrl);
         if (!effectiveUrl.isEmpty() && effectiveUrl.equals(expectedEntrypoint)) {
             return "bundle_current";
+        }
+        if (!effectiveUrl.isEmpty() && effectiveUrl.equals(comparableUrl(HOSTED_UI_PREFIX))) {
+            return "hosted_vm";
         }
         if (!effectiveUrl.isEmpty() && effectiveUrl.equals(expectedFallback)) {
             return "fallback_asset";

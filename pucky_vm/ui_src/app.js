@@ -230,7 +230,7 @@
     feedLoadError: "",
     feedSource: "",
     feedLastAppliedAt: 0,
-    nativeFeedSnapshotPromise: null,
+    vmFeedSnapshotPromise: null,
     showArchivedFeed: false,
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
@@ -492,16 +492,6 @@
         });
         applyTurnStatus(payload);
         renderVoiceStatus();
-      }
-      if (name === "pucky.feed.updated") {
-        if (state.route === "feed") {
-          void syncFeedCards({
-            reason: "native_feed_updated",
-            silent: true,
-            render: true,
-            androidMirror: false
-          });
-        }
       }
     }
   };
@@ -890,10 +880,6 @@
 
   const HOME_FEED_LIMIT = 100;
 
-  function hasAndroidBridge() {
-    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
-  }
-
   function feedApiBaseUrl() {
     if (state.links.apiBaseUrl) {
       return state.links.apiBaseUrl;
@@ -980,54 +966,14 @@
     return normalizeFeedSnapshot(payload, "vm");
   }
 
-  async function fetchAndroidFeedCacheSnapshot(reason = "feed_cache_fallback") {
-    if (!hasAndroidBridge()) {
-      throw new Error("Android feed cache is not available");
-    }
-    const snapshot = await Pucky.request({
-      command: "pucky.feed.cache.get",
-      args: { reason }
-    });
-    return normalizeFeedSnapshot(snapshot, "android_cache");
-  }
-
-  async function mirrorVmFeedToAndroidCache(reason = "feed_mirror") {
-    if (!hasAndroidBridge()) {
-      return null;
-    }
-    const resetCursor = true;
-    const result = await Pucky.request({
-      command: "pucky.feed.sync",
-      args: {
-        reason,
-        reset_cursor: resetCursor,
-        authoritative: true
-      }
-    });
-    return result;
-  }
-
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
     try {
       const snapshot = await fetchVmFeedSnapshot({ includeArchived: false });
       const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
-      if (options.androidMirror !== false) {
-        void mirrorVmFeedToAndroidCache(reason).catch(() => {});
-      }
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return applied;
     } catch (error) {
-      if (hasAndroidBridge()) {
-        try {
-          const fallback = await fetchAndroidFeedCacheSnapshot(reason);
-          const applied = applyFeedSnapshot(fallback, { render: options.render !== false });
-          await syncVoiceThreadScope({ reason: `feed_cache:${reason}`, render: true });
-          return applied;
-        } catch (_) {
-          // Fall through to the browser-style unavailable state below.
-        }
-      }
       state.feedLoadError = error instanceof Error ? error.message : String(error || "Feed unavailable");
       if (!options.silent) {
         throw error;
@@ -1045,34 +991,30 @@
     void syncVoiceThreadScope({ reason: "load_cards", render: true });
   }
 
-  async function refreshCardsFromNativeSnapshot(options = {}) {
-    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      return { cards: state.cards };
-    }
-    if (state.nativeFeedSnapshotPromise) {
-      return state.nativeFeedSnapshotPromise;
+  async function refreshCardsFromVmSnapshot(options = {}) {
+    if (state.vmFeedSnapshotPromise) {
+      return state.vmFeedSnapshotPromise;
     }
     const turnId = turnStatusTurnId(state.turn);
-    recordTurnUiEvent("feed_snapshot_refresh_start", {
+    recordTurnUiEvent("feed_vm_refresh_start", {
       turn_id: turnId,
-      reason: String(options.reason || "native_snapshot")
+      reason: String(options.reason || "vm_snapshot")
     });
-    state.nativeFeedSnapshotPromise = (async () => {
+    state.vmFeedSnapshotPromise = (async () => {
       try {
         await syncFeedCards({
-          reason: String(options.reason || "native_snapshot"),
+          reason: String(options.reason || "vm_snapshot"),
           silent: true,
-          render: false,
-          androidMirror: false
+          render: false
         });
         if (options.render !== false) {
           render();
           restoreNavStateAfterCards();
           syncOpenThreadDetailAfterCards();
         }
-        recordTurnUiEvent("feed_snapshot_refresh_complete", {
+        recordTurnUiEvent("feed_vm_refresh_complete", {
           turn_id: turnId,
-          reason: String(options.reason || "native_snapshot"),
+          reason: String(options.reason || "vm_snapshot"),
           card_count: state.cards.length,
           source: state.feedSource
         });
@@ -1080,10 +1022,10 @@
       } catch (_) {
         return { cards: state.cards };
       } finally {
-        state.nativeFeedSnapshotPromise = null;
+        state.vmFeedSnapshotPromise = null;
       }
     })();
-    return state.nativeFeedSnapshotPromise;
+    return state.vmFeedSnapshotPromise;
   }
 
   async function loadTurnStatus(options = {}) {
@@ -2312,7 +2254,7 @@
   }
 
   function uiDebugRefreshCards() {
-    void refreshCardsFromNativeSnapshot({ render: true }).then(() => {
+    void refreshCardsFromVmSnapshot({ render: true }).then(() => {
       void syncVoiceThreadScope({ reason: "debug_refresh_cards", render: true });
     });
     return {
@@ -6590,7 +6532,7 @@
 
   async function archiveHomeCard(card) {
     dismissOpenCardMenu(false);
-    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });
+    await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });
     const freshCard = findCardByIdentity(card) || card;
     return requestFeedAction(freshCard, "archive");
   }
@@ -8055,17 +7997,6 @@
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
       render();
-      if (hasAndroidBridge() && result && result.ok !== false) {
-        void Pucky.request({
-          command: "pucky.feed.action",
-          args: {
-            card_id: cardId,
-            session_id: sessionId,
-            action,
-            client_action_id: clientActionId
-          }
-        }).catch(() => {});
-      }
       if (result && result.ok === false && !options.silent) {
         showToast(result.error || "Feed refreshed");
       }
@@ -9119,7 +9050,7 @@
           await loadTurnStatus({ render: false });
           const turnActive = isTurnActive(state.turn);
           if (state.route === "feed" && (turnActive || wasTurnActive)) {
-            await refreshCardsFromNativeSnapshot({ render: false });
+            await refreshCardsFromVmSnapshot({ render: false });
           }
           changed = changed || turnActive || wasTurnActive;
         }

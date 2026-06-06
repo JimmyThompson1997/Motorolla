@@ -20,7 +20,6 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
@@ -86,7 +85,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.turn.received_cue.test", "pucky.turn.chime.test",
             "pucky.turn.history", "pucky.turn.read", "pucky.turn.debug.inject_history",
             "pucky.turn.debug.response_fault",
-            "pucky.feed.sync", "pucky.feed.action", "pucky.feed.cache.get",
             "wake.status", "wake.config.set", "wake.start", "wake.stop", "wake.simulate",
             "speech.native.status", "speech.native.start", "speech.native.stop",
             "speech.native.last", "speech.native.list", "speech.native.delete",
@@ -127,8 +125,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "phone.voicemail.list",
             "phone.blocked_numbers.list", "phone.blocked_numbers.add", "phone.blocked_numbers.remove",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
-            "ui.dashboard.show", "ui.reply_cards.set", "ui.reply_cards.merge", "ui.reply_cards.get",
-            "ui.reply_cards.clear", "ui.bundle.status", "ui.bundle.install_downloaded",
+            "ui.dashboard.show", "ui.bundle.status", "ui.bundle.install_downloaded",
             "ui.bundle.refresh", "ui.surface.get", "ui.debug.goto_home",
             "ui.debug.back", "ui.debug.focus_card", "ui.debug.clear_focus", "ui.debug.refresh_cards", "ui.debug.open_card_action",
             "ui.shell.mode.get", "ui.shell.mode.set",
@@ -491,12 +488,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return puckyTurnController.debugInjectHistory(command.args());
             case "pucky.turn.debug.response_fault":
                 return puckyTurnController.debugResponseFault(command.args());
-            case "pucky.feed.sync":
-                return PuckyFeedController.shared(settingsStore.context()).sync(command.args());
-            case "pucky.feed.action":
-                return PuckyFeedController.shared(settingsStore.context()).action(command.args());
-            case "pucky.feed.cache.get":
-                return PuckyFeedController.shared(settingsStore.context()).snapshot();
             case "wake.status":
                 return wakeWordController.status();
             case "wake.config.set":
@@ -615,14 +606,6 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return uiController.state();
             case "ui.dashboard.show":
                 return uiController.showDashboard(command.args());
-            case "ui.reply_cards.set":
-                return uiController.replyCardsSet(command.args());
-            case "ui.reply_cards.merge":
-                return uiController.replyCardsMerge(command.args());
-            case "ui.reply_cards.get":
-                return uiController.replyCardsGet();
-            case "ui.reply_cards.clear":
-                return uiController.replyCardsClear();
             case "ui.bundle.status":
                 return uiBundleController.status();
             case "ui.bundle.install_downloaded":
@@ -646,7 +629,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "ui.shell.mode.get":
                 return uiShellMode();
             case "ui.shell.mode.set":
-                settingsStore.setUiShellMode(command.args().optString("mode", "web_cached"));
+                settingsStore.setUiShellMode(command.args().optString("mode", "web_hosted"));
                 return uiShellMode();
             case "launcher.capability.get":
                 return uiController.launcherCapability();

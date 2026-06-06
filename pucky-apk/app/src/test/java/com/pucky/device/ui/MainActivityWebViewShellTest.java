@@ -21,10 +21,16 @@ public final class MainActivityWebViewShellTest {
                         && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")")
                         && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController))")
                         && count(source, "new WebView") == 1);
-        assertTrue("MainActivity should always load the cached or bundled HTML entrypoint",
-                source.contains("String url = uiBundleController.entrypointUrl();")
+        assertTrue("MainActivity should load the hosted VM HTML entrypoint",
+                source.contains("HOSTED_UI_URL = \"https://pucky.fly.dev/ui/pucky/latest/index.html\"")
+                        && source.contains("String url = hostedUiUrl();")
                         && source.contains("uiSurfaceController.recordRequested(url, uiBundleController);")
                         && source.contains("webShell.loadUrl(url)"));
+        assertFalse("MainActivity should not load the local bundle as the normal UI entrypoint",
+                source.contains("String url = uiBundleController.entrypointUrl();"));
+        assertFalse("MainActivity should not emit native feed snapshots into the hosted UI",
+                source.contains("emitWebFeedUpdated")
+                        || source.contains("PuckyFeedController.shared(this).syncAsync(\"activity_resume\")"));
 
         String[] forbidden = {
                 "buildHomeView",
@@ -63,9 +69,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("public void postMessage(String raw)")
                         && bridge.contains("window.Pucky&&window.Pucky.__resolve"));
         assertTrue("HTML bridge should allow explicit UI/player/file commands",
-                bridge.contains("case \"ui.reply_cards.get\"")
-                        && bridge.contains("case \"pucky.feed.cache.get\"")
-                        && bridge.contains("case \"ui.default_audio_speed.get\"")
+                bridge.contains("case \"ui.default_audio_speed.get\"")
                         && bridge.contains("case \"ui.default_audio_speed.set\"")
                         && bridge.contains("case \"browser.open\"")
                         && bridge.contains("case \"player.asset.prepare\"")
@@ -95,6 +99,11 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"ui.bundle.status\"")
                         && bridge.contains("case \"ui.surface.get\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
+        assertFalse("HTML bridge should not expose local feed/reply-card UI commands",
+                bridge.contains("case \"ui.reply_cards.get\"")
+                        || bridge.contains("case \"pucky.feed.cache.get\"")
+                        || bridge.contains("case \"pucky.feed.sync\"")
+                        || bridge.contains("case \"pucky.feed.action\""));
         assertFalse("HTML bridge should not expose raw shell execution",
                 bridge.contains("shell.exec"));
         assertTrue("UI bundles should verify schema, entrypoint, bridge version, and file hashes",
@@ -220,8 +229,11 @@ public final class MainActivityWebViewShellTest {
         assertTrue(client.contains("uiSurface.recordLoaded(url, uiBundles);"));
         assertTrue(surface.contains("\"pucky.ui_surface.v1\""));
         assertTrue(surface.contains("\"bundle_current\""));
+        assertTrue(surface.contains("\"hosted_vm\""));
         assertTrue(surface.contains("\"fallback_asset\""));
         assertTrue(surface.contains("\"legacy_placeholder\""));
+        assertTrue(surface.contains("\"live_ui_version\""));
+        assertTrue(surface.contains("\"bundle_ui_version\""));
         assertTrue(surface.contains("\"route\""));
         assertTrue(surface.contains("\"detail\""));
         assertTrue(surface.contains("\"thread_scope\""));
@@ -233,20 +245,20 @@ public final class MainActivityWebViewShellTest {
     }
 
     @Test
-    public void nativeShellModeIsCollapsedToWebCached() throws Exception {
+    public void nativeShellModeIsCollapsedToHostedWeb() throws Exception {
         String settings = read("src/main/java/com/pucky/device/storage/SettingsStore.java");
         String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String bridge = read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java");
 
-        assertTrue("SettingsStore should report WebView mode as the only shell mode",
-                settings.contains("return \"web_cached\";")
-                        && settings.contains("return true;")
-                        && settings.contains("putString(UI_SHELL_MODE, \"web_cached\")"));
-        assertTrue("Native command and HTML bridge shell mode setters should both normalize to WebView",
-                executor.contains("optString(\"mode\", \"web_cached\")")
-                        && bridge.contains("optString(\"mode\", \"web_cached\")"));
+        assertTrue("SettingsStore should report hosted WebView mode as the only shell mode",
+                settings.contains("return \"web_hosted\";")
+                        && settings.contains("return false;")
+                        && settings.contains("putString(UI_SHELL_MODE, \"web_hosted\")"));
+        assertTrue("Native command and HTML bridge shell mode setters should both normalize to hosted WebView",
+                executor.contains("optString(\"mode\", \"web_hosted\")")
+                        && bridge.contains("optString(\"mode\", \"web_hosted\")"));
         assertFalse("SettingsStore should not normalize any request back to native",
-                settings.contains("? \"web_cached\" : \"native\""));
+                settings.contains("? \"web_hosted\" : \"native\""));
     }
 
     @Test
@@ -261,7 +273,7 @@ public final class MainActivityWebViewShellTest {
                         && source.contains("showHomeScreen(showHomeRequested)")
                         && source.contains("loadWebShell(boolean resetNavigation)")
                         && source.contains("reset_nav=1"));
-        assertFalse("ui_shell_mode is collapsed to web_cached and should not reload the UI by itself",
+        assertFalse("ui_shell_mode is collapsed to hosted web and should not reload the UI by itself",
                 source.contains("Set UI shell mode from launch extra: \" + settingsStore.getUiShellMode());\n            uiSurfaceChanged = true;"));
         assertTrue("UI bundle installs should still refresh the WebView surface",
                 source.contains("if (intent.hasExtra(\"ui_bundle_path\"))")
@@ -324,24 +336,27 @@ public final class MainActivityWebViewShellTest {
     }
 
     @Test
-    public void replyCardCommandsAreAllowlistedAndRouted() throws Exception {
+    public void replyCardCommandsAreNotPartOfTheVisibleUiBridge() throws Exception {
         String source = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         String uiController = read("src/main/java/com/pucky/device/ui/PuckyUiController.java");
         String intentController = read("src/main/java/com/pucky/device/intents/IntentController.java");
 
-        assertTrue(source.contains("\"ui.reply_cards.set\""));
-        assertTrue(source.contains("\"ui.reply_cards.merge\""));
-        assertTrue(source.contains("\"ui.reply_cards.get\""));
-        assertTrue(source.contains("\"pucky.feed.cache.get\""));
-        assertTrue(source.contains("\"ui.reply_cards.clear\""));
-        assertTrue(source.contains("uiController.replyCardsSet"));
-        assertTrue(source.contains("uiController.replyCardsMerge"));
-        assertTrue(source.contains("uiController.replyCardsGet"));
-        assertTrue(source.contains("PuckyFeedController.shared(settingsStore.context()).snapshot()"));
-        assertTrue(source.contains("uiController.replyCardsClear"));
-        assertTrue(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));
-        assertTrue(uiController.contains("return PuckyFeedController.shared(context).snapshot();"));
-        assertTrue(uiController.contains("PuckyFeedController.shared(context).notifyFeedUpdated();"));
+        assertFalse(source.contains("\"ui.reply_cards.set\""));
+        assertFalse(source.contains("\"ui.reply_cards.merge\""));
+        assertFalse(source.contains("\"ui.reply_cards.get\""));
+        assertFalse(source.contains("\"ui.reply_cards.clear\""));
+        assertFalse(source.contains("\"pucky.feed.cache.get\""));
+        assertFalse(source.contains("\"pucky.feed.sync\""));
+        assertFalse(source.contains("\"pucky.feed.action\""));
+        assertFalse(source.contains("uiController.replyCardsSet"));
+        assertFalse(source.contains("uiController.replyCardsMerge"));
+        assertFalse(source.contains("uiController.replyCardsGet"));
+        assertFalse(source.contains("uiController.replyCardsClear"));
+        assertFalse(uiController.contains("import com.pucky.device.pucky.PuckyFeedController;"));
+        assertFalse(uiController.contains("replyCardsSet"));
+        assertFalse(uiController.contains("replyCardsMerge"));
+        assertFalse(uiController.contains("replyCardsGet"));
+        assertFalse(uiController.contains("replyCardsClear"));
         assertTrue(source.contains("\"ui.bundle.status\""));
         assertTrue(source.contains("\"ui.bundle.install_downloaded\""));
         assertTrue(source.contains("\"ui.bundle.refresh\""));

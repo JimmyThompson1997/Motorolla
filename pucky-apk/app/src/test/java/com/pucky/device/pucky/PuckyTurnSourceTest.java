@@ -361,7 +361,7 @@ public final class PuckyTurnSourceTest {
     }
 
     @Test
-    public void feedSyncSupportsResetCursorAndReplyCardMerge() throws Exception {
+    public void feedSyncRemainsInternalForTurnRecoveryNotVisibleUi() throws Exception {
         String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
         String ui = read("src/main/java/com/pucky/device/ui/PuckyUiController.java");
         String store = read("src/main/java/com/pucky/device/ui/ReplyCardStore.java");
@@ -373,13 +373,13 @@ public final class PuckyTurnSourceTest {
         assertTrue(feed.contains("String cursor = (resetCursor || authoritative) ? \"\" : prefs.getString(KEY_CURSOR, \"\")"));
         assertTrue(feed.contains("int pageLimit = (resetCursor || authoritative) ? 200 : 5;"));
         assertTrue(feed.contains("Json.put(out, \"reset_cursor\", resetCursor)"));
-        assertTrue(ui.contains("public JSONObject replyCardsMerge(JSONObject args)"));
-        assertTrue(ui.contains("replyCards.merge(cards)"));
+        assertFalse(ui.contains("public JSONObject replyCardsMerge(JSONObject args)"));
         assertTrue(store.contains("public JSONObject merge(JSONArray cardsJson)"));
-        assertTrue(commands.contains("\"ui.reply_cards.merge\""));
-        assertTrue(commands.contains("\"pucky.feed.cache.get\""));
-        assertTrue(commands.contains("return uiController.replyCardsMerge(command.args())"));
-        assertTrue(caps.contains("ui.reply_cards.set/ui.reply_cards.merge/ui.reply_cards.get/ui.reply_cards.clear/pucky.feed.cache.get"));
+        assertFalse(commands.contains("\"ui.reply_cards.merge\""));
+        assertFalse(commands.contains("\"pucky.feed.cache.get\""));
+        assertFalse(commands.contains("return uiController.replyCardsMerge(command.args())"));
+        assertFalse(caps.contains("ui.reply_cards"));
+        assertTrue(caps.contains("ui.web_shell"));
     }
 
     @Test

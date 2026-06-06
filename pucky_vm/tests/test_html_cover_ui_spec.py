@@ -485,7 +485,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert 'command === "pucky.turn.status"' in app
     assert 'command: "pucky.turn.status"' in app
     assert 'if (state.route === "feed") {' in app
-    assert 'await refreshCardsFromNativeSnapshot({ render: false });' in app
+    assert 'await refreshCardsFromVmSnapshot({ render: false });' in app
     assert "function renderVoiceStatus()" in app
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
@@ -622,10 +622,10 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert "function canArchiveHomeCard(card)" in app
     assert "function canRevealHomeArchive(card)" in app
     assert "function installArchiveReveal(wrapper, item, config)" in app
-    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });' in app
+    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });' in app
     assert 'return requestFeedAction(freshCard, "archive");' in app
     assert 'feedApiRequest("/api/feed/actions"' in app
-    assert 'command: "pucky.feed.action"' in app
+    assert 'command: "pucky.feed.action"' not in app
     assert "client_action_id" in app
     assert "function archiveActionButton(card)" not in app
     assert 'const archive = archiveActionButton(card);' not in app
@@ -864,8 +864,13 @@ def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     assert 'fetch("/ui/pucky/fixtures/reply_cards.json"' not in app
     assert "function fetchVmFeedSnapshot(options = {})" in app
     assert "return `/api/feed?${params.toString()}`;" in app
-    assert 'command: "pucky.feed.cache.get"' in app
-    assert 'reason: "native_feed_updated"' in app
+    assert 'command: "pucky.feed.cache.get"' not in app
+    assert 'command: "pucky.feed.sync"' not in app
+    assert 'command: "pucky.feed.action"' not in app
+    assert 'name === "pucky.feed.updated"' not in app
+    assert 'reason: "native_feed_updated"' not in app
+    assert "function fetchAndroidFeedCacheSnapshot" not in app
+    assert "function mirrorVmFeedToAndroidCache" not in app
     assert 'state.cards = cards;' not in app
     assert 'void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });' not in app
     assert 'const snapshot = await fetchAndroidFeedCacheSnapshot(String(options.reason || "native_snapshot"));' not in app
@@ -1111,14 +1116,13 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     optimistic = function_block(app, "applyOptimisticHomeArchive")
 
     assert "authoritative: true" in app
-    assert "reset_cursor: resetCursor" in app
     assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
     assert 'const wrapper = el("div", "card-wrap");' in app
     assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
     assert "appendArchiveRevealAction(wrapper, {" in app
     assert 'iconSvg("delete", { filled: true })' in app
     assert "result && result.ok === false" in app
-    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });' in archive
+    assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true });' in archive
     assert "function applyOptimisticArchive(card)" not in app
     assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
     assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
@@ -1174,7 +1178,7 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert "state.cards = state.cards.map(item => {" in optimistic
     assert "archived: true" in optimistic
     assert 'return sameCardId || sameSession ? { ...item, archived: true } : item;' in optimistic
-    assert 'command: "pucky.feed.action"' in app
+    assert 'command: "pucky.feed.action"' not in app
     assert "CARD_ARCHIVE_SWIPE_" not in app
     assert ".archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
@@ -1472,7 +1476,7 @@ def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
     assert 'content.classList.add("meeting-audio-detail")' in app
     assert "content.append(meetingTranscriptAction(card));" in app
     assert 'el("button", "meeting-view-transcript", label)' in app
-    assert 'openSideDetail(panel, card.title || "Meeting Transcript", content, () => showAudioDetail(card))' in app
+    assert "showTranscript(meetingCardFromRecord(meeting));" in app
     assert ".audio-detail" in styles
     meeting_detail = css_block(styles, ".meeting-audio-detail")
     assert "height: calc(var(--viewport-safe-h) - 45px);" in meeting_detail
@@ -1664,7 +1668,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert 'back.setAttribute("aria-label", "Back")' in app
     assert 'back.setAttribute("aria-label", "Back to feed")' not in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
-    assert "function documentViewer(item)" in app
+    assert "async function documentViewer(card, item, options = {})" in app
     assert "function showImageReel(card, imageSet = null, options = {})" in app
     assert "const restoreOptions = typeof options === \"number\"" in app
     assert "function currentImageGalleryIndex(track)" in app
@@ -2159,9 +2163,9 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert 'reason: "detail_dismiss", render: true, force: true' in app
     assert "function findFocusedCard()" in app
     assert "function reconcileFocusedCardSelection()" in app
-    assert "async function refreshCardsFromNativeSnapshot(options = {})" in app
-    assert 'recordTurnUiEvent("feed_snapshot_refresh_start"' in app
-    assert 'recordTurnUiEvent("feed_snapshot_refresh_complete"' in app
+    assert "async function refreshCardsFromVmSnapshot(options = {})" in app
+    assert 'recordTurnUiEvent("feed_vm_refresh_start"' in app
+    assert 'recordTurnUiEvent("feed_vm_refresh_complete"' in app
     assert "function uiDebugOpenCardAction(rawArgs = {})" in app
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app

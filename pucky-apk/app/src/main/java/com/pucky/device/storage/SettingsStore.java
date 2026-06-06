@@ -160,15 +160,15 @@ public final class SettingsStore {
     }
 
     public String getUiShellMode() {
-        return "web_cached";
+        return "web_hosted";
     }
 
     public boolean isWebCachedUiEnabled() {
-        return true;
+        return false;
     }
 
     public void setUiShellMode(String mode) {
-        prefs.edit().putString(UI_SHELL_MODE, "web_cached").apply();
+        prefs.edit().putString(UI_SHELL_MODE, "web_hosted").apply();
     }
 
     public float getDefaultTileAudioSpeed() {

@@ -14,7 +14,6 @@ import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -28,15 +27,13 @@ public final class PuckyWebBridge {
     private final Context context;
     private final WeakReference<WebView> webView;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ReplyCardStore replyCards;
     private final UiBundleController uiBundles;
     private final SettingsStore settings;
 
-    public PuckyWebBridge(Context context, WebView webView, ReplyCardStore replyCards,
+    public PuckyWebBridge(Context context, WebView webView,
             UiBundleController uiBundles, SettingsStore settings) {
         this.context = context.getApplicationContext();
         this.webView = new WeakReference<>(webView);
-        this.replyCards = replyCards;
         this.uiBundles = uiBundles;
         this.settings = settings;
     }
@@ -75,18 +72,10 @@ public final class PuckyWebBridge {
     private JSONObject execute(String command, JSONObject args) throws CommandException {
         PlayerController player = PlayerController.shared(context);
         switch (command) {
-            case "pucky.feed.cache.get":
-                return PuckyFeedController.shared(context).snapshot();
-            case "ui.reply_cards.get":
-                return PuckyFeedController.shared(context).snapshot();
             case "ui.default_audio_speed.get":
                 return defaultAudioSpeed();
             case "ui.default_audio_speed.set":
                 return setDefaultAudioSpeed(args);
-            case "pucky.feed.sync":
-                return PuckyFeedController.shared(context).sync(args);
-            case "pucky.feed.action":
-                return PuckyFeedController.shared(context).action(args);
             case "pucky.config.get":
                 return puckyConfig();
             case "player.state":
@@ -178,7 +167,7 @@ public final class PuckyWebBridge {
             case "ui.shell.mode.get":
                 return shellMode();
             case "ui.shell.mode.set":
-                settings.setUiShellMode(args.optString("mode", "web_cached"));
+                settings.setUiShellMode(args.optString("mode", "web_hosted"));
                 return shellMode();
             default:
                 throw new CommandException(CommandErrorCodes.CAPABILITY_UNAVAILABLE,

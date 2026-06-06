@@ -35,14 +35,12 @@ import android.widget.FrameLayout;
 import com.pucky.device.assistant.PuckyAssistantController;
 import com.pucky.device.buttons.ButtonController;
 import com.pucky.device.player.PlayerController;
-import com.pucky.device.pucky.PuckyFeedController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.service.PuckyForegroundService;
 import com.pucky.device.state.PuckyState;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.ui.PuckyWebBridge;
 import com.pucky.device.ui.PuckyWebResourceClient;
-import com.pucky.device.ui.ReplyCardStore;
 import com.pucky.device.ui.UiBundleController;
 import com.pucky.device.ui.UiSurfaceController;
 import com.pucky.device.util.Json;
@@ -64,9 +62,9 @@ public class MainActivity extends Activity {
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
+    private static final String HOSTED_UI_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html";
 
     private SettingsStore settingsStore;
-    private ReplyCardStore replyCardStore;
     private UiBundleController uiBundleController;
     private UiSurfaceController uiSurfaceController;
     private ButtonController buttonController;
@@ -83,7 +81,6 @@ public class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             emitWebPlayerState();
             emitWebTurnStatus();
-            emitWebFeedUpdated();
         }
     };
 
@@ -94,7 +91,6 @@ public class MainActivity extends Activity {
             if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.post(MainActivity.this::emitWebPlayerState);
                 mainHandler.post(MainActivity.this::emitWebTurnStatus);
-                mainHandler.post(MainActivity.this::emitWebFeedUpdated);
             }
         }
     };
@@ -104,8 +100,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         PuckyApplication app = (PuckyApplication) getApplication();
         settingsStore = app.settingsStore();
-        settingsStore.setUiShellMode("web_cached");
-        replyCardStore = new ReplyCardStore(this);
+        settingsStore.setUiShellMode("web_hosted");
         uiBundleController = new UiBundleController(this);
         uiSurfaceController = new UiSurfaceController(this);
         buttonController = new ButtonController(this);
@@ -134,10 +129,8 @@ public class MainActivity extends Activity {
         registerStateReceivers();
         applySystemUiForMode();
         ensureAutoConnectService();
-        PuckyFeedController.shared(this).syncAsync("activity_resume");
         emitWebPlayerState();
         emitWebTurnStatus();
-        emitWebFeedUpdated();
     }
 
     @Override
@@ -173,7 +166,6 @@ public class MainActivity extends Activity {
             if (handled) {
                 emitWebPlayerState();
                 emitWebTurnStatus();
-                emitWebFeedUpdated();
                 return true;
             }
         }
@@ -363,7 +355,7 @@ public class MainActivity extends Activity {
         webShell.setOverScrollMode(View.OVER_SCROLL_NEVER);
         configureWebShellSettings(webShell);
         webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController));
-        webBridge = new PuckyWebBridge(this, webShell, replyCardStore, uiBundleController, settingsStore);
+        webBridge = new PuckyWebBridge(this, webShell, uiBundleController, settingsStore);
         webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
         com.pucky.device.ui.UiAutomationController.attach(webShell);
         root.addView(webShell, new FrameLayout.LayoutParams(
@@ -395,7 +387,7 @@ public class MainActivity extends Activity {
 
     private void loadWebShell(boolean resetNavigation) {
         if (webShell != null && uiBundleController != null) {
-            String url = uiBundleController.entrypointUrl();
+            String url = hostedUiUrl();
             if (resetNavigation) {
                 url = url + (url.contains("?") ? "&" : "?") + "reset_nav=1";
             }
@@ -409,14 +401,17 @@ public class MainActivity extends Activity {
     }
 
     private void showHomeScreen(boolean resetNavigation) {
-        settingsStore.setUiShellMode("web_cached");
+        settingsStore.setUiShellMode("web_hosted");
         if (webShell == null) {
             setContentView(buildWebShellView());
         }
         loadWebShell(resetNavigation);
         emitWebPlayerState();
         emitWebTurnStatus();
-        emitWebFeedUpdated();
+    }
+
+    private String hostedUiUrl() {
+        return HOSTED_UI_URL;
     }
 
     private void emitWebPlayerState() {
@@ -428,12 +423,6 @@ public class MainActivity extends Activity {
     private void emitWebTurnStatus() {
         if (webBridge != null) {
             webBridge.emit("pucky.turn.status", PuckyTurnController.shared(this).status());
-        }
-    }
-
-    private void emitWebFeedUpdated() {
-        if (webBridge != null) {
-            webBridge.emit("pucky.feed.updated", PuckyFeedController.shared(this).snapshot());
         }
     }
 

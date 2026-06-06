@@ -40,4 +40,20 @@ public final class UiSurfaceControllerTest {
 
         assertEquals("fallback_asset", kind);
     }
+
+    @Test
+    public void sourceKindTreatsHostedVmPageAsHostedVm() throws Exception {
+        Method sourceKind = UiSurfaceController.class.getDeclaredMethod(
+                "sourceKind",
+                String.class,
+                String.class,
+                String.class,
+                String.class);
+        sourceKind.setAccessible(true);
+
+        String activeUrl = "https://pucky.fly.dev/ui/pucky/latest/index.html?reset_nav=1";
+        String kind = (String) sourceKind.invoke(null, activeUrl, "", "", "");
+
+        assertEquals("hosted_vm", kind);
+    }
 }
