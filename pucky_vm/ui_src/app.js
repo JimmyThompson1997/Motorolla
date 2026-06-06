@@ -4184,7 +4184,7 @@
     if (source && source.is_meeting_recording && sessionId) {
       return `meeting:${sessionId}:audio`;
     }
-    const explicit = String(source && source.media_id || "").trim();
+    const explicit = String(source && (source.media_id || source.audio_media_id) || "").trim();
     if (explicit) {
       return explicit;
     }
@@ -7842,11 +7842,11 @@
   }
 
   function hasAudio(card) {
-    return Boolean(card.audio_path || card.audio_playlist_path);
+    return Boolean(card.audio_path || card.audio_playlist_path || card.audio_url);
   }
 
   function audioControlKey(card) {
-    return card.audio_playlist_path || card.audio_path || card.session_id || card.title || "";
+    return card.audio_playlist_path || card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
   }
 
   function audioStateKey(card) {
@@ -7862,7 +7862,9 @@
       return false;
     }
     return samePath(player.path, card.audio_path)
-      || samePath(player.source, card.audio_playlist_path);
+      || samePath(player.path, card.audio_url)
+      || samePath(player.source, card.audio_playlist_path)
+      || samePath(player.source, card.audio_url);
   }
 
   function playerHasAudioIdentity(player) {

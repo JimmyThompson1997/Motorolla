@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from .sqlite_utils import (
     configure_sqlite_connection,
@@ -217,41 +219,47 @@ class FeedStore:
         *,
         include_archived: bool = True,
         compact: bool = False,
+        base_url: str = "",
     ) -> dict[str, object]:
         safe_limit = max(1, min(100, int(limit or 20)))
-        updated_after_ms, after_card_id = _cursor_decode(cursor)
+        cursor_ms, after_group_key = _cursor_decode(cursor)
+        has_cursor = bool(str(cursor or "").strip())
         with self._lock:
             archived_clause = "" if include_archived else "AND archived = 0"
             rows = self._conn.execute(
                 f"""
-                SELECT card_id
+                SELECT *
                 FROM feed_cards
-                WHERE ((updated_at_ms > ?)
-                   OR (updated_at_ms = ? AND card_id > ?))
+                WHERE deleted = 0
                   {archived_clause}
-                ORDER BY updated_at_ms ASC, card_id ASC
-                LIMIT ?
+                ORDER BY updated_at_ms DESC, card_id ASC
                 """,
-                (updated_after_ms, updated_after_ms, after_card_id, safe_limit + 1),
+                (),
             ).fetchall()
-            has_more = len(rows) > safe_limit
-            rows = rows[:safe_limit]
-            group_keys: list[str] = []
+            groups: list[tuple[str, sqlite3.Row]] = []
             seen_group_keys: set[str] = set()
             for row in rows:
                 group_key = self._group_key_for_card_id(str(row["card_id"]))
                 if group_key in seen_group_keys:
                     continue
                 seen_group_keys.add(group_key)
-                group_keys.append(group_key)
+                latest_ms = int(row["updated_at_ms"])
+                if has_cursor and not (
+                    latest_ms < cursor_ms
+                    or (latest_ms == cursor_ms and group_key > after_group_key)
+                ):
+                    continue
+                groups.append((group_key, row))
+            has_more = len(groups) > safe_limit
+            page_groups = groups[:safe_limit]
             items = [
-                self._build_group_item(group_key, include_archived=include_archived, compact=compact)
-                for group_key in group_keys
+                self._build_group_item(group_key, include_archived=include_archived, compact=compact, base_url=base_url)
+                for group_key, _row in page_groups
             ]
             next_cursor = ""
-            if rows:
-                last = self._fetch_card_row(rows[-1]["card_id"])
-                next_cursor = _cursor_encode(int(last["updated_at_ms"]), str(last["card_id"]))
+            if page_groups:
+                last_group_key, last = page_groups[-1]
+                next_cursor = _cursor_encode(int(last["updated_at_ms"]), last_group_key)
             return {
                 "schema": "pucky.feed_sync.v1",
                 "items": items,
@@ -671,15 +679,17 @@ class FeedStore:
         *,
         include_archived: bool = True,
         compact: bool = False,
+        base_url: str = "",
     ) -> dict[str, object]:
         rows = self._card_rows_for_group(group_key)
         if not include_archived:
             rows = [row for row in rows if not bool(int(row["archived"]))]
+        rows = [row for row in rows if not bool(int(row["deleted"]))]
         if not rows:
             raise KeyError("card_not_found")
         rows.sort(key=lambda row: (int(row["updated_at_ms"]), str(row["card_id"])))
         latest = rows[-1]
-        latest_item = self._build_item(str(latest["card_id"]), compact=compact)
+        latest_item = self._build_item(str(latest["card_id"]), compact=compact, base_url=base_url)
         if not compact:
             transcript_messages: list[object] = []
             for row in rows:
@@ -706,7 +716,7 @@ class FeedStore:
             card["thread_history_count"] = len(rows)
         return latest_item
 
-    def _build_item(self, card_id: str, *, compact: bool = False) -> dict[str, object]:
+    def _build_item(self, card_id: str, *, compact: bool = False, base_url: str = "") -> dict[str, object]:
         row = self._fetch_card_row(card_id)
         if row is None:
             raise KeyError("card_not_found")
@@ -765,9 +775,16 @@ class FeedStore:
             },
             "telemetry": telemetry,
         }
-        if not compact and audio is not None:
-            item["audio_mime_type"] = str(audio["mime_type"])
-            item["audio_base64"] = str(audio["content_base64"])
+        if audio is not None:
+            audio_mime_type = str(audio["mime_type"])
+            audio_base64 = str(audio["content_base64"])
+            if compact:
+                audio_meta = self._compact_audio_metadata(audio, base_url=base_url)
+                if audio_meta:
+                    item.update(audio_meta)
+            else:
+                item["audio_mime_type"] = audio_mime_type
+                item["audio_base64"] = audio_base64
         if not compact and html is not None:
             item["html_mime_type"] = str(html["mime_type"])
             item["html_base64"] = str(html["content_base64"])
@@ -776,3 +793,24 @@ class FeedStore:
                 card["html_mime_type"] = str(html["mime_type"])
                 card["html_base64"] = str(html["content_base64"])
         return item
+
+    def _compact_audio_metadata(self, audio: sqlite3.Row, *, base_url: str = "") -> dict[str, object]:
+        audio_base64 = str(audio["content_base64"] or "")
+        if not audio_base64:
+            return {}
+        try:
+            body = base64.b64decode(audio_base64, validate=True)
+        except Exception:
+            return {}
+        if not body:
+            return {}
+        artifact_id = str(audio["artifact_id"])
+        root = str(base_url or "").rstrip("/")
+        path = f"/api/artifacts/{quote(artifact_id, safe='')}"
+        return {
+            "audio_url": f"{root}{path}" if root else path,
+            "audio_media_id": f"feed:{artifact_id}",
+            "audio_mime_type": str(audio["mime_type"] or "application/octet-stream"),
+            "audio_bytes": len(body),
+            "audio_sha256": hashlib.sha256(body).hexdigest(),
+        }

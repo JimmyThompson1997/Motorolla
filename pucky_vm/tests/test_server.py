@@ -1182,6 +1182,12 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("audio_base64", compact["items"][0])
         self.assertNotIn("html_base64", compact["items"][0])
         self.assertEqual(compact["items"][0]["card_id"], turn["card_id"])
+        self.assertEqual(compact["items"][0]["audio_mime_type"], "audio/wav")
+        self.assertEqual(compact["items"][0]["audio_bytes"], len(b"RIFFaudio"))
+        self.assertEqual(compact["items"][0]["audio_sha256"], hashlib.sha256(b"RIFFaudio").hexdigest())
+        self.assertEqual(compact["items"][0]["audio_media_id"], f"feed:{turn['card_id']}:audio")
+        self.assertTrue(compact["items"][0]["audio_url"].startswith(self.base_url + "/api/artifacts/"))
+        self.assertNotIn(str(self.tmp.name), compact["items"][0]["audio_url"])
 
         archive = self.post_json(
             "/api/feed/actions",
@@ -1218,6 +1224,86 @@ class ServerTests(unittest.TestCase):
         )
         self.assertTrue(action["ok"])
         self.assertTrue(action["item"]["archived"])
+
+    def test_feed_sync_orders_newest_groups_first_and_excludes_archived_before_ordering(self) -> None:
+        older = self.post_json(
+            "/api/turn/text",
+            {"text": "Older grouped feed card", "turn_id": "feed_order_older"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "feed_order_older_thread"},
+        )
+        time.sleep(0.01)
+        newer = self.post_json(
+            "/api/turn/text",
+            {"text": "Newer grouped feed card", "turn_id": "feed_order_newer"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "feed_order_newer_thread"},
+        )
+
+        payload = self.get_json("/api/feed?limit=10&compact=1&include_archived=0", headers={"Authorization": "Bearer secret"})
+        self.assertEqual([item["card_id"] for item in payload["items"][:2]], [newer["card_id"], older["card_id"]])
+
+        archive = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "feed_order_archive_newer",
+                "card_id": newer["card_id"],
+                "action": "archive",
+            },
+        )
+        self.assertTrue(archive["ok"])
+        active = self.get_json("/api/feed?limit=10&compact=1&include_archived=0", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(active["items"][0]["card_id"], older["card_id"])
+        self.assertNotIn(newer["card_id"], [item["card_id"] for item in active["items"]])
+
+    def test_feed_sync_thread_group_order_uses_latest_turn_activity(self) -> None:
+        newest_single = self.post_json(
+            "/api/turn/text",
+            {"text": "Newest single before grouped update", "turn_id": "feed_group_single"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "feed_group_single_thread"},
+        )
+        time.sleep(0.01)
+        self.post_json(
+            "/api/turn/text",
+            {"text": "Old grouped thread turn", "turn_id": "feed_group_old"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "feed_group_thread"},
+        )
+        time.sleep(0.01)
+        latest_grouped = self.post_json(
+            "/api/turn/text",
+            {"text": "Latest grouped thread turn", "turn_id": "feed_group_latest"},
+            headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": "feed_group_thread"},
+        )
+
+        payload = self.get_json("/api/feed?limit=10&compact=1&include_archived=0", headers={"Authorization": "Bearer secret"})
+        self.assertEqual([item["card_id"] for item in payload["items"][:2]], [latest_grouped["card_id"], newest_single["card_id"]])
+        self.assertEqual(payload["items"][0]["thread_history_count"], 2)
+
+    def test_feed_sync_descending_pagination_has_no_duplicates(self) -> None:
+        created: list[str] = []
+        for index in range(5):
+            time.sleep(0.01)
+            item = self.post_json(
+                "/api/turn/text",
+                {"text": f"Paged feed card {index}", "turn_id": f"feed_page_{index}"},
+                headers={"X-Pucky-Thread-Mode": "existing", "X-Pucky-Thread-Id": f"feed_page_thread_{index}"},
+            )
+            created.append(item["card_id"])
+
+        first = self.get_json("/api/feed?limit=2&compact=1&include_archived=0", headers={"Authorization": "Bearer secret"})
+        second = self.get_json(
+            f"/api/feed?limit=2&compact=1&include_archived=0&cursor={urllib.parse.quote(first['next_cursor'], safe='')}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        third = self.get_json(
+            f"/api/feed?limit=2&compact=1&include_archived=0&cursor={urllib.parse.quote(second['next_cursor'], safe='')}",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+        seen = [item["card_id"] for item in first["items"] + second["items"] + third["items"]]
+        self.assertEqual(seen[:5], list(reversed(created)))
+        self.assertEqual(len(seen[:5]), len(set(seen[:5])))
+        self.assertTrue(first["has_more"])
+        self.assertTrue(second["has_more"])
+        self.assertFalse(third["has_more"])
 
     def test_feed_sync_compact_thread_group_omits_heavy_history_payloads(self) -> None:
         self.post_json(

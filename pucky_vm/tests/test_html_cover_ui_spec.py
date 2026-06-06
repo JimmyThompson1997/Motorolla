@@ -894,6 +894,7 @@ def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     assert 'fetch("/ui/pucky/fixtures/reply_cards.json"' not in app
     assert "function fetchVmFeedSnapshot(options = {})" in app
     assert "return `/api/feed?${params.toString()}`;" in app
+    assert 'params.set("compact", "1");' in app
     assert 'command: "pucky.feed.cache.get"' not in app
     assert 'command: "pucky.feed.sync"' not in app
     assert 'command: "pucky.feed.action"' not in app
@@ -932,6 +933,14 @@ def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     assert "is-resetting" not in app
     assert "--feed-refresh-progress" not in app
     assert "@keyframes feedRefreshSpin" not in styles
+
+    assert "function hasAudio(card)" in app
+    assert "card.audio_path || card.audio_playlist_path || card.audio_url" in app
+    assert "source.media_id || source.audio_media_id" in app
+    assert "card.audio_playlist_path || card.audio_path || card.audio_media_id || card.audio_url" in app
+    assert "samePath(player.path, card.audio_url)" in app
+    assert "samePath(player.source, card.audio_url)" in app
+    assert 'command: "media.cache.ensure"' in app
 
 
 def test_settings_tab_renders_real_backed_settings_page() -> None:

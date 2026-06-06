@@ -3753,9 +3753,10 @@ class PuckyVoiceService:
         *,
         include_archived: bool = True,
         compact: bool = False,
+        base_url: str = "",
     ) -> dict[str, object]:
         return self._decorate_feed_payload(
-            self.feed.list_feed(cursor, limit, include_archived=include_archived, compact=compact)
+            self.feed.list_feed(cursor, limit, include_archived=include_archived, compact=compact, base_url=base_url)
         )
 
     def feed_action(self, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
@@ -5282,6 +5283,7 @@ def make_handler(service: PuckyVoiceService):
                         int(limit),
                         include_archived=include_archived,
                         compact=compact,
+                        base_url=request_base_url(self.headers, self.server.server_address),
                     )
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_sync_failed", "detail": str(exc)})
