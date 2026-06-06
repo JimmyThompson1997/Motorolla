@@ -192,10 +192,11 @@ async function main() {
     const feedRequests = requestLog.filter(item => item.url.includes("/api/feed"));
     const fixtureRequests = requestLog.filter(item => item.url.includes("/ui/pucky/fixtures/reply_cards.json"));
     const beforeInteractionMetrics = await homeMetrics(page);
-    const mouseHover = await mouseHoverDoesNotDragFeed(page);
-    const mouseDrag = await mouseDragDoesNotRevealArchive(page);
     const wheel = await wheelStillScrolls(page);
     await saveScreenshot(page, config.reportDir, "after-wheel");
+    await page.locator("#feed").evaluate(node => { node.scrollTop = 0; });
+    const mouseHover = await mouseHoverDoesNotDragFeed(page);
+    const mouseDrag = await mouseDragDoesNotRevealArchive(page);
     const afterInteractionMetrics = await homeMetrics(page);
     const archive = await maybeArchiveFirstCard(page, requestLog, config.archive);
     if (config.archive) {
