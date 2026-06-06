@@ -604,12 +604,14 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     app = read("app.js")
     styles = read("styles.css")
     reveal = function_block(app, "installArchiveReveal")
+    can_archive = function_block(app, "canArchiveHomeCard")
 
     assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
     assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
     assert "const ARCHIVE_REVEAL_SLOP_PX = 12" in app
     assert "showArchivedFeed: false" in app
     assert "async function archiveHomeCard(card)" in app
+    assert "function canArchiveHomeCard(card)" in app
     assert "function canRevealHomeArchive(card)" in app
     assert "function installArchiveReveal(wrapper, item, config)" in app
     assert 'await syncFeedCards({ reason: "pre_archive", silent: true, render: false, authoritative: true, androidMirror: false });' in app
@@ -617,6 +619,10 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'feedApiRequest("/api/feed/actions"' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
+    assert 'const archive = archiveActionButton(card);' in app
+    assert 'applyCardActionData(archive, "archive", card, "reply");' in app
+    assert "action action-archive" in app
+    assert "return isFailedPendingOutboundCard(card);" in can_archive
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function canArchiveBySwipe(card)" not in app
     assert "installArchiveReveal(wrapper, card, {" in app
@@ -671,6 +677,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     app = read("app.js")
     styles = read("styles.css")
     outbound = function_block(app, "outboundCardView")
+    can_archive = function_block(app, "canArchiveHomeCard")
     can_reveal = function_block(app, "canRevealHomeArchive")
     filtered = function_block(app, "filteredFeedCards")
     request_mark_read = function_block(app, "requestMarkRead")
@@ -681,7 +688,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "function pendingOutboundStatusLabel(card)" in app
     assert "function pendingOutboundStatusClass(card)" in app
     assert "if (isPendingOutboundCard(card)) {\n      return outboundCardView(card);" in app
-    assert "if (isPendingOutboundCard(card)) {\n        return false;\n      }" in filtered
+    assert "if (isPendingOutboundCard(card)) {\n        return state.showArchivedFeed ? archived : !archived;\n      }" in filtered
     assert "isFeedIconIncluded(cardIconKey(card))" in filtered
     assert "if (!card || card.deleted || isPendingOutboundCard(card))" in app
     assert "card?.session_id || card?.local_session_id || card?.turn_id" in app
@@ -697,13 +704,16 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "showRichPage(card)" not in outbound
     assert "identity" not in outbound
     assert "card-actions" not in outbound
+    assert "card-outbound-actions" in outbound
+    assert "const archive = archiveActionButton(card);" in outbound
+    assert "appendArchiveRevealAction(wrapper, {" in outbound
+    assert "installArchiveReveal(wrapper, card, {" in outbound
 
-    assert "appendArchiveRevealAction(wrapper, {" not in outbound
-    assert "installArchiveReveal(wrapper, card, {" not in outbound
+    assert "function canArchiveHomeCard(card)" in app
+    assert "if (!isPendingOutboundCard(card)) {\n      return true;\n    }\n    return isFailedPendingOutboundCard(card);" in can_archive
     assert "function installArchiveReveal(wrapper, item, config)" in app
     assert "function canRevealHomeArchive(card)" in app
-    assert "if (Boolean(card?.archived) || isPendingOutboundCard(card)) {" in can_reveal
-    assert "return false;" in can_reveal
+    assert "return canArchiveHomeCard(card);" in can_reveal
     assert "function prefersTouchInput()" in app
     assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
 
@@ -717,6 +727,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert ".card-outbound-status.is-thinking" in styles
     assert ".card-outbound-status.is-failed" in styles
     assert ".card-outbound-time" in styles
+    assert ".card-outbound-actions" in styles
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function cardLongPressMenu(card)" not in app
     assert "function cardFocusBorder()" not in app
