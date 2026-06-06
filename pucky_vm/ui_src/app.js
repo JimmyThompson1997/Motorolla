@@ -4274,7 +4274,7 @@
       return String(item.src || item.data_url);
     }
     if (artifactId) {
-      return resolveArtifactUrl(item, options);
+      return resolveArtifactUrl(item, { ...options, preferDataUrl: true });
     }
     if (url && hasNativeBridge) {
       const preparedPath = await ensureAudioCacheForPlayback({ ...(item || {}), audio_url: url }, options);
@@ -5454,6 +5454,9 @@
           return resolveLocalArtifactPath(virtualPath, { ...(item || {}), path: virtualPath }, options);
         }
       }
+      if (options.preferDataUrl) {
+        return resolveRemoteArtifactObjectUrl(artifactId, item);
+      }
       const apiUrl = artifactApiUrl(artifactId);
       if (apiUrl) {
         return apiUrl;
@@ -5470,6 +5473,28 @@
       throw new Error("attachment path is missing");
     }
     return resolveLocalArtifactPath(path, item, options);
+  }
+
+  async function resolveRemoteArtifactObjectUrl(artifactId, item) {
+    const apiUrl = artifactApiUrl(artifactId);
+    if (!apiUrl) {
+      throw new Error("artifact url is missing");
+    }
+    await ensureLinksApiConfig();
+    const headers = {};
+    if (state.links.apiToken) {
+      headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    const response = await fetch(apiUrl, { cache: "no-store", headers });
+    if (!response.ok) {
+      throw new Error(`Artifact unavailable: HTTP ${response.status}`);
+    }
+    const mime = resolvedMediaMime(
+      { mime_type: String(response.headers.get("content-type") || "").split(";", 1)[0].trim() },
+      item,
+      apiUrl
+    );
+    return URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: mime }));
   }
 
   async function resolveLocalArtifactPath(path, item, options = {}) {

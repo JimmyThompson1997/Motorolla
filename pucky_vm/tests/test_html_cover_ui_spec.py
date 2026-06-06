@@ -343,7 +343,10 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'url = String(resolvedMeetingAudio.url);' in resolve_audio_attachment
     assert "await ensureAudioCacheForPlayback({ ...(item || {}), audio_url: url }, options)" in resolve_audio_attachment
     assert 'command: "player.asset.prepare"' not in resolve_audio_attachment
-    assert 'return resolveArtifactUrl(item, options);' in resolve_audio_attachment
+    assert 'return resolveArtifactUrl(item, { ...options, preferDataUrl: true });' in resolve_audio_attachment
+    resolve_artifact = function_block(app, "resolveArtifactUrl")
+    assert "async function resolveRemoteArtifactObjectUrl(artifactId, item)" in app
+    assert "return resolveRemoteArtifactObjectUrl(artifactId, item);" in resolve_artifact
     assert ".meetings-page" in styles
     assert ".meetings-list-card" in styles
     assert ".card.card-meeting-processing" in styles
