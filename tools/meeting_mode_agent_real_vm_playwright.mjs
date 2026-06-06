@@ -773,7 +773,11 @@ async function runScenario({
   }
 
   const attachments = summarizeAttachments(detailMeeting);
-  for (const requiredLabel of ["Meeting Transcript", "Meeting Summary", "Meeting Audio"]) {
+  const summaryAttachment = attachments.find((item) => item && String(item.kind || "") === "html");
+  if (!summaryAttachment) {
+    throw new Error(`${scenario.name} is missing the HTML summary attachment`);
+  }
+  for (const requiredLabel of ["Meeting Transcript", "Meeting Audio"]) {
     if (!attachments.some((item) => String(item?.title || "") === requiredLabel)) {
       throw new Error(`${scenario.name} is missing attachment ${requiredLabel}`);
     }
@@ -812,13 +816,13 @@ async function runScenario({
   const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "03-transcript-detail");
 
   const chipTexts = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
-  for (const requiredLabel of ["Meeting Transcript", "Meeting Summary", "Meeting Audio"]) {
+  for (const requiredLabel of ["Meeting Transcript", String(summaryAttachment.title || ""), "Meeting Audio"]) {
     if (!chipTexts.includes(requiredLabel)) {
       throw new Error(`${scenario.name} transcript detail is missing attachment chip ${requiredLabel}`);
     }
   }
 
-  await page.locator("#detail .bubble-attachment-chip", { hasText: "Meeting Summary" }).last().click();
+  await page.locator("#detail .bubble-attachment-chip", { hasText: String(summaryAttachment.title || "") }).last().click();
   await waitForDetail(page, "attachment", "html_iframe");
   await page.waitForSelector("#detail iframe.document-frame", { timeout: 15000 });
 
@@ -834,7 +838,6 @@ async function runScenario({
   });
   writeTextFile(path.join(scenarioDir, "rendered_summary_html.html"), renderedSummaryHtml);
 
-  const summaryAttachment = attachments.find((item) => item && item.title === "Meeting Summary");
   if (!summaryAttachment?.artifact) {
     throw new Error(`${scenario.name} is missing Meeting Summary artifact metadata`);
   }
