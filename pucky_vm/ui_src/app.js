@@ -228,6 +228,8 @@
     traceCard: null,
     metaCard: null,
     feedLoadError: "",
+    feedSource: "",
+    feedLastAppliedAt: 0,
     nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
     openCardMenuSessionId: "",
@@ -490,19 +492,15 @@
         });
         applyTurnStatus(payload);
         renderVoiceStatus();
-        if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" && state.route === "feed") {
-          void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });
-        }
       }
       if (name === "pucky.feed.updated") {
-        const cards = Array.isArray(payload && payload.cards) ? payload.cards : [];
-        if (cards.length || (payload && payload.count === 0)) {
-          state.cards = cards;
-          reconcileFocusedCardSelection();
-          clearMissingFeedIconFilter();
-          render();
-          restoreNavStateAfterCards();
-          syncOpenThreadDetailAfterCards();
+        if (state.route === "feed") {
+          void syncFeedCards({
+            reason: "native_feed_updated",
+            silent: true,
+            render: true,
+            androidMirror: false
+          });
         }
       }
     }
@@ -958,6 +956,8 @@
 
   function applyFeedSnapshot(snapshot, options = {}) {
     state.cards = Array.isArray(snapshot?.cards) ? snapshot.cards : [];
+    state.feedSource = String(snapshot?.source || "unknown");
+    state.feedLastAppliedAt = Date.now();
     state.feedLoadError = "";
     reconcileReadOverrides();
     reconcileFocusedCardSelection();
@@ -1004,12 +1004,6 @@
         authoritative: true
       }
     });
-    const snapshot = result && result.snapshot ? normalizeFeedSnapshot(result.snapshot, "android_localized") : null;
-    if (snapshot && Array.isArray(snapshot.cards) && snapshot.cards.length) {
-      applyFeedSnapshot(snapshot, { render: true });
-      restoreNavStateAfterCards();
-      syncOpenThreadDetailAfterCards();
-    }
     return result;
   }
 
@@ -1065,8 +1059,12 @@
     });
     state.nativeFeedSnapshotPromise = (async () => {
       try {
-        const snapshot = await fetchAndroidFeedCacheSnapshot(String(options.reason || "native_snapshot"));
-        applyFeedSnapshot(snapshot, { render: false });
+        await syncFeedCards({
+          reason: String(options.reason || "native_snapshot"),
+          silent: true,
+          render: false,
+          androidMirror: false
+        });
         if (options.render !== false) {
           render();
           restoreNavStateAfterCards();
@@ -1075,7 +1073,8 @@
         recordTurnUiEvent("feed_snapshot_refresh_complete", {
           turn_id: turnId,
           reason: String(options.reason || "native_snapshot"),
-          card_count: state.cards.length
+          card_count: state.cards.length,
+          source: state.feedSource
         });
         return { cards: state.cards };
       } catch (_) {
@@ -2223,6 +2222,9 @@
       home_feed: {
         active_route: state.route,
         ui_version: state.uiSurface?.ui_version || "",
+        feed_source: state.feedSource,
+        feed_last_applied_ms: Math.round(Number(state.feedLastAppliedAt || 0)),
+        feed_load_error: state.feedLoadError,
         scroll_top: Math.round(Number(feed?.scrollTop || 0)),
         client_height: Math.round(Number(feed?.clientHeight || 0)),
         scroll_height: Math.round(Number(feed?.scrollHeight || 0)),

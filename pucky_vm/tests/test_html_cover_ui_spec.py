@@ -865,6 +865,12 @@ def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     assert "function fetchVmFeedSnapshot(options = {})" in app
     assert "return `/api/feed?${params.toString()}`;" in app
     assert 'command: "pucky.feed.cache.get"' in app
+    assert 'reason: "native_feed_updated"' in app
+    assert 'state.cards = cards;' not in app
+    assert 'void refreshCardsFromNativeSnapshot({ render: true, reason: "turn_status_event" });' not in app
+    assert 'const snapshot = await fetchAndroidFeedCacheSnapshot(String(options.reason || "native_snapshot"));' not in app
+    assert "feed_source: state.feedSource" in app
+    assert "feed_load_error: state.feedLoadError" in app
     assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
     assert 'pointerType === "mouse" || pointerType === "pen"' in app
     assert 'isTouchPointerEvent(event)' not in app
