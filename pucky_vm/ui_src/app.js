@@ -4219,7 +4219,8 @@
   async function resolveAudioAttachmentSrc(item, options = {}) {
     const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     const meetingId = String(item && item.meeting_id || "").trim();
-    if (meetingId) {
+    const hasCanonicalAttachmentSource = Boolean(attachmentArtifactId(item) || String(item && item.url || "").trim());
+    if (meetingId && !hasCanonicalAttachmentSource) {
       const resolvedMeetingAudio = await resolveMeetingAudioLink(item);
       const resolvedPath = String(resolvedMeetingAudio && (resolvedMeetingAudio.device_path || resolvedMeetingAudio.path) || "").trim();
       if (resolvedPath && hasNativeBridge && isAndroidPlayableAudioPath(resolvedPath)) {
@@ -4680,35 +4681,63 @@
     });
   }
 
-  async function resolveMeetingTranscriptLink(card, summaryItem = null) {
+  async function resolveMeetingAttachmentLink(card, summaryItem, targetTitle, resolveHref) {
     const attachments = assistantAttachmentsForCard(card);
-    const transcriptIndex = meetingAttachmentIndexByTitle(attachments, "Meeting Transcript");
-    const transcriptAttachment = transcriptIndex >= 0 ? attachments[transcriptIndex] : null;
-    if (transcriptAttachment) {
+    const targetIndex = meetingAttachmentIndexByTitle(attachments, targetTitle);
+    const targetAttachment = targetIndex >= 0 ? attachments[targetIndex] : null;
+    if (targetAttachment) {
       try {
         return {
-          href: await resolveArtifactUrl(transcriptAttachment, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true }),
+          href: await resolveHref(targetAttachment),
           attachments,
-          transcriptIndex,
+          targetIndex,
           summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
-          transcriptAttachment
+          targetAttachment
         };
       } catch (_) {
         return {
           href: "",
           attachments,
-          transcriptIndex,
+          targetIndex,
           summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
-          transcriptAttachment
+          targetAttachment
         };
       }
     }
     return {
       href: "",
       attachments,
-      transcriptIndex: -1,
+      targetIndex: -1,
       summaryIndex: meetingSummaryAttachmentIndex(attachments, summaryItem),
-      transcriptAttachment: null
+      targetAttachment: null
+    };
+  }
+
+  async function resolveMeetingTranscriptLink(card, summaryItem = null) {
+    const context = await resolveMeetingAttachmentLink(
+      card,
+      summaryItem,
+      "Meeting Transcript",
+      attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true })
+    );
+    return {
+      ...context,
+      transcriptIndex: context.targetIndex,
+      transcriptAttachment: context.targetAttachment
+    };
+  }
+
+  async function resolveMeetingAudioAttachmentLink(card, summaryItem = null) {
+    const context = await resolveMeetingAttachmentLink(
+      card,
+      summaryItem,
+      "Meeting Audio",
+      attachment => resolveAudioAttachmentSrc(attachment, { maxBytes: 32 * 1024 * 1024 })
+    );
+    return {
+      ...context,
+      audioIndex: context.targetIndex,
+      audioAttachment: context.targetAttachment
     };
   }
 
@@ -4801,6 +4830,7 @@
       return raw;
     }
     const transcriptHref = String(options.transcriptHref || "").trim();
+    const audioHref = String(options.audioHref || "").trim();
     const hasTranscriptPlaceholder = raw.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}");
     const hasPlaceholder = raw.includes("{{PUCKY_MEETING_AUDIO_LINK}}");
     const hasRawMeetingAudioUrl = /\/api\/meetings\/[^"' ]+\/audio/i.test(raw);
@@ -4814,15 +4844,13 @@
         : '<span class="pucky-meeting-transcript-link is-unavailable">Transcript unavailable on this device.</span>';
       output = output.replace(/\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}/g, transcriptReplacement);
     }
-    const resolved = await resolveMeetingAudioLink(source);
-    const href = String(resolved && resolved.url || "").trim();
-    const replacement = href
-      ? meetingAudioLinkHtml(href)
+    const replacement = audioHref
+      ? meetingAudioLinkHtml(audioHref)
       : '<span class="pucky-meeting-audio-link is-unavailable">Audio unavailable on this device.</span>';
     output = output.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
-    if (href) {
-      output = output.replace(/<a([^>]*?)href=["'](?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(href, "Listen To Audio"));
-      output = output.replace(/<a([^>]*?)href=["']\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(href, "Listen To Audio"));
+    if (audioHref) {
+      output = output.replace(/<a([^>]*?)href=["'](?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
+      output = output.replace(/<a([^>]*?)href=["']\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
     }
     return output;
   }
@@ -5146,6 +5174,7 @@
     const src = documentHtmlSrc(item);
     try {
       const transcriptContext = await resolveMeetingTranscriptLink(card, item);
+      const audioContext = await resolveMeetingAudioAttachmentLink(card, item);
       const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
       if (hasNativeBridge && (isAndroidLocalArtifactPath(localPath) || artifactId)) {
         const readPath = isAndroidLocalArtifactPath(localPath) ? localPath : artifactVirtualPath(artifactId);
@@ -5154,7 +5183,8 @@
           args: { path: readPath, max_bytes: 2 * 1024 * 1024 }
         });
         iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item, {
-          transcriptHref: transcriptContext.href
+          transcriptHref: transcriptContext.href,
+          audioHref: audioContext.href
         });
       } else if (!hasNativeBridge && artifactId) {
         const response = await fetch(artifactApiUrl(artifactId), { cache: "no-store" });
@@ -5162,7 +5192,8 @@
           throw new Error(`HTML artifact unavailable: HTTP ${response.status}`);
         }
         iframe.srcdoc = await rewriteMeetingHtmlContent(await response.text(), item, {
-          transcriptHref: transcriptContext.href
+          transcriptHref: transcriptContext.href,
+          audioHref: audioContext.href
         });
       } else if (src) {
         iframe.src = src;

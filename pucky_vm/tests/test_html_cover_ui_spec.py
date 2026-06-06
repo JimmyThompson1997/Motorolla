@@ -296,9 +296,8 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'if (item.url) {' in resolve_artifact
     assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
     assert "async function resolveLocalArtifactPath(path, item, options = {})" in app
-    assert "async function resolveMeetingAudioLink(source = {})" in app
     assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
-    assert 'command: "meeting.recording.resolve_audio_link"' in app
+    assert "async function resolveMeetingAudioAttachmentLink(card, summaryItem = null)" in app
     assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app
     assert "{{PUCKY_MEETING_TRANSCRIPT_LINK}}" in app
     assert "{{PUCKY_MEETING_AUDIO_LINK}}" in app
@@ -313,6 +312,12 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "requestAnimationFrame(bind);" in bridge
     assert "event.target instanceof Element" not in bridge
     assert "target instanceof HTMLAnchorElement" not in bridge
+    html_rewrite = function_block(app, "rewriteMeetingHtmlContent")
+    assert 'const audioHref = String(options.audioHref || "").trim();' in html_rewrite
+    assert "await resolveMeetingAudioLink(source)" not in html_rewrite
+    html_iframe = function_block(app, "htmlIframeViewer")
+    assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
+    assert "audioHref: audioContext.href" in html_iframe
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app
@@ -325,6 +330,7 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'loadMeetings({ render: true });' in app
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
+    assert 'const hasCanonicalAttachmentSource = Boolean(attachmentArtifactId(item) || String(item && item.url || "").trim());' in resolve_audio_attachment
     assert 'if (path && hasNativeBridge && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
     assert 'command: "player.asset.prepare"' in resolve_audio_attachment

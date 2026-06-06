@@ -2704,12 +2704,9 @@ class PuckyVoiceService:
                 if transcript_path:
                     attachment["path"] = transcript_path
             elif str(attachment.get("title") or "").strip().lower() == "meeting audio":
-                device_path = _android_app_owned_path(record.get("device_path"))
                 audio_path = str(record.get("audio_path") or "").strip()
                 audio_url = str(record.get("audio_url") or "").strip()
-                if device_path:
-                    attachment["path"] = device_path
-                elif audio_path:
+                if audio_path:
                     attachment["path"] = audio_path
                 if audio_url:
                     attachment["url"] = audio_url
@@ -3950,7 +3947,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the correlated saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
@@ -4336,13 +4333,13 @@ def _meeting_title_quality(title: object, meeting_id: object) -> str:
 
 def _meeting_audio_attachment_payload(record: dict[str, object], canonical_basename: str) -> dict[str, object]:
     meeting_id = str(record.get("meeting_id") or "").strip()
-    device_path = _android_app_owned_path(record.get("device_path"))
     audio_path = str(record.get("audio_path") or "").strip()
     audio_url = str(record.get("audio_url") or "").strip()
-    if not device_path and not audio_path and not audio_url:
+    if not audio_path and not audio_url:
         return {}
     payload: dict[str, object] = {
         "id": f"{meeting_id}:audio" if meeting_id else "meeting-audio",
+        "artifact": f"pucky_card_{meeting_id}:meeting_audio" if meeting_id else "",
         "title": "Meeting Audio",
         "kind": "audio",
         "mime_type": str(record.get("mime_type") or "audio/mp4"),
@@ -4350,9 +4347,7 @@ def _meeting_audio_attachment_payload(record: dict[str, object], canonical_basen
         "canonical_basename": canonical_basename,
         "recording_title": str(record.get("recording_title") or ""),
     }
-    if device_path:
-        payload["path"] = device_path
-    elif audio_path:
+    if audio_path:
         payload["path"] = audio_path
     if audio_url:
         payload["url"] = audio_url

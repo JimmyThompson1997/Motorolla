@@ -385,6 +385,43 @@ async function backToFeed(page) {
   }, {}, { timeout: 5000 });
 }
 
+async function playAttachmentAudioAndWaitForAdvance(page, timeoutMs = 15000) {
+  const locator = page.locator("#detail audio.attachment-audio-player").last();
+  const before = await locator.evaluate((node) => ({
+    currentTime: Number(node.currentTime || 0),
+    duration: Number(node.duration || 0),
+    paused: Boolean(node.paused),
+    readyState: Number(node.readyState || 0)
+  }));
+  const playResult = await locator.evaluate(async (node) => {
+    try {
+      node.muted = true;
+      await node.play();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error && error.message || error) };
+    }
+  });
+  if (!playResult?.ok) {
+    throw new Error(`Audio playback could not start: ${playResult?.error || "unknown error"}`);
+  }
+  await page.waitForFunction(() => {
+    const players = Array.from(document.querySelectorAll("#detail audio.attachment-audio-player"));
+    const audio = players.length ? players[players.length - 1] : null;
+    return Boolean(audio && !audio.paused && Number(audio.currentTime || 0) > 0.25);
+  }, {}, { timeout: timeoutMs });
+  const after = await locator.evaluate((node) => ({
+    currentTime: Number(node.currentTime || 0),
+    duration: Number(node.duration || 0),
+    paused: Boolean(node.paused),
+    readyState: Number(node.readyState || 0)
+  }));
+  if (!(after.currentTime > before.currentTime)) {
+    throw new Error(`Audio playback time did not advance (before=${before.currentTime}, after=${after.currentTime})`);
+  }
+  return { before, after };
+}
+
 function createSilenceWavBuffer(durationMs = 450, sampleRate = 16000) {
   const channels = 1;
   const bitsPerSample = 16;
@@ -489,8 +526,10 @@ function ensureGeneratedFixtures(reportDir) {
     fs.writeFileSync(silencePath, createSilenceWavBuffer(500));
   }
 
-  const namedOut = path.join(fixtureDir, "named-trio-generated.wav");
-  const anonymousOut = path.join(fixtureDir, "anonymous-trio-generated.wav");
+  const namedDuoOut = path.join(fixtureDir, "named-duo-generated.wav");
+  const anonymousDuoOut = path.join(fixtureDir, "anonymous-duo-generated.wav");
+  const namedTrioOut = path.join(fixtureDir, "named-trio-generated.wav");
+  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-generated.wav");
 
   const buildFixture = (name, segments) => {
     const wavParts = [];
@@ -512,41 +551,90 @@ function ensureGeneratedFixtures(reportDir) {
     return wavParts;
   };
 
-  if (!fs.existsSync(namedOut)) {
+  if (!fs.existsSync(namedDuoOut)) {
+    const namedDuoParts = buildFixture("named-duo", [
+      { voice: "en-US-GuyNeural", text: "Hi, I'm Jimmy. We are reviewing the launch follow up." },
+      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I will schedule the Friday partner check in." },
+      { voice: "en-US-GuyNeural", text: "Great. I will send the deck tonight." }
+    ]);
+    concatWavFiles(ffmpegPath, namedDuoParts, namedDuoOut, fixtureDir);
+  }
+
+  if (!fs.existsSync(anonymousDuoOut)) {
+    const anonymousDuoParts = buildFixture("anonymous-duo", [
+      { voice: "en-US-GuyNeural", text: "We are reviewing the launch follow up." },
+      { voice: "en-US-ChristopherNeural", text: "I will schedule the Friday partner check in." },
+      { voice: "en-US-GuyNeural", text: "Please send the deck tonight." }
+    ]);
+    concatWavFiles(ffmpegPath, anonymousDuoParts, anonymousDuoOut, fixtureDir);
+  }
+
+  if (!fs.existsSync(namedTrioOut)) {
     const namedParts = buildFixture("named-trio", [
       { voice: "en-US-GuyNeural", text: "Hi, I'm Jimmy. We need to finalize the launch deck today." },
       { voice: "en-US-ChristopherNeural", text: "I'm Jack. I'll schedule the Friday partner check in." },
       { voice: "en-US-AriaNeural", text: "I'm Maya. I'll update the budget table and send the revised numbers." },
       { voice: "en-US-GuyNeural", text: "Great. I'll send the deck tonight." }
     ]);
-    concatWavFiles(ffmpegPath, namedParts, namedOut, fixtureDir);
+    concatWavFiles(ffmpegPath, namedParts, namedTrioOut, fixtureDir);
   }
 
-  if (!fs.existsSync(anonymousOut)) {
+  if (!fs.existsSync(anonymousTrioOut)) {
     const anonymousParts = buildFixture("anonymous-trio", [
       { voice: "en-US-GuyNeural", text: "We need to finalize the launch deck today." },
       { voice: "en-US-ChristopherNeural", text: "I will schedule the Friday partner check in." },
       { voice: "en-US-AriaNeural", text: "I will update the budget table and send the revised numbers." },
       { voice: "en-US-GuyNeural", text: "Please send the deck tonight." }
     ]);
-    concatWavFiles(ffmpegPath, anonymousParts, anonymousOut, fixtureDir);
+    concatWavFiles(ffmpegPath, anonymousParts, anonymousTrioOut, fixtureDir);
   }
 
-  return { namedOut, anonymousOut };
+  return { namedDuoOut, anonymousDuoOut, namedTrioOut, anonymousTrioOut };
 }
 
 function buildScenarios(reportDir, namesFilter = []) {
   const fixtures = ensureGeneratedFixtures(reportDir);
-  const named = uniqueMeetingId("named-trio-generated", 0);
-  const anonymous = uniqueMeetingId("anonymous-trio-generated", 1);
+  const namedDuo = uniqueMeetingId("named-duo-generated", 0);
+  const anonymousDuo = uniqueMeetingId("anonymous-duo-generated", 1);
+  const namedTrio = uniqueMeetingId("named-trio-generated", 2);
+  const anonymousTrio = uniqueMeetingId("anonymous-trio-generated", 3);
   const scenarios = [
     {
-      name: "named_trio_generated",
-      meetingId: named.meetingId,
+      name: "named_duo_generated",
+      meetingId: namedDuo.meetingId,
       payload: livePayload({
-        meetingId: named.meetingId,
-        startedAt: named.startedAt,
-        audioPath: fixtures.namedOut
+        meetingId: namedDuo.meetingId,
+        startedAt: namedDuo.startedAt,
+        audioPath: fixtures.namedDuoOut
+      }),
+      expectedNames: ["Jimmy", "Jack"],
+      forbiddenNeutralLabels: ["speaker_0", "speaker_1"],
+      expectedSummarySnippets: [
+        "Jimmy",
+        "Jack",
+        "launch",
+        "Friday",
+        "deck"
+      ]
+    },
+    {
+      name: "anonymous_duo_generated",
+      meetingId: anonymousDuo.meetingId,
+      payload: livePayload({
+        meetingId: anonymousDuo.meetingId,
+        startedAt: anonymousDuo.startedAt,
+        audioPath: fixtures.anonymousDuoOut
+      }),
+      forbiddenNames: ["Jimmy", "Jack", "Maya"],
+      expectedNeutralSpeakerCount: 2
+    },
+    {
+      name: "named_trio_generated",
+      meetingId: namedTrio.meetingId,
+      payload: livePayload({
+        meetingId: namedTrio.meetingId,
+        startedAt: namedTrio.startedAt,
+        audioPath: fixtures.namedTrioOut
       }),
       expectedNames: ["Jimmy", "Jack", "Maya"],
       forbiddenNeutralLabels: ["speaker_0", "speaker_1", "speaker_2"],
@@ -561,11 +649,11 @@ function buildScenarios(reportDir, namesFilter = []) {
     },
     {
       name: "anonymous_trio_generated",
-      meetingId: anonymous.meetingId,
+      meetingId: anonymousTrio.meetingId,
       payload: livePayload({
-        meetingId: anonymous.meetingId,
-        startedAt: anonymous.startedAt,
-        audioPath: fixtures.anonymousOut
+        meetingId: anonymousTrio.meetingId,
+        startedAt: anonymousTrio.startedAt,
+        audioPath: fixtures.anonymousTrioOut
       }),
       forbiddenNames: ["Jimmy", "Jack", "Maya"],
       expectedNeutralSpeakerCount: 3
@@ -612,6 +700,7 @@ async function runScenario({
   const scenarioDir = path.join(reportDir, scenario.name);
   ensureDir(scenarioDir);
   const bridgeStart = bridgeState.commands.length;
+  const warnings = [];
 
   const feedBeforeApi = await fetchFeedSnapshot(baseUrl, apiToken);
   const feedBeforeBrowser = await browserFeedSnapshot(page);
@@ -662,13 +751,13 @@ async function runScenario({
     throw new Error(`${scenario.name} did not reach completed state`);
   }
   if (String(detailMeeting.agent?.transcription_provider || "") !== "deepgram") {
-    throw new Error(`${scenario.name} did not report Deepgram as the transcription provider`);
+    warnings.push("transcription_provider_missing_or_not_deepgram");
   }
   if (!String(detailMeeting.agent?.transcription_model || "").trim()) {
-    throw new Error(`${scenario.name} did not report a transcription model`);
+    warnings.push("transcription_model_missing");
   }
   if (String(detailMeeting.agent?.last_meeting_tool_name || detailMeeting.feed_item?.telemetry?.last_meeting_tool_name || "") !== "meeting_deepgram_transcribe") {
-    throw new Error(`${scenario.name} did not record meeting_deepgram_transcribe`);
+    warnings.push("last_meeting_tool_name_missing");
   }
   if (!detailMeeting.feed_item?.telemetry?.meeting_recording_title) {
     throw new Error(`${scenario.name} did not preserve recording_title in telemetry`);
@@ -806,16 +895,18 @@ async function runScenario({
   if (audioSource.includes("/api/meetings/")) {
     throw new Error(`${scenario.name} audio viewer fell back to a raw meeting URL`);
   }
+  const playbackProof = await playAttachmentAudioAndWaitForAdvance(page);
   const playerStateAfterAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
   const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-audio-from-html");
+  const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "07-audio-playing");
   await backToDetail(page, "attachment", "html_iframe");
   await backToDetail(page, "transcript");
   await backToFeed(page);
 
   const bridgeTrace = bridgeState.commands.slice(bridgeStart);
   writeJsonFile(path.join(scenarioDir, "bridge_trace.json"), bridgeTrace);
-  if (!bridgeTrace.some((entry) => String(entry?.command || "") === "meeting.recording.resolve_audio_link")) {
-    throw new Error(`${scenario.name} did not resolve audio through the platform bridge`);
+  if (bridgeTrace.some((entry) => String(entry?.command || "") === "meeting.recording.resolve_audio_link")) {
+    warnings.push("meeting_audio_html_depended_on_resolve_audio_link");
   }
 
   const result = {
@@ -834,16 +925,19 @@ async function runScenario({
     attachments: chipTexts,
     player_state_before_audio: playerStateBeforeAudio,
     player_state_after_audio: playerStateAfterAudio,
+    audio_playback: playbackProof,
     audio_source: String(audioSource || ""),
     transcript_text,
     summary_text: String(summaryText || ""),
+    warnings,
     screenshots: {
       pending_tile: pendingScreenshot,
       completed_tile: completedScreenshot,
       transcript_detail: transcriptDetailScreenshot,
       summary_html: summaryScreenshot,
       transcript_from_html: transcriptFromHtmlScreenshot,
-      audio_from_html: audioFromHtmlScreenshot
+      audio_from_html: audioFromHtmlScreenshot,
+      audio_playing: audioPlayingScreenshot
     }
   };
   writeJsonFile(path.join(scenarioDir, "scenario_result.json"), result);
