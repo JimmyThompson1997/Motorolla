@@ -2804,7 +2804,6 @@ class PuckyVoiceService:
                         "artifact": html_artifact,
                         "viewer_artifact": html_artifact,
                         "html_artifact": html_artifact,
-                        "html_viewer_path": f"fixtures/artifacts/{html_artifact}",
                         "mime_type": "text/html",
                         "title": html_title,
                         "kind": "html",

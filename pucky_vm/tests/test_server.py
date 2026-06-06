@@ -1395,7 +1395,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertEqual(summary_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertEqual(summary_attachment["viewer"]["viewer_artifact"], summary_attachment["artifact"])
-        self.assertEqual(summary_attachment["viewer"]["html_viewer_path"], f"fixtures/artifacts/{summary_attachment['artifact']}")
+        self.assertNotIn("html_viewer_path", summary_attachment["viewer"])
         self.assertEqual(audio_attachment["kind"], "audio")
         self.assertEqual(audio_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(audio_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")

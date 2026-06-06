@@ -279,8 +279,11 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "function meetingTranscriptAction(card)" in app
     assert 'return "View Transcript";' in function_block(app, "meetingTranscriptLabel")
     resolve_artifact = function_block(app, "resolveArtifactUrl")
+    assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_artifact
     assert 'const path = mediaPath(item);' in resolve_artifact
-    assert 'if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {' in resolve_artifact
+    assert "if (path && hasNativeBridge && isAndroidLocalArtifactPath(path)) {" in resolve_artifact
+    assert 'const artifactId = attachmentArtifactId(item);' in resolve_artifact
+    assert "const apiUrl = artifactApiUrl(artifactId);" in resolve_artifact
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_artifact
     assert 'if (item.url) {' in resolve_artifact
     assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
@@ -313,7 +316,8 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
-    assert 'if (path && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
+    assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
+    assert 'if (path && hasNativeBridge && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
     assert 'command: "player.asset.prepare"' in resolve_audio_attachment
     assert 'return resolveArtifactUrl(item, options);' in resolve_audio_attachment

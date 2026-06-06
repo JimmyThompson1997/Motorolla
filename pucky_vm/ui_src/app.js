@@ -3394,7 +3394,7 @@
     return isAndroidPlayableAudioPath(audioPath) ? audioPath : "";
   }
 
-  function isAndroidPlayableAudioPath(path) {
+  function isAndroidLocalArtifactPath(path) {
     const value = String(path || "").trim();
     return Boolean(value)
       && !/^[A-Za-z]:[\\/]/.test(value)
@@ -3406,6 +3406,10 @@
         || value.startsWith("/sdcard/")
         || value.startsWith("content://")
       );
+  }
+
+  function isAndroidPlayableAudioPath(path) {
+    return isAndroidLocalArtifactPath(path);
   }
 
   function meetingTranscriptMessages(meeting) {
@@ -4240,11 +4244,12 @@
   }
 
   async function resolveAudioAttachmentSrc(item, options = {}) {
+    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     const meetingId = String(item && item.meeting_id || "").trim();
     if (meetingId) {
       const resolvedMeetingAudio = await resolveMeetingAudioLink(item);
       const resolvedPath = String(resolvedMeetingAudio && (resolvedMeetingAudio.device_path || resolvedMeetingAudio.path) || "").trim();
-      if (resolvedPath && isAndroidPlayableAudioPath(resolvedPath)) {
+      if (resolvedPath && hasNativeBridge && isAndroidPlayableAudioPath(resolvedPath)) {
         return resolveLocalArtifactPath(resolvedPath, { ...(item || {}), path: resolvedPath }, options);
       }
       if (resolvedMeetingAudio && resolvedMeetingAudio.url) {
@@ -4252,14 +4257,14 @@
       }
     }
     const path = String(mediaPath(item) || "").trim();
-    if (path && isAndroidPlayableAudioPath(path)) {
+    if (path && hasNativeBridge && isAndroidPlayableAudioPath(path)) {
       return resolveLocalArtifactPath(path, item, options);
     }
     if (item && (item.src || item.data_url)) {
       return String(item.src || item.data_url);
     }
     const url = String(item && item.url || "").trim();
-    if (url && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+    if (url && hasNativeBridge) {
       const result = await Pucky.request({
         command: "player.asset.prepare",
         args: {
@@ -4275,6 +4280,9 @@
         throw new Error("Audio unavailable: prepared asset path is missing.");
       }
       return resolveLocalArtifactPath(preparedPath, { ...(item || {}), path: preparedPath }, options);
+    }
+    if (url) {
+      return url;
     }
     return resolveArtifactUrl(item, options);
   }
@@ -5160,16 +5168,27 @@
   async function htmlIframeViewer(card, item, options = {}) {
     const iframe = el("iframe", "document-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
-    const path = item.viewer_path || item.html_viewer_path || item.document_html_path || htmlAttachmentLocalPath(item);
+    const artifactId = attachmentArtifactId(item, ["viewer_artifact", "html_artifact", "document_html_artifact", "artifact"]);
+    const localPath = item.viewer_path || item.html_viewer_path || item.document_html_path || htmlAttachmentLocalPath(item);
     const src = documentHtmlSrc(item);
     try {
       const transcriptContext = await resolveMeetingTranscriptLink(card, item);
-      if (path) {
+      const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+      if (hasNativeBridge && (isAndroidLocalArtifactPath(localPath) || artifactId)) {
+        const readPath = isAndroidLocalArtifactPath(localPath) ? localPath : artifactVirtualPath(artifactId);
         const result = await Pucky.request({
           command: "artifact.read_base64",
-          args: { path, max_bytes: 2 * 1024 * 1024 }
+          args: { path: readPath, max_bytes: 2 * 1024 * 1024 }
         });
         iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item, {
+          transcriptHref: transcriptContext.href
+        });
+      } else if (!hasNativeBridge && artifactId) {
+        const response = await fetch(artifactApiUrl(artifactId), { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTML artifact unavailable: HTTP ${response.status}`);
+        }
+        iframe.srcdoc = await rewriteMeetingHtmlContent(await response.text(), item, {
           transcriptHref: transcriptContext.href
         });
       } else if (src) {
@@ -5347,9 +5366,23 @@
     if (item.src || item.data_url) {
       return String(item.src || item.data_url);
     }
+    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    const artifactId = attachmentArtifactId(item);
     const path = mediaPath(item);
-    if (path && window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+    if (path && hasNativeBridge && isAndroidLocalArtifactPath(path)) {
       return resolveLocalArtifactPath(path, item, options);
+    }
+    if (artifactId) {
+      if (hasNativeBridge) {
+        const virtualPath = artifactVirtualPath(artifactId);
+        if (virtualPath) {
+          return resolveLocalArtifactPath(virtualPath, { ...(item || {}), path: virtualPath }, options);
+        }
+      }
+      const apiUrl = artifactApiUrl(artifactId);
+      if (apiUrl) {
+        return apiUrl;
+      }
     }
     if (item.url) {
       return String(item.url);
@@ -5427,9 +5460,35 @@
     return item && (item.path || item.local_path || item.image_path || item.artifact_path || "");
   }
 
+  function attachmentArtifactId(item, preferredFields = []) {
+    const fields = preferredFields.concat([
+      "artifact",
+      "viewer_artifact",
+      "html_artifact",
+      "document_html_artifact",
+      "preview_artifact"
+    ]);
+    for (const field of fields) {
+      const value = String(item?.[field] || item?.viewer?.[field] || item?.original?.[field] || "").trim();
+      if (value) {
+        return value;
+      }
+    }
+    return "";
+  }
+
+  function artifactVirtualPath(artifactId) {
+    const value = String(artifactId || "").trim();
+    return value ? `fixtures/artifacts/${encodeURI(value)}` : "";
+  }
+
+  function artifactApiUrl(artifactId) {
+    const value = String(artifactId || "").trim();
+    return value ? `/api/artifacts/${encodeURIComponent(value)}` : "";
+  }
+
   function bundledArtifactPath(item, field = "artifact") {
-    const artifact = item && item[field];
-    return artifact ? `fixtures/artifacts/${encodeURI(String(artifact))}` : "";
+    return artifactVirtualPath(item && item[field]);
   }
 
   function documentHtmlSrc(item) {
