@@ -422,6 +422,42 @@ async function playAttachmentAudioAndWaitForAdvance(page, timeoutMs = 15000) {
   return { before, after };
 }
 
+async function waitForAudioViewerResolution(page, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await page.evaluate(() => {
+      const detail = document.getElementById("detail");
+      const players = Array.from(document.querySelectorAll("#detail audio.attachment-audio-player"));
+      const audio = players.length ? players[players.length - 1] : null;
+      const error = detail?.querySelector(".attachment-error");
+      return {
+        detail_html: String(detail?.innerHTML || ""),
+        audio_outer_html: String(audio?.outerHTML || ""),
+        src: String(audio?.getAttribute("src") || ""),
+        current_src: String(audio?.currentSrc || ""),
+        error_text: String(error?.textContent || "").trim()
+      };
+    });
+    if (state.error_text || state.src || state.current_src) {
+      return state;
+    }
+    await delay(200);
+  }
+  return await page.evaluate(() => {
+    const detail = document.getElementById("detail");
+    const players = Array.from(document.querySelectorAll("#detail audio.attachment-audio-player"));
+    const audio = players.length ? players[players.length - 1] : null;
+    const error = detail?.querySelector(".attachment-error");
+    return {
+      detail_html: String(detail?.innerHTML || ""),
+      audio_outer_html: String(audio?.outerHTML || ""),
+      src: String(audio?.getAttribute("src") || ""),
+      current_src: String(audio?.currentSrc || ""),
+      error_text: String(error?.textContent || "").trim()
+    };
+  });
+}
+
 function createSilenceWavBuffer(durationMs = 450, sampleRate = 16000) {
   const channels = 1;
   const bitsPerSample = 16;
@@ -886,12 +922,13 @@ async function runScenario({
   const playerStateBeforeAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
   await page.frameLocator("#detail iframe.document-frame").locator("a.pucky-meeting-audio-link").click();
   await waitForDetail(page, "attachment", "audio_player");
-  await page.waitForFunction(() => {
-    const players = Array.from(document.querySelectorAll("#detail audio.attachment-audio-player"));
-    const audio = players.length ? players[players.length - 1] : null;
-    return Boolean(audio && audio.getAttribute("src"));
-  }, {}, { timeout: 15000 });
-  const audioSource = await page.locator("#detail audio.attachment-audio-player").last().evaluate((node) => node.getAttribute("src") || "");
+  const audioResolution = await waitForAudioViewerResolution(page);
+  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-audio-from-html");
+  writeJsonFile(path.join(scenarioDir, "audio_viewer_resolution.json"), audioResolution);
+  if (audioResolution.error_text) {
+    throw new Error(`${scenario.name} audio viewer reported an error: ${audioResolution.error_text}`);
+  }
+  const audioSource = String(audioResolution.src || audioResolution.current_src || "");
   if (!audioSource) {
     throw new Error(`${scenario.name} audio viewer did not resolve an audio source`);
   }
@@ -900,7 +937,6 @@ async function runScenario({
   }
   const playbackProof = await playAttachmentAudioAndWaitForAdvance(page);
   const playerStateAfterAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
-  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-audio-from-html");
   const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "07-audio-playing");
   await backToDetail(page, "attachment", "html_iframe");
   await backToDetail(page, "transcript");
@@ -1228,20 +1264,38 @@ async function run() {
     if (!scenarios.length) {
       throw new Error("No scenarios selected for real VM proof");
     }
+    const failures = [];
     for (const scenario of scenarios) {
-      const result = await runScenario({
-        page,
-        baseUrl: options.baseUrl,
-        apiToken,
-        reportDir,
-        scenario,
-        pathToMeetingId,
-        bridgeState
-      });
-      summary.scenarios.push(result);
+      try {
+        const result = await runScenario({
+          page,
+          baseUrl: options.baseUrl,
+          apiToken,
+          reportDir,
+          scenario,
+          pathToMeetingId,
+          bridgeState
+        });
+        summary.scenarios.push({ ok: true, ...result });
+      } catch (error) {
+        const scenarioDir = path.join(reportDir, scenario.name);
+        ensureDir(scenarioDir);
+        const failure = {
+          schema: "pucky.meeting_mode_real_vm_scenario_failure.v1",
+          ok: false,
+          name: scenario.name,
+          meeting_id: scenario.meetingId,
+          error: error?.message || String(error)
+        };
+        failures.push(failure);
+        summary.scenarios.push(failure);
+        writeJsonFile(path.join(scenarioDir, "scenario_error.json"), failure);
+      }
     }
-
-    summary.ok = true;
+    summary.ok = failures.length === 0;
+    if (failures.length) {
+      summary.error = `${failures.length} scenario(s) failed`;
+    }
   } catch (error) {
     summary.ok = false;
     summary.error = error?.message || String(error);

@@ -4219,7 +4219,9 @@
   async function resolveAudioAttachmentSrc(item, options = {}) {
     const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     const meetingId = String(item && item.meeting_id || "").trim();
-    const hasCanonicalAttachmentSource = Boolean(attachmentArtifactId(item) || String(item && item.url || "").trim());
+    const artifactId = attachmentArtifactId(item);
+    const url = String(item && item.url || "").trim();
+    const hasCanonicalAttachmentSource = Boolean(artifactId || url);
     if (meetingId && !hasCanonicalAttachmentSource) {
       const resolvedMeetingAudio = await resolveMeetingAudioLink(item);
       const resolvedPath = String(resolvedMeetingAudio && (resolvedMeetingAudio.device_path || resolvedMeetingAudio.path) || "").trim();
@@ -4237,7 +4239,9 @@
     if (item && (item.src || item.data_url)) {
       return String(item.src || item.data_url);
     }
-    const url = String(item && item.url || "").trim();
+    if (artifactId && !hasNativeBridge) {
+      return resolveArtifactUrl(item, options);
+    }
     if (url && hasNativeBridge) {
       const result = await Pucky.request({
         command: "player.asset.prepare",

@@ -330,9 +330,12 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'loadMeetings({ render: true });' in app
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
-    assert 'const hasCanonicalAttachmentSource = Boolean(attachmentArtifactId(item) || String(item && item.url || "").trim());' in resolve_audio_attachment
+    assert 'const artifactId = attachmentArtifactId(item);' in resolve_audio_attachment
+    assert 'const url = String(item && item.url || "").trim();' in resolve_audio_attachment
+    assert 'const hasCanonicalAttachmentSource = Boolean(artifactId || url);' in resolve_audio_attachment
     assert 'if (path && hasNativeBridge && isAndroidPlayableAudioPath(path)) {' in resolve_audio_attachment
     assert 'return resolveLocalArtifactPath(path, item, options);' in resolve_audio_attachment
+    assert 'if (artifactId && !hasNativeBridge) {' in resolve_audio_attachment
     assert 'command: "player.asset.prepare"' in resolve_audio_attachment
     assert 'return resolveArtifactUrl(item, options);' in resolve_audio_attachment
     assert ".meetings-page" in styles
