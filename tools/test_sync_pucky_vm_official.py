@@ -37,6 +37,11 @@ def test_choose_machine_id_prefers_started_machine() -> None:
 def test_has_only_ignorable_fly_stderr_accepts_known_console_noise() -> None:
     stderr = "\n".join(
         [
+            "Connecting to fdaa:47:ec5c:a7b:4d5:202b:9ccc:2...",
+            "Already on 'master'",
+            "From https://github.com/JimmyThompson1997/Motorolla",
+            " * branch            master     -> FETCH_HEAD",
+            "Already up to date.",
             "Warning: Metrics token unavailable: context canceled",
             "Error: The handle is invalid.",
         ]

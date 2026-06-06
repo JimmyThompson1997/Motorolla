@@ -23,6 +23,16 @@ DEFAULT_FLY_APP = "pucky"
 DEFAULT_VM_REPO_PATH = "/data/pucky-src"
 RESULT_SCHEMA = "pucky.vm_sync_evidence.v1"
 IGNORABLE_FLY_STDERR_PREFIXES = (
+    "Connecting to ",
+    "Your branch is up to date with ",
+    "Your branch is behind ",
+    "(use \"git pull\"",
+    "Already on ",
+    "Already up to date.",
+    "From ",
+    "* branch",
+    "Updating ",
+    "Fast-forward",
     "Warning: Metrics token unavailable:",
     "Error: The handle is invalid.",
 )
