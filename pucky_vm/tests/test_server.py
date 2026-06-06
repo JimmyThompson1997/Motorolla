@@ -2617,6 +2617,7 @@ class ServerTests(unittest.TestCase):
         schema = reply_output_schema()
         attachments = schema["properties"]["attachments"]
         self.assertIn("recording_title", schema["properties"])
+        self.assertIn("recording_title", schema["required"])
         self.assertEqual(schema["properties"]["recording_title"]["type"], ["string", "null"])
         self.assertEqual(attachments["type"], ["array", "null"])
         self.assertIn("attachments", schema["required"])

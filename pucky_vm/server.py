@@ -3795,7 +3795,7 @@ def reply_output_schema() -> dict[str, object]:
                 },
             },
         },
-        "required": ["reply_text", "card_title", "card_icon", "html", "attachments"],
+        "required": ["reply_text", "card_title", "card_icon", "recording_title", "html", "attachments"],
     }
 
 
