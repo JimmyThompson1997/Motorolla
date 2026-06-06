@@ -863,7 +863,7 @@ async function runScenario({
 
   await openMeetingAttachment(page, scenario.meetingId);
   await page.waitForSelector("#detail iframe.document-frame", { timeout: 15000 });
-  const paperclipAttachmentTitle = String(await page.locator("#detail .attachment-title").last().textContent() || "").trim();
+  const paperclipAttachmentTitle = String(await page.locator("#detail .detail-title").last().textContent() || "").trim();
   if (paperclipAttachmentTitle !== String(summaryAttachment.title || "").trim()) {
     throw new Error(`${scenario.name} paperclip opened ${paperclipAttachmentTitle || "an unexpected attachment"} instead of the summary HTML`);
   }
