@@ -206,7 +206,11 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     app = read("app.js")
 
     assert 'src="./pucky-links-catalog.js"' in html
-    assert "const BUNDLE_CONFIG = window.PUCKY_BUNDLE_CONFIG" not in app
+    assert "window.PUCKY_BUNDLE_CONFIG" in app
+    assert "function bundleConfig()" in app
+    assert "function bundleUiVersion()" in app
+    assert "ui_version: bundleUiVersion()" in app
+    assert 'ui_version: "browser_preview"' not in app
     assert 'return "https://www.klavis.ai/home";' not in app
     assert 'BUNDLE_CONFIG.links_url' not in app
     assert "window.PUCKY_LINKS_CATALOG" in app

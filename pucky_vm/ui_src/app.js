@@ -2095,15 +2095,42 @@
     node.setAttribute("aria-hidden", "true");
   }
 
+  function bundleConfig() {
+    return window.PUCKY_BUNDLE_CONFIG && typeof window.PUCKY_BUNDLE_CONFIG === "object"
+      ? window.PUCKY_BUNDLE_CONFIG
+      : {};
+  }
+
+  function bundleUiVersion() {
+    const config = bundleConfig();
+    const explicit = String(config.ui_version || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    const short = String(config.source_commit_short || "").trim();
+    return short ? `git-${short}` : "browser_preview";
+  }
+
+  function initialSurfaceKind() {
+    const url = String(window.location && window.location.href || "");
+    return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest\/index\.html/i.test(url)
+      ? "hosted_vm"
+      : "bundle_current";
+  }
+
   function initialUiSurfaceStatus() {
+    const config = bundleConfig();
     return {
       schema: "pucky.ui_surface.v1",
       requested_url: window.location.href,
       active_url: window.location.href,
       entrypoint_url: window.location.href,
       fallback_asset_url: "",
-      ui_version: "browser_preview",
-      source_kind: "bundle_current",
+      ui_version: bundleUiVersion(),
+      source_commit_full: String(config.source_commit_full || ""),
+      source_commit_short: String(config.source_commit_short || ""),
+      source_dirty: Boolean(config.source_dirty),
+      source_kind: initialSurfaceKind(),
       bridge_connected: Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")
     };
   }
@@ -2613,7 +2640,10 @@
       active_url: String(raw.active_url || window.location.href || ""),
       entrypoint_url: String(raw.entrypoint_url || window.location.href || ""),
       fallback_asset_url: String(raw.fallback_asset_url || ""),
-      ui_version: String(raw.ui_version || "unknown"),
+      ui_version: String(raw.ui_version || bundleUiVersion() || "unknown"),
+      source_commit_full: String(raw.source_commit_full || bundleConfig().source_commit_full || ""),
+      source_commit_short: String(raw.source_commit_short || bundleConfig().source_commit_short || ""),
+      source_dirty: Boolean(raw.source_dirty ?? bundleConfig().source_dirty),
       source_kind: String(raw.source_kind || "legacy_placeholder"),
       bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid)
     };

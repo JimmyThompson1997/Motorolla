@@ -26,6 +26,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
+    assert "pucky-config.js" in manifest["files"]
     assert "pucky-links-catalog.js" in manifest["files"]
     assert "fixtures/reply_cards.json" in manifest["files"]
     assert "fixtures/reply_cards_deploy.json" in manifest["files"]
@@ -36,11 +37,16 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "index.html" in names
+        assert "pucky-config.js" in names
         assert "pucky-links-catalog.js" in names
         assert "fixtures/reply_cards.json" in names
         assert "fixtures/links_logo_overrides.json" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
+        config_script = archive.read("pucky-config.js").decode("utf-8")
+        assert '"schema":"pucky.bundle_config.v1"' in config_script
+        assert '"ui_version":"test-ui"' in config_script
+        assert '"created_at":"2026-05-20T00:00:00+00:00"' in config_script
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)
@@ -106,6 +112,12 @@ def test_ui_bundle_can_embed_explicit_source_provenance(tmp_path, monkeypatch: p
     assert manifest["source_commit_short"] == "abc123d"
     assert manifest["source_branch"] == "master"
     assert manifest["source_dirty"] is False
+    with zipfile.ZipFile(result["bundle_path"]) as archive:
+        config_script = archive.read("pucky-config.js").decode("utf-8")
+    assert '"source_commit_full":"abc123def456"' in config_script
+    assert '"source_commit_short":"abc123d"' in config_script
+    assert '"source_branch":"master"' in config_script
+    assert '"source_dirty":false' in config_script
 
 
 def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):

@@ -105,6 +105,7 @@ def build_ui_bundle(
     output_dir.mkdir(parents=True, exist_ok=True)
     created_at = created_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     ui_version = ui_version or default_version()
+    source = source_provenance()
 
     with TemporaryDirectory() as temp_name:
         staging = Path(temp_name) / "bundle"
@@ -113,13 +114,13 @@ def build_ui_bundle(
             staging / "fixtures" / "reply_cards_deploy.json",
             staging / "fixtures" / "reply_cards.json",
         )
-        write_bundle_config(staging)
+        write_bundle_config(staging, ui_version=ui_version, created_at=created_at, source=source)
         write_links_catalog_script(staging)
         manifest = manifest_for(
             staging,
             ui_version=ui_version,
             created_at=created_at,
-            source=source_provenance(),
+            source=source,
         )
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         zip_path = output_dir / "pucky-ui-latest.zip"
@@ -135,16 +136,44 @@ def build_ui_bundle(
         }
 
 
-def bundle_config_payload() -> dict[str, str]:
-    return {}
+def bundle_config_payload(
+    *,
+    ui_version: str | None = None,
+    created_at: str | None = None,
+    source: dict[str, object] | None = None,
+) -> dict[str, object]:
+    source = source or source_provenance()
+    return {
+        "schema": "pucky.bundle_config.v1",
+        "ui_version": ui_version or default_version(),
+        "created_at": created_at or "",
+        "source_commit_full": str(source.get("source_commit_full", "")),
+        "source_commit_short": str(source.get("source_commit_short", "")),
+        "source_branch": str(source.get("source_branch", "")),
+        "source_dirty": bool(source.get("source_dirty", True)),
+    }
 
 
-def bundle_config_script() -> str:
-    return "window.PUCKY_BUNDLE_CONFIG = " + json.dumps(bundle_config_payload(), separators=(",", ":")) + ";\n"
+def bundle_config_script(
+    *,
+    ui_version: str | None = None,
+    created_at: str | None = None,
+    source: dict[str, object] | None = None,
+) -> str:
+    return "window.PUCKY_BUNDLE_CONFIG = " + json.dumps(
+        bundle_config_payload(ui_version=ui_version, created_at=created_at, source=source),
+        separators=(",", ":"),
+    ) + ";\n"
 
 
-def write_bundle_config(root: Path) -> None:
-    text = bundle_config_script()
+def write_bundle_config(
+    root: Path,
+    *,
+    ui_version: str | None = None,
+    created_at: str | None = None,
+    source: dict[str, object] | None = None,
+) -> None:
+    text = bundle_config_script(ui_version=ui_version, created_at=created_at, source=source)
     (root / "pucky-config.js").write_text(text, encoding="utf-8", newline="\n")
 
 
