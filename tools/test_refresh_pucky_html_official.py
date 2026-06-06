@@ -277,7 +277,8 @@ def test_verify_live_shell_after_refresh_force_stops_relaunches_and_reads_surfac
     args = argparse.Namespace(
         repo_root=tmp_path,
         adb=Path("adb.exe"),
-        device_id="ZY22JZ26LK",
+        device_id="pucky-emulator-slot-06",
+        adb_serial="emulator-5564",
         package_name="com.pucky.device.debug",
         activity_name="com.pucky.device.MainActivity",
         command_timeout_seconds=120,
@@ -288,7 +289,7 @@ def test_verify_live_shell_after_refresh_force_stops_relaunches_and_reads_surfac
     monkeypatch.setattr(
         official,
         "run_adb",
-        lambda _args, _serial, adb_args, *, timeout_seconds=30: adb_calls.append(adb_args) or "",
+        lambda _args, serial, adb_args, *, timeout_seconds=30: adb_calls.append([serial, *adb_args]) or "",
     )
     monkeypatch.setattr(
         official,
@@ -305,8 +306,8 @@ def test_verify_live_shell_after_refresh_force_stops_relaunches_and_reads_surfac
     result = official.verify_live_shell_after_refresh(args)
 
     assert adb_calls == [
-        ["shell", "am", "force-stop", "com.pucky.device.debug"],
-        ["shell", "am", "start", "-n", "com.pucky.device.debug/com.pucky.device.MainActivity"],
+        ["emulator-5564", "shell", "am", "force-stop", "com.pucky.device.debug"],
+        ["emulator-5564", "shell", "am", "start", "-n", "com.pucky.device.debug/com.pucky.device.MainActivity"],
     ]
     assert channel_waits == [60.0]
     assert result["surface"]["route"] == "links"
@@ -411,6 +412,8 @@ def test_parse_args_accepts_hidden_adb_and_surface_settings(tmp_path: Path) -> N
             "emulator",
             "--device-id",
             "pucky-emulator-slot-02",
+            "--adb-serial",
+            "emulator-5564",
             "--repo-root",
             str(tmp_path),
             "--adb",
@@ -423,6 +426,7 @@ def test_parse_args_accepts_hidden_adb_and_surface_settings(tmp_path: Path) -> N
     )
 
     assert args.adb == (tmp_path / "adb.exe").resolve()
+    assert args.adb_serial == "emulator-5564"
     assert args.surface_timeout_seconds == 90
     assert args.relaunch_settle_seconds == 1.5
 

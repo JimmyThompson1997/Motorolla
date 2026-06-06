@@ -254,16 +254,17 @@ def wait_for_live_surface(
 
 
 def verify_live_shell_after_refresh(args: argparse.Namespace) -> dict[str, Any]:
+    adb_serial = args.adb_serial or args.device_id
     force_stop_output = run_adb(
         args,
-        args.device_id,
+        adb_serial,
         ["shell", "am", "force-stop", args.package_name],
         timeout_seconds=max(30, args.command_timeout_seconds),
     )
     phone_shared.relaunch_activity(
         run_adb,
         args,
-        args.device_id,
+        adb_serial,
         timeout_seconds=max(30, args.command_timeout_seconds),
         settle_seconds=max(0.0, float(args.relaunch_settle_seconds)),
     )
@@ -278,11 +279,13 @@ def verify_live_shell_after_refresh(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "force_stop": {
             "package_name": args.package_name,
+            "adb_serial": adb_serial,
             "output": force_stop_output,
         },
         "relaunch": {
             "package_name": args.package_name,
             "activity_name": args.activity_name,
+            "adb_serial": adb_serial,
             "settle_seconds": float(args.relaunch_settle_seconds),
         },
         "broker_channel": broker_channel,
@@ -374,6 +377,7 @@ def build_evidence(
         "target": {
             "type": args.target,
             "id": args.device_id,
+            "adb_serial": args.adb_serial or args.device_id,
         },
         "bundle_url": args.bundle_url,
         "manifest_url": args.manifest_url,
@@ -432,6 +436,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh the cached Pucky HTML bundle through the official VM-backed path.")
     parser.add_argument("--target", choices=("emulator", "phone"), required=True)
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
+    parser.add_argument("--adb-serial", default=os.environ.get("PUCKY_ADB_SERIAL", ""))
     parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky-bridge-dev-jt323.fly.dev"))
     parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--vm-base-url", default=DEFAULT_VM_BASE_URL)
