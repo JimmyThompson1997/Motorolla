@@ -4600,6 +4600,7 @@
       device_path: String(source.device_path || meetingRecord.device_path || source.audio_path || meetingRecord.audio_path || "").trim(),
       audio_url: String(source.audio_url || meetingRecord.audio_url || source.url || "").trim(),
       transcript_path: String(source.transcript_path || meetingRecord.transcript_path || "").trim(),
+      transcript_html_path: String(source.transcript_html_path || meetingRecord.transcript_html_path || "").trim(),
       mime_type: String(source.audio_mime_type || source.mime_type_audio || source.mime_type || meetingRecord.mime_type || "").trim(),
       started_at: String(source.started_at || meetingRecord.started_at || source.created_at || meetingRecord.created_at || "").trim()
     };
@@ -4739,6 +4740,19 @@
   }
 
   async function resolveMeetingTranscriptLink(card, summaryItem = null) {
+    const htmlContext = await resolveMeetingAttachmentLink(
+      card,
+      summaryItem,
+      "Meeting Transcript HTML",
+      attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024 })
+    );
+    if (htmlContext.targetAttachment) {
+      return {
+        ...htmlContext,
+        transcriptIndex: htmlContext.targetIndex,
+        transcriptAttachment: htmlContext.targetAttachment
+      };
+    }
     const context = await resolveMeetingAttachmentLink(
       card,
       summaryItem,
@@ -4792,15 +4806,19 @@
   }
 
   function openMeetingAttachmentFromHtml(card, attachments, summaryIndex, targetTitle) {
-    const targetIndex = meetingAttachmentIndexByTitle(attachments, targetTitle);
-    if (targetIndex < 0) {
-      return false;
+    const candidates = Array.isArray(targetTitle) ? targetTitle : [targetTitle];
+    for (const candidate of candidates) {
+      const targetIndex = meetingAttachmentIndexByTitle(attachments, candidate);
+      if (targetIndex < 0) {
+        continue;
+      }
+      showAttachmentViewer(card, attachments, {
+        initialIndex: targetIndex,
+        onDismiss: () => reopenMeetingSummaryAttachment(card, attachments, summaryIndex)
+      });
+      return true;
     }
-    showAttachmentViewer(card, attachments, {
-      initialIndex: targetIndex,
-      onDismiss: () => reopenMeetingSummaryAttachment(card, attachments, summaryIndex)
-    });
-    return true;
+    return false;
   }
 
   function installMeetingHtmlActionBridge(iframe, { card, attachments, summaryIndex } = {}) {
@@ -4828,7 +4846,7 @@
         if (action === "transcript") {
           event.preventDefault();
           event.stopPropagation();
-          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, "Meeting Transcript")) {
+          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, ["Meeting Transcript HTML", "Meeting Transcript"])) {
             target.removeAttribute("data-pucky-meeting-action");
             target.click();
           }

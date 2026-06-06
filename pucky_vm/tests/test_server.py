@@ -1524,18 +1524,20 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Meeting Mode Agent Handoff", prompt)
         self.assertIn("audio_path:", prompt)
         self.assertIn("Use Deepgram for the meeting transcript and diarization.", prompt)
-        self.assertIn("Relabel diarized speakers to real participant names", prompt)
+        self.assertIn("keep distinct anonymous speakers separated as neutral labels", prompt)
+        self.assertIn("The platform will publish a VM transcript HTML artifact", prompt)
+        self.assertIn("Use due dates only when the meeting explicitly states them.", prompt)
         self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", prompt)
         self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", prompt)
         self.assertIn("Meeting Mode Agent", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("Use Deepgram for the meeting transcript and diarization.", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("relabel speaker_0, speaker_1", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("Transcribe and diarize it with Deepgram.", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("relabel them to real names only when clearly justified", self.meeting_codex.developer_instructions[-1])
         self.assertIn("recording_title", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", self.meeting_codex.developer_instructions[-1])
-        self.assertNotIn("Android-local", self.meeting_codex.developer_instructions[-1])
-        self.assertNotIn("window.top.Pucky.request", self.meeting_codex.developer_instructions[-1])
-        self.assertNotIn("meeting_result", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("Produce the transcript HTML.", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("due date only when explicitly stated", self.meeting_codex.developer_instructions[-1])
+        self.assertNotIn("Your job is to turn one finished meeting recording into", self.meeting_codex.developer_instructions[-1])
+        self.assertNotIn("Hard constraints:", self.meeting_codex.developer_instructions[-1])
+        self.assertNotIn("Output shape:", self.meeting_codex.developer_instructions[-1])
         self.assertEqual(meeting["agent"]["transcription_provider"], "deepgram")
         self.assertEqual(meeting["agent"]["transcription_model"], "nova-3")
         self.assertEqual(meeting["agent"]["last_meeting_tool_name"], "meeting_deepgram_transcribe")
@@ -1559,12 +1561,18 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("attachments", messages[0])
         attachments = messages[1]["attachments"]
         transcript_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript")
-        summary_attachment = next(item for item in attachments if item["kind"] == "html")
+        transcript_html_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript HTML")
+        summary_attachment = next(item for item in attachments if item["id"] == "meeting-20260601-120000-device-abc123ef:html")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
         self.assertEqual(transcript_attachment["kind"], "text")
         self.assertIn("Jimmy:", transcript_attachment["text"])
         self.assertIn("meeting_transcript", transcript_attachment["artifact"])
         self.assertEqual(transcript_attachment["recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertEqual(transcript_html_attachment["kind"], "html")
+        self.assertEqual(transcript_html_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
+        self.assertEqual(transcript_html_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
+        self.assertEqual(transcript_html_attachment["recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertIn("meeting_transcript_html", transcript_html_attachment["artifact"])
         self.assertEqual(summary_attachment["title"], "Meeting Summary")
         self.assertEqual(summary_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
@@ -1583,8 +1591,13 @@ class ServerTests(unittest.TestCase):
         self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", raw_summary_html)
         self.assertNotIn("/api/meetings/", raw_summary_html)
         self.assertNotIn("<script", raw_summary_html.lower())
+        raw_transcript_html = base64.b64decode(str(self.service.feed.get_artifact(transcript_html_attachment["artifact"])["content_base64"])).decode("utf-8")
+        self.assertIn("Meeting Transcript", raw_transcript_html)
+        self.assertIn("Jimmy", raw_transcript_html)
         self.assertEqual(meeting["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertTrue(Path(meeting["audio_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
+        self.assertTrue(Path(meeting["transcript_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
+        self.assertTrue(Path(meeting["transcript_html_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         self.assertEqual(self.meeting_codex.tool_calls[-1]["schema"], "pucky.meeting_deepgram_transcribe.v1")
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
@@ -1644,6 +1657,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(renamed["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertTrue(Path(renamed["audio_path"]).name.startswith("Quarterly_Deck_Recording_06.01.26"))
         self.assertTrue(Path(renamed["transcript_path"]).name.startswith("Quarterly_Deck_Recording_06.01.26"))
+        self.assertTrue(Path(renamed["transcript_html_path"]).name.startswith("Quarterly_Deck_Recording_06.01.26"))
         self.assertEqual(renamed["agent"]["last_meeting_tool_name"], "meeting_record_update")
         self.assertEqual(renamed["agent"]["title_quality"], "human_like")
         self.assertEqual(renamed["agent"]["recording_title_quality"], "human_like")
@@ -1652,8 +1666,15 @@ class ServerTests(unittest.TestCase):
             for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
             if item["title"] == "Meeting Transcript"
         )
+        transcript_html_attachment = next(
+            item
+            for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
+            if item["title"] == "Meeting Transcript HTML"
+        )
         self.assertEqual(transcript_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertEqual(transcript_attachment["recording_title"], "Quarterly Deck Recording")
+        self.assertEqual(transcript_html_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
+        self.assertEqual(transcript_html_attachment["recording_title"], "Quarterly Deck Recording")
 
     def test_meeting_deepgram_transcribe_tool_keeps_neutral_speakers_when_names_are_unknown(self) -> None:
         self.post_json(
@@ -1720,6 +1741,7 @@ class ServerTests(unittest.TestCase):
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
         self.assertTrue(any(item["title"] == "Meeting Audio" and item["kind"] == "audio" for item in attachments))
         self.assertTrue(any(item["title"] == "Meeting Transcript" for item in attachments))
+        self.assertTrue(any(item["title"] == "Meeting Transcript HTML" for item in attachments))
 
     def test_raw_meeting_title_is_allowed_and_flagged_machine_like(self) -> None:
         raw_meeting_id = "meeting-20260603-121500-device-raw-title"

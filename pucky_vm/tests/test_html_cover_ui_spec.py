@@ -312,12 +312,16 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "requestAnimationFrame(bind);" in bridge
     assert "event.target instanceof Element" not in bridge
     assert "target instanceof HTMLAnchorElement" not in bridge
+    assert '["Meeting Transcript HTML", "Meeting Transcript"]' in bridge
     html_rewrite = function_block(app, "rewriteMeetingHtmlContent")
     assert 'const audioHref = String(options.audioHref || "").trim();' in html_rewrite
     assert "await resolveMeetingAudioLink(source)" not in html_rewrite
     html_iframe = function_block(app, "htmlIframeViewer")
     assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
     assert "audioHref: audioContext.href" in html_iframe
+    transcript_link = function_block(app, "resolveMeetingTranscriptLink")
+    assert '"Meeting Transcript HTML"' in transcript_link
+    assert '"Meeting Transcript"' in transcript_link
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app

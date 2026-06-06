@@ -2182,13 +2182,28 @@ class PuckyVoiceService:
             transcript_path = str(
                 self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", canonical_transcript)
             )
+            transcript_html_path = str(
+                self._write_meeting_text_artifact(
+                    meeting_id,
+                    canonical_basename,
+                    "transcript.html",
+                    _meeting_transcript_html_document(record, canonical_transcript),
+                )
+            )
             previous = Path(str(record.get("transcript_path") or ""))
             if previous.is_file() and previous != Path(transcript_path):
                 try:
                     previous.unlink()
                 except Exception:
                     pass
+            previous_html = Path(str(record.get("transcript_html_path") or ""))
+            if previous_html.is_file() and previous_html != Path(transcript_html_path):
+                try:
+                    previous_html.unlink()
+                except Exception:
+                    pass
             record["transcript_path"] = transcript_path
+            record["transcript_html_path"] = transcript_html_path
             record["transcript_text"] = canonical_transcript
             record["transcript_status"] = "completed"
             record["transcript_error"] = ""
@@ -2196,6 +2211,7 @@ class PuckyVoiceService:
                 "schema": "pucky.meeting_transcript_attachment.v1",
                 "title": "Meeting Transcript",
                 "kind": "text",
+                "html_title": "Meeting Transcript HTML",
                 "diarization_status": _meeting_diarization_status_from_text(canonical_transcript, speaker_turns),
             }
             record["diarization_requested"] = True
@@ -2213,6 +2229,7 @@ class PuckyVoiceService:
             canonical_basename=canonical_basename,
             transcript_text=canonical_transcript,
             transcript_path=str(record.get("transcript_path") or ""),
+            transcript_html_path=str(record.get("transcript_html_path") or ""),
         )
         html_base64 = str(feed_item.get("html_base64") or "")
         if summary_html:
@@ -2774,6 +2791,7 @@ class PuckyVoiceService:
         canonical_basename: str,
         transcript_text: str,
         transcript_path: str,
+        transcript_html_path: str,
     ) -> list[dict[str, object]]:
         messages = [dict(item) for item in list(feed_item.get("transcript_messages") or []) if isinstance(item, dict)]
         assistant = next((item for item in messages if str(item.get("role") or "") == "assistant"), None)
@@ -2793,6 +2811,12 @@ class PuckyVoiceService:
                 attachment["text"] = transcript_text
                 if transcript_path:
                     attachment["path"] = transcript_path
+            elif str(attachment.get("kind") or "") == "html" and str(attachment.get("title") or "").strip().lower() == "meeting transcript html":
+                if transcript_html_path:
+                    attachment["path"] = transcript_html_path
+                attachment["artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
+                attachment["viewer_artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
+                attachment["html_artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
             elif str(attachment.get("title") or "").strip().lower() == "meeting audio":
                 audio_path = str(record.get("audio_path") or "").strip()
                 audio_url = str(record.get("audio_url") or "").strip()
@@ -2814,6 +2838,7 @@ class PuckyVoiceService:
         audio_sync = self._rename_meeting_audio_artifact(record, canonical_basename)
         if rename_transcript:
             self._rename_meeting_text_artifact(record, "transcript_path", canonical_basename, "transcript.txt")
+            self._rename_meeting_text_artifact(record, "transcript_html_path", canonical_basename, "transcript.html")
         now = _iso_time(time.time())
         agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
         agent.update(
@@ -2862,9 +2887,19 @@ class PuckyVoiceService:
         transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
         transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
+        transcript_html_path = ""
         if transcript_source:
             transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
+            transcript_html_path = str(
+                self._write_meeting_text_artifact(
+                    meeting_id,
+                    canonical_basename,
+                    "transcript.html",
+                    _meeting_transcript_html_document(record, transcript_text),
+                )
+            )
+            record["transcript_html_path"] = transcript_html_path
             prepared.append(
                 normalize_attachment(
                     {
@@ -2878,6 +2913,24 @@ class PuckyVoiceService:
                         "meeting_id": meeting_id,
                         "canonical_basename": canonical_basename,
                         "recording_title": recording_title,
+                    }
+                )
+            )
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{meeting_id}:transcript_html",
+                        "path": transcript_html_path,
+                        "artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
+                        "viewer_artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
+                        "html_artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
+                        "mime_type": "text/html",
+                        "title": "Meeting Transcript HTML",
+                        "kind": "html",
+                        "meeting_id": meeting_id,
+                        "canonical_basename": canonical_basename,
+                        "recording_title": recording_title,
+                        "transcript_path": transcript_path,
                     }
                 )
             )
@@ -2902,6 +2955,7 @@ class PuckyVoiceService:
                         "started_at": str(record.get("started_at") or record.get("created_at") or ""),
                         "mime_type_audio": str(record.get("mime_type") or ""),
                         "transcript_path": transcript_path,
+                        "transcript_html_path": transcript_html_path,
                     }
                 )
             )
@@ -2916,6 +2970,8 @@ class PuckyVoiceService:
             "fallback_from_reply_text": False,
             "transcript_path": transcript_path,
             "transcript_attachment_present": bool(transcript_source),
+            "transcript_html_path": transcript_html_path,
+            "transcript_html_attachment_present": bool(transcript_html_path),
             "recording_title": recording_title,
             "recording_title_source": recording_title_source,
             "canonical_basename": canonical_basename,
@@ -3087,6 +3143,8 @@ class PuckyVoiceService:
             "canonical_basename",
             "transcript_status",
             "transcript_error",
+            "transcript_path",
+            "transcript_html_path",
             "diarization_requested",
             "diarization_status",
             "agent",
@@ -4038,7 +4096,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Use due dates only when the meeting explicitly states them. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The platform will publish a VM transcript HTML artifact from that labeled transcript. The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
@@ -4325,6 +4383,111 @@ def _meeting_transcript_text_from_attachment(item: dict[str, object]) -> str:
         return ""
     text = str(item.get("text") or "").replace("\r\n", "\n").strip()
     return text
+
+
+def _meeting_transcript_html_document(record: dict[str, object], transcript_text: str) -> str:
+    title = str(record.get("recording_title") or record.get("title") or "Meeting Transcript").strip() or "Meeting Transcript"
+    subtitle = "Meeting Transcript"
+    rows: list[str] = []
+    for raw_line in str(transcript_text or "").splitlines():
+        clean_line = str(raw_line or "").strip()
+        if not clean_line:
+            continue
+        match = MEETING_TRANSCRIPT_LINE_RE.match(clean_line)
+        if match:
+            start_label = str(match.group("start") or "").strip()
+            end_label = str(match.group("end") or "").strip()
+            timestamp = start_label
+            if start_label and end_label:
+                timestamp = f"{start_label}-{end_label}"
+            timestamp_html = f'<span class="transcript-timestamp">{html.escape(timestamp)}</span>' if timestamp else ""
+            speaker_html = f'<span class="transcript-speaker">{html.escape(str(match.group("speaker") or "").strip())}</span>'
+            text_html = f'<span class="transcript-line-text">{html.escape(str(match.group("text") or "").strip())}</span>'
+            rows.append(f'<p class="transcript-line">{timestamp_html}{speaker_html}{text_html}</p>')
+            continue
+        rows.append(f'<p class="transcript-line transcript-line-freeform">{html.escape(clean_line)}</p>')
+    transcript_html = "\n".join(rows) if rows else '<p class="transcript-empty">Transcript unavailable.</p>'
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{html.escape(title)} Transcript</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        --page-bg: #f3f5f8;
+        --card-bg: #ffffff;
+        --text: #101820;
+        --muted: #52606d;
+        --accent: #b45309;
+        --line-border: rgba(16, 24, 32, 0.08);
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        background: linear-gradient(180deg, #f8fafc 0%, var(--page-bg) 100%);
+        color: var(--text);
+        font: 16px/1.55 "Segoe UI", system-ui, sans-serif;
+        padding: 20px;
+      }}
+      main {{
+        max-width: 880px;
+        margin: 0 auto;
+        background: var(--card-bg);
+        border-radius: 24px;
+        box-shadow: 0 16px 60px rgba(15, 23, 42, 0.10);
+        padding: 24px 20px 28px;
+      }}
+      h1 {{
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.1;
+      }}
+      .subtitle {{
+        margin: 8px 0 22px;
+        color: var(--muted);
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }}
+      .transcript {{
+        display: grid;
+        gap: 12px;
+      }}
+      .transcript-line {{
+        margin: 0;
+        padding: 14px 16px;
+        border: 1px solid var(--line-border);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.96);
+      }}
+      .transcript-timestamp {{
+        display: inline-block;
+        min-width: 86px;
+        margin-right: 10px;
+        color: var(--accent);
+        font-weight: 700;
+      }}
+      .transcript-speaker {{
+        margin-right: 8px;
+        font-weight: 800;
+      }}
+      .transcript-empty {{
+        margin: 0;
+        color: var(--muted);
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{html.escape(title)}</h1>
+      <p class="subtitle">{html.escape(subtitle)}</p>
+      <section class="transcript">{transcript_html}</section>
+    </main>
+  </body>
+</html>
+"""
 
 
 MEETING_TRANSCRIPT_LINE_RE = re.compile(

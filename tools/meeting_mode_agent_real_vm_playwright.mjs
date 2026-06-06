@@ -545,12 +545,26 @@ function uniqueMeetingId(label, offsetMinutes = 0) {
   };
 }
 
+function wavDurationMs(audioPath) {
+  const buffer = fs.readFileSync(audioPath);
+  if (buffer.length < 44 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+    throw new Error(`Expected a PCM WAV fixture at ${audioPath}`);
+  }
+  const channels = buffer.readUInt16LE(22);
+  const sampleRate = buffer.readUInt32LE(24);
+  const bitsPerSample = buffer.readUInt16LE(34);
+  const dataSize = buffer.readUInt32LE(40);
+  const bytesPerSecond = Math.max(1, sampleRate * channels * Math.max(1, bitsPerSample / 8));
+  return Math.max(1000, Math.round((dataSize / bytesPerSecond) * 1000));
+}
+
 function livePayload({ meetingId, startedAt, audioPath }) {
+  const durationMs = wavDurationMs(audioPath);
   return {
     meeting_id: meetingId,
     started_at: startedAt,
-    stopped_at: new Date(Date.parse(startedAt) + 12000).toISOString().replace(".000Z", "Z"),
-    duration_ms: 12000,
+    stopped_at: new Date(Date.parse(startedAt) + durationMs).toISOString().replace(".000Z", "Z"),
+    duration_ms: durationMs,
     device_id: "codex-realvm-browser-proof",
     device_path: `/data/user/0/com.pucky.device.debug/files/voice/${meetingId}.wav`,
     mime_type: "audio/wav",
@@ -565,15 +579,13 @@ function ensureGeneratedFixtures(reportDir) {
   ensureDir(fixtureDir);
   ensureDir(segmentDir);
 
-  const silencePath = path.join(segmentDir, "silence-1200ms.wav");
+  const silencePath = path.join(segmentDir, "silence-1600ms.wav");
   if (!fs.existsSync(silencePath)) {
-    fs.writeFileSync(silencePath, createSilenceWavBuffer(1200));
+    fs.writeFileSync(silencePath, createSilenceWavBuffer(1600));
   }
 
-  const namedDuoOut = path.join(fixtureDir, "named-duo-generated-v2.wav");
-  const anonymousDuoOut = path.join(fixtureDir, "anonymous-duo-generated-v2.wav");
-  const namedTrioOut = path.join(fixtureDir, "named-trio-generated-v2.wav");
-  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-generated-v2.wav");
+  const namedTrioOut = path.join(fixtureDir, "named-trio-60s-generated.wav");
+  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-60s-generated.wav");
 
   const buildFixture = (name, segments) => {
     const wavParts = [];
@@ -595,85 +607,48 @@ function ensureGeneratedFixtures(reportDir) {
     return wavParts;
   };
 
-  if (!fs.existsSync(namedDuoOut)) {
-    const namedDuoParts = buildFixture("named-duo", [
-      { voice: "en-US-GuyNeural", text: "Hi Maya, I'm Jimmy speaking about the launch follow up." },
-      { voice: "en-US-AriaNeural", text: "Hi Jimmy, this is Maya. I will schedule the Friday partner check in." },
-      { voice: "en-US-GuyNeural", text: "Thanks Maya. Jimmy will send the deck tonight." }
-    ]);
-    concatWavFiles(ffmpegPath, namedDuoParts, namedDuoOut, fixtureDir);
-  }
-
-  if (!fs.existsSync(anonymousDuoOut)) {
-    const anonymousDuoParts = buildFixture("anonymous-duo", [
-      { voice: "en-US-GuyNeural", text: "We are reviewing the launch follow up." },
-      { voice: "en-US-AriaNeural", text: "I will schedule the Friday partner check in." },
-      { voice: "en-US-GuyNeural", text: "Please send the deck tonight." }
-    ]);
-    concatWavFiles(ffmpegPath, anonymousDuoParts, anonymousDuoOut, fixtureDir);
-  }
-
   if (!fs.existsSync(namedTrioOut)) {
-    const namedParts = buildFixture("named-trio", [
-      { voice: "en-US-GuyNeural", text: "Hi Jack and Maya, I'm Jimmy. We need to finalize the launch deck today." },
-      { voice: "en-US-ChristopherNeural", text: "Hi Jimmy, this is Jack. I will schedule the Friday partner check in." },
-      { voice: "en-US-AriaNeural", text: "Hi Jimmy and Jack, this is Maya. I will update the budget table and send the revised numbers." },
-      { voice: "en-US-GuyNeural", text: "Thanks Maya. Jimmy will send the deck tonight." }
+    const namedParts = buildFixture("named-trio-60s", [
+      { voice: "en-US-GuyNeural", text: "Hi Jack and Maya, I'm Jimmy. Thanks for joining the launch readiness meeting for the partner rollout this morning." },
+      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I reviewed the partner checklist today, and the biggest open item is the intro email for the reseller group." },
+      { voice: "en-US-AriaNeural", text: "I'm Maya. I updated the budget workbook last night, and I still need the final finance headcount before I lock the totals." },
+      { voice: "en-US-GuyNeural", text: "This is Jimmy again. I will send the launch deck to leadership by Tuesday June ninth, and I will include the reseller email draft in that packet." },
+      { voice: "en-US-ChristopherNeural", text: "Jack here again. I will schedule the partner check in for Thursday June eleventh, and I will add the reseller questions to the agenda before lunch." },
+      { voice: "en-US-AriaNeural", text: "Maya speaking again. I will send the revised budget table by Wednesday June tenth, right after finance confirms the headcount this afternoon." },
+      { voice: "en-US-GuyNeural", text: "We also need the frequently asked questions cleaned up. Jack, please own the first draft, and Maya, please review the pricing section after that draft is ready." },
+      { voice: "en-US-ChristopherNeural", text: "Understood. I'm Jack, and I will circulate the frequently asked questions draft by Monday June eighth so Maya has time to review it before the Thursday call." },
+      { voice: "en-US-AriaNeural", text: "That works for me. I'm Maya, and I will review the pricing section by Tuesday June ninth and send comments back on the same day." },
+      { voice: "en-US-GuyNeural", text: "Perfect. Jimmy owns the launch deck, Jack owns the partner meeting and the questions draft, and Maya owns the budget table plus the pricing review." }
     ]);
     concatWavFiles(ffmpegPath, namedParts, namedTrioOut, fixtureDir);
   }
 
   if (!fs.existsSync(anonymousTrioOut)) {
-    const anonymousParts = buildFixture("anonymous-trio", [
-      { voice: "en-US-GuyNeural", text: "We need to finalize the launch deck today." },
-      { voice: "en-US-ChristopherNeural", text: "I will schedule the Friday partner check in." },
-      { voice: "en-US-AriaNeural", text: "I will update the budget table and send the revised numbers." },
-      { voice: "en-US-GuyNeural", text: "Please send the deck tonight." }
+    const anonymousParts = buildFixture("anonymous-trio-60s", [
+      { voice: "en-US-GuyNeural", text: "Thanks for joining the launch readiness meeting for the partner rollout. The first issue is the reseller introduction email and the open deck notes." },
+      { voice: "en-US-ChristopherNeural", text: "I reviewed the partner checklist today, and I can own the reseller agenda. I will schedule the partner check in for Thursday June eleventh." },
+      { voice: "en-US-AriaNeural", text: "I updated the budget workbook last night, and I still need the finance headcount. I will send the revised budget table by Wednesday June tenth." },
+      { voice: "en-US-GuyNeural", text: "I will send the launch deck to leadership by Tuesday June ninth, and I will include the reseller introduction draft in that packet." },
+      { voice: "en-US-ChristopherNeural", text: "I can also draft the frequently asked questions page. I will circulate that draft by Monday June eighth so the pricing section can be reviewed in time." },
+      { voice: "en-US-AriaNeural", text: "I will review the pricing section by Tuesday June ninth, and I will reply with edits the same day after the frequently asked questions draft arrives." },
+      { voice: "en-US-GuyNeural", text: "The biggest risk is missing the partner rollout window, so the deck, the questions page, and the budget numbers all need to land on their due dates." },
+      { voice: "en-US-ChristopherNeural", text: "Understood. The partner check in stays on Thursday June eleventh, and the agenda will cover reseller concerns, pricing, and the final launch timeline." },
+      { voice: "en-US-AriaNeural", text: "The budget update will call out the headcount change, the revised travel estimate, and the pricing impact once finance confirms the numbers." },
+      { voice: "en-US-GuyNeural", text: "Great. The launch deck is due Tuesday June ninth, the budget table is due Wednesday June tenth, and the partner meeting happens Thursday June eleventh." }
     ]);
     concatWavFiles(ffmpegPath, anonymousParts, anonymousTrioOut, fixtureDir);
   }
 
-  return { namedDuoOut, anonymousDuoOut, namedTrioOut, anonymousTrioOut };
+  return { namedTrioOut, anonymousTrioOut };
 }
 
 function buildScenarios(reportDir, namesFilter = []) {
   const fixtures = ensureGeneratedFixtures(reportDir);
-  const namedDuo = uniqueMeetingId("named-duo-generated", 0);
-  const anonymousDuo = uniqueMeetingId("anonymous-duo-generated", 1);
-  const namedTrio = uniqueMeetingId("named-trio-generated", 2);
-  const anonymousTrio = uniqueMeetingId("anonymous-trio-generated", 3);
+  const namedTrio = uniqueMeetingId("named-trio-60s", 0);
+  const anonymousTrio = uniqueMeetingId("anonymous-trio-60s", 1);
   const scenarios = [
     {
-      name: "named_duo_generated",
-      meetingId: namedDuo.meetingId,
-      payload: livePayload({
-        meetingId: namedDuo.meetingId,
-        startedAt: namedDuo.startedAt,
-        audioPath: fixtures.namedDuoOut
-      }),
-      expectedNames: ["Jimmy", "Maya"],
-      forbiddenNeutralLabels: ["speaker_0", "speaker_1"],
-      expectedSummarySnippets: [
-        "Jimmy",
-        "Maya",
-        "launch",
-        "Friday",
-        "deck"
-      ]
-    },
-    {
-      name: "anonymous_duo_generated",
-      meetingId: anonymousDuo.meetingId,
-      payload: livePayload({
-        meetingId: anonymousDuo.meetingId,
-        startedAt: anonymousDuo.startedAt,
-        audioPath: fixtures.anonymousDuoOut
-      }),
-      forbiddenNames: ["Jimmy", "Jack", "Maya"],
-      expectedNeutralSpeakerCount: 2
-    },
-    {
-      name: "named_trio_generated",
+      name: "named_trio_60s",
       meetingId: namedTrio.meetingId,
       payload: livePayload({
         meetingId: namedTrio.meetingId,
@@ -687,12 +662,15 @@ function buildScenarios(reportDir, namesFilter = []) {
         "Jack",
         "Maya",
         "launch deck",
-        "Friday",
-        "budget table"
-      ]
+        "budget",
+        "June 9",
+        "June 10",
+        "June 11"
+      ],
+      expectedDueDateSnippets: ["June 9", "June 10", "June 11"]
     },
     {
-      name: "anonymous_trio_generated",
+      name: "anonymous_trio_60s",
       meetingId: anonymousTrio.meetingId,
       payload: livePayload({
         meetingId: anonymousTrio.meetingId,
@@ -700,7 +678,15 @@ function buildScenarios(reportDir, namesFilter = []) {
         audioPath: fixtures.anonymousTrioOut
       }),
       forbiddenNames: ["Jimmy", "Jack", "Maya"],
-      expectedNeutralSpeakerCount: 3
+      expectedNeutralSpeakerCount: 3,
+      expectedSummarySnippets: [
+        "launch",
+        "budget",
+        "partner",
+        "June 9",
+        "June 10",
+        "June 11"
+      ]
     }
   ];
   if (!namesFilter.length) {
@@ -781,7 +767,14 @@ async function runScenario({
   if (!feedCard) {
     throw new Error(`Could not find completed feed card for ${scenario.meetingId}`);
   }
+  if (!String(feedCard.preview || "").trim()) {
+    throw new Error(`${scenario.name} feed tile reply text is empty`);
+  }
   const completedScreenshot = await saveScreenshot(page, scenarioDir, "02-completed-tile");
+  const tileMarkup = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().innerHTML();
+  if (!/svg|material-symbols|card-icon/i.test(String(tileMarkup || ""))) {
+    throw new Error(`${scenario.name} feed tile did not render an icon`);
+  }
 
   const detailMeeting = completedPayload.meeting || {};
   for (const value of [detailMeeting.device_path, detailMeeting.audio_path]) {
@@ -817,11 +810,15 @@ async function runScenario({
   }
 
   const attachments = summarizeAttachments(detailMeeting);
-  const summaryAttachment = attachments.find((item) => item && String(item.kind || "") === "html");
+  const summaryAttachment = attachments.find((item) => String(item?.id || "") === `${scenario.meetingId}:html`);
+  const transcriptHtmlAttachment = attachments.find((item) => String(item?.title || "") === "Meeting Transcript HTML");
   if (!summaryAttachment) {
     throw new Error(`${scenario.name} is missing the HTML summary attachment`);
   }
-  for (const requiredLabel of ["Meeting Transcript", "Meeting Audio"]) {
+  if (!transcriptHtmlAttachment) {
+    throw new Error(`${scenario.name} is missing the Meeting Transcript HTML attachment`);
+  }
+  for (const requiredLabel of ["Meeting Transcript", "Meeting Transcript HTML", "Meeting Audio"]) {
     if (!attachments.some((item) => String(item?.title || "") === requiredLabel)) {
       throw new Error(`${scenario.name} is missing attachment ${requiredLabel}`);
     }
@@ -851,16 +848,17 @@ async function runScenario({
       }
     }
     const neutralSpeakers = distinctNeutralSpeakers(transcriptText);
-    if (neutralSpeakers.length < Number(scenario.expectedNeutralSpeakerCount || 0)) {
-      throw new Error(`${scenario.name} transcript did not preserve ${scenario.expectedNeutralSpeakerCount} neutral speakers`);
+    if (neutralSpeakers.length !== Number(scenario.expectedNeutralSpeakerCount || 0)) {
+      throw new Error(`${scenario.name} transcript did not preserve exactly ${scenario.expectedNeutralSpeakerCount} neutral speakers`);
     }
   }
 
-  await openMeetingTranscript(page, scenario.meetingId);
+  await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().click();
+  await waitForDetail(page, "transcript");
   const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "03-transcript-detail");
 
   const chipTexts = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
-  for (const requiredLabel of ["Meeting Transcript", String(summaryAttachment.title || ""), "Meeting Audio"]) {
+  for (const requiredLabel of ["Meeting Transcript", "Meeting Transcript HTML", String(summaryAttachment.title || ""), "Meeting Audio"]) {
     if (!chipTexts.includes(requiredLabel)) {
       throw new Error(`${scenario.name} transcript detail is missing attachment chip ${requiredLabel}`);
     }
@@ -881,12 +879,15 @@ async function runScenario({
     return String(frame?.contentDocument?.body?.innerHTML || frame?.srcdoc || "");
   });
   writeTextFile(path.join(scenarioDir, "rendered_summary_html.html"), renderedSummaryHtml);
+  const summaryFrame = page.frameLocator("#detail iframe.document-frame");
 
   if (!summaryAttachment?.artifact) {
     throw new Error(`${scenario.name} is missing Meeting Summary artifact metadata`);
   }
   const rawSummaryHtml = Buffer.from(String((await fetchArtifactBase64(baseUrl, apiToken, String(summaryAttachment.artifact || ""))).content_base64 || ""), "base64").toString("utf8");
   writeTextFile(path.join(scenarioDir, "raw_summary_html.html"), rawSummaryHtml);
+  const rawTranscriptHtml = Buffer.from(String((await fetchArtifactBase64(baseUrl, apiToken, String(transcriptHtmlAttachment.artifact || ""))).content_base64 || ""), "base64").toString("utf8");
+  writeTextFile(path.join(scenarioDir, "raw_transcript_html.html"), rawTranscriptHtml);
 
   if (!rawSummaryHtml.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}") || !rawSummaryHtml.includes("{{PUCKY_MEETING_AUDIO_LINK}}")) {
     throw new Error(`${scenario.name} raw summary HTML is missing the required placeholders`);
@@ -900,12 +901,33 @@ async function runScenario({
   if (renderedSummaryHtml.includes("/api/meetings/") || renderedSummaryHtml.includes("/tmp/") || renderedSummaryHtml.includes("<script")) {
     throw new Error(`${scenario.name} rendered summary still exposes raw runtime links or inline script`);
   }
+  const summarySections = ["Overview", "Participants", "Action Items"];
+  for (const sectionLabel of summarySections) {
+    if (!summaryText.includes(sectionLabel)) {
+      throw new Error(`${scenario.name} summary HTML is missing section ${sectionLabel}`);
+    }
+  }
+  const summaryVisibleLinks = await summaryFrame.locator("a.document-open-link").allTextContents();
+  if (summaryVisibleLinks.length !== 2) {
+    throw new Error(`${scenario.name} summary HTML did not render exactly two visible document links`);
+  }
+  if (!summaryVisibleLinks.includes("Open Transcript") || !summaryVisibleLinks.includes("Listen To Audio")) {
+    throw new Error(`${scenario.name} summary HTML did not render the expected transcript/audio link labels`);
+  }
 
   if (scenario.expectedSummarySnippets) {
     const normalizedSummaryText = normalizeProofText(summaryText);
     for (const snippet of scenario.expectedSummarySnippets) {
       if (!normalizedSummaryText.includes(normalizeProofText(snippet))) {
         throw new Error(`${scenario.name} summary text is missing expected content: ${snippet}`);
+      }
+    }
+  }
+  if (scenario.expectedDueDateSnippets) {
+    const normalizedSummaryText = normalizeProofText(summaryText);
+    for (const dueDate of scenario.expectedDueDateSnippets) {
+      if (!normalizedSummaryText.includes(normalizeProofText(dueDate))) {
+        throw new Error(`${scenario.name} summary text is missing explicit due date ${dueDate}`);
       }
     }
   }
@@ -917,13 +939,15 @@ async function runScenario({
     }
   }
 
-  const summaryFrame = page.frameLocator("#detail iframe.document-frame");
   await summaryFrame.locator("a.pucky-meeting-transcript-link").click();
-  await waitForDetail(page, "attachment", "text");
-  await page.waitForSelector("#detail .text-preview", { timeout: 15000 });
-  const transcriptFromHtmlText = await page.locator("#detail .text-preview").last().textContent();
-  if (!String(transcriptFromHtmlText || "").trim() || /no text preview|text preview unavailable/i.test(String(transcriptFromHtmlText || ""))) {
-    throw new Error(`${scenario.name} transcript link inside summary did not open transcript detail`);
+  await waitForDetail(page, "attachment", "html_iframe");
+  await page.waitForSelector("#detail iframe.document-frame", { timeout: 15000 });
+  const transcriptFromHtmlText = await page.locator("#detail iframe.document-frame").last().evaluate((node) => {
+    const frame = node instanceof HTMLIFrameElement ? node : null;
+    return String(frame?.contentDocument?.body?.textContent || frame?.srcdoc || "");
+  });
+  if (!String(transcriptFromHtmlText || "").trim() || /transcript unavailable|html preview unavailable/i.test(String(transcriptFromHtmlText || ""))) {
+    throw new Error(`${scenario.name} transcript link inside summary did not open transcript HTML detail`);
   }
   const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "05-transcript-from-html");
   await backToDetail(page, "attachment", "html_iframe");
