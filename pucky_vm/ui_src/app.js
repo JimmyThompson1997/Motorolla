@@ -7403,7 +7403,7 @@
   }
 
   function cardTimestamp(card) {
-    const raw = card.created_at || card.timestamp || card.time || "";
+    const raw = card.updated_at || card.created_at || card.timestamp || card.time || "";
     const text = smartTimestamp(raw, "");
     if (!text) {
       return null;

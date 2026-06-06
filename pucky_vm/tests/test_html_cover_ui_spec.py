@@ -1360,6 +1360,8 @@ def test_smart_card_and_message_timestamps_are_rendered() -> None:
     fixtures = runtime_fixture_text()
 
     assert "function cardTimestamp(card)" in app
+    card_timestamp_body = app.split("function cardTimestamp(card) {", 1)[1].split("\n  }\n\n  function messageTimestamp", 1)[0]
+    assert "card.updated_at || card.created_at || card.timestamp || card.time || \"\"" in card_timestamp_body
     assert "function messageTimestamp(message)" in app
     assert "function smartTimestamp(raw, fallback = \"\")" in app
     assert "function formatSmartTimestamp(date, now = new Date())" in app
