@@ -7,11 +7,6 @@
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
-  const FEED_REFRESH_THRESHOLD = 28;
-  const FEED_REFRESH_MAX_PULL = 72;
-  const FEED_REFRESH_HOLD_OFFSET = 46;
-  const FEED_REFRESH_MIN_DWELL_MS = 450;
-  const FEED_REFRESH_TIMEOUT_MS = 15000;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const ARCHIVE_REVEAL_WIDTH_PX = 88;
@@ -24,7 +19,6 @@
     "threshold_not_met",
     "outside_dismiss",
     "click_capture_close",
-    "feed_rubberband_reset",
     "pointercancel",
     "touchcancel",
     "route_change",
@@ -234,8 +228,6 @@
     traceCard: null,
     metaCard: null,
     feedLoadError: "",
-    feedRefreshPromise: null,
-    feedRefreshing: false,
     nativeFeedSnapshotPromise: null,
     showArchivedFeed: false,
     openCardMenuSessionId: "",
@@ -2187,6 +2179,8 @@
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
     const detail = document.getElementById("detail");
+    const feed = document.getElementById("feed");
+    const feedStyle = feed ? window.getComputedStyle(feed) : null;
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
     const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
@@ -2226,6 +2220,22 @@
       },
       turn_timing: currentTurnUiTiming(),
       visible_cards: cards,
+      home_feed: {
+        active_route: state.route,
+        ui_version: state.uiSurface?.ui_version || "",
+        scroll_top: Math.round(Number(feed?.scrollTop || 0)),
+        client_height: Math.round(Number(feed?.clientHeight || 0)),
+        scroll_height: Math.round(Number(feed?.scrollHeight || 0)),
+        overflow_y: feedStyle?.overflowY || "",
+        direct_card_count: feed ? Array.from(feed.children).filter(node => node?.classList?.contains("card-wrap")).length : 0,
+        visible_card_count: cards.length,
+        archive_reveal_open_count: document.querySelectorAll(".card-wrap.is-archive-reveal-open").length,
+        archive_reveal_active_count: document.querySelectorAll(".card-wrap.is-archive-reveal-active").length,
+        last_scroll_sample: {
+          scroll_top: Math.round(Number(feed?.scrollTop || 0)),
+          timestamp_ms: Date.now()
+        }
+      },
       ui_debug_available: true
     };
   }
@@ -4080,10 +4090,6 @@
       actions.append(file);
     }
 
-    const archive = archiveActionButton(card);
-    if (archive) {
-      actions.append(archive);
-    }
     cardEl.append(identity, body, actions);
     if (cardStamp) {
       const stamp = el("time", "card-timestamp", cardStamp.text);
@@ -4134,22 +4140,6 @@
     return wrapper;
   }
 
-  function archiveActionButton(card) {
-    if (!canArchiveHomeCard(card)) {
-      return null;
-    }
-    const archive = el("button", `action action-archive ${actionStateClass(card, "archive")}`);
-    archive.type = "button";
-    applyCardActionData(archive, "archive", card, "reply");
-    archive.innerHTML = iconSvg("delete", { filled: true });
-    archive.setAttribute("aria-label", `Archive ${card?.title || "reply"}`);
-    archive.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await performHomeArchive(card);
-    });
-    return archive;
-  }
-
   function outboundCardView(card) {
     const wrapper = el("div", "card-wrap");
     const cardEl = el("article", isFailedPendingOutboundCard(card)
@@ -4170,12 +4160,6 @@
       metaCopy.append(time);
     }
     meta.append(metaCopy);
-    const archive = archiveActionButton(card);
-    if (archive) {
-      const actions = el("div", "card-outbound-actions");
-      actions.append(archive);
-      meta.append(actions);
-    }
     cardEl.append(copy, meta);
     if (canArchiveHomeCard(card)) {
       appendArchiveRevealAction(wrapper, {
@@ -6689,7 +6673,7 @@
   }
 
   function canRevealHomeArchive(card) {
-    if (state.route !== "feed" || state.showArchivedFeed || state.feedRefreshing) {
+    if (state.route !== "feed" || state.showArchivedFeed) {
       return false;
     }
     return canArchiveHomeCard(card);
@@ -6913,7 +6897,14 @@
         closeReveal({ immediate: true });
         return;
       }
+      if (!horizontal && startOffset <= 0 && dx > 0) {
+        closeReveal({ immediate: true });
+        return;
+      }
       horizontal = true;
+      if (source === "pointer" && !pointerCaptured) {
+        capturePointer(activePointerId);
+      }
       wrapper.classList.add("is-archive-reveal-dragging");
       const nextOffset = applyOffset(startOffset - dx);
       record("move", { source, offset: nextOffset });
@@ -6963,9 +6954,6 @@
         return;
       }
       begin(event.clientX, event.clientY, event.target, event.pointerId, "pointer");
-      if (active) {
-        capturePointer(event.pointerId);
-      }
     });
     wrapper.addEventListener("pointermove", event => {
       if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
@@ -7349,324 +7337,6 @@
       stick_to_latest: shouldStickToLatest
     });
     return { type: detail.type, thread_id: cardThreadId(nextCard), session_id: nextSessionId };
-  }
-
-  function sleep(ms) {
-    return new Promise(resolve => window.setTimeout(resolve, ms));
-  }
-
-  async function withTimeout(promise, timeoutMs, message) {
-    let timeoutId = 0;
-    const timeout = new Promise((_, reject) => {
-      timeoutId = window.setTimeout(() => reject(new Error(message || "Timed out")), timeoutMs);
-    });
-    try {
-      return await Promise.race([promise, timeout]);
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-  }
-
-  function updateFeedRefreshIndicator(options = {}) {
-    const indicator = document.getElementById("feedRefresh");
-    if (!indicator) {
-      return;
-    }
-    const offset = Math.max(0, Number(options.offset) || 0);
-    const visible = Boolean(options.refreshing);
-    const label = indicator.querySelector(".feed-refresh-pill");
-    const text = "Refreshing...";
-    indicator.style.setProperty("--feed-refresh-pull", `${offset}px`);
-    indicator.classList.toggle("is-visible", Boolean(visible));
-    indicator.classList.toggle("is-refreshing", Boolean(options.refreshing));
-    if (label) {
-      label.textContent = text;
-    }
-    indicator.setAttribute("aria-label", text);
-    indicator.setAttribute("aria-hidden", visible ? "false" : "true");
-  }
-
-  function resetFeedRefreshIndicator() {
-    const indicator = document.getElementById("feedRefresh");
-    if (!indicator) {
-      return;
-    }
-    indicator.style.setProperty("--feed-refresh-pull", "0px");
-    const label = indicator.querySelector(".feed-refresh-pill");
-    if (label) {
-      label.textContent = "Refreshing...";
-    }
-    indicator.classList.remove("is-visible", "is-refreshing");
-    indicator.setAttribute("aria-label", "Refreshing Home feed");
-    indicator.setAttribute("aria-hidden", "true");
-  }
-
-  function releaseFeedPull(feed) {
-    feed.classList.remove("is-rubber-banding");
-    feed.classList.add("is-rubber-band-release");
-    feed.style.transform = "";
-    window.setTimeout(() => {
-      feed.classList.remove("is-rubber-band-release");
-    }, 340);
-  }
-
-  function finishFeedRefresh() {
-    const feed = document.getElementById("feed");
-    resetFeedRefreshIndicator();
-    if (feed) {
-      feed.classList.remove("is-feed-refreshing");
-      releaseFeedPull(feed);
-    }
-  }
-
-  async function refreshFeedCards() {
-    if (state.feedRefreshPromise) {
-      return state.feedRefreshPromise;
-    }
-    state.feedRefreshing = true;
-    const startedAt = Date.now();
-    const feed = document.getElementById("feed");
-    if (feed) {
-      feed.classList.remove("is-rubber-banding");
-      feed.classList.remove("is-rubber-band-release");
-      feed.classList.add("is-feed-refreshing");
-      feed.style.transform = `translateY(${FEED_REFRESH_HOLD_OFFSET}px)`;
-    }
-    updateFeedRefreshIndicator({ offset: FEED_REFRESH_HOLD_OFFSET, refreshing: true });
-
-    state.feedRefreshPromise = (async () => {
-      try {
-        await withTimeout(syncFeedCards({ reason: "pull_to_refresh", render: false, authoritative: true }), FEED_REFRESH_TIMEOUT_MS, "Feed refresh timed out");
-        state.feedScrollTop = 0;
-        render();
-        restoreScrollPosition(document.getElementById("feed"), 0);
-        persistNavState();
-      } catch (_) {
-        // Keep the existing feed visible when the native card store is briefly unavailable.
-      } finally {
-        const remaining = FEED_REFRESH_MIN_DWELL_MS - (Date.now() - startedAt);
-        if (remaining > 0) {
-          await sleep(remaining);
-        }
-        state.feedRefreshing = false;
-        state.feedRefreshPromise = null;
-        finishFeedRefresh();
-      }
-    })();
-    return state.feedRefreshPromise;
-  }
-
-  function installFeedRubberBand() {
-    const feed = document.getElementById("feed");
-    if (!feed || feed.dataset.rubberBandBound) {
-      return;
-    }
-    feed.dataset.rubberBandBound = "true";
-
-    let startY = 0;
-    let active = false;
-    let offset = 0;
-    let raf = 0;
-    let pullDirection = "";
-    let refreshArmed = false;
-    let activePointerId = null;
-    const preferTouchEvents = prefersTouchInput();
-    let gestureId = "";
-    let gestureSource = "";
-
-    const recordFeedPull = (phase, extra = {}) => archiveRevealDebugRecord({
-      scope: "feed_rubberband",
-      phase,
-      source: extra.source || gestureSource,
-      gesture_id: extra.gesture_id || gestureId,
-      wrapper: feed,
-      offset: extra.offset ?? offset,
-      horizontal: false,
-      wrapper_class: extra.wrapper_class || feed.className,
-      close_reason: extra.close_reason,
-      context: extra.context || pullDirection
-    });
-
-    const atTop = () => feed.scrollTop <= 0;
-    const atBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 1;
-    const apply = nextOffset => {
-      offset = nextOffset;
-      if (raf) {
-        return;
-      }
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        feed.style.transform = offset ? `translateY(${offset}px)` : "";
-      });
-    };
-    const reset = () => {
-      if (activeArchiveReveal) {
-        recordFeedPull("dismiss", {
-          close_reason: "feed_rubberband_reset",
-          context: "active_archive_reveal_present"
-        });
-      }
-      active = false;
-      offset = 0;
-      pullDirection = "";
-      refreshArmed = false;
-      if (raf) {
-        cancelAnimationFrame(raf);
-        raf = 0;
-      }
-      updateFeedRefreshIndicator({ offset: 0 });
-      releaseFeedPull(feed);
-      gestureId = "";
-      gestureSource = "";
-    };
-
-    const beginPull = (y, pointer = null, source = "") => {
-      if (state.route !== "feed" || state.feedRefreshing) {
-        return;
-      }
-      startY = y;
-      active = false;
-      pullDirection = "";
-      refreshArmed = false;
-      activePointerId = pointer;
-      gestureId = nextArchiveRevealGestureId();
-      gestureSource = source;
-      recordFeedPull("begin", { source, offset: 0, context: "pull_begin" });
-    };
-
-    const movePull = (y, event = null, source = "") => {
-      if (state.route !== "feed" || state.feedRefreshing) {
-        return;
-      }
-      const dy = y - startY;
-      const topPull = dy > 0 && atTop();
-      const bottomPull = dy < 0 && atBottom();
-      const edgePull = topPull || bottomPull;
-      if (!edgePull) {
-        if (active) {
-          reset();
-        }
-        return;
-      }
-      if (event && event.cancelable) {
-        event.preventDefault();
-      }
-      active = true;
-      feed.classList.add("is-rubber-banding");
-      feed.classList.remove("is-rubber-band-release");
-      pullDirection = topPull ? "top" : "bottom";
-      const eased = Math.min(FEED_REFRESH_MAX_PULL, Math.pow(Math.abs(dy), 0.72));
-      refreshArmed = pullDirection === "top" && eased >= FEED_REFRESH_THRESHOLD;
-      if (pullDirection === "bottom") {
-        refreshArmed = false;
-      }
-      updateFeedRefreshIndicator({ offset: pullDirection === "top" ? eased : 0 });
-      apply(Math.sign(dy) * eased);
-      recordFeedPull("move", {
-        source,
-        offset: Math.sign(dy) * eased,
-        context: pullDirection || "pull_move"
-      });
-    };
-
-    const endPull = (source = "") => {
-      if (pullDirection === "top" && refreshArmed) {
-        recordFeedPull("finish", {
-          source,
-          offset,
-          context: "refresh_armed"
-        });
-        active = false;
-        offset = 0;
-        refreshArmed = false;
-        pullDirection = "";
-        activePointerId = null;
-        if (raf) {
-          cancelAnimationFrame(raf);
-          raf = 0;
-        }
-        refreshFeedCards();
-        gestureId = "";
-        gestureSource = "";
-        return;
-      }
-      if (active) {
-        recordFeedPull("finish", {
-          source,
-          offset,
-          context: "reset_after_pull"
-        });
-        reset();
-      }
-      activePointerId = null;
-      gestureId = "";
-      gestureSource = "";
-    };
-
-    const cancelPull = (source = "") => {
-      recordFeedPull("cancel", {
-        source,
-        offset,
-        close_reason: source === "touch" ? "touchcancel" : "pointercancel",
-        context: "pull_cancel"
-      });
-      if (active) {
-        reset();
-      }
-      activePointerId = null;
-      gestureId = "";
-      gestureSource = "";
-    };
-
-    feed.addEventListener("pointerdown", event => {
-      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
-        return;
-      }
-      beginPull(event.clientY, event.pointerId, "pointer");
-    }, { passive: true });
-    feed.addEventListener("pointermove", event => {
-      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
-        return;
-      }
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      movePull(event.clientY, event, "pointer");
-    }, { passive: false });
-    feed.addEventListener("pointerup", event => {
-      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
-        return;
-      }
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      endPull("pointer");
-    });
-    feed.addEventListener("pointercancel", event => {
-      if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {
-        return;
-      }
-      if (activePointerId !== null && event.pointerId !== activePointerId) {
-        return;
-      }
-      cancelPull("pointer");
-    });
-    feed.addEventListener("touchstart", event => {
-      if (!event.touches.length) {
-        return;
-      }
-      beginPull(event.touches[0].clientY, null, "touch");
-    }, { passive: true });
-
-    feed.addEventListener("touchmove", event => {
-      if (!event.touches.length) {
-        return;
-      }
-      movePull(event.touches[0].clientY, event, "touch");
-    }, { passive: false });
-
-    feed.addEventListener("touchend", () => endPull("touch"));
-    feed.addEventListener("touchcancel", () => cancelPull("touch"));
   }
 
   function cardTimestamp(card) {
@@ -8818,7 +8488,7 @@
       return;
     }
     feedSyncIntervalId = window.setInterval(() => {
-      if (document.visibilityState !== "visible" || state.route !== "feed" || state.feedRefreshing) {
+      if (document.visibilityState !== "visible" || state.route !== "feed") {
         return;
       }
       syncFeedCards({ reason: "feed_visible_poll", silent: true, render: true });
@@ -9495,7 +9165,6 @@
     dispatch: uiDebugDispatch,
     linksMetrics: linksDebugMetrics
   };
-  installFeedRubberBand();
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();

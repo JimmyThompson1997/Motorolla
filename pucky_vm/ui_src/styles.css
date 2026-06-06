@@ -453,27 +453,7 @@ button {
 }
 
 .feed.is-home-route {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding-bottom: 0;
-}
-
-.home-feed-shell {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.home-feed-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
   overflow-y: auto;
-  padding: 0 0 var(--nav-safe);
-  scrollbar-width: none;
-  overscroll-behavior-y: contain;
-  will-change: transform;
 }
 
 .feed.is-links-route {
@@ -492,63 +472,7 @@ button {
   max-height: 100%;
   min-height: 0;
 }
-.feed-refresh {
-  --feed-refresh-pull: 0px;
-  position: relative;
-  z-index: 2;
-  flex: 0 0 0;
-  height: 0;
-  display: grid;
-  place-items: center;
-  overflow: visible;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(calc(var(--feed-refresh-pull) - 34px));
-  transition: transform 180ms ease;
-}
-
-.feed-refresh.is-visible,
-.feed-refresh.is-refreshing {
-  opacity: 1;
-}
-
-.feed-refresh.is-refreshing {
-  transform: translateY(calc(var(--feed-refresh-pull) - 32px));
-}
-
-.feed-refresh-pill {
-  min-width: 118px;
-  padding: 7px 13px 8px;
-  border: 1px solid rgba(245, 249, 255, 0.18);
-  border-radius: 999px;
-  background: rgba(7, 13, 23, 0.86);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  color: rgba(245, 249, 255, 0.9);
-  font-size: 12px;
-  font-weight: 720;
-  line-height: 1;
-  text-align: center;
-  white-space: nowrap;
-  backdrop-filter: blur(14px);
-}
-
-.feed.is-rubber-banding,
-.home-feed-scroll.is-rubber-banding {
-  transition: none;
-}
-
-.feed.is-rubber-band-release,
-.home-feed-scroll.is-rubber-band-release {
-  transition: transform 320ms cubic-bezier(0.19, 1, 0.22, 1);
-}
-
-.feed.is-feed-refreshing,
-.home-feed-scroll.is-feed-refreshing {
-  transition: transform 180ms ease;
-}
-
-.feed::-webkit-scrollbar,
-.home-feed-scroll::-webkit-scrollbar {
+.feed::-webkit-scrollbar {
   display: none;
 }
 
@@ -1475,13 +1399,6 @@ button {
   min-width: 0;
 }
 
-.card-outbound-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 42px;
-}
-
 .card-outbound-status {
   display: inline-flex;
   align-items: center;
@@ -1551,10 +1468,6 @@ button {
   height: 25px;
   fill: currentColor;
   stroke: none;
-}
-
-.action.action-archive {
-  color: #ff8f7c;
 }
 
 .action-audio.is-playing {

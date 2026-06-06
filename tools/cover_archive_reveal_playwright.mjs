@@ -390,7 +390,7 @@ function revealActionSelector(sessionId) {
 }
 
 function archiveButtonSelector(sessionId) {
-  return `[data-card-session-id="${sessionId}"][data-card-action="archive"]`;
+  return revealActionSelector(sessionId);
 }
 
 async function ensureCardVisible(page, sessionId) {
@@ -490,35 +490,6 @@ function expect(condition, message) {
 
 async function captureVisibleCards(page) {
   return page.evaluate(() => window.PuckyUiDebug?.describe?.()?.visible_cards || []);
-}
-
-async function runPositiveButtonArchive(page, summary, key, sessionId, screenshotPrefix, options = {}) {
-  const result = { session_id: sessionId, method: "button" };
-  await ensureCardVisible(page, sessionId);
-  result.before_visible = await cardVisibleCount(page, sessionId);
-  result.archive_button_count = await archiveButtonCount(page, sessionId);
-  expect(result.before_visible === 1, `${key}: expected card to be visible before archive`);
-  expect(result.archive_button_count === 1, `${key}: expected visible archive button`);
-  result.before_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-before`);
-  if (options.exerciseFinePointerNegative) {
-    await clearDebugTrace(page);
-    await mouseDragOnCard(page, sessionId);
-    await page.waitForTimeout(250);
-    result.fine_pointer_negative = {
-      reveal_open: await wrapperOpen(page, sessionId),
-      trace: await debugTrace(page),
-      screenshot: await saveScreenshot(page, reportDir, `${screenshotPrefix}-fine-pointer-negative`)
-    };
-    expect(!result.fine_pointer_negative.reveal_open, `${key}: mouse drag should not open archive reveal`);
-    expect(!result.fine_pointer_negative.trace.some(entry => entry.phase === "open"), `${key}: mouse drag should not record open trace`);
-  }
-  await page.locator(archiveButtonSelector(sessionId)).click();
-  await page.waitForFunction((innerSessionId) => !document.querySelector(`[data-card-session-id="${innerSessionId}"]`), sessionId);
-  result.after_visible = await cardVisibleCount(page, sessionId);
-  expect(result.after_visible === 0, `${key}: archived card should disappear from the visible feed`);
-  result.after_screenshot = await saveScreenshot(page, reportDir, `${screenshotPrefix}-after`);
-  result.visible_cards_after = await captureVisibleCards(page);
-  summary.cases[key] = result;
 }
 
 async function runPositiveSwipeArchive(page, client, summary, key, sessionId, screenshotPrefix, options = {}) {
@@ -645,7 +616,8 @@ async function runVerticalDragSpotCheck(page, client, summary) {
     trace: await debugTrace(page),
     screenshot: await saveScreenshot(page, reportDir, "99-vertical-drag")
   };
-  expect(summary.vertical_drag.trace.some(entry => entry.scope === "feed_rubberband"), "Expected feed rubber-band telemetry after vertical drag");
+  expect(!summary.vertical_drag.trace.some(entry => entry.scope === "feed_rubberband"), "Home vertical drag should not invoke feed rubber-band telemetry");
+  expect(!summary.vertical_drag.trace.some(entry => entry.phase === "open"), "Home vertical drag should not open archive reveal");
 }
 
 async function run() {
@@ -767,18 +739,29 @@ async function run() {
     summary.initial_visible_cards = await captureVisibleCards(page);
     summary.initial_screenshot = await saveScreenshot(page, reportDir, "01-initial");
 
-    await runPositiveButtonArchive(page, summary, "reply_button", REPLY_BUTTON_SESSION_ID, "02-reply-button", { exerciseFinePointerNegative: true });
+    await clearDebugTrace(page);
+    await mouseDragOnCard(page, REPLY_BUTTON_SESSION_ID);
+    await page.waitForTimeout(250);
+    summary.cases.reply_fine_pointer_negative = {
+      session_id: REPLY_BUTTON_SESSION_ID,
+      method: "fine_pointer_negative",
+      reveal_open: await wrapperOpen(page, REPLY_BUTTON_SESSION_ID),
+      trace: await debugTrace(page),
+      screenshot: await saveScreenshot(page, reportDir, "02-reply-fine-pointer-negative")
+    };
+    expect(!summary.cases.reply_fine_pointer_negative.reveal_open, "reply_fine_pointer_negative: mouse drag should not open archive reveal");
+    expect(!summary.cases.reply_fine_pointer_negative.trace.some(entry => entry.phase === "open"), "reply_fine_pointer_negative: mouse drag should not record open trace");
     await runPositiveSwipeArchive(page, client, summary, "reply_swipe", REPLY_SWIPE_SESSION_ID, "03-reply-swipe", {
       exerciseThresholdClose: true,
       exerciseBodyClose: true
     });
     await runNegativePendingCase(page, client, summary, "pending_inflight", PENDING_SESSION_ID, "04-pending-inflight");
-    await runPositiveButtonArchive(page, summary, "failed_pending_button", FAILED_PENDING_BUTTON_SESSION_ID, "05-failed-pending-button");
+    await runPositiveSwipeArchive(page, client, summary, "failed_pending_swipe_first", FAILED_PENDING_BUTTON_SESSION_ID, "05-failed-pending-swipe-first");
     await runPositiveSwipeArchive(page, client, summary, "failed_pending_swipe", FAILED_PENDING_SWIPE_SESSION_ID, "06-failed-pending-swipe", {
       exerciseOutsideDismiss: true
     });
     await runNegativePendingCase(page, client, summary, "pending_thread_inflight", PENDING_THREAD_SESSION_ID, "07-pending-thread-inflight");
-    await runPositiveButtonArchive(page, summary, "failed_thread_button", FAILED_THREAD_BUTTON_SESSION_ID, "08-failed-thread-button");
+    await runPositiveSwipeArchive(page, client, summary, "failed_thread_swipe_first", FAILED_THREAD_BUTTON_SESSION_ID, "08-failed-thread-swipe-first");
     await runPositiveSwipeArchive(page, client, summary, "failed_thread_swipe", FAILED_THREAD_SWIPE_SESSION_ID, "09-failed-thread-swipe");
     await runVerticalDragSpotCheck(page, client, summary);
 

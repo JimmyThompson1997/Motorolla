@@ -57,6 +57,26 @@ async function visibleCardTitles(page) {
   );
 }
 
+async function homeMetrics(page) {
+  return page.evaluate(() => {
+    const feed = document.getElementById("feed");
+    const style = feed ? window.getComputedStyle(feed) : null;
+    const debug = window.PuckyUiDebug?.describe?.() || {};
+    return {
+      route: debug.route || "",
+      debug_home_feed: debug.home_feed || null,
+      feed_scroll_top: Math.round(Number(feed?.scrollTop || 0)),
+      feed_client_height: Math.round(Number(feed?.clientHeight || 0)),
+      feed_scroll_height: Math.round(Number(feed?.scrollHeight || 0)),
+      feed_overflow_y: style?.overflowY || "",
+      home_shell_count: document.querySelectorAll(".home-feed-shell, .home-feed-scroll").length,
+      visible_archive_button_count: document.querySelectorAll(".action-archive, [data-card-action='archive']").length,
+      reveal_action_count: document.querySelectorAll(".card-wrap .archive-reveal-action").length,
+      reveal_open_count: document.querySelectorAll(".card-wrap.is-archive-reveal-open").length
+    };
+  });
+}
+
 async function waitForHomeCards(page, timeoutMs) {
   await page.waitForFunction(() => {
     const feed = document.getElementById("feed");
@@ -80,6 +100,23 @@ async function mouseHoverDoesNotDragFeed(page) {
   await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.35, { steps: 12 });
   const after = await feed.evaluate(node => node.scrollTop);
   return { before, after, changed: Math.abs(after - before) };
+}
+
+async function mouseDragDoesNotRevealArchive(page) {
+  const card = page.locator("#feed .card-wrap article.card").first();
+  const box = await card.boundingBox();
+  if (!box) {
+    throw new Error("Could not locate first Home card for mouse drag test");
+  }
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.18, box.y + box.height * 0.5, { steps: 14 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  return page.evaluate(() => ({
+    open_count: document.querySelectorAll(".card-wrap.is-archive-reveal-open").length,
+    active_count: document.querySelectorAll(".card-wrap.is-archive-reveal-active").length
+  }));
 }
 
 async function wheelStillScrolls(page) {
@@ -149,9 +186,12 @@ async function main() {
     const unexpectedFixtureTitles = visibleTitles.filter(title => FIXTURE_TITLES.has(title) && !fixtureTitlesInLiveFeed.includes(title));
     const feedRequests = requestLog.filter(item => item.url.includes("/api/feed"));
     const fixtureRequests = requestLog.filter(item => item.url.includes("/ui/pucky/fixtures/reply_cards.json"));
+    const beforeInteractionMetrics = await homeMetrics(page);
     const mouseHover = await mouseHoverDoesNotDragFeed(page);
+    const mouseDrag = await mouseDragDoesNotRevealArchive(page);
     const wheel = await wheelStillScrolls(page);
     await saveScreenshot(page, config.reportDir, "after-wheel");
+    const afterInteractionMetrics = await homeMetrics(page);
     const archive = await maybeArchiveFirstCard(page, requestLog, config.archive);
     if (config.archive) {
       await saveScreenshot(page, config.reportDir, "after-archive");
@@ -168,7 +208,10 @@ async function main() {
       fixture_request_count: fixtureRequests.length,
       bridge_reply_cards_get_count: 0,
       unexpected_fixture_titles: unexpectedFixtureTitles,
+      before_interaction_metrics: beforeInteractionMetrics,
+      after_interaction_metrics: afterInteractionMetrics,
       mouse_hover_scroll_delta: mouseHover.changed,
+      mouse_drag_archive_reveal: mouseDrag,
       wheel_scroll_ok: wheel.ok,
       archive,
       assertions: {
@@ -176,7 +219,12 @@ async function main() {
         no_static_fixture_request: fixtureRequests.length === 0,
         visible_matches_live_first: !liveTitles.length || visibleTitles[0] === liveTitles[0],
         no_unexpected_fixture_titles: unexpectedFixtureTitles.length === 0,
+        home_uses_single_feed_scroller: beforeInteractionMetrics.home_shell_count === 0
+          && beforeInteractionMetrics.feed_overflow_y === "auto"
+          && beforeInteractionMetrics.feed_scroll_height > beforeInteractionMetrics.feed_client_height,
+        no_visible_archive_button: beforeInteractionMetrics.visible_archive_button_count === 0,
         mouse_hover_does_not_drag: mouseHover.changed <= 1,
+        mouse_drag_does_not_reveal_archive: mouseDrag.open_count === 0 && mouseDrag.active_count === 0,
         wheel_scrolls: wheel.ok,
         archive_calls_api_when_enabled: !config.archive || archive.feed_action_requests > 0
       },

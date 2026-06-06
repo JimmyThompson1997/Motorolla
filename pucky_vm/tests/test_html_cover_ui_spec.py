@@ -623,15 +623,19 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'feedApiRequest("/api/feed/actions"' in app
     assert 'command: "pucky.feed.action"' in app
     assert "client_action_id" in app
-    assert 'const archive = archiveActionButton(card);' in app
-    assert 'applyCardActionData(archive, "archive", card, "reply");' in app
-    assert "action action-archive" in app
+    assert "function archiveActionButton(card)" not in app
+    assert 'const archive = archiveActionButton(card);' not in app
+    assert 'applyCardActionData(archive, "archive", card, "reply");' not in app
+    assert "action action-archive" not in app
     assert "return isFailedPendingOutboundCard(card);" in can_archive
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function canArchiveBySwipe(card)" not in app
     assert "installArchiveReveal(wrapper, card, {" in app
     assert "if (currentOffset() >= ARCHIVE_REVEAL_OPEN_THRESHOLD_PX)" in reveal
     assert "actionButton.tabIndex = isOpen ? 0 : -1;" in reveal
+    assert "if (!horizontal && Math.abs(dy) > Math.abs(dx))" in reveal
+    assert "event.preventDefault();" in reveal
+    assert "if (horizontal) {" in reveal
     assert "CARD_MENU_LONG_PRESS_MS" not in app
     assert "function toggleCardStar(card)" not in app
     assert "function isCardStarred(card)" not in app
@@ -708,8 +712,8 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "showRichPage(card)" not in outbound
     assert "identity" not in outbound
     assert "card-actions" not in outbound
-    assert "card-outbound-actions" in outbound
-    assert "const archive = archiveActionButton(card);" in outbound
+    assert "card-outbound-actions" not in outbound
+    assert "const archive = archiveActionButton(card);" not in outbound
     assert "appendArchiveRevealAction(wrapper, {" in outbound
     assert "installArchiveReveal(wrapper, card, {" in outbound
 
@@ -731,7 +735,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert ".card-outbound-status.is-thinking" in styles
     assert ".card-outbound-status.is-failed" in styles
     assert ".card-outbound-time" in styles
-    assert ".card-outbound-actions" in styles
+    assert ".card-outbound-actions" not in styles
     assert "function installCardArchiveSwipe(wrapper, card)" not in app
     assert "function cardLongPressMenu(card)" not in app
     assert "function cardFocusBorder()" not in app
@@ -823,73 +827,56 @@ def test_map_page_and_maplibre_experiment_are_removed() -> None:
     assert ".map-canvas" not in styles
     assert ".map-debug-samples" not in styles
 
-def test_feed_has_subtle_edge_rubber_band() -> None:
+def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     app = read("app.js")
     html = read("index.html")
     styles = read("styles.css")
 
-    assert "function installFeedRubberBand()" in app
-    assert "feed.dataset.rubberBandBound" in app
-    assert 'state.route !== "feed"' in app
-    assert "const FEED_REFRESH_THRESHOLD" in app
-    assert "const FEED_REFRESH_MAX_PULL" in app
-    assert "const FEED_REFRESH_MIN_DWELL_MS" in app
-    assert "function refreshFeedCards()" in app
-    assert "state.feedRefreshPromise" in app
-    assert "function resetFeedRefreshIndicator()" in app
-    assert 'label.textContent = text' in app
-    assert '"Refreshing..."' in app
+    assert "home-feed-shell" not in app
+    assert "home-feed-scroll" not in app
+    assert ".home-feed-shell" not in styles
+    assert ".home-feed-scroll" not in styles
+    home_route = css_block(styles, ".feed.is-home-route")
+    assert "overflow: hidden" not in home_route
+    feed_block = css_block(styles, ".feed")
+    assert "overflow-y: auto;" in feed_block
+    assert 'feed.replaceChildren(...cards.map(cardView))' in app
+
+    assert "function installFeedRubberBand()" not in app
+    assert "installFeedRubberBand();" not in app
+    assert "feed.dataset.rubberBandBound" not in app
+    assert "const FEED_REFRESH_THRESHOLD" not in app
+    assert "const FEED_REFRESH_MAX_PULL" not in app
+    assert "const FEED_REFRESH_MIN_DWELL_MS" not in app
+    assert "function resetFeedRefreshIndicator()" not in app
+    assert 'id="feedRefresh"' not in html
+    assert ".feed-refresh" not in styles
+    assert ".feed.is-rubber-banding" not in styles
+    assert ".feed.is-rubber-band-release" not in styles
     assert '"Release to refresh"' not in app
     assert '"Pull to refresh"' not in app
-    assert "const visible = Boolean(options.refreshing);" in app
-    assert 'indicator.classList.toggle("is-armed"' not in app
     assert 'Pucky.request({ command: "ui.reply_cards.get", args: {} })' not in app
     assert 'command === "ui.reply_cards.get"' not in app
     assert 'fetch("/ui/pucky/fixtures/reply_cards.json"' not in app
     assert "function fetchVmFeedSnapshot(options = {})" in app
     assert "return `/api/feed?${params.toString()}`;" in app
     assert 'command: "pucky.feed.cache.get"' in app
-    assert 'pullDirection === "top" && refreshArmed' in app
-    assert 'pullDirection === "bottom"' in app
-    assert 'const preferTouchEvents = prefersTouchInput();' in app
-    assert 'feed.addEventListener("pointerdown"' in app
-    assert 'feed.addEventListener("pointermove"' in app
-    assert 'feed.addEventListener("pointerup"' in app
-    assert 'feed.addEventListener("pointercancel"' in app
     assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
     assert 'pointerType === "mouse" || pointerType === "pen"' in app
-    assert 'if (!shouldHandleTouchLikePointerEvent(event, preferTouchEvents)) {' in app
     assert 'isTouchPointerEvent(event)' not in app
-    assert 'beginPull(event.clientY, event.pointerId, "pointer")' in app
-    assert 'movePull(event.clientY, event, "pointer")' in app
-    assert 'feed.addEventListener("touchstart"' in app
-    assert 'feed.addEventListener("touchmove"' in app
-    assert 'feed.addEventListener("touchend", () => endPull("touch"));' in app
-    assert 'feed.addEventListener("touchcancel", () => cancelPull("touch"));' in app
-    assert "} else {\n      feed.addEventListener(\"touchstart\"" not in app
-    assert 'recordFeedPull("begin"' in app
-    assert 'recordFeedPull("move"' in app
-    assert 'recordFeedPull("finish"' in app
-    assert 'recordFeedPull("cancel"' in app
-    assert 'close_reason: "feed_rubberband_reset"' in app
-    assert "Math.pow(Math.abs(dy), 0.72)" in app
-    assert "Math.min(FEED_REFRESH_MAX_PULL" in app
-    assert 'feed.classList.add("is-rubber-banding")' in app
-    assert 'feed.classList.add("is-rubber-band-release")' in app
-    assert "installFeedRubberBand();" in app
-    assert 'id="feedRefresh"' in html
-    assert 'class="feed-refresh-pill"' in html
-    assert ">Refreshing...<" in html
+    assert 'feed.addEventListener("pointerdown"' not in app
+    assert 'feed.addEventListener("pointermove"' not in app
+    assert 'feed.addEventListener("pointerup"' not in app
+    assert 'feed.addEventListener("pointercancel"' not in app
+    assert 'feed.addEventListener("touchstart"' not in app
+    assert 'feed.addEventListener("touchmove"' not in app
+    assert 'feed.addEventListener("touchend"' not in app
+    assert 'feed.addEventListener("touchcancel"' not in app
+
     assert "Pull to refresh" not in html
     assert "Release to refresh" not in html
     assert "feed-refresh-spinner" not in html
-    assert 'aria-live="polite"' in html
     assert "overscroll-behavior-y: contain;" in styles
-    assert ".feed-refresh" in styles
-    assert ".feed-refresh.is-refreshing" in styles
-    assert ".feed-refresh-pill" in styles
-    assert ".feed-refresh.is-resetting" not in styles
-    assert "transition: transform 180ms ease;" in styles
     assert "opacity 140ms ease" not in styles
     assert "animation: feedRefreshSpin" not in styles
     assert "--feed-refresh-progress" not in styles
@@ -900,8 +887,6 @@ def test_feed_has_subtle_edge_rubber_band() -> None:
     assert "is-resetting" not in app
     assert "--feed-refresh-progress" not in app
     assert "@keyframes feedRefreshSpin" not in styles
-    assert ".feed.is-rubber-banding" in styles
-    assert ".feed.is-rubber-band-release" in styles
 
 
 def test_settings_tab_renders_real_backed_settings_page() -> None:
@@ -1133,7 +1118,7 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert '"threshold_not_met"' in app
     assert '"outside_dismiss"' in app
     assert '"click_capture_close"' in app
-    assert '"feed_rubberband_reset"' in app
+    assert '"feed_rubberband_reset"' not in app
     assert '"pointercancel"' in app
     assert '"touchcancel"' in app
     assert '"route_change"' in app
@@ -2177,6 +2162,10 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "thread_scope: {" in app
     assert "turn_timing: currentTurnUiTiming()," in app
     assert "visible_cards: cards" in app
+    assert "home_feed: {" in app
+    assert "overflow_y: feedStyle?.overflowY || \"\"" in app
+    assert "scroll_height: Math.round(Number(feed?.scrollHeight || 0))" in app
+    assert "archive_reveal_open_count: document.querySelectorAll(\".card-wrap.is-archive-reveal-open\").length" in app
     assert 'active: Boolean(focusedCard)' in app
     assert 'menu_open: Boolean(focusedCard)' in app
     assert "openCardMenuThreadId" in app
