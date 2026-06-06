@@ -4913,11 +4913,13 @@
       const transcriptReplacement = transcriptHref
         ? meetingTranscriptLinkHtml(transcriptHref)
         : '<span class="pucky-meeting-transcript-link is-unavailable">Transcript unavailable on this device.</span>';
+      output = output.replace(/<a\b[^>]*href=["']\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}["'][^>]*>.*?<\/a>/gi, transcriptReplacement);
       output = output.replace(/\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}/g, transcriptReplacement);
     }
     const replacement = audioHref
       ? meetingAudioLinkHtml(audioHref)
       : '<span class="pucky-meeting-audio-link is-unavailable">Audio unavailable on this device.</span>';
+    output = output.replace(/<a\b[^>]*href=["']\{\{PUCKY_MEETING_AUDIO_LINK\}\}["'][^>]*>.*?<\/a>/gi, replacement);
     output = output.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
     if (audioHref) {
       output = output.replace(/<a([^>]*?)href=["'](?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));

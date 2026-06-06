@@ -316,6 +316,8 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     html_rewrite = function_block(app, "rewriteMeetingHtmlContent")
     assert 'const audioHref = String(options.audioHref || "").trim();' in html_rewrite
     assert "await resolveMeetingAudioLink(source)" not in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_TRANSCRIPT_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, transcriptReplacement);' in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_AUDIO_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, replacement);' in html_rewrite
     html_iframe = function_block(app, "htmlIframeViewer")
     assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
     assert "audioHref: audioContext.href" in html_iframe
