@@ -22,7 +22,9 @@ from unittest.mock import patch
 from pucky_vm.server import (
     Config,
     PuckyVoiceService,
+    _meeting_canonical_basename,
     _meeting_request_audio_attachment,
+    _meeting_summary_html_with_vm_links,
     make_handler,
     meeting_reply_output_schema,
     parse_reply_envelope,
@@ -1537,7 +1539,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn("recording_title", self.meeting_codex.developer_instructions[-1])
         self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", self.meeting_codex.developer_instructions[-1])
         self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("The platform will publish the transcript HTML artifact from transcript_text.", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("The platform will publish the transcript HTML artifact from transcript_text", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("render the final links", self.meeting_codex.developer_instructions[-1])
         self.assertIn("due date only when explicitly stated", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Your job is to turn one finished meeting recording into", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Hard constraints:", self.meeting_codex.developer_instructions[-1])
@@ -1722,6 +1725,29 @@ class ServerTests(unittest.TestCase):
             with urllib.request.urlopen(urllib.parse.urljoin(self.base_url, url), timeout=10) as response:
                 body = response.read()
                 self.assertTrue(body)
+
+    def test_meeting_summary_html_rewrites_placeholder_anchors_without_nested_links(self) -> None:
+        raw = (
+            '<p><a href="{{PUCKY_MEETING_TRANSCRIPT_LINK}}">Transcript</a> | '
+            '<a href="{{PUCKY_MEETING_AUDIO_LINK}}">Audio</a></p>'
+        )
+        rendered = _meeting_summary_html_with_vm_links(
+            raw,
+            "/api/shared/artifacts/transcript?token=test-token",
+            "/api/shared/meetings/meeting-1/audio?token=test-token",
+        )
+        self.assertIn('class="document-open-link pucky-meeting-transcript-link"', rendered)
+        self.assertIn('class="document-open-link pucky-meeting-audio-link"', rendered)
+        self.assertNotIn('href="<a', rendered)
+        self.assertNotIn('>Transcript</a>">', rendered)
+        self.assertNotIn('>Audio</a>">', rendered)
+
+    def test_meeting_canonical_basename_does_not_duplicate_date_suffix_from_recording_title(self) -> None:
+        record = {"started_at": "2026-06-07T01:57:22Z"}
+        self.assertEqual(
+            _meeting_canonical_basename(record, "partner_rollout_launch_readiness_06.07.26"),
+            "partner_rollout_launch_readiness_06_07_26",
+        )
 
     def test_meeting_deepgram_transcribe_tool_keeps_neutral_speakers_when_names_are_unknown(self) -> None:
         self.post_json(

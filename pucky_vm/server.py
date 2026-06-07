@@ -4285,7 +4285,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text. Use due dates only when the meeting explicitly states them. The summary HTML is invalid unless it includes the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}}. Do not replace those placeholders with raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text. Use due dates only when the meeting explicitly states them. The summary HTML is invalid unless it includes the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} as standalone tokens. Do not wrap those placeholders in your own <a> tags, and do not replace them with raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
@@ -4640,14 +4640,6 @@ def _meeting_summary_html_with_vm_links(summary_html: str, transcript_href: str,
         "audio",
         "pucky-meeting-audio-link",
     )
-    output = output.replace(
-        "{{PUCKY_MEETING_TRANSCRIPT_LINK}}",
-        transcript_link,
-    )
-    output = output.replace(
-        "{{PUCKY_MEETING_AUDIO_LINK}}",
-        audio_link,
-    )
     output = re.sub(
         r'<a\b[^>]*href=["\']\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}["\'][^>]*>.*?</a>',
         transcript_link,
@@ -4659,6 +4651,14 @@ def _meeting_summary_html_with_vm_links(summary_html: str, transcript_href: str,
         audio_link,
         output,
         flags=re.I | re.S,
+    )
+    output = output.replace(
+        "{{PUCKY_MEETING_TRANSCRIPT_LINK}}",
+        transcript_link,
+    )
+    output = output.replace(
+        "{{PUCKY_MEETING_AUDIO_LINK}}",
+        audio_link,
     )
     output = re.sub(
         r'<a\b[^>]*href=["\'](?:https?:\/\/[^"\']+)?\/api\/meetings\/[^"\']+\/audio(?:\?[^"\']*)?["\'][^>]*>.*?</a>',
@@ -4851,6 +4851,10 @@ def _meeting_date_label(record: dict[str, object]) -> str:
 def _meeting_canonical_basename(record: dict[str, object], title: str) -> str:
     stem = _meeting_title_stem(title)
     date_label = _meeting_date_label(record)
+    if date_label:
+        date_token = _meeting_title_stem(date_label)
+        if date_token and stem.lower().endswith(date_token.lower()):
+            return stem
     return f"{stem}_{date_label}" if date_label else stem
 
 
