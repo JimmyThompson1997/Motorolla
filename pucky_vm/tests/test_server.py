@@ -2329,6 +2329,9 @@ class ServerTests(unittest.TestCase):
             "recording_title": "Launch Readiness Recording",
             "audio_path": "C:\\fake\\meeting.wav",
             "mime_type": "audio/wav",
+        }
+        latest_record = {
+            **record,
             "tool_transcript_text": "Hello from Jimmy. Hello from Jack.",
             "tool_transcript_attachment_text": "[00:00-00:02] Jimmy: Hello from Jimmy.\n[00:02-00:04] Jack: Hello from Jack.",
             "tool_speaker_turns": [
@@ -2355,11 +2358,12 @@ class ServerTests(unittest.TestCase):
                 }
             )
         )
-        attachments, attachment_meta = self.service._prepare_meeting_reply_attachments(
-            meeting_id=meeting_id,
-            record=record,
-            envelope=envelope,
-        )
+        with patch.object(self.service, "_meeting_record_by_id", return_value=latest_record):
+            attachments, attachment_meta = self.service._prepare_meeting_reply_attachments(
+                meeting_id=meeting_id,
+                record=record,
+                envelope=envelope,
+            )
         titles = [str(item.get("title") or "") for item in attachments]
         self.assertIn("Transcript (Plain Text)", titles)
         self.assertIn("Transcript", titles)

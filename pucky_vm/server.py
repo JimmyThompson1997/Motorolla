@@ -3007,6 +3007,20 @@ class PuckyVoiceService:
         transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
         if not transcript_source:
             transcript_source = _meeting_fallback_transcript_attachment(record)
+        if not transcript_source:
+            latest_record = self._meeting_record_by_id(meeting_id)
+            if isinstance(latest_record, dict):
+                transcript_source = _meeting_fallback_transcript_attachment(latest_record)
+                for key in (
+                    "tool_transcript_text",
+                    "tool_transcript_attachment_text",
+                    "tool_speaker_turns",
+                    "transcript_text",
+                    "speaker_turns",
+                    "speaker_labels",
+                ):
+                    if key not in record and key in latest_record:
+                        record[key] = latest_record[key]
         transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
         transcript_html_path = ""
