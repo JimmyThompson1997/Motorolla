@@ -318,11 +318,26 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "await resolveMeetingAudioLink(source)" not in html_rewrite
     assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_TRANSCRIPT_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, transcriptReplacement);' in html_rewrite
     assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_AUDIO_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, replacement);' in html_rewrite
+    assert 'const hasBrokenTranscriptLink = /<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-transcript-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/i.test(raw);' in html_rewrite
+    assert 'const hasBrokenAudioLink = /<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-audio-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/i.test(raw);' in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-transcript-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));' in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-audio-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));' in html_rewrite
     html_iframe = function_block(app, "htmlIframeViewer")
     assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
-    assert "if (src) {" in html_iframe
+    assert 'if (src && /^data:/i.test(src)) {' in html_iframe
     assert "iframe.src = src;" in html_iframe
+    assert "iframe.srcdoc = await rewriteMeetingHtmlContent(await fetchHtmlAttachmentText(item, artifactId, src), item, {" in html_iframe
     assert "audioHref: audioContext.href" in html_iframe
+    assert "async function fetchHtmlAttachmentText(item, artifactId, src = \"\")" in app
+    fetch_html = function_block(app, "fetchHtmlAttachmentText")
+    assert 'const response = await fetchArtifactHttpResponse(htmlSrc, "HTML artifact");' in fetch_html
+    assert 'const response = await fetchArtifactHttpResponse(artifactApiUrl(artifactId), "HTML artifact");' in fetch_html
+    assert "async function fetchArtifactHttpResponse(url, label = \"Artifact\")" in app
+    fetch_artifact_http = function_block(app, "fetchArtifactHttpResponse")
+    assert "await ensureLinksApiConfig();" in fetch_artifact_http
+    assert "if (state.links.apiToken && !/[?&]token=/i.test(apiUrl)) {" in fetch_artifact_http
+    assert "headers.Authorization = `Bearer ${state.links.apiToken}`;" in fetch_artifact_http
+    assert "throw new Error(`${label} unavailable: HTTP ${response.status}`);" in fetch_artifact_http
     transcript_link = function_block(app, "resolveMeetingTranscriptLink")
     assert '"Transcript"' in transcript_link
     assert '"Transcript (Plain Text)"' in transcript_link

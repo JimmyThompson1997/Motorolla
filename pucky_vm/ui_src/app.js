@@ -4922,7 +4922,9 @@
     const hasTranscriptPlaceholder = raw.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}");
     const hasPlaceholder = raw.includes("{{PUCKY_MEETING_AUDIO_LINK}}");
     const hasRawMeetingAudioUrl = /\/api\/meetings\/[^"' ]+\/audio/i.test(raw);
-    if (!hasTranscriptPlaceholder && !hasPlaceholder && !hasRawMeetingAudioUrl) {
+    const hasBrokenTranscriptLink = /<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-transcript-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/i.test(raw);
+    const hasBrokenAudioLink = /<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-audio-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/i.test(raw);
+    if (!hasTranscriptPlaceholder && !hasPlaceholder && !hasRawMeetingAudioUrl && !hasBrokenTranscriptLink && !hasBrokenAudioLink) {
       return raw;
     }
     let output = raw;
@@ -4933,11 +4935,17 @@
       output = output.replace(/<a\b[^>]*href=["']\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}["'][^>]*>.*?<\/a>/gi, transcriptReplacement);
       output = output.replace(/\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}/g, transcriptReplacement);
     }
+    if (transcriptHref) {
+      output = output.replace(/<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-transcript-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));
+    }
     const replacement = audioHref
       ? meetingAudioLinkHtml(audioHref)
       : '<span class="pucky-meeting-audio-link is-unavailable">Audio unavailable on this device.</span>';
     output = output.replace(/<a\b[^>]*href=["']\{\{PUCKY_MEETING_AUDIO_LINK\}\}["'][^>]*>.*?<\/a>/gi, replacement);
     output = output.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
+    if (audioHref) {
+      output = output.replace(/<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-audio-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
+    }
     if (audioHref) {
       output = output.replace(/<a([^>]*?)href=["'](?:https?:\/\/[^"' ]+)?\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
       output = output.replace(/<a([^>]*?)href=["']\/api\/meetings\/[^"' ]+\/audio["']([^>]*)>(.*?)<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
@@ -5266,24 +5274,20 @@
       const transcriptContext = await resolveMeetingTranscriptLink(card, item);
       const audioContext = await resolveMeetingAudioAttachmentLink(card, item);
       const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
-      if (src) {
+      if (src && /^data:/i.test(src)) {
         iframe.src = src;
-      } else if (hasNativeBridge && (isAndroidLocalArtifactPath(localPath) || artifactId)) {
+      } else if (src || artifactId) {
+        iframe.srcdoc = await rewriteMeetingHtmlContent(await fetchHtmlAttachmentText(item, artifactId, src), item, {
+          transcriptHref: transcriptContext.href,
+          audioHref: audioContext.href
+        });
+      } else if (hasNativeBridge && isAndroidLocalArtifactPath(localPath)) {
         const readPath = isAndroidLocalArtifactPath(localPath) ? localPath : artifactVirtualPath(artifactId);
         const result = await Pucky.request({
           command: "artifact.read_base64",
           args: { path: readPath, max_bytes: 2 * 1024 * 1024 }
         });
         iframe.srcdoc = await rewriteMeetingHtmlContent(atob(String(result.content_base64 || "")), item, {
-          transcriptHref: transcriptContext.href,
-          audioHref: audioContext.href
-        });
-      } else if (!hasNativeBridge && artifactId) {
-        const response = await fetch(artifactApiUrl(artifactId), { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTML artifact unavailable: HTTP ${response.status}`);
-        }
-        iframe.srcdoc = await rewriteMeetingHtmlContent(await response.text(), item, {
           transcriptHref: transcriptContext.href,
           audioHref: audioContext.href
         });
@@ -5302,6 +5306,19 @@
       return fallback;
     }
     return iframe;
+  }
+
+  async function fetchHtmlAttachmentText(item, artifactId, src = "") {
+    const htmlSrc = String(src || "").trim();
+    if (htmlSrc) {
+      const response = await fetchArtifactHttpResponse(htmlSrc, "HTML artifact");
+      return await response.text();
+    }
+    if (artifactId) {
+      const response = await fetchArtifactHttpResponse(artifactApiUrl(artifactId), "HTML artifact");
+      return await response.text();
+    }
+    throw new Error("HTML attachment source is missing");
   }
 
   async function tableViewer(item) {
@@ -5499,21 +5516,30 @@
     if (!apiUrl) {
       throw new Error("artifact url is missing");
     }
-    await ensureLinksApiConfig();
-    const headers = {};
-    if (state.links.apiToken) {
-      headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
-    const response = await fetch(apiUrl, { cache: "no-store", headers });
-    if (!response.ok) {
-      throw new Error(`Artifact unavailable: HTTP ${response.status}`);
-    }
+    const response = await fetchArtifactHttpResponse(apiUrl, "Artifact");
     const mime = resolvedMediaMime(
       { mime_type: String(response.headers.get("content-type") || "").split(";", 1)[0].trim() },
       item,
       apiUrl
     );
     return URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: mime }));
+  }
+
+  async function fetchArtifactHttpResponse(url, label = "Artifact") {
+    const apiUrl = String(url || "").trim();
+    if (!apiUrl) {
+      throw new Error("artifact url is missing");
+    }
+    await ensureLinksApiConfig();
+    const headers = {};
+    if (state.links.apiToken && !/[?&]token=/i.test(apiUrl)) {
+      headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    const response = await fetch(apiUrl, { cache: "no-store", headers });
+    if (!response.ok) {
+      throw new Error(`${label} unavailable: HTTP ${response.status}`);
+    }
+    return response;
   }
 
   async function resolveLocalArtifactPath(path, item, options = {}) {
