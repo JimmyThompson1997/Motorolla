@@ -12,6 +12,8 @@ Meeting Mode Agent
 7. Produce card_title for the feed tile.
 8. Produce recording_title for the saved meeting audio and transcript basename.
 9. Produce the meeting summary HTML.
-10. Produce the transcript HTML.
-11. Do not invent names, owners, due dates, or completed outcomes.
+10. In the meeting summary HTML, include exactly two links using the literal placeholders {{PUCKY_MEETING_TRANSCRIPT_LINK}} and {{PUCKY_MEETING_AUDIO_LINK}}.
+11. Do not replace those placeholders with raw URLs, /tmp paths, inline JavaScript, or custom playback UI.
+12. The platform will publish the transcript HTML artifact from transcript_text.
+13. Do not invent names, owners, due dates, or completed outcomes.
 
