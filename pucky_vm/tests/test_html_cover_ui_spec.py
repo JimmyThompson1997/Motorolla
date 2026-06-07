@@ -296,6 +296,11 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'if (item.url) {' in resolve_artifact
     assert 'const bundled = bundledArtifactPath(item);' in resolve_artifact
     assert "async function resolveLocalArtifactPath(path, item, options = {})" in app
+    first_attachment = function_block(app, "firstDisplayableAttachmentInfo")
+    assert "const cardLevel = preferredDisplayAttachments(card, card?.attachments);" in first_attachment
+    assert "const cardLevelHasMeetingAttachments = cardLevel.some(isMeetingAttachmentItem);" in first_attachment
+    assert "if (cardLevelHasMeetingAttachments && cardLevel.length) {" in first_attachment
+    assert "if (!cardLevelHasMeetingAttachments && cardLevel.length) {" in first_attachment
     assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
     assert "async function resolveMeetingAudioAttachmentLink(card, summaryItem = null)" in app
     assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app

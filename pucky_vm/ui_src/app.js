@@ -7795,6 +7795,11 @@
 
   function firstDisplayableAttachmentInfo(card) {
     const sets = [];
+    const cardLevel = preferredDisplayAttachments(card, card?.attachments);
+    const cardLevelHasMeetingAttachments = cardLevel.some(isMeetingAttachmentItem);
+    if (cardLevelHasMeetingAttachments && cardLevel.length) {
+      sets.push(cardLevel);
+    }
     const messages = messagesForCard(card);
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (String(messages[index]?.role || "").toLowerCase() === "user") {
@@ -7806,8 +7811,7 @@
         break;
       }
     }
-    const cardLevel = preferredDisplayAttachments(card, card?.attachments);
-    if (cardLevel.length) {
+    if (!cardLevelHasMeetingAttachments && cardLevel.length) {
       sets.push(cardLevel);
     }
     for (const attachments of sets) {
