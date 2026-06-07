@@ -3499,6 +3499,9 @@
     const transcriptArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript` : "";
     const transcriptHtmlArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript_html` : "";
     const summaryHtmlBase64 = String(card.html_base64 || "").trim();
+    const summaryHtmlText = decodeMeetingSummaryBase64(summaryHtmlBase64);
+    const transcriptHtmlUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/artifacts\/[^"']+)["'][^>]*>/i);
+    const signedAudioUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/meetings\/[^"']*\/audio[^"']*)["'][^>]*>/i);
     if (summaryHtmlBase64) {
       attachments.push({
         id: `meeting-summary-${meetingId || "current"}`,
@@ -3506,6 +3509,8 @@
         kind: "html",
         mime_type: String(card.html_mime_type || "text/html"),
         data_url: `data:text/html;base64,${summaryHtmlBase64}`,
+        viewer_src: `data:text/html;base64,${summaryHtmlBase64}`,
+        html_src: `data:text/html;base64,${summaryHtmlBase64}`,
         artifact: summaryArtifactId,
         viewer_artifact: summaryArtifactId,
         html_artifact: summaryArtifactId,
@@ -3520,6 +3525,8 @@
         kind: "html",
         mime_type: "text/html",
         path: transcriptHtmlPath,
+        viewer_url: transcriptHtmlUrl,
+        html_url: transcriptHtmlUrl,
         artifact: transcriptHtmlArtifactId,
         viewer_artifact: transcriptHtmlArtifactId,
         html_artifact: transcriptHtmlArtifactId,
@@ -3540,7 +3547,7 @@
         meeting_id: meetingId
       });
     }
-    const audioUrl = String(record.audio_url || "").trim();
+    const audioUrl = signedAudioUrl || String(record.audio_url || "").trim();
     const audioPath = String(record.audio_path || "").trim();
     if (audioUrl || audioPath) {
       attachments.push({
@@ -3554,6 +3561,23 @@
       });
     }
     return attachments;
+  }
+
+  function decodeMeetingSummaryBase64(contentBase64) {
+    const value = String(contentBase64 || "").trim();
+    if (!value) {
+      return "";
+    }
+    try {
+      return atob(value);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function extractMeetingSummaryLink(htmlText, pattern) {
+    const match = String(htmlText || "").match(pattern);
+    return match ? String(match[1] || "").trim() : "";
   }
 
   function meetingAttachmentsForCard(card) {
