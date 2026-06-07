@@ -4,6 +4,7 @@
   const AUDIO_STATE_KEY = "pucky.cover.audio_state.v1";
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
+  const THEME_STATE_KEY = "pucky.cover.theme.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -171,6 +172,9 @@
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "settings", icon: "settings", label: "Settings" }
   ];
+  const LIGHT_APPS = [
+    { route: "links", label: "Apps", icon: "link" }
+  ];
 
   const DEFAULT_HOME_MENU_ICONS = [
     { key: "book", icon: "book", label: "Audiobooks", accent: "#72c2ff" }
@@ -192,6 +196,7 @@
     NO_AUTH: "No auth"
   };
 
+  const initialTheme = resolveInitialTheme();
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
   const state = {
@@ -199,8 +204,10 @@
     cardIconRegistry: {},
     cardIconRegistryLoading: false,
     cardIconRegistryRequestedAt: 0,
-    route: initialRoute(persistedNavState.route),
-    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route),
+    theme: initialTheme,
+    route: initialRoute(persistedNavState.route, initialTheme),
+    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme),
+    lightReturnRoute: "",
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
@@ -1893,6 +1900,12 @@
     if (!tabs) {
       return;
     }
+    if (isLightShellRoute()) {
+      tabs.hidden = true;
+      tabs.replaceChildren();
+      return;
+    }
+    tabs.hidden = false;
     tabs.replaceChildren(...PAGE_TABS.map(tabView));
   }
 
@@ -2862,6 +2875,11 @@
     if (!tray) {
       return;
     }
+    if (isLightShellRoute()) {
+      tray.hidden = true;
+      tray.replaceChildren();
+      return;
+    }
     if (state.route !== "feed" || state.openTrayRoute !== "feed") {
       tray.hidden = true;
       tray.replaceChildren();
@@ -2919,8 +2937,13 @@
   function renderFeed() {
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
+    document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);
     feed.classList.toggle("is-links-route", state.route === "links");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
+    if (isLightShellRoute()) {
+      feed.replaceChildren(lightView());
+      return;
+    }
     if (state.route === "settings") {
       feed.replaceChildren(settingsPageView());
       return;
@@ -2961,6 +2984,53 @@
       return;
     }
     feed.replaceChildren(...cards.map(cardView));
+  }
+
+  function lightView() {
+    const view = el("section", "light-shell");
+    view.dataset.lightRoute = state.route || "home";
+    view.append(lightHomePage());
+    return view;
+  }
+
+  function lightHomePage() {
+    const page = el("section", "light-home");
+    page.append(el("h1", "light-home-title", "Pucky"));
+    const grid = el("div", "light-app-grid");
+    grid.append(...LIGHT_APPS.map(lightAppTile));
+    page.append(grid);
+    return page;
+  }
+
+  function lightAppTile(app) {
+    const tile = el("button", "light-app-tile");
+    tile.type = "button";
+    tile.dataset.lightAppRoute = app.route;
+    tile.setAttribute("aria-label", app.label);
+    tile.addEventListener("click", () => lightNavigate(app.route));
+    const icon = el("span", "light-app-icon");
+    icon.innerHTML = iconSvg(app.icon, { filled: false });
+    tile.append(icon, el("span", "light-app-label", app.label));
+    return tile;
+  }
+
+  function lightNavigate(route) {
+    if (linksHandoffLocked()) {
+      return;
+    }
+    rememberFeedScroll();
+    dismissTransientUiForRouteChange();
+    state.route = route;
+    state.openTrayRoute = null;
+    state.lightReturnRoute = "home";
+    persistNavState();
+    render();
+    void syncVoiceThreadScope({ reason: "light_app_click", render: true });
+    if (state.route === "links") {
+      linksDebugStartSession("route", { reason: "light_app_open" });
+      linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
+      loadLinksPortal({ render: true });
+    }
   }
 
   function filteredFeedEmptyView() {
@@ -3577,7 +3647,19 @@
 
   function extractMeetingSummaryLink(htmlText, pattern) {
     const match = String(htmlText || "").match(pattern);
-    return match ? String(match[1] || "").trim() : "";
+    return absolutizeAppUrl(match ? String(match[1] || "").trim() : "");
+  }
+
+  function absolutizeAppUrl(url) {
+    const value = String(url || "").trim();
+    if (!value) {
+      return "";
+    }
+    try {
+      return new URL(value, window.location.origin).href;
+    } catch (_) {
+      return value;
+    }
   }
 
   function meetingAttachmentsForCard(card) {
@@ -5181,6 +5263,7 @@
       output = output.replace(/\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}/g, transcriptReplacement);
     }
     if (transcriptHref) {
+      output = output.replace(/<a\b[^>]*data-pucky-meeting-action=["']transcript["'][^>]*>.*?<\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));
       output = output.replace(/<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-transcript-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));
     }
     const replacement = audioHref
@@ -5189,6 +5272,7 @@
     output = output.replace(/<a\b[^>]*href=["']\{\{PUCKY_MEETING_AUDIO_LINK\}\}["'][^>]*>.*?<\/a>/gi, replacement);
     output = output.replace(/\{\{PUCKY_MEETING_AUDIO_LINK\}\}/g, replacement);
     if (audioHref) {
+      output = output.replace(/<a\b[^>]*data-pucky-meeting-action=["']audio["'][^>]*>.*?<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
       output = output.replace(/<a\b[^>]*href=["']<a\b[^>]*pucky-meeting-audio-link\b[^>]*>.*?<\/a>["'][^>]*>.*?<\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));
     }
     if (audioHref) {
@@ -5520,7 +5604,10 @@
       const audioContext = await resolveMeetingAudioAttachmentLink(card, item);
       const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
       if (src && /^data:/i.test(src)) {
-        iframe.src = src;
+        iframe.srcdoc = await rewriteMeetingHtmlContent(decodeHtmlDataUrl(src), item, {
+          transcriptHref: transcriptContext.href,
+          audioHref: audioContext.href
+        });
       } else if (src || artifactId) {
         iframe.srcdoc = await rewriteMeetingHtmlContent(await fetchHtmlAttachmentText(item, artifactId, src), item, {
           transcriptHref: transcriptContext.href,
@@ -5564,6 +5651,27 @@
       return await response.text();
     }
     throw new Error("HTML attachment source is missing");
+  }
+
+  function decodeHtmlDataUrl(src) {
+    const value = String(src || "").trim();
+    if (!/^data:/i.test(value)) {
+      return value;
+    }
+    const commaIndex = value.indexOf(",");
+    if (commaIndex < 0) {
+      return "";
+    }
+    const metadata = value.slice(5, commaIndex).toLowerCase();
+    const payload = value.slice(commaIndex + 1);
+    try {
+      if (metadata.includes(";base64")) {
+        return atob(payload);
+      }
+      return decodeURIComponent(payload);
+    } catch (_) {
+      return "";
+    }
   }
 
   async function tableViewer(item) {
@@ -6236,6 +6344,16 @@
     const overlay = document.getElementById("speedOverlay");
     if (overlay && overlay.classList.contains("is-open")) {
       closeSpeedPicker();
+      return true;
+    }
+    if (state.route === "links" && state.theme === "light" && state.lightReturnRoute === "home") {
+      releaseLinksHandoff({ render: false, reason: "android_back" });
+      state.route = "home";
+      state.openTrayRoute = null;
+      state.lightReturnRoute = "";
+      persistNavState();
+      render();
+      void syncVoiceThreadScope({ reason: "light_apps_back", render: true });
       return true;
     }
     return false;
@@ -8520,6 +8638,41 @@
     return isCardRead(card) ? "is-read" : "is-unread";
   }
 
+  function resolveInitialTheme() {
+    const params = new URLSearchParams(window.location.search || "");
+    const queryTheme = normalizeTheme(params.get("theme"));
+    if (queryTheme) {
+      persistTheme(queryTheme);
+      return queryTheme;
+    }
+    try {
+      return normalizeTheme(localStorage.getItem(THEME_STATE_KEY)) || "dark";
+    } catch (_) {
+      return "dark";
+    }
+  }
+
+  function normalizeTheme(value) {
+    const theme = String(value || "").trim().toLowerCase();
+    return theme === "light" || theme === "dark" ? theme : "";
+  }
+
+  function persistTheme(theme) {
+    try {
+      localStorage.setItem(THEME_STATE_KEY, normalizeTheme(theme) || "dark");
+    } catch (_) {
+      // Theme persistence is a visual preference and should never block boot.
+    }
+  }
+
+  function isLightTheme() {
+    return state.theme === "light";
+  }
+
+  function isLightShellRoute() {
+    return isLightTheme() && state.route === "home";
+  }
+
   function loadNavState() {
     try {
       if (shouldResetNavState()) {
@@ -8542,10 +8695,13 @@
     }
   }
 
-  function initialRoute(route) {
+  function initialRoute(route, theme = "dark") {
     const queryRoute = routeQueryParam();
     if (PAGE_TABS.some(tab => tab.route === queryRoute)) {
       return queryRoute;
+    }
+    if (normalizeTheme(theme) === "light") {
+      return "home";
     }
     const value = String(route || "");
     return PAGE_TABS.some(tab => tab.route === value) ? value : "feed";
@@ -8559,9 +8715,9 @@
     }
   }
 
-  function initialOpenTrayRoute(openTrayRoute, route) {
+  function initialOpenTrayRoute(openTrayRoute, route, theme = "dark") {
     const value = String(openTrayRoute || "");
-    const normalizedRoute = initialRoute(route);
+    const normalizedRoute = initialRoute(route, theme);
     return value && value === normalizedRoute ? value : null;
   }
 

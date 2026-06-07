@@ -259,6 +259,63 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/connect"' not in app
 
 
+def test_light_apps_tile_ports_to_exact_canonical_links_route() -> None:
+    html = read("index.html")
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert "const THEME_STATE_KEY = \"pucky.cover.theme.v1\"" in app
+    assert "const LIGHT_APPS = [" in app
+    assert '{ route: "links", label: "Apps", icon: "link" }' in app
+    assert "theme: initialTheme" in app
+    assert "lightReturnRoute: \"\"" in app
+    assert "function resolveInitialTheme()" in app
+    assert "function isLightShellRoute()" in app
+    assert "function lightView()" in app
+    assert "function lightHomePage()" in app
+    assert "function lightNavigate(route)" in app
+    assert 'if (isLightShellRoute()) {' in app
+    assert "feed.replaceChildren(lightView());" in app
+    assert 'if (state.route === "links") {' in app
+    assert 'const page = linksPageView();' in app
+    assert "lightLinksPage" not in app
+    assert "lightAppsPage" not in app
+    assert "lightSettingsSurface" not in app
+    assert ".light-links" not in styles
+    assert ".light-apps-page" not in styles
+    assert ".light-shell" in styles
+    assert ".light-app-tile" in styles
+    assert 'data-voice-status' in html
+    assert "renderVoiceStatus()" in app
+    assert ".voice-status" in styles
+    assert "function linksPageView()" in app
+    assert "loadLinksPortal({ render: true });" in app
+
+
+def test_light_launched_links_uses_canonical_header_and_back_home_return() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    render_feed = function_block(app, "renderFeed")
+    handle_back = function_block(app, "handleAndroidBack")
+    light_navigate = function_block(app, "lightNavigate")
+
+    assert 'document.querySelector(".app-shell")?.setAttribute("data-view", state.route);' in render_feed
+    assert 'document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);' in render_feed
+    assert 'if (isLightShellRoute()) {' in render_feed
+    assert 'if (state.route === "links") {' in render_feed
+    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (state.route === "links") {')
+    assert 'feed.classList.toggle("is-links-route", state.route === "links");' in render_feed
+    assert 'state.lightReturnRoute = "home";' in light_navigate
+    assert 'if (state.route === "links" && state.theme === "light" && state.lightReturnRoute === "home") {' in handle_back
+    assert 'state.route = "home";' in handle_back
+    assert 'state.lightReturnRoute = "";' in handle_back
+    assert ".app-shell[data-theme=\"light\"] .header" not in styles
+    assert ".app-shell[data-theme=\"light\"] .page-tabs" not in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
+    assert ".light-shell .links-page" not in styles
+
+
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -323,6 +380,9 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert 'title: "Transcript"' in meeting_record_attachments
     assert 'title: "Transcript (Plain Text)"' in meeting_record_attachments
     assert 'title: "Meeting Audio"' in meeting_record_attachments
+    assert 'const audioUrl = signedAudioUrl || String(record.audio_url || "").trim();' in meeting_record_attachments
+    assert 'viewer_url: transcriptHtmlUrl,' in meeting_record_attachments
+    assert "function absolutizeAppUrl(url)" in app
     assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
     assert "async function resolveMeetingAudioAttachmentLink(card, summaryItem = null)" in app
     assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app
@@ -347,14 +407,17 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_AUDIO_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, replacement);' in html_rewrite
     assert 'const hasBrokenTranscriptLink = /<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-transcript-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/i.test(raw);' in html_rewrite
     assert 'const hasBrokenAudioLink = /<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-audio-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/i.test(raw);' in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*data-pucky-meeting-action=["\']transcript["\'][^>]*>.*?<\\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));' in html_rewrite
+    assert 'output = output.replace(/<a\\b[^>]*data-pucky-meeting-action=["\']audio["\'][^>]*>.*?<\\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));' in html_rewrite
     assert 'output = output.replace(/<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-transcript-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/gi, meetingTranscriptLinkHtml(transcriptHref));' in html_rewrite
     assert 'output = output.replace(/<a\\b[^>]*href=["\']<a\\b[^>]*pucky-meeting-audio-link\\b[^>]*>.*?<\\/a>["\'][^>]*>.*?<\\/a>/gi, meetingAudioLinkHtml(audioHref, "Listen To Audio"));' in html_rewrite
     html_iframe = function_block(app, "htmlIframeViewer")
     assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
     assert 'if (src && /^data:/i.test(src)) {' in html_iframe
-    assert "iframe.src = src;" in html_iframe
+    assert "iframe.srcdoc = await rewriteMeetingHtmlContent(decodeHtmlDataUrl(src), item, {" in html_iframe
     assert "iframe.srcdoc = await rewriteMeetingHtmlContent(await fetchHtmlAttachmentText(item, artifactId, src), item, {" in html_iframe
     assert "audioHref: audioContext.href" in html_iframe
+    assert "function decodeHtmlDataUrl(src)" in app
     assert "async function fetchHtmlAttachmentText(item, artifactId, src = \"\")" in app
     fetch_html = function_block(app, "fetchHtmlAttachmentText")
     assert 'const response = await fetchArtifactHttpResponse(htmlSrc, "HTML artifact");' in fetch_html
@@ -642,7 +705,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route)" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme)" in app
     assert 'FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1"' in app
     assert "excludedFeedIcons: loadFeedIconExcludes()" in app
     assert "renderRouteTray()" in app
@@ -1697,8 +1760,8 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
 
     assert 'const NAV_STATE_KEY = "pucky.cover.nav_state.v1"' in app
     assert "const persistedNavState = loadNavState();" in app
-    assert "route: initialRoute(persistedNavState.route)" in app
-    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route)" in app
+    assert "route: initialRoute(persistedNavState.route, initialTheme)" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme)" in app
     assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
     assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
     assert "function loadNavState()" in app
