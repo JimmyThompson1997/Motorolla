@@ -326,20 +326,16 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
     assert "async function loadMeetingDetail(meeting)" in app
     assert "function meetingsPageView()" in app
-    assert "function meetingRowView(meeting)" in app
     assert "function meetingCardFromRecord(meeting)" in app
+    assert "function isMeetingsListCard(card)" in app
+    assert "function meetingListCardClass(card)" in app
     assert "showMeetingDetail(meeting)" in app
-    meeting_row = function_block(app, "meetingRowView")
-    assert 'const row = el(' in meeting_row
-    assert '"card card-meeting is-failed"' in meeting_row
-    assert '"card card-meeting card-pending-thread"' in meeting_row
-    assert 'const identity = el("div", "identity is-read");' in meeting_row
-    assert 'const body = el("div", "card-body");' in meeting_row
-    assert 'const actions = el("div", "card-actions");' in meeting_row
-    assert 'const audio = el("button", "action action-audio");' in meeting_row
-    assert 'void showMeetingAudioDetail(meeting);' in meeting_row
-    assert 'el("p", "preview", meetingRowPreview(meeting))' in meeting_row
-    assert 'const stamp = meetingRowTimestamp(meeting);' in meeting_row
+    assert "function meetingRowView(meeting)" not in app
+    assert "function meetingRowPreview(meeting)" not in app
+    assert "function meetingStateLabel(meeting)" not in app
+    assert "function meetingSubtitleLegacy(meeting)" not in app
+    meetings_page = function_block(app, "meetingsPageView")
+    assert "visibleMeetingRecords().slice().reverse().map(meeting => cardView(meetingCardFromRecord(meeting)))" in meetings_page
     meeting_full_detail = function_block(app, "meetingHasFullDetail")
     assert "meetingState(meeting) !== \"completed\"" in meeting_full_detail
     assert "persistedAssistant" in meeting_full_detail
@@ -349,15 +345,32 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert "function preparedAudioFilename(" not in app
     assert "audio_path: meetingPlayablePath(card)" in app
     assert 'audio_url: String(card.audio_url || "")' in app
-    assert 'read: true,' in function_block(app, "meetingCardFromRecord")
-    assert 'updated_at: String(card.updated_at || card.stopped_at || "")' in function_block(app, "meetingCardFromRecord")
+    meeting_card_from_record = function_block(app, "meetingCardFromRecord")
+    assert 'read: true,' in meeting_card_from_record
+    assert 'updated_at: String(card.updated_at || card.stopped_at || "")' in meeting_card_from_record
+    assert 'render_profile: "meeting_list",' in meeting_card_from_record
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
     assert 'value.startsWith("/data/pucky-src/")' in app
     assert "function meetingTranscriptSection(meeting)" in app
     assert "function meetingTranscriptAction(card)" in app
     assert 'return "View Transcript";' in function_block(app, "meetingTranscriptLabel")
+    meeting_title = function_block(app, "meetingTitle")
+    assert "recording_title" in meeting_title
+    assert "card.title ||" not in meeting_title
     assert "function openMeetingSummaryDetail(meeting, options = {})" in app
     assert "function showMeetingAudioDetail(meeting)" in app
+    card_view = function_block(app, "cardView")
+    assert "const isMeetingList = isMeetingsListCard(card);" in card_view
+    assert "meetingListCardClass(card)" in card_view
+    assert 'const body = el("div", isMeetingList ? "card-body is-title-only" : "card-body");' in card_view
+    assert "void showMeetingDetail(card.meeting_record);" in card_view
+    assert "void showMeetingAudioDetail(card.meeting_record);" in card_view
+    assert "if (!isMeetingList) {" in card_view
+    assert 'applyCardActionData(body, isMeetingList ? "attachment" : "transcript", card, isMeetingList ? "meeting" : "reply");' in card_view
+    assert 'applyCardActionData(audio, "audio", card, isMeetingList ? "meeting" : "reply");' in card_view
+    assert 'if (card.html_path) {' in card_view
+    assert 'showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });' in card_view
+    assert 'if (!isMeetingList) {' in card_view
     resolve_artifact = function_block(app, "resolveArtifactUrl")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_artifact
     assert 'const path = mediaPath(item);' in resolve_artifact
@@ -435,17 +448,15 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert '"Meeting Transcript"' in transcript_link
     assert "function isMeetingProcessingCard(card)" in app
     assert "function meetingProcessingCardView(card)" in app
+    assert ".card.card-meeting-list" in styles
+    assert ".card.card-meeting-list .card-body.is-title-only" in styles
     assert 'applyCardDataAttributes(cardEl, card, "meeting_processing")' in app
     assert "Processing meeting..." in app
     assert "Transcription, diarization, and follow-up checks are running." in app
     assert "showTranscript(card);" not in function_block(app, "meetingProcessingCardView")
     assert "speaker_turns" in app
-    assert 'return "Pending";' in function_block(app, "meetingStateLabel")
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
-    meeting_preview = function_block(app, "meetingRowPreview")
-    assert 'return "Pending";' in meeting_preview
-    assert 'return transcript || "Meeting ready.";' in meeting_preview
     meeting_timestamp = function_block(app, "meetingRowTimestamp")
     assert "smartTimestamp(" in meeting_timestamp
     assert "meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at" in meeting_timestamp
@@ -514,7 +525,7 @@ def test_attachment_source_filter_hides_placeholders_and_html_path_fallback_open
     assert "installMeetingHtmlActionBridge" in html_iframe
     assert ".meeting-transcript-section" in styles
     assert ".meeting-speaker-turn" in styles
-    assert ".meeting-row-state.is-completed" in styles
+    assert ".card.card-meeting-list" in styles
     assert ".meetings-empty.is-error" in styles
 
 
@@ -592,8 +603,9 @@ def test_meetings_and_home_reuse_shared_left_reveal_archive_controller() -> None
     assert "appendArchiveRevealAction(wrapper, {" in app
     assert 'action.innerHTML = iconSvg("delete", { filled: true });' in app
     assert 'const row = el(' in app
-    assert '"card card-meeting"' in app
-    assert 'installArchiveReveal(wrapper, meeting, {' in app
+    assert "meetingListCardClass(card)" in app
+    assert '"card card-meeting-list"' in app
+    assert 'installArchiveReveal(wrapper, card.meeting_record, {' in app
     assert 'installArchiveReveal(wrapper, card, {' in app
     assert "if (busy || !config.canReveal(item) || isDragIgnoredTarget(target))" in reveal
     assert "applyOffset(startOffset - dx);" in reveal
@@ -601,7 +613,9 @@ def test_meetings_and_home_reuse_shared_left_reveal_archive_controller() -> None
     assert "void config.performArchive(item)" in reveal
     assert ".archive-reveal-action" in styles
     assert ".card-wrap.is-archive-reveal-open .archive-reveal-action" in styles
-    assert ".meeting-row-card" in styles
+    assert ".meeting-row-card" not in styles
+    assert ".card.card-meeting-list" in styles
+    assert ".card.card-meeting-list .card-body.is-title-only" in styles
 
 
 def test_meeting_recording_status_uses_purple_dot() -> None:

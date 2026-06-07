@@ -3340,76 +3340,9 @@
       page.append(el("div", "meetings-refreshing", "Refreshing..."));
     }
     const list = el("section", "meetings-list-card");
-    list.append(...visibleMeetingRecords().slice().reverse().map(meetingRowView));
+    list.append(...visibleMeetingRecords().slice().reverse().map(meeting => cardView(meetingCardFromRecord(meeting))));
     page.append(list);
     return page;
-  }
-
-  function meetingRowView(meeting) {
-    const card = meetingCardFromRecord(meeting);
-    const stateName = meetingState(meeting);
-    const wrapper = el("div", "card-wrap");
-    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const row = el(
-      "article",
-      stateName === "failed"
-        ? "card card-meeting is-failed"
-        : stateName === "completed"
-          ? "card card-meeting"
-          : "card card-meeting card-pending-thread"
-    );
-    row.style.setProperty("--accent", card.accent || "#72c2ff");
-    applyCardDataAttributes(row, card, "meeting");
-    const identity = el("div", "identity is-read");
-    identity.innerHTML = iconSvg("mic", { filled: true });
-    identity.setAttribute("aria-hidden", "true");
-    const body = el("div", "card-body");
-    body.setAttribute("role", "button");
-    body.tabIndex = 0;
-    body.setAttribute("aria-disabled", "false");
-    applyCardActionData(body, "attachment", card, "meeting");
-    body.append(
-      el("h2", "title", meetingTitle(meeting)),
-      el("p", "preview", meetingRowPreview(meeting))
-    );
-    const actions = el("div", "card-actions");
-    const audio = el("button", "action action-audio");
-    audio.type = "button";
-    applyCardActionData(audio, "audio", card, "meeting");
-    audio.innerHTML = iconSvg("mic", { filled: true });
-    audio.setAttribute("aria-label", `Open audio for ${meetingTitle(meeting)}`);
-    audio.addEventListener("click", event => {
-      event.stopPropagation();
-      void showMeetingAudioDetail(meeting);
-    });
-    actions.append(audio);
-    body.addEventListener("click", () => {
-      if (!shouldSuppressCardActivation()) {
-        void showMeetingDetail(meeting);
-      }
-    });
-    body.addEventListener("keydown", event => {
-      if ((event.key === "Enter" || event.key === " ") && !shouldSuppressCardActivation()) {
-        event.preventDefault();
-        void showMeetingDetail(meeting);
-      }
-    });
-    row.append(identity, body, actions);
-    const stamp = meetingRowTimestamp(meeting);
-    if (stamp) {
-      const time = el("time", "card-timestamp", stamp.text);
-      time.dateTime = stamp.iso;
-      row.append(time);
-    }
-    appendArchiveRevealAction(wrapper, {
-      label: `Archive ${meetingTitle(meeting)}`
-    });
-    wrapper.append(row);
-    installArchiveReveal(wrapper, meeting, {
-      canReveal: canRevealMeetingArchive,
-      performArchive: () => performMeetingArchive(meeting)
-    });
-    return wrapper;
   }
 
   function visibleMeetingRecords() {
@@ -3556,6 +3489,7 @@
       attachments,
       transcript_messages: meetingTranscriptMessages(card),
       is_meeting_recording: true,
+      render_profile: "meeting_list",
       meeting_record: card
     };
   }
@@ -3750,36 +3684,12 @@
   function meetingTitle(meeting) {
     const raw = meeting && typeof meeting === "object" ? meeting : {};
     const card = raw.card && typeof raw.card === "object" ? raw.card : {};
-    return String(card.title || raw.title || raw.meeting_id || "Meeting Recording");
+    return String(raw.recording_title || card.recording_title || raw.title || raw.meeting_id || "Meeting Recording");
   }
 
   function meetingState(meeting) {
     const value = String(meeting && meeting.state || "uploaded").toLowerCase();
     return ["uploaded", "processing", "completed", "failed"].includes(value) ? value : "uploaded";
-  }
-
-  function meetingStateLabel(meeting) {
-    const stateName = meetingState(meeting);
-    if (stateName === "processing" || stateName === "uploaded") {
-      return "Pending";
-    }
-    return stateName === "failed" ? "Failed" : "Ready";
-  }
-
-  function meetingRowPreview(meeting) {
-    const stateName = meetingState(meeting);
-    if (stateName === "failed") {
-      return meetingFailedSummary(meeting);
-    }
-    if (stateName === "processing" || stateName === "uploaded") {
-      return "Pending";
-    }
-    const summary = String(meeting && meeting.card && meeting.card.summary || "").trim();
-    if (summary) {
-      return summary;
-    }
-    const transcript = meetingTranscriptText(meeting);
-    return transcript || "Meeting ready.";
   }
 
   function meetingRowTimestamp(meeting) {
@@ -3790,27 +3700,6 @@
     }
     const date = parseDate(raw);
     return { text, iso: date ? date.toISOString() : String(raw) };
-  }
-
-  function meetingSubtitleLegacy(meeting) {
-    const stamp = smartTimestamp(
-      meeting && (meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at) || ""
-    );
-    if (stamp) {
-      return stamp;
-    }
-    const duration = formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
-    return [duration, status].filter(Boolean).join(" · ");
-  }
-
-  function meetingSubtitle(meeting) {
-    const stamp = smartTimestamp(
-      meeting && (meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at) || ""
-    );
-    if (stamp) {
-      return stamp;
-    }
-    return formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
   }
 
   function formatMeetingDuration(durationMs) {
@@ -4327,43 +4216,61 @@
     }
     const wrapper = el("div", "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", isCardRead(card) ? "card" : "card card-unread");
+    const isMeetingList = isMeetingsListCard(card);
+    const cardEl = el("article", isMeetingList
+      ? meetingListCardClass(card)
+      : isCardRead(card)
+        ? "card"
+        : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
-    applyCardDataAttributes(cardEl, card, "reply");
+    applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");
     const cardStamp = cardTimestamp(card);
 
-    const identity = el("button", `identity ${cardStateClass(card)}`);
-    identity.type = "button";
-    applyCardActionData(identity, "mark_read", card, "reply");
-    identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
-    identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
-    identity.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleCardRead(card);
-    });
+    let identity = null;
+    if (!isMeetingList) {
+      identity = el("button", `identity ${cardStateClass(card)}`);
+      identity.type = "button";
+      applyCardActionData(identity, "mark_read", card, "reply");
+      identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
+      identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
+      identity.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleCardRead(card);
+      });
+    }
 
-    const body = el("div", "card-body");
+    const body = el("div", isMeetingList ? "card-body is-title-only" : "card-body");
     body.setAttribute("role", "button");
     body.tabIndex = 0;
     body.setAttribute("aria-disabled", "false");
-    applyCardActionData(body, "transcript", card, "reply");
+    applyCardActionData(body, isMeetingList ? "attachment" : "transcript", card, isMeetingList ? "meeting" : "reply");
     body.addEventListener("click", () => {
       if (!shouldSuppressCardActivation()) {
+        if (isMeetingList) {
+          void showMeetingDetail(card.meeting_record);
+          return;
+        }
         showTranscript(card);
       }
     });
     body.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
+        if (isMeetingList) {
+          void showMeetingDetail(card.meeting_record);
+          return;
+        }
         showTranscript(card);
       }
     });
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
-    if (isPlayingCard(card)) {
-      body.append(waveform(card, "wave-row", 46));
-    } else {
-      body.append(el("p", "preview", card.summary || card.transcript || ""));
+    if (!isMeetingList) {
+      if (isPlayingCard(card)) {
+        body.append(waveform(card, "wave-row", 46));
+      } else {
+        body.append(el("p", "preview", card.summary || card.transcript || ""));
+      }
     }
 
     const actions = el("div", "card-actions");
@@ -4372,45 +4279,68 @@
         ? "action action-audio is-playing"
         : "action action-audio");
       audio.type = "button";
-      applyCardActionData(audio, "audio", card, "reply");
+      applyCardActionData(audio, "audio", card, isMeetingList ? "meeting" : "reply");
       audio.innerHTML = iconSvg("mic", { filled: true });
-      audio.setAttribute("aria-label", `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
+      audio.setAttribute("aria-label", isMeetingList
+        ? `Open audio for ${card.title}`
+        : `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
+        if (isMeetingList) {
+          void showMeetingAudioDetail(card.meeting_record);
+          return;
+        }
         await toggleAudio(card);
       });
       actions.append(audio);
     }
-    const attachmentInfo = firstDisplayableAttachmentInfo(card);
-    if (card.html_path) {
-      const page = el("button", `action ${actionStateClass(card, "page")}`);
-      page.type = "button";
-      applyCardActionData(page, "page", card, "reply");
-      page.innerHTML = iconSvg("attachment", { filled: true });
-      page.setAttribute("aria-label", `Open page for ${card.title}`);
-      page.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showRichPage(card);
-      });
-      actions.append(page);
-    } else if (attachmentInfo) {
-      const file = el("button", `action ${actionStateClass(card, "attachment")}`);
-      file.type = "button";
-      applyCardActionData(file, "attachment", card, "reply");
-      file.innerHTML = iconSvg("attachment", { filled: true });
-      file.setAttribute("aria-label", `Open file for ${card.title}`);
-      file.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
-      });
-      actions.append(file);
+    if (!isMeetingList) {
+      const attachmentInfo = firstDisplayableAttachmentInfo(card);
+      if (card.html_path) {
+        const page = el("button", `action ${actionStateClass(card, "page")}`);
+        page.type = "button";
+        applyCardActionData(page, "page", card, "reply");
+        page.innerHTML = iconSvg("attachment", { filled: true });
+        page.setAttribute("aria-label", `Open page for ${card.title}`);
+        page.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showRichPage(card);
+        });
+        actions.append(page);
+      } else if (attachmentInfo) {
+        const file = el("button", `action ${actionStateClass(card, "attachment")}`);
+        file.type = "button";
+        applyCardActionData(file, "attachment", card, "reply");
+        file.innerHTML = iconSvg("attachment", { filled: true });
+        file.setAttribute("aria-label", `Open file for ${card.title}`);
+        file.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
+        });
+        actions.append(file);
+      }
     }
 
-    cardEl.append(identity, body, actions);
+    if (identity) {
+      cardEl.append(identity, body, actions);
+    } else {
+      cardEl.append(body, actions);
+    }
     if (cardStamp) {
       const stamp = el("time", "card-timestamp", cardStamp.text);
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
+    }
+    if (isMeetingList) {
+      appendArchiveRevealAction(wrapper, {
+        label: `Archive ${card.title || "meeting"}`
+      });
+      wrapper.append(cardEl);
+      installArchiveReveal(wrapper, card.meeting_record, {
+        canReveal: canRevealMeetingArchive,
+        performArchive: () => performMeetingArchive(card.meeting_record)
+      });
+      return wrapper;
     }
     if (canArchiveHomeCard(card)) {
       appendArchiveRevealAction(wrapper, {
@@ -4425,6 +4355,21 @@
       });
     }
     return wrapper;
+  }
+
+  function isMeetingsListCard(card) {
+    return Boolean(card && card.is_meeting_recording && card.render_profile === "meeting_list" && card.meeting_record);
+  }
+
+  function meetingListCardClass(card) {
+    const stateName = meetingState(card && card.meeting_record);
+    if (stateName === "failed") {
+      return "card card-meeting-list is-failed";
+    }
+    if (stateName === "completed") {
+      return "card card-meeting-list";
+    }
+    return "card card-meeting-list card-pending-thread";
   }
 
   function isMeetingProcessingCard(card) {
@@ -7261,7 +7206,7 @@
   }
 
   function installArchiveReveal(wrapper, item, config) {
-    const revealTrack = wrapper?.querySelector(".card, .meeting-row-card");
+    const revealTrack = wrapper?.querySelector(".card");
     const actionButton = wrapper?.querySelector(".archive-reveal-action");
     if (!revealTrack || !actionButton) {
       return;
