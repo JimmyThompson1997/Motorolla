@@ -504,7 +504,30 @@ function resolveFfmpegPath() {
 }
 
 function runEdgeTts({ voice, text, targetPath }) {
-  runProcess("python", ["-m", "edge_tts", "--voice", voice, "--text", text, "--write-media", targetPath], { cwd: repoRoot });
+  const args = ["-m", "edge_tts", "--voice", voice, "--text", text, "--write-media", targetPath];
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      runProcess("python", args, { cwd: repoRoot });
+      return;
+    } catch (error) {
+      lastError = error;
+      try {
+        if (fs.existsSync(targetPath)) {
+          fs.unlinkSync(targetPath);
+        }
+      } catch (_) {
+        // Leave any cleanup failure to the final retry error.
+      }
+      const message = String(error?.message || "");
+      const retryable = message.includes("503") || message.includes("timed out") || message.includes("ECONNRESET");
+      if (!retryable || attempt === 4) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1200 * attempt);
+    }
+  }
+  throw lastError || new Error("edge_tts failed");
 }
 
 function transcodeToWav(ffmpegPath, inputPath, outputPath) {
