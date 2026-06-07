@@ -1560,39 +1560,46 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("Meeting Mode Agent Handoff", json.dumps(messages))
         self.assertNotIn("attachments", messages[0])
         attachments = messages[1]["attachments"]
-        transcript_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript")
-        transcript_html_attachment = next(item for item in attachments if item["title"] == "Meeting Transcript HTML")
+        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
+        transcript_html_attachment = next(item for item in attachments if item["title"] == "Transcript")
         summary_attachment = next(item for item in attachments if item["id"] == "meeting-20260601-120000-device-abc123ef:html")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
         self.assertEqual(transcript_attachment["kind"], "text")
         self.assertIn("Jimmy:", transcript_attachment["text"])
         self.assertIn("meeting_transcript", transcript_attachment["artifact"])
         self.assertEqual(transcript_attachment["recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertIn("/api/shared/artifacts/", str(transcript_attachment["src"]))
+        self.assertIn("token=", str(transcript_attachment["src"]))
         self.assertEqual(transcript_html_attachment["kind"], "html")
         self.assertEqual(transcript_html_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(transcript_html_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertEqual(transcript_html_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertIn("meeting_transcript_html", transcript_html_attachment["artifact"])
+        self.assertIn("/api/shared/artifacts/", str(transcript_html_attachment["viewer_url"]))
+        self.assertIn("token=", str(transcript_html_attachment["viewer_url"]))
         self.assertEqual(summary_attachment["title"], "Meeting Summary")
         self.assertEqual(summary_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertEqual(summary_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertEqual(summary_attachment["viewer"]["viewer_artifact"], summary_attachment["artifact"])
-        self.assertNotIn("html_viewer_path", summary_attachment["viewer"])
+        self.assertEqual(summary_attachment["viewer"]["viewer_url"], summary_attachment["viewer_url"])
         self.assertEqual(audio_attachment["kind"], "audio")
         self.assertEqual(audio_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(audio_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertEqual(audio_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertIn("meeting_audio", audio_attachment["artifact"])
         self.assertTrue(str(audio_attachment["path"]).endswith(".m4a"))
-        self.assertTrue(str(audio_attachment["url"]).endswith("/api/meetings/meeting-20260601-120000-device-abc123ef/audio"))
+        self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", str(audio_attachment["url"]))
+        self.assertIn("token=", str(audio_attachment["url"]))
         raw_summary_html = base64.b64decode(str(self.service.feed.get_artifact(summary_attachment["artifact"])["content_base64"])).decode("utf-8")
-        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", raw_summary_html)
-        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", raw_summary_html)
+        self.assertIn("/api/shared/artifacts/", raw_summary_html)
+        self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", raw_summary_html)
+        self.assertNotIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", raw_summary_html)
+        self.assertNotIn("{{PUCKY_MEETING_AUDIO_LINK}}", raw_summary_html)
         self.assertNotIn("/api/meetings/", raw_summary_html)
         self.assertNotIn("<script", raw_summary_html.lower())
         raw_transcript_html = base64.b64decode(str(self.service.feed.get_artifact(transcript_html_attachment["artifact"])["content_base64"])).decode("utf-8")
-        self.assertIn("Meeting Transcript", raw_transcript_html)
+        self.assertIn("Transcript", raw_transcript_html)
         self.assertIn("Jimmy", raw_transcript_html)
         self.assertEqual(meeting["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertTrue(Path(meeting["audio_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
@@ -1664,17 +1671,53 @@ class ServerTests(unittest.TestCase):
         transcript_attachment = next(
             item
             for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
-            if item["title"] == "Meeting Transcript"
+            if item["title"] == "Transcript (Plain Text)"
         )
         transcript_html_attachment = next(
             item
             for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
-            if item["title"] == "Meeting Transcript HTML"
+            if item["title"] == "Transcript"
         )
         self.assertEqual(transcript_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertEqual(transcript_attachment["recording_title"], "Quarterly Deck Recording")
         self.assertEqual(transcript_html_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertEqual(transcript_html_attachment["recording_title"], "Quarterly Deck Recording")
+
+    def test_meeting_signed_summary_transcript_and_audio_urls_are_browser_readable_without_auth(self) -> None:
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-120000-device-abc123ef",
+                "started_at": "2026-06-01T12:00:00Z",
+                "stopped_at": "2026-06-01T12:00:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == "meeting-20260601-120000-device-abc123ef"), {})
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+        self.assertEqual(meeting["state"], "completed")
+        attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
+        summary_attachment = next(item for item in attachments if item["title"] == "Meeting Summary")
+        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript")
+        audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
+
+        for url in (
+            str(summary_attachment["viewer_url"]),
+            str(transcript_attachment["viewer_url"]),
+            str(audio_attachment["url"]),
+        ):
+            with urllib.request.urlopen(urllib.parse.urljoin(self.base_url, url), timeout=10) as response:
+                body = response.read()
+                self.assertTrue(body)
 
     def test_meeting_deepgram_transcribe_tool_keeps_neutral_speakers_when_names_are_unknown(self) -> None:
         self.post_json(
@@ -1740,8 +1783,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["agent"]["title_quality"], "human_like")
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
         self.assertTrue(any(item["title"] == "Meeting Audio" and item["kind"] == "audio" for item in attachments))
-        self.assertTrue(any(item["title"] == "Meeting Transcript" for item in attachments))
-        self.assertTrue(any(item["title"] == "Meeting Transcript HTML" for item in attachments))
+        self.assertTrue(any(item["title"] == "Transcript (Plain Text)" for item in attachments))
+        self.assertTrue(any(item["title"] == "Transcript" for item in attachments))
 
     def test_raw_meeting_title_is_allowed_and_flagged_machine_like(self) -> None:
         raw_meeting_id = "meeting-20260603-121500-device-raw-title"

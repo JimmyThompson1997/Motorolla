@@ -27,7 +27,8 @@ function parseArgs(argv) {
     baseUrl: DEFAULT_BASE_URL,
     headless: true,
     reportDir: "",
-    scenarioNames: []
+    scenarioNames: [],
+    bridgeMode: "none"
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = String(argv[index] || "");
@@ -48,6 +49,10 @@ function parseArgs(argv) {
     }
     if (token === "--headed") {
       options.headless = false;
+      continue;
+    }
+    if (token === "--with-bridge") {
+      options.bridgeMode = "with_bridge";
       continue;
     }
   }
@@ -553,6 +558,17 @@ function uniqueMeetingId(label, offsetMinutes = 0) {
   };
 }
 
+async function fetchArtifactText(baseUrl, apiToken, artifactId) {
+  const response = await fetch(`${baseUrl}/api/artifacts/${encodeURIComponent(artifactId)}`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${apiToken}` }
+  });
+  if (!response.ok) {
+    throw new Error(`Artifact fetch failed (${response.status})`);
+  }
+  return response.text();
+}
+
 function wavDurationMs(audioPath) {
   const buffer = fs.readFileSync(audioPath);
   if (buffer.length < 44 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
@@ -732,12 +748,10 @@ async function runScenario({
   apiToken,
   reportDir,
   scenario,
-  pathToMeetingId,
-  bridgeState
+  bridgeMode
 }) {
   const scenarioDir = path.join(reportDir, scenario.name);
   ensureDir(scenarioDir);
-  const bridgeStart = bridgeState.commands.length;
   const warnings = [];
 
   const feedBeforeApi = await fetchFeedSnapshot(baseUrl, apiToken);
@@ -785,12 +799,6 @@ async function runScenario({
   }
 
   const detailMeeting = completedPayload.meeting || {};
-  for (const value of [detailMeeting.device_path, detailMeeting.audio_path]) {
-    const cleanPath = String(value || "").trim();
-    if (cleanPath) {
-      pathToMeetingId.set(cleanPath, scenario.meetingId);
-    }
-  }
 
   if (String(detailMeeting.state || "") !== "completed") {
     throw new Error(`${scenario.name} did not reach completed state`);
@@ -819,14 +827,14 @@ async function runScenario({
 
   const attachments = summarizeAttachments(detailMeeting);
   const summaryAttachment = attachments.find((item) => String(item?.id || "") === `${scenario.meetingId}:html`);
-  const transcriptHtmlAttachment = attachments.find((item) => String(item?.title || "") === "Meeting Transcript HTML");
+  const transcriptHtmlAttachment = attachments.find((item) => String(item?.title || "") === "Transcript");
   if (!summaryAttachment) {
     throw new Error(`${scenario.name} is missing the HTML summary attachment`);
   }
   if (!transcriptHtmlAttachment) {
-    throw new Error(`${scenario.name} is missing the Meeting Transcript HTML attachment`);
+    throw new Error(`${scenario.name} is missing the Transcript attachment`);
   }
-  for (const requiredLabel of ["Meeting Transcript", "Meeting Transcript HTML", "Meeting Audio"]) {
+  for (const requiredLabel of ["Transcript (Plain Text)", "Transcript", "Meeting Audio"]) {
     if (!attachments.some((item) => String(item?.title || "") === requiredLabel)) {
       throw new Error(`${scenario.name} is missing attachment ${requiredLabel}`);
     }
@@ -875,7 +883,7 @@ async function runScenario({
   const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "04-transcript-detail");
 
   const chipTexts = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
-  for (const requiredLabel of ["Meeting Transcript", "Meeting Transcript HTML", String(summaryAttachment.title || ""), "Meeting Audio"]) {
+  for (const requiredLabel of ["Transcript (Plain Text)", "Transcript", String(summaryAttachment.title || ""), "Meeting Audio"]) {
     if (!chipTexts.includes(requiredLabel)) {
       throw new Error(`${scenario.name} transcript detail is missing attachment chip ${requiredLabel}`);
     }
@@ -905,22 +913,28 @@ async function runScenario({
   if (!summaryAttachment?.artifact) {
     throw new Error(`${scenario.name} is missing Meeting Summary artifact metadata`);
   }
-  const rawSummaryHtml = Buffer.from(String((await fetchArtifactBase64(baseUrl, apiToken, String(summaryAttachment.artifact || ""))).content_base64 || ""), "base64").toString("utf8");
+  const rawSummaryHtml = await fetchArtifactText(baseUrl, apiToken, String(summaryAttachment.artifact || ""));
   writeTextFile(path.join(scenarioDir, "raw_summary_html.html"), rawSummaryHtml);
-  const rawTranscriptHtml = Buffer.from(String((await fetchArtifactBase64(baseUrl, apiToken, String(transcriptHtmlAttachment.artifact || ""))).content_base64 || ""), "base64").toString("utf8");
+  const rawTranscriptHtml = await fetchArtifactText(baseUrl, apiToken, String(transcriptHtmlAttachment.artifact || ""));
   writeTextFile(path.join(scenarioDir, "raw_transcript_html.html"), rawTranscriptHtml);
 
-  if (!rawSummaryHtml.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}") || !rawSummaryHtml.includes("{{PUCKY_MEETING_AUDIO_LINK}}")) {
-    throw new Error(`${scenario.name} raw summary HTML is missing the required placeholders`);
+  if (!/href="\/api\/shared\/artifacts\/[^"]+\?token=/.test(rawSummaryHtml)) {
+    throw new Error(`${scenario.name} raw summary HTML is missing a signed transcript HTML link`);
+  }
+  if (!/href="\/api\/shared\/meetings\/[^"]+\/audio\?token=/.test(rawSummaryHtml)) {
+    throw new Error(`${scenario.name} raw summary HTML is missing a signed meeting audio link`);
+  }
+  if (rawSummaryHtml.includes("{{PUCKY_MEETING_TRANSCRIPT_LINK}}") || rawSummaryHtml.includes("{{PUCKY_MEETING_AUDIO_LINK}}")) {
+    throw new Error(`${scenario.name} raw summary HTML still contains placeholder tokens`);
   }
   if (rawSummaryHtml.includes("/api/meetings/") || rawSummaryHtml.includes("/tmp/") || rawSummaryHtml.includes("<script")) {
-    throw new Error(`${scenario.name} raw summary HTML still contains runtime links or inline script`);
+    throw new Error(`${scenario.name} raw summary HTML still contains protected runtime links or inline script`);
   }
   if (!renderedSummaryHtml.includes("pucky-meeting-transcript-link") || !renderedSummaryHtml.includes("pucky-meeting-audio-link")) {
     throw new Error(`${scenario.name} rendered summary did not expose transcript/audio controls`);
   }
   if (renderedSummaryHtml.includes("/api/meetings/") || renderedSummaryHtml.includes("/tmp/") || renderedSummaryHtml.includes("<script")) {
-    throw new Error(`${scenario.name} rendered summary still exposes raw runtime links or inline script`);
+    throw new Error(`${scenario.name} rendered summary still exposes protected runtime links or inline script`);
   }
   const normalizedSummaryText = normalizeProofText(summaryText);
   if (!normalizedSummaryText.includes("action")) {
@@ -969,7 +983,10 @@ async function runScenario({
   const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-transcript-from-html");
   await backToDetail(page, "attachment", "html_iframe");
 
-  const playerStateBeforeAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
+  const bridgeConnected = await page.evaluate(() => Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function"));
+  if (bridgeMode === "none" && bridgeConnected) {
+    throw new Error(`${scenario.name} unexpectedly detected a native bridge in no-bridge mode`);
+  }
   await page.frameLocator("#detail iframe.document-frame").locator("a.pucky-meeting-audio-link").click();
   await waitForDetail(page, "attachment", "audio_player");
   const audioResolution = await waitForAudioViewerResolution(page);
@@ -982,21 +999,20 @@ async function runScenario({
   if (!audioSource) {
     throw new Error(`${scenario.name} audio viewer did not resolve an audio source`);
   }
-  if (audioSource.includes("/api/meetings/")) {
-    throw new Error(`${scenario.name} audio viewer fell back to a raw meeting URL`);
+  if (!audioSource.includes("/api/shared/meetings/")) {
+    throw new Error(`${scenario.name} audio viewer did not use the signed meeting audio URL`);
   }
   const playbackProof = await playAttachmentAudioAndWaitForAdvance(page);
-  const playerStateAfterAudio = await page.evaluate(() => window.Pucky.request({ command: "player.state", args: {} }));
   const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "08-audio-playing");
   await backToDetail(page, "attachment", "html_iframe");
   await backToDetail(page, "transcript");
   await backToFeed(page);
 
-  const bridgeTrace = bridgeState.commands.slice(bridgeStart);
-  writeJsonFile(path.join(scenarioDir, "bridge_trace.json"), bridgeTrace);
-  if (bridgeTrace.some((entry) => String(entry?.command || "") === "meeting.recording.resolve_audio_link")) {
-    warnings.push("meeting_audio_html_depended_on_resolve_audio_link");
-  }
+  writeJsonFile(path.join(scenarioDir, "bridge_trace.json"), {
+    bridge_mode: bridgeMode,
+    bridge_connected: bridgeConnected,
+    commands: []
+  });
 
   const result = {
     schema: "pucky.meeting_mode_real_vm_scenario.v1",
@@ -1012,8 +1028,8 @@ async function runScenario({
     transcript_status: String(detailMeeting.transcript_status || ""),
     last_meeting_tool_name: String(detailMeeting.agent?.last_meeting_tool_name || detailMeeting.feed_item?.telemetry?.last_meeting_tool_name || ""),
     attachments: chipTexts,
-    player_state_before_audio: playerStateBeforeAudio,
-    player_state_after_audio: playerStateAfterAudio,
+    bridge_mode: bridgeMode,
+    bridge_connected: bridgeConnected,
     audio_playback: playbackProof,
     audio_source: String(audioSource || ""),
     transcript_text,
@@ -1252,6 +1268,7 @@ async function run() {
     schema: "pucky.meeting_mode_real_vm_proof.v1",
     started_at: new Date().toISOString(),
     base_url: options.baseUrl,
+    bridge_mode: options.bridgeMode,
     report_dir: reportDir,
     scenarios: []
   };
@@ -1296,12 +1313,14 @@ async function run() {
       viewport: VIEWPORT,
       recordVideo: { dir: videoDir, size: VIEWPORT }
     });
-    await installCodexPuckyBridge(context, buildBridgeHandler({
-      baseUrl: options.baseUrl,
-      apiToken,
-      pathToMeetingId,
-      bridgeState
-    }));
+    if (options.bridgeMode === "with_bridge") {
+      await installCodexPuckyBridge(context, buildBridgeHandler({
+        baseUrl: options.baseUrl,
+        apiToken,
+        pathToMeetingId,
+        bridgeState
+      }));
+    }
     page = await context.newPage();
     pageVideo = page.video();
     attachPageLogging(page, consoleLogPath);
@@ -1324,8 +1343,7 @@ async function run() {
           apiToken,
           reportDir,
           scenario,
-          pathToMeetingId,
-          bridgeState
+          bridgeMode: options.bridgeMode
         });
         summary.scenarios.push({ ok: true, ...result });
       } catch (error) {
@@ -1375,6 +1393,7 @@ async function run() {
     if (videoPath && fs.existsSync(summaryPath)) {
       const current = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
       current.video_path = videoPath;
+      current.bridge_mode = options.bridgeMode;
       current.bridge_commands = bridgeState.commands;
       writeJsonFile(summaryPath, current);
     }

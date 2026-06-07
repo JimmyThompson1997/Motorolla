@@ -4689,8 +4689,9 @@
     const id = String(item?.id || "").trim().toLowerCase();
     const title = String(item?.title || "").trim().toLowerCase();
     if (id.endsWith(":html")) return 0;
-    if (title === "meeting transcript html") return 1;
-    if (title === "meeting transcript") return 2;
+    if (title === "meeting summary") return 0;
+    if (title === "transcript" || title === "meeting transcript html") return 1;
+    if (title === "transcript (plain text)" || title === "meeting transcript") return 2;
     if (title === "meeting audio") return 3;
     return 4;
   }
@@ -4768,12 +4769,20 @@
   }
 
   async function resolveMeetingTranscriptLink(card, summaryItem = null) {
-    const htmlContext = await resolveMeetingAttachmentLink(
+    let htmlContext = await resolveMeetingAttachmentLink(
       card,
       summaryItem,
-      "Meeting Transcript HTML",
+      "Transcript",
       attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024 })
     );
+    if (!htmlContext.targetAttachment) {
+      htmlContext = await resolveMeetingAttachmentLink(
+        card,
+        summaryItem,
+        "Meeting Transcript HTML",
+        attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024 })
+      );
+    }
     if (htmlContext.targetAttachment) {
       return {
         ...htmlContext,
@@ -4781,12 +4790,20 @@
         transcriptAttachment: htmlContext.targetAttachment
       };
     }
-    const context = await resolveMeetingAttachmentLink(
+    let context = await resolveMeetingAttachmentLink(
       card,
       summaryItem,
-      "Meeting Transcript",
+      "Transcript (Plain Text)",
       attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true })
     );
+    if (!context.targetAttachment) {
+      context = await resolveMeetingAttachmentLink(
+        card,
+        summaryItem,
+        "Meeting Transcript",
+        attachment => resolveArtifactUrl(attachment, { maxBytes: 2 * 1024 * 1024, preferDataUrl: true })
+      );
+    }
     return {
       ...context,
       transcriptIndex: context.targetIndex,
@@ -4874,7 +4891,7 @@
         if (action === "transcript") {
           event.preventDefault();
           event.stopPropagation();
-          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, ["Meeting Transcript HTML", "Meeting Transcript"])) {
+          if (!openMeetingAttachmentFromHtml(card, attachments, summaryIndex, ["Transcript", "Transcript (Plain Text)", "Meeting Transcript HTML", "Meeting Transcript"])) {
             target.removeAttribute("data-pucky-meeting-action");
             target.click();
           }
@@ -5249,7 +5266,9 @@
       const transcriptContext = await resolveMeetingTranscriptLink(card, item);
       const audioContext = await resolveMeetingAudioAttachmentLink(card, item);
       const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
-      if (hasNativeBridge && (isAndroidLocalArtifactPath(localPath) || artifactId)) {
+      if (src) {
+        iframe.src = src;
+      } else if (hasNativeBridge && (isAndroidLocalArtifactPath(localPath) || artifactId)) {
         const readPath = isAndroidLocalArtifactPath(localPath) ? localPath : artifactVirtualPath(artifactId);
         const result = await Pucky.request({
           command: "artifact.read_base64",
@@ -5268,8 +5287,6 @@
           transcriptHref: transcriptContext.href,
           audioHref: audioContext.href
         });
-      } else if (src) {
-        iframe.src = src;
       } else {
         throw new Error("HTML attachment source is missing");
       }

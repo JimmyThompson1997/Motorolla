@@ -533,6 +533,8 @@ class Config:
     composio_default_user_id: str = "jimmythompson323"
     connect_portal_secret: str = ""
     connect_portal_ttl_seconds: int = 12 * 60 * 60
+    meeting_artifact_link_secret: str = ""
+    meeting_artifact_link_ttl_seconds: int = 365 * 24 * 60 * 60
     composio_default_auth_mode: str = "browser"
     proof_reply_delay_enabled: bool = False
     meeting_developer_instructions: str | None = None
@@ -583,6 +585,15 @@ class Config:
                 or os.environ.get("PUCKY_API_TOKEN", "").strip()
             ),
             connect_portal_ttl_seconds=max(300, int(os.environ.get("PUCKY_CONNECT_PORTAL_TTL_SECONDS", str(12 * 60 * 60)))),
+            meeting_artifact_link_secret=(
+                os.environ.get("PUCKY_MEETING_ARTIFACT_LINK_SECRET", "").strip()
+                or os.environ.get("PUCKY_CONNECT_PORTAL_SECRET", "").strip()
+                or os.environ.get("PUCKY_API_TOKEN", "").strip()
+            ),
+            meeting_artifact_link_ttl_seconds=max(
+                3600,
+                int(os.environ.get("PUCKY_MEETING_ARTIFACT_LINK_TTL_SECONDS", str(365 * 24 * 60 * 60))),
+            ),
             composio_default_auth_mode=os.environ.get("PUCKY_COMPOSIO_PORTAL_AUTH_MODE", "browser").strip().lower() or "browser",
             proof_reply_delay_enabled=(
                 os.environ.get("PUCKY_PROOF_REPLY_DELAY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -1511,6 +1522,74 @@ class PuckyVoiceService:
     def _portal_token_secret(self) -> str:
         return str(self.config.connect_portal_secret or "").strip()
 
+    def _meeting_artifact_link_secret(self) -> str:
+        return (
+            str(self.config.meeting_artifact_link_secret or "").strip()
+            or str(self.config.connect_portal_secret or "").strip()
+            or str(self.config.pucky_api_token or "").strip()
+        )
+
+    def _mint_meeting_artifact_link_token(
+        self,
+        *,
+        resource_type: str,
+        resource_id: str,
+        ttl_seconds: int | None = None,
+    ) -> str:
+        secret = self._meeting_artifact_link_secret()
+        if not secret:
+            return ""
+        clean_type = str(resource_type or "").strip().lower()
+        clean_id = str(resource_id or "").strip()
+        if clean_type not in {"artifact", "meeting_audio"} or not clean_id:
+            return ""
+        now = int(time.time())
+        payload = {
+            "typ": "pucky_meeting_artifact_link",
+            "iat": now,
+            "exp": now + max(3600, int(ttl_seconds or self.config.meeting_artifact_link_ttl_seconds)),
+            "resource_type": clean_type,
+            "resource_id": clean_id,
+        }
+        header = {"alg": "HS256", "typ": "JWT"}
+        return _encode_signed_token(header, payload, secret)
+
+    def _verify_meeting_artifact_link_token(
+        self,
+        token: str,
+        *,
+        resource_type: str,
+        resource_id: str,
+    ) -> bool:
+        payload = _decode_signed_token(str(token or "").strip(), self._meeting_artifact_link_secret())
+        if not payload:
+            return False
+        if str(payload.get("typ") or "") != "pucky_meeting_artifact_link":
+            return False
+        if str(payload.get("resource_type") or "").strip().lower() != str(resource_type or "").strip().lower():
+            return False
+        if str(payload.get("resource_id") or "").strip() != str(resource_id or "").strip():
+            return False
+        return True
+
+    def meeting_artifact_signed_url(self, artifact_id: str, *, base_url: str = "") -> str:
+        clean = str(artifact_id or "").strip()
+        token = self._mint_meeting_artifact_link_token(resource_type="artifact", resource_id=clean)
+        if not clean or not token:
+            return ""
+        prefix = str(base_url or "").rstrip("/")
+        path = f"/api/shared/artifacts/{quote(clean, safe='')}?token={quote(token, safe='')}"
+        return f"{prefix}{path}" if prefix else path
+
+    def meeting_audio_signed_url(self, meeting_id: str, *, base_url: str = "") -> str:
+        clean = _safe_meeting_id(meeting_id)
+        token = self._mint_meeting_artifact_link_token(resource_type="meeting_audio", resource_id=clean)
+        if not clean or not token:
+            return ""
+        prefix = str(base_url or "").rstrip("/")
+        path = f"/api/shared/meetings/{quote(clean, safe='')}/audio?token={quote(token, safe='')}"
+        return f"{prefix}{path}" if prefix else path
+
     def _mint_links_portal_token(self, *, user_id: str, ttl_seconds: int | None = None) -> str:
         secret = self._portal_token_secret()
         if not secret:
@@ -2178,6 +2257,12 @@ class PuckyVoiceService:
         )
         record["canonical_basename"] = canonical_basename
         self._apply_meeting_basename_sync(record, canonical_basename, owner="meeting_record_update", rename_transcript=True)
+        transcript_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript"
+        transcript_html_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript_html"
+        summary_artifact_id = f"pucky_card_{meeting_id}:html"
+        transcript_href = self.meeting_artifact_signed_url(transcript_html_artifact_id)
+        transcript_plain_href = self.meeting_artifact_signed_url(transcript_artifact_id)
+        audio_href = self.meeting_audio_signed_url(meeting_id)
         if canonical_transcript:
             transcript_path = str(
                 self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", canonical_transcript)
@@ -2209,9 +2294,9 @@ class PuckyVoiceService:
             record["transcript_error"] = ""
             record["transcript_result"] = {
                 "schema": "pucky.meeting_transcript_attachment.v1",
-                "title": "Meeting Transcript",
+                "title": "Transcript (Plain Text)",
                 "kind": "text",
-                "html_title": "Meeting Transcript HTML",
+                "html_title": "Transcript",
                 "diarization_status": _meeting_diarization_status_from_text(canonical_transcript, speaker_turns),
             }
             record["diarization_requested"] = True
@@ -2233,7 +2318,8 @@ class PuckyVoiceService:
         )
         html_base64 = str(feed_item.get("html_base64") or "")
         if summary_html:
-            html_base64 = base64.b64encode(summary_html.encode("utf-8")).decode("ascii")
+            finalized_summary_html = _meeting_summary_html_with_vm_links(summary_html, transcript_href, audio_href)
+            html_base64 = base64.b64encode(finalized_summary_html.encode("utf-8")).decode("ascii")
         if isinstance(feed_item, dict) and str(record.get("card_id") or "").strip():
             assistant_audio_b64 = str(feed_item.get("audio_base64") or "")
             request_audio_b64 = ""
@@ -2725,7 +2811,7 @@ class PuckyVoiceService:
         record["transcript_text"] = transcript_text
         record["transcript_result"] = {
             "schema": "pucky.meeting_transcript_attachment.v1",
-            "title": str(transcript_attachment.get("title") or "Meeting Transcript"),
+            "title": "Transcript (Plain Text)",
             "kind": str(transcript_attachment.get("kind") or "text"),
             "diarization_status": _meeting_diarization_status_from_text(transcript_text, parsed_turns),
         }
@@ -2803,27 +2889,50 @@ class PuckyVoiceService:
             )
             messages.append(assistant)
         attachments = [dict(item) for item in list(assistant.get("attachments") or []) if isinstance(item, dict)]
+        transcript_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript"
+        transcript_html_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript_html"
+        summary_artifact_id = f"pucky_card_{meeting_id}:html"
+        transcript_plain_href = self.meeting_artifact_signed_url(transcript_artifact_id)
+        transcript_href = self.meeting_artifact_signed_url(transcript_html_artifact_id)
+        audio_href = self.meeting_audio_signed_url(meeting_id)
+        summary_href = self.meeting_artifact_signed_url(summary_artifact_id)
         for attachment in attachments:
             attachment["meeting_id"] = meeting_id
             attachment["canonical_basename"] = canonical_basename
             attachment["recording_title"] = str(record.get("recording_title") or "")
-            if str(attachment.get("kind") or "") == "text" and str(attachment.get("title") or "").strip().lower() == "meeting transcript":
+            title = str(attachment.get("title") or "").strip().lower()
+            kind = str(attachment.get("kind") or "").strip().lower()
+            if kind == "text" and title in {"meeting transcript", "transcript", "transcript (plain text)"}:
+                attachment["title"] = "Transcript (Plain Text)"
                 attachment["text"] = transcript_text
                 if transcript_path:
                     attachment["path"] = transcript_path
-            elif str(attachment.get("kind") or "") == "html" and str(attachment.get("title") or "").strip().lower() == "meeting transcript html":
+                attachment["artifact"] = transcript_artifact_id
+                attachment["src"] = transcript_plain_href
+                attachment["url"] = transcript_plain_href
+            elif kind == "html" and title in {"meeting transcript html", "transcript"}:
+                attachment["title"] = "Transcript"
                 if transcript_html_path:
                     attachment["path"] = transcript_html_path
-                attachment["artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
-                attachment["viewer_artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
-                attachment["html_artifact"] = f"pucky_card_{meeting_id}:meeting_transcript_html"
-            elif str(attachment.get("title") or "").strip().lower() == "meeting audio":
+                attachment["artifact"] = transcript_html_artifact_id
+                attachment["viewer_artifact"] = transcript_html_artifact_id
+                attachment["html_artifact"] = transcript_html_artifact_id
+                attachment["viewer_url"] = transcript_href
+                attachment["html_url"] = transcript_href
+            elif kind == "html" and str(attachment.get("id") or "").strip() == f"{meeting_id}:html":
+                attachment["title"] = "Meeting Summary"
+                attachment["artifact"] = summary_artifact_id
+                attachment["viewer_artifact"] = summary_artifact_id
+                attachment["html_artifact"] = summary_artifact_id
+                attachment["viewer_url"] = summary_href
+                attachment["html_url"] = summary_href
+            elif title == "meeting audio":
                 audio_path = str(record.get("audio_path") or "").strip()
-                audio_url = str(record.get("audio_url") or "").strip()
                 if audio_path:
                     attachment["path"] = audio_path
-                if audio_url:
-                    attachment["url"] = audio_url
+                if audio_href:
+                    attachment["src"] = audio_href
+                    attachment["url"] = audio_href
         assistant["attachments"] = attachments
         return messages
 
@@ -2888,6 +2997,13 @@ class PuckyVoiceService:
         transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
         transcript_html_path = ""
+        transcript_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript"
+        transcript_html_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript_html"
+        summary_artifact_id = f"pucky_card_{meeting_id}:html"
+        transcript_href = self.meeting_artifact_signed_url(transcript_html_artifact_id)
+        transcript_plain_href = self.meeting_artifact_signed_url(transcript_artifact_id)
+        audio_href = self.meeting_audio_signed_url(meeting_id)
+        finalized_summary_html = ""
         if transcript_source:
             transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
@@ -2905,9 +3021,10 @@ class PuckyVoiceService:
                     {
                         "id": f"{meeting_id}:transcript",
                         "path": transcript_path,
-                        "artifact": f"pucky_card_{meeting_id}:meeting_transcript",
+                        "artifact": transcript_artifact_id,
+                        "src": transcript_plain_href,
                         "mime_type": "text/plain",
-                        "title": "Meeting Transcript",
+                        "title": "Transcript (Plain Text)",
                         "kind": "text",
                         "text": transcript_text,
                         "meeting_id": meeting_id,
@@ -2921,11 +3038,13 @@ class PuckyVoiceService:
                     {
                         "id": f"{meeting_id}:transcript_html",
                         "path": transcript_html_path,
-                        "artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
-                        "viewer_artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
-                        "html_artifact": f"pucky_card_{meeting_id}:meeting_transcript_html",
+                        "artifact": transcript_html_artifact_id,
+                        "viewer_artifact": transcript_html_artifact_id,
+                        "html_artifact": transcript_html_artifact_id,
+                        "viewer_url": transcript_href,
+                        "html_url": transcript_href,
                         "mime_type": "text/html",
-                        "title": "Meeting Transcript HTML",
+                        "title": "Transcript",
                         "kind": "html",
                         "meeting_id": meeting_id,
                         "canonical_basename": canonical_basename,
@@ -2935,8 +3054,13 @@ class PuckyVoiceService:
                 )
             )
         if envelope.html_content:
-            html_title = envelope.html_title or f"{envelope.card_title or 'Meeting'} Summary"
-            html_artifact = f"pucky_card_{meeting_id}:html"
+            html_title = "Meeting Summary"
+            html_artifact = summary_artifact_id
+            finalized_summary_html = _meeting_summary_html_with_vm_links(
+                envelope.html_content,
+                transcript_href,
+                audio_href,
+            )
             prepared.append(
                 normalize_attachment(
                     {
@@ -2944,12 +3068,12 @@ class PuckyVoiceService:
                         "artifact": html_artifact,
                         "viewer_artifact": html_artifact,
                         "html_artifact": html_artifact,
+                        "viewer_url": self.meeting_artifact_signed_url(html_artifact),
+                        "html_url": self.meeting_artifact_signed_url(html_artifact),
                         "mime_type": "text/html",
                         "title": html_title,
                         "kind": "html",
                         "meeting_id": meeting_id,
-                        "device_path": str(record.get("device_path") or ""),
-                        "audio_url": str(record.get("audio_url") or ""),
                         "canonical_basename": canonical_basename,
                         "recording_title": recording_title,
                         "started_at": str(record.get("started_at") or record.get("created_at") or ""),
@@ -2961,6 +3085,9 @@ class PuckyVoiceService:
             )
         audio_attachment = _meeting_audio_attachment_payload(record, canonical_basename)
         if audio_attachment:
+            if audio_href:
+                audio_attachment["src"] = audio_href
+                audio_attachment["url"] = audio_href
             prepared.append(
                 normalize_attachment(
                     audio_attachment
@@ -2975,6 +3102,7 @@ class PuckyVoiceService:
             "recording_title": recording_title,
             "recording_title_source": recording_title_source,
             "canonical_basename": canonical_basename,
+            "summary_html_content": finalized_summary_html,
         }
 
     def _write_meeting_text_artifact(self, meeting_id: str, canonical_basename: str, suffix: str, content: str) -> Path:
@@ -3634,8 +3762,9 @@ class PuckyVoiceService:
         }
         html_mime_type = ""
         html_base64 = ""
-        if envelope.html_content:
-            html_bytes = envelope.html_content.encode("utf-8")
+        final_html_content = str(attachment_meta.get("summary_html_content") or envelope.html_content or "")
+        if final_html_content:
+            html_bytes = final_html_content.encode("utf-8")
             if len(html_bytes) <= self.config.max_html_bytes:
                 html_mime_type = "text/html"
                 html_base64 = base64.b64encode(html_bytes).decode("ascii")
@@ -4359,7 +4488,8 @@ def _extract_named_meeting_transcript_attachment(attachments: tuple[dict[str, ob
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or "").strip().lower()
-        if title == "meeting transcript":
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind == "text" and title in {"meeting transcript", "transcript", "transcript (plain text)"}:
             return dict(item)
     return {}
 
@@ -4373,7 +4503,9 @@ def _meeting_transcript_attachment_payload(result: dict[str, object]) -> dict[st
         for item in attachments:
             if not isinstance(item, dict):
                 continue
-            if str(item.get("title") or "").strip().lower() == "meeting transcript":
+            title = str(item.get("title") or "").strip().lower()
+            kind = str(item.get("kind") or "").strip().lower()
+            if kind == "text" and title in {"meeting transcript", "transcript", "transcript (plain text)"}:
                 return dict(item)
     return {}
 
@@ -4385,9 +4517,63 @@ def _meeting_transcript_text_from_attachment(item: dict[str, object]) -> str:
     return text
 
 
+def _meeting_summary_link_html(href: str, label: str, action: str, class_name: str) -> str:
+    return (
+        f'<a class="document-open-link {html.escape(class_name)}" '
+        f'href="{html.escape(str(href or "").strip())}" '
+        f'data-pucky-meeting-action="{html.escape(str(action or "").strip())}">'
+        f"{html.escape(str(label or '').strip())}</a>"
+    )
+
+
+def _meeting_summary_html_with_vm_links(summary_html: str, transcript_href: str, audio_href: str) -> str:
+    output = str(summary_html or "")
+    if not output:
+        return output
+    transcript_link = _meeting_summary_link_html(
+        transcript_href,
+        "Open Transcript",
+        "transcript",
+        "pucky-meeting-transcript-link",
+    )
+    audio_link = _meeting_summary_link_html(
+        audio_href,
+        "Listen To Audio",
+        "audio",
+        "pucky-meeting-audio-link",
+    )
+    output = output.replace(
+        "{{PUCKY_MEETING_TRANSCRIPT_LINK}}",
+        transcript_link,
+    )
+    output = output.replace(
+        "{{PUCKY_MEETING_AUDIO_LINK}}",
+        audio_link,
+    )
+    output = re.sub(
+        r'<a\b[^>]*href=["\']\{\{PUCKY_MEETING_TRANSCRIPT_LINK\}\}["\'][^>]*>.*?</a>',
+        transcript_link,
+        output,
+        flags=re.I | re.S,
+    )
+    output = re.sub(
+        r'<a\b[^>]*href=["\']\{\{PUCKY_MEETING_AUDIO_LINK\}\}["\'][^>]*>.*?</a>',
+        audio_link,
+        output,
+        flags=re.I | re.S,
+    )
+    output = re.sub(
+        r'<a\b[^>]*href=["\'](?:https?:\/\/[^"\']+)?\/api\/meetings\/[^"\']+\/audio(?:\?[^"\']*)?["\'][^>]*>.*?</a>',
+        audio_link,
+        output,
+        flags=re.I | re.S,
+    )
+    return output
+
+
 def _meeting_transcript_html_document(record: dict[str, object], transcript_text: str) -> str:
-    title = str(record.get("recording_title") or record.get("title") or "Meeting Transcript").strip() or "Meeting Transcript"
-    subtitle = "Meeting Transcript"
+    title = str(record.get("recording_title") or record.get("title") or "Transcript").strip() or "Transcript"
+    subtitle = "Transcript"
     rows: list[str] = []
     for raw_line in str(transcript_text or "").splitlines():
         clean_line = str(raw_line or "").strip()
@@ -5391,6 +5577,30 @@ def make_handler(service: PuckyVoiceService):
                     return
                 self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
                 return
+            if path.startswith("/api/shared/meetings/") and path.endswith("/audio"):
+                query = parse_qs(parsed.query)
+                meeting_id = unquote(path.removeprefix("/api/shared/meetings/").removesuffix("/audio")).strip()
+                token = query.get("token", [""])[0]
+                if not service._verify_meeting_artifact_link_token(
+                    token,
+                    resource_type="meeting_audio",
+                    resource_id=meeting_id,
+                ):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                audio = service.meeting_audio(meeting_id)
+                if audio is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "meeting_audio_not_found"})
+                    return
+                body, mime_type, filename = audio
+                self._bytes(
+                    HTTPStatus.OK,
+                    body,
+                    mime_type,
+                    filename=filename,
+                    headers={"X-Robots-Tag": "noindex, nofollow"},
+                )
+                return
             if path.startswith("/api/meetings/") and path.endswith("/audio"):
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -5412,6 +5622,34 @@ def make_handler(service: PuckyVoiceService):
                     self._json(HTTPStatus.OK, service.meeting_detail(meeting_id))
                 except KeyError:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "meeting_not_found"})
+                return
+            if path.startswith("/api/shared/artifacts/"):
+                query = parse_qs(parsed.query)
+                artifact_id = unquote(path.removeprefix("/api/shared/artifacts/")).strip()
+                token = query.get("token", [""])[0]
+                if not service._verify_meeting_artifact_link_token(
+                    token,
+                    resource_type="artifact",
+                    resource_id=artifact_id,
+                ):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                artifact = service.artifact(artifact_id)
+                if artifact is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "artifact_not_found"})
+                    return
+                try:
+                    body = base64.b64decode(str(artifact.get("content_base64") or ""))
+                except Exception:
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "artifact_decode_failed"})
+                    return
+                self._bytes(
+                    HTTPStatus.OK,
+                    body,
+                    str(artifact.get("mime_type") or "application/octet-stream"),
+                    filename=str(artifact.get("artifact_id") or "artifact"),
+                    headers={"X-Robots-Tag": "noindex, nofollow"},
+                )
                 return
             if path.startswith("/api/artifacts/"):
                 if not self._is_authorized():
@@ -5721,25 +5959,46 @@ def make_handler(service: PuckyVoiceService):
             self.end_headers()
             self.wfile.write(body)
 
-        def _text(self, status: HTTPStatus, text: str, content_type: str) -> None:
+        def _text(
+            self,
+            status: HTTPStatus,
+            text: str,
+            content_type: str,
+            *,
+            headers: dict[str, str] | None = None,
+        ) -> None:
             body = text_body(text)
             self.send_response(int(status))
             self._cors_headers()
             self.send_header("Content-Type", content_type)
+            for key, value in (headers or {}).items():
+                if value:
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
-        def _html(self, status: HTTPStatus, html_text: str) -> None:
-            self._text(status, html_text, "text/html; charset=utf-8")
+        def _html(self, status: HTTPStatus, html_text: str, *, headers: dict[str, str] | None = None) -> None:
+            self._text(status, html_text, "text/html; charset=utf-8", headers=headers)
 
-        def _bytes(self, status: HTTPStatus, body: bytes, content_type: str, *, filename: str = "") -> None:
+        def _bytes(
+            self,
+            status: HTTPStatus,
+            body: bytes,
+            content_type: str,
+            *,
+            filename: str = "",
+            headers: dict[str, str] | None = None,
+        ) -> None:
             self.send_response(int(status))
             self._cors_headers()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             if filename:
                 self.send_header("Content-Disposition", inline_content_disposition(filename))
+            for key, value in (headers or {}).items():
+                if value:
+                    self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 

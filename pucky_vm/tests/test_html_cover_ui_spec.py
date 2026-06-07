@@ -312,7 +312,7 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "requestAnimationFrame(bind);" in bridge
     assert "event.target instanceof Element" not in bridge
     assert "target instanceof HTMLAnchorElement" not in bridge
-    assert '["Meeting Transcript HTML", "Meeting Transcript"]' in bridge
+    assert '["Transcript", "Transcript (Plain Text)", "Meeting Transcript HTML", "Meeting Transcript"]' in bridge
     html_rewrite = function_block(app, "rewriteMeetingHtmlContent")
     assert 'const audioHref = String(options.audioHref || "").trim();' in html_rewrite
     assert "await resolveMeetingAudioLink(source)" not in html_rewrite
@@ -320,8 +320,12 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert 'output = output.replace(/<a\\b[^>]*href=["\']\\{\\{PUCKY_MEETING_AUDIO_LINK\\}\\}["\'][^>]*>.*?<\\/a>/gi, replacement);' in html_rewrite
     html_iframe = function_block(app, "htmlIframeViewer")
     assert "const audioContext = await resolveMeetingAudioAttachmentLink(card, item);" in html_iframe
+    assert "if (src) {" in html_iframe
+    assert "iframe.src = src;" in html_iframe
     assert "audioHref: audioContext.href" in html_iframe
     transcript_link = function_block(app, "resolveMeetingTranscriptLink")
+    assert '"Transcript"' in transcript_link
+    assert '"Transcript (Plain Text)"' in transcript_link
     assert '"Meeting Transcript HTML"' in transcript_link
     assert '"Meeting Transcript"' in transcript_link
     assert "function isMeetingProcessingCard(card)" in app
@@ -2022,7 +2026,8 @@ def test_feed_tile_prefers_meeting_summary_attachment_when_no_html_path() -> Non
     assert "function firstDisplayableAttachmentInfo(card)" in app
     assert "function preferredDisplayAttachments(card, attachments)" in app
     assert 'if (id.endsWith(":html")) return 0;' in app
-    assert 'if (title === "meeting transcript html") return 1;' in app
+    assert 'if (title === "meeting summary") return 0;' in app
+    assert 'if (title === "transcript" || title === "meeting transcript html") return 1;' in app
     assert "preferredDisplayAttachments(card, messages[index]?.attachments)" in app
     assert "preferredDisplayAttachments(card, card?.attachments)" in app
     assert '["html_iframe", "table", "text", "image_gallery", "video_player", "audio_player", "document_html"]' in app
