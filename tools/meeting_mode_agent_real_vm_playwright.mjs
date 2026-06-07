@@ -1055,7 +1055,7 @@ async function runScenario({
     bridge_connected: bridgeConnected,
     audio_playback: playbackProof,
     audio_source: String(audioSource || ""),
-    transcript_text,
+    transcript_text: transcriptText,
     summary_text: String(summaryText || ""),
     warnings,
     screenshots: {
