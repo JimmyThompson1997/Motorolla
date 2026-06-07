@@ -24,6 +24,7 @@ from pucky_vm.server import (
     PuckyVoiceService,
     _meeting_request_audio_attachment,
     make_handler,
+    meeting_reply_output_schema,
     parse_reply_envelope,
     reply_output_schema,
     reset_broker_for_tests,
@@ -1525,7 +1526,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn("audio_path:", prompt)
         self.assertIn("Use Deepgram for the meeting transcript and diarization.", prompt)
         self.assertIn("keep distinct anonymous speakers separated as neutral labels", prompt)
-        self.assertIn("The platform will publish a VM transcript HTML artifact", prompt)
+        self.assertIn("Return the cleaned labeled transcript in transcript_text.", prompt)
+        self.assertIn("The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text.", prompt)
         self.assertIn("Use due dates only when the meeting explicitly states them.", prompt)
         self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", prompt)
         self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", prompt)
@@ -2928,11 +2930,13 @@ class ServerTests(unittest.TestCase):
         for key in item_schema["required"]:
             self.assertEqual(item_schema["properties"][key]["type"], ["string", "null"])
 
-    def test_meeting_turns_share_the_normal_reply_schema(self) -> None:
-        normal_schema = reply_output_schema()
+    def test_meeting_reply_output_schema_requires_transcript_text(self) -> None:
+        schema = meeting_reply_output_schema()
 
-        self.assertNotIn("meeting_result", normal_schema["required"])
-        self.assertNotIn("meeting_result", normal_schema["properties"])
+        self.assertIn("transcript_text", schema["properties"])
+        self.assertIn("transcript_text", schema["required"])
+        self.assertNotIn("meeting_result", schema["required"])
+        self.assertNotIn("meeting_result", schema["properties"])
 
     def test_reply_envelope_accepts_safe_icon_slug(self) -> None:
         envelope = parse_reply_envelope(
@@ -2950,6 +2954,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.reply_text, "Text")
         self.assertEqual(envelope.recording_title, "Recording Title")
         self.assertEqual(envelope.card_icon, "sparkles")
+        self.assertEqual(envelope.transcript_text, "")
         self.assertEqual(envelope.html_content, "")
 
     def test_large_html_is_omitted(self) -> None:

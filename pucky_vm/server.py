@@ -494,6 +494,7 @@ class ReplyEnvelope:
     card_title: str
     card_icon: str
     recording_title: str = ""
+    transcript_text: str = ""
     html_title: str = ""
     html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
@@ -2722,7 +2723,7 @@ class PuckyVoiceService:
                 request_audio_mime_type=mime_type,
                 request_audio_base64=base64.b64encode(audio).decode("ascii"),
                 request_audio_attachment=_meeting_request_audio_attachment(record),
-                output_schema=reply_output_schema(),
+                output_schema=meeting_reply_output_schema(),
                 developer_instructions=self.config.meeting_developer_instructions or self.config.developer_instructions,
                 display_transcript_text="Meeting recording",
                 force_unread=True,
@@ -2794,6 +2795,14 @@ class PuckyVoiceService:
     @staticmethod
     def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
         transcript_attachment = _meeting_transcript_attachment_payload(result)
+        if not transcript_attachment:
+            transcript_text = str(result.get("transcript_text") or "").replace("\r\n", "\n").strip()
+            if transcript_text:
+                transcript_attachment = {
+                    "title": "Transcript (Plain Text)",
+                    "kind": "text",
+                    "text": transcript_text,
+                }
         if not transcript_attachment:
             transcript_attachment = _meeting_fallback_transcript_attachment(record)
         if not transcript_attachment:
@@ -3005,6 +3014,14 @@ class PuckyVoiceService:
         record["canonical_basename"] = canonical_basename
         self._apply_meeting_basename_sync(record, canonical_basename, owner="meeting_agent_recording_title", rename_transcript=False)
         transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
+        if not transcript_source:
+            transcript_text = str(envelope.transcript_text or "").replace("\r\n", "\n").strip()
+            if transcript_text:
+                transcript_source = {
+                    "title": "Transcript (Plain Text)",
+                    "kind": "text",
+                    "text": transcript_text,
+                }
         if not transcript_source:
             transcript_source = _meeting_fallback_transcript_attachment(record)
         if not transcript_source:
@@ -3845,6 +3862,8 @@ class PuckyVoiceService:
         result["accent"] = card["accent"]
         if envelope.recording_title:
             result["recording_title"] = envelope.recording_title
+        if envelope.transcript_text:
+            result["transcript_text"] = envelope.transcript_text
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -4028,6 +4047,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
     reply_text = str(data.get("reply_text") or "").strip() or clean
     card_title = (str(data.get("card_title") or "").strip() or fallback_title(reply_text))[:MAX_CARD_TITLE_CHARS].strip() or "Pucky"
     recording_title = str(data.get("recording_title") or "").strip()[:MAX_CARD_TITLE_CHARS].strip()
+    transcript_text = str(data.get("transcript_text") or "").replace("\r\n", "\n").strip()
     html_title = ""
     html_content = ""
     html = data.get("html")
@@ -4044,6 +4064,7 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
         card_title,
         normalize_card_icon(data.get("card_icon")),
         recording_title,
+        transcript_text,
         html_title,
         html_content,
         tuple(attachments),
@@ -4098,6 +4119,18 @@ def reply_output_schema() -> dict[str, object]:
         },
         "required": ["reply_text", "card_title", "card_icon", "recording_title", "html", "attachments"],
     }
+
+
+def meeting_reply_output_schema() -> dict[str, object]:
+    schema = reply_output_schema()
+    properties = dict(schema.get("properties") or {})
+    properties["transcript_text"] = {"type": ["string", "null"]}
+    schema["properties"] = properties
+    required = [str(item) for item in list(schema.get("required") or [])]
+    if "transcript_text" not in required:
+        required.append("transcript_text")
+    schema["required"] = required
+    return schema
 
 
 def _normalize_card_icon_record(payload: dict[str, object]) -> dict[str, str]:
@@ -4252,7 +4285,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Use due dates only when the meeting explicitly states them. The Meeting Transcript must come back as a normal attachment titled "Meeting Transcript". The platform will publish a VM transcript HTML artifact from that labeled transcript. The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text. Use due dates only when the meeting explicitly states them. The meeting HTML must include the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} and must not include raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
