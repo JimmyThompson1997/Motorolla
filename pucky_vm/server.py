@@ -2188,6 +2188,15 @@ class PuckyVoiceService:
                 "last_tool_error": "",
             },
         )
+        record["tool_transcript_text"] = transcript_text
+        record["tool_transcript_attachment_text"] = attachment_text
+        record["tool_speaker_turns"] = speaker_turns
+        record["updated_at"] = now
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
         return {
             "ok": True,
             "schema": "pucky.meeting_deepgram_transcribe.v1",
@@ -2786,6 +2795,8 @@ class PuckyVoiceService:
     def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
         transcript_attachment = _meeting_transcript_attachment_payload(result)
         if not transcript_attachment:
+            transcript_attachment = _meeting_fallback_transcript_attachment(record)
+        if not transcript_attachment:
             record["transcript_status"] = "missing_transcript_attachment"
             record["transcript_error"] = "Meeting Transcript attachment missing or empty."
             record["diarization_status"] = "missing_transcript_attachment"
@@ -2994,6 +3005,8 @@ class PuckyVoiceService:
         record["canonical_basename"] = canonical_basename
         self._apply_meeting_basename_sync(record, canonical_basename, owner="meeting_agent_recording_title", rename_transcript=False)
         transcript_source = _extract_named_meeting_transcript_attachment(envelope.attachments)
+        if not transcript_source:
+            transcript_source = _meeting_fallback_transcript_attachment(record)
         transcript_text = _meeting_transcript_text_from_attachment(transcript_source)
         transcript_path = ""
         transcript_html_path = ""
@@ -4515,6 +4528,44 @@ def _meeting_transcript_text_from_attachment(item: dict[str, object]) -> str:
         return ""
     text = str(item.get("text") or "").replace("\r\n", "\n").strip()
     return text
+
+
+def _meeting_fallback_transcript_attachment(record: dict[str, object]) -> dict[str, object]:
+    def _build_payload(text_value: object, turns_value: object, speaker_labels: object) -> dict[str, object]:
+        transcript_text = str(text_value or "").replace("\r\n", "\n").strip()
+        labels = _normalize_meeting_speaker_labels(speaker_labels)
+        turns = _normalize_meeting_speaker_turns(turns_value, labels)
+        canonical = _canonical_meeting_transcript_text(
+            transcript_text=transcript_text,
+            speaker_turns=turns,
+        )
+        if not canonical:
+            return {}
+        return {
+            "title": "Transcript (Plain Text)",
+            "kind": "text",
+            "text": canonical,
+        }
+
+    payload = _build_payload(
+        record.get("transcript_text"),
+        record.get("speaker_turns"),
+        record.get("speaker_labels"),
+    )
+    if payload:
+        return payload
+    fallback_text = str(record.get("tool_transcript_attachment_text") or "").replace("\r\n", "\n").strip()
+    if fallback_text:
+        return {
+            "title": "Transcript (Plain Text)",
+            "kind": "text",
+            "text": fallback_text,
+        }
+    return _build_payload(
+        record.get("tool_transcript_text"),
+        record.get("tool_speaker_turns"),
+        record.get("speaker_labels"),
+    )
 
 
 def _meeting_summary_link_html(href: str, label: str, action: str, class_name: str) -> str:

@@ -2321,6 +2321,54 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(meeting["feed_item"]["read"])
         self.assertNotIn("meeting_result", self.service.meeting_codex.output_schemas[-1]["properties"])
 
+    def test_meeting_attachment_builder_falls_back_to_tool_transcript_when_agent_omits_transcript_attachment(self) -> None:
+        meeting_id = "meeting-20260601-120701-device-abc123ef"
+        record = {
+            "meeting_id": meeting_id,
+            "title": "Meeting Summary",
+            "recording_title": "Launch Readiness Recording",
+            "audio_path": "C:\\fake\\meeting.wav",
+            "mime_type": "audio/wav",
+            "tool_transcript_text": "Hello from Jimmy. Hello from Jack.",
+            "tool_transcript_attachment_text": "[00:00-00:02] Jimmy: Hello from Jimmy.\n[00:02-00:04] Jack: Hello from Jack.",
+            "tool_speaker_turns": [
+                {"speaker": "Jimmy", "text": "Hello from Jimmy.", "start": 0.0, "end": 2.0},
+                {"speaker": "Jack", "text": "Hello from Jack.", "start": 2.0, "end": 4.0},
+            ],
+        }
+        envelope = parse_reply_envelope(
+            json.dumps(
+                {
+                    "reply_text": "I processed the meeting.",
+                    "card_title": "Meeting Summary",
+                    "recording_title": "Launch Readiness Recording",
+                    "card_icon": "mic",
+                    "html": {
+                        "title": "Meeting Summary",
+                        "content": (
+                            "<section><h1>Overview</h1><p>Meeting summary.</p>"
+                            "<p>{{PUCKY_MEETING_TRANSCRIPT_LINK}}</p>"
+                            "<p>{{PUCKY_MEETING_AUDIO_LINK}}</p></section>"
+                        ),
+                    },
+                    "attachments": [],
+                }
+            )
+        )
+        attachments, attachment_meta = self.service._prepare_meeting_reply_attachments(
+            meeting_id=meeting_id,
+            record=record,
+            envelope=envelope,
+        )
+        titles = [str(item.get("title") or "") for item in attachments]
+        self.assertIn("Transcript (Plain Text)", titles)
+        self.assertIn("Transcript", titles)
+        self.assertIn("Meeting Summary", titles)
+        self.assertIn("Meeting Audio", titles)
+        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
+        self.assertIn("Jimmy:", str(transcript_attachment.get("text") or ""))
+        self.assertIn("/api/shared/meetings/", str(attachment_meta.get("summary_html_content") or ""))
+
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"
         self.post_json(
