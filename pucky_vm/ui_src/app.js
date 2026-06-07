@@ -3276,38 +3276,61 @@
   }
 
   function meetingRowView(meeting) {
-    const wrapper = el("div", "card-wrap meeting-wrap");
-    const row = el("div", "meeting-row meeting-row-card");
-    row.setAttribute("role", "button");
-    row.tabIndex = 0;
-    const copy = el("span", "meeting-row-copy");
-    copy.append(
-      el("span", "meeting-row-title", meetingTitle(meeting)),
-      el("span", "meeting-row-subtitle", meetingSubtitle(meeting))
+    const card = meetingCardFromRecord(meeting);
+    const stateName = meetingState(meeting);
+    const wrapper = el("div", "card-wrap");
+    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
+    const row = el(
+      "article",
+      stateName === "failed"
+        ? "card card-meeting is-failed"
+        : stateName === "completed"
+          ? "card card-meeting"
+          : "card card-meeting card-pending-thread"
     );
-    const controls = el("span", "meeting-row-controls");
-    const audio = el("button", "meeting-row-audio");
+    row.style.setProperty("--accent", card.accent || "#72c2ff");
+    applyCardDataAttributes(row, card, "meeting");
+    const identity = el("div", "identity is-read");
+    identity.innerHTML = iconSvg("mic", { filled: true });
+    identity.setAttribute("aria-hidden", "true");
+    const body = el("div", "card-body");
+    body.setAttribute("role", "button");
+    body.tabIndex = 0;
+    body.setAttribute("aria-disabled", "false");
+    applyCardActionData(body, "attachment", card, "meeting");
+    body.append(
+      el("h2", "title", meetingTitle(meeting)),
+      el("p", "preview", meetingRowPreview(meeting))
+    );
+    const actions = el("div", "card-actions");
+    const audio = el("button", "action action-audio");
     audio.type = "button";
+    applyCardActionData(audio, "audio", card, "meeting");
     audio.innerHTML = iconSvg("mic", { filled: true });
     audio.setAttribute("aria-label", `Open audio for ${meetingTitle(meeting)}`);
     audio.addEventListener("click", event => {
       event.stopPropagation();
       void showMeetingAudioDetail(meeting);
     });
-    const stateBadge = el("span", `meeting-row-state is-${meetingState(meeting)}`, meetingStateLabel(meeting));
-    controls.append(audio, stateBadge);
-    row.append(copy, controls);
-    row.addEventListener("click", () => {
+    actions.append(audio);
+    body.addEventListener("click", () => {
       if (!shouldSuppressCardActivation()) {
         void showMeetingDetail(meeting);
       }
     });
-    row.addEventListener("keydown", event => {
+    body.addEventListener("keydown", event => {
       if ((event.key === "Enter" || event.key === " ") && !shouldSuppressCardActivation()) {
         event.preventDefault();
         void showMeetingDetail(meeting);
       }
     });
+    row.append(identity, body, actions);
+    const stamp = meetingRowTimestamp(meeting);
+    if (stamp) {
+      const time = el("time", "card-timestamp", stamp.text);
+      time.dateTime = stamp.iso;
+      row.append(time);
+    }
     appendArchiveRevealAction(wrapper, {
       label: `Archive ${meetingTitle(meeting)}`
     });
@@ -3337,8 +3360,10 @@
       }
       return openMeetingSummaryDetail(record, options);
     };
-    if (!meetingId) {
+    if (stateName === "completed") {
       openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
+    }
+    if (!meetingId) {
       return;
     }
     const shouldLoadDetail = stateName === "failed" || !meetingHasFullDetail(meeting);
@@ -3369,7 +3394,7 @@
 
   function openMeetingSummaryDetail(meeting, options = {}) {
     const card = meetingCardFromRecord(meeting);
-    const attachments = assistantAttachmentsForCard(card);
+    const attachments = meetingAttachmentsForCard(card);
     const summaryIndex = meetingSummaryAttachmentIndex(attachments, null);
     if (summaryIndex >= 0) {
       showAttachmentViewer(card, attachments, { initialIndex: summaryIndex, ...options });
@@ -3382,7 +3407,7 @@
   async function showMeetingAudioDetail(meeting) {
     const openAudio = (record) => {
       const card = meetingCardFromRecord(record);
-      const attachments = assistantAttachmentsForCard(card);
+      const attachments = meetingAttachmentsForCard(card);
       const audioIndex = meetingAttachmentIndexByTitle(attachments, "Meeting Audio");
       if (audioIndex >= 0) {
         showAttachmentViewer(card, attachments, { initialIndex: audioIndex });
@@ -3444,21 +3469,99 @@
   function meetingCardFromRecord(meeting) {
     const card = meeting && typeof meeting === "object" ? meeting : {};
     const agentCard = card.card && typeof card.card === "object" ? card.card : {};
+    const attachments = meetingRecordAttachments(card);
     return {
       session_id: String(card.meeting_id || agentCard.session_id || ""),
       title: meetingTitle(card),
       icon: "mic",
       accent: "#72c2ff",
+      read: true,
       created_at: String(card.started_at || card.created_at || ""),
+      updated_at: String(card.updated_at || card.stopped_at || ""),
       summary: String(agentCard.summary || card.transcript_text || (meetingState(card) === "processing" ? "Processing..." : "")),
       audio_path: meetingPlayablePath(card),
       audio_url: String(card.audio_url || ""),
       audio_mime_type: String(card.mime_type || "audio/mp4"),
       audio_duration_ms: safeNumber(card.duration_ms),
+      attachments,
       transcript_messages: meetingTranscriptMessages(card),
       is_meeting_recording: true,
       meeting_record: card
     };
+  }
+
+  function meetingRecordAttachments(meeting) {
+    const record = meeting && typeof meeting === "object" ? meeting : {};
+    const card = record.card && typeof record.card === "object" ? record.card : {};
+    const meetingId = String(record.meeting_id || "").trim();
+    const attachments = [];
+    const summaryArtifactId = meetingId ? `pucky_card_${meetingId}:html` : "";
+    const transcriptArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript` : "";
+    const transcriptHtmlArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript_html` : "";
+    const summaryHtmlBase64 = String(card.html_base64 || "").trim();
+    if (summaryHtmlBase64) {
+      attachments.push({
+        id: `meeting-summary-${meetingId || "current"}`,
+        title: "Meeting Summary",
+        kind: "html",
+        mime_type: String(card.html_mime_type || "text/html"),
+        data_url: `data:text/html;base64,${summaryHtmlBase64}`,
+        artifact: summaryArtifactId,
+        viewer_artifact: summaryArtifactId,
+        html_artifact: summaryArtifactId,
+        meeting_id: meetingId
+      });
+    }
+    const transcriptHtmlPath = String(record.transcript_html_path || "").trim();
+    if (transcriptHtmlPath || transcriptHtmlArtifactId) {
+      attachments.push({
+        id: `meeting-transcript-html-${meetingId || "current"}`,
+        title: "Transcript",
+        kind: "html",
+        mime_type: "text/html",
+        path: transcriptHtmlPath,
+        artifact: transcriptHtmlArtifactId,
+        viewer_artifact: transcriptHtmlArtifactId,
+        html_artifact: transcriptHtmlArtifactId,
+        meeting_id: meetingId
+      });
+    }
+    const transcriptPath = String(record.transcript_path || "").trim();
+    const transcriptText = meetingTranscriptText(record);
+    if (transcriptText || transcriptPath || transcriptArtifactId) {
+      attachments.push({
+        id: `meeting-transcript-text-${meetingId || "current"}`,
+        title: "Transcript (Plain Text)",
+        kind: "text",
+        mime_type: "text/plain",
+        path: transcriptPath,
+        artifact: transcriptArtifactId,
+        text: transcriptText,
+        meeting_id: meetingId
+      });
+    }
+    const audioUrl = String(record.audio_url || "").trim();
+    const audioPath = String(record.audio_path || "").trim();
+    if (audioUrl || audioPath) {
+      attachments.push({
+        id: `meeting-audio-${meetingId || "current"}`,
+        title: "Meeting Audio",
+        kind: "audio",
+        mime_type: String(record.mime_type || "audio/mp4"),
+        url: audioUrl,
+        path: audioPath,
+        meeting_id: meetingId
+      });
+    }
+    return attachments;
+  }
+
+  function meetingAttachmentsForCard(card) {
+    const primary = preferredDisplayAttachments(card, card?.attachments);
+    if (primary.length) {
+      return primary;
+    }
+    return assistantAttachmentsForCard(card);
   }
 
   function meetingPlayablePath(meeting) {
@@ -3555,6 +3658,32 @@
       return "Pending";
     }
     return stateName === "failed" ? "Failed" : "Ready";
+  }
+
+  function meetingRowPreview(meeting) {
+    const stateName = meetingState(meeting);
+    if (stateName === "failed") {
+      return meetingFailedSummary(meeting);
+    }
+    if (stateName === "processing" || stateName === "uploaded") {
+      return "Pending";
+    }
+    const summary = String(meeting && meeting.card && meeting.card.summary || "").trim();
+    if (summary) {
+      return summary;
+    }
+    const transcript = meetingTranscriptText(meeting);
+    return transcript || "Meeting ready.";
+  }
+
+  function meetingRowTimestamp(meeting) {
+    const raw = meeting && (meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at) || "";
+    const text = smartTimestamp(raw, "");
+    if (!text) {
+      return null;
+    }
+    const date = parseDate(raw);
+    return { text, iso: date ? date.toISOString() : String(raw) };
   }
 
   function meetingSubtitleLegacy(meeting) {
@@ -4829,7 +4958,7 @@
   }
 
   async function resolveMeetingAttachmentLink(card, summaryItem, targetTitle, resolveHref) {
-    const attachments = assistantAttachmentsForCard(card);
+    const attachments = meetingAttachmentsForCard(card);
     const targetIndex = meetingAttachmentIndexByTitle(attachments, targetTitle);
     const targetAttachment = targetIndex >= 0 ? attachments[targetIndex] : null;
     if (targetAttachment) {
@@ -5388,8 +5517,8 @@
       }
       installMeetingHtmlActionBridge(iframe, {
         card,
-        attachments: Array.isArray(options.attachmentSet) ? options.attachmentSet : assistantAttachmentsForCard(card),
-        summaryIndex: Number.isFinite(Number(options.initialIndex)) ? Number(options.initialIndex) : meetingSummaryAttachmentIndex(assistantAttachmentsForCard(card), item)
+        attachments: Array.isArray(options.attachmentSet) ? options.attachmentSet : meetingAttachmentsForCard(card),
+        summaryIndex: Number.isFinite(Number(options.initialIndex)) ? Number(options.initialIndex) : meetingSummaryAttachmentIndex(meetingAttachmentsForCard(card), item)
       });
     } catch (error) {
       const fallback = el("section", "document-fallback");

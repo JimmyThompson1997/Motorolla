@@ -273,10 +273,16 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert "function meetingCardFromRecord(meeting)" in app
     assert "showMeetingDetail(meeting)" in app
     meeting_row = function_block(app, "meetingRowView")
-    assert 'const controls = el("span", "meeting-row-controls");' in meeting_row
-    assert 'const audio = el("button", "meeting-row-audio");' in meeting_row
+    assert 'const row = el(' in meeting_row
+    assert '"card card-meeting is-failed"' in meeting_row
+    assert '"card card-meeting card-pending-thread"' in meeting_row
+    assert 'const identity = el("div", "identity is-read");' in meeting_row
+    assert 'const body = el("div", "card-body");' in meeting_row
+    assert 'const actions = el("div", "card-actions");' in meeting_row
+    assert 'const audio = el("button", "action action-audio");' in meeting_row
     assert 'void showMeetingAudioDetail(meeting);' in meeting_row
-    assert "controls.append(audio, stateBadge);" in meeting_row
+    assert 'el("p", "preview", meetingRowPreview(meeting))' in meeting_row
+    assert 'const stamp = meetingRowTimestamp(meeting);' in meeting_row
     meeting_full_detail = function_block(app, "meetingHasFullDetail")
     assert "meetingState(meeting) !== \"completed\"" in meeting_full_detail
     assert "persistedAssistant" in meeting_full_detail
@@ -286,6 +292,8 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert "function preparedAudioFilename(" not in app
     assert "audio_path: meetingPlayablePath(card)" in app
     assert 'audio_url: String(card.audio_url || "")' in app
+    assert 'read: true,' in function_block(app, "meetingCardFromRecord")
+    assert 'updated_at: String(card.updated_at || card.stopped_at || "")' in function_block(app, "meetingCardFromRecord")
     assert 'card.device_path || card.audio_path || card.audio_url' not in app
     assert 'value.startsWith("/data/pucky-src/")' in app
     assert "function meetingTranscriptSection(meeting)" in app
@@ -310,6 +318,11 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert "if (!cardLevelHasMeetingAttachments && cardLevel.length) {" in first_attachment
     meeting_summary_index = function_block(app, "meetingSummaryAttachmentIndex")
     assert 'return meetingAttachmentIndexByTitle(attachments, "Meeting Summary");' in meeting_summary_index
+    meeting_record_attachments = function_block(app, "meetingRecordAttachments")
+    assert 'title: "Meeting Summary"' in meeting_record_attachments
+    assert 'title: "Transcript"' in meeting_record_attachments
+    assert 'title: "Transcript (Plain Text)"' in meeting_record_attachments
+    assert 'title: "Meeting Audio"' in meeting_record_attachments
     assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
     assert "async function resolveMeetingAudioAttachmentLink(card, summaryItem = null)" in app
     assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app
@@ -367,9 +380,12 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert 'return "Pending";' in function_block(app, "meetingStateLabel")
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
-    meeting_subtitle = function_block(app, "meetingSubtitle")
-    assert "smartTimestamp(" in meeting_subtitle
-    assert "meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at" in meeting_subtitle
+    meeting_preview = function_block(app, "meetingRowPreview")
+    assert 'return "Pending";' in meeting_preview
+    assert 'return transcript || "Meeting ready.";' in meeting_preview
+    meeting_timestamp = function_block(app, "meetingRowTimestamp")
+    assert "smartTimestamp(" in meeting_timestamp
+    assert "meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at" in meeting_timestamp
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
     assert 'const artifactId = attachmentArtifactId(item);' in resolve_audio_attachment
@@ -391,10 +407,6 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert ".meeting-processing-mark" in styles
     assert ".meeting-processing-timestamp" in styles
     assert ".meeting-row-icon" not in styles
-    assert ".meeting-row-controls" in styles
-    assert ".meeting-row-audio" in styles
-    assert ".meeting-row-state.is-processing" in styles
-    assert ".meeting-row-state.is-uploaded" in styles
 
 
 def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> None:
@@ -513,11 +525,11 @@ def test_meetings_and_home_reuse_shared_left_reveal_archive_controller() -> None
     assert "function applyOptimisticMeetingArchive(meeting)" in app
     assert "const ARCHIVE_REVEAL_WIDTH_PX = 88" in app
     assert "const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44" in app
-    assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
     assert 'const wrapper = el("div", "card-wrap");' in app
     assert "appendArchiveRevealAction(wrapper, {" in app
     assert 'action.innerHTML = iconSvg("delete", { filled: true });' in app
-    assert 'const row = el("div", "meeting-row meeting-row-card");' in app
+    assert 'const row = el(' in app
+    assert '"card card-meeting"' in app
     assert 'installArchiveReveal(wrapper, meeting, {' in app
     assert 'installArchiveReveal(wrapper, card, {' in app
     assert "if (busy || !config.canReveal(item) || isDragIgnoredTarget(target))" in reveal
@@ -1207,7 +1219,6 @@ def test_home_and_meeting_archive_use_left_reveal_trash_without_old_swipe_classe
     assert "authoritative: true" in app
     assert 'syncFeedCards({ reason: "load_cards", silent: true, render: true, authoritative: true })' in app
     assert 'const wrapper = el("div", "card-wrap");' in app
-    assert 'const wrapper = el("div", "card-wrap meeting-wrap");' in app
     assert "appendArchiveRevealAction(wrapper, {" in app
     assert 'iconSvg("delete", { filled: true })' in app
     assert "result && result.ok === false" in app
