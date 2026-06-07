@@ -3285,8 +3285,18 @@
       el("span", "meeting-row-title", meetingTitle(meeting)),
       el("span", "meeting-row-subtitle", meetingSubtitle(meeting))
     );
+    const controls = el("span", "meeting-row-controls");
+    const audio = el("button", "meeting-row-audio");
+    audio.type = "button";
+    audio.innerHTML = iconSvg("mic", { filled: true });
+    audio.setAttribute("aria-label", `Open audio for ${meetingTitle(meeting)}`);
+    audio.addEventListener("click", event => {
+      event.stopPropagation();
+      void showMeetingAudioDetail(meeting);
+    });
     const stateBadge = el("span", `meeting-row-state is-${meetingState(meeting)}`, meetingStateLabel(meeting));
-    row.append(copy, stateBadge);
+    controls.append(audio, stateBadge);
+    row.append(copy, controls);
     row.addEventListener("click", () => {
       if (!shouldSuppressCardActivation()) {
         void showMeetingDetail(meeting);
@@ -3315,26 +3325,93 @@
 
   async function showMeetingDetail(meeting) {
     const meetingId = String(meeting && meeting.meeting_id || "").trim();
+    const stateName = meetingState(meeting);
     const openDetail = (record, options = {}) => {
       if (meetingState(record) === "failed") {
         showMeetingFailedDetail(record, options);
-        return;
+        return true;
       }
-      showTranscript(meetingCardFromRecord(record), options);
+      if (meetingState(record) !== "completed") {
+        showTranscript(meetingCardFromRecord(record), options);
+        return true;
+      }
+      return openMeetingSummaryDetail(record, options);
     };
-    openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
     if (!meetingId) {
+      openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
       return;
     }
-    const shouldLoadDetail = meetingState(meeting) === "failed" || !meetingHasFullDetail(meeting);
+    const shouldLoadDetail = stateName === "failed" || !meetingHasFullDetail(meeting);
     if (!shouldLoadDetail) {
+      openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
       return;
+    }
+    if (stateName !== "completed") {
+      openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
     }
     try {
       const detail = await loadMeetingDetail(meeting);
       const panel = document.getElementById("detail");
+      if (stateName === "completed") {
+        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
+        return;
+      }
       if (panel?.classList.contains("is-open") && panel.getAttribute("data-detail-session-id") === meetingId) {
         openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
+      }
+    } catch (error) {
+      showToast(error.message);
+      if (stateName === "completed") {
+        openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
+      }
+    }
+  }
+
+  function openMeetingSummaryDetail(meeting, options = {}) {
+    const card = meetingCardFromRecord(meeting);
+    const attachments = assistantAttachmentsForCard(card);
+    const summaryIndex = meetingSummaryAttachmentIndex(attachments, null);
+    if (summaryIndex >= 0) {
+      showAttachmentViewer(card, attachments, { initialIndex: summaryIndex, ...options });
+      return true;
+    }
+    showTranscript(card, options);
+    return false;
+  }
+
+  async function showMeetingAudioDetail(meeting) {
+    const openAudio = (record) => {
+      const card = meetingCardFromRecord(record);
+      const attachments = assistantAttachmentsForCard(card);
+      const audioIndex = meetingAttachmentIndexByTitle(attachments, "Meeting Audio");
+      if (audioIndex >= 0) {
+        showAttachmentViewer(card, attachments, { initialIndex: audioIndex });
+        return true;
+      }
+      const fallback = {
+        title: "Meeting Audio",
+        kind: "audio",
+        mime_type: card.audio_mime_type || "audio/mp4",
+        path: card.audio_path || "",
+        url: card.audio_url || ""
+      };
+      if (fallback.path || fallback.url) {
+        void showAudioAttachment(card, fallback);
+        return true;
+      }
+      return false;
+    };
+    if (openAudio(meeting)) {
+      return;
+    }
+    if (!String(meeting && meeting.meeting_id || "").trim()) {
+      showToast("Meeting audio is unavailable.");
+      return;
+    }
+    try {
+      const detail = await loadMeetingDetail(meeting);
+      if (!openAudio(detail)) {
+        showToast("Meeting audio is unavailable.");
       }
     } catch (error) {
       showToast(error.message);
@@ -3475,15 +3552,30 @@
   function meetingStateLabel(meeting) {
     const stateName = meetingState(meeting);
     if (stateName === "processing" || stateName === "uploaded") {
-      return "Processing...";
+      return "Pending";
     }
     return stateName === "failed" ? "Failed" : "Ready";
   }
 
-  function meetingSubtitle(meeting) {
+  function meetingSubtitleLegacy(meeting) {
+    const stamp = smartTimestamp(
+      meeting && (meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at) || ""
+    );
+    if (stamp) {
+      return stamp;
+    }
     const duration = formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
-    const status = meetingStateLabel(meeting);
     return [duration, status].filter(Boolean).join(" · ");
+  }
+
+  function meetingSubtitle(meeting) {
+    const stamp = smartTimestamp(
+      meeting && (meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at) || ""
+    );
+    if (stamp) {
+      return stamp;
+    }
+    return formatMeetingDuration(safeNumber(meeting && meeting.duration_ms));
   }
 
   function formatMeetingDuration(durationMs) {
@@ -4717,7 +4809,7 @@
 
   function meetingSummaryAttachmentIndex(attachments, summaryItem) {
     if (!summaryItem) {
-      return -1;
+      return meetingAttachmentIndexByTitle(attachments, "Meeting Summary");
     }
     const matchId = String(summaryItem.id || "").trim();
     const matchArtifact = String(summaryItem.artifact || "").trim();

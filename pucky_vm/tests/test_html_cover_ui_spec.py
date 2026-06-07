@@ -259,7 +259,7 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/connect"' not in app
 
 
-def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
+def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
@@ -272,6 +272,11 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "function meetingRowView(meeting)" in app
     assert "function meetingCardFromRecord(meeting)" in app
     assert "showMeetingDetail(meeting)" in app
+    meeting_row = function_block(app, "meetingRowView")
+    assert 'const controls = el("span", "meeting-row-controls");' in meeting_row
+    assert 'const audio = el("button", "meeting-row-audio");' in meeting_row
+    assert 'void showMeetingAudioDetail(meeting);' in meeting_row
+    assert "controls.append(audio, stateBadge);" in meeting_row
     meeting_full_detail = function_block(app, "meetingHasFullDetail")
     assert "meetingState(meeting) !== \"completed\"" in meeting_full_detail
     assert "persistedAssistant" in meeting_full_detail
@@ -286,6 +291,8 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "function meetingTranscriptSection(meeting)" in app
     assert "function meetingTranscriptAction(card)" in app
     assert 'return "View Transcript";' in function_block(app, "meetingTranscriptLabel")
+    assert "function openMeetingSummaryDetail(meeting, options = {})" in app
+    assert "function showMeetingAudioDetail(meeting)" in app
     resolve_artifact = function_block(app, "resolveArtifactUrl")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_artifact
     assert 'const path = mediaPath(item);' in resolve_artifact
@@ -301,6 +308,8 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "const cardLevelHasMeetingAttachments = cardLevel.some(isMeetingAttachmentItem);" in first_attachment
     assert "if (cardLevelHasMeetingAttachments && cardLevel.length) {" in first_attachment
     assert "if (!cardLevelHasMeetingAttachments && cardLevel.length) {" in first_attachment
+    meeting_summary_index = function_block(app, "meetingSummaryAttachmentIndex")
+    assert 'return meetingAttachmentIndexByTitle(attachments, "Meeting Summary");' in meeting_summary_index
     assert "async function resolveMeetingTranscriptLink(card, summaryItem = null)" in app
     assert "async function resolveMeetingAudioAttachmentLink(card, summaryItem = null)" in app
     assert "async function rewriteMeetingHtmlContent(htmlText, source = {}, options = {})" in app
@@ -355,9 +364,12 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert "Transcription, diarization, and follow-up checks are running." in app
     assert "showTranscript(card);" not in function_block(app, "meetingProcessingCardView")
     assert "speaker_turns" in app
-    assert "Processing..." in app
+    assert 'return "Pending";' in function_block(app, "meetingStateLabel")
     assert "Refreshing..." in app
     assert 'loadMeetings({ render: true });' in app
+    meeting_subtitle = function_block(app, "meetingSubtitle")
+    assert "smartTimestamp(" in meeting_subtitle
+    assert "meeting.updated_at || meeting.stopped_at || meeting.started_at || meeting.created_at" in meeting_subtitle
     resolve_audio_attachment = function_block(app, "resolveAudioAttachmentSrc")
     assert 'const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");' in resolve_audio_attachment
     assert 'const artifactId = attachmentArtifactId(item);' in resolve_audio_attachment
@@ -379,6 +391,10 @@ def test_meetings_route_lists_recordings_and_opens_transcript_detail() -> None:
     assert ".meeting-processing-mark" in styles
     assert ".meeting-processing-timestamp" in styles
     assert ".meeting-row-icon" not in styles
+    assert ".meeting-row-controls" in styles
+    assert ".meeting-row-audio" in styles
+    assert ".meeting-row-state.is-processing" in styles
+    assert ".meeting-row-state.is-uploaded" in styles
 
 
 def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> None:
@@ -392,6 +408,7 @@ def test_failed_meetings_open_failed_detail_instead_of_processing_player() -> No
     assert 'if (meetingState(record) === "failed") {' in show_meeting_detail
     assert "showMeetingFailedDetail(record, options);" in show_meeting_detail
     assert 'showTranscript(meetingCardFromRecord(record), options);' in show_meeting_detail
+    assert "return openMeetingSummaryDetail(record, options);" in show_meeting_detail
     assert 'applyDetailDataAttributes(panel, "meeting_failed", detailCard, { viewer: "meeting_failed" });' in failed_detail
     assert 'rememberNavDetail("meeting_failed", detailCard, options);' in failed_detail
     assert "Meeting failed" in failed_content

@@ -3300,6 +3300,29 @@ button {
   gap: 4px;
 }
 
+.meeting-row-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meeting-row-audio {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(114, 194, 255, 0.14);
+  color: #9dd6ff;
+}
+
+.meeting-row-audio .material-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .meeting-row-title,
 .meeting-row-subtitle {
   min-width: 0;
@@ -3331,6 +3354,12 @@ button {
 .meeting-row-state.is-completed {
   background: rgba(80, 216, 106, 0.14);
   color: #7df397;
+}
+
+.meeting-row-state.is-processing,
+.meeting-row-state.is-uploaded {
+  background: rgba(255, 191, 71, 0.16);
+  color: #ffd78d;
 }
 
 .meeting-row-state.is-failed {
