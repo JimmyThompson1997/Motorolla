@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -13,12 +14,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import tools.phone_proof_shared as phone_shared
 import tools.phone_walkie_thread_proof as proof
 import tools.refresh_pucky_html_official as official_html
 
-
-ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
 RESULT_SCHEMA = "pucky.meeting_mode_phone_real_vm_proof.v1"
 DEFAULT_ACTIVITY_NAME = "com.pucky.device.CoverHomeActivity"
