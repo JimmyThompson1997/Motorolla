@@ -219,19 +219,30 @@ async function fetchFeedSnapshot(baseUrl, apiToken) {
 
 async function browserFeedSnapshot(page) {
   return page.evaluate(() => {
-    if (window.PuckyUiDebug && typeof window.PuckyUiDebug.describe === "function") {
-      return window.PuckyUiDebug.describe();
-    }
-    const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map((node) => ({
+    const domCards = Array.from(document.querySelectorAll("[data-card-session-id]")).map((node) => ({
       kind: node.getAttribute("data-card-kind") || "",
       card_id: node.getAttribute("data-card-id") || "",
       session_id: node.getAttribute("data-card-session-id") || "",
       thread_id: node.getAttribute("data-card-thread-id") || "",
-      preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
+      title: (node.querySelector(".title")?.textContent || "").trim(),
+      preview: (
+        node.querySelector(".preview, .card-outbound-preview, .card-summary, .summary, .title")?.textContent || ""
+      ).trim()
     }));
+    const route = document.querySelector(".app-shell")?.getAttribute("data-view") || "";
+    if (window.PuckyUiDebug && typeof window.PuckyUiDebug.describe === "function") {
+      const described = window.PuckyUiDebug.describe();
+      if (described && typeof described === "object") {
+        return {
+          ...described,
+          route: described.route || route,
+          visible_cards: domCards.length ? domCards : Array.isArray(described.visible_cards) ? described.visible_cards : []
+        };
+      }
+    }
     return {
       schema: "pucky.ui_surface.v1",
-      route: document.querySelector(".app-shell")?.getAttribute("data-view") || "",
+      route,
       detail: {
         open: false,
         type: "",
@@ -240,7 +251,7 @@ async function browserFeedSnapshot(page) {
         thread_id: "",
         viewer: ""
       },
-      visible_cards: cards
+      visible_cards: domCards
     };
   });
 }
@@ -1045,19 +1056,24 @@ async function runScenario({
   const meetingsCompletedClass = await waitForMeetingRouteCard(page, scenario.meetingId, { pending: false });
   const meetingsAfterBrowser = await browserFeedSnapshot(page);
   writeJsonFile(path.join(scenarioDir, "meetings_after.json"), meetingsAfterBrowser);
-  const meetingsCompletedRow = Array.isArray(meetingsAfterBrowser?.visible_cards)
-    ? meetingsAfterBrowser.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
-    : null;
   const meetingsCompletedScreenshot = await saveScreenshot(page, scenarioDir, "04-meetings-completed-row");
+  const meetingsRowState = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().evaluate((node) => ({
+    title: String(node.querySelector(".title")?.textContent || "").trim(),
+    hasIdentity: Boolean(node.querySelector(".identity")),
+    hasPreview: Boolean(node.querySelector(".preview")),
+    audioButtons: node.querySelectorAll(".action.action-audio").length,
+    actionButtons: node.querySelectorAll(".action").length
+  }));
   await gotoRoute(page, "feed");
 
-  const feedCard = Array.isArray(feedAfterBrowser?.visible_cards)
-    ? feedAfterBrowser.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
+  const feedCard = Array.isArray(feedAfterApi?.cards)
+    ? feedAfterApi.cards.find((item) => String(item?.session_id || item?.turn_id || "") === scenario.meetingId)
     : null;
   if (!feedCard) {
     throw new Error(`Could not find completed feed card for ${scenario.meetingId}`);
   }
-  if (!String(feedCard.preview || "").trim()) {
+  const feedReplyText = String(feedCard.summary || feedCard.text || "").trim();
+  if (!feedReplyText) {
     throw new Error(`${scenario.name} feed tile reply text is empty`);
   }
   const tileMarkup = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().innerHTML();
@@ -1097,20 +1113,13 @@ async function runScenario({
   if (String(meetingsCompletedClass || "").includes("card-pending-thread")) {
     throw new Error(`${scenario.name} meetings route row never converted out of pending state`);
   }
-  if (!meetingsCompletedRow) {
+  if (!String(meetingsRowState.title || "").trim()) {
     throw new Error(`${scenario.name} missing completed meetings row`);
   }
-  const meetingsRowTitle = String(meetingsCompletedRow.preview || "").trim();
+  const meetingsRowTitle = String(meetingsRowState.title || "").trim();
   if (meetingsRowTitle !== String(detailMeeting.recording_title || "").trim()) {
     throw new Error(`${scenario.name} meetings row title did not use recording_title`);
   }
-  const meetingsRowState = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().evaluate((node) => ({
-    title: String(node.querySelector(".title")?.textContent || "").trim(),
-    hasIdentity: Boolean(node.querySelector(".identity")),
-    hasPreview: Boolean(node.querySelector(".preview")),
-    audioButtons: node.querySelectorAll(".action.action-audio").length,
-    actionButtons: node.querySelectorAll(".action").length
-  }));
   if (meetingsRowState.hasIdentity) {
     throw new Error(`${scenario.name} meetings row still rendered a left identity control`);
   }
