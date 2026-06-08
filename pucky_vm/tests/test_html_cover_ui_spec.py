@@ -259,32 +259,103 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/connect"' not in app
 
 
-def test_light_apps_tile_ports_to_exact_canonical_links_route() -> None:
+def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     html = read("index.html")
     app = read("app.js")
     styles = read("styles.css")
 
     assert "const THEME_STATE_KEY = \"pucky.cover.theme.v1\"" in app
     assert "const LIGHT_APPS = [" in app
-    assert '{ route: "links", label: "Apps", icon: "link" }' in app
+    assert 'route: "notes"' in app
+    assert 'route: "tasks"' in app
+    assert 'route: "calendar"' in app
+    assert 'route: "inbox"' in app
+    assert 'route: "feed"' in app
+    assert 'route: "projects"' in app
+    assert 'route: "contacts"' in app
+    assert '{ route: "apps", label: "Apps"' in app
+    assert '{ route: "meetings", label: "Meetings"' in app
+    assert '{ route: "meeting-capture", label: "Meetings"' not in app
+    assert '{ route: "links", label: "Apps"' not in app
+    light_apps_block = app.split("const LIGHT_APPS = [", 1)[1].split("];", 1)[0]
+    assert 'route: "notifications"' not in light_apps_block
     assert "theme: initialTheme" in app
     assert "lightReturnRoute: \"\"" in app
+    assert "previousLightRoute:" in app
+    assert "selectedContactId:" in app
+    assert "selectedMeetingId:" in app
+    assert "selectedNoteId:" in app
+    assert "selectedTaskId:" in app
+    assert "selectedProjectId:" in app
+    assert "selectedFeedId:" in app
+    assert "selectedCalendarDay:" in app
+    assert "taskFilter:" in app
     assert "function resolveInitialTheme()" in app
     assert "function isLightShellRoute()" in app
     assert "function lightView()" in app
     assert "function lightHomePage()" in app
-    assert "function lightNavigate(route)" in app
+    assert "function lightNavigate(route" in app
+    assert "function lightAppsPage()" in app
+    assert "function lightSettingsSurface()" in app
+    assert "function lightInboxPage()" in app
+    assert "function homeFeedContentNodes()" in app
+    assert "function lightMeetingsPage()" in app
+    assert "function lightNotesPage()" in app
+    assert "function lightNoteDetailPage()" in app
+    assert "function lightTasksPage()" in app
+    assert "function lightTaskDetailPage()" in app
+    assert "function lightCalendarPage()" in app
+    assert "function lightMeetingDetailPage()" in app
+    assert "function lightFeedPage()" in app
+    assert "function lightFeedDetailPage()" in app
+    assert "function lightProjectsPage()" in app
+    assert "function lightProjectDetailPage()" in app
+    assert "function lightContactsPage()" in app
+    assert "function lightContactDetailPage()" in app
+    assert "function lightNotificationsPage()" not in app
+    assert "function lightNotificationDetailPage()" not in app
+    assert "function lightDigestView()" not in app
+    assert "notificationDigestItems" not in app
+    assert "lightMeetingCapturePage" not in app
+    assert "lightNavigate(\"meeting-capture\"" not in app
     assert 'if (isLightShellRoute()) {' in app
     assert "feed.replaceChildren(lightView());" in app
+    assert 'case "apps":' in app
+    assert 'view.append(lightAppsPage())' in app
+    assert 'case "meetings":' in app
+    assert 'view.append(lightMeetingsPage())' in app
+    assert 'case "settings":' in app
+    assert 'view.append(lightSettingsSurface())' in app
+    assert 'case "inbox":' in app
+    assert 'view.append(lightInboxPage())' in app
+    assert 'case "note-detail":' in app
+    assert 'case "task-detail":' in app
+    assert 'case "meeting-detail":' in app
+    assert 'case "feed-detail":' in app
+    assert 'case "project-detail":' in app
+    assert 'case "contact-detail":' in app
+    assert 'case "notifications":' not in app
+    assert 'case "notification-detail":' not in app
     assert 'if (state.route === "links") {' in app
     assert 'const page = linksPageView();' in app
     assert "lightLinksPage" not in app
-    assert "lightAppsPage" not in app
-    assert "lightSettingsSurface" not in app
+    assert "lightPrototypePage" not in app
+    assert "function lightStatusBar()" not in app
+    assert ".light-status-" not in styles
+    assert ".light-digest" not in styles
+    assert ".light-capture" not in styles
     assert ".light-links" not in styles
-    assert ".light-apps-page" not in styles
+    assert ".light-apps-page" in styles
+    assert ".light-settings-surface" in styles
+    assert ".light-real-feed-page" in styles
+    assert ".light-meetings-page" in styles
     assert ".light-shell" in styles
     assert ".light-app-tile" in styles
+    assert ".light-tasks-page" in styles
+    assert ".light-calendar-page" in styles
+    assert ".light-document-page" in styles
+    assert ".light-project-row" in styles
+    assert ".light-contact-row" in styles
     assert 'data-voice-status' in html
     assert "renderVoiceStatus()" in app
     assert ".voice-status" in styles
@@ -292,28 +363,71 @@ def test_light_apps_tile_ports_to_exact_canonical_links_route() -> None:
     assert "loadLinksPortal({ render: true });" in app
 
 
-def test_light_launched_links_uses_canonical_header_and_back_home_return() -> None:
+def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
     render_feed = function_block(app, "renderFeed")
     handle_back = function_block(app, "handleAndroidBack")
+    light_apps = function_block(app, "lightAppsPage")
+    light_settings = function_block(app, "lightSettingsSurface")
+    light_inbox = function_block(app, "lightInboxPage")
+    light_meetings = function_block(app, "lightMeetingsPage")
+    home_feed_content = function_block(app, "homeFeedContentNodes")
     light_navigate = function_block(app, "lightNavigate")
+    light_tasks = function_block(app, "lightTasksPage")
+    light_task_sections = function_block(app, "lightTaskSectionTitle")
+    light_back = function_block(app, "lightBack")
 
     assert 'document.querySelector(".app-shell")?.setAttribute("data-view", state.route);' in render_feed
     assert 'document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);' in render_feed
     assert 'if (isLightShellRoute()) {' in render_feed
     assert 'if (state.route === "links") {' in render_feed
     assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (state.route === "links") {')
-    assert 'feed.classList.toggle("is-links-route", state.route === "links");' in render_feed
-    assert 'state.lightReturnRoute = "home";' in light_navigate
-    assert 'if (state.route === "links" && state.theme === "light" && state.lightReturnRoute === "home") {' in handle_back
-    assert 'state.route = "home";' in handle_back
-    assert 'state.lightReturnRoute = "";' in handle_back
-    assert ".app-shell[data-theme=\"light\"] .header" not in styles
-    assert ".app-shell[data-theme=\"light\"] .page-tabs" not in styles
-    assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
-    assert ".light-shell .links-page" not in styles
+    assert 'feed.classList.toggle("is-links-route", state.route === "links" || state.route === "apps");' in render_feed
+
+    assert "linksPageView()" in light_apps
+    assert "loadLinksPortal({ render: true });" in app
+    assert "syncLinksPage();" in app
+    assert "function hydrateBundledLinksCatalog" in app
+    assert "startLinksHandoff(slug);" in app
+    assert "window.__PUCKY_LINKS_DEBUG__" in app
+    assert "settingsPageView()" in light_settings
+    assert "homeFeedContentNodes()" in light_inbox
+    assert "filteredFeedCards()" in home_feed_content
+    assert "cards.map(cardView)" in home_feed_content
+    assert "renderHomeFeedInto(feed);" in render_feed
+    assert 'lightRealFeedPage("Inbox"' not in app
+    assert "Real Home tiles will appear here." not in app
+    assert "showTranscript(card)" not in light_inbox
+    assert "lightInboxCardView" not in app
+
+    assert "meetingsPageView()" in light_meetings
+    assert "meetingCardFromRecord" not in light_meetings
+    assert "showMeetingDetail" not in light_meetings
+    assert "showMeetingAudioDetail" not in light_meetings
+    assert 'if (state.route === "meetings") {' in light_navigate
+    assert "loadMeetings({ render: true });" in light_navigate
+
+    assert '"DO SOON"' in light_tasks
+    assert 'lightSectionTitle("DO")' in light_task_sections
+    assert 'lightSectionTitle("DO SOON")' in light_task_sections
+    assert 'lightSectionTitle("OVERDUE")' in light_task_sections
+    assert 'lightSectionTitle("DONE")' in light_task_sections
+    assert 'lightNavigate("note-detail", { from: "notes" })' in app
+    assert 'lightNavigate("task-detail", { from: "tasks" })' in app
+    assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
+    assert 'lightNavigate("feed-detail", { from: "feed" })' in app
+    assert 'lightNavigate("project-detail", { from: "projects" })' in app
+    assert 'lightNavigate("contact-detail", { from: "contacts" })' in app
+
+    assert 'if (isLightShellRoute() && lightBack()) {' in handle_back
+    assert 'state.route = parent === state.route ? "home" : parent;' in light_back
+    assert ".app-shell[data-theme=\"light\"] .header" in styles
+    assert ".app-shell[data-theme=\"light\"] .page-tabs" in styles
+    assert ".light-shell .links-page" in styles
+    assert "lightLinksPage" not in app
+    assert "function loadLightLinks" not in app
 
 
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
@@ -325,6 +439,8 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert "async function loadMeetings(options = {})" in app
     assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
     assert "async function loadMeetingDetail(meeting)" in app
+    assert "function meetingsApiErrorMessage(error" in app
+    assert 'detail.replace(/^Links request failed/i, "Meetings request failed")' in app
     assert "function meetingsPageView()" in app
     assert "function meetingCardFromRecord(meeting)" in app
     assert "function isMeetingsListCard(card)" in app
@@ -757,7 +873,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "state.excludedFeedIcons.delete(key)" in app
     assert "state.openTrayRoute = null;\n        render();\n        return;" not in app
     assert "state.feedIconFilter" not in app
-    assert "feed.replaceChildren(...cards.map(cardView))" in app
+    assert "renderHomeFeedInto(feed);" in app
+    assert "return cards.map(cardView);" in app
     assert "No selected replies." in app
     assert ".route-tray" in styles
     assert "position: absolute;" in styles
@@ -1013,7 +1130,8 @@ def test_home_feed_is_plain_single_scroller_without_pull_refresh() -> None:
     assert "overflow: hidden" not in home_route
     feed_block = css_block(styles, ".feed")
     assert "overflow-y: auto;" in feed_block
-    assert 'feed.replaceChildren(...cards.map(cardView))' in app
+    assert "renderHomeFeedInto(feed);" in app
+    assert "return cards.map(cardView);" in app
 
     assert "function installFeedRubberBand()" not in app
     assert "installFeedRubberBand();" not in app
@@ -1268,7 +1386,8 @@ def test_card_actions_have_local_read_state() -> None:
     assert "return { ...card, archived: true };" in app
     assert "return Boolean(card && card.read);" in app
     assert 'if (!options.restoring) {\n      markCardRead(card);' in app
-    assert "isCardRead(card) ? \"card\" : \"card card-unread\"" in app
+    assert "const cardEl = el(\"article\", isMeetingList\n      ? meetingListCardClass(card)" in app
+    assert "isCardRead(card)\n        ? \"card\"\n        : \"card card-unread\"" in app
     assert "cardStateClass(card)" in app
     assert 'actionStateClass(card, "page")' in app
     assert '"card card-unread"' in app
@@ -2248,10 +2367,10 @@ def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surf
     assert '"data-detail-session-id"' in app
     assert '"data-detail-thread-id"' in app
     assert '"data-detail-viewer"' in app
-    assert 'applyCardDataAttributes(cardEl, card, "reply");' in app
+    assert 'applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");' in app
     assert 'applyCardActionData(identity, "mark_read", card, "reply");' in app
-    assert 'applyCardActionData(body, "transcript", card, "reply");' in app
-    assert 'applyCardActionData(audio, "audio", card, "reply");' in app
+    assert 'applyCardActionData(body, isMeetingList ? "attachment" : "transcript", card, isMeetingList ? "meeting" : "reply");' in app
+    assert 'applyCardActionData(audio, "audio", card, isMeetingList ? "meeting" : "reply");' in app
     assert 'applyCardActionData(page, "page", card, "reply");' in app
     assert 'applyCardActionData(file, "attachment", card, "reply");' in app
     assert 'applyCardDataAttributes(cardEl, card, "pending_outbound");' in app
@@ -2310,10 +2429,10 @@ def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surf
     assert '"data-detail-session-id"' in app
     assert '"data-detail-thread-id"' in app
     assert '"data-detail-viewer"' in app
-    assert 'applyCardDataAttributes(cardEl, card, "reply");' in app
+    assert 'applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");' in app
     assert 'applyCardActionData(identity, "mark_read", card, "reply");' in app
-    assert 'applyCardActionData(body, "transcript", card, "reply");' in app
-    assert 'applyCardActionData(audio, "audio", card, "reply");' in app
+    assert 'applyCardActionData(body, isMeetingList ? "attachment" : "transcript", card, isMeetingList ? "meeting" : "reply");' in app
+    assert 'applyCardActionData(audio, "audio", card, isMeetingList ? "meeting" : "reply");' in app
     assert 'applyCardActionData(page, "page", card, "reply");' in app
     assert 'applyCardActionData(file, "attachment", card, "reply");' in app
     assert 'applyCardDataAttributes(cardEl, card, "pending_outbound");' in app
