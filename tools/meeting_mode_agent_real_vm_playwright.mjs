@@ -491,10 +491,7 @@ async function backToFeed(page) {
   if (!result?.ok) {
     throw new Error(`Back action failed: ${result?.error || "unknown error"}`);
   }
-  await page.waitForFunction(() => {
-    const detail = document.getElementById("detail");
-    return !detail || detail.getAttribute("aria-hidden") === "true";
-  }, {}, { timeout: 5000 });
+  await ensureDetailClosed(page, 10000);
 }
 
 async function playAttachmentAudioAndWaitForAdvance(page, timeoutMs = 15000) {
