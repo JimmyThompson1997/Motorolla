@@ -225,7 +225,6 @@
     "home",
     "apps",
     "settings",
-    "inbox",
     "notes",
     "note-detail",
     "tasks",
@@ -239,8 +238,11 @@
     "project-new",
     "contacts",
     "contact-detail",
-    "contact-new",
-    "meetings"
+    "contact-new"
+  ]);
+  const LIGHT_CANONICAL_PORT_ROUTES = new Map([
+    ["inbox", "feed"],
+    ["meetings", "meetings"]
   ]);
   const LIGHT_ROUTE_PARENTS = {
     "note-detail": "notes",
@@ -326,13 +328,15 @@
   const initialTheme = resolveInitialTheme();
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
+  const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);
   const state = {
     cards: [],
     cardIconRegistry: {},
     cardIconRegistryLoading: false,
     cardIconRegistryRequestedAt: 0,
     theme: initialTheme,
-    route: initialRoute(persistedNavState.route, initialTheme),
+    route: initialRouteValue,
+    canonicalLaunch: initialCanonicalLaunch(initialRouteValue, initialTheme),
     openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme),
     lightReturnRoute: "",
     previousLightRoute: "home",
@@ -2962,39 +2966,46 @@
   }
 
   function tabView(tab) {
-    const button = el("button", tab.route === state.route ? "tab is-active" : "tab");
+    const route = effectiveRoute();
+    const button = el("button", tab.route === route ? "tab is-active" : "tab");
     button.type = "button";
     button.disabled = linksHandoffLocked();
     button.dataset.route = tab.route;
     button.setAttribute("aria-label", tab.label);
-    button.setAttribute("aria-current", tab.route === state.route ? "page" : "false");
+    button.setAttribute("aria-current", tab.route === route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: false });
     button.addEventListener("click", () => {
       if (linksHandoffLocked()) {
         return;
       }
       rememberFeedScroll();
-      if (state.route === tab.route) {
+      if (route === tab.route) {
         state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
       } else {
         dismissTransientUiForRouteChange();
         state.route = tab.route;
         state.openTrayRoute = null;
+        if (activeCanonicalLaunch()) {
+          setCanonicalLaunchTarget(tab.route, "");
+        } else {
+          state.canonicalLaunch = null;
+        }
       }
       persistNavState();
       render();
       void syncVoiceThreadScope({ reason: "tab_click", render: true });
-      if (state.route === "feed") {
+      const nextRoute = effectiveRoute();
+      if (nextRoute === "feed") {
         restoreFeedScroll();
         syncFeedCards({ reason: "route_feed", silent: true, render: true });
-      } else if (state.route === "links") {
+      } else if (nextRoute === "links") {
         linksDebugStartSession("route", { reason: "route_open" });
         linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
         loadLinksPortal({ render: true });
-      } else if (state.route === "meetings") {
+      } else if (nextRoute === "meetings") {
         refreshMeetingRecordingStatus({ render: true });
         loadMeetings({ render: true });
-      } else if (state.route === "settings") {
+      } else if (nextRoute === "settings") {
         loadSettingsState({ render: true });
       }
     });
@@ -3018,12 +3029,13 @@
     if (!tray) {
       return;
     }
+    const route = effectiveRoute();
     if (isLightShellRoute()) {
       tray.hidden = true;
       tray.replaceChildren();
       return;
     }
-    if (state.route !== "feed" || state.openTrayRoute !== "feed") {
+    if (route !== "feed" || state.openTrayRoute !== "feed") {
       tray.hidden = true;
       tray.replaceChildren();
       return;
@@ -3079,19 +3091,21 @@
 
   function renderFeed() {
     const feed = document.getElementById("feed");
-    document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
-    document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);
-    feed.classList.toggle("is-links-route", state.route === "links" || state.route === "apps");
+    const route = effectiveRoute();
+    const theme = effectiveTheme();
+    document.querySelector(".app-shell")?.setAttribute("data-view", route);
+    document.querySelector(".app-shell")?.setAttribute("data-theme", theme);
+    feed.classList.toggle("is-links-route", route === "links" || state.route === "apps");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (isLightShellRoute()) {
       feed.replaceChildren(lightView());
       return;
     }
-    if (state.route === "settings") {
+    if (route === "settings") {
       feed.replaceChildren(settingsPageView());
       return;
     }
-    if (state.route === "links") {
+    if (route === "links") {
       const page = linksPageView();
       if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
         feed.replaceChildren(page);
@@ -3099,12 +3113,12 @@
       syncLinksPage();
       return;
     }
-    if (state.route === "meetings") {
+    if (route === "meetings") {
       feed.replaceChildren(meetingsPageView());
       return;
     }
-    if (state.route !== "feed") {
-      const current = PAGE_TABS.find(tab => tab.route === state.route);
+    if (route !== "feed") {
+      const current = PAGE_TABS.find(tab => tab.route === route);
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
@@ -3146,9 +3160,6 @@
       case "settings":
         view.append(lightSettingsSurface());
         break;
-      case "inbox":
-        view.append(lightInboxPage());
-        break;
       case "contacts":
         view.append(lightContactsPage());
         break;
@@ -3163,9 +3174,6 @@
         break;
       case "meeting-detail":
         view.append(lightMeetingDetailPage());
-        break;
-      case "meetings":
-        view.append(lightMeetingsPage());
         break;
       case "notes":
         view.append(lightNotesPage());
@@ -3244,35 +3252,6 @@
     const wrap = el("span", `light-app-icon color-${color || "blue"}`);
     wrap.innerHTML = iconSvg(icon, { filled: false });
     return wrap;
-  }
-
-  function lightInboxPage() {
-    const page = lightPage("Inbox");
-    page.classList.add("light-real-feed-page", "light-inbox-page");
-    const list = el("div", "light-real-feed-list");
-    list.append(...homeFeedContentNodes());
-    page.append(list);
-    return page;
-  }
-
-  function lightRealFeedPage(title, cards, options = {}) {
-    const page = lightPage(title);
-    page.classList.add("light-real-feed-page");
-    const list = el("div", "light-real-feed-list");
-    if (!cards.length) {
-      list.append(lightEmptyState(options.icon || "mail", options.emptyTitle || "No tiles yet", options.emptyDetail || "Real reply tiles will appear here."));
-    } else {
-      list.append(...cards.map(cardView));
-    }
-    page.append(list);
-    return page;
-  }
-
-  function lightMeetingsPage() {
-    const page = lightPage("Meetings", { large: true });
-    page.classList.add("light-meetings-page");
-    page.append(meetingsPageView());
-    return page;
   }
 
   function lightContactsPage() {
@@ -3742,6 +3721,7 @@
     if (linksHandoffLocked()) {
       return;
     }
+    const launch = canonicalLaunchForRoute(route, "home");
     rememberFeedScroll();
     dismissTransientUiForRouteChange();
     if (options.from) {
@@ -3752,20 +3732,41 @@
       state.previousLightRoute = "home";
     }
     state.route = route;
+    state.canonicalLaunch = launch;
     state.openTrayRoute = null;
-    state.lightReturnRoute = "home";
+    state.lightReturnRoute = launch?.return_route || "home";
     persistNavState();
     render();
     void syncVoiceThreadScope({ reason: "light_app_click", render: true });
-    if (state.route === "apps") {
+    if (route === "apps") {
       linksDebugStartSession("route", { reason: "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
       loadLinksPortal({ render: true });
     }
-    if (state.route === "meetings") {
+    if (route === "inbox") {
+      restoreFeedScroll();
+      syncFeedCards({ reason: "light_inbox_open", silent: true, render: true });
+    }
+    if (route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
       loadMeetings({ render: true });
     }
+  }
+
+  function handleCanonicalLaunchBack() {
+    const launch = activeCanonicalLaunch();
+    if (!launch?.return_route) {
+      return false;
+    }
+    state.route = launch.return_route || "home";
+    state.canonicalLaunch = null;
+    state.previousLightRoute = "home";
+    state.lightReturnRoute = "";
+    state.openTrayRoute = null;
+    persistNavState();
+    render();
+    void syncVoiceThreadScope({ reason: "canonical_launch_back", render: true });
+    return true;
   }
 
   function lightBack() {
@@ -7264,6 +7265,9 @@
       closeSpeedPicker();
       return true;
     }
+    if (handleCanonicalLaunchBack()) {
+      return true;
+    }
     if (isLightShellRoute() && lightBack()) {
       return true;
     }
@@ -9576,12 +9580,78 @@
     }
   }
 
+  function initialCanonicalLaunch(route, theme = "dark") {
+    if (normalizeTheme(theme) !== "light") {
+      return null;
+    }
+    return canonicalLaunchForRoute(route, "home");
+  }
+
+  function canonicalLaunchForRoute(route, returnRoute = "home") {
+    const sourceRoute = String(route || "").trim();
+    const targetRoute = LIGHT_CANONICAL_PORT_ROUTES.get(sourceRoute);
+    if (!targetRoute) {
+      return null;
+    }
+    return {
+      source_route: sourceRoute,
+      target_route: targetRoute,
+      return_route: String(returnRoute || "").trim()
+    };
+  }
+
+  function normalizeCanonicalLaunch(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const sourceRoute = String(value.source_route || "").trim();
+    const targetRoute = String(value.target_route || "").trim();
+    const returnRoute = String(value.return_route || "").trim();
+    if (!PAGE_TABS.some(tab => tab.route === targetRoute)) {
+      return null;
+    }
+    if (sourceRoute && sourceRoute !== "inbox" && sourceRoute !== "meetings") {
+      return null;
+    }
+    return {
+      source_route: sourceRoute,
+      target_route: targetRoute,
+      return_route: returnRoute
+    };
+  }
+
+  function activeCanonicalLaunch() {
+    return state.canonicalLaunch || initialCanonicalLaunch(state.route, state.theme);
+  }
+
+  function effectiveRoute() {
+    const launch = activeCanonicalLaunch();
+    return launch ? launch.target_route : state.route;
+  }
+
+  function effectiveTheme() {
+    return activeCanonicalLaunch() ? "dark" : state.theme;
+  }
+
+  function setCanonicalLaunchTarget(route, returnRoute = "") {
+    const value = String(route || "").trim();
+    if (!PAGE_TABS.some(tab => tab.route === value)) {
+      state.canonicalLaunch = null;
+      return;
+    }
+    state.canonicalLaunch = {
+      source_route: "",
+      target_route: value,
+      return_route: String(returnRoute || "").trim()
+    };
+  }
+
   function isLightTheme() {
     return state.theme === "light";
   }
 
   function isLightShellRoute() {
-    return isLightTheme() && LIGHT_ROUTES.has(state.route || "home");
+    return isLightTheme() && !activeCanonicalLaunch() && LIGHT_ROUTES.has(state.route || "home");
   }
 
   function loadNavState() {
@@ -9612,10 +9682,16 @@
       return queryRoute;
     }
     if (normalizeTheme(theme) === "light") {
+      if (LIGHT_CANONICAL_PORT_ROUTES.has(queryRoute)) {
+        return queryRoute;
+      }
       if (LIGHT_ROUTES.has(queryRoute)) {
         return queryRoute;
       }
       const value = String(route || "");
+      if (LIGHT_CANONICAL_PORT_ROUTES.has(value)) {
+        return value;
+      }
       if (LIGHT_ROUTES.has(value)) {
         return value;
       }
@@ -9917,7 +9993,7 @@
       rememberFeedScroll();
       captureCurrentDetailScroll();
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
-        route: initialRoute(state.route),
+        route: initialRoute(state.route, state.theme),
         open_tray_route: state.openTrayRoute || null,
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

@@ -4315,10 +4315,8 @@ button {
   line-height: 1.35;
 }
 
-.light-real-feed-page,
 .light-apps-page,
-.light-settings-surface,
-.light-meetings-page {
+.light-settings-surface {
   min-height: calc(var(--viewport-h) - 42px);
   padding-bottom: 28px;
 }
@@ -4350,93 +4348,6 @@ button {
 
 .light-shell[data-light-route="apps"] .links-list-card {
   flex: 1 1 auto;
-}
-
-.light-real-feed-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.light-real-feed-list .card-wrap {
-  margin: 0;
-}
-
-.light-real-feed-list .card {
-  min-height: 96px;
-  grid-template-columns: 50px minmax(0, 1fr) auto;
-  color: #101624;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(17, 24, 39, 0.07);
-  box-shadow:
-    0 12px 30px rgba(15, 23, 42, 0.075),
-    inset 0 1px 0 rgba(255, 255, 255, 0.96);
-}
-
-.light-real-feed-list .title,
-.light-real-feed-list .preview {
-  color: #101624;
-}
-
-.light-real-feed-list .preview,
-.light-real-feed-list .card-timestamp {
-  color: #6b7280;
-}
-
-.light-real-feed-list .identity,
-.light-real-feed-list .action {
-  background: color-mix(in srgb, var(--accent, #226fe8) 12%, #fff);
-  color: var(--accent, #226fe8);
-  box-shadow: none;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-page {
-  gap: 12px;
-  padding: 10px 0 92px;
-  color: #101624;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-header,
-.app-shell[data-theme="light"] .light-shell .meetings-list-card,
-.app-shell[data-theme="light"] .light-shell .meetings-empty,
-.app-shell[data-theme="light"] .light-shell .meetings-refreshing {
-  color: #101624;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-kicker,
-.app-shell[data-theme="light"] .light-shell .meetings-empty,
-.app-shell[data-theme="light"] .light-shell .meetings-refreshing {
-  color: #6b7280;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-refresh {
-  color: #226fe8;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.08);
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-list-card .card {
-  color: #101624;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(17, 24, 39, 0.07);
-  box-shadow:
-    0 12px 30px rgba(15, 23, 42, 0.075),
-    inset 0 1px 0 rgba(255, 255, 255, 0.96);
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-list-card .title,
-.app-shell[data-theme="light"] .light-shell .meetings-list-card .card-body {
-  color: #101624;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-list-card .card-timestamp {
-  color: #6b7280;
-}
-
-.app-shell[data-theme="light"] .light-shell .meetings-list-card .action {
-  background: color-mix(in srgb, var(--accent, #226fe8) 12%, #fff);
-  color: var(--accent, #226fe8);
-  box-shadow: none;
 }
 
 .app-shell[data-theme="light"] .light-shell .settings-page {

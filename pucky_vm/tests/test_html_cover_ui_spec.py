@@ -278,8 +278,12 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert '{ route: "meeting-capture", label: "Meetings"' not in app
     assert '{ route: "links", label: "Apps"' not in app
     light_apps_block = app.split("const LIGHT_APPS = [", 1)[1].split("];", 1)[0]
+    light_routes_block = app.split("const LIGHT_ROUTES = new Set([", 1)[1].split("]);", 1)[0]
     assert 'route: "notifications"' not in light_apps_block
+    assert '"inbox"' not in light_routes_block
+    assert '"meetings"' not in light_routes_block
     assert "theme: initialTheme" in app
+    assert "canonicalLaunch: initialCanonicalLaunch(" in app
     assert "lightReturnRoute: \"\"" in app
     assert "previousLightRoute:" in app
     assert "selectedContactId:" in app
@@ -291,15 +295,21 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert "selectedCalendarDay:" in app
     assert "taskFilter:" in app
     assert "function resolveInitialTheme()" in app
+    assert "function initialCanonicalLaunch(" in app
+    assert "function activeCanonicalLaunch()" in app
+    assert "function effectiveRoute()" in app
+    assert "function effectiveTheme()" in app
+    assert "function handleCanonicalLaunchBack()" in app
     assert "function isLightShellRoute()" in app
     assert "function lightView()" in app
     assert "function lightHomePage()" in app
     assert "function lightNavigate(route" in app
     assert "function lightAppsPage()" in app
     assert "function lightSettingsSurface()" in app
-    assert "function lightInboxPage()" in app
     assert "function homeFeedContentNodes()" in app
-    assert "function lightMeetingsPage()" in app
+    assert "function lightInboxPage()" not in app
+    assert "function lightMeetingsPage()" not in app
+    assert "function lightRealFeedPage(" not in app
     assert "function lightNotesPage()" in app
     assert "function lightNoteDetailPage()" in app
     assert "function lightTasksPage()" in app
@@ -322,12 +332,10 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert "feed.replaceChildren(lightView());" in app
     assert 'case "apps":' in app
     assert 'view.append(lightAppsPage())' in app
-    assert 'case "meetings":' in app
-    assert 'view.append(lightMeetingsPage())' in app
+    assert 'case "meetings":' not in app
     assert 'case "settings":' in app
     assert 'view.append(lightSettingsSurface())' in app
-    assert 'case "inbox":' in app
-    assert 'view.append(lightInboxPage())' in app
+    assert 'case "inbox":' not in app
     assert 'case "note-detail":' in app
     assert 'case "task-detail":' in app
     assert 'case "meeting-detail":' in app
@@ -347,8 +355,9 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert ".light-links" not in styles
     assert ".light-apps-page" in styles
     assert ".light-settings-surface" in styles
-    assert ".light-real-feed-page" in styles
-    assert ".light-meetings-page" in styles
+    assert ".light-real-feed-page" not in styles
+    assert ".light-real-feed-list" not in styles
+    assert ".light-meetings-page" not in styles
     assert ".light-shell" in styles
     assert ".light-app-tile" in styles
     assert ".light-tasks-page" in styles
@@ -369,22 +378,27 @@ def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() 
 
     render_feed = function_block(app, "renderFeed")
     handle_back = function_block(app, "handleAndroidBack")
+    active_canonical_launch = function_block(app, "activeCanonicalLaunch")
+    effective_route = function_block(app, "effectiveRoute")
+    effective_theme = function_block(app, "effectiveTheme")
+    handle_canonical_launch_back = function_block(app, "handleCanonicalLaunchBack")
     light_apps = function_block(app, "lightAppsPage")
     light_settings = function_block(app, "lightSettingsSurface")
-    light_inbox = function_block(app, "lightInboxPage")
-    light_meetings = function_block(app, "lightMeetingsPage")
     home_feed_content = function_block(app, "homeFeedContentNodes")
     light_navigate = function_block(app, "lightNavigate")
+    tab_view = function_block(app, "tabView")
     light_tasks = function_block(app, "lightTasksPage")
     light_task_sections = function_block(app, "lightTaskSectionTitle")
     light_back = function_block(app, "lightBack")
 
-    assert 'document.querySelector(".app-shell")?.setAttribute("data-view", state.route);' in render_feed
-    assert 'document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);' in render_feed
+    assert 'const route = effectiveRoute();' in render_feed
+    assert 'const theme = effectiveTheme();' in render_feed
+    assert 'document.querySelector(".app-shell")?.setAttribute("data-view", route);' in render_feed
+    assert 'document.querySelector(".app-shell")?.setAttribute("data-theme", theme);' in render_feed
     assert 'if (isLightShellRoute()) {' in render_feed
-    assert 'if (state.route === "links") {' in render_feed
-    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (state.route === "links") {')
-    assert 'feed.classList.toggle("is-links-route", state.route === "links" || state.route === "apps");' in render_feed
+    assert 'if (route === "links") {' in render_feed
+    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (route === "links") {')
+    assert 'feed.classList.toggle("is-links-route", route === "links" || state.route === "apps");' in render_feed
 
     assert "linksPageView()" in light_apps
     assert "loadLinksPortal({ render: true });" in app
@@ -393,21 +407,22 @@ def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() 
     assert "startLinksHandoff(slug);" in app
     assert "window.__PUCKY_LINKS_DEBUG__" in app
     assert "settingsPageView()" in light_settings
-    assert "homeFeedContentNodes()" in light_inbox
     assert "filteredFeedCards()" in home_feed_content
     assert "cards.map(cardView)" in home_feed_content
     assert "renderHomeFeedInto(feed);" in render_feed
-    assert 'lightRealFeedPage("Inbox"' not in app
     assert "Real Home tiles will appear here." not in app
-    assert "showTranscript(card)" not in light_inbox
     assert "lightInboxCardView" not in app
-
-    assert "meetingsPageView()" in light_meetings
-    assert "meetingCardFromRecord" not in light_meetings
-    assert "showMeetingDetail" not in light_meetings
-    assert "showMeetingAudioDetail" not in light_meetings
-    assert 'if (state.route === "meetings") {' in light_navigate
+    assert "return state.canonicalLaunch || initialCanonicalLaunch(state.route, state.theme);" in active_canonical_launch
+    assert 'return launch ? launch.target_route : state.route;' in effective_route
+    assert 'return activeCanonicalLaunch() ? "dark" : state.theme;' in effective_theme
+    assert 'const launch = canonicalLaunchForRoute(route, "home");' in light_navigate
+    assert "state.canonicalLaunch = launch;" in light_navigate
+    assert 'setCanonicalLaunchTarget(tab.route, "");' in tab_view
+    assert 'if (route === "meetings") {' in light_navigate
     assert "loadMeetings({ render: true });" in light_navigate
+    assert 'if (handleCanonicalLaunchBack()) {' in handle_back
+    assert 'state.route = launch.return_route || "home";' in handle_canonical_launch_back
+    assert "state.canonicalLaunch = null;" in handle_canonical_launch_back
 
     assert '"DO SOON"' in light_tasks
     assert 'lightSectionTitle("DO")' in light_task_sections
@@ -426,6 +441,7 @@ def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() 
     assert ".app-shell[data-theme=\"light\"] .header" in styles
     assert ".app-shell[data-theme=\"light\"] .page-tabs" in styles
     assert ".light-shell .links-page" in styles
+    assert ".light-shell .meetings-page" not in styles
     assert "lightLinksPage" not in app
     assert "function loadLightLinks" not in app
 
@@ -852,7 +868,8 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "function loadFeedIconExcludes()" in app
     assert "function persistFeedIconExcludes()" in app
     assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
-    assert 'if (state.route !== "feed" || state.openTrayRoute !== "feed")' in app
+    assert "const route = effectiveRoute();" in app
+    assert 'if (route !== "feed" || state.openTrayRoute !== "feed")' in app
     assert "const filters = uniqueFeedIconFilters();" in app
     assert 'iconSvg("archive_folder", { filled: state.showArchivedFeed })' in app
     assert '"route-tray-archive-icon"' in app
@@ -1893,7 +1910,8 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
 
     assert 'const NAV_STATE_KEY = "pucky.cover.nav_state.v1"' in app
     assert "const persistedNavState = loadNavState();" in app
-    assert "route: initialRoute(persistedNavState.route, initialTheme)" in app
+    assert "const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);" in app
+    assert "route: initialRouteValue" in app
     assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme)" in app
     assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
     assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
