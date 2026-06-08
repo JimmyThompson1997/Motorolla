@@ -89,6 +89,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     parser.add_argument("--canonical-root", type=Path, default=CANONICAL_REPO_ROOT, help=argparse.SUPPRESS)
     parser.add_argument("--adb", type=Path, default=Path(r"C:\Users\jimmy\Desktop\Android\tools\android-sdk\platform-tools\adb.exe"), help=argparse.SUPPRESS)
+    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL") or proof.DEFAULT_BROKER_URL, help=argparse.SUPPRESS)
+    parser.add_argument("--puckyctl", type=Path, default=ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py", help=argparse.SUPPRESS)
     parser.add_argument("--node", type=Path, default=proof.bundled_node_executable(), help=argparse.SUPPRESS)
     parser.add_argument("--node-modules", type=Path, default=proof.bundled_node_modules(), help=argparse.SUPPRESS)
     parser.add_argument("--browser-helper", type=Path, default=ROOT / "tools" / "phone_walkie_thread_proof_browser.js", help=argparse.SUPPRESS)
@@ -102,6 +104,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.canonical_root = args.canonical_root.resolve()
     args.evidence_dir = args.evidence_dir.resolve()
     args.browser_helper = args.browser_helper.resolve()
+    args.puckyctl = args.puckyctl.resolve()
     args.node = args.node.resolve() if args.node.exists() else args.node
     args.node_modules = args.node_modules.resolve()
     args.adb = args.adb.resolve() if isinstance(args.adb, Path) and args.adb.exists() else args.adb
