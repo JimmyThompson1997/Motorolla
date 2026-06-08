@@ -2,8 +2,11 @@
 "use strict";
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { chromium } from "playwright";
+
+const require = createRequire(import.meta.url);
+const { chromium } = require("playwright");
 
 function escapeAttribute(value) {
   return String(value || "")

@@ -329,7 +329,7 @@ def run_browser_phase(
     scenario_dir: Path,
     browser_json_name: str,
     device_name: str,
-    timeout_seconds: int | float = 60,
+    timeout_seconds: int | float | None = None,
 ) -> dict[str, Any]:
     payload = proof.capture_phase(
         args,
@@ -339,7 +339,7 @@ def run_browser_phase(
         scenario_dir=scenario_dir,
         browser_name=browser_json_name,
         device_name=device_name,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=timeout_seconds or args.browser_timeout_seconds,
     )
     return payload
 
