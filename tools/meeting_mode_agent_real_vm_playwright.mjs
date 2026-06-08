@@ -293,7 +293,7 @@ async function postMeeting(baseUrl, apiToken, payload) {
   });
 }
 
-async function waitForMeetingState(baseUrl, apiToken, meetingId, expectedState, timeoutMs = 180000) {
+async function waitForMeetingState(baseUrl, apiToken, meetingId, expectedState, timeoutMs = 600000) {
   const deadline = Date.now() + timeoutMs;
   let lastPayload = {};
   while (Date.now() < deadline) {
@@ -311,7 +311,7 @@ async function waitForMeetingState(baseUrl, apiToken, meetingId, expectedState, 
   throw new Error(`Timed out waiting for ${meetingId} to reach ${expectedState}; last payload: ${JSON.stringify(lastPayload).slice(0, 2000)}`);
 }
 
-async function waitForMeetingProcessing(baseUrl, apiToken, meetingId, timeoutMs = 60000) {
+async function waitForMeetingProcessing(baseUrl, apiToken, meetingId, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const payload = await fetchMeetingDetail(baseUrl, apiToken, meetingId);
@@ -331,6 +331,61 @@ async function waitForMeetingProcessing(baseUrl, apiToken, meetingId, timeoutMs 
 async function triggerFeedRefresh(page) {
   await page.evaluate(() => window.PuckyUiDebug.dispatch("refresh_cards"));
   await delay(500);
+}
+
+async function waitForRoute(page, route, timeoutMs = 10000) {
+  await page.waitForFunction((expectedRoute) => {
+    return document.querySelector(".app-shell")?.getAttribute("data-view") === expectedRoute;
+  }, route, { timeout: timeoutMs });
+}
+
+async function gotoRoute(page, route, timeoutMs = 10000) {
+  const currentRoute = await page.evaluate(() => document.querySelector(".app-shell")?.getAttribute("data-view") || "");
+  if (currentRoute !== route) {
+    await page.locator(`[data-route="${route}"]`).first().click();
+  }
+  await waitForRoute(page, route, timeoutMs);
+  await delay(250);
+}
+
+async function triggerMeetingsRefresh(page) {
+  await gotoRoute(page, "meetings");
+  const refreshButton = page.locator("button.meetings-refresh").first();
+  if (await refreshButton.count()) {
+    await refreshButton.click();
+  }
+  await delay(500);
+}
+
+async function browserRouteSnapshot(page, route) {
+  if (route === "meetings") {
+    await triggerMeetingsRefresh(page);
+  } else {
+    await gotoRoute(page, "feed");
+    await triggerFeedRefresh(page);
+  }
+  return browserFeedSnapshot(page);
+}
+
+async function waitForMeetingRouteCard(page, meetingId, { pending = null, timeoutMs = 60000 } = {}) {
+  const selector = `[data-card-session-id="${meetingId}"]`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await triggerMeetingsRefresh(page);
+    const card = page.locator(selector).first();
+    if (await card.count()) {
+      const className = await card.evaluate((node) => String(node.className || ""));
+      if (pending === null) {
+        return className;
+      }
+      const isPending = className.includes("card-pending-thread");
+      if (Boolean(pending) === isPending) {
+        return className;
+      }
+    }
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for meetings route card ${meetingId}${pending === null ? "" : pending ? " pending" : " completed"}`);
 }
 
 async function waitForCardText(page, meetingId, text, timeoutMs = 60000) {
@@ -377,6 +432,22 @@ async function openMeetingAttachment(page, meetingId) {
     throw new Error(`Could not open attachment action for ${meetingId}: ${result?.error || "unknown error"}`);
   }
   await waitForDetail(page, "attachment", "html_iframe");
+}
+
+async function openMeetingRowSummary(page, meetingId) {
+  await gotoRoute(page, "meetings");
+  const body = page.locator(`[data-card-session-id="${meetingId}"] .card-body`).first();
+  await body.waitFor({ state: "visible", timeout: 15000 });
+  await body.click();
+  await waitForDetail(page, "attachment", "html_iframe");
+}
+
+async function openMeetingRowAudio(page, meetingId) {
+  await gotoRoute(page, "meetings");
+  const audioAction = page.locator(`[data-card-session-id="${meetingId}"] .action.action-audio`).first();
+  await audioAction.waitFor({ state: "visible", timeout: 15000 });
+  await audioAction.click();
+  await waitForDetail(page, "attachment", "audio_player");
 }
 
 async function backToDetail(page, detailType, viewer = null) {
@@ -626,13 +697,15 @@ function ensureGeneratedFixtures(reportDir) {
   ensureDir(fixtureDir);
   ensureDir(segmentDir);
 
-  const silencePath = path.join(segmentDir, "silence-1600ms.wav");
+  const silencePath = path.join(segmentDir, "silence-1200ms.wav");
   if (!fs.existsSync(silencePath)) {
-    fs.writeFileSync(silencePath, createSilenceWavBuffer(1600));
+    fs.writeFileSync(silencePath, createSilenceWavBuffer(1200));
   }
 
-  const namedTrioOut = path.join(fixtureDir, "named-trio-60s-generated.wav");
-  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-60s-generated.wav");
+  const namedDuoOut = path.join(fixtureDir, "named-duo-3to5m-generated.wav");
+  const anonymousDuoOut = path.join(fixtureDir, "anonymous-duo-3to5m-generated.wav");
+  const namedTrioOut = path.join(fixtureDir, "named-trio-3to5m-generated.wav");
+  const anonymousTrioOut = path.join(fixtureDir, "anonymous-trio-3to5m-generated.wav");
 
   const buildFixture = (name, segments) => {
     const wavParts = [];
@@ -654,48 +727,169 @@ function ensureGeneratedFixtures(reportDir) {
     return wavParts;
   };
 
+  if (!fs.existsSync(namedDuoOut)) {
+    const namedParts = buildFixture("named-duo-3to5m", [
+      { voice: "en-US-GuyNeural", text: "Hi Maya, I'm Jimmy. Thanks for joining this partner rollout launch readiness review so we can get the deck, budget, and reseller email lined up before next week." },
+      { voice: "en-US-AriaNeural", text: "Hi Jimmy, this is Maya. I finished the latest budget workbook last night, but I still need finance to confirm the open headcount line before I lock the totals." },
+      { voice: "en-US-GuyNeural", text: "I'm Jimmy again. The main launch issue on my side is that the leadership deck still needs the reseller introduction email, the customer story slide, and a cleaner summary of the launch timeline." },
+      { voice: "en-US-AriaNeural", text: "Maya speaking. On the finance side I also need to clean up the travel table, the contractor line, and the pricing sensitivity note before the budget is ready to share more broadly." },
+      { voice: "en-US-GuyNeural", text: "Jimmy will send the launch deck to leadership by Tuesday June ninth, and I will include the first pass of the reseller introduction email in that deck packet at the same time." },
+      { voice: "en-US-AriaNeural", text: "I am Maya, and I will send the revised budget workbook by Wednesday June tenth once finance confirms the headcount this afternoon and I can update the totals." },
+      { voice: "en-US-GuyNeural", text: "Maya, please also own the pricing risk log. I want that document drafted by Tuesday June ninth so we can mention the biggest open pricing concerns during the Thursday partner call." },
+      { voice: "en-US-AriaNeural", text: "That works. Maya will draft the pricing risk log by Tuesday June ninth, and I will send the reseller contact list by Friday June twelfth so sales has the latest names and addresses." },
+      { voice: "en-US-GuyNeural", text: "Jimmy will schedule the internal launch dry run for Thursday June eleventh, and I will send the agenda for that dry run by Wednesday June tenth before lunch." },
+      { voice: "en-US-AriaNeural", text: "I also need the updated pricing assumptions. Maya will review those assumptions by Thursday June eleventh and send comments back the same afternoon after the finance check is done." },
+      { voice: "en-US-GuyNeural", text: "I want the frequently asked questions page cleaned up too. Jimmy will draft the frequently asked questions page by Monday June eighth and will call out the reseller onboarding steps in that draft." },
+      { voice: "en-US-AriaNeural", text: "Once that arrives, Maya will review the pricing section and the travel estimate on Tuesday June ninth so the questions page and the budget use the same numbers." },
+      { voice: "en-US-GuyNeural", text: "Another item is the leadership follow up note. Jimmy will send that note by Friday June twelfth with the dry-run outcome, the deck status, and the reseller email status." },
+      { voice: "en-US-AriaNeural", text: "Maya will update the forecast notes inside the workbook by Wednesday June tenth, and I will highlight any remaining finance blockers in the same message as the revised budget." },
+      { voice: "en-US-GuyNeural", text: "Let me recap the owners. Jimmy owns the launch deck, the reseller introduction email, the frequently asked questions page, the dry-run agenda, and the leadership follow up note." },
+      { voice: "en-US-AriaNeural", text: "And Maya owns the revised budget workbook, the pricing risk log, the reseller contact list, the pricing assumptions review, and the forecast notes." },
+      { voice: "en-US-GuyNeural", text: "Great. I'm Jimmy, and I want all of those dates held because the partner rollout window is tight and leadership expects a complete status update before the week is over." },
+      { voice: "en-US-AriaNeural", text: "Understood. This is Maya, and I will keep the June ninth, June tenth, June eleventh, and June twelfth due dates visible in each follow up so nothing slips." }
+    ]);
+    concatWavFiles(ffmpegPath, namedParts, namedDuoOut, fixtureDir);
+  }
+
+  if (!fs.existsSync(anonymousDuoOut)) {
+    const anonymousParts = buildFixture("anonymous-duo-3to5m", [
+      { voice: "en-US-GuyNeural", text: "Thanks for joining this partner rollout launch readiness review so we can get the deck, budget, and reseller email lined up before next week." },
+      { voice: "en-US-AriaNeural", text: "I finished the latest budget workbook last night, but I still need finance to confirm the open headcount line before I lock the totals." },
+      { voice: "en-US-GuyNeural", text: "The main launch issue on my side is that the leadership deck still needs the reseller introduction email, the customer story slide, and a cleaner summary of the launch timeline." },
+      { voice: "en-US-AriaNeural", text: "On the finance side I also need to clean up the travel table, the contractor line, and the pricing sensitivity note before the budget is ready to share more broadly." },
+      { voice: "en-US-GuyNeural", text: "I will send the launch deck to leadership by Tuesday June ninth, and I will include the first pass of the reseller introduction email in that deck packet at the same time." },
+      { voice: "en-US-AriaNeural", text: "I will send the revised budget workbook by Wednesday June tenth once finance confirms the headcount this afternoon and I can update the totals." },
+      { voice: "en-US-GuyNeural", text: "Please also own the pricing risk log. I want that document drafted by Tuesday June ninth so we can mention the biggest open pricing concerns during the Thursday partner call." },
+      { voice: "en-US-AriaNeural", text: "That works. I will draft the pricing risk log by Tuesday June ninth, and I will send the reseller contact list by Friday June twelfth so sales has the latest names and addresses." },
+      { voice: "en-US-GuyNeural", text: "I will schedule the internal launch dry run for Thursday June eleventh, and I will send the agenda for that dry run by Wednesday June tenth before lunch." },
+      { voice: "en-US-AriaNeural", text: "I also need the updated pricing assumptions. I will review those assumptions by Thursday June eleventh and send comments back the same afternoon after the finance check is done." },
+      { voice: "en-US-GuyNeural", text: "I want the frequently asked questions page cleaned up too. I will draft the frequently asked questions page by Monday June eighth and will call out the reseller onboarding steps in that draft." },
+      { voice: "en-US-AriaNeural", text: "Once that arrives, I will review the pricing section and the travel estimate on Tuesday June ninth so the questions page and the budget use the same numbers." },
+      { voice: "en-US-GuyNeural", text: "Another item is the leadership follow up note. I will send that note by Friday June twelfth with the dry-run outcome, the deck status, and the reseller email status." },
+      { voice: "en-US-AriaNeural", text: "I will update the forecast notes inside the workbook by Wednesday June tenth, and I will highlight any remaining finance blockers in the same message as the revised budget." },
+      { voice: "en-US-GuyNeural", text: "Let me recap the owners. One speaker owns the launch deck, the reseller introduction email, the frequently asked questions page, the dry-run agenda, and the leadership follow up note." },
+      { voice: "en-US-AriaNeural", text: "The other speaker owns the revised budget workbook, the pricing risk log, the reseller contact list, the pricing assumptions review, and the forecast notes." },
+      { voice: "en-US-GuyNeural", text: "Great. I want all of those dates held because the partner rollout window is tight and leadership expects a complete status update before the week is over." },
+      { voice: "en-US-AriaNeural", text: "Understood. I will keep the June ninth, June tenth, June eleventh, and June twelfth due dates visible in each follow up so nothing slips." }
+    ]);
+    concatWavFiles(ffmpegPath, anonymousParts, anonymousDuoOut, fixtureDir);
+  }
+
   if (!fs.existsSync(namedTrioOut)) {
-    const namedParts = buildFixture("named-trio-60s", [
-      { voice: "en-US-GuyNeural", text: "Hi Jack and Maya, I'm Jimmy. Thanks for joining the launch readiness meeting for the partner rollout this morning." },
-      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I reviewed the partner checklist today, and the biggest open item is the intro email for the reseller group." },
-      { voice: "en-US-AriaNeural", text: "I'm Maya. I updated the budget workbook last night, and I still need the final finance headcount before I lock the totals." },
-      { voice: "en-US-GuyNeural", text: "This is Jimmy again. I will send the launch deck to leadership by Tuesday June ninth, and I will include the reseller email draft in that packet." },
-      { voice: "en-US-ChristopherNeural", text: "Jack here again. I will schedule the partner check in for Thursday June eleventh, and I will add the reseller questions to the agenda before lunch." },
-      { voice: "en-US-AriaNeural", text: "Maya speaking again. I will send the revised budget table by Wednesday June tenth, right after finance confirms the headcount this afternoon." },
-      { voice: "en-US-GuyNeural", text: "We also need the frequently asked questions cleaned up. Jack, please own the first draft, and Maya, please review the pricing section after that draft is ready." },
-      { voice: "en-US-ChristopherNeural", text: "Understood. I'm Jack, and I will circulate the frequently asked questions draft by Monday June eighth so Maya has time to review it before the Thursday call." },
-      { voice: "en-US-AriaNeural", text: "That works for me. I'm Maya, and I will review the pricing section by Tuesday June ninth and send comments back on the same day." },
-      { voice: "en-US-GuyNeural", text: "Perfect. Jimmy owns the launch deck, Jack owns the partner meeting and the questions draft, and Maya owns the budget table plus the pricing review." }
+    const namedParts = buildFixture("named-trio-3to5m", [
+      { voice: "en-US-GuyNeural", text: "Hi Jack and Maya, I'm Jimmy. Thanks for joining this partner rollout launch readiness meeting so we can line up the deck, the reseller email, the partner call, and the finance numbers." },
+      { voice: "en-US-ChristopherNeural", text: "I'm Jack. I reviewed the partner checklist this morning, and the two biggest open items are the reseller introduction email and the frequently asked questions page for onboarding." },
+      { voice: "en-US-AriaNeural", text: "I'm Maya. I updated the budget workbook last night, but I still need the finance headcount, the travel number, and the final pricing assumptions before I can lock the totals." },
+      { voice: "en-US-GuyNeural", text: "Jimmy will send the launch deck to leadership by Tuesday June ninth, and I will include the first pass of the reseller introduction email plus the customer story slide in that deck packet." },
+      { voice: "en-US-ChristopherNeural", text: "Jack will schedule the partner check in for Thursday June eleventh, and I will send the draft agenda by Wednesday June tenth so everyone can review the reseller questions in advance." },
+      { voice: "en-US-AriaNeural", text: "Maya will send the revised budget workbook by Wednesday June tenth after finance confirms the headcount, and I will flag the biggest pricing changes in that same note." },
+      { voice: "en-US-GuyNeural", text: "This is Jimmy again. I also need a short leadership follow up note by Friday June twelfth, and I will own that note after the dry run finishes on Thursday." },
+      { voice: "en-US-ChristopherNeural", text: "Jack here again. I will draft the frequently asked questions page by Monday June eighth, and I will add the reseller onboarding steps, contact flow, and escalation path in the first version." },
+      { voice: "en-US-AriaNeural", text: "Maya speaking. I will review the pricing section inside that frequently asked questions page by Tuesday June ninth so it matches the workbook and the travel assumptions." },
+      { voice: "en-US-GuyNeural", text: "Jimmy will run the internal launch dry run on Thursday June eleventh, and I will send the dry-run agenda by Wednesday June tenth before lunch so the team can prepare." },
+      { voice: "en-US-ChristopherNeural", text: "I also need to prepare the reseller question tracker. Jack will circulate that tracker by Tuesday June ninth, and I will keep it updated before the Thursday partner check in." },
+      { voice: "en-US-AriaNeural", text: "Maya will send the pricing risk log by Tuesday June ninth, and I will update the forecast notes by Wednesday June tenth so leadership can see the remaining finance blockers clearly." },
+      { voice: "en-US-GuyNeural", text: "Another deliverable is the customer story document. Jimmy will send that by Wednesday June tenth, and I will pull the main quote into the launch deck before the dry run." },
+      { voice: "en-US-ChristopherNeural", text: "Jack will send the reseller email draft comments back by Tuesday June ninth, and I will verify the partner call attendee list by Wednesday June tenth before the agenda goes out." },
+      { voice: "en-US-AriaNeural", text: "Maya will send the revised travel estimate by Friday June twelfth, and I will keep the contractor line visible in the workbook so finance can approve the final total quickly." },
+      { voice: "en-US-GuyNeural", text: "Let me recap the owners. Jimmy owns the launch deck, the customer story, the dry run, and the leadership follow up note." },
+      { voice: "en-US-ChristopherNeural", text: "Jack owns the partner check in, the frequently asked questions page, the reseller question tracker, the attendee list, and the email draft comments." },
+      { voice: "en-US-AriaNeural", text: "Maya owns the revised budget workbook, the pricing section review, the pricing risk log, the forecast notes, and the revised travel estimate." },
+      { voice: "en-US-GuyNeural", text: "Perfect. I'm Jimmy, and I want the June eighth, June ninth, June tenth, June eleventh, and June twelfth due dates repeated in every follow up so the partner rollout stays on schedule." },
+      { voice: "en-US-AriaNeural", text: "That works for me. This is Maya, and I will watch the finance dependency closely so the budget and pricing pieces do not block the launch deck or the partner meeting." }
     ]);
     concatWavFiles(ffmpegPath, namedParts, namedTrioOut, fixtureDir);
   }
 
   if (!fs.existsSync(anonymousTrioOut)) {
-    const anonymousParts = buildFixture("anonymous-trio-60s", [
-      { voice: "en-US-GuyNeural", text: "Thanks for joining the launch readiness meeting for the partner rollout. The first issue is the reseller introduction email and the open deck notes." },
-      { voice: "en-US-ChristopherNeural", text: "I reviewed the partner checklist today, and I can own the reseller agenda. I will schedule the partner check in for Thursday June eleventh." },
-      { voice: "en-US-AriaNeural", text: "I updated the budget workbook last night, and I still need the finance headcount. I will send the revised budget table by Wednesday June tenth." },
-      { voice: "en-US-GuyNeural", text: "I will send the launch deck to leadership by Tuesday June ninth, and I will include the reseller introduction draft in that packet." },
-      { voice: "en-US-ChristopherNeural", text: "I can also draft the frequently asked questions page. I will circulate that draft by Monday June eighth so the pricing section can be reviewed in time." },
-      { voice: "en-US-AriaNeural", text: "I will review the pricing section by Tuesday June ninth, and I will reply with edits the same day after the frequently asked questions draft arrives." },
-      { voice: "en-US-GuyNeural", text: "The biggest risk is missing the partner rollout window, so the deck, the questions page, and the budget numbers all need to land on their due dates." },
-      { voice: "en-US-ChristopherNeural", text: "Understood. The partner check in stays on Thursday June eleventh, and the agenda will cover reseller concerns, pricing, and the final launch timeline." },
-      { voice: "en-US-AriaNeural", text: "The budget update will call out the headcount change, the revised travel estimate, and the pricing impact once finance confirms the numbers." },
-      { voice: "en-US-GuyNeural", text: "Great. The launch deck is due Tuesday June ninth, the budget table is due Wednesday June tenth, and the partner meeting happens Thursday June eleventh." }
+    const anonymousParts = buildFixture("anonymous-trio-3to5m", [
+      { voice: "en-US-GuyNeural", text: "Thanks for joining this partner rollout launch readiness meeting so we can line up the deck, the reseller email, the partner call, and the finance numbers." },
+      { voice: "en-US-ChristopherNeural", text: "I reviewed the partner checklist this morning, and the two biggest open items are the reseller introduction email and the frequently asked questions page for onboarding." },
+      { voice: "en-US-AriaNeural", text: "I updated the budget workbook last night, but I still need the finance headcount, the travel number, and the final pricing assumptions before I can lock the totals." },
+      { voice: "en-US-GuyNeural", text: "I will send the launch deck to leadership by Tuesday June ninth, and I will include the first pass of the reseller introduction email plus the customer story slide in that deck packet." },
+      { voice: "en-US-ChristopherNeural", text: "I will schedule the partner check in for Thursday June eleventh, and I will send the draft agenda by Wednesday June tenth so everyone can review the reseller questions in advance." },
+      { voice: "en-US-AriaNeural", text: "I will send the revised budget workbook by Wednesday June tenth after finance confirms the headcount, and I will flag the biggest pricing changes in that same note." },
+      { voice: "en-US-GuyNeural", text: "I also need a short leadership follow up note by Friday June twelfth, and I will own that note after the dry run finishes on Thursday." },
+      { voice: "en-US-ChristopherNeural", text: "I will draft the frequently asked questions page by Monday June eighth, and I will add the reseller onboarding steps, contact flow, and escalation path in the first version." },
+      { voice: "en-US-AriaNeural", text: "I will review the pricing section inside that frequently asked questions page by Tuesday June ninth so it matches the workbook and the travel assumptions." },
+      { voice: "en-US-GuyNeural", text: "I will run the internal launch dry run on Thursday June eleventh, and I will send the dry-run agenda by Wednesday June tenth before lunch so the team can prepare." },
+      { voice: "en-US-ChristopherNeural", text: "I also need to prepare the reseller question tracker. I will circulate that tracker by Tuesday June ninth, and I will keep it updated before the Thursday partner check in." },
+      { voice: "en-US-AriaNeural", text: "I will send the pricing risk log by Tuesday June ninth, and I will update the forecast notes by Wednesday June tenth so leadership can see the remaining finance blockers clearly." },
+      { voice: "en-US-GuyNeural", text: "Another deliverable is the customer story document. I will send that by Wednesday June tenth, and I will pull the main quote into the launch deck before the dry run." },
+      { voice: "en-US-ChristopherNeural", text: "I will send the reseller email draft comments back by Tuesday June ninth, and I will verify the partner call attendee list by Wednesday June tenth before the agenda goes out." },
+      { voice: "en-US-AriaNeural", text: "I will send the revised travel estimate by Friday June twelfth, and I will keep the contractor line visible in the workbook so finance can approve the final total quickly." },
+      { voice: "en-US-GuyNeural", text: "One speaker owns the launch deck, the customer story, the dry run, and the leadership follow up note." },
+      { voice: "en-US-ChristopherNeural", text: "Another speaker owns the partner check in, the frequently asked questions page, the reseller question tracker, the attendee list, and the email draft comments." },
+      { voice: "en-US-AriaNeural", text: "The remaining speaker owns the revised budget workbook, the pricing section review, the pricing risk log, the forecast notes, and the revised travel estimate." },
+      { voice: "en-US-GuyNeural", text: "I want the June eighth, June ninth, June tenth, June eleventh, and June twelfth due dates repeated in every follow up so the partner rollout stays on schedule." },
+      { voice: "en-US-AriaNeural", text: "That works for me. I will watch the finance dependency closely so the budget and pricing pieces do not block the launch deck or the partner meeting." }
     ]);
     concatWavFiles(ffmpegPath, anonymousParts, anonymousTrioOut, fixtureDir);
   }
 
-  return { namedTrioOut, anonymousTrioOut };
+  return {
+    namedDuoOut,
+    anonymousDuoOut,
+    namedTrioOut,
+    anonymousTrioOut
+  };
 }
 
 function buildScenarios(reportDir, namesFilter = []) {
   const fixtures = ensureGeneratedFixtures(reportDir);
-  const namedTrio = uniqueMeetingId("named-trio-60s", 0);
-  const anonymousTrio = uniqueMeetingId("anonymous-trio-60s", 1);
+  const namedDuo = uniqueMeetingId("named-duo-3to5m", 0);
+  const anonymousDuo = uniqueMeetingId("anonymous-duo-3to5m", 1);
+  const namedTrio = uniqueMeetingId("named-trio-3to5m", 2);
+  const anonymousTrio = uniqueMeetingId("anonymous-trio-3to5m", 3);
   const scenarios = [
     {
-      name: "named_trio_60s",
+      name: "named_duo_3to5m",
+      meetingId: namedDuo.meetingId,
+      payload: livePayload({
+        meetingId: namedDuo.meetingId,
+        startedAt: namedDuo.startedAt,
+        audioPath: fixtures.namedDuoOut
+      }),
+      expectedNames: ["Jimmy", "Maya"],
+      forbiddenNeutralLabels: ["speaker_0", "speaker_1"],
+      expectedSummarySnippets: [
+        "Jimmy",
+        "Maya",
+        "launch deck",
+        "budget workbook",
+        "pricing risk log",
+        "June 8",
+        "June 9",
+        "June 10",
+        "June 11",
+        "June 12"
+      ],
+      expectedDueDateSnippets: ["June 8", "June 9", "June 10", "June 11", "June 12"]
+    },
+    {
+      name: "anonymous_duo_3to5m",
+      meetingId: anonymousDuo.meetingId,
+      payload: livePayload({
+        meetingId: anonymousDuo.meetingId,
+        startedAt: anonymousDuo.startedAt,
+        audioPath: fixtures.anonymousDuoOut
+      }),
+      forbiddenNames: ["Jimmy", "Jack", "Maya"],
+      expectedNeutralSpeakerCount: 2,
+      expectedSummarySnippets: [
+        "launch deck",
+        "budget workbook",
+        "pricing risk log",
+        "June 8",
+        "June 9",
+        "June 10",
+        "June 11",
+        "June 12"
+      ],
+      expectedDueDateSnippets: ["June 8", "June 9", "June 10", "June 11", "June 12"]
+    },
+    {
+      name: "named_trio_3to5m",
       meetingId: namedTrio.meetingId,
       payload: livePayload({
         meetingId: namedTrio.meetingId,
@@ -710,14 +904,16 @@ function buildScenarios(reportDir, namesFilter = []) {
         "Maya",
         "launch deck",
         "budget",
+        "June 8",
         "June 9",
         "June 10",
-        "June 11"
+        "June 11",
+        "June 12"
       ],
-      expectedDueDateSnippets: ["June 9", "June 10", "June 11"]
+      expectedDueDateSnippets: ["June 8", "June 9", "June 10", "June 11", "June 12"]
     },
     {
-      name: "anonymous_trio_60s",
+      name: "anonymous_trio_3to5m",
       meetingId: anonymousTrio.meetingId,
       payload: livePayload({
         meetingId: anonymousTrio.meetingId,
@@ -730,12 +926,21 @@ function buildScenarios(reportDir, namesFilter = []) {
         "launch",
         "budget",
         "partner",
+        "June 8",
         "June 9",
         "June 10",
-        "June 11"
-      ]
+        "June 11",
+        "June 12"
+      ],
+      expectedDueDateSnippets: ["June 8", "June 9", "June 10", "June 11", "June 12"]
     }
   ];
+  for (const scenario of scenarios) {
+    const durationMs = Number(scenario?.payload?.duration_ms || 0);
+    if (!(durationMs >= 180000 && durationMs <= 300000)) {
+      throw new Error(`${scenario.name} fixture duration ${durationMs}ms is outside the 3-5 minute target`);
+    }
+  }
   if (!namesFilter.length) {
     return scenarios;
   }
@@ -778,11 +983,14 @@ async function runScenario({
   const warnings = [];
 
   const feedBeforeApi = await fetchFeedSnapshot(baseUrl, apiToken);
-  const feedBeforeBrowser = await browserFeedSnapshot(page);
+  const feedBeforeBrowser = await browserRouteSnapshot(page, "feed");
   writeJsonFile(path.join(scenarioDir, "feed_before.json"), {
     api: feedBeforeApi,
     browser: feedBeforeBrowser
   });
+  const meetingsBeforeBrowser = await browserRouteSnapshot(page, "meetings");
+  writeJsonFile(path.join(scenarioDir, "meetings_before.json"), meetingsBeforeBrowser);
+  await gotoRoute(page, "feed");
 
   const postResponse = await postMeeting(baseUrl, apiToken, scenario.payload);
   writeJsonFile(path.join(scenarioDir, "meeting_post_response.json"), postResponse);
@@ -791,20 +999,38 @@ async function runScenario({
   const processingPayload = await fetchMeetingDetail(baseUrl, apiToken, scenario.meetingId);
   writeJsonFile(path.join(scenarioDir, "meeting_processing.json"), processingPayload);
 
+  await gotoRoute(page, "feed");
   await waitForCardText(page, scenario.meetingId, "Processing");
-  const pendingScreenshot = await saveScreenshot(page, scenarioDir, "01-pending-tile");
+  const homePendingScreenshot = await saveScreenshot(page, scenarioDir, "01-home-pending-tile");
+
+  const pendingMeetingsClass = await waitForMeetingRouteCard(page, scenario.meetingId, { pending: true });
+  const meetingsPendingSnapshot = await browserFeedSnapshot(page);
+  const meetingsPendingRow = Array.isArray(meetingsPendingSnapshot?.visible_cards)
+    ? meetingsPendingSnapshot.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
+    : null;
+  const meetingsPendingScreenshot = await saveScreenshot(page, scenarioDir, "02-meetings-pending-row");
+  await gotoRoute(page, "feed");
 
   const completedMeeting = await waitForMeetingState(baseUrl, apiToken, scenario.meetingId, "completed");
   const completedPayload = await fetchMeetingDetail(baseUrl, apiToken, scenario.meetingId);
   writeJsonFile(path.join(scenarioDir, "meeting_completed.json"), completedPayload);
 
-  await triggerFeedRefresh(page);
-  const feedAfterBrowser = await browserFeedSnapshot(page);
+  const feedAfterBrowser = await browserRouteSnapshot(page, "feed");
   const feedAfterApi = await fetchFeedSnapshot(baseUrl, apiToken);
   writeJsonFile(path.join(scenarioDir, "feed_after.json"), {
     api: feedAfterApi,
     browser: feedAfterBrowser
   });
+  const homeCompletedScreenshot = await saveScreenshot(page, scenarioDir, "03-home-completed-tile");
+
+  const meetingsCompletedClass = await waitForMeetingRouteCard(page, scenario.meetingId, { pending: false });
+  const meetingsAfterBrowser = await browserFeedSnapshot(page);
+  writeJsonFile(path.join(scenarioDir, "meetings_after.json"), meetingsAfterBrowser);
+  const meetingsCompletedRow = Array.isArray(meetingsAfterBrowser?.visible_cards)
+    ? meetingsAfterBrowser.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
+    : null;
+  const meetingsCompletedScreenshot = await saveScreenshot(page, scenarioDir, "04-meetings-completed-row");
+  await gotoRoute(page, "feed");
 
   const feedCard = Array.isArray(feedAfterBrowser?.visible_cards)
     ? feedAfterBrowser.visible_cards.find((item) => String(item?.session_id || "") === scenario.meetingId)
@@ -815,7 +1041,6 @@ async function runScenario({
   if (!String(feedCard.preview || "").trim()) {
     throw new Error(`${scenario.name} feed tile reply text is empty`);
   }
-  const completedScreenshot = await saveScreenshot(page, scenarioDir, "02-completed-tile");
   const tileMarkup = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().innerHTML();
   if (!/svg|material-symbols|card-icon/i.test(String(tileMarkup || ""))) {
     throw new Error(`${scenario.name} feed tile did not render an icon`);
@@ -847,6 +1072,36 @@ async function runScenario({
   if (!detailMeeting.feed_item?.telemetry?.meeting_recording_title || String(detailMeeting.feed_item.telemetry.meeting_recording_title || "") !== String(detailMeeting.recording_title || "")) {
     throw new Error(`${scenario.name} feed telemetry recording title mismatch`);
   }
+  if (!String(pendingMeetingsClass || "").includes("card-pending-thread")) {
+    throw new Error(`${scenario.name} meetings route did not expose a pending row state`);
+  }
+  if (String(meetingsCompletedClass || "").includes("card-pending-thread")) {
+    throw new Error(`${scenario.name} meetings route row never converted out of pending state`);
+  }
+  if (!meetingsCompletedRow) {
+    throw new Error(`${scenario.name} missing completed meetings row`);
+  }
+  const meetingsRowTitle = String(meetingsCompletedRow.preview || "").trim();
+  if (meetingsRowTitle !== String(detailMeeting.recording_title || "").trim()) {
+    throw new Error(`${scenario.name} meetings row title did not use recording_title`);
+  }
+  const meetingsRowState = await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().evaluate((node) => ({
+    title: String(node.querySelector(".title")?.textContent || "").trim(),
+    hasIdentity: Boolean(node.querySelector(".identity")),
+    hasPreview: Boolean(node.querySelector(".preview")),
+    audioButtons: node.querySelectorAll(".action.action-audio").length,
+    actionButtons: node.querySelectorAll(".action").length
+  }));
+  if (meetingsRowState.hasIdentity) {
+    throw new Error(`${scenario.name} meetings row still rendered a left identity control`);
+  }
+  if (meetingsRowState.hasPreview) {
+    throw new Error(`${scenario.name} meetings row still rendered a preview/subtitle`);
+  }
+  if (meetingsRowState.audioButtons !== 1 || meetingsRowState.actionButtons !== 1) {
+    throw new Error(`${scenario.name} meetings row did not keep exactly one right-side mic action`);
+  }
+  await gotoRoute(page, "feed");
 
   const attachments = summarizeAttachments(detailMeeting);
   const summaryAttachment = attachments.find((item) => String(item?.id || "") === `${scenario.meetingId}:html`);
@@ -898,34 +1153,23 @@ async function runScenario({
   if (paperclipAttachmentTitle !== String(summaryAttachment.title || "").trim()) {
     throw new Error(`${scenario.name} paperclip opened ${paperclipAttachmentTitle || "an unexpected attachment"} instead of the summary HTML`);
   }
-  const paperclipSummaryScreenshot = await saveScreenshot(page, scenarioDir, "03-paperclip-summary-html");
-  await backToFeed(page);
-
-  await page.locator(`[data-card-session-id="${scenario.meetingId}"]`).first().click();
-  await waitForDetail(page, "transcript");
-  const transcriptDetailScreenshot = await saveScreenshot(page, scenarioDir, "04-transcript-detail");
-
-  const chipTexts = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
+  const summaryFromHomeScreenshot = await saveScreenshot(page, scenarioDir, "05-summary-from-home-tile");
+  const chipTextsFromHome = [...new Set(await page.locator("#detail .bubble-attachment-chip span").allTextContents())];
   for (const requiredLabel of ["Transcript (Plain Text)", "Transcript", String(summaryAttachment.title || ""), "Meeting Audio"]) {
-    if (!chipTexts.includes(requiredLabel)) {
-      throw new Error(`${scenario.name} transcript detail is missing attachment chip ${requiredLabel}`);
+    if (!chipTextsFromHome.includes(requiredLabel)) {
+      throw new Error(`${scenario.name} summary detail is missing attachment chip ${requiredLabel}`);
     }
   }
-  const firstChipText = String(await page.locator("#detail .bubble-attachment-chip span").first().textContent() || "").trim();
-  if (firstChipText !== String(summaryAttachment.title || "").trim()) {
-    throw new Error(`${scenario.name} transcript detail did not prioritize the summary HTML chip`);
-  }
+  await backToFeed(page);
 
-  await page.locator("#detail .bubble-attachment-chip", { hasText: String(summaryAttachment.title || "") }).last().click();
-  await waitForDetail(page, "attachment", "html_iframe");
+  await openMeetingRowSummary(page, scenario.meetingId);
   await page.waitForSelector("#detail iframe.document-frame", { timeout: 15000 });
+  const summaryFromMeetingsScreenshot = await saveScreenshot(page, scenarioDir, "06-summary-from-meetings-row");
 
   const summaryText = await page.locator("#detail iframe.document-frame").last().evaluate((node) => {
     const frame = node instanceof HTMLIFrameElement ? node : null;
     return String(frame?.contentDocument?.body?.textContent || frame?.srcdoc || "");
   });
-  const summaryScreenshot = await saveScreenshot(page, scenarioDir, "05-summary-html");
-
   const renderedSummaryHtml = await page.locator("#detail iframe.document-frame").last().evaluate((node) => {
     const frame = node instanceof HTMLIFrameElement ? node : null;
     return String(frame?.contentDocument?.body?.innerHTML || frame?.srcdoc || "");
@@ -1003,7 +1247,7 @@ async function runScenario({
   if (!String(transcriptFromHtmlText || "").trim() || /transcript unavailable|html preview unavailable/i.test(String(transcriptFromHtmlText || ""))) {
     throw new Error(`${scenario.name} transcript link inside summary did not open transcript HTML detail`);
   }
-  const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "06-transcript-from-html");
+  const transcriptFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "07-transcript-from-summary");
   await backToDetail(page, "attachment", "html_iframe");
 
   const bridgeConnected = await page.evaluate(() => Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function"));
@@ -1013,7 +1257,7 @@ async function runScenario({
   await page.frameLocator("#detail iframe.document-frame").locator("a.pucky-meeting-audio-link").click();
   await waitForDetail(page, "attachment", "audio_player");
   const audioResolution = await waitForAudioViewerResolution(page);
-  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "07-audio-from-html");
+  const audioFromHtmlScreenshot = await saveScreenshot(page, scenarioDir, "08-audio-from-summary");
   writeJsonFile(path.join(scenarioDir, "audio_viewer_resolution.json"), audioResolution);
   if (audioResolution.error_text) {
     throw new Error(`${scenario.name} audio viewer reported an error: ${audioResolution.error_text}`);
@@ -1025,10 +1269,19 @@ async function runScenario({
   if (!audioSource.includes("/api/shared/meetings/")) {
     throw new Error(`${scenario.name} audio viewer did not use the signed meeting audio URL`);
   }
-  const playbackProof = await playAttachmentAudioAndWaitForAdvance(page);
-  const audioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "08-audio-playing");
+  const summaryAudioPlayback = await playAttachmentAudioAndWaitForAdvance(page);
+  const summaryAudioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "09-audio-playing-from-summary");
   await backToDetail(page, "attachment", "html_iframe");
-  await backToDetail(page, "transcript");
+  await backToFeed(page);
+
+  await openMeetingRowAudio(page, scenario.meetingId);
+  const rowAudioResolution = await waitForAudioViewerResolution(page);
+  writeJsonFile(path.join(scenarioDir, "row_audio_viewer_resolution.json"), rowAudioResolution);
+  if (rowAudioResolution.error_text) {
+    throw new Error(`${scenario.name} meetings row mic reported an error: ${rowAudioResolution.error_text}`);
+  }
+  const rowAudioPlayback = await playAttachmentAudioAndWaitForAdvance(page);
+  const rowAudioPlayingScreenshot = await saveScreenshot(page, scenarioDir, "10-audio-playing-from-meetings-row");
   await backToFeed(page);
 
   writeJsonFile(path.join(scenarioDir, "bridge_trace.json"), {
@@ -1050,23 +1303,30 @@ async function runScenario({
     diarization_status: String(detailMeeting.diarization_status || ""),
     transcript_status: String(detailMeeting.transcript_status || ""),
     last_meeting_tool_name: String(detailMeeting.agent?.last_meeting_tool_name || detailMeeting.feed_item?.telemetry?.last_meeting_tool_name || ""),
-    attachments: chipTexts,
+    attachments: chipTextsFromHome,
     bridge_mode: bridgeMode,
     bridge_connected: bridgeConnected,
-    audio_playback: playbackProof,
+    pending_meetings_row_class: String(pendingMeetingsClass || ""),
+    completed_meetings_row_class: String(meetingsCompletedClass || ""),
+    meetings_row_title: meetingsRowState.title,
+    meetings_row_state: meetingsRowState,
+    audio_playback_from_summary: summaryAudioPlayback,
+    audio_playback_from_meetings_row: rowAudioPlayback,
     audio_source: String(audioSource || ""),
     transcript_text: transcriptText,
     summary_text: String(summaryText || ""),
     warnings,
     screenshots: {
-      pending_tile: pendingScreenshot,
-      completed_tile: completedScreenshot,
-      paperclip_summary_html: paperclipSummaryScreenshot,
-      transcript_detail: transcriptDetailScreenshot,
-      summary_html: summaryScreenshot,
-      transcript_from_html: transcriptFromHtmlScreenshot,
-      audio_from_html: audioFromHtmlScreenshot,
-      audio_playing: audioPlayingScreenshot
+      home_pending_tile: homePendingScreenshot,
+      meetings_pending_row: meetingsPendingScreenshot,
+      home_completed_tile: homeCompletedScreenshot,
+      meetings_completed_row: meetingsCompletedScreenshot,
+      summary_from_home_tile: summaryFromHomeScreenshot,
+      summary_from_meetings_row: summaryFromMeetingsScreenshot,
+      transcript_from_summary: transcriptFromHtmlScreenshot,
+      audio_from_summary: audioFromHtmlScreenshot,
+      audio_playing_from_summary: summaryAudioPlayingScreenshot,
+      audio_playing_from_meetings_row: rowAudioPlayingScreenshot
     }
   };
   writeJsonFile(path.join(scenarioDir, "scenario_result.json"), result);

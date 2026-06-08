@@ -227,6 +227,10 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert 'if (op.kind === "wait_for_selector")' in source
     assert 'if (op.kind === "wait_for_text")' in source
     assert 'if (op.kind === "text_content")' in source
+    assert 'if (op.kind === "selector_count")' in source
+    assert 'if (op.kind === "click_frame_selector")' in source
+    assert 'if (op.kind === "audio_state")' in source
+    assert 'if (op.kind === "play_audio")' in source
     assert "page.screenshot" in source
     assert "scrollIntoViewIfNeeded" in source
 

@@ -128,6 +128,39 @@ async function selectorText(page, selector, timeoutMs) {
   return (value || "").trim();
 }
 
+async function selectorCount(page, selector) {
+  return page.locator(selector).count();
+}
+
+async function clickFrameSelector(page, frameSelector, selector, timeoutMs) {
+  const locator = page.frameLocator(frameSelector).locator(selector).first();
+  await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.click({ timeout: Math.min(timeoutMs, 5000) });
+  } catch (_) {
+    try {
+      await locator.click({ timeout: timeoutMs, force: true });
+    } catch (_forceError) {
+      await locator.evaluate(node => node.click());
+    }
+  }
+  await page.waitForTimeout(200);
+}
+
+async function audioSnapshot(page, selector, timeoutMs) {
+  const locator = page.locator(selector).first();
+  await locator.waitFor({ state: "attached", timeout: timeoutMs });
+  return locator.evaluate(node => ({
+    duration: Number(node.duration || 0),
+    readyState: Number(node.readyState || 0),
+    paused: Boolean(node.paused),
+    currentTime: Number(node.currentTime || 0),
+    src: String(node.getAttribute("src") || ""),
+    currentSrc: String(node.currentSrc || "")
+  }));
+}
+
 async function closeDetailIfOpen(page, timeoutMs) {
   const detail = page.locator("#detail.is-open .detail-back").first();
   if (await detail.count()) {
@@ -268,10 +301,59 @@ async function runOperation(page, request, op) {
     }
     return { kind: op.kind, selector, text: await selectorText(page, selector, timeoutMs), detail: await describePage(page) };
   }
+  if (op.kind === "selector_count") {
+    const selector = String(op.selector || "").trim();
+    if (!selector) {
+      throw new Error("selector_count requires selector");
+    }
+    return { kind: op.kind, selector, count: await selectorCount(page, selector), detail: await describePage(page) };
+  }
+  if (op.kind === "click_frame_selector") {
+    const frameSelector = String(op.frame_selector || "#detail iframe.document-frame").trim();
+    const selector = String(op.selector || "").trim();
+    if (!frameSelector || !selector) {
+      throw new Error("click_frame_selector requires frame_selector and selector");
+    }
+    await clickFrameSelector(page, frameSelector, selector, timeoutMs);
+    return { kind: op.kind, frame_selector: frameSelector, selector, detail: await describePage(page) };
+  }
   if (op.kind === "wait_for_detail") {
     const selector = `#detail.is-open[data-detail-type="${escapeAttribute(op.detail_type || "")}"]`;
     await page.waitForSelector(selector, { timeout: timeoutMs });
     return { kind: op.kind, selector, detail: await describePage(page) };
+  }
+  if (op.kind === "audio_state") {
+    const selector = String(op.selector || "#detail audio.attachment-audio-player").trim();
+    if (!selector) {
+      throw new Error("audio_state requires selector");
+    }
+    return { kind: op.kind, selector, audio: await audioSnapshot(page, selector, timeoutMs), detail: await describePage(page) };
+  }
+  if (op.kind === "play_audio") {
+    const selector = String(op.selector || "#detail audio.attachment-audio-player").trim();
+    if (!selector) {
+      throw new Error("play_audio requires selector");
+    }
+    const locator = page.locator(selector).first();
+    const before = await audioSnapshot(page, selector, timeoutMs);
+    const playResult = await locator.evaluate(async (node) => {
+      try {
+        node.muted = true;
+        await node.play();
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error && error.message ? error.message : String(error) };
+      }
+    });
+    if (!playResult.ok) {
+      throw new Error(`Could not start audio playback: ${playResult.error || "unknown error"}`);
+    }
+    await page.waitForFunction((innerSelector) => {
+      const node = document.querySelector(innerSelector);
+      return Boolean(node && !node.paused && Number(node.currentTime || 0) > 0.25);
+    }, selector, { timeout: timeoutMs });
+    const after = await audioSnapshot(page, selector, timeoutMs);
+    return { kind: op.kind, selector, before, after, detail: await describePage(page) };
   }
   if (op.kind === "screenshot") {
     const screenshotPath = String(op.path || "").trim();
