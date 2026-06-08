@@ -33,6 +33,7 @@
   const MIN_PLAYBACK_SPEED = 0.5;
   const MAX_PLAYBACK_SPEED = 3;
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+  const DOT = " \u00b7 ";
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -142,6 +143,42 @@
       filled: '<path d="M5 4h14c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm2.2 12h9.7l-3.1-4.1-2.4 3.1-1.8-2.2L7.2 16ZM8 9.5A1.5 1.5 0 1 0 8 6.5a1.5 1.5 0 0 0 0 3Z"/>',
       outline: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8" cy="9" r="1.6"/><path d="m6.5 16 3.1-3.4 2.2 2.5 2.5-3.2 3.5 4.1H6.5Z"/>'
     },
+    note: {
+      filled: '<path d="M6 3h8.6L20 8.4V21H6c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2Zm8 1.8V9h4.2L14 4.8ZM7.5 12h9v1.8h-9V12Zm0 4h6.8v1.8H7.5V16Z"/>',
+      outline: '<path d="M5 4h9l5 5v11H5V4Z"/><path d="M14 4v5h5"/><path d="M8 13h8M8 17h6"/>'
+    },
+    folder: {
+      filled: '<path d="M4 5h6l2 2h8c1.1 0 2 .9 2 2v8.5c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2Z"/>',
+      outline: '<path d="M3 6h6.2l2 2H21v10.5c0 .8-.7 1.5-1.5 1.5h-16C2.7 20 2 19.3 2 18.5v-11C2 6.7 2.7 6 3 6Z"/>'
+    },
+    contacts: {
+      filled: '<path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7.5-2.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20c0-3.3 3-6 7-6s7 2.7 7 6v1H2v-1Zm13.7-7c2.8.4 5.3 2.6 5.3 5.5V20h-3.2c-.2-2.4-1.2-4.5-2.8-6.1.2-.3.4-.6.7-.9Z"/>',
+      outline: '<circle cx="9" cy="7" r="3.5"/><path d="M2.5 20.5c.4-4 3.1-6.5 6.5-6.5s6.1 2.5 6.5 6.5"/><circle cx="16.5" cy="6" r="2.7"/><path d="M15.7 12.5c3 .4 5.2 2.6 5.6 5.8"/>'
+    },
+    apps: {
+      filled: '<path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/>',
+      outline: '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>'
+    },
+    plus: {
+      filled: '<path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z"/>',
+      outline: '<path d="M12 5v14M5 12h14"/>'
+    },
+    pin: {
+      filled: '<path d="M15 2 22 9l-2 2-1.4-1.4-4.1 4.1.5 4.8-1.5 1.5-4.9-4.9L4 20l-1-1 4.9-4.6L3 9.5 4.5 8l4.8.5 4.1-4.1L12 3l3-1Z"/>',
+      outline: '<path d="m15 3 6 6-2 2-1.5-1.5-4.2 4.2.5 4.8-1.2 1.2-8.3-8.3 1.2-1.2 4.8.5 4.2-4.2L13 5l2-2Z"/><path d="m8.7 15.3-4.2 4.2"/>'
+    },
+    warning: {
+      filled: '<path d="M12 2 22 20H2L12 2Zm-1 6v6h2V8h-2Zm0 8v2h2v-2h-2Z"/>',
+      outline: '<path d="M12 3 21 20H3L12 3Z"/><path d="M12 8v6M12 17v.2"/>'
+    },
+    search: {
+      filled: '<path d="M10 3a7 7 0 0 1 5.6 11.2l4.1 4.1-1.4 1.4-4.1-4.1A7 7 0 1 1 10 3Zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/>',
+      outline: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.8 15.8 4.2 4.2"/>'
+    },
+    more_vert: {
+      filled: '<path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>',
+      outline: '<circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/>'
+    },
     lightbulb_2: {
       filled: '<path d="M9 21h6v-2H9v2Zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26A6.98 6.98 0 0 0 19 9c0-3.86-3.14-7-7-7Zm2.05 11.06-.55.34V16h-3v-2.6l-.55-.34A4.93 4.93 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.67-.84 3.23-2.95 4.06ZM10 10.2h4V8.5h-4v1.7Z"/>',
       outline: '<path d="M9 21h6"/><path d="M9.5 18h5"/><path d="M9.5 15.8v-2.4A5.6 5.6 0 0 1 6.5 8.5 5.5 5.5 0 0 1 12 3a5.5 5.5 0 0 1 5.5 5.5 5.6 5.6 0 0 1-3 4.9v2.4"/><path d="M10 9h4"/><path d="M12 3V1.8"/><path d="m5.5 4.2-.9-.9"/><path d="m18.5 4.2.9-.9"/>'
@@ -173,7 +210,97 @@
     { route: "settings", icon: "settings", label: "Settings" }
   ];
   const LIGHT_APPS = [
-    { route: "links", label: "Apps", icon: "link" }
+    { route: "notes", label: "Notes", icon: "note", color: "orange", badge: 0 },
+    { route: "tasks", label: "Tasks", icon: "checklist", color: "green", badge: 3 },
+    { route: "calendar", label: "Calendar", icon: "calendar", color: "red", badge: 0 },
+    { route: "inbox", label: "Inbox", icon: "mail", color: "purple", badge: "inbox" },
+    { route: "feed", label: "Feed", icon: "text", color: "blue", badge: 8 },
+    { route: "projects", label: "Projects", icon: "folder", color: "cyan", badge: 0 },
+    { route: "contacts", label: "Contacts", icon: "contacts", color: "pink", badge: 0 },
+    { route: "apps", label: "Apps", icon: "apps", color: "navy", badge: 0 },
+    { route: "meetings", label: "Meetings", icon: "mic", color: "sky", badge: 1 },
+    { route: "settings", label: "Settings", icon: "settings", color: "gray", badge: 0 }
+  ];
+  const LIGHT_ROUTES = new Set([
+    "home",
+    "apps",
+    "settings",
+    "inbox",
+    "notes",
+    "note-detail",
+    "tasks",
+    "task-detail",
+    "calendar",
+    "meeting-detail",
+    "feed",
+    "feed-detail",
+    "projects",
+    "project-detail",
+    "project-new",
+    "contacts",
+    "contact-detail",
+    "contact-new",
+    "meetings"
+  ]);
+  const LIGHT_ROUTE_PARENTS = {
+    "note-detail": "notes",
+    "task-detail": "tasks",
+    "meeting-detail": "calendar",
+    "feed-detail": "feed",
+    "project-detail": "projects",
+    "project-new": "projects",
+    "contact-detail": "contacts",
+    "contact-new": "contacts"
+  };
+
+  const LIGHT_CONTACTS = [
+    { id: "maya", name: "Maya Chen", avatar: "MC", photo: "fixtures/contact_photos/maya.svg", channel: "Slack DM", time: "18m ago", note: "approved the eng budget...", email: "maya.chen@email.com", phone: "+1 (415) 555-0142", relation: "Design lead", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "maya.chen@email.com" }, { icon: "chat", label: "Slack", value: "@maya" }], activity: [`Slack DM${DOT}approved the engineering budget`, `Meeting${DOT}Roadmap sync today`, `Follow-up${DOT}Next 1:1 Friday`] },
+    { id: "tom", name: "Tom Reyes", avatar: "TR", photo: "fixtures/contact_photos/tom.svg", channel: "Email", time: "1h ago", note: "re: migration thread", email: "tom.reyes@email.com", phone: "+1 (415) 555-0177", relation: "Staff Engineer", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "tom.reyes@email.com" }], activity: [`Email${DOT}migration thread 1h ago`, `Meeting${DOT}Vendor review today`, `Decision${DOT}last pushed Monday`] },
+    { id: "priya", name: "Priya Shah", avatar: "PS", photo: "fixtures/contact_photos/priya.svg", channel: "Figma comment", time: "yesterday", note: "onboarding spec v3", email: "priya.shah@email.com", phone: "+1 (415) 555-0125", relation: "Product", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "priya.shah@email.com" }], activity: [`Figma${DOT}commented on onboarding spec v3`, `Project${DOT}launch review next week`, `Note${DOT}shared onboarding notes`] },
+    { id: "sarah", name: "Sarah K.", avatar: "SK", photo: "fixtures/contact_photos/sarah.svg", channel: "iMessage", time: "last week", note: "let's grab lunch", email: "sarah.k@email.com", phone: "+1 (415) 555-0188", relation: "Friend", connectedAccounts: [{ icon: "chat", label: "iMessage", value: "+1 (415) 555-0188" }], activity: [`iMessage${DOT}last week${DOT}let's grab lunch`, `Meeting${DOT}6 weeks ago`, `Upcoming${DOT}lunch tomorrow`] },
+    { id: "linear", name: "Linear sales", avatar: "LS", photo: "", channel: "Email", time: "2 days ago", note: "meeting confirmation", email: "sales@linear.app", phone: "+1 (415) 555-0104", relation: "External vendor", connectedAccounts: [{ icon: "mail", label: "Email", value: "sales@linear.app" }], activity: [`Email${DOT}meeting confirmation`, `Meeting${DOT}Vendor review today`, `Artifact${DOT}pricing doc pending`] }
+  ];
+
+  const LIGHT_EVENTS = [
+    { id: "roadmap", meetingId: "roadmap", title: "Roadmap sync", detail: "Maya, Tom, Priya", time: "10:00", displayTime: "10:00 - 10:45 AM", hour: 10, color: "red", place: "Zoom" },
+    { id: "coffee", meetingId: "coffee", title: "Coffee - Maya", detail: "Sightglass", time: "2:00", displayTime: "2:00 - 2:30 PM", hour: 14, color: "blue", place: "Sightglass" },
+    { id: "vendor", meetingId: "vendor", title: "Vendor review - Linear", detail: "Conf room A", time: "4:00", displayTime: "4:00 - 5:15 PM", hour: 16, color: "green", place: "Conf room A" }
+  ];
+
+  const LIGHT_MEETINGS = [
+    { id: "vendor", title: "Vendor review - Linear", time: "4:00 - 5:15 PM", place: "Conf room A", attendees: ["Linear sales", "Tom Reyes"], brief: "Linear is pitching an MCP integration. Tom is skeptical. Agent flagged we evaluated similar in March.", agenda: ["Demo", "Pricing", "Migration cost"], docs: ["March eval notes"] },
+    { id: "roadmap", title: "Roadmap sync", time: "10:00 - 10:45 AM", place: "Zoom", attendees: ["Maya Chen", "Tom Reyes", "Priya Shah"], brief: "Budget is approved; the remaining question is sequencing the onboarding and migration milestones.", agenda: ["Hiring plan", "Migration date", "Launch risks"], docs: ["Q4 hiring plan"] },
+    { id: "coffee", title: "Coffee - Maya", time: "2:00 - 2:30 PM", place: "Sightglass", attendees: ["Maya Chen"], brief: "A lightweight check-in after the budget decision. Keep it personal, then confirm next steps for Friday.", agenda: ["Budget follow-up", "Hiring plan", "Weekend timing"], docs: ["Q4 hiring plan"] }
+  ];
+
+  const LIGHT_NOTES = [
+    { id: "q4", title: "Q4 hiring plan", icon: "pin", updated: "2h ago", context: "All notes", pinned: true, body: "We're entering a critical phase of growth, and our Q4 hiring will focus on strengthening key engineering capabilities and team leadership.", sections: [{ title: "Goals", lines: ["Hire 2 senior backend engineers", "Improve system reliability and performance", "Build a stronger foundation for scale"] }, { title: "Target roles", lines: ["Senior Backend Engineer (2)", "Engineering Manager (1)"] }, { title: "Next steps", lines: ["Finalize role briefs by Oct 15, align with People Ops on sourcing strategy, and start interviews by early November."] }] },
+    { id: "march", title: "March eval notes", icon: "attachment", updated: "yesterday", context: "Vendor review", pinned: false, body: "Previous MCP vendor evaluation noted setup speed as the upside and long-term support as the concern.", sections: [{ title: "Risks", lines: ["Support burden", "Credible pilot metrics", "Migration cost"] }] },
+    { id: "onboarding", title: "Onboarding spec v3", icon: "note", updated: "last week", context: "Project Aurora", pinned: false, body: "Priya's latest spec tightens the first-run checklist and removes the heavyweight welcome flow.", sections: [{ title: "Open", lines: ["Confirm final welcome copy", "Review analytics events"] }] }
+  ];
+
+  const LIGHT_TASKS = [
+    { id: "budget", title: "Sign off on Maya's budget", detail: "Final Q4 engineering budget review.", due: "5pm", group: "do" },
+    { id: "mom", title: "Call mom - birthday gift idea", detail: "", due: "today", group: "do" },
+    { id: "slides", title: "Prep Q4 roadmap slides", detail: "Align with design and leadership.", due: "tomorrow", group: "soon" },
+    { id: "nda", title: "Reply to legal about NDA", detail: "They sent redlined version Friday.", due: "1 day ago", group: "overdue" },
+    { id: "retro", title: "Submit Q3 retrospective", detail: "", due: "2 days ago", group: "overdue" },
+    { id: "cleanup", title: "Archive migration notes", detail: "Moved into Project Migration.", due: "done today", group: "done" },
+    { id: "agenda", title: "Send roadmap agenda", detail: "Shared with Maya, Tom, and Priya.", due: "done yesterday", group: "done" },
+    { id: "receipt", title: "Upload Tokyo flight receipt", detail: "", due: "done Tue", group: "done" }
+  ];
+
+  const LIGHT_PROJECTS = [
+    { id: "aurora", title: "Project Aurora", detail: "Spec review, PRD discussion, and requirements artifacts.", lastActivity: "Tom replied 1h ago", chips: ["2 threads", "4 artifacts", "Maya"], threads: ["PRD review thread", "Budget approval DM"], artifacts: ["Onboarding spec v3", "Requirements snapshot", "Figma comment"], notes: ["Q4 hiring plan"], tasks: ["Review PRD: Project Aurora", "Prep Q4 roadmap slides"], meetings: ["Roadmap sync"], people: ["Maya Chen", "Tom Reyes", "Priya Shah"] },
+    { id: "migration", title: "Migration", detail: "Reply threads, rollout docs, and follow-up work in one folder.", lastActivity: "Inbox reply 18m ago", chips: ["3 threads", "2 docs", "Tom"], threads: ["Migration update", "Tom objections", "Slack launch notes"], artifacts: ["March eval notes", "Rollout checklist"], notes: ["March eval notes"], tasks: ["Archive migration notes", "Reply to legal about NDA"], meetings: ["Vendor review - Linear"], people: ["Tom Reyes", "Linear sales"] },
+    { id: "onboarding", title: "Onboarding", detail: "First-run product polish, design comments, and launch tasks.", lastActivity: "Priya commented yesterday", chips: ["1 thread", "3 artifacts", "Priya"], threads: ["Figma feedback"], artifacts: ["Onboarding spec v3", "Launch copy", "Analytics checklist"], notes: ["Onboarding spec v3"], tasks: ["Prep Q4 roadmap slides"], meetings: ["Roadmap sync"], people: ["Priya Shah", "Maya Chen"] }
+  ];
+
+  const LIGHT_FEED = [
+    { id: "maya-budget", time: "18m", icon: "contacts", title: "Maya approved the budget", detail: "Slack DM", body: "Maya signed off on the revised engineering budget and asked for the Friday hiring follow-up to stay on calendar." },
+    { id: "tom-migration", time: "1h", icon: "mail", title: "Tom replied on migration", detail: "Email thread", body: "Tom wants the migration risks written down before the vendor review. The open question is long-term support burden." },
+    { id: "q4-note", time: "2h", icon: "note", title: "Q4 hiring plan pinned", detail: "Notes", body: "The hiring plan now anchors the roadmap sync. Pucky connected it to the budget approval and onboarding milestone." },
+    { id: "priya-onboarding", time: "Yesterday", icon: "image", title: "Priya commented on onboarding spec", detail: "Figma", body: "Priya's comments reduced the first-run flow and moved the analytics checklist into launch review." }
   ];
 
   const DEFAULT_HOME_MENU_ICONS = [
@@ -208,6 +335,17 @@
     route: initialRoute(persistedNavState.route, initialTheme),
     openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme),
     lightReturnRoute: "",
+    previousLightRoute: "home",
+    selectedContactId: "sarah",
+    selectedMeetingId: "vendor",
+    selectedNoteId: "q4",
+    selectedTaskId: "budget",
+    selectedProjectId: "aurora",
+    selectedFeedId: "maya-budget",
+    selectedCalendarDay: 8,
+    calendarPickerOpen: false,
+    taskFilter: "all",
+    localProjects: [],
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
@@ -1442,7 +1580,7 @@
   }
 
   function optionsShouldRenderLinksPage() {
-    return state.route === "links";
+    return state.route === "links" || state.route === "apps";
   }
 
   let linksPageNode = null;
@@ -1823,7 +1961,7 @@
       state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
       state.meetings.lastRefreshAt = Date.now();
     } catch (error) {
-      state.meetings.error = String(error && error.message ? error.message : "Unable to load meetings");
+      state.meetings.error = meetingsApiErrorMessage(error, "Unable to load meetings");
     } finally {
       state.meetings.loading = false;
       if (options.render) {
@@ -1843,6 +1981,11 @@
       String(item && item.meeting_id || "") === meetingId ? { ...item, ...detail } : item
     );
     return detail;
+  }
+
+  function meetingsApiErrorMessage(error, fallback = "Meetings request failed") {
+    const detail = String(error && error.message ? error.message : fallback);
+    return detail.replace(/^Links request failed/i, "Meetings request failed");
   }
 
   async function refreshMeetingRecordingStatus(options = {}) {
@@ -2938,7 +3081,7 @@
     const feed = document.getElementById("feed");
     document.querySelector(".app-shell")?.setAttribute("data-view", state.route);
     document.querySelector(".app-shell")?.setAttribute("data-theme", state.theme);
-    feed.classList.toggle("is-links-route", state.route === "links");
+    feed.classList.toggle("is-links-route", state.route === "links" || state.route === "apps");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     if (isLightShellRoute()) {
       feed.replaceChildren(lightView());
@@ -2965,37 +3108,107 @@
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
+    renderHomeFeedInto(feed);
+  }
+
+  function renderHomeFeedInto(container) {
+    container.replaceChildren(...homeFeedContentNodes());
+  }
+
+  function homeFeedContentNodes() {
     if (state.feedLoadError && !state.cards.length) {
       const empty = el("div", "empty feed-load-error");
       empty.append(
         el("strong", "", "Could not load the Home feed."),
         el("span", "", state.feedLoadError)
       );
-      feed.replaceChildren(empty);
-      return;
+      return [empty];
     }
     if (!state.cards.length) {
-      feed.innerHTML = '<div class="empty">No replies yet.<br>Pucky will place agent replies here.</div>';
-      return;
+      const empty = el("div", "empty");
+      empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
+      return [empty];
     }
     const cards = filteredFeedCards();
     if (!cards.length) {
-      feed.replaceChildren(filteredFeedEmptyView());
-      return;
+      return [filteredFeedEmptyView()];
     }
-    feed.replaceChildren(...cards.map(cardView));
+    return cards.map(cardView);
   }
 
   function lightView() {
     const view = el("section", "light-shell");
     view.dataset.lightRoute = state.route || "home";
-    view.append(lightHomePage());
+    switch (state.route) {
+      case "apps":
+        view.append(lightAppsPage());
+        break;
+      case "settings":
+        view.append(lightSettingsSurface());
+        break;
+      case "inbox":
+        view.append(lightInboxPage());
+        break;
+      case "contacts":
+        view.append(lightContactsPage());
+        break;
+      case "contact-detail":
+        view.append(lightContactDetailPage());
+        break;
+      case "contact-new":
+        view.append(lightContactCreatePage());
+        break;
+      case "calendar":
+        view.append(lightCalendarPage());
+        break;
+      case "meeting-detail":
+        view.append(lightMeetingDetailPage());
+        break;
+      case "meetings":
+        view.append(lightMeetingsPage());
+        break;
+      case "notes":
+        view.append(lightNotesPage());
+        break;
+      case "note-detail":
+        view.append(lightNoteDetailPage());
+        break;
+      case "tasks":
+        view.append(lightTasksPage());
+        break;
+      case "task-detail":
+        view.append(lightTaskDetailPage());
+        break;
+      case "projects":
+        view.append(lightProjectsPage());
+        break;
+      case "project-detail":
+        view.append(lightProjectDetailPage());
+        break;
+      case "project-new":
+        view.append(lightProjectCreatePage());
+        break;
+      case "feed":
+        view.append(lightFeedPage());
+        break;
+      case "feed-detail":
+        view.append(lightFeedDetailPage());
+        break;
+      case "home":
+      default:
+        state.route = "home";
+        view.append(lightHomePage());
+        break;
+    }
+    view.dataset.lightRoute = state.route || "home";
     return view;
   }
 
   function lightHomePage() {
     const page = el("section", "light-home");
-    page.append(el("h1", "light-home-title", "Pucky"));
+    const top = el("div", "light-home-top");
+    top.append(el("div", "light-home-kicker", "Pucky"));
+    page.append(top);
     const grid = el("div", "light-app-grid");
     grid.append(...LIGHT_APPS.map(lightAppTile));
     page.append(grid);
@@ -3005,32 +3218,792 @@
   function lightAppTile(app) {
     const tile = el("button", "light-app-tile");
     tile.type = "button";
+    tile.dataset.route = app.route;
     tile.dataset.lightAppRoute = app.route;
+    tile.dataset.appLabel = app.label;
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => lightNavigate(app.route));
-    const icon = el("span", "light-app-icon");
-    icon.innerHTML = iconSvg(app.icon, { filled: false });
+    const icon = lightAppIcon(app.icon, app.color);
+    const badge = lightBadgeFor(app);
+    if (badge) {
+      icon.append(el("span", "light-app-badge", String(badge)));
+    }
     tile.append(icon, el("span", "light-app-label", app.label));
     return tile;
   }
 
-  function lightNavigate(route) {
+  function lightBadgeFor(app) {
+    if (app.badge === "inbox") {
+      const unread = state.cards.filter(card => !isActionRead(card, "audio")).length;
+      return unread > 0 ? unread : "";
+    }
+    return Number(app.badge || 0) > 0 ? app.badge : "";
+  }
+
+  function lightAppIcon(icon, color) {
+    const wrap = el("span", `light-app-icon color-${color || "blue"}`);
+    wrap.innerHTML = iconSvg(icon, { filled: false });
+    return wrap;
+  }
+
+  function lightInboxPage() {
+    const page = lightPage("Inbox");
+    page.classList.add("light-real-feed-page", "light-inbox-page");
+    const list = el("div", "light-real-feed-list");
+    list.append(...homeFeedContentNodes());
+    page.append(list);
+    return page;
+  }
+
+  function lightRealFeedPage(title, cards, options = {}) {
+    const page = lightPage(title);
+    page.classList.add("light-real-feed-page");
+    const list = el("div", "light-real-feed-list");
+    if (!cards.length) {
+      list.append(lightEmptyState(options.icon || "mail", options.emptyTitle || "No tiles yet", options.emptyDetail || "Real reply tiles will appear here."));
+    } else {
+      list.append(...cards.map(cardView));
+    }
+    page.append(list);
+    return page;
+  }
+
+  function lightMeetingsPage() {
+    const page = lightPage("Meetings", { large: true });
+    page.classList.add("light-meetings-page");
+    page.append(meetingsPageView());
+    return page;
+  }
+
+  function lightContactsPage() {
+    const page = el("section", "light-page light-contacts-page");
+    const appbar = el("header", "light-appbar light-contacts-appbar");
+    appbar.append(
+      lightIconButton("chevron_left", "Back", () => lightNavigate("home"), "light-appbar-back"),
+      el("h2", "light-appbar-title", "Contacts"),
+      lightIconButton("search", "Search contacts")
+    );
+    const list = el("div", "light-contact-list");
+    list.append(...LIGHT_CONTACTS.map(contact => {
+      const row = el("button", "light-card light-contact-row");
+      row.type = "button";
+      row.dataset.contactId = contact.id;
+      row.addEventListener("click", () => {
+        state.selectedContactId = contact.id;
+        lightNavigate("contact-detail", { from: "contacts" });
+      });
+      row.append(lightAvatar(contact), lightContactCopy(contact));
+      return row;
+    }));
+    page.append(appbar, list, lightCircleButton("plus", "Add contact", () => lightNavigate("contact-new", { from: "contacts" }), "light-contact-add-fab"));
+    return page;
+  }
+
+  function lightContactCreatePage() {
+    const page = lightPage("New Contact");
+    const card = el("section", "light-card light-create-card");
+    const starts = el("div", "light-create-options");
+    [
+      { icon: "mail", label: "From email", value: "Find recent senders" },
+      { icon: "chat", label: "From messages", value: "Pull a thread into contacts" },
+      { icon: "apps", label: "From connected apps", value: "Use synced accounts" }
+    ].forEach(row => {
+      const item = el("div", "light-create-option");
+      item.append(lightSmallIcon(row.icon), lightTextStack(row.label, row.value));
+      starts.append(item);
+    });
+    card.append(
+      lightSmallIcon("contacts"),
+      lightTextStack("Create a contact", "Prototype-only shell for adding a person or account."),
+      starts
+    );
+    page.append(card);
+    return page;
+  }
+
+  function lightContactDetailPage() {
+    const contact = selectedContact();
+    const page = lightPage("Contact");
+    const hero = el("section", "light-profile-card");
+    hero.append(lightAvatar(contact, "large"), el("h1", "", contact.name), el("p", "", contact.relation));
+    const actions = el("div", "light-profile-actions");
+    [
+      ["phone", "Call", "green"],
+      ["mail", "Mail", "blue"],
+      ["chat", "Message", "blue"],
+      ["calendar", "Invite", "red"]
+    ].forEach(([icon, label, color]) => actions.append(lightActionColumn(icon, label, color)));
+    hero.append(actions);
+    page.append(hero);
+    page.append(lightInfoSection("Contact", [
+      { icon: "mail", label: "Email", value: contact.email },
+      { icon: "phone", label: "Phone", value: contact.phone }
+    ]));
+    if (contact.connectedAccounts && contact.connectedAccounts.length) {
+      page.append(lightInfoSection("Connected accounts", contact.connectedAccounts));
+    }
+    page.append(lightInfoSection("Activity", contact.activity.map((item, index) => ({
+      icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
+      label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
+      value: item
+    }))));
+    return page;
+  }
+
+  function lightCalendarPage() {
+    const page = lightPage(calendarDayTitle(), {
+      action: lightCircleButton("calendar", "Choose date", () => {
+        state.calendarPickerOpen = !state.calendarPickerOpen;
+        render();
+      })
+    });
+    page.classList.add("light-calendar-page");
+    if (state.calendarPickerOpen) {
+      page.append(lightDatePicker());
+    }
+    page.append(lightTimeline());
+    return page;
+  }
+
+  function lightDatePicker() {
+    const picker = el("section", "light-date-picker");
+    picker.append(el("div", "light-date-picker-title", "June 2026"));
+    const grid = el("div", "light-date-grid");
+    Array.from({ length: 30 }, (_, index) => String(index + 1)).forEach(day => {
+      const selected = Number(day) === state.selectedCalendarDay;
+      const button = el("button", selected ? "light-date-cell is-selected" : "light-date-cell", day);
+      button.type = "button";
+      button.dataset.day = day;
+      button.addEventListener("click", () => {
+        state.selectedCalendarDay = Number(day);
+        state.calendarPickerOpen = false;
+        render();
+      });
+      grid.append(button);
+    });
+    picker.append(grid);
+    return picker;
+  }
+
+  function lightTimeline() {
+    const timeline = el("div", "light-timeline");
+    for (let hour = 7; hour <= 18; hour += 1) {
+      const row = el("div", "light-time-row");
+      row.append(el("span", "light-time-label", hourLabel(hour)));
+      const lane = el("div", "light-time-lane");
+      LIGHT_EVENTS.filter(event => event.hour === hour).forEach(event => {
+        const block = el("button", `light-event-block ${event.color}`);
+        block.type = "button";
+        block.dataset.eventId = event.id;
+        block.addEventListener("click", () => {
+          state.selectedMeetingId = event.meetingId;
+          lightNavigate("meeting-detail", { from: "calendar" });
+        });
+        block.append(el("strong", "", event.title), el("span", "", event.detail));
+        lane.append(block);
+      });
+      row.append(lane);
+      timeline.append(row);
+    }
+    return timeline;
+  }
+
+  function lightMeetingDetailPage() {
+    const meeting = selectedMeeting();
+    const page = lightPage("Event", { action: lightCircleButton("mic", "Open meetings", () => lightNavigate("meetings", { from: "meeting-detail" })) });
+    page.classList.add("light-document-page", "light-event-document");
+    const article = el("article", "light-doc-article");
+    article.append(
+      lightDocumentEyebrow("Calendar event", `${calendarDayTitle()}${DOT}${meeting.time}`),
+      el("h1", "", meeting.title),
+      lightDocumentMeta([
+        ["Time", meeting.time],
+        ["Place", meeting.place],
+        ["Attendees", `${meeting.attendees.length} attendees`]
+      ])
+    );
+    page.append(article);
+    page.append(lightCopySection("Agent brief", meeting.brief));
+    page.append(lightListSection("Agenda", meeting.agenda));
+    page.append(lightAttendeesSection(meeting.attendees));
+    page.append(lightInfoSection("Related docs", meeting.docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
+    return page;
+  }
+
+  function lightNotesPage() {
+    const page = lightPage("Notes", { large: true });
+    const pinned = LIGHT_NOTES.filter(note => note.pinned);
+    if (pinned.length) {
+      page.append(lightSectionTitle("Pinned"), ...pinned.map(lightNoteRow));
+    }
+    const recent = el("div", "light-list");
+    recent.append(...LIGHT_NOTES.filter(note => !note.pinned).map(lightNoteRow));
+    page.append(lightSectionTitle("Recent"), recent);
+    return page;
+  }
+
+  function lightNoteRow(note) {
+    const row = el("button", "light-card light-note-row");
+    row.type = "button";
+    row.dataset.noteId = note.id;
+    row.addEventListener("click", () => {
+      state.selectedNoteId = note.id;
+      lightNavigate("note-detail", { from: "notes" });
+    });
+    const meta = `${note.pinned ? `Pinned${DOT}` : ""}${note.updated}${DOT}${note.context}`;
+    row.append(lightSmallIcon(note.icon || (note.pinned ? "pin" : "note")), lightTextStack(note.title, meta));
+    return row;
+  }
+
+  function lightNoteDetailPage() {
+    const note = selectedNote();
+    const page = lightPage("Note", {
+      action: lightCircleButton("pin", note.pinned ? "Unpin note" : "Pin note", () => {
+        note.pinned = !note.pinned;
+        render();
+      }, note.pinned ? "light-pin-button is-pinned" : "light-pin-button")
+    });
+    page.classList.add("light-document-page", "light-note-document");
+    const article = el("article", "light-doc-article light-note-detail");
+    article.append(
+      lightDocumentEyebrow(note.pinned ? "Pinned note" : "Note", `${note.updated}${DOT}${note.context}`),
+      el("h1", "", note.title),
+      el("p", "light-note-body", note.body)
+    );
+    note.sections.forEach(section => {
+      article.append(el("h2", "", section.title));
+      const list = el("ul", "");
+      section.lines.forEach(line => list.append(el("li", "", line)));
+      article.append(list);
+    });
+    page.append(article);
+    return page;
+  }
+
+  function lightTasksPage() {
+    const page = el("section", "light-page light-tasks-page");
+    const appbar = el("header", "light-appbar light-tasks-appbar");
+    appbar.append(
+      lightIconButton("chevron_left", "Back", () => lightBack(), "light-appbar-back"),
+      el("h2", "light-appbar-title", "Tasks"),
+      el("span", "light-appbar-empty")
+    );
+    page.append(appbar, el("h1", "light-tasks-title", "Tasks"), lightTaskCountLine(), lightTaskFilters());
+    [
+      ["do", "DO"],
+      ["soon", "DO SOON"],
+      ["overdue", "OVERDUE"],
+      ["done", "DONE"]
+    ].forEach(([group, label]) => {
+      const tasks = filteredTasks(group);
+      if (!tasks.length) return;
+      page.append(lightTaskSectionTitle(label), lightTaskGroup(tasks, group));
+    });
+    return page;
+  }
+
+  function lightTaskSectionTitle(label) {
+    if (label === "DO") {
+      return lightSectionTitle("DO");
+    }
+    if (label === "DO SOON") {
+      return lightSectionTitle("DO SOON");
+    }
+    if (label === "DONE") {
+      return lightSectionTitle("DONE");
+    }
+    return lightSectionTitle("OVERDUE");
+  }
+
+  function lightTaskCounts() {
+    return LIGHT_TASKS.reduce((counts, task) => {
+      if (task.group === "overdue") {
+        counts.overdue += 1;
+      } else if (task.group === "done") {
+        counts.done += 1;
+      } else if (task.group === "do" || task.group === "soon") {
+        counts.due += 1;
+      }
+      return counts;
+    }, { due: 0, overdue: 0, done: 0 });
+  }
+
+  function lightTaskCountLine() {
+    const counts = lightTaskCounts();
+    const line = el("p", "light-task-counts");
+    line.append(
+      el("span", "light-task-count due", `${counts.due} due`),
+      DOT,
+      el("span", "light-task-count overdue", `${counts.overdue} overdue`),
+      DOT,
+      el("span", "light-task-count done", `${counts.done} done`)
+    );
+    return line;
+  }
+
+  function lightTaskFilters() {
+    const filters = [["all", "All"], ["due", "Due"], ["overdue", "Overdue"], ["done", "Done"]];
+    const wrap = el("div", "light-segmented light-task-segmented");
+    filters.forEach(([key, label]) => wrap.append(lightPillButton(label, () => { state.taskFilter = key; render(); }, state.taskFilter === key)));
+    return wrap;
+  }
+
+  function lightTaskGroup(tasks, group) {
+    const card = el("div", "light-card light-task-card light-task-group");
+    tasks.forEach(task => {
+      const row = el("button", `light-task-row ${group}`);
+      row.type = "button";
+      row.addEventListener("click", () => {
+        state.selectedTaskId = task.id;
+        lightNavigate("task-detail", { from: "tasks" });
+      });
+      const checkClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
+      row.append(el("span", checkClass), lightTextStack(task.title, task.detail), el("span", "light-due", task.due));
+      card.append(row);
+    });
+    return card;
+  }
+
+  function lightTaskDetailPage() {
+    const task = selectedTask();
+    const page = lightPage("Task");
+    page.append(lightHeroDetail(task.title, task.due, task.group === "overdue" ? "warning" : "checklist"));
+    page.append(lightCopySection("Notes", task.detail || "No extra notes yet."));
+    page.append(lightInfoSection("Related", [
+      { icon: "contacts", label: "Owner", value: task.id === "budget" ? "Maya Chen" : "Pucky" },
+      { icon: "folder", label: "Project", value: task.id === "slides" ? "Project Aurora" : "General" }
+    ]));
+    return page;
+  }
+
+  function lightAppsPage() {
+    const page = lightPage("Apps", { large: true });
+    page.classList.add("light-apps-page");
+    page.append(linksPageView());
+    return page;
+  }
+
+  function lightFeedPage() {
+    const page = lightPage("Feed", { large: true });
+    page.append(lightSectionTitle("Today"));
+    const list = el("div", "light-list");
+    list.append(...LIGHT_FEED.slice(0, 3).map(lightFeedRow));
+    page.append(list, lightSectionTitle("Yesterday"), lightFeedRow(LIGHT_FEED[3]));
+    return page;
+  }
+
+  function lightFeedRow(item) {
+    const row = el("button", "light-card light-feed-row");
+    row.type = "button";
+    row.dataset.feedId = item.id;
+    row.addEventListener("click", () => {
+      state.selectedFeedId = item.id;
+      lightNavigate("feed-detail", { from: "feed" });
+    });
+    row.append(lightSmallIcon(item.icon), lightTextStack(item.title, `${item.time}${DOT}${item.detail}`), el("span", "light-chevron", ">"));
+    return row;
+  }
+
+  function lightFeedDetailPage() {
+    const item = selectedFeedItem();
+    const page = lightPage("Feed Item");
+    page.classList.add("light-document-page", "light-feed-document");
+    const article = el("article", "light-doc-article");
+    article.append(
+      lightDocumentEyebrow(item.detail, item.time),
+      el("h1", "", item.title),
+      el("p", "light-note-body", item.body)
+    );
+    page.append(article);
+    page.append(lightInfoSection("Related", [
+      { icon: "note", label: "Note", value: item.id === "q4-note" ? "Q4 hiring plan" : "Open" },
+      { icon: "folder", label: "Project", value: item.id === "tom-migration" ? "Migration" : "Project Aurora" }
+    ]));
+    return page;
+  }
+
+  function lightProjectsPage() {
+    const page = lightPage("Projects", { large: true, action: lightCircleButton("plus", "New project", () => lightNavigate("project-new", { from: "projects" })) });
+    const list = el("div", "light-list");
+    list.append(...allProjects().map(project => {
+      const row = el("button", "light-card light-project-row");
+      row.type = "button";
+      row.addEventListener("click", () => {
+        state.selectedProjectId = project.id;
+        lightNavigate("project-detail", { from: "projects" });
+      });
+      const chips = el("span", "light-project-chip-row");
+      project.chips.forEach(chip => chips.append(el("span", "light-project-chip", chip)));
+      row.append(lightSmallIcon("folder"), lightTextStack(project.title, `${project.lastActivity}${DOT}${project.detail}`), chips);
+      return row;
+    }));
+    page.append(list);
+    return page;
+  }
+
+  function lightProjectDetailPage() {
+    const project = selectedProject();
+    const page = lightPage(project.title);
+    page.append(lightDetailHero(project.title, `${project.lastActivity}${DOT}${project.detail}`, "folder"));
+    page.append(lightChipCloud(project.chips));
+    const grid = el("div", "light-project-section-grid");
+    [
+      ["Threads", "chat", project.threads],
+      ["Artifacts", "attachment", project.artifacts],
+      ["Notes", "note", project.notes],
+      ["Tasks", "checklist", project.tasks],
+      ["Meetings", "calendar", project.meetings],
+      ["People", "contacts", project.people]
+    ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
+    page.append(grid);
+    return page;
+  }
+
+  function lightProjectCreatePage() {
+    const page = lightPage("New Project");
+    const card = el("section", "light-card light-project-create-card");
+    const name = el("input", "light-project-input");
+    name.type = "text";
+    name.placeholder = "Project name";
+    name.value = "New project";
+    const hints = el("div", "light-create-options");
+    [
+      ["chat", "Threads", "Collect related conversations"],
+      ["attachment", "Artifacts", "Roll up files and generated pages"],
+      ["checklist", "Tasks", "Track follow-ups in one folder"]
+    ].forEach(([icon, label, value]) => {
+      const option = el("div", "light-create-option");
+      option.append(lightSmallIcon(icon), lightTextStack(label, value));
+      hints.append(option);
+    });
+    const create = lightPillButton("Create project", () => {
+      const title = name.value.trim() || "New project";
+      const project = {
+        id: `local-${Date.now()}`,
+        title,
+        detail: "Local prototype folder for threads, artifacts, notes, tasks, meetings, and people.",
+        lastActivity: "Created just now",
+        chips: ["0 threads", "0 artifacts", "Draft"],
+        threads: ["Drop related chat threads here"],
+        artifacts: ["Generated pages and files will appear here"],
+        notes: ["Notes can be linked from the Notes app"],
+        tasks: ["Tasks can be linked from the Tasks app"],
+        meetings: ["Meetings can be attached from Calendar"],
+        people: ["Add collaborators from Contacts"]
+      };
+      state.localProjects.unshift(project);
+      state.selectedProjectId = project.id;
+      lightNavigate("project-detail", { from: "projects" });
+    }, false);
+    card.append(lightSmallIcon("folder"), lightTextStack("Project folder", "A lightweight rollup of chats, artifacts, notes, tasks, meetings, and people."), name, hints, create);
+    page.append(card);
+    return page;
+  }
+
+  function lightProjectSection(title, icon, items) {
+    const section = el("section", "light-card light-project-section");
+    section.append(lightSmallIcon(icon), el("h3", "", title));
+    const list = el("div", "light-project-section-items");
+    items.forEach(item => list.append(el("span", "", item)));
+    section.append(list);
+    return section;
+  }
+
+  function lightSettingsSurface() {
+    const page = el("section", "light-page light-settings-surface");
+    page.append(lightHeader("Settings"));
+    const settings = settingsPageView();
+    settings.classList.add("light-settings-real");
+    page.append(settings);
+    return page;
+  }
+
+  function lightPage(title, options = {}) {
+    const page = el("section", "light-page");
+    page.append(lightHeader(title, options));
+    if (options.subtitle) {
+      page.append(el("p", "light-page-subtitle", options.subtitle));
+    }
+    return page;
+  }
+
+  function lightHeader(title, options = {}) {
+    const header = el("header", "light-page-header");
+    const left = options.back === false
+      ? el("div", "light-nav-slot")
+      : lightCircleButton("chevron_left", "Back", () => lightBack(), "light-back-button");
+    const heading = el(options.large ? "h1" : "h2", options.large ? "light-page-title large" : "light-page-title", title);
+    const right = options.action || el("div", "light-nav-slot");
+    header.append(left, heading, right);
+    return header;
+  }
+
+  function lightNavigate(route, options = {}) {
     if (linksHandoffLocked()) {
       return;
     }
     rememberFeedScroll();
     dismissTransientUiForRouteChange();
+    if (options.from) {
+      state.previousLightRoute = options.from;
+    } else if (state.route && state.route !== route && state.route !== "home") {
+      state.previousLightRoute = state.route;
+    } else {
+      state.previousLightRoute = "home";
+    }
     state.route = route;
     state.openTrayRoute = null;
     state.lightReturnRoute = "home";
     persistNavState();
     render();
     void syncVoiceThreadScope({ reason: "light_app_click", render: true });
-    if (state.route === "links") {
+    if (state.route === "apps") {
       linksDebugStartSession("route", { reason: "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
       loadLinksPortal({ render: true });
     }
+    if (state.route === "meetings") {
+      refreshMeetingRecordingStatus({ render: true });
+      loadMeetings({ render: true });
+    }
+  }
+
+  function lightBack() {
+    if (linksHandoffLocked()) {
+      releaseLinksHandoff({ render: false, reason: "light_back" });
+      return true;
+    }
+    if (!isLightShellRoute() || state.route === "home") {
+      return false;
+    }
+    const parent = LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
+    state.route = parent === state.route ? "home" : parent;
+    state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
+    state.openTrayRoute = null;
+    state.lightReturnRoute = state.route === "home" ? "" : "home";
+    persistNavState();
+    render();
+    void syncVoiceThreadScope({ reason: "light_back", render: true });
+    return true;
+  }
+
+  function lightCircleButton(icon, label, onClick, className = "") {
+    const button = el("button", `light-circle-button ${className}`.trim());
+    button.type = "button";
+    button.setAttribute("aria-label", label);
+    button.innerHTML = iconSvg(icon, { filled: false });
+    if (typeof onClick === "function") {
+      button.addEventListener("click", onClick);
+    }
+    return button;
+  }
+
+  function lightIconButton(icon, label, onClick, className = "") {
+    const button = el("button", `light-icon-button ${className}`.trim());
+    button.type = "button";
+    button.setAttribute("aria-label", label);
+    button.innerHTML = iconSvg(icon, { filled: false });
+    if (typeof onClick === "function") {
+      button.addEventListener("click", onClick);
+    }
+    return button;
+  }
+
+  function lightPillButton(label, onClick, active = false) {
+    const button = el("button", active ? "light-pill is-active" : "light-pill", label);
+    button.type = "button";
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function lightSmallIcon(icon) {
+    const wrap = el("span", "light-small-icon");
+    wrap.innerHTML = iconSvg(icon, { filled: false });
+    return wrap;
+  }
+
+  function lightTextStack(title, detail) {
+    const copy = el("span", "light-text-stack");
+    copy.append(el("strong", "", title), el("span", "", detail || ""));
+    return copy;
+  }
+
+  function lightContactCopy(contact) {
+    return lightTextStack(contact.name, `${contact.channel}${DOT}${contact.time}${DOT}${contact.note}`);
+  }
+
+  function lightAvatar(contact, size = "") {
+    const hasPhoto = Boolean(contact.photo);
+    const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : contact.avatar);
+    avatar.setAttribute("aria-label", contact.name);
+    avatar.dataset.contactId = contact.id;
+    if (hasPhoto) {
+      avatar.dataset.photo = contact.photo;
+      const img = document.createElement("img");
+      img.src = contact.photo;
+      img.alt = "";
+      img.decoding = "async";
+      avatar.append(img);
+    } else {
+      avatar.style.background = "linear-gradient(135deg,#f59e0b,#fbbf24)";
+    }
+    return avatar;
+  }
+
+  function lightActionColumn(icon, label, color) {
+    const action = el("button", "light-profile-action");
+    action.type = "button";
+    action.append(lightAppIcon(icon, color), el("span", "", label));
+    return action;
+  }
+
+  function lightEmptyState(icon, title, detail) {
+    const empty = el("section", "light-empty-state");
+    empty.append(lightAppIcon(icon, "sky"), el("h2", "", title), el("p", "", detail));
+    return empty;
+  }
+
+  function lightSectionTitle(title) {
+    return el("h3", "light-section-title", String(title).toUpperCase());
+  }
+
+  function lightCopySection(title, body) {
+    const section = el("section", "light-copy-section");
+    section.append(lightSectionTitle(title), el("p", "", body));
+    return section;
+  }
+
+  function lightListSection(title, lines) {
+    const section = el("section", "light-card light-list-section");
+    section.append(lightSectionTitle(title));
+    const list = el("ul", "");
+    lines.forEach(line => list.append(el("li", "", line)));
+    section.append(list);
+    return section;
+  }
+
+  function lightInfoSection(title, rows) {
+    const section = el("section", "light-info-section");
+    section.append(lightSectionTitle(title));
+    const card = el("div", "light-card light-info-card");
+    rows.forEach(row => {
+      const item = el("div", "light-info-row");
+      item.append(lightSmallIcon(row.icon), lightTextStack(row.label, row.value), row.value === "Open" ? el("span", "light-chevron", ">") : el("span", ""));
+      card.append(item);
+    });
+    section.append(card);
+    return section;
+  }
+
+  function lightAttendeesSection(attendees) {
+    const section = el("section", "light-info-section light-attendees-section");
+    section.append(lightSectionTitle("Attendees"));
+    const card = el("div", "light-card light-info-card");
+    attendees.forEach(name => card.append(lightAttendeeRow(name)));
+    section.append(card);
+    return section;
+  }
+
+  function lightAttendeeRow(name) {
+    const contact = LIGHT_CONTACTS.find(item => item.name === name);
+    const row = el(contact ? "button" : "div", contact ? "light-info-row light-attendee-row is-clickable" : "light-info-row light-attendee-row is-external");
+    if (contact) {
+      row.type = "button";
+      row.addEventListener("click", () => {
+        state.selectedContactId = contact.id;
+        lightNavigate("contact-detail", { from: "meeting-detail" });
+      });
+    }
+    row.append(lightSmallIcon(contact ? "contacts" : "apps"), lightTextStack(name, contact ? contact.relation : `External${DOT}Vendor`), contact ? el("span", "light-chevron", ">") : el("span", ""));
+    return row;
+  }
+
+  function lightHeroDetail(title, detail, icon) {
+    const hero = el("section", "light-card light-hero-detail");
+    hero.append(lightAppIcon(icon, "sky"), lightTextStack(title, detail));
+    return hero;
+  }
+
+  function lightDetailHero(title, detail, icon) {
+    const hero = el("section", "light-card light-detail-hero");
+    hero.append(lightSmallIcon(icon), lightTextStack(title, detail));
+    return hero;
+  }
+
+  function lightChipCloud(chips) {
+    const cloud = el("div", "light-chip-cloud");
+    chips.forEach(chip => cloud.append(el("span", "", chip)));
+    return cloud;
+  }
+
+  function hourLabel(hour) {
+    const suffix = hour >= 12 ? "PM" : "AM";
+    const value = hour > 12 ? hour - 12 : hour;
+    return `${value} ${suffix}`;
+  }
+
+  function calendarDayTitle() {
+    return `Today, June ${state.selectedCalendarDay}${ordinalSuffix(state.selectedCalendarDay)}`;
+  }
+
+  function ordinalSuffix(day) {
+    const value = Number(day || 0);
+    if ([11, 12, 13].includes(value % 100)) return "th";
+    if (value % 10 === 1) return "st";
+    if (value % 10 === 2) return "nd";
+    if (value % 10 === 3) return "rd";
+    return "th";
+  }
+
+  function lightDocumentEyebrow(label, detail) {
+    const row = el("p", "light-doc-eyebrow");
+    row.append(el("span", "", label), DOT, el("span", "", detail));
+    return row;
+  }
+
+  function lightDocumentMeta(rows) {
+    const meta = el("dl", "light-doc-meta");
+    rows.forEach(([label, value]) => {
+      meta.append(el("dt", "", label), el("dd", "", value));
+    });
+    return meta;
+  }
+
+  function filteredTasks(group) {
+    return LIGHT_TASKS.filter(task => {
+      const byFilter = state.taskFilter === "all"
+        || (state.taskFilter === "due" && (task.group === "do" || task.group === "soon"))
+        || task.group === state.taskFilter;
+      return task.group === group && byFilter;
+    });
+  }
+
+  function selectedContact() {
+    return LIGHT_CONTACTS.find(contact => contact.id === state.selectedContactId) || LIGHT_CONTACTS[0];
+  }
+
+  function selectedMeeting() {
+    return LIGHT_MEETINGS.find(meeting => meeting.id === state.selectedMeetingId) || LIGHT_MEETINGS[0];
+  }
+
+  function selectedNote() {
+    return LIGHT_NOTES.find(note => note.id === state.selectedNoteId) || LIGHT_NOTES[0];
+  }
+
+  function selectedTask() {
+    return LIGHT_TASKS.find(task => task.id === state.selectedTaskId) || LIGHT_TASKS[0];
+  }
+
+  function selectedProject() {
+    return allProjects().find(project => project.id === state.selectedProjectId) || LIGHT_PROJECTS[0];
+  }
+
+  function allProjects() {
+    return [...state.localProjects, ...LIGHT_PROJECTS];
+  }
+
+  function selectedFeedItem() {
+    return LIGHT_FEED.find(item => item.id === state.selectedFeedId) || LIGHT_FEED[0];
   }
 
   function filteredFeedEmptyView() {
@@ -3388,7 +4361,7 @@
         openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
       }
     } catch (error) {
-      showToast(error.message);
+      showToast(meetingsApiErrorMessage(error));
       if (stateName === "completed") {
         openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
       }
@@ -3442,7 +4415,7 @@
         showToast("Meeting audio is unavailable.");
       }
     } catch (error) {
-      showToast(error.message);
+      showToast(meetingsApiErrorMessage(error));
     }
   }
 
@@ -6291,14 +7264,7 @@
       closeSpeedPicker();
       return true;
     }
-    if (state.route === "links" && state.theme === "light" && state.lightReturnRoute === "home") {
-      releaseLinksHandoff({ render: false, reason: "android_back" });
-      state.route = "home";
-      state.openTrayRoute = null;
-      state.lightReturnRoute = "";
-      persistNavState();
-      render();
-      void syncVoiceThreadScope({ reason: "light_apps_back", render: true });
+    if (isLightShellRoute() && lightBack()) {
       return true;
     }
     return false;
@@ -8615,7 +9581,7 @@
   }
 
   function isLightShellRoute() {
-    return isLightTheme() && state.route === "home";
+    return isLightTheme() && LIGHT_ROUTES.has(state.route || "home");
   }
 
   function loadNavState() {
@@ -8646,6 +9612,13 @@
       return queryRoute;
     }
     if (normalizeTheme(theme) === "light") {
+      if (LIGHT_ROUTES.has(queryRoute)) {
+        return queryRoute;
+      }
+      const value = String(route || "");
+      if (LIGHT_ROUTES.has(value)) {
+        return value;
+      }
       return "home";
     }
     const value = String(route || "");
