@@ -110,6 +110,7 @@ async function main() {
   attachPageLogging(page, path.join(config.reportDir, "console.log"));
 
   const screenshots = {};
+  const optionalActions = {};
   try {
     await page.goto(config.pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await page.locator(".light-shell[data-light-route=\"home\"] .light-app-grid").waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -134,18 +135,31 @@ async function main() {
 
     const inboxAudio = page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]");
     if (await inboxAudio.count()) {
-      await inboxAudio.first().click();
-      await page.waitForTimeout(500);
-      screenshots.inboxAudio = await saveScreenshot(page, config.reportDir, "04-vm-light-inbox-audio");
-      await dismissDetail(page);
+      try {
+        await inboxAudio.first().click({ timeout: 5000 });
+        await page.waitForTimeout(500);
+        screenshots.inboxAudio = await saveScreenshot(page, config.reportDir, "04-vm-light-inbox-audio");
+        optionalActions.inbox_audio_click = "ok";
+        await dismissDetail(page);
+      } catch (error) {
+        optionalActions.inbox_audio_click = String(error?.message || error || "failed").slice(0, 240);
+      }
     }
     const inboxPageAction = page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"page\"], .light-shell[data-light-route=\"inbox\"] [data-card-action=\"attachment\"]");
-    if (await inboxPageAction.count()) {
-      await inboxPageAction.first().click();
-      await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
-      screenshots.inboxPage = await saveScreenshot(page, config.reportDir, "05-vm-light-inbox-page");
-      await dismissDetail(page);
+    const inboxPageActionCount = await inboxPageAction.count();
+    optionalActions.inbox_page_action_count = inboxPageActionCount;
+    if (inboxPageActionCount) {
+      try {
+        await inboxPageAction.first().click({ timeout: 5000 });
+        await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
+        screenshots.inboxPage = await saveScreenshot(page, config.reportDir, "05-vm-light-inbox-page");
+        optionalActions.inbox_page_click = "ok";
+        await dismissDetail(page);
+      } catch (error) {
+        optionalActions.inbox_page_click = String(error?.message || error || "failed").slice(0, 240);
+      }
     }
+    assert(inboxPageActionCount > 0, "Light Inbox did not expose canonical page/attachment actions");
 
     await backToHome(page);
     await clickLightTile(page, "meetings");
@@ -165,12 +179,20 @@ async function main() {
     await dismissDetail(page);
 
     const meetingAudio = page.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]");
-    if (await meetingAudio.count()) {
-      await meetingAudio.first().click();
-      await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
-      screenshots.meetingsAudio = await saveScreenshot(page, config.reportDir, "08-vm-light-meetings-audio");
-      await dismissDetail(page);
+    const meetingAudioCount = await meetingAudio.count();
+    optionalActions.meeting_audio_action_count = meetingAudioCount;
+    if (meetingAudioCount) {
+      try {
+        await meetingAudio.first().click({ timeout: 5000 });
+        await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
+        screenshots.meetingsAudio = await saveScreenshot(page, config.reportDir, "08-vm-light-meetings-audio");
+        optionalActions.meetings_audio_click = "ok";
+        await dismissDetail(page);
+      } catch (error) {
+        optionalActions.meetings_audio_click = String(error?.message || error || "failed").slice(0, 240);
+      }
     }
+    assert(meetingAudioCount > 0, "Light Meetings did not expose canonical meeting audio actions");
 
     const fixtureRequests = requestLog.filter(item => item.url.includes("/fixtures/reply_cards"));
     assert(fixtureRequests.length === 0, "VM proof observed bundled reply card fixture requests");
@@ -188,6 +210,7 @@ async function main() {
       matching_inbox_titles: matchingInboxTitles.slice(0, 10),
       matching_meeting_titles: matchingMeetingTitles.slice(0, 10),
       fixture_request_count: fixtureRequests.length,
+      optional_actions: optionalActions,
       screenshots
     };
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
