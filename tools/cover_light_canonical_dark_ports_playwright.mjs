@@ -50,6 +50,10 @@ function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function cssString(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+}
+
 async function waitForCanonicalPort(page, activeLabel, timeoutMs) {
   await page.waitForFunction(
     expected => {
@@ -113,12 +117,90 @@ async function closeDetail(page, timeoutMs) {
   await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: timeoutMs });
 }
 
+async function clickSelector(page, selector, timeoutMs) {
+  await page.locator(selector).first().waitFor({ state: "visible", timeout: timeoutMs });
+  await page.evaluate(selectorValue => {
+    const target = document.querySelector(selectorValue);
+    if (!(target instanceof HTMLElement)) {
+      throw new Error(`Missing clickable target for ${selectorValue}`);
+    }
+    target.click();
+  }, selector);
+}
+
+async function stableCardSelector(page, selector, timeoutMs) {
+  const trigger = page.locator(selector).first();
+  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
+  const target = await trigger.evaluate(node => {
+    const article = node.closest("article.card");
+    return {
+      action: String(node.getAttribute("data-card-action") || "").trim(),
+      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
+      card_id: String(article?.getAttribute("data-card-id") || "").trim(),
+      is_card_body: node.classList.contains("card-body")
+    };
+  });
+  if (target.action && (target.session_id || target.card_id)) {
+    return target.session_id
+      ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="${cssString(target.action)}"]`
+      : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="${cssString(target.action)}"]`;
+  }
+  if (target.is_card_body && (target.session_id || target.card_id)) {
+    return target.session_id
+      ? `article.card[data-card-session-id="${cssString(target.session_id)}"] .card-body`
+      : `article.card[data-card-id="${cssString(target.card_id)}"] .card-body`;
+  }
+  return selector;
+}
+
 async function openAndReadDetail(page, selector, timeoutMs) {
-  await page.locator(selector).first().click();
+  const targetSelector = await stableCardSelector(page, selector, timeoutMs);
+  await clickSelector(page, targetSelector, timeoutMs);
   await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
   const detail = await readDetailState(page);
   await closeDetail(page, timeoutMs);
   return detail;
+}
+
+async function toggleAndReadAudioState(page, selector, timeoutMs) {
+  const trigger = page.locator(selector).first();
+  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
+  const target = await trigger.evaluate(button => {
+    const article = button.closest("article.card");
+    return {
+      card_id: String(article?.getAttribute("data-card-id") || "").trim(),
+      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
+      title: String(article?.querySelector(".title")?.textContent || "").trim()
+    };
+  });
+  assert(target.card_id || target.session_id, "Audio target did not resolve to a canonical card identity");
+  const targetSelector = target.session_id
+    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio"]`
+    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio"]`;
+  await clickSelector(page, targetSelector, timeoutMs);
+  await page.waitForFunction(
+    selectorValue => Boolean(document.querySelector(selectorValue)?.classList.contains("is-playing")),
+    targetSelector,
+    { timeout: timeoutMs }
+  );
+  const playing = await page.locator(targetSelector).evaluate(button => ({
+    classes: String(button.className || "").trim(),
+    aria_label: String(button.getAttribute("aria-label") || "").trim()
+  }));
+  await clickSelector(page, targetSelector, timeoutMs);
+  await page.waitForFunction(
+    selectorValue => {
+      const button = document.querySelector(selectorValue);
+      return !!button && !button.classList.contains("is-playing");
+    },
+    targetSelector,
+    { timeout: timeoutMs }
+  );
+  return {
+    ...target,
+    ...playing,
+    playing: true
+  };
 }
 
 async function clickLightTile(page, route, timeoutMs) {
@@ -168,13 +250,11 @@ async function main() {
     screenshots.directDarkFeed = await saveScreenshot(darkFeedPage, config.reportDir, "02-direct-dark-feed");
     screenshots.directDarkMeetings = await saveScreenshot(darkMeetingsPage, config.reportDir, "03-direct-dark-meetings");
 
-    const darkFeedRows = await extractCardRows(darkFeedPage, ".card-wrap article.card");
-    const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
-
     await clickLightTile(lightPage, "inbox", config.timeoutMs);
     await waitForCanonicalPort(lightPage, "Home", config.timeoutMs);
     assert(await lightPage.locator(".light-shell").count() === 0, "Light-launched Inbox should not render inside .light-shell");
     assert(await lightPage.locator(".app-shell[data-theme=\"dark\"]").count() === 1, "Light-launched Inbox should force the canonical dark theme");
+    const darkFeedRows = await extractCardRows(darkFeedPage, ".card-wrap article.card");
     const inboxRows = await extractCardRows(lightPage, ".card-wrap article.card");
     assert(rowsMatch(darkFeedRows, inboxRows), "Light-launched Inbox cards did not exactly match direct dark feed cards");
     await lightPage.locator(".page-tabs .tab.is-active[aria-label=\"Home\"]").click();
@@ -183,9 +263,9 @@ async function main() {
     await lightPage.locator(".page-tabs .tab.is-active[aria-label=\"Home\"]").click();
     await lightPage.locator("#routeTray .route-tray-shell").waitFor({ state: "hidden", timeout: config.timeoutMs });
 
-    const darkFeedAudioDetail = await openAndReadDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    const lightInboxAudioDetail = await openAndReadDetail(lightPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    assert(JSON.stringify(lightInboxAudioDetail) === JSON.stringify(darkFeedAudioDetail), "Inbox audio detail diverged from direct dark feed");
+    const darkFeedAudioState = await toggleAndReadAudioState(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
+    const lightInboxAudioState = await toggleAndReadAudioState(lightPage, "[data-card-action=\"audio\"]", config.timeoutMs);
+    assert(JSON.stringify(lightInboxAudioState) === JSON.stringify(darkFeedAudioState), "Inbox audio playback behavior diverged from direct dark feed");
 
     const pageOrAttachmentSelector = "[data-card-action=\"page\"], [data-card-action=\"attachment\"]";
     assert(await darkFeedPage.locator(pageOrAttachmentSelector).count() > 0, "Direct dark feed did not expose a page or attachment action");
@@ -203,6 +283,7 @@ async function main() {
     assert(await lightPage.locator(".app-shell[data-theme=\"dark\"]").count() === 1, "Light-launched Meetings should force the canonical dark theme");
     assert(await lightPage.locator(".light-page-title").count() === 0, "Light-launched Meetings should not render a duplicate light page title");
     assert(await lightPage.locator(".meetings-title").count() === 1, "Light-launched Meetings should render the canonical meetings header once");
+    const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
     const lightMeetingsRows = await extractCardRows(lightPage, ".meetings-page .card-wrap article.card");
     assert(rowsMatch(darkMeetingsRows, lightMeetingsRows), "Light-launched Meetings rows did not exactly match direct dark meetings");
     screenshots.meetings = await saveScreenshot(lightPage, config.reportDir, "06-light-launched-meetings-dark");
@@ -226,7 +307,7 @@ async function main() {
       comparisons: {
         inbox_matches_direct_dark_feed: true,
         meetings_match_direct_dark_meetings: true,
-        inbox_audio_detail: lightInboxAudioDetail,
+        inbox_audio_state: lightInboxAudioState,
         inbox_page_detail: lightInboxPageDetail,
         meetings_detail: lightMeetingDetail,
         meetings_audio_detail: lightMeetingAudio
