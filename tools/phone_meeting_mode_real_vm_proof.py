@@ -174,10 +174,25 @@ def wav_duration_ms(audio_path: Path) -> int:
     body = audio_path.read_bytes()
     if len(body) < 44 or body[:4] != b"RIFF" or body[8:12] != b"WAVE":
         raise MeetingModePhoneProofError(f"Expected PCM WAV fixture at {audio_path}")
-    channels = int.from_bytes(body[22:24], "little")
-    sample_rate = int.from_bytes(body[24:28], "little")
-    bits_per_sample = int.from_bytes(body[34:36], "little")
-    data_size = int.from_bytes(body[40:44], "little")
+    channels = 0
+    sample_rate = 0
+    bits_per_sample = 0
+    data_size = 0
+    cursor = 12
+    while cursor + 8 <= len(body):
+        chunk_id = body[cursor : cursor + 4]
+        chunk_size = int.from_bytes(body[cursor + 4 : cursor + 8], "little")
+        chunk_data_offset = cursor + 8
+        if chunk_id == b"fmt " and chunk_size >= 16 and chunk_data_offset + 16 <= len(body):
+            channels = int.from_bytes(body[chunk_data_offset + 2 : chunk_data_offset + 4], "little")
+            sample_rate = int.from_bytes(body[chunk_data_offset + 4 : chunk_data_offset + 8], "little")
+            bits_per_sample = int.from_bytes(body[chunk_data_offset + 14 : chunk_data_offset + 16], "little")
+        elif chunk_id == b"data":
+            data_size = chunk_size
+            break
+        cursor = chunk_data_offset + chunk_size + (chunk_size % 2)
+    if not (channels > 0 and sample_rate > 0 and bits_per_sample > 0 and data_size > 0):
+        raise MeetingModePhoneProofError(f"Unable to parse WAV metadata from {audio_path}")
     bytes_per_second = max(1, sample_rate * channels * max(1, bits_per_sample // 8))
     return max(1000, round((data_size / bytes_per_second) * 1000))
 

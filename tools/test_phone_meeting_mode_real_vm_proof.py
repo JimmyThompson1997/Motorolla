@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,33 @@ def test_audio_ops_use_summary_frame_link_and_playback_probe() -> None:
     assert ops[1]["selector"] == "a.pucky-meeting-audio-link"
     assert ops[3] == {"kind": "audio_state", "selector": meeting_proof.AUDIO_SELECTOR}
     assert ops[4] == {"kind": "play_audio", "selector": meeting_proof.AUDIO_SELECTOR}
+
+
+def test_wav_duration_ms_handles_list_chunk(tmp_path: Path) -> None:
+    sample_rate = 16000
+    channels = 1
+    bits_per_sample = 16
+    bytes_per_second = sample_rate * channels * (bits_per_sample // 8)
+    duration_ms = 2000
+    data_size = (bytes_per_second * duration_ms) // 1000
+    data_chunk = b"\x00" * data_size
+    fmt_chunk = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        bytes_per_second,
+        channels * (bits_per_sample // 8),
+        bits_per_sample,
+    )
+    list_payload = b"INFO"
+    list_chunk = struct.pack("<4sI", b"LIST", len(list_payload)) + list_payload
+    data_header = struct.pack("<4sI", b"data", data_size)
+    riff_size = 4 + len(fmt_chunk) + len(list_chunk) + len(data_header) + len(data_chunk)
+    wav_bytes = struct.pack("<4sI4s", b"RIFF", riff_size, b"WAVE") + fmt_chunk + list_chunk + data_header + data_chunk
+    wav_path = tmp_path / "with-list-chunk.wav"
+    wav_path.write_bytes(wav_bytes)
+
+    assert meeting_proof.wav_duration_ms(wav_path) == 2000
