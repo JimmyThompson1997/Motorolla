@@ -4417,6 +4417,144 @@ button {
   border-top-color: rgba(17, 24, 39, 0.06);
 }
 
+.light-canonical-port-page {
+  min-height: calc(var(--viewport-h) - 42px);
+  padding-bottom: 28px;
+}
+
+.light-meetings-page .light-page-header {
+  margin-bottom: 4px;
+}
+
+.light-canonical-port-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-bottom: 92px;
+}
+
+.light-shell[data-light-route="inbox"] .light-canonical-port-surface {
+  padding-top: 6px;
+}
+
+.light-shell[data-light-route="meetings"] .light-canonical-port-surface {
+  padding-top: 2px;
+}
+
+.light-shell[data-light-route="meetings"] .meetings-page {
+  gap: 12px;
+  padding: 0 0 18px;
+}
+
+.meetings-embedded-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .card,
+.app-shell[data-theme="light"][data-view="meetings"] .card {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(17, 24, 39, 0.08);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .card.card-pending-thread,
+.app-shell[data-theme="light"][data-view="meetings"] .card.card-pending-thread {
+  border-color: rgba(34, 111, 232, 0.16);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .card.card-unread {
+  border-color: rgba(255, 59, 48, 0.28);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 59, 48, 0.1),
+    0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .identity,
+.app-shell[data-theme="light"][data-view="inbox"] .action,
+.app-shell[data-theme="light"][data-view="meetings"] .action {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .identity.is-unread,
+.app-shell[data-theme="light"][data-view="inbox"] .action.is-unread {
+  color: #ff3b30;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .identity.is-read,
+.app-shell[data-theme="light"][data-view="inbox"] .action.is-read,
+.app-shell[data-theme="light"][data-view="meetings"] .action,
+.app-shell[data-theme="light"][data-view="meetings"] .title,
+.app-shell[data-theme="light"][data-view="inbox"] .title {
+  color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .preview,
+.app-shell[data-theme="light"][data-view="meetings"] .preview,
+.app-shell[data-theme="light"][data-view="inbox"] .card-timestamp,
+.app-shell[data-theme="light"][data-view="meetings"] .card-timestamp,
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-refreshing,
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-empty {
+  color: #6b7280;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .preview {
+  color: #4b5563;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .card.card-meeting-processing,
+.app-shell[data-theme="light"][data-view="meetings"] .card.card-meeting-processing {
+  background:
+    linear-gradient(180deg, rgba(34, 111, 232, 0.08), rgba(34, 111, 232, 0.02)),
+    rgba(255, 255, 255, 0.96);
+  border-color: rgba(34, 111, 232, 0.14);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-processing-mark,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-processing-mark {
+  color: #226fe8;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-processing-subcopy,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-processing-subcopy {
+  color: #6b7280;
+}
+
+.light-shell[data-light-route="inbox"] .empty,
+.light-shell[data-light-route="inbox"] .feed-load-error,
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-empty {
+  padding: 22px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.075);
+}
+
+.light-shell[data-light-route="inbox"] .empty strong,
+.light-shell[data-light-route="inbox"] .feed-load-error strong {
+  color: #101624;
+}
+
+.light-shell[data-light-route="inbox"] .empty,
+.light-shell[data-light-route="inbox"] .feed-load-error,
+.light-shell[data-light-route="inbox"] .empty small,
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-empty {
+  color: #6b7280;
+}
+
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-refresh {
+  background: rgba(255, 255, 255, 0.96);
+  color: #226fe8;
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.08),
+    inset 0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="meetings"] .meetings-empty.is-error {
+  color: #c03d34;
+}
+
 .app-shell[data-theme="light"] .detail-panel {
   background: #fbfcff;
 }
@@ -4445,6 +4583,235 @@ button {
 .app-shell[data-theme="light"] .bubble.user {
   background: #eaf3ff;
   color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .chat-media,
+.app-shell[data-theme="light"][data-view="meetings"] .chat-media {
+  background: #ffffff;
+  border-color: rgba(17, 24, 39, 0.08);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .chat-media::after,
+.app-shell[data-theme="light"][data-view="meetings"] .chat-media::after {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #ffffff 78%);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .bubble-origin-action,
+.app-shell[data-theme="light"][data-view="inbox"] .bubble-trace-action,
+.app-shell[data-theme="light"][data-view="inbox"] .bubble-meta,
+.app-shell[data-theme="light"][data-view="meetings"] .bubble-origin-action,
+.app-shell[data-theme="light"][data-view="meetings"] .bubble-trace-action,
+.app-shell[data-theme="light"][data-view="meetings"] .bubble-meta {
+  color: #7b8494;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .bubble-attachment-chip,
+.app-shell[data-theme="light"][data-view="meetings"] .bubble-attachment-chip {
+  background: #edf5ff;
+  color: #101624;
+  box-shadow: inset 0 0 0 1px rgba(34, 111, 232, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .document-fallback,
+.app-shell[data-theme="light"][data-view="inbox"] .attachment-audio-card,
+.app-shell[data-theme="light"][data-view="inbox"] .table-viewer,
+.app-shell[data-theme="light"][data-view="inbox"] .text-viewer,
+.app-shell[data-theme="light"][data-view="inbox"] .video-detail,
+.app-shell[data-theme="light"][data-view="meetings"] .document-fallback,
+.app-shell[data-theme="light"][data-view="meetings"] .attachment-audio-card,
+.app-shell[data-theme="light"][data-view="meetings"] .table-viewer,
+.app-shell[data-theme="light"][data-view="meetings"] .text-viewer,
+.app-shell[data-theme="light"][data-view="meetings"] .video-detail {
+  background: #fbfcff;
+  color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .attachment-title,
+.app-shell[data-theme="light"][data-view="inbox"] .attachment-meta,
+.app-shell[data-theme="light"][data-view="meetings"] .attachment-title,
+.app-shell[data-theme="light"][data-view="meetings"] .attachment-meta {
+  color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .attachment-subtitle,
+.app-shell[data-theme="light"][data-view="meetings"] .attachment-subtitle {
+  color: #6b7280;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .attachment-error,
+.app-shell[data-theme="light"][data-view="meetings"] .attachment-error {
+  background: rgba(255, 59, 48, 0.1);
+  color: #c03d34;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .video-controls,
+.app-shell[data-theme="light"][data-view="meetings"] .video-controls {
+  background: rgba(255, 255, 255, 0.92);
+  color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .video-progress,
+.app-shell[data-theme="light"][data-view="inbox"] .video-scrubber,
+.app-shell[data-theme="light"][data-view="meetings"] .video-progress,
+.app-shell[data-theme="light"][data-view="meetings"] .video-scrubber {
+  background: #226fe8;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .audio-detail,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-transcript-detail,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-failed-detail,
+.app-shell[data-theme="light"][data-view="meetings"] .audio-detail,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-transcript-detail,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-failed-detail {
+  background: transparent;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-transcript-section,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-transcript-section,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-failed-body,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-failed-body {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 12px 28px rgba(15, 23, 42, 0.08),
+    inset 0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-speaker-label,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-speaker-label {
+  color: #226fe8;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-speaker-text,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-transcript-text,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-transcript-note,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-speaker-text,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-transcript-text,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-transcript-note {
+  color: #263244;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-transcript-note.is-error,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-transcript-note.is-error,
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-failed-error,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-failed-error {
+  color: #c03d34;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-failed-kicker,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-failed-kicker {
+  color: #d97706;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-failed-chip,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-failed-chip {
+  background: #edf5ff;
+  color: #51606f;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .meeting-view-transcript,
+.app-shell[data-theme="light"][data-view="meetings"] .meeting-view-transcript {
+  background: #eaf3ff;
+  color: #226fe8;
+  box-shadow: inset 0 0 0 1px rgba(34, 111, 232, 0.12);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .audio-summary,
+.app-shell[data-theme="light"][data-view="inbox"] .time-row,
+.app-shell[data-theme="light"][data-view="meetings"] .audio-summary,
+.app-shell[data-theme="light"][data-view="meetings"] .time-row,
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-list-header,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-list-header,
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-detail,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-detail {
+  color: #6b7280;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-list-header,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-list-header {
+  background: #fbfcff;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-row,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-row {
+  background: #ffffff;
+  color: #101624;
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.06);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-row.is-active,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-row.is-active {
+  background: #eef5ff;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-row.is-selected,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-row.is-selected {
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 111, 232, 0.2),
+    0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-time,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-time {
+  color: #226fe8;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .timestamp-play,
+.app-shell[data-theme="light"][data-view="meetings"] .timestamp-play {
+  background: #226fe8;
+  color: #ffffff;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-track,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-track {
+  background: rgba(17, 24, 39, 0.12);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-fill,
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-knob,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-fill,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-knob {
+  background: #226fe8;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-knob,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-knob {
+  box-shadow: 0 0 0 5px rgba(34, 111, 232, 0.14);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-chapter-tick,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-chapter-tick {
+  background: rgba(34, 111, 232, 0.35);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-chapter-range,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-chapter-range {
+  background: rgba(34, 111, 232, 0.14);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .scrub-chapter-marker,
+.app-shell[data-theme="light"][data-view="meetings"] .scrub-chapter-marker {
+  background: #8ab4ff;
+  box-shadow: 0 0 0 4px rgba(34, 111, 232, 0.12);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .control,
+.app-shell[data-theme="light"][data-view="meetings"] .control {
+  color: #101624;
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .control-play,
+.app-shell[data-theme="light"][data-view="meetings"] .control-play {
+  background: #226fe8;
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(34, 111, 232, 0.18);
+}
+
+.app-shell[data-theme="light"][data-view="inbox"] .control-speed,
+.app-shell[data-theme="light"][data-view="meetings"] .control-speed {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.08);
 }
 
 @media (max-width: 380px) {
