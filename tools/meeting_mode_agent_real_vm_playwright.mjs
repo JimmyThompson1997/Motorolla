@@ -668,10 +668,29 @@ function wavDurationMs(audioPath) {
   if (buffer.length < 44 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
     throw new Error(`Expected a PCM WAV fixture at ${audioPath}`);
   }
-  const channels = buffer.readUInt16LE(22);
-  const sampleRate = buffer.readUInt32LE(24);
-  const bitsPerSample = buffer.readUInt16LE(34);
-  const dataSize = buffer.readUInt32LE(40);
+  let channels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataSize = 0;
+  let cursor = 12;
+  while (cursor + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", cursor, cursor + 4);
+    const chunkSize = buffer.readUInt32LE(cursor + 4);
+    const chunkDataOffset = cursor + 8;
+    if (chunkId === "fmt " && chunkSize >= 16 && chunkDataOffset + 16 <= buffer.length) {
+      channels = buffer.readUInt16LE(chunkDataOffset + 2);
+      sampleRate = buffer.readUInt32LE(chunkDataOffset + 4);
+      bitsPerSample = buffer.readUInt16LE(chunkDataOffset + 14);
+    } else if (chunkId === "data") {
+      dataSize = chunkSize;
+      break;
+    }
+    const paddedChunkSize = chunkSize + (chunkSize % 2);
+    cursor = chunkDataOffset + paddedChunkSize;
+  }
+  if (!(channels > 0 && sampleRate > 0 && bitsPerSample > 0 && dataSize > 0)) {
+    throw new Error(`Unable to parse WAV metadata from ${audioPath}`);
+  }
   const bytesPerSecond = Math.max(1, sampleRate * channels * Math.max(1, bitsPerSample / 8));
   return Math.max(1000, Math.round((dataSize / bytesPerSecond) * 1000));
 }
