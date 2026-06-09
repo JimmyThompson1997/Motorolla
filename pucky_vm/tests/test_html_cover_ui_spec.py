@@ -259,13 +259,14 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert '"/api/links/connect"' not in app
 
 
-def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
+def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_preview() -> None:
     html = read("index.html")
     app = read("app.js")
     styles = read("styles.css")
 
     assert "const THEME_STATE_KEY = \"pucky.cover.theme.v1\"" in app
     assert "const LIGHT_APPS = [" in app
+    assert "const LIGHT_ROUTES = new Set([" in app
     assert 'route: "notes"' in app
     assert 'route: "tasks"' in app
     assert 'route: "calendar"' in app
@@ -277,11 +278,6 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert '{ route: "meetings", label: "Meetings"' in app
     assert '{ route: "meeting-capture", label: "Meetings"' not in app
     assert '{ route: "links", label: "Apps"' not in app
-    light_apps_block = app.split("const LIGHT_APPS = [", 1)[1].split("];", 1)[0]
-    light_routes_block = app.split("const LIGHT_ROUTES = new Set([", 1)[1].split("]);", 1)[0]
-    assert 'route: "notifications"' not in light_apps_block
-    assert '"inbox"' in light_routes_block
-    assert '"meetings"' in light_routes_block
     assert "theme: initialTheme" in app
     assert "lightReturnRoute: \"\"" in app
     assert "previousLightRoute:" in app
@@ -294,6 +290,9 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert "selectedCalendarDay:" in app
     assert "taskFilter:" in app
     assert "function resolveInitialTheme()" in app
+    assert "function isWalkthroughPreview()" in app
+    assert 'params.get("preview") === "walkthrough"' in app
+    assert "function resolveRouteForTheme(route, theme = state.theme)" in app
     assert "function effectiveRoute()" in app
     assert "function effectiveTheme()" in app
     assert "function usesHomeFeedRoute(" in app
@@ -329,6 +328,17 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert "lightNavigate(\"meeting-capture\"" not in app
     assert 'if (isLightShellRoute()) {' in app
     assert "feed.replaceChildren(lightView());" in app
+    assert 'if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {' in app
+    assert 'return resolveRouteForTheme(queryRoute || route, theme);' in app
+    assert 'if (value === "apps") return "links";' in app
+    assert 'if (value === "inbox") return "feed";' in app
+    assert 'if (value === "home") return "feed";' in app
+    assert "appearanceSettingsCard()" in app
+    assert 'settingId: "appearance"' in app
+    assert 'title: "Appearance"' in app
+    assert 'function setThemePreference(theme)' in app
+    assert 'state.theme = nextTheme;' in app
+    assert 'persistTheme(nextTheme);' in app
     assert 'case "apps":' in app
     assert 'view.append(lightAppsPage())' in app
     assert 'case "meetings":' in app
@@ -345,7 +355,6 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert 'case "contact-detail":' in app
     assert 'case "notifications":' not in app
     assert 'case "notification-detail":' not in app
-    assert 'if (state.route === "links") {' in app
     assert 'const page = linksPageView();' in app
     assert "lightLinksPage" not in app
     assert "lightPrototypePage" not in app
@@ -369,6 +378,15 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert ".light-document-page" in styles
     assert ".light-project-row" in styles
     assert ".light-contact-row" in styles
+    assert ".app-shell[data-theme=\"light\"] {" in styles
+    assert ".app-shell[data-theme=\"light\"][data-chrome-mode=\"light-shell\"] .header" in styles
+    assert ".app-shell[data-theme=\"light\"] .tab.is-active" in styles
+    assert ".app-shell[data-theme=\"light\"] .route-tray-shell" in styles
+    assert ".app-shell[data-theme=\"light\"] .settings-page" in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" in styles
+    assert ".app-shell[data-theme=\"light\"] .card" in styles
+    assert ".app-shell[data-theme=\"light\"] .detail-panel" in styles
+    assert ".app-shell[data-theme=\"light\"] .header,\n.app-shell[data-theme=\"light\"] .page-tabs,\n.app-shell[data-theme=\"light\"] .route-tray {\n  display: none;\n}" not in styles
     assert 'data-voice-status' in html
     assert "renderVoiceStatus()" in app
     assert ".voice-status" in styles
@@ -376,24 +394,30 @@ def test_light_walkthrough_restores_mock_routes_and_real_ports() -> None:
     assert "loadLinksPortal({ render: true });" in app
 
 
-def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() -> None:
+def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_preview() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
     render_feed = function_block(app, "renderFeed")
+    render_tabs = function_block(app, "renderTabs")
+    render_route_tray = function_block(app, "renderRouteTray")
     handle_back = function_block(app, "handleAndroidBack")
+    initial_route = function_block(app, "initialRoute")
+    resolve_route = function_block(app, "resolveRouteForTheme")
     effective_route = function_block(app, "effectiveRoute")
     effective_theme = function_block(app, "effectiveTheme")
     uses_home_feed = function_block(app, "usesHomeFeedRoute")
     embedded_light_app = function_block(app, "embeddedLightApp")
     chrome_mode = function_block(app, "chromeMode")
+    walkthrough_preview = function_block(app, "isWalkthroughPreview")
+    appearance_settings = function_block(app, "appearanceSettingsCard")
+    set_theme = function_block(app, "setThemePreference")
     light_apps = function_block(app, "lightAppsPage")
     light_settings = function_block(app, "lightSettingsSurface")
     light_inbox = function_block(app, "lightInboxPage")
     light_meetings = function_block(app, "lightMeetingsPage")
     home_feed_content = function_block(app, "homeFeedContentNodes")
     light_navigate = function_block(app, "lightNavigate")
-    tab_view = function_block(app, "tabView")
     light_tasks = function_block(app, "lightTasksPage")
     light_task_sections = function_block(app, "lightTaskSectionTitle")
     light_back = function_block(app, "lightBack")
@@ -408,9 +432,41 @@ def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() 
     assert 'shell?.setAttribute("data-embedded-app", embeddedLightApp());' in render_feed
     assert 'shell?.setAttribute("data-chrome-mode", chromeMode());' in render_feed
     assert 'if (isLightShellRoute()) {' in render_feed
+    assert 'if (route === "settings") {' in render_feed
     assert 'if (route === "links") {' in render_feed
-    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (route === "links") {')
+    assert 'if (route === "meetings") {' in render_feed
+    assert 'if (route !== "feed") {' in render_feed
+    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (route === "settings") {')
     assert 'feed.classList.toggle("is-links-route", route === "links" || state.route === "apps");' in render_feed
+
+    assert 'if (isLightShellRoute()) {' in render_tabs
+    assert 'tabs.hidden = true;' in render_tabs
+    assert 'tabs.hidden = false;' in render_tabs
+    assert 'tabs.replaceChildren(...PAGE_TABS.map(tabView));' in render_tabs
+    assert 'if (isLightShellRoute()) {' in render_route_tray
+    assert 'tray.hidden = true;' in render_route_tray
+    assert 'if (route !== "feed" || state.openTrayRoute !== "feed") {' in render_route_tray
+    assert 'return params.get("preview") === "walkthrough";' in walkthrough_preview
+
+    assert 'if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {' in initial_route
+    assert 'return resolveRouteForTheme(queryRoute || route, theme);' in initial_route
+    assert 'if (PAGE_TABS.some(tab => tab.route === value)) {' in resolve_route
+    assert 'if (value === "apps") return "links";' in resolve_route
+    assert 'if (value === "inbox") return "feed";' in resolve_route
+    assert 'if (value === "home") return "feed";' in resolve_route
+    assert 'return "feed";' in resolve_route
+
+    assert 'settingId: "appearance"' in appearance_settings
+    assert 'title: "Appearance"' in appearance_settings
+    assert 'valueLabel: appearanceThemeLabel(currentTheme)' in appearance_settings
+    assert '{ value: "dark", label: "Dark" }' in appearance_settings
+    assert '{ value: "light", label: "Light" }' in appearance_settings
+    assert 'const nextTheme = normalizeTheme(theme) || "dark";' in set_theme
+    assert 'const nextRoute = resolveRouteForTheme(state.route, nextTheme);' in set_theme
+    assert 'state.theme = nextTheme;' in set_theme
+    assert 'persistTheme(nextTheme);' in set_theme
+    assert 'persistNavState();' in set_theme
+    assert 'render();' in set_theme
 
     assert "linksPageView()" in light_apps
     assert "loadLinksPortal({ render: true });" in app
@@ -456,11 +512,13 @@ def test_light_walkthrough_ports_reuse_canonical_surfaces_without_duplication() 
     assert 'if (isLightShellRoute() && lightBack()) {' in handle_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
     assert ".app-shell[data-theme=\"light\"] .header" in styles
-    assert ".app-shell[data-theme=\"light\"] .page-tabs" in styles
-    assert ".light-shell .links-page" in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" in styles
     assert ".light-shell[data-light-route=\"meetings\"] .meetings-page" in styles
-    assert ".app-shell[data-theme=\"light\"][data-view=\"inbox\"] .card" in styles
-    assert ".app-shell[data-theme=\"light\"][data-view=\"meetings\"] .card" in styles
+    assert ".app-shell[data-theme=\"light\"] .card" in styles
+    assert ".app-shell[data-theme=\"light\"] .meetings-refresh" in styles
+    assert ".app-shell[data-theme=\"light\"] .chat-media" in styles
+    assert ".app-shell[data-theme=\"light\"] .audio-detail" in styles
+    assert ".app-shell[data-theme=\"light\"] .timestamp-row" in styles
     assert "lightLinksPage" not in app
     assert "function loadLightLinks" not in app
 

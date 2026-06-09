@@ -4175,6 +4175,7 @@
     hero.append(heroIcon, heroCopy);
     page.append(
       hero,
+      appearanceSettingsCard(),
       defaultAudioSpeedSettingCard(),
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
@@ -4184,6 +4185,31 @@
       advancedSettingsCard()
     );
     return page;
+  }
+
+  function appearanceSettingsCard() {
+    const currentTheme = normalizeTheme(state.theme) || "dark";
+    return settingsSelectorCard({
+      settingId: "appearance",
+      accent: "#8b63ff",
+      icon: currentTheme === "light" ? "lightbulb_2" : "moon",
+      title: "Appearance",
+      detail: "Switch between dark and light.",
+      valueLabel: appearanceThemeLabel(currentTheme),
+      onOpen: () => openSettingsSelector({
+        title: "Appearance",
+        currentValue: currentTheme,
+        options: [
+          { value: "dark", label: "Dark" },
+          { value: "light", label: "Light" }
+        ],
+        onSelect: setThemePreference
+      })
+    });
+  }
+
+  function appearanceThemeLabel(theme) {
+    return normalizeTheme(theme) === "light" ? "Light" : "Dark";
   }
 
   function defaultAudioSpeedSettingCard() {
@@ -4927,6 +4953,28 @@
     } catch (_) {
       // Browser preview keeps the optimistic local value.
     }
+  }
+
+  function setThemePreference(theme) {
+    const nextTheme = normalizeTheme(theme) || "dark";
+    const previousTheme = state.theme;
+    const nextRoute = resolveRouteForTheme(state.route, nextTheme);
+    state.theme = nextTheme;
+    persistTheme(nextTheme);
+    if (nextRoute !== state.route) {
+      dismissTransientUiForRouteChange();
+      state.route = nextRoute;
+      state.openTrayRoute = null;
+      state.lightReturnRoute = "";
+      state.previousLightRoute = "home";
+    } else if (!PAGE_TABS.some(tab => tab.route === state.route)) {
+      state.openTrayRoute = null;
+    }
+    if (previousTheme !== nextTheme && nextRoute === "settings") {
+      loadSettingsState({ render: false });
+    }
+    persistNavState();
+    render();
   }
 
   function settingsToggleCard({ accent, icon, title, detail, enabled, onToggle }) {
@@ -9630,8 +9678,17 @@
     return state.theme === "light";
   }
 
+  function isWalkthroughPreview() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return params.get("preview") === "walkthrough";
+    } catch (_) {
+      return false;
+    }
+  }
+
   function isLightShellRoute() {
-    return isLightTheme() && LIGHT_ROUTES.has(state.route || "home");
+    return isLightTheme() && isWalkthroughPreview() && LIGHT_ROUTES.has(state.route || "home");
   }
 
   function loadNavState() {
@@ -9658,10 +9715,10 @@
 
   function initialRoute(route, theme = "dark") {
     const queryRoute = routeQueryParam();
-    if (PAGE_TABS.some(tab => tab.route === queryRoute)) {
-      return queryRoute;
-    }
-    if (normalizeTheme(theme) === "light") {
+    if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {
+      if (PAGE_TABS.some(tab => tab.route === queryRoute)) {
+        return queryRoute;
+      }
       if (LIGHT_ROUTES.has(queryRoute)) {
         return queryRoute;
       }
@@ -9671,8 +9728,23 @@
       }
       return "home";
     }
-    const value = String(route || "");
-    return PAGE_TABS.some(tab => tab.route === value) ? value : "feed";
+    return resolveRouteForTheme(queryRoute || route, theme);
+  }
+
+  function resolveRouteForTheme(route, theme = state.theme) {
+    const value = String(route || "").trim();
+    if (PAGE_TABS.some(tab => tab.route === value)) {
+      return value;
+    }
+    if (normalizeTheme(theme) === "light") {
+      if (value === "apps") return "links";
+      if (value === "inbox") return "feed";
+      if (value === "home") return "feed";
+      if (value === "settings") return "settings";
+      if (value === "meetings") return "meetings";
+      if (value === "feed") return "feed";
+    }
+    return "feed";
   }
 
   function routeQueryParam() {
