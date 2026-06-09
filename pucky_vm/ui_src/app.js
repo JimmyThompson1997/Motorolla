@@ -4961,6 +4961,7 @@
     const nextRoute = resolveRouteForTheme(state.route, nextTheme);
     state.theme = nextTheme;
     persistTheme(nextTheme);
+    syncThemeQueryParam(nextTheme);
     if (nextRoute !== state.route) {
       dismissTransientUiForRouteChange();
       state.route = nextRoute;
@@ -9646,6 +9647,16 @@
       localStorage.setItem(THEME_STATE_KEY, normalizeTheme(theme) || "dark");
     } catch (_) {
       // Theme persistence is a visual preference and should never block boot.
+    }
+  }
+
+  function syncThemeQueryParam(theme) {
+    try {
+      const url = new URL(window.location.href || "");
+      url.searchParams.set("theme", normalizeTheme(theme) || "dark");
+      window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch (_) {
+      // Query param sync should help reload parity without blocking the page.
     }
   }
 

@@ -290,6 +290,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "selectedCalendarDay:" in app
     assert "taskFilter:" in app
     assert "function resolveInitialTheme()" in app
+    assert "function syncThemeQueryParam(theme)" in app
     assert "function isWalkthroughPreview()" in app
     assert 'params.get("preview") === "walkthrough"' in app
     assert "function resolveRouteForTheme(route, theme = state.theme)" in app
@@ -339,6 +340,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'function setThemePreference(theme)' in app
     assert 'state.theme = nextTheme;' in app
     assert 'persistTheme(nextTheme);' in app
+    assert 'syncThemeQueryParam(nextTheme);' in app
     assert 'case "apps":' in app
     assert 'view.append(lightAppsPage())' in app
     assert 'case "meetings":' in app
@@ -406,6 +408,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     resolve_route = function_block(app, "resolveRouteForTheme")
     effective_route = function_block(app, "effectiveRoute")
     effective_theme = function_block(app, "effectiveTheme")
+    sync_theme_query = function_block(app, "syncThemeQueryParam")
     uses_home_feed = function_block(app, "usesHomeFeedRoute")
     embedded_light_app = function_block(app, "embeddedLightApp")
     chrome_mode = function_block(app, "chromeMode")
@@ -465,8 +468,13 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'const nextRoute = resolveRouteForTheme(state.route, nextTheme);' in set_theme
     assert 'state.theme = nextTheme;' in set_theme
     assert 'persistTheme(nextTheme);' in set_theme
+    assert 'syncThemeQueryParam(nextTheme);' in set_theme
     assert 'persistNavState();' in set_theme
     assert 'render();' in set_theme
+
+    assert 'const url = new URL(window.location.href || "");' in sync_theme_query
+    assert 'url.searchParams.set("theme", normalizeTheme(theme) || "dark");' in sync_theme_query
+    assert 'window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);' in sync_theme_query
 
     assert "linksPageView()" in light_apps
     assert "loadLinksPortal({ render: true });" in app

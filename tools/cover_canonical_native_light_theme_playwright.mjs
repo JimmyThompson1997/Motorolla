@@ -92,6 +92,14 @@ async function waitForShellRoute(page, { theme, route, readySelector, timeoutMs 
   );
 }
 
+async function gotoPage(page, url, timeoutMs) {
+  await page.goto(url, { waitUntil: "commit", timeout: timeoutMs });
+}
+
+async function reloadPage(page, timeoutMs) {
+  await page.reload({ waitUntil: "commit", timeout: timeoutMs });
+}
+
 async function waitForSettings(page, theme, timeoutMs) {
   await waitForShellRoute(page, {
     theme,
@@ -489,18 +497,18 @@ async function main() {
     const darkLinksUrl = buildPageUrl(config.baseUrl, { theme: "dark", route: "links" });
     const darkMeetingsUrl = buildPageUrl(config.baseUrl, { theme: "dark", route: "meetings" });
 
-    await page.goto(darkSettingsUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkSettingsUrl, config.timeoutMs);
     await waitForSettings(page, "dark", config.timeoutMs);
     summary.dark_baseline.settings = await readThemeState(page);
     summary.screenshots["01-dark-settings-baseline"] = await saveScreenshot(page, config.reportDir, "01-dark-settings-baseline");
 
-    await page.goto(darkFeedUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkFeedUrl, config.timeoutMs);
     await waitForFeed(page, "dark", config.timeoutMs);
     summary.dark_baseline.feed_rows = await extractCardRows(page, "#feed article.card", 10);
     summary.dark_baseline.feed_audio = await measureFeedAudioProgress(page, config.timeoutMs);
     summary.screenshots["02-dark-home-baseline"] = await saveScreenshot(page, config.reportDir, "02-dark-home-baseline");
 
-    await page.goto(darkLinksUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkLinksUrl, config.timeoutMs);
     await waitForLinks(page, "dark", config.timeoutMs);
     summary.dark_baseline.links_rows = await extractLinksRows(page, 10);
     summary.dark_baseline.links_search = await runLinksSearchProof(page, config.timeoutMs);
@@ -508,7 +516,7 @@ async function main() {
     await page.waitForTimeout(500);
     summary.screenshots["03-dark-links-baseline"] = await saveScreenshot(page, config.reportDir, "03-dark-links-baseline");
 
-    await page.goto(darkMeetingsUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkMeetingsUrl, config.timeoutMs);
     await waitForMeetings(page, "dark", config.timeoutMs);
     summary.dark_baseline.meeting_rows = await extractCardRows(page, ".meetings-page article.card", 10);
     summary.dark_baseline.meeting_audio = await measureMeetingAudioProgress(page, config.timeoutMs);
@@ -537,7 +545,7 @@ async function main() {
       return;
     }
 
-    await page.goto(darkSettingsUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkSettingsUrl, config.timeoutMs);
     await waitForSettings(page, "dark", config.timeoutMs);
     summary.screenshots["05-settings-before-toggle"] = await saveScreenshot(page, config.reportDir, "05-settings-before-toggle");
     await chooseAppearance(page, "light", config.timeoutMs);
@@ -548,21 +556,21 @@ async function main() {
     assert(summary.light.settings_after_toggle.route === "settings", "Appearance selector should keep the Settings route active");
     summary.screenshots["06-settings-after-toggle-light"] = await saveScreenshot(page, config.reportDir, "06-settings-after-toggle-light");
 
-    await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await reloadPage(page, config.timeoutMs);
     await waitForSettings(page, "light", config.timeoutMs);
     summary.light.settings_after_reload = await readThemeState(page);
     assert(summary.light.settings_after_reload.theme === "light", "Light theme did not survive reload");
     assert(summary.light.settings_after_reload.stored_theme === "light", "Reload lost the persisted light theme");
     summary.screenshots["07-settings-after-reload-light"] = await saveScreenshot(page, config.reportDir, "07-settings-after-reload-light");
 
-    await page.goto(buildPageUrl(config.baseUrl, { theme: "light", route: "feed" }), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, buildPageUrl(config.baseUrl, { theme: "light", route: "feed" }), config.timeoutMs);
     await waitForFeed(page, "light", config.timeoutMs);
     assert(await page.locator(".light-shell").count() === 0, "Native light Home should not render through .light-shell");
     summary.light.feed_rows = await extractCardRows(page, "#feed article.card", 10);
     assert(rowsMatch(summary.dark_baseline.feed_rows, summary.light.feed_rows), "Light Home feed rows diverged from the canonical dark baseline");
     summary.screenshots["08-light-home"] = await saveScreenshot(page, config.reportDir, "08-light-home");
     summary.light.tab_smoke = await collectTabSmoke(page, "light", config.timeoutMs);
-    await page.goto(buildPageUrl(config.baseUrl, { theme: "light", route: "feed" }), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, buildPageUrl(config.baseUrl, { theme: "light", route: "feed" }), config.timeoutMs);
     await waitForFeed(page, "light", config.timeoutMs);
 
     summary.light.read_toggle = await toggleReadRoundTrip(page, config.timeoutMs);
@@ -591,7 +599,7 @@ async function main() {
     }
 
     const lightLinksUrl = buildPageUrl(config.baseUrl, { theme: "light", route: "links" });
-    await page.goto(lightLinksUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, lightLinksUrl, config.timeoutMs);
     await waitForLinks(page, "light", config.timeoutMs);
     summary.light.links_rows = await extractLinksRows(page, 10);
     assert(summary.light.links_rows.length > 0, "Light Links page rendered no rows");
@@ -603,7 +611,7 @@ async function main() {
     summary.light.links_open = await runLinksOpenProof(page, requestLog, config.timeoutMs, lightLinksUrl);
     summary.screenshots["15-light-links-app-open"] = await saveScreenshot(page, config.reportDir, "15-light-links-app-open");
 
-    await page.goto(buildPageUrl(config.baseUrl, { theme: "light", route: "meetings" }), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, buildPageUrl(config.baseUrl, { theme: "light", route: "meetings" }), config.timeoutMs);
     await waitForMeetings(page, "light", config.timeoutMs);
     assert(await page.locator(".light-shell").count() === 0, "Native light Meetings should not render through .light-shell");
     summary.light.meeting_rows = await extractCardRows(page, ".meetings-page article.card", 10);
@@ -625,14 +633,14 @@ async function main() {
       });
     }
 
-    await page.goto(darkFeedUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkFeedUrl, config.timeoutMs);
     await waitForFeed(page, "dark", config.timeoutMs);
     summary.dark_regression.feed_rows = await extractCardRows(page, "#feed article.card", 10);
     assert(rowsMatch(summary.dark_baseline.feed_rows, summary.dark_regression.feed_rows), "Dark Home feed regressed after the light theme implementation");
     summary.dark_regression.feed_audio = await measureFeedAudioProgress(page, config.timeoutMs);
     summary.screenshots["19-dark-home-regression"] = await saveScreenshot(page, config.reportDir, "19-dark-home-regression");
 
-    await page.goto(darkLinksUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkLinksUrl, config.timeoutMs);
     await waitForLinks(page, "dark", config.timeoutMs);
     summary.dark_regression.links_rows = await extractLinksRows(page, 10);
     assert(
@@ -645,14 +653,14 @@ async function main() {
     summary.dark_regression.links_open = await runLinksOpenProof(page, requestLog, config.timeoutMs, darkLinksUrl);
     summary.screenshots["20-dark-links-regression"] = await saveScreenshot(page, config.reportDir, "20-dark-links-regression");
 
-    await page.goto(darkMeetingsUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkMeetingsUrl, config.timeoutMs);
     await waitForMeetings(page, "dark", config.timeoutMs);
     summary.dark_regression.meeting_rows = await extractCardRows(page, ".meetings-page article.card", 10);
     assert(rowsMatch(summary.dark_baseline.meeting_rows, summary.dark_regression.meeting_rows), "Dark Meetings rows regressed after the light theme implementation");
     summary.dark_regression.meeting_audio = await measureMeetingAudioProgress(page, config.timeoutMs);
     summary.screenshots["21-dark-meetings-regression"] = await saveScreenshot(page, config.reportDir, "21-dark-meetings-regression");
 
-    await page.goto(darkSettingsUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoPage(page, darkSettingsUrl, config.timeoutMs);
     await waitForSettings(page, "dark", config.timeoutMs);
     summary.dark_regression.settings = await readThemeState(page);
     summary.screenshots["22-dark-settings-regression"] = await saveScreenshot(page, config.reportDir, "22-dark-settings-regression");
