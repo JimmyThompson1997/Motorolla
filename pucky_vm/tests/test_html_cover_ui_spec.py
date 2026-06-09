@@ -33,6 +33,17 @@ def css_block(styles: str, selector: str) -> str:
     return match.group("body")
 
 
+def top_level_css_block(styles: str, selector: str) -> str:
+    match = re.search(rf"(?m)^{re.escape(selector)}\s*\{{(?P<body>.*?)^\}}", styles, re.S)
+    assert match, f"Missing top-level CSS selector {selector}"
+    return match.group("body")
+
+
+def assert_css_block_omits_properties(body: str, *properties: str) -> None:
+    for prop in properties:
+        assert not re.search(rf"(?m)^\s*{re.escape(prop)}\s*:", body), f"Unexpected CSS property {prop}"
+
+
 def function_block(source: str, name: str) -> str:
     match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
     assert match, f"Missing function {name}"
@@ -384,12 +395,19 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".light-contact-row" in styles
     assert ".app-shell[data-theme=\"light\"] {" in styles
     assert ".app-shell[data-theme=\"light\"][data-chrome-mode=\"light-shell\"] .header" in styles
-    assert ".app-shell[data-theme=\"light\"] .tab.is-active" in styles
-    assert ".app-shell[data-theme=\"light\"] .route-tray-shell" in styles
-    assert ".app-shell[data-theme=\"light\"] .settings-page" in styles
-    assert ".app-shell[data-theme=\"light\"] .links-page" in styles
-    assert ".app-shell[data-theme=\"light\"] .card" in styles
-    assert ".app-shell[data-theme=\"light\"] .detail-panel" in styles
+    assert "--surface-app:" in styles
+    assert "--surface-card:" in styles
+    assert "--text-primary:" in styles
+    assert "--icon-card-neutral:" in styles
+    assert "--icon-card-identity-unread:" in styles
+    assert "--icon-card-action-active:" in styles
+    assert "--shadow-card:" in styles
+    assert ".app-shell[data-theme=\"light\"] .settings-page" not in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
+    assert ".app-shell[data-theme=\"light\"] .card" not in styles
+    assert ".app-shell[data-theme=\"light\"] .detail-panel" not in styles
+    assert ".app-shell[data-theme=\"light\"] .tab.is-active" not in styles
+    assert ".app-shell[data-theme=\"light\"] .route-tray-shell" not in styles
     assert ".app-shell[data-theme=\"light\"] .header,\n.app-shell[data-theme=\"light\"] .page-tabs,\n.app-shell[data-theme=\"light\"] .route-tray {\n  display: none;\n}" not in styles
     assert 'data-voice-status' in html
     assert "renderVoiceStatus()" in app
@@ -432,6 +450,21 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     light_back = function_block(app, "lightBack")
     filtered_feed_cards = function_block(app, "filteredFeedCards")
     desired_thread_scope = function_block(app, "desiredThreadScope")
+    light_theme_block = css_block(styles, '.app-shell[data-theme="light"]')
+    app_shell_block = css_block(styles, ".app-shell")
+    tab_block = css_block(styles, ".tab")
+    active_tab_block = css_block(styles, ".tab.is-active")
+    route_tray_block = css_block(styles, ".route-tray-shell")
+    settings_selector_button_block = css_block(styles, ".settings-selector-button")
+    links_search_placeholder_block = css_block(styles, ".links-search::placeholder")
+    card_block = top_level_css_block(styles, ".card")
+    timestamp_block = css_block(styles, ".card-timestamp")
+    identity_unread_block = css_block(styles, ".identity.is-unread")
+    action_unread_block = css_block(styles, ".action.is-unread")
+    action_block = css_block(styles, ".action")
+    action_playing_block = css_block(styles, ".action-audio.is-playing")
+    detail_header_block = css_block(styles, ".detail-header")
+    meeting_row_block = css_block(styles, ".meeting-row")
 
     assert 'const route = effectiveRoute();' in render_feed
     assert 'const theme = effectiveTheme();' in render_feed
@@ -541,14 +574,61 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
 
     assert 'if (isLightShellRoute() && lightBack()) {' in handle_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
-    assert ".app-shell[data-theme=\"light\"] .header" in styles
-    assert ".app-shell[data-theme=\"light\"] .links-page" in styles
     assert ".light-shell[data-light-route=\"meetings\"] .meetings-page" in styles
-    assert ".app-shell[data-theme=\"light\"] .card" in styles
-    assert ".app-shell[data-theme=\"light\"] .meetings-refresh" in styles
-    assert ".app-shell[data-theme=\"light\"] .chat-media" in styles
-    assert ".app-shell[data-theme=\"light\"] .audio-detail" in styles
-    assert ".app-shell[data-theme=\"light\"] .timestamp-row" in styles
+    assert "color: var(--text-primary);" in app_shell_block
+    assert "background: var(--surface-app);" in app_shell_block
+    assert "background: transparent;" in tab_block
+    assert "color: var(--icon-primary);" in tab_block
+    assert "background: var(--surface-control-strong);" in active_tab_block
+    assert "color: var(--icon-primary);" in active_tab_block
+    assert "background: var(--surface-card-elevated);" in route_tray_block
+    assert "background: var(--surface-control);" in settings_selector_button_block
+    assert "color: var(--text-placeholder);" in links_search_placeholder_block
+    assert "background: var(--surface-card);" in card_block
+    assert "box-shadow: var(--shadow-card);" in card_block
+    assert "color: var(--text-primary);" in card_block
+    assert "color: var(--text-muted-strong);" in timestamp_block
+    assert "color: var(--icon-card-identity-unread);" in identity_unread_block
+    assert "color: var(--icon-card-action-unread);" in action_unread_block
+    assert "color: var(--icon-card-neutral);" in action_block
+    assert "color: var(--icon-card-action-active);" in action_playing_block
+    assert "background: var(--surface-header);" in detail_header_block
+    assert "background: var(--surface-control);" in meeting_row_block
+    assert "color-scheme: light;" in light_theme_block
+    assert "--surface-app:" in light_theme_block
+    assert "--text-primary:" in light_theme_block
+    assert "--icon-card-neutral:" in light_theme_block
+    assert_css_block_omits_properties(
+        light_theme_block,
+        "padding",
+        "margin",
+        "gap",
+        "display",
+        "position",
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "height",
+        "min-height",
+        "max-height",
+        "width",
+        "flex",
+        "grid-template-columns",
+        "grid-template-rows",
+        "overflow",
+        "transform",
+    )
+    assert "--icon-card-identity-unread:" not in light_theme_block
+    assert "--icon-card-action-unread:" not in light_theme_block
+    assert "--icon-card-action-active:" not in light_theme_block
+    assert ".app-shell[data-theme=\"light\"] .header" not in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
+    assert ".app-shell[data-theme=\"light\"] .card" not in styles
+    assert ".app-shell[data-theme=\"light\"] .meetings-refresh" not in styles
+    assert ".app-shell[data-theme=\"light\"] .chat-media" not in styles
+    assert ".app-shell[data-theme=\"light\"] .audio-detail" not in styles
+    assert ".app-shell[data-theme=\"light\"] .timestamp-row" not in styles
     assert "lightLinksPage" not in app
     assert "function loadLightLinks" not in app
 
@@ -1013,7 +1093,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert ".route-tray-icons" in styles
     assert ".filter-icon.is-selected" in styles
     assert "var(--filter-accent" in styles
-    assert "color: rgba(245, 249, 255, 0.58);" in styles
+    assert "color: var(--icon-subtle);" in styles
     assert '.filter-icon[data-filter-icon="all"].is-selected' not in styles
     assert ".feed-filter-empty" in styles
 

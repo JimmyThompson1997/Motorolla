@@ -50,6 +50,36 @@ function cssString(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }
 
+function parseRgb(color) {
+  const match = String(color || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isNearColor(color, target, tolerance = 12) {
+  const left = parseRgb(color);
+  const right = parseRgb(target);
+  if (!left || !right) {
+    return false;
+  }
+  return left.every((value, index) => Math.abs(value - right[index]) <= tolerance);
+}
+
+function assertGeometryParity(before, after, tolerance = 1.5) {
+  for (const selector of Object.keys(before)) {
+    const left = before[selector];
+    const right = after[selector];
+    assert(left, `Missing dark geometry for ${selector}`);
+    assert(right, `Missing light geometry for ${selector}`);
+    for (const field of ["x", "y", "width", "height"]) {
+      const delta = Math.abs(Number(left[field] || 0) - Number(right[field] || 0));
+      assert(delta <= tolerance, `Theme toggle changed ${selector} ${field} by ${delta}px`);
+    }
+  }
+}
+
 function buildPageUrl(baseUrl, { theme = "dark", route = "", resetNav = true, preview = "" } = {}) {
   const url = new URL(`${String(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   if (theme) {
@@ -197,6 +227,108 @@ async function readThemeState(page) {
     route: document.querySelector(".app-shell")?.getAttribute("data-view") || "",
     canonical_route: document.querySelector(".app-shell")?.getAttribute("data-canonical-route") || ""
   }));
+}
+
+async function captureGeometry(page, selectors) {
+  return page.evaluate(activeSelectors => Object.fromEntries(
+    activeSelectors.map(selector => {
+      const node = document.querySelector(selector);
+      if (!(node instanceof HTMLElement)) {
+        return [selector, null];
+      }
+      const rect = node.getBoundingClientRect();
+      const style = window.getComputedStyle(node);
+      return [selector, {
+        x: Number(rect.x.toFixed(2)),
+        y: Number(rect.y.toFixed(2)),
+        width: Number(rect.width.toFixed(2)),
+        height: Number(rect.height.toFixed(2)),
+        padding_top: style.paddingTop,
+        padding_right: style.paddingRight,
+        padding_bottom: style.paddingBottom,
+        padding_left: style.paddingLeft,
+        margin_top: style.marginTop,
+        margin_right: style.marginRight,
+        margin_bottom: style.marginBottom,
+        margin_left: style.marginLeft,
+        display: style.display,
+        position: style.position
+      }];
+    })
+  ), selectors);
+}
+
+async function extractFeedForegrounds(page, selector, limit = 5) {
+  return page.locator(selector).evaluateAll((nodes, maxRows) =>
+    nodes.slice(0, maxRows).map(node => {
+      const title = node.querySelector(".title");
+      const preview = node.querySelector(".preview");
+      const timestamp = node.querySelector(".card-timestamp");
+      const identity = node.querySelector(".identity");
+      const actions = Array.from(node.querySelectorAll("[data-card-action]"));
+      const styleOf = element => element ? window.getComputedStyle(element) : null;
+      const nodeStyle = window.getComputedStyle(node);
+      return {
+        card_id: String(node.getAttribute("data-card-id") || "").trim(),
+        session_id: String(node.getAttribute("data-card-session-id") || "").trim(),
+        title: String(title?.textContent || "").trim(),
+        title_color: styleOf(title)?.color || "",
+        preview_color: styleOf(preview)?.color || "",
+        timestamp_color: styleOf(timestamp)?.color || "",
+        identity_class: String(identity?.className || "").trim(),
+        identity_color: styleOf(identity)?.color || "",
+        action_classes: actions.map(action => String(action.className || "").trim()),
+        action_colors: actions.map(action => window.getComputedStyle(action).color),
+        background_color: nodeStyle.backgroundColor,
+        border_color: nodeStyle.borderColor
+      };
+    }),
+    limit
+  );
+}
+
+async function extractMeetingsForegrounds(page, selector, limit = 5) {
+  return page.locator(selector).evaluateAll((nodes, maxRows) =>
+    nodes.slice(0, maxRows).map(node => {
+      const title = node.querySelector(".title");
+      const timestamp = node.querySelector(".card-timestamp");
+      const actions = Array.from(node.querySelectorAll("[data-card-action]"));
+      const styleOf = element => element ? window.getComputedStyle(element) : null;
+      const nodeStyle = window.getComputedStyle(node);
+      return {
+        card_id: String(node.getAttribute("data-card-id") || "").trim(),
+        session_id: String(node.getAttribute("data-card-session-id") || "").trim(),
+        title: String(title?.textContent || "").trim(),
+        title_color: styleOf(title)?.color || "",
+        timestamp_color: styleOf(timestamp)?.color || "",
+        action_classes: actions.map(action => String(action.className || "").trim()),
+        action_colors: actions.map(action => window.getComputedStyle(action).color),
+        background_color: nodeStyle.backgroundColor,
+        border_color: nodeStyle.borderColor,
+        classes: String(node.className || "").trim()
+      };
+    }),
+    limit
+  );
+}
+
+function assertNoWhiteOnWhiteForegrounds(rows, label) {
+  const darkWhite = "rgb(245, 249, 255)";
+  for (const row of rows) {
+    assert(!isNearColor(row.title_color, darkWhite), `${label} title stayed dark-theme white for ${row.title || row.card_id || "unknown row"}`);
+    if (row.preview_color) {
+      assert(!isNearColor(row.preview_color, darkWhite), `${label} preview stayed dark-theme white for ${row.title || row.card_id || "unknown row"}`);
+    }
+    if (row.timestamp_color) {
+      assert(!isNearColor(row.timestamp_color, darkWhite), `${label} timestamp stayed dark-theme white for ${row.title || row.card_id || "unknown row"}`);
+    }
+    if (row.identity_color) {
+      assert(!isNearColor(row.identity_color, darkWhite), `${label} identity icon stayed dark-theme white for ${row.title || row.card_id || "unknown row"}`);
+    }
+    for (const [index, color] of (row.action_colors || []).entries()) {
+      assert(!isNearColor(color, darkWhite), `${label} action icon ${index} stayed dark-theme white for ${row.title || row.card_id || "unknown row"}`);
+    }
+  }
 }
 
 async function openAppearanceSelector(page, timeoutMs) {
@@ -548,12 +680,21 @@ async function main() {
     await gotoPage(page, darkSettingsUrl, config.timeoutMs);
     await waitForSettings(page, "dark", config.timeoutMs);
     summary.screenshots["05-settings-before-toggle"] = await saveScreenshot(page, config.reportDir, "05-settings-before-toggle");
+    const geometrySelectors = [".app-shell", ".header", "#pageTabs", "#feed", ".settings-page"];
+    const darkSettingsGeometry = await captureGeometry(page, geometrySelectors);
     await chooseAppearance(page, "light", config.timeoutMs);
     await pageWaitForTheme(page, "light", config.timeoutMs);
     summary.light.settings_after_toggle = await readThemeState(page);
     assert(summary.light.settings_after_toggle.theme === "light", "Appearance selector did not switch the app shell to light");
     assert(summary.light.settings_after_toggle.stored_theme === "light", "Appearance selector did not persist the light theme");
     assert(summary.light.settings_after_toggle.route === "settings", "Appearance selector should keep the Settings route active");
+    const lightSettingsGeometry = await captureGeometry(page, geometrySelectors);
+    summary.light.settings_geometry = {
+      dark: darkSettingsGeometry,
+      light: lightSettingsGeometry
+    };
+    assertGeometryParity(darkSettingsGeometry, lightSettingsGeometry);
+    writeJsonFile(path.join(config.reportDir, "01-02-settings-geometry.json"), summary.light.settings_geometry);
     summary.screenshots["06-settings-after-toggle-light"] = await saveScreenshot(page, config.reportDir, "06-settings-after-toggle-light");
 
     await reloadPage(page, config.timeoutMs);
@@ -567,6 +708,9 @@ async function main() {
     await waitForFeed(page, "light", config.timeoutMs);
     assert(await page.locator(".light-shell").count() === 0, "Native light Home should not render through .light-shell");
     summary.light.feed_rows = await extractCardRows(page, "#feed article.card", 10);
+    summary.light.feed_foregrounds = await extractFeedForegrounds(page, "#feed article.card", 6);
+    assertNoWhiteOnWhiteForegrounds(summary.light.feed_foregrounds, "Light Home");
+    writeJsonFile(path.join(config.reportDir, "03-home-foregrounds.json"), summary.light.feed_foregrounds);
     assert(rowsMatch(summary.dark_baseline.feed_rows, summary.light.feed_rows), "Light Home feed rows diverged from the canonical dark baseline");
     summary.screenshots["08-light-home"] = await saveScreenshot(page, config.reportDir, "08-light-home");
     summary.light.tab_smoke = await collectTabSmoke(page, "light", config.timeoutMs);
@@ -615,6 +759,9 @@ async function main() {
     await waitForMeetings(page, "light", config.timeoutMs);
     assert(await page.locator(".light-shell").count() === 0, "Native light Meetings should not render through .light-shell");
     summary.light.meeting_rows = await extractCardRows(page, ".meetings-page article.card", 10);
+    summary.light.meeting_foregrounds = await extractMeetingsForegrounds(page, ".meetings-page article.card", 6);
+    assertNoWhiteOnWhiteForegrounds(summary.light.meeting_foregrounds, "Light Meetings");
+    writeJsonFile(path.join(config.reportDir, "06-meetings-foregrounds.json"), summary.light.meeting_foregrounds);
     assert(rowsMatch(summary.dark_baseline.meeting_rows, summary.light.meeting_rows), "Light Meetings rows diverged from the canonical dark baseline");
     summary.screenshots["16-light-meetings"] = await saveScreenshot(page, config.reportDir, "16-light-meetings");
 
