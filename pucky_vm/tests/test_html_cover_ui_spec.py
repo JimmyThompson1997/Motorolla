@@ -296,6 +296,8 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "function resolveRouteForTheme(route, theme = state.theme)" in app
     assert "function effectiveRoute()" in app
     assert "function effectiveTheme()" in app
+    assert "function handlePageTabRoute(routeValue)" in app
+    assert "function installPageTabNavigation()" in app
     assert "function usesHomeFeedRoute(" in app
     assert "function embeddedLightApp()" in app
     assert "function chromeMode()" in app
@@ -391,6 +393,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".app-shell[data-theme=\"light\"] .header,\n.app-shell[data-theme=\"light\"] .page-tabs,\n.app-shell[data-theme=\"light\"] .route-tray {\n  display: none;\n}" not in styles
     assert 'data-voice-status' in html
     assert "renderVoiceStatus()" in app
+    assert "installPageTabNavigation();" in app
     assert ".voice-status" in styles
     assert "function linksPageView()" in app
     assert "loadLinksPortal({ render: true });" in app
@@ -402,6 +405,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
 
     render_feed = function_block(app, "renderFeed")
     render_tabs = function_block(app, "renderTabs")
+    tab_view = function_block(app, "tabView")
+    handle_tab_route = function_block(app, "handlePageTabRoute")
+    install_tab_navigation = function_block(app, "installPageTabNavigation")
     render_route_tray = function_block(app, "renderRouteTray")
     handle_back = function_block(app, "handleAndroidBack")
     initial_route = function_block(app, "initialRoute")
@@ -446,6 +452,22 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'tabs.hidden = true;' in render_tabs
     assert 'tabs.hidden = false;' in render_tabs
     assert 'tabs.replaceChildren(...PAGE_TABS.map(tabView));' in render_tabs
+    assert 'button.dataset.route = tab.route;' in tab_view
+    assert 'button.addEventListener("click"' not in tab_view
+    assert 'const route = effectiveRoute();' in handle_tab_route
+    assert 'const nextTabRoute = String(routeValue || "").trim();' in handle_tab_route
+    assert 'if (!nextTabRoute || linksHandoffLocked()) {' in handle_tab_route
+    assert 'state.route = nextTabRoute;' in handle_tab_route
+    assert 'persistNavState();' in handle_tab_route
+    assert 'render();' in handle_tab_route
+    assert 'linksDebugStartSession("route", { reason: "route_open" });' in handle_tab_route
+    assert 'loadLinksPortal({ render: true });' in handle_tab_route
+    assert 'loadMeetings({ render: true });' in handle_tab_route
+    assert 'loadSettingsState({ render: true });' in handle_tab_route
+    assert 'tabs.dataset.routeBound = "true";' in install_tab_navigation
+    assert 'tabs.addEventListener("click", event => {' in install_tab_navigation
+    assert 'target.closest(".tab[data-route]")' in install_tab_navigation
+    assert 'handlePageTabRoute(button.getAttribute("data-route") || "");' in install_tab_navigation
     assert 'if (isLightShellRoute()) {' in render_route_tray
     assert 'tray.hidden = true;' in render_route_tray
     assert 'if (route !== "feed" || state.openTrayRoute !== "feed") {' in render_route_tray
@@ -952,7 +974,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "function toggleFeedIcon(icon)" in app
     assert "function loadFeedIconExcludes()" in app
     assert "function persistFeedIconExcludes()" in app
-    assert 'state.openTrayRoute === tab.route ? null : tab.route' in app
+    assert 'state.openTrayRoute === nextTabRoute ? null : nextTabRoute' in app
     assert "const route = effectiveRoute();" in app
     assert 'if (route !== "feed" || state.openTrayRoute !== "feed")' in app
     assert "const filters = uniqueFeedIconFilters();" in app

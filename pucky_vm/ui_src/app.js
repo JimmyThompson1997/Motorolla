@@ -2971,39 +2971,60 @@
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: false });
-    button.addEventListener("click", () => {
-      if (linksHandoffLocked()) {
+    return button;
+  }
+
+  function handlePageTabRoute(routeValue) {
+    const route = effectiveRoute();
+    const nextTabRoute = String(routeValue || "").trim();
+    if (!nextTabRoute || linksHandoffLocked()) {
+      return;
+    }
+    rememberFeedScroll();
+    if (route === nextTabRoute) {
+      state.openTrayRoute = state.openTrayRoute === nextTabRoute ? null : nextTabRoute;
+    } else {
+      dismissTransientUiForRouteChange();
+      state.route = nextTabRoute;
+      state.openTrayRoute = null;
+      state.lightReturnRoute = "";
+      state.previousLightRoute = "home";
+    }
+    persistNavState();
+    render();
+    void syncVoiceThreadScope({ reason: "tab_click", render: true });
+    const nextRoute = state.route;
+    if (nextRoute === "feed") {
+      restoreFeedScroll();
+      syncFeedCards({ reason: "route_feed", silent: true, render: true });
+    } else if (nextRoute === "links") {
+      linksDebugStartSession("route", { reason: "route_open" });
+      linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
+      loadLinksPortal({ render: true });
+    } else if (nextRoute === "meetings") {
+      refreshMeetingRecordingStatus({ render: true });
+      loadMeetings({ render: true });
+    } else if (nextRoute === "settings") {
+      loadSettingsState({ render: true });
+    }
+  }
+
+  function installPageTabNavigation() {
+    const tabs = document.getElementById("pageTabs");
+    if (!tabs || tabs.dataset.routeBound === "true") {
+      return;
+    }
+    tabs.dataset.routeBound = "true";
+    tabs.addEventListener("click", event => {
+      const target = event.target;
+      const button = target && typeof target.closest === "function"
+        ? target.closest(".tab[data-route]")
+        : null;
+      if (!button || !tabs.contains(button)) {
         return;
       }
-      rememberFeedScroll();
-      if (route === tab.route) {
-        state.openTrayRoute = state.openTrayRoute === tab.route ? null : tab.route;
-      } else {
-        dismissTransientUiForRouteChange();
-        state.route = tab.route;
-        state.openTrayRoute = null;
-        state.lightReturnRoute = "";
-        state.previousLightRoute = "home";
-      }
-      persistNavState();
-      render();
-      void syncVoiceThreadScope({ reason: "tab_click", render: true });
-      const nextRoute = state.route;
-      if (nextRoute === "feed") {
-        restoreFeedScroll();
-        syncFeedCards({ reason: "route_feed", silent: true, render: true });
-      } else if (nextRoute === "links") {
-        linksDebugStartSession("route", { reason: "route_open" });
-        linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
-        loadLinksPortal({ render: true });
-      } else if (nextRoute === "meetings") {
-        refreshMeetingRecordingStatus({ render: true });
-        loadMeetings({ render: true });
-      } else if (nextRoute === "settings") {
-        loadSettingsState({ render: true });
-      }
+      handlePageTabRoute(button.getAttribute("data-route") || "");
     });
-    return button;
   }
 
   function dismissTransientUiForRouteChange() {
@@ -10773,6 +10794,7 @@
     dispatch: uiDebugDispatch,
     linksMetrics: linksDebugMetrics
   };
+  installPageTabNavigation();
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
