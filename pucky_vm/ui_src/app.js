@@ -203,38 +203,34 @@
 
   const PAGE_TABS = [
     { route: "feed", icon: "mail", label: "Home" },
-    { route: "links", icon: "link", label: "Links" },
+    { route: "links", icon: "link", label: "Connect" },
     { route: "meetings", icon: "mic", label: "Meetings" },
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "settings", icon: "settings", label: "Settings" }
   ];
   const LIGHT_APPS = [
-    { route: "notes", label: "Notes", icon: "note", color: "orange", badge: 0 },
-    { route: "tasks", label: "Tasks", icon: "checklist", color: "green", badge: 3 },
-    { route: "calendar", label: "Calendar", icon: "calendar", color: "red", badge: 0 },
-    { route: "inbox", label: "Inbox", icon: "mail", color: "purple", badge: "inbox" },
-    { route: "feed", label: "Feed", icon: "text", color: "blue", badge: 8 },
-    { route: "projects", label: "Projects", icon: "folder", color: "cyan", badge: 0 },
-    { route: "contacts", label: "Contacts", icon: "contacts", color: "pink", badge: 0 },
-    { route: "apps", label: "Apps", icon: "apps", color: "navy", badge: 0 },
-    { route: "meetings", label: "Meetings", icon: "mic", color: "sky", badge: 1 },
-    { route: "settings", label: "Settings", icon: "settings", color: "gray", badge: 0 }
+    { route: "feed", label: "Inbox", icon: "mail", color: "purple", kind: "real" },
+    { route: "links", label: "Connect", icon: "link", color: "navy", kind: "real" },
+    { route: "meetings", label: "Meetings", icon: "mic", color: "sky", kind: "real" },
+    { route: "settings", label: "Settings", icon: "settings", color: "gray", kind: "real" },
+    { route: "notes", label: "Notes", icon: "note", color: "orange", kind: "mock" },
+    { route: "tasks", label: "Tasks", icon: "checklist", color: "green", kind: "mock" },
+    { route: "calendar", label: "Calendar", icon: "calendar", color: "red", kind: "mock" },
+    { route: "feed-preview", label: "Feed", icon: "text", color: "blue", kind: "mock" },
+    { route: "projects", label: "Projects", icon: "folder", color: "cyan", kind: "mock" },
+    { route: "contacts", label: "Contacts", icon: "contacts", color: "pink", kind: "mock" }
   ];
   const LIGHT_ROUTES = new Set([
     "home",
-    "apps",
-    "settings",
-    "inbox",
     "notes",
     "note-detail",
     "tasks",
     "task-detail",
     "calendar",
-    "meetings",
     "meeting-detail",
-    "feed",
-    "feed-detail",
+    "feed-preview",
+    "feed-preview-detail",
     "projects",
     "project-detail",
     "project-new",
@@ -242,11 +238,12 @@
     "contact-detail",
     "contact-new"
   ]);
+  const HOME_SHELL_CANONICAL_ROUTES = new Set(["feed", "links", "meetings", "settings"]);
   const LIGHT_ROUTE_PARENTS = {
     "note-detail": "notes",
     "task-detail": "tasks",
     "meeting-detail": "calendar",
-    "feed-detail": "feed",
+    "feed-preview-detail": "feed-preview",
     "project-detail": "projects",
     "project-new": "projects",
     "contact-detail": "contacts",
@@ -327,6 +324,7 @@
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
   const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);
+  const initialHomeShellActiveValue = initialHomeShellActive(persistedNavState.route, initialTheme);
   const state = {
     cards: [],
     cardIconRegistry: {},
@@ -334,7 +332,8 @@
     cardIconRegistryRequestedAt: 0,
     theme: initialTheme,
     route: initialRouteValue,
-    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme),
+    homeShellActive: initialHomeShellActiveValue,
+    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme),
     lightReturnRoute: "",
     previousLightRoute: "home",
     selectedContactId: "sarah",
@@ -1581,7 +1580,7 @@
   }
 
   function optionsShouldRenderLinksPage() {
-    return state.route === "links" || state.route === "apps";
+    return state.route === "links";
   }
 
   let linksPageNode = null;
@@ -1625,12 +1624,12 @@
           );
         }
         if (!state.links.token) {
-          state.links.error = payload && payload.error ? payload.error : "Links portal unavailable";
+          state.links.error = payload && payload.error ? payload.error : "Connect portal unavailable";
           return;
         }
         await loadLinksConnected({ render: false, force: Boolean(options.force) });
       } catch (error) {
-        const detail = String(error && error.message ? error.message : "Unable to open Links");
+        const detail = String(error && error.message ? error.message : "Unable to open Connect");
         const bridgeLikelyPresent = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
         state.links.available = false;
         state.links.error = !bridgeLikelyPresent && /unauthorized|401/i.test(detail) ? "" : detail;
@@ -1700,7 +1699,7 @@
   function syncLinksEmptyState(refs) {
     if (state.links.loading && !state.links.firstPageReady && !state.links.apps.length) {
       refs.empty.hidden = false;
-      refs.emptyTitle.textContent = "Loading Links...";
+      refs.emptyTitle.textContent = "Loading Connect...";
       refs.emptyBody.textContent = "Pucky is fetching your connectable apps.";
       refs.retry.hidden = true;
       refs.searchWrap.hidden = true;
@@ -1710,7 +1709,7 @@
     }
     if (state.links.error && !state.links.apps.length) {
       refs.empty.hidden = false;
-      refs.emptyTitle.textContent = "Could not load Links right now.";
+      refs.emptyTitle.textContent = "Could not load Connect right now.";
       refs.emptyBody.textContent = state.links.error;
       refs.retry.hidden = false;
       refs.searchWrap.hidden = true;
@@ -1845,7 +1844,7 @@
     if (!state.links.token) {
       await hydrateLinksSession({ render: false });
       if (!state.links.token) {
-        state.links.error = state.links.error || "Links portal unavailable";
+        state.links.error = state.links.error || "Connect portal unavailable";
         render();
         return;
       }
@@ -1869,7 +1868,7 @@
       );
       const authUrl = String(payload && payload.auth_url || "").trim();
       if (!authUrl) {
-        throw new Error("Links did not return a valid auth URL.");
+        throw new Error("Connect did not return a valid auth URL.");
       }
       if (String(payload && payload.auth_mode || state.links.auth_mode) === "browser") {
         linksDebugRecord("browser_open_requested", { slug }, "click");
@@ -1943,7 +1942,7 @@
       payload._http_status = response.status;
     }
     if (!response.ok) {
-      throw new Error(String(payload && (payload.detail || payload.error) || `Links request failed (${response.status})`));
+      throw new Error(String(payload && (payload.detail || payload.error) || `Connect request failed (${response.status})`));
     }
     return payload;
   }
@@ -1986,7 +1985,7 @@
 
   function meetingsApiErrorMessage(error, fallback = "Meetings request failed") {
     const detail = String(error && error.message ? error.message : fallback);
-    return detail.replace(/^Links request failed/i, "Meetings request failed");
+    return detail.replace(/^(Links|Connect) request failed/i, "Meetings request failed");
   }
 
   async function refreshMeetingRecordingStatus(options = {}) {
@@ -2044,7 +2043,7 @@
     if (!tabs) {
       return;
     }
-    if (isLightShellRoute()) {
+    if (isHomeShellRoute()) {
       tabs.hidden = true;
       tabs.replaceChildren();
       return;
@@ -2986,6 +2985,7 @@
     } else {
       dismissTransientUiForRouteChange();
       state.route = nextTabRoute;
+      state.homeShellActive = false;
       state.openTrayRoute = null;
       state.lightReturnRoute = "";
       state.previousLightRoute = "home";
@@ -3045,7 +3045,7 @@
       return;
     }
     const route = effectiveRoute();
-    if (isLightShellRoute()) {
+    if (isHomeShellRoute()) {
       tray.hidden = true;
       tray.replaceChildren();
       return;
@@ -3114,18 +3114,24 @@
     shell?.setAttribute("data-canonical-route", route || "feed");
     shell?.setAttribute("data-embedded-app", embeddedLightApp());
     shell?.setAttribute("data-chrome-mode", chromeMode());
-    feed.classList.toggle("is-links-route", route === "links" || state.route === "apps");
+    feed.classList.toggle("is-links-route", route === "links");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
-    if (isLightShellRoute()) {
+    if (isHomeShellMockRoute()) {
       feed.replaceChildren(lightView());
       return;
     }
     if (route === "settings") {
-      feed.replaceChildren(settingsPageView());
+      if (isHomeShellCanonicalRoute(route)) {
+        feed.replaceChildren(homeShellCanonicalView(route, lightSettingsSurface()));
+      } else {
+        feed.replaceChildren(settingsPageView());
+      }
       return;
     }
     if (route === "links") {
-      const page = linksPageView();
+      const page = isHomeShellCanonicalRoute(route)
+        ? homeShellCanonicalView(route, lightAppsPage())
+        : linksPageView();
       if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
         feed.replaceChildren(page);
       }
@@ -3133,7 +3139,11 @@
       return;
     }
     if (route === "meetings") {
-      feed.replaceChildren(meetingsPageView());
+      if (isHomeShellCanonicalRoute(route)) {
+        feed.replaceChildren(homeShellCanonicalView(route, lightMeetingsPage()));
+      } else {
+        feed.replaceChildren(meetingsPageView());
+      }
       return;
     }
     if (route !== "feed") {
@@ -3141,11 +3151,23 @@
       feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
       return;
     }
+    if (isHomeShellCanonicalRoute(route)) {
+      feed.replaceChildren(homeShellCanonicalView(route, lightInboxPage()));
+      return;
+    }
     renderHomeFeedInto(feed);
   }
 
   function renderHomeFeedInto(container) {
     container.replaceChildren(...homeFeedContentNodes());
+  }
+
+  function homeShellCanonicalView(route, page) {
+    const view = el("section", "light-shell");
+    view.dataset.lightRoute = route || "home";
+    view.dataset.homeShellKind = HOME_SHELL_CANONICAL_ROUTES.has(route) ? "canonical" : "mock";
+    view.append(page);
+    return view;
   }
 
   function homeFeedContentNodes() {
@@ -3172,19 +3194,8 @@
   function lightView() {
     const view = el("section", "light-shell");
     view.dataset.lightRoute = state.route || "home";
+    view.dataset.homeShellKind = "mock";
     switch (state.route) {
-      case "apps":
-        view.append(lightAppsPage());
-        break;
-      case "settings":
-        view.append(lightSettingsSurface());
-        break;
-      case "inbox":
-        view.append(lightInboxPage());
-        break;
-      case "meetings":
-        view.append(lightMeetingsPage());
-        break;
       case "contacts":
         view.append(lightContactsPage());
         break;
@@ -3221,10 +3232,10 @@
       case "project-new":
         view.append(lightProjectCreatePage());
         break;
-      case "feed":
+      case "feed-preview":
         view.append(lightFeedPage());
         break;
-      case "feed-detail":
+      case "feed-preview-detail":
         view.append(lightFeedDetailPage());
         break;
       case "home":
@@ -3239,9 +3250,6 @@
 
   function lightHomePage() {
     const page = el("section", "light-home");
-    const top = el("div", "light-home-top");
-    top.append(el("div", "light-home-kicker", "Pucky"));
-    page.append(top);
     const grid = el("div", "light-app-grid");
     grid.append(...LIGHT_APPS.map(lightAppTile));
     page.append(grid);
@@ -3257,20 +3265,8 @@
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => lightNavigate(app.route));
     const icon = lightAppIcon(app.icon, app.color);
-    const badge = lightBadgeFor(app);
-    if (badge) {
-      icon.append(el("span", "light-app-badge", String(badge)));
-    }
     tile.append(icon, el("span", "light-app-label", app.label));
     return tile;
-  }
-
-  function lightBadgeFor(app) {
-    if (app.badge === "inbox") {
-      const unread = state.cards.filter(card => !isActionRead(card, "audio")).length;
-      return unread > 0 ? unread : "";
-    }
-    return Number(app.badge || 0) > 0 ? app.badge : "";
   }
 
   function lightAppIcon(icon, color) {
@@ -3285,7 +3281,7 @@
     appbar.append(
       lightIconButton("chevron_left", "Back", () => lightNavigate("home"), "light-appbar-back"),
       el("h2", "light-appbar-title", "Contacts"),
-      lightIconButton("search", "Search contacts")
+      el("span", "light-appbar-empty")
     );
     const list = el("div", "light-contact-list");
     list.append(...LIGHT_CONTACTS.map(contact => {
@@ -3355,13 +3351,12 @@
   }
 
   function lightCalendarPage() {
-    const page = lightPage(calendarDayTitle(), {
-      action: lightCircleButton("calendar", "Choose date", () => {
-        state.calendarPickerOpen = !state.calendarPickerOpen;
-        render();
-      })
-    });
+    const page = lightPage(calendarDayTitle());
     page.classList.add("light-calendar-page");
+    page.append(lightPillButton(state.calendarPickerOpen ? "Hide dates" : "Choose date", () => {
+      state.calendarPickerOpen = !state.calendarPickerOpen;
+      render();
+    }, state.calendarPickerOpen));
     if (state.calendarPickerOpen) {
       page.append(lightDatePicker());
     }
@@ -3414,7 +3409,7 @@
 
   function lightMeetingDetailPage() {
     const meeting = selectedMeeting();
-    const page = lightPage("Event", { action: lightCircleButton("mic", "Open meetings", () => lightNavigate("meetings", { from: "meeting-detail" })) });
+    const page = lightPage("Event");
     page.classList.add("light-document-page", "light-event-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -3461,12 +3456,7 @@
 
   function lightNoteDetailPage() {
     const note = selectedNote();
-    const page = lightPage("Note", {
-      action: lightCircleButton("pin", note.pinned ? "Unpin note" : "Pin note", () => {
-        note.pinned = !note.pinned;
-        render();
-      }, note.pinned ? "light-pin-button is-pinned" : "light-pin-button")
-    });
+    const page = lightPage("Note");
     page.classList.add("light-document-page", "light-note-document");
     const article = el("article", "light-doc-article light-note-detail");
     article.append(
@@ -3581,7 +3571,7 @@
   }
 
   function lightAppsPage() {
-    const page = lightPage("Apps", { large: true });
+    const page = lightPage("Connect", { large: true });
     page.classList.add("light-apps-page");
     page.append(linksPageView());
     return page;
@@ -3597,13 +3587,13 @@
   }
 
   function lightFeedRow(item) {
-    const row = el("button", "light-card light-feed-row");
-    row.type = "button";
-    row.dataset.feedId = item.id;
-    row.addEventListener("click", () => {
-      state.selectedFeedId = item.id;
-      lightNavigate("feed-detail", { from: "feed" });
-    });
+      const row = el("button", "light-card light-feed-row");
+      row.type = "button";
+      row.dataset.feedId = item.id;
+      row.addEventListener("click", () => {
+        state.selectedFeedId = item.id;
+        lightNavigate("feed-preview-detail", { from: "feed-preview" });
+      });
     row.append(lightSmallIcon(item.icon), lightTextStack(item.title, `${item.time}${DOT}${item.detail}`), el("span", "light-chevron", ">"));
     return row;
   }
@@ -3627,8 +3617,9 @@
   }
 
   function lightProjectsPage() {
-    const page = lightPage("Projects", { large: true, action: lightCircleButton("plus", "New project", () => lightNavigate("project-new", { from: "projects" })) });
+    const page = lightPage("Projects", { large: true });
     const list = el("div", "light-list");
+    page.append(lightPillButton("New project", () => lightNavigate("project-new", { from: "projects" })));
     list.append(...allProjects().map(project => {
       const row = el("button", "light-card light-project-row");
       row.type = "button";
@@ -3764,33 +3755,41 @@
     if (linksHandoffLocked()) {
       return;
     }
+    const nextRoute = normalizeHomeShellRoute(route, { preview: isWalkthroughPreview() });
+    if (!nextRoute) {
+      return;
+    }
     rememberFeedScroll();
     dismissTransientUiForRouteChange();
     if (options.from) {
       state.previousLightRoute = options.from;
-    } else if (state.route && state.route !== route && state.route !== "home") {
+    } else if (state.route && state.route !== nextRoute && state.route !== "home") {
       state.previousLightRoute = state.route;
     } else {
       state.previousLightRoute = "home";
     }
-    state.route = route;
+    state.route = nextRoute;
+    state.homeShellActive = true;
     state.openTrayRoute = null;
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     persistNavState();
     render();
     void syncVoiceThreadScope({ reason: "light_app_click", render: true });
-    if (route === "apps") {
+    if (state.route === "links") {
       linksDebugStartSession("route", { reason: "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
       loadLinksPortal({ render: true });
     }
-    if (route === "inbox") {
+    if (state.route === "feed") {
       restoreFeedScroll();
-      syncFeedCards({ reason: "light_inbox_open", silent: true, render: true });
+      syncFeedCards({ reason: "home_shell_feed_open", silent: true, render: true });
     }
-    if (route === "meetings") {
+    if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
       loadMeetings({ render: true });
+    }
+    if (state.route === "settings") {
+      loadSettingsState({ render: true });
     }
   }
 
@@ -3799,11 +3798,14 @@
       releaseLinksHandoff({ render: false, reason: "light_back" });
       return true;
     }
-    if (!isLightShellRoute() || state.route === "home") {
+    if (!isHomeShellRoute() || state.route === "home") {
       return false;
     }
-    const parent = LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
+    const parent = isHomeShellCanonicalRoute()
+      ? "home"
+      : LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
     state.route = parent === state.route ? "home" : parent;
+    state.homeShellActive = true;
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
     state.openTrayRoute = null;
     state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -4033,16 +4035,6 @@
   }
 
   function filteredFeedEmptyView() {
-    if (state.route === "inbox") {
-      const empty = el("div", "empty feed-filter-empty");
-      empty.append(
-        el("div", "feed-filter-empty-icon", ""),
-        el("div", "", "Inbox is clear."),
-        el("small", "", "New replies from this device will appear here.")
-      );
-      empty.querySelector(".feed-filter-empty-icon").innerHTML = iconSvg("mail", { filled: true });
-      return empty;
-    }
     const empty = el("div", "empty feed-filter-empty");
     empty.append(
       el("div", "feed-filter-empty-icon", ""),
@@ -4059,9 +4051,6 @@
         return false;
       }
       const archived = Boolean(card && card.archived);
-      if (state.route === "inbox") {
-        return !archived;
-      }
       if (isPendingOutboundCard(card)) {
         return state.showArchivedFeed ? archived : !archived;
       }
@@ -7359,7 +7348,7 @@
       closeSpeedPicker();
       return true;
     }
-    if (isLightShellRoute() && lightBack()) {
+    if (isHomeShellRoute() && lightBack()) {
       return true;
     }
     return false;
@@ -9682,7 +9671,7 @@
   }
 
   function effectiveRoute() {
-    return state.route === "inbox" ? "feed" : state.route;
+    return state.route;
   }
 
   function effectiveTheme() {
@@ -9691,19 +9680,21 @@
 
   function usesHomeFeedRoute(route = state.route) {
     const value = String(route || "").trim();
-    return value === "feed" || value === "inbox";
+    return value === "feed";
   }
 
   function embeddedLightApp() {
     const value = String(state.route || "").trim();
-    if (isLightTheme() && (value === "inbox" || value === "meetings")) {
-      return value;
+    if (!isHomeShellCanonicalRoute(value)) {
+      return "";
     }
-    return "";
+    if (value === "feed") return "inbox";
+    if (value === "links") return "connect";
+    return value;
   }
 
   function chromeMode() {
-    return isLightShellRoute() ? "light-shell" : "canonical";
+    return isHomeShellRoute() ? "home-shell" : "canonical";
   }
 
   function isLightTheme() {
@@ -9719,8 +9710,42 @@
     }
   }
 
+  function normalizeHomeShellRoute(route) {
+    const value = String(route || "").trim();
+    if (!value) {
+      return "home";
+    }
+    if (value === "apps") {
+      return "links";
+    }
+    if (value === "inbox") {
+      return "feed";
+    }
+    if (value === "home" || LIGHT_ROUTES.has(value) || HOME_SHELL_CANONICAL_ROUTES.has(value)) {
+      return value;
+    }
+    return "";
+  }
+
+  function isHomeShellMockRoute(route = state.route) {
+    const value = String(route || "").trim();
+    return value === "home" || LIGHT_ROUTES.has(value);
+  }
+
+  function isHomeShellCanonicalRoute(route = effectiveRoute()) {
+    const value = String(route || "").trim();
+    return Boolean(state.homeShellActive && HOME_SHELL_CANONICAL_ROUTES.has(value));
+  }
+
+  function isHomeShellRoute(route = state.route) {
+    const value = String(route || "").trim();
+    return value === "home"
+      || LIGHT_ROUTES.has(value)
+      || Boolean(state.homeShellActive && HOME_SHELL_CANONICAL_ROUTES.has(value));
+  }
+
   function isLightShellRoute() {
-    return isLightTheme() && isWalkthroughPreview() && LIGHT_ROUTES.has(state.route || "home");
+    return isHomeShellMockRoute();
   }
 
   function loadNavState() {
@@ -9746,37 +9771,48 @@
   }
 
   function initialRoute(route, theme = "dark") {
+    return resolveInitialRouteState(route, theme).route;
+  }
+
+  function initialHomeShellActive(route, theme = "dark") {
+    return resolveInitialRouteState(route, theme).homeShellActive;
+  }
+
+  function resolveInitialRouteState(route, theme = "dark") {
+    void route;
+    void theme;
     const queryRoute = routeQueryParam();
-    if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {
-      if (PAGE_TABS.some(tab => tab.route === queryRoute)) {
-        return queryRoute;
-      }
-      if (LIGHT_ROUTES.has(queryRoute)) {
-        return queryRoute;
-      }
-      const value = String(route || "");
-      if (LIGHT_ROUTES.has(value)) {
-        return value;
-      }
-      return "home";
+    if (queryRoute) {
+      return resolveRequestedRouteState(queryRoute);
     }
-    return resolveRouteForTheme(queryRoute || route, theme);
+    return { route: "home", homeShellActive: true };
+  }
+
+  function resolveRequestedRouteState(routeValue) {
+    const value = String(routeValue || "").trim();
+    if (!value) {
+      return { route: "home", homeShellActive: true };
+    }
+    if (PAGE_TABS.some(tab => tab.route === value)) {
+      return { route: value, homeShellActive: false };
+    }
+    const homeShellRoute = normalizeHomeShellRoute(value);
+    if (homeShellRoute) {
+      return { route: homeShellRoute, homeShellActive: true };
+    }
+    return { route: "home", homeShellActive: true };
   }
 
   function resolveRouteForTheme(route, theme = state.theme) {
+    void theme;
     const value = String(route || "").trim();
+    if (!value) {
+      return "home";
+    }
     if (PAGE_TABS.some(tab => tab.route === value)) {
       return value;
     }
-    if (normalizeTheme(theme) === "light") {
-      if (value === "apps") return "links";
-      if (value === "inbox") return "feed";
-      if (value === "home") return "feed";
-      if (value === "settings") return "settings";
-      if (value === "meetings") return "meetings";
-      if (value === "feed") return "feed";
-    }
-    return "feed";
+    return normalizeHomeShellRoute(value) || "home";
   }
 
   function routeQueryParam() {
@@ -9787,9 +9823,12 @@
     }
   }
 
-  function initialOpenTrayRoute(openTrayRoute, route, theme = "dark") {
+  function initialOpenTrayRoute(openTrayRoute, route, homeShellActive = false, theme = "dark") {
     const value = String(openTrayRoute || "");
     const normalizedRoute = initialRoute(route, theme);
+    if (homeShellActive || normalizedRoute !== "feed") {
+      return null;
+    }
     return value && value === normalizedRoute ? value : null;
   }
 
@@ -10071,7 +10110,8 @@
       rememberFeedScroll();
       captureCurrentDetailScroll();
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
-        route: initialRoute(state.route, state.theme),
+        route: state.route,
+        home_shell_active: Boolean(state.homeShellActive),
         open_tray_route: state.openTrayRoute || null,
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

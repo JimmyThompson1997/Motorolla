@@ -80,11 +80,11 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'icon: "mailbox"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
-    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Links" },\n    { route: "meetings", icon: "mic", label: "Meetings" }' in app
+    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Connect" },\n    { route: "meetings", icon: "mic", label: "Meetings" }' in app
     assert "link:" in app
     assert 'route: "links"' in app
     assert 'icon: "link"' in app
-    assert 'label: "Links"' in app
+    assert 'label: "Connect"' in app
     assert 'route: "meetings"' in app
     assert 'icon: "mic"' in app
     assert 'label: "Meetings"' in app
@@ -105,7 +105,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "function linksPageView()" in app
     assert "function meetingsPageView(options = {})" in app
     assert 'if (state.route === "links")' in app
-    assert 'const page = linksPageView();' in app
+    assert "homeShellCanonicalView(route, lightAppsPage())" in app
     assert 'feed.replaceChildren(meetingsPageView());' in app
     assert 'if (feed.firstElementChild !== page || feed.childElementCount !== 1) {' in app
     assert "links-portal-frame" not in app
@@ -120,7 +120,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert "async function loadLinksCatalog(options = {})" not in app
     assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' not in app
     assert "window.location.assign(href);" not in app
-    assert "Links did not return a valid auth URL." in app
+    assert "Connect did not return a valid auth URL." in app
     assert "Opened " not in app
     assert "linksHandoffLocked()" in app
     assert "window.__PUCKY_LINKS_DEBUG__" in app
@@ -229,7 +229,7 @@ def test_links_route_uses_local_catalog_and_query_route_restore() -> None:
     assert "loadLinksPortal({ render: true });" in app
     assert "function routeQueryParam()" in app
     assert "const queryRoute = routeQueryParam();" in app
-    assert "return queryRoute;" in app
+    assert "return resolveRequestedRouteState(queryRoute);" in app
     assert '"/api/links/composio/portal-url"' in app
     assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' not in app
     assert '/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}' in app
@@ -281,15 +281,15 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'route: "notes"' in app
     assert 'route: "tasks"' in app
     assert 'route: "calendar"' in app
-    assert 'route: "inbox"' in app
     assert 'route: "feed"' in app
     assert 'route: "projects"' in app
     assert 'route: "contacts"' in app
-    assert '{ route: "apps", label: "Apps"' in app
+    assert '{ route: "links", label: "Connect"' in app
     assert '{ route: "meetings", label: "Meetings"' in app
     assert '{ route: "meeting-capture", label: "Meetings"' not in app
-    assert '{ route: "links", label: "Apps"' not in app
+    assert '{ route: "apps", label: "Apps"' not in app
     assert "theme: initialTheme" in app
+    assert "homeShellActive: initialHomeShellActiveValue" in app
     assert "lightReturnRoute: \"\"" in app
     assert "previousLightRoute:" in app
     assert "selectedContactId:" in app
@@ -304,6 +304,10 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "function syncThemeQueryParam(theme)" in app
     assert "function isWalkthroughPreview()" in app
     assert 'params.get("preview") === "walkthrough"' in app
+    assert "function normalizeHomeShellRoute(route)" in app
+    assert "function initialHomeShellActive(route, theme = \"dark\")" in app
+    assert "function resolveInitialRouteState(route, theme = \"dark\")" in app
+    assert "function resolveRequestedRouteState(routeValue)" in app
     assert "function resolveRouteForTheme(route, theme = state.theme)" in app
     assert "function effectiveRoute()" in app
     assert "function effectiveTheme()" in app
@@ -312,6 +316,9 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "function usesHomeFeedRoute(" in app
     assert "function embeddedLightApp()" in app
     assert "function chromeMode()" in app
+    assert "function isHomeShellMockRoute(route = state.route)" in app
+    assert "function isHomeShellCanonicalRoute(route = effectiveRoute())" in app
+    assert "function isHomeShellRoute(route = state.route)" in app
     assert "function isLightShellRoute()" in app
     assert "function lightView()" in app
     assert "function lightHomePage()" in app
@@ -340,13 +347,12 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "notificationDigestItems" not in app
     assert "lightMeetingCapturePage" not in app
     assert "lightNavigate(\"meeting-capture\"" not in app
-    assert 'if (isLightShellRoute()) {' in app
+    assert 'if (isHomeShellMockRoute()) {' in app
     assert "feed.replaceChildren(lightView());" in app
-    assert 'if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {' in app
-    assert 'return resolveRouteForTheme(queryRoute || route, theme);' in app
-    assert 'if (value === "apps") return "links";' in app
-    assert 'if (value === "inbox") return "feed";' in app
-    assert 'if (value === "home") return "feed";' in app
+    assert 'return resolveInitialRouteState(route, theme).route;' in app
+    assert 'return resolveInitialRouteState(route, theme).homeShellActive;' in app
+    assert 'if (value === "apps") {' in app
+    assert 'if (value === "inbox") {' in app
     assert "appearanceSettingsCard()" in app
     assert 'settingId: "appearance"' in app
     assert 'title: "Appearance"' in app
@@ -354,23 +360,18 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'state.theme = nextTheme;' in app
     assert 'persistTheme(nextTheme);' in app
     assert 'syncThemeQueryParam(nextTheme);' in app
-    assert 'case "apps":' in app
-    assert 'view.append(lightAppsPage())' in app
-    assert 'case "meetings":' in app
-    assert 'view.append(lightMeetingsPage())' in app
-    assert 'case "settings":' in app
-    assert 'view.append(lightSettingsSurface())' in app
-    assert 'case "inbox":' in app
-    assert 'view.append(lightInboxPage())' in app
+    assert 'case "feed-preview":' in app
+    assert 'view.append(lightFeedPage())' in app
+    assert 'case "feed-preview-detail":' in app
+    assert 'view.append(lightFeedDetailPage())' in app
     assert 'case "note-detail":' in app
     assert 'case "task-detail":' in app
     assert 'case "meeting-detail":' in app
-    assert 'case "feed-detail":' in app
     assert 'case "project-detail":' in app
     assert 'case "contact-detail":' in app
     assert 'case "notifications":' not in app
     assert 'case "notification-detail":' not in app
-    assert 'const page = linksPageView();' in app
+    assert 'homeShellCanonicalView(route, lightAppsPage())' in app
     assert "lightLinksPage" not in app
     assert "lightPrototypePage" not in app
     assert "function lightStatusBar()" not in app
@@ -394,7 +395,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".light-project-row" in styles
     assert ".light-contact-row" in styles
     assert ".app-shell[data-theme=\"light\"] {" in styles
-    assert ".app-shell[data-theme=\"light\"][data-chrome-mode=\"light-shell\"] .header" in styles
+    assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
     assert "--surface-app:" in styles
     assert "--surface-card:" in styles
     assert "--text-primary:" in styles
@@ -473,15 +474,16 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'shell?.setAttribute("data-canonical-route", route || "feed");' in render_feed
     assert 'shell?.setAttribute("data-embedded-app", embeddedLightApp());' in render_feed
     assert 'shell?.setAttribute("data-chrome-mode", chromeMode());' in render_feed
-    assert 'if (isLightShellRoute()) {' in render_feed
+    assert 'if (isHomeShellMockRoute()) {' in render_feed
+    assert 'if (isHomeShellCanonicalRoute(route)) {' in render_feed
     assert 'if (route === "settings") {' in render_feed
     assert 'if (route === "links") {' in render_feed
     assert 'if (route === "meetings") {' in render_feed
     assert 'if (route !== "feed") {' in render_feed
-    assert render_feed.index('if (isLightShellRoute()) {') < render_feed.index('if (route === "settings") {')
-    assert 'feed.classList.toggle("is-links-route", route === "links" || state.route === "apps");' in render_feed
+    assert render_feed.index('if (isHomeShellMockRoute()) {') < render_feed.index('if (route === "settings") {')
+    assert 'feed.classList.toggle("is-links-route", route === "links");' in render_feed
 
-    assert 'if (isLightShellRoute()) {' in render_tabs
+    assert 'if (isHomeShellRoute()) {' in render_tabs
     assert 'tabs.hidden = true;' in render_tabs
     assert 'tabs.hidden = false;' in render_tabs
     assert 'tabs.replaceChildren(...PAGE_TABS.map(tabView));' in render_tabs
@@ -497,22 +499,19 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'loadLinksPortal({ render: true });' in handle_tab_route
     assert 'loadMeetings({ render: true });' in handle_tab_route
     assert 'loadSettingsState({ render: true });' in handle_tab_route
+    assert 'state.homeShellActive = false;' in handle_tab_route
     assert 'tabs.dataset.routeBound = "true";' in install_tab_navigation
     assert 'tabs.addEventListener("click", event => {' in install_tab_navigation
     assert 'target.closest(".tab[data-route]")' in install_tab_navigation
     assert 'handlePageTabRoute(button.getAttribute("data-route") || "");' in install_tab_navigation
-    assert 'if (isLightShellRoute()) {' in render_route_tray
+    assert 'if (isHomeShellRoute()) {' in render_route_tray
     assert 'tray.hidden = true;' in render_route_tray
     assert 'if (route !== "feed" || state.openTrayRoute !== "feed") {' in render_route_tray
     assert 'return params.get("preview") === "walkthrough";' in walkthrough_preview
 
-    assert 'if (normalizeTheme(theme) === "light" && isWalkthroughPreview()) {' in initial_route
-    assert 'return resolveRouteForTheme(queryRoute || route, theme);' in initial_route
+    assert 'return resolveInitialRouteState(route, theme).route;' in initial_route
     assert 'if (PAGE_TABS.some(tab => tab.route === value)) {' in resolve_route
-    assert 'if (value === "apps") return "links";' in resolve_route
-    assert 'if (value === "inbox") return "feed";' in resolve_route
-    assert 'if (value === "home") return "feed";' in resolve_route
-    assert 'return "feed";' in resolve_route
+    assert 'return normalizeHomeShellRoute(value) || "home";' in resolve_route
 
     assert 'settingId: "appearance"' in appearance_settings
     assert 'title: "Appearance"' in appearance_settings
@@ -545,19 +544,23 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "renderHomeFeedInto(feed);" in render_feed
     assert "Real Home tiles will appear here." not in app
     assert "lightInboxCardView" not in app
-    assert 'return state.route === "inbox" ? "feed" : state.route;' in effective_route
+    assert 'return state.route;' in effective_route
     assert 'return state.theme;' in effective_theme
-    assert 'return value === "feed" || value === "inbox";' in uses_home_feed
-    assert 'if (isLightTheme() && (value === "inbox" || value === "meetings")) {' in embedded_light_app
-    assert 'return isLightShellRoute() ? "light-shell" : "canonical";' in chrome_mode
+    assert 'return value === "feed";' in uses_home_feed
+    assert 'if (!isHomeShellCanonicalRoute(value)) {' in embedded_light_app
+    assert 'if (value === "feed") return "inbox";' in embedded_light_app
+    assert 'if (value === "links") return "connect";' in embedded_light_app
+    assert 'return isHomeShellRoute() ? "home-shell" : "canonical";' in chrome_mode
     assert "canonicalLaunchForRoute" not in app
     assert "activeCanonicalLaunch" not in app
     assert "handleCanonicalLaunchBack" not in app
     assert "state.canonicalLaunch" not in app
-    assert 'if (route === "meetings") {' in light_navigate
+    assert 'const nextRoute = normalizeHomeShellRoute(route' in light_navigate
+    assert 'state.homeShellActive = true;' in light_navigate
+    assert 'if (state.route === "meetings") {' in light_navigate
     assert "loadMeetings({ render: true });" in light_navigate
     assert 'if (handleCanonicalLaunchBack()) {' not in handle_back
-    assert 'if (state.route === "inbox") {' in filtered_feed_cards
+    assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
 
     assert '"DO SOON"' in light_tasks
@@ -568,11 +571,11 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
     assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
-    assert 'lightNavigate("feed-detail", { from: "feed" })' in app
+    assert 'lightNavigate("feed-preview-detail", { from: "feed-preview" })' in app
     assert 'lightNavigate("project-detail", { from: "projects" })' in app
     assert 'lightNavigate("contact-detail", { from: "contacts" })' in app
 
-    assert 'if (isLightShellRoute() && lightBack()) {' in handle_back
+    assert 'if (isHomeShellRoute() && lightBack()) {' in handle_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
     assert ".light-shell[data-light-route=\"meetings\"] .meetings-page" in styles
     assert "color: var(--text-primary);" in app_shell_block
@@ -622,7 +625,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "--icon-card-identity-unread:" not in light_theme_block
     assert "--icon-card-action-unread:" not in light_theme_block
     assert "--icon-card-action-active:" not in light_theme_block
-    assert ".app-shell[data-theme=\"light\"] .header" not in styles
+    assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
     assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
     assert ".app-shell[data-theme=\"light\"] .card" not in styles
     assert ".app-shell[data-theme=\"light\"] .meetings-refresh" not in styles
@@ -643,7 +646,7 @@ def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
     assert 'linksApiRequest("/api/meetings?compact=1", { cache: "no-store" })' in app
     assert "async function loadMeetingDetail(meeting)" in app
     assert "function meetingsApiErrorMessage(error" in app
-    assert 'detail.replace(/^Links request failed/i, "Meetings request failed")' in app
+    assert 'detail.replace(/^(Links|Connect) request failed/i, "Meetings request failed")' in app
     assert "function meetingsPageView(options = {})" in app
     assert "function meetingCardFromRecord(meeting)" in app
     assert "function isMeetingsListCard(card)" in app
@@ -1038,7 +1041,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme)" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme)" in app
     assert 'FEED_ICON_EXCLUDES_KEY = "pucky.cover.feed_icon_excludes.v1"' in app
     assert "excludedFeedIcons: loadFeedIconExcludes()" in app
     assert "renderRouteTray()" in app
@@ -2099,7 +2102,7 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert "const persistedNavState = loadNavState();" in app
     assert "const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);" in app
     assert "route: initialRouteValue" in app
-    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialTheme)" in app
+    assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme)" in app
     assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
     assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
     assert "function loadNavState()" in app
