@@ -3700,7 +3700,7 @@
     page.append(lightTaskCountLine(), lightTaskFilters());
     [
       ["do", "DO"],
-      ["soon", "DO SOON"],
+      ["soon", "DUE SOON"],
       ["overdue", "OVERDUE"],
       ["done", "DONE"]
     ].forEach(([group, label]) => {
@@ -3715,8 +3715,8 @@
     if (label === "DO") {
       return lightSectionTitle("DO");
     }
-    if (label === "DO SOON") {
-      return lightSectionTitle("DO SOON");
+    if (label === "DUE SOON") {
+      return lightSectionTitle("DUE SOON");
     }
     if (label === "DONE") {
       return lightSectionTitle("DONE");

@@ -4220,12 +4220,31 @@ button {
 
 .light-task-row {
   min-height: 54px;
+  width: 100%;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) minmax(54px, auto);
   align-items: center;
   gap: 12px;
   padding: 7px 16px 7px 18px;
   text-align: left;
+  color: inherit;
+  font: inherit;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.light-task-row:active {
+  transform: scale(0.995);
+  background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
+}
+
+.light-task-row:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -1px;
 }
 
 .light-check-circle {

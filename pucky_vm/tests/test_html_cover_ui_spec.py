@@ -466,6 +466,13 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     action_playing_block = css_block(styles, ".action-audio.is-playing")
     detail_header_block = css_block(styles, ".detail-header")
     meeting_row_block = css_block(styles, ".meeting-row")
+    task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
+    task_row_base_block = None
+    for block in task_row_blocks:
+      if "min-height: 54px;" in block:
+        task_row_base_block = block
+        break
+    assert task_row_base_block, "Missing .light-task-row base CSS block"
 
     assert 'const route = effectiveRoute();' in render_feed
     assert 'const theme = effectiveTheme();' in render_feed
@@ -563,9 +570,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
 
-    assert '"DO SOON"' in light_tasks
+    assert '"DUE SOON"' in light_tasks
     assert 'lightSectionTitle("DO")' in light_task_sections
-    assert 'lightSectionTitle("DO SOON")' in light_task_sections
+    assert 'lightSectionTitle("DUE SOON")' in light_task_sections
     assert 'lightSectionTitle("OVERDUE")' in light_task_sections
     assert 'lightSectionTitle("DONE")' in light_task_sections
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
@@ -597,6 +604,10 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "color: var(--icon-card-action-active);" in action_playing_block
     assert "background: var(--surface-header);" in detail_header_block
     assert "background: var(--surface-control);" in meeting_row_block
+    assert ".light-task-row:active" in styles
+    assert ".light-task-row:focus-visible" in styles
+    assert 'appearance: none;' in task_row_base_block
+    assert 'touch-action: manipulation;' in task_row_base_block
     assert "color-scheme: light;" in light_theme_block
     assert "--surface-app:" in light_theme_block
     assert "--text-primary:" in light_theme_block
@@ -718,6 +729,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_project_detail = function_block(app, "lightProjectDetailPage")
     light_contacts = function_block(app, "lightContactsPage")
     filtered_tasks = function_block(app, "filteredTasks")
+    task_group = function_block(app, "lightTaskGroup")
     all_projects = function_block(app, "allProjects")
     note_detail = function_block(app, "lightNoteDetailPage")
     task_detail = function_block(app, "lightTaskDetailPage")
@@ -730,8 +742,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightWorkspaceStatus("notes"' in light_notes
     assert 'lightHtmlDocument(note' in note_detail
     assert 'filteredTasks(group)' in light_tasks
+    assert 'const row = el("button", `light-task-row ${group}`);' in task_group
+    assert 'row.type = "button";' in task_group
+    assert 'row.dataset.taskId = task.id;' in task_group
+    assert 'lightNavigate("task-detail", { from: "tasks" })' in task_group
     assert 'workspaceItems("tasks")' in filtered_tasks
-    assert '"DO SOON"' in light_tasks
+    assert '"DUE SOON"' in light_tasks
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
     assert 'lightHtmlDocument(task' in task_detail
