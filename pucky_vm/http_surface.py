@@ -35,7 +35,7 @@ def is_bearer_authorized(expected_token: str, authorization_header: str) -> bool
 def cors_header_items() -> tuple[tuple[str, str], ...]:
     return (
         ("Access-Control-Allow-Origin", "*"),
-        ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+        ("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS"),
         ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
     )
 

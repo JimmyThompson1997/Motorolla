@@ -231,7 +231,12 @@ export function writeJsonFile(targetPath, payload) {
 
 export async function saveScreenshot(page, reportDir, name) {
   const target = path.join(reportDir, `${name}.png`);
-  await page.screenshot({ path: target, fullPage: true });
+  await page.screenshot({
+    path: target,
+    fullPage: true,
+    animations: "disabled",
+    timeout: 120000,
+  });
   return target;
 }
 
