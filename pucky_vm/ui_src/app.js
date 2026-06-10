@@ -27,6 +27,7 @@
     "unknown"
   ]);
   const MEETING_STATUS_POLL_MS = 1000;
+  const WORKSPACE_TASK_REFRESH_MS = 2000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -249,56 +250,22 @@
     "contact-detail": "contacts",
     "contact-new": "contacts"
   };
-
-  const LIGHT_CONTACTS = [
-    { id: "maya", name: "Maya Chen", avatar: "MC", photo: "fixtures/contact_photos/maya.svg", channel: "Slack DM", time: "18m ago", note: "approved the eng budget...", email: "maya.chen@email.com", phone: "+1 (415) 555-0142", relation: "Design lead", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "maya.chen@email.com" }, { icon: "chat", label: "Slack", value: "@maya" }], activity: [`Slack DM${DOT}approved the engineering budget`, `Meeting${DOT}Roadmap sync today`, `Follow-up${DOT}Next 1:1 Friday`] },
-    { id: "tom", name: "Tom Reyes", avatar: "TR", photo: "fixtures/contact_photos/tom.svg", channel: "Email", time: "1h ago", note: "re: migration thread", email: "tom.reyes@email.com", phone: "+1 (415) 555-0177", relation: "Staff Engineer", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "tom.reyes@email.com" }], activity: [`Email${DOT}migration thread 1h ago`, `Meeting${DOT}Vendor review today`, `Decision${DOT}last pushed Monday`] },
-    { id: "priya", name: "Priya Shah", avatar: "PS", photo: "fixtures/contact_photos/priya.svg", channel: "Figma comment", time: "yesterday", note: "onboarding spec v3", email: "priya.shah@email.com", phone: "+1 (415) 555-0125", relation: "Product", connectedAccounts: [{ icon: "mail", label: "Gmail", value: "priya.shah@email.com" }], activity: [`Figma${DOT}commented on onboarding spec v3`, `Project${DOT}launch review next week`, `Note${DOT}shared onboarding notes`] },
-    { id: "sarah", name: "Sarah K.", avatar: "SK", photo: "fixtures/contact_photos/sarah.svg", channel: "iMessage", time: "last week", note: "let's grab lunch", email: "sarah.k@email.com", phone: "+1 (415) 555-0188", relation: "Friend", connectedAccounts: [{ icon: "chat", label: "iMessage", value: "+1 (415) 555-0188" }], activity: [`iMessage${DOT}last week${DOT}let's grab lunch`, `Meeting${DOT}6 weeks ago`, `Upcoming${DOT}lunch tomorrow`] },
-    { id: "linear", name: "Linear sales", avatar: "LS", photo: "", channel: "Email", time: "2 days ago", note: "meeting confirmation", email: "sales@linear.app", phone: "+1 (415) 555-0104", relation: "External vendor", connectedAccounts: [{ icon: "mail", label: "Email", value: "sales@linear.app" }], activity: [`Email${DOT}meeting confirmation`, `Meeting${DOT}Vendor review today`, `Artifact${DOT}pricing doc pending`] }
-  ];
-
-  const LIGHT_EVENTS = [
-    { id: "roadmap", meetingId: "roadmap", title: "Roadmap sync", detail: "Maya, Tom, Priya", time: "10:00", displayTime: "10:00 - 10:45 AM", hour: 10, color: "red", place: "Zoom" },
-    { id: "coffee", meetingId: "coffee", title: "Coffee - Maya", detail: "Sightglass", time: "2:00", displayTime: "2:00 - 2:30 PM", hour: 14, color: "blue", place: "Sightglass" },
-    { id: "vendor", meetingId: "vendor", title: "Vendor review - Linear", detail: "Conf room A", time: "4:00", displayTime: "4:00 - 5:15 PM", hour: 16, color: "green", place: "Conf room A" }
-  ];
-
-  const LIGHT_MEETINGS = [
-    { id: "vendor", title: "Vendor review - Linear", time: "4:00 - 5:15 PM", place: "Conf room A", attendees: ["Linear sales", "Tom Reyes"], brief: "Linear is pitching an MCP integration. Tom is skeptical. Agent flagged we evaluated similar in March.", agenda: ["Demo", "Pricing", "Migration cost"], docs: ["March eval notes"] },
-    { id: "roadmap", title: "Roadmap sync", time: "10:00 - 10:45 AM", place: "Zoom", attendees: ["Maya Chen", "Tom Reyes", "Priya Shah"], brief: "Budget is approved; the remaining question is sequencing the onboarding and migration milestones.", agenda: ["Hiring plan", "Migration date", "Launch risks"], docs: ["Q4 hiring plan"] },
-    { id: "coffee", title: "Coffee - Maya", time: "2:00 - 2:30 PM", place: "Sightglass", attendees: ["Maya Chen"], brief: "A lightweight check-in after the budget decision. Keep it personal, then confirm next steps for Friday.", agenda: ["Budget follow-up", "Hiring plan", "Weekend timing"], docs: ["Q4 hiring plan"] }
-  ];
-
-  const LIGHT_NOTES = [
-    { id: "q4", title: "Q4 hiring plan", icon: "pin", updated: "2h ago", context: "All notes", pinned: true, body: "We're entering a critical phase of growth, and our Q4 hiring will focus on strengthening key engineering capabilities and team leadership.", sections: [{ title: "Goals", lines: ["Hire 2 senior backend engineers", "Improve system reliability and performance", "Build a stronger foundation for scale"] }, { title: "Target roles", lines: ["Senior Backend Engineer (2)", "Engineering Manager (1)"] }, { title: "Next steps", lines: ["Finalize role briefs by Oct 15, align with People Ops on sourcing strategy, and start interviews by early November."] }] },
-    { id: "march", title: "March eval notes", icon: "attachment", updated: "yesterday", context: "Vendor review", pinned: false, body: "Previous MCP vendor evaluation noted setup speed as the upside and long-term support as the concern.", sections: [{ title: "Risks", lines: ["Support burden", "Credible pilot metrics", "Migration cost"] }] },
-    { id: "onboarding", title: "Onboarding spec v3", icon: "note", updated: "last week", context: "Project Aurora", pinned: false, body: "Priya's latest spec tightens the first-run checklist and removes the heavyweight welcome flow.", sections: [{ title: "Open", lines: ["Confirm final welcome copy", "Review analytics events"] }] }
-  ];
-
-  const LIGHT_TASKS = [
-    { id: "budget", title: "Sign off on Maya's budget", detail: "Final Q4 engineering budget review.", due: "5pm", group: "do" },
-    { id: "mom", title: "Call mom - birthday gift idea", detail: "", due: "today", group: "do" },
-    { id: "slides", title: "Prep Q4 roadmap slides", detail: "Align with design and leadership.", due: "tomorrow", group: "soon" },
-    { id: "nda", title: "Reply to legal about NDA", detail: "They sent redlined version Friday.", due: "1 day ago", group: "overdue" },
-    { id: "retro", title: "Submit Q3 retrospective", detail: "", due: "2 days ago", group: "overdue" },
-    { id: "cleanup", title: "Archive migration notes", detail: "Moved into Project Migration.", due: "done today", group: "done" },
-    { id: "agenda", title: "Send roadmap agenda", detail: "Shared with Maya, Tom, and Priya.", due: "done yesterday", group: "done" },
-    { id: "receipt", title: "Upload Tokyo flight receipt", detail: "", due: "done Tue", group: "done" }
-  ];
-
-  const LIGHT_PROJECTS = [
-    { id: "aurora", title: "Project Aurora", detail: "Spec review, PRD discussion, and requirements artifacts.", lastActivity: "Tom replied 1h ago", chips: ["2 threads", "4 artifacts", "Maya"], threads: ["PRD review thread", "Budget approval DM"], artifacts: ["Onboarding spec v3", "Requirements snapshot", "Figma comment"], notes: ["Q4 hiring plan"], tasks: ["Review PRD: Project Aurora", "Prep Q4 roadmap slides"], meetings: ["Roadmap sync"], people: ["Maya Chen", "Tom Reyes", "Priya Shah"] },
-    { id: "migration", title: "Migration", detail: "Reply threads, rollout docs, and follow-up work in one folder.", lastActivity: "Inbox reply 18m ago", chips: ["3 threads", "2 docs", "Tom"], threads: ["Migration update", "Tom objections", "Slack launch notes"], artifacts: ["March eval notes", "Rollout checklist"], notes: ["March eval notes"], tasks: ["Archive migration notes", "Reply to legal about NDA"], meetings: ["Vendor review - Linear"], people: ["Tom Reyes", "Linear sales"] },
-    { id: "onboarding", title: "Onboarding", detail: "First-run product polish, design comments, and launch tasks.", lastActivity: "Priya commented yesterday", chips: ["1 thread", "3 artifacts", "Priya"], threads: ["Figma feedback"], artifacts: ["Onboarding spec v3", "Launch copy", "Analytics checklist"], notes: ["Onboarding spec v3"], tasks: ["Prep Q4 roadmap slides"], meetings: ["Roadmap sync"], people: ["Priya Shah", "Maya Chen"] }
-  ];
-
-  const LIGHT_FEED = [
-    { id: "maya-budget", time: "18m", icon: "contacts", title: "Maya approved the budget", detail: "Slack DM", body: "Maya signed off on the revised engineering budget and asked for the Friday hiring follow-up to stay on calendar." },
-    { id: "tom-migration", time: "1h", icon: "mail", title: "Tom replied on migration", detail: "Email thread", body: "Tom wants the migration risks written down before the vendor review. The open question is long-term support burden." },
-    { id: "q4-note", time: "2h", icon: "note", title: "Q4 hiring plan pinned", detail: "Notes", body: "The hiring plan now anchors the roadmap sync. Pucky connected it to the budget approval and onboarding milestone." },
-    { id: "priya-onboarding", time: "Yesterday", icon: "image", title: "Priya commented on onboarding spec", detail: "Figma", body: "Priya's comments reduced the first-run flow and moved the analytics checklist into launch review." }
-  ];
+  const WORKSPACE_ROUTE_COLLECTIONS = {
+    notes: "notes",
+    "note-detail": "notes",
+    tasks: "tasks",
+    "task-detail": "tasks",
+    calendar: "calendar-events",
+    "meeting-detail": "calendar-events",
+    "feed-preview": "feed-items",
+    "feed-preview-detail": "feed-items",
+    projects: "projects",
+    "project-detail": "projects",
+    "project-new": "projects",
+    contacts: "contacts",
+    "contact-detail": "contacts",
+    "contact-new": "contacts"
+  };
 
   const DEFAULT_HOME_MENU_ICONS = [
     { key: "book", icon: "book", label: "Audiobooks", accent: "#72c2ff" }
@@ -342,10 +309,18 @@
     selectedTaskId: "budget",
     selectedProjectId: "aurora",
     selectedFeedId: "maya-budget",
-    selectedCalendarDay: 8,
+    selectedCalendarDate: todayDateKey(),
     calendarPickerOpen: false,
     taskFilter: "all",
-    localProjects: [],
+    workspace: {
+      notes: { items: [], loaded: false, loading: false, error: "" },
+      tasks: { items: [], loaded: false, loading: false, error: "" },
+      "calendar-events": { items: [], loaded: false, loading: false, error: "" },
+      "feed-items": { items: [], loaded: false, loading: false, error: "" },
+      projects: { items: [], loaded: false, loading: false, error: "" },
+      contacts: { items: [], loaded: false, loading: false, error: "" },
+      assets: {}
+    },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
@@ -1067,6 +1042,142 @@
       throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
     }
     return payload;
+  }
+
+  async function workspaceApiRequest(path, options = {}) {
+    await ensureLinksApiConfig();
+    const method = String(options.method || "GET").toUpperCase();
+    const init = {
+      method,
+      cache: String(options.cache || "no-store"),
+      headers: { Accept: "application/json" }
+    };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    if (options.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
+    }
+    return payload;
+  }
+
+  function workspaceQuery(collection, options = {}) {
+    const params = new URLSearchParams();
+    params.set("limit", String(Math.max(1, Number(options.limit || 200) || 200)));
+    if (options.includeArchived) params.set("include_archived", "1");
+    if (options.includeDeleted) params.set("include_deleted", "1");
+    if (options.date) params.set("date", String(options.date));
+    const query = params.toString();
+    return `/api/workspace/${collection}${query ? `?${query}` : ""}`;
+  }
+
+  async function loadWorkspaceCollection(collection, options = {}) {
+    const bucket = state.workspace[collection];
+    if (!bucket || (bucket.loading && !options.force)) {
+      return;
+    }
+    bucket.loading = true;
+    bucket.error = "";
+    try {
+      const date = collection === "calendar-events" ? selectedCalendarDateKey() : "";
+      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
+      bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
+      bucket.loaded = true;
+    } catch (error) {
+      bucket.error = String(error && error.message || error || "Workspace request failed");
+    } finally {
+      bucket.loading = false;
+    }
+    if (options.render) {
+      render();
+    }
+  }
+
+  async function upsertWorkspaceRecord(collection, body, options = {}) {
+    const bucket = workspaceBucket(collection);
+    try {
+      const record = await workspaceApiRequest(`/api/workspace/${collection}`, {
+        method: "POST",
+        body
+      });
+      await loadWorkspaceCollection(collection, { ...options, force: true, render: false });
+      if (options.render) {
+        render();
+      }
+      return record;
+    } catch (error) {
+      bucket.error = String(error && error.message || error || "Workspace write failed");
+      showToast(bucket.error);
+      if (options.render) {
+        render();
+      }
+      return null;
+    }
+  }
+
+  async function patchWorkspaceRecord(collection, id, body, options = {}) {
+    const recordId = String(id || "").trim();
+    const bucket = workspaceBucket(collection);
+    if (!recordId) {
+      return null;
+    }
+    try {
+      const record = await workspaceApiRequest(`/api/workspace/${collection}/${encodeURIComponent(recordId)}`, {
+        method: "PATCH",
+        body
+      });
+      await loadWorkspaceCollection(collection, { ...options, force: true, render: false });
+      if (options.render) {
+        render();
+      }
+      return record;
+    } catch (error) {
+      bucket.error = String(error && error.message || error || "Workspace write failed");
+      showToast(bucket.error);
+      if (options.render) {
+        render();
+      }
+      return null;
+    }
+  }
+
+  async function loadWorkspaceForRoute(route = state.route, options = {}) {
+    const collection = WORKSPACE_ROUTE_COLLECTIONS[String(route || "")];
+    if (!collection) {
+      return;
+    }
+    await loadWorkspaceCollection(collection, options);
+  }
+
+  async function loadWorkspaceAsset(assetId, options = {}) {
+    const id = String(assetId || "").trim();
+    if (!id || state.workspace.assets[id]) {
+      return state.workspace.assets[id] || null;
+    }
+    try {
+      const payload = await workspaceApiRequest(`/api/workspace/assets/${encodeURIComponent(id)}`);
+      state.workspace.assets[id] = payload;
+      if (options.render) {
+        render();
+      }
+      return payload;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function workspaceItems(collection) {
+    return Array.isArray(state.workspace[collection]?.items) ? state.workspace[collection].items : [];
+  }
+
+  function workspaceBucket(collection) {
+    return state.workspace[collection] || { items: [], loaded: false, loading: false, error: "" };
   }
 
   function normalizeFeedSnapshot(payload, source = "vm") {
@@ -3283,6 +3394,20 @@
     return wrap;
   }
 
+  function lightWorkspaceStatus(collection, icon, emptyTitle) {
+    const bucket = workspaceBucket(collection);
+    if (bucket.error) {
+      return lightEmptyState("warning", "Could not load", bucket.error);
+    }
+    if (!bucket.loaded) {
+      return lightEmptyState(icon, "Loading", "Pulling workspace records from the VM.");
+    }
+    if (bucket.loaded && !workspaceItems(collection).length) {
+      return lightEmptyState(icon, emptyTitle, "Agent-created records will appear here.");
+    }
+    return null;
+  }
+
   function lightContactsPage() {
     const page = el("section", "light-page light-contacts-page");
     const appbar = el("header", "light-appbar light-contacts-appbar");
@@ -3292,7 +3417,12 @@
       el("span", "light-appbar-empty")
     );
     const list = el("div", "light-contact-list");
-    list.append(...LIGHT_CONTACTS.map(contact => {
+    const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
+    if (status) {
+      page.append(appbar, status);
+      return page;
+    }
+    list.append(...workspaceItems("contacts").map(contact => {
       const row = el("button", "light-card light-contact-row");
       row.type = "button";
       row.dataset.contactId = contact.id;
@@ -3310,20 +3440,45 @@
   function lightContactCreatePage() {
     const page = lightPage("New Contact");
     const card = el("section", "light-card light-create-card");
-    const starts = el("div", "light-create-options");
-    [
-      { icon: "mail", label: "From email", value: "Find recent senders" },
-      { icon: "chat", label: "From messages", value: "Pull a thread into contacts" },
-      { icon: "apps", label: "From connected apps", value: "Use synced accounts" }
-    ].forEach(row => {
-      const item = el("div", "light-create-option");
-      item.append(lightSmallIcon(row.icon), lightTextStack(row.label, row.value));
-      starts.append(item);
+    const name = el("input", "light-project-input");
+    name.type = "text";
+    name.placeholder = "Display name";
+    name.value = "New contact";
+    const email = el("input", "light-project-input");
+    email.type = "email";
+    email.placeholder = "Email";
+    const phone = el("input", "light-project-input");
+    phone.type = "tel";
+    phone.placeholder = "Phone";
+    const save = lightPillButton("Create contact", async () => {
+      const title = name.value.trim() || "New contact";
+      const record = await upsertWorkspaceRecord("contacts", {
+        id: `contact-${Date.now()}`,
+        title,
+        summary: "Workspace contact",
+        metadata: {
+          avatar: title.split(/\s+/).map(part => part[0] || "").join("").slice(0, 2).toUpperCase(),
+          email: email.value.trim(),
+          phone: phone.value.trim(),
+          endpoints: [
+            ...(email.value.trim() ? [{ label: "Email", value: email.value.trim() }] : []),
+            ...(phone.value.trim() ? [{ label: "Phone", value: phone.value.trim() }] : [])
+          ],
+          activity: ["Created from Contacts"]
+        }
+      }, { render: false });
+      if (record) {
+        state.selectedContactId = record.id;
+        lightNavigate("contact-detail", { from: "contacts" });
+      }
     });
     card.append(
       lightSmallIcon("contacts"),
-      lightTextStack("Create a contact", "Prototype-only shell for adding a person or account."),
-      starts
+      lightTextStack("Create a contact", "Persist a person, endpoints, activity, and agent-written HTML profile."),
+      name,
+      email,
+      phone,
+      save
     );
     page.append(card);
     return page;
@@ -3331,30 +3486,32 @@
 
   function lightContactDetailPage() {
     const contact = selectedContact();
+    if (!contact) {
+      return lightPage("Contact", { subtitle: "Contact not found." });
+    }
     const page = lightPage("Contact");
     const hero = el("section", "light-profile-card");
-    hero.append(lightAvatar(contact, "large"), el("h1", "", contact.name), el("p", "", contact.relation));
-    const actions = el("div", "light-profile-actions");
-    [
-      ["phone", "Call", "green"],
-      ["mail", "Mail", "blue"],
-      ["chat", "Message", "blue"],
-      ["calendar", "Invite", "red"]
-    ].forEach(([icon, label, color]) => actions.append(lightActionColumn(icon, label, color)));
-    hero.append(actions);
+    hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
+    const meta = contact.metadata || {};
     page.append(lightInfoSection("Contact", [
-      { icon: "mail", label: "Email", value: contact.email },
-      { icon: "phone", label: "Phone", value: contact.phone }
+      { icon: "mail", label: "Email", value: meta.email || "" },
+      { icon: "phone", label: "Phone", value: meta.phone || "" }
     ]));
-    if (contact.connectedAccounts && contact.connectedAccounts.length) {
-      page.append(lightInfoSection("Connected accounts", contact.connectedAccounts));
+    if (Array.isArray(meta.endpoints) && meta.endpoints.length) {
+      page.append(lightInfoSection("Endpoints", meta.endpoints.map(row => ({ icon: "apps", label: row.label, value: row.value }))));
     }
-    page.append(lightInfoSection("Activity", contact.activity.map((item, index) => ({
+    if (Array.isArray(meta.activity) && meta.activity.length) {
+      page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
       icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
       label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
       value: item
-    }))));
+      }))));
+    }
+    if (contact.links && contact.links.length) {
+      page.append(lightInfoSection("Linked records", contact.links.map(link => ({ icon: "link", label: link.label || link.target_kind, value: `${link.target_kind}:${link.target_id}` }))));
+    }
+    page.append(lightHtmlDocument(contact, "No generated contact page yet."));
     return page;
   }
 
@@ -3365,6 +3522,14 @@
       state.calendarPickerOpen = !state.calendarPickerOpen;
       render();
     }, state.calendarPickerOpen));
+    const status = lightWorkspaceStatus("calendar-events", "calendar", "No events today");
+    if (status) {
+      if (state.calendarPickerOpen) {
+        page.append(lightDatePicker());
+      }
+      page.append(status);
+      return page;
+    }
     if (state.calendarPickerOpen) {
       page.append(lightDatePicker());
     }
@@ -3374,17 +3539,25 @@
 
   function lightDatePicker() {
     const picker = el("section", "light-date-picker");
-    picker.append(el("div", "light-date-picker-title", "June 2026"));
+    const selected = new Date(`${selectedCalendarDateKey()}T12:00:00`);
+    const monthTitle = selected.toLocaleDateString([], { month: "long", year: "numeric" });
+    picker.append(el("div", "light-date-picker-title", monthTitle));
     const grid = el("div", "light-date-grid");
-    Array.from({ length: 30 }, (_, index) => String(index + 1)).forEach(day => {
-      const selected = Number(day) === state.selectedCalendarDay;
-      const button = el("button", selected ? "light-date-cell is-selected" : "light-date-cell", day);
+    Array.from({ length: 21 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() + index - 7);
+      return date;
+    }).forEach(date => {
+      const key = dateKey(date);
+      const isSelected = key === selectedCalendarDateKey();
+      const button = el("button", isSelected ? "light-date-cell is-selected" : "light-date-cell", String(date.getDate()));
       button.type = "button";
-      button.dataset.day = day;
+      button.dataset.date = key;
       button.addEventListener("click", () => {
-        state.selectedCalendarDay = Number(day);
+        state.selectedCalendarDate = key;
         state.calendarPickerOpen = false;
         render();
+        void loadWorkspaceCollection("calendar-events", { render: true, force: true });
       });
       grid.append(button);
     });
@@ -3398,15 +3571,22 @@
       const row = el("div", "light-time-row");
       row.append(el("span", "light-time-label", hourLabel(hour)));
       const lane = el("div", "light-time-lane");
-      LIGHT_EVENTS.filter(event => event.hour === hour).forEach(event => {
-        const block = el("button", `light-event-block ${event.color}`);
+      const events = workspaceItems("calendar-events").filter(event => calendarEventHour(event) === hour);
+      if (events.length > 1) {
+        const height = 18 + events.length * 62;
+        row.style.minHeight = `${height}px`;
+        lane.style.minHeight = `${height}px`;
+      }
+      events.forEach((event, index) => {
+        const block = el("button", `light-event-block ${calendarEventColor(event, index)}`);
         block.type = "button";
         block.dataset.eventId = event.id;
+        block.style.top = `${10 + index * 58}px`;
         block.addEventListener("click", () => {
-          state.selectedMeetingId = event.meetingId;
+          state.selectedMeetingId = event.id;
           lightNavigate("meeting-detail", { from: "calendar" });
         });
-        block.append(el("strong", "", event.title), el("span", "", event.detail));
+        block.append(el("strong", "", event.title), el("span", "", event.summary || calendarEventTimeRange(event)));
         lane.append(block);
       });
       row.append(lane);
@@ -3417,34 +3597,57 @@
 
   function lightMeetingDetailPage() {
     const meeting = selectedMeeting();
+    if (!meeting) {
+      return lightPage("Event", { subtitle: "Event not found." });
+    }
+    const meta = meeting.metadata || {};
+    const attendees = Array.isArray(meta.attendees) ? meta.attendees : [];
+    const docs = Array.isArray(meta.docs) ? meta.docs : [];
+    const contactBucket = workspaceBucket("contacts");
+    if (attendees.length && !contactBucket.loaded && !contactBucket.loading) {
+      void loadWorkspaceCollection("contacts", { render: true });
+    }
     const page = lightPage("Event");
     page.classList.add("light-document-page", "light-event-document");
     const article = el("article", "light-doc-article");
     article.append(
-      lightDocumentEyebrow("Calendar event", `${calendarDayTitle()}${DOT}${meeting.time}`),
+      lightDocumentEyebrow("Calendar event", `${meeting.date || selectedCalendarDateKey()}${DOT}${calendarEventTimeRange(meeting)}`),
       el("h1", "", meeting.title),
       lightDocumentMeta([
-        ["Time", meeting.time],
-        ["Place", meeting.place],
-        ["Attendees", `${meeting.attendees.length} attendees`]
+        ["Time", calendarEventTimeRange(meeting)],
+        ["Place", meta.place || "Unspecified"],
+        ["Attendees", `${attendees.length} attendees`]
       ])
     );
     page.append(article);
-    page.append(lightCopySection("Agent brief", meeting.brief));
-    page.append(lightListSection("Agenda", meeting.agenda));
-    page.append(lightAttendeesSection(meeting.attendees));
-    page.append(lightInfoSection("Related docs", meeting.docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
+    page.append(lightCopySection("Agent brief", meeting.summary || "No brief yet."));
+    if (Array.isArray(meta.agenda) && meta.agenda.length) {
+      page.append(lightListSection("Agenda", meta.agenda));
+    }
+    if (attendees.length) {
+      page.append(lightAttendeesSection(attendees));
+    }
+    if (docs.length) {
+      page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
+    }
+    page.append(lightHtmlDocument(meeting, "No generated event page yet."));
     return page;
   }
 
   function lightNotesPage() {
     const page = lightPage("Notes", { large: true });
-    const pinned = LIGHT_NOTES.filter(note => note.pinned);
+    const status = lightWorkspaceStatus("notes", "note", "No notes yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    const notes = workspaceItems("notes");
+    const pinned = notes.filter(note => note.pinned);
     if (pinned.length) {
       page.append(lightSectionTitle("Pinned"), ...pinned.map(lightNoteRow));
     }
     const recent = el("div", "light-list");
-    recent.append(...LIGHT_NOTES.filter(note => !note.pinned).map(lightNoteRow));
+    recent.append(...notes.filter(note => !note.pinned).map(lightNoteRow));
     page.append(lightSectionTitle("Recent"), recent);
     return page;
   }
@@ -3457,28 +3660,26 @@
       state.selectedNoteId = note.id;
       lightNavigate("note-detail", { from: "notes" });
     });
-    const meta = `${note.pinned ? `Pinned${DOT}` : ""}${note.updated}${DOT}${note.context}`;
-    row.append(lightSmallIcon(note.icon || (note.pinned ? "pin" : "note")), lightTextStack(note.title, meta));
+    const meta = `${note.pinned ? `Pinned${DOT}` : ""}${workspaceTimestamp(note.updated_at_ms, "Updated")}${DOT}${note.metadata?.context || "Notes"}`;
+    row.append(lightSmallIcon(note.metadata?.icon || (note.pinned ? "pin" : "note")), lightTextStack(note.title, meta));
     return row;
   }
 
   function lightNoteDetailPage() {
     const note = selectedNote();
+    if (!note) {
+      return lightPage("Note", { subtitle: "Note not found." });
+    }
     const page = lightPage("Note");
     page.classList.add("light-document-page", "light-note-document");
     const article = el("article", "light-doc-article light-note-detail");
     article.append(
-      lightDocumentEyebrow(note.pinned ? "Pinned note" : "Note", `${note.updated}${DOT}${note.context}`),
+      lightDocumentEyebrow(note.pinned ? "Pinned note" : "Note", `${workspaceTimestamp(note.updated_at_ms, "Updated")}${DOT}${note.metadata?.context || "Notes"}`),
       el("h1", "", note.title),
-      el("p", "light-note-body", note.body)
+      el("p", "light-note-body", note.summary || "")
     );
-    note.sections.forEach(section => {
-      article.append(el("h2", "", section.title));
-      const list = el("ul", "");
-      section.lines.forEach(line => list.append(el("li", "", line)));
-      article.append(list);
-    });
     page.append(article);
+    page.append(lightHtmlDocument(note, "No generated note page yet."));
     return page;
   }
 
@@ -3490,7 +3691,13 @@
       el("h2", "light-appbar-title", "Tasks"),
       el("span", "light-appbar-empty")
     );
-    page.append(appbar, el("h1", "light-tasks-title", "Tasks"), lightTaskCountLine(), lightTaskFilters());
+    const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
+    page.append(appbar, el("h1", "light-tasks-title", "Tasks"));
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    page.append(lightTaskCountLine(), lightTaskFilters());
     [
       ["do", "DO"],
       ["soon", "DO SOON"],
@@ -3518,12 +3725,13 @@
   }
 
   function lightTaskCounts() {
-    return LIGHT_TASKS.reduce((counts, task) => {
-      if (task.group === "overdue") {
+    return workspaceItems("tasks").reduce((counts, task) => {
+      const group = String(task.derived_group || "do");
+      if (group === "overdue") {
         counts.overdue += 1;
-      } else if (task.group === "done") {
+      } else if (group === "done") {
         counts.done += 1;
-      } else if (task.group === "do" || task.group === "soon") {
+      } else if (group === "do" || group === "soon") {
         counts.due += 1;
       }
       return counts;
@@ -3555,26 +3763,66 @@
     tasks.forEach(task => {
       const row = el("button", `light-task-row ${group}`);
       row.type = "button";
+      row.dataset.taskId = task.id;
       row.addEventListener("click", () => {
         state.selectedTaskId = task.id;
         lightNavigate("task-detail", { from: "tasks" });
       });
       const checkClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
-      row.append(el("span", checkClass), lightTextStack(task.title, task.detail), el("span", "light-due", task.due));
+      row.append(el("span", checkClass), lightTextStack(task.title, task.summary), el("span", "light-due", taskDueLabel(task)));
       card.append(row);
     });
     return card;
   }
 
+  function taskDueLabel(task) {
+    const group = String(task?.derived_group || "do");
+    const due = Number(task?.due_at_ms || 0);
+    if (group === "done") {
+      return "done";
+    }
+    if (!Number.isFinite(due) || due <= 0) {
+      return "no due";
+    }
+    const date = new Date(due);
+    const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const day = dateKey(date);
+    if (group === "overdue") {
+      return `${workspaceTimestamp(due, "overdue")}`;
+    }
+    if (day === todayDateKey()) {
+      return `today ${time}`;
+    }
+    if (day === todayDateKey(1)) {
+      return `tomorrow ${time}`;
+    }
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  function taskToggleButton(task) {
+    const done = String(task?.derived_group || "") === "done" || String(task?.status || "").toLowerCase() === "done";
+    const button = lightPillButton(done ? "Reopen task" : "Mark done", async () => {
+      button.disabled = true;
+      await patchWorkspaceRecord("tasks", task.id, { status: done ? "open" : "done" }, { render: true });
+    }, false);
+    button.classList.add("light-task-toggle");
+    return button;
+  }
+
   function lightTaskDetailPage() {
     const task = selectedTask();
+    if (!task) {
+      return lightPage("Task", { subtitle: "Task not found." });
+    }
     const page = lightPage("Task");
-    page.append(lightHeroDetail(task.title, task.due, task.group === "overdue" ? "warning" : "checklist"));
-    page.append(lightCopySection("Notes", task.detail || "No extra notes yet."));
+    page.append(lightHeroDetail(task.title, taskDueLabel(task), task.derived_group === "overdue" ? "warning" : "checklist"));
+    page.append(taskToggleButton(task));
+    page.append(lightCopySection("Notes", task.summary || "No extra notes yet."));
     page.append(lightInfoSection("Related", [
-      { icon: "contacts", label: "Owner", value: task.id === "budget" ? "Maya Chen" : "Pucky" },
-      { icon: "folder", label: "Project", value: task.id === "slides" ? "Project Aurora" : "General" }
+      { icon: "contacts", label: "Owner", value: task.metadata?.owner || "Pucky" },
+      { icon: "folder", label: "Project", value: task.metadata?.project || "General" }
     ]));
+    page.append(lightHtmlDocument(task, "No generated task page yet."));
     return page;
   }
 
@@ -3587,10 +3835,23 @@
 
   function lightFeedPage() {
     const page = lightPage("Feed", { large: true });
+    const status = lightWorkspaceStatus("feed-items", "text", "No feed items yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    const items = workspaceItems("feed-items");
+    const todayItems = items.filter(item => dateKey(new Date(Number(item.event_at_ms || item.updated_at_ms || 0))) === todayDateKey());
+    const olderItems = items.filter(item => dateKey(new Date(Number(item.event_at_ms || item.updated_at_ms || 0))) !== todayDateKey());
     page.append(lightSectionTitle("Today"));
     const list = el("div", "light-list");
-    list.append(...LIGHT_FEED.slice(0, 3).map(lightFeedRow));
-    page.append(list, lightSectionTitle("Yesterday"), lightFeedRow(LIGHT_FEED[3]));
+    list.append(...(todayItems.length ? todayItems : items.slice(0, 3)).map(lightFeedRow));
+    page.append(list);
+    if (olderItems.length) {
+      const older = el("div", "light-list");
+      older.append(...olderItems.map(lightFeedRow));
+      page.append(lightSectionTitle("Older"), older);
+    }
     return page;
   }
 
@@ -3602,25 +3863,28 @@
         state.selectedFeedId = item.id;
         lightNavigate("feed-preview-detail", { from: "feed-preview" });
       });
-    row.append(lightSmallIcon(item.icon), lightTextStack(item.title, `${item.time}${DOT}${item.detail}`), el("span", "light-chevron", ">"));
+    row.append(lightSmallIcon(item.metadata?.icon || "text"), lightTextStack(item.title, `${workspaceTimestamp(item.event_at_ms || item.updated_at_ms, "Updated")}${DOT}${item.summary || item.metadata?.type || "Workspace"}`), el("span", "light-chevron", ">"));
     return row;
   }
 
   function lightFeedDetailPage() {
     const item = selectedFeedItem();
+    if (!item) {
+      return lightPage("Feed Item", { subtitle: "Feed item not found." });
+    }
     const page = lightPage("Feed Item");
     page.classList.add("light-document-page", "light-feed-document");
     const article = el("article", "light-doc-article");
     article.append(
-      lightDocumentEyebrow(item.detail, item.time),
+      lightDocumentEyebrow(item.metadata?.type || "Workspace feed", workspaceTimestamp(item.event_at_ms || item.updated_at_ms, "Updated")),
       el("h1", "", item.title),
-      el("p", "light-note-body", item.body)
+      el("p", "light-note-body", item.summary || "")
     );
     page.append(article);
-    page.append(lightInfoSection("Related", [
-      { icon: "note", label: "Note", value: item.id === "q4-note" ? "Q4 hiring plan" : "Open" },
-      { icon: "folder", label: "Project", value: item.id === "tom-migration" ? "Migration" : "Project Aurora" }
-    ]));
+    if (item.links && item.links.length) {
+      page.append(lightInfoSection("Related", item.links.map(link => ({ icon: "link", label: link.label || link.target_kind, value: `${link.target_kind}:${link.target_id}` }))));
+    }
+    page.append(lightHtmlDocument(item, "No generated feed page yet."));
     return page;
   }
 
@@ -3628,16 +3892,22 @@
     const page = lightPage("Projects", { large: true });
     const list = el("div", "light-list");
     page.append(lightPillButton("New project", () => lightNavigate("project-new", { from: "projects" })));
+    const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
     list.append(...allProjects().map(project => {
       const row = el("button", "light-card light-project-row");
       row.type = "button";
+      row.dataset.projectId = project.id;
       row.addEventListener("click", () => {
         state.selectedProjectId = project.id;
         lightNavigate("project-detail", { from: "projects" });
       });
       const chips = el("span", "light-project-chip-row");
-      project.chips.forEach(chip => chips.append(el("span", "light-project-chip", chip)));
-      row.append(lightSmallIcon("folder"), lightTextStack(project.title, `${project.lastActivity}${DOT}${project.detail}`), chips);
+      projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
+      row.append(lightSmallIcon("folder"), lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`), chips);
       return row;
     }));
     page.append(list);
@@ -3646,19 +3916,24 @@
 
   function lightProjectDetailPage() {
     const project = selectedProject();
+    if (!project) {
+      return lightPage("Project", { subtitle: "Project not found." });
+    }
     const page = lightPage(project.title);
-    page.append(lightDetailHero(project.title, `${project.lastActivity}${DOT}${project.detail}`, "folder"));
-    page.append(lightChipCloud(project.chips));
+    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`, "folder"));
+    page.append(lightChipCloud(projectChips(project)));
     const grid = el("div", "light-project-section-grid");
     [
-      ["Threads", "chat", project.threads],
-      ["Artifacts", "attachment", project.artifacts],
-      ["Notes", "note", project.notes],
-      ["Tasks", "checklist", project.tasks],
-      ["Meetings", "calendar", project.meetings],
-      ["People", "contacts", project.people]
+      ["Threads", "chat", projectThreads(project)],
+      ["Artifacts", "attachment", projectAssets(project)],
+      ["Notes", "note", projectLinked(project, "note")],
+      ["Tasks", "checklist", projectLinked(project, "task")],
+      ["Calendar", "calendar", projectLinked(project, "calendar_event")],
+      ["Feed", "text", projectLinked(project, "feed_item")],
+      ["People", "contacts", projectLinked(project, "contact")]
     ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
     page.append(grid);
+    page.append(lightHtmlDocument(project, "No generated project page yet."));
     return page;
   }
 
@@ -3679,24 +3954,22 @@
       option.append(lightSmallIcon(icon), lightTextStack(label, value));
       hints.append(option);
     });
-    const create = lightPillButton("Create project", () => {
+    const create = lightPillButton("Create project", async () => {
       const title = name.value.trim() || "New project";
-      const project = {
-        id: `local-${Date.now()}`,
+      const record = await upsertWorkspaceRecord("projects", {
+        id: `project-${Date.now()}`,
         title,
-        detail: "Local prototype folder for threads, artifacts, notes, tasks, meetings, and people.",
-        lastActivity: "Created just now",
-        chips: ["0 threads", "0 artifacts", "Draft"],
-        threads: ["Drop related chat threads here"],
-        artifacts: ["Generated pages and files will appear here"],
-        notes: ["Notes can be linked from the Notes app"],
-        tasks: ["Tasks can be linked from the Tasks app"],
-        meetings: ["Meetings can be attached from Calendar"],
-        people: ["Add collaborators from Contacts"]
-      };
-      state.localProjects.unshift(project);
-      state.selectedProjectId = project.id;
-      lightNavigate("project-detail", { from: "projects" });
+        summary: "Workspace project folder for threads, generated pages, links, tasks, and people.",
+        metadata: {
+          threads: ["Drop related chat threads here"],
+          assets: ["Generated pages and files will appear here"],
+          chips: ["1 thread", "Draft"]
+        }
+      }, { render: false });
+      if (record) {
+        state.selectedProjectId = record.id;
+        lightNavigate("project-detail", { from: "projects" });
+      }
     }, false);
     card.append(lightSmallIcon("folder"), lightTextStack("Project folder", "A lightweight rollup of chats, artifacts, notes, tasks, meetings, and people."), name, hints, create);
     page.append(card);
@@ -3707,7 +3980,8 @@
     const section = el("section", "light-card light-project-section");
     section.append(lightSmallIcon(icon), el("h3", "", title));
     const list = el("div", "light-project-section-items");
-    items.forEach(item => list.append(el("span", "", item)));
+    const values = Array.isArray(items) && items.length ? items : ["Nothing linked yet"];
+    values.forEach(item => list.append(el("span", "", item)));
     section.append(list);
     return section;
   }
@@ -3783,6 +4057,7 @@
     persistNavState();
     render();
     void syncVoiceThreadScope({ reason: "light_app_click", render: true });
+    void loadWorkspaceForRoute(state.route, { render: true, force: true });
     if (state.route === "links") {
       linksDebugStartSession("route", { reason: "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
@@ -3865,18 +4140,23 @@
   }
 
   function lightContactCopy(contact) {
-    return lightTextStack(contact.name, `${contact.channel}${DOT}${contact.time}${DOT}${contact.note}`);
+    const meta = contact.metadata || {};
+    const activity = Array.isArray(meta.activity) && meta.activity.length ? meta.activity[0] : "";
+    return lightTextStack(contact.title, `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
   }
 
   function lightAvatar(contact, size = "") {
-    const hasPhoto = Boolean(contact.photo);
-    const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : contact.avatar);
-    avatar.setAttribute("aria-label", contact.name);
+    const meta = contact.metadata || {};
+    const photo = String(meta.photo || "");
+    const initials = String(meta.avatar || contact.title || "?").slice(0, 2).toUpperCase();
+    const hasPhoto = Boolean(photo);
+    const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : initials);
+    avatar.setAttribute("aria-label", contact.title);
     avatar.dataset.contactId = contact.id;
     if (hasPhoto) {
-      avatar.dataset.photo = contact.photo;
+      avatar.dataset.photo = photo;
       const img = document.createElement("img");
-      img.src = contact.photo;
+      img.src = photo;
       img.alt = "";
       img.decoding = "async";
       avatar.append(img);
@@ -3941,7 +4221,7 @@
   }
 
   function lightAttendeeRow(name) {
-    const contact = LIGHT_CONTACTS.find(item => item.name === name);
+    const contact = workspaceItems("contacts").find(item => item.title === name || item.metadata?.display_name === name);
     const row = el(contact ? "button" : "div", contact ? "light-info-row light-attendee-row is-clickable" : "light-info-row light-attendee-row is-external");
     if (contact) {
       row.type = "button";
@@ -3950,7 +4230,7 @@
         lightNavigate("contact-detail", { from: "meeting-detail" });
       });
     }
-    row.append(lightSmallIcon(contact ? "contacts" : "apps"), lightTextStack(name, contact ? contact.relation : `External${DOT}Vendor`), contact ? el("span", "light-chevron", ">") : el("span", ""));
+    row.append(lightSmallIcon(contact ? "contacts" : "apps"), lightTextStack(name, contact ? contact.summary : `External${DOT}Vendor`), contact ? el("span", "light-chevron", ">") : el("span", ""));
     return row;
   }
 
@@ -3978,8 +4258,45 @@
     return `${value} ${suffix}`;
   }
 
+  function calendarEventHour(event) {
+    const start = Number(event?.start_at_ms || 0);
+    if (!Number.isFinite(start) || start <= 0) {
+      return 9;
+    }
+    return new Date(start).getHours();
+  }
+
+  function calendarEventTimeRange(event) {
+    const start = Number(event?.start_at_ms || 0);
+    const end = Number(event?.end_at_ms || 0);
+    if (!Number.isFinite(start) || start <= 0) {
+      return "Any time";
+    }
+    const startText = new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (!Number.isFinite(end) || end <= start) {
+      return startText;
+    }
+    const endText = new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `${startText} - ${endText}`;
+  }
+
+  function calendarEventColor(event, index = 0) {
+    const type = String(event?.metadata?.type || event?.status || "").toLowerCase();
+    if (type.includes("deadline") || type.includes("risk")) {
+      return "red";
+    }
+    if (type.includes("personal") || type.includes("focus")) {
+      return "blue";
+    }
+    return ["red", "blue", "green"][Math.abs(index) % 3] || "blue";
+  }
+
   function calendarDayTitle() {
-    return `Today, June ${state.selectedCalendarDay}${ordinalSuffix(state.selectedCalendarDay)}`;
+    const date = new Date(`${selectedCalendarDateKey()}T12:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      return "Calendar";
+    }
+    return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
   }
 
   function ordinalSuffix(day) {
@@ -4006,40 +4323,132 @@
   }
 
   function filteredTasks(group) {
-    return LIGHT_TASKS.filter(task => {
+    return workspaceItems("tasks").filter(task => {
+      const taskGroup = String(task.derived_group || "do");
       const byFilter = state.taskFilter === "all"
-        || (state.taskFilter === "due" && (task.group === "do" || task.group === "soon"))
-        || task.group === state.taskFilter;
-      return task.group === group && byFilter;
+        || (state.taskFilter === "due" && (taskGroup === "do" || taskGroup === "soon"))
+        || taskGroup === state.taskFilter;
+      return taskGroup === group && byFilter;
     });
   }
 
   function selectedContact() {
-    return LIGHT_CONTACTS.find(contact => contact.id === state.selectedContactId) || LIGHT_CONTACTS[0];
+    return selectedWorkspaceRecord("contacts", state.selectedContactId);
   }
 
   function selectedMeeting() {
-    return LIGHT_MEETINGS.find(meeting => meeting.id === state.selectedMeetingId) || LIGHT_MEETINGS[0];
+    return selectedWorkspaceRecord("calendar-events", state.selectedMeetingId);
   }
 
   function selectedNote() {
-    return LIGHT_NOTES.find(note => note.id === state.selectedNoteId) || LIGHT_NOTES[0];
+    return selectedWorkspaceRecord("notes", state.selectedNoteId);
   }
 
   function selectedTask() {
-    return LIGHT_TASKS.find(task => task.id === state.selectedTaskId) || LIGHT_TASKS[0];
+    return selectedWorkspaceRecord("tasks", state.selectedTaskId);
   }
 
   function selectedProject() {
-    return allProjects().find(project => project.id === state.selectedProjectId) || LIGHT_PROJECTS[0];
+    return selectedWorkspaceRecord("projects", state.selectedProjectId);
   }
 
   function allProjects() {
-    return [...state.localProjects, ...LIGHT_PROJECTS];
+    return workspaceItems("projects");
+  }
+
+  function projectChips(project) {
+    const meta = project?.metadata || {};
+    if (Array.isArray(meta.chips) && meta.chips.length) {
+      return meta.chips.map(String);
+    }
+    const threads = projectThreads(project).filter(item => item !== "Nothing linked yet").length;
+    const links = Array.isArray(project?.links) ? project.links.length : 0;
+    return [`${threads} thread${threads === 1 ? "" : "s"}`, `${links} link${links === 1 ? "" : "s"}`];
+  }
+
+  function projectThreads(project) {
+    const threads = project?.metadata?.threads;
+    return Array.isArray(threads) ? threads.map(String).filter(Boolean) : [];
+  }
+
+  function projectAssets(project) {
+    const assets = project?.metadata?.assets;
+    return Array.isArray(assets) ? assets.map(String).filter(Boolean) : [];
+  }
+
+  function projectLinked(project, kind) {
+    const links = Array.isArray(project?.links) ? project.links : [];
+    return links
+      .filter(link => String(link.source_kind) === "project" && String(link.target_kind) === kind)
+      .map(link => String(link.label || link.target_id || kind));
   }
 
   function selectedFeedItem() {
-    return LIGHT_FEED.find(item => item.id === state.selectedFeedId) || LIGHT_FEED[0];
+    return workspaceItems("feed-items").find(item => item.id === state.selectedFeedId) || workspaceItems("feed-items")[0] || null;
+  }
+
+  function selectedWorkspaceRecord(collection, id, fallback = null) {
+    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || workspaceItems(collection)[0] || fallback;
+  }
+
+  function selectedCalendarDateKey() {
+    return state.selectedCalendarDate || todayDateKey();
+  }
+
+  function todayDateKey(offsetDays = 0) {
+    const date = new Date();
+    date.setDate(date.getDate() + Number(offsetDays || 0));
+    return dateKey(date);
+  }
+
+  function dateKey(date) {
+    const value = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(value.getTime())) {
+      return "";
+    }
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+
+  function workspaceTimestamp(ms, fallback = "") {
+    const value = Number(ms || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      return fallback;
+    }
+    return formatSmartTimestamp(new Date(value));
+  }
+
+  function workspaceHtml(record) {
+    if (!record) {
+      return "";
+    }
+    const direct = String(record.html || "");
+    if (direct) {
+      return direct;
+    }
+    const assetId = String(record.html_asset_id || "");
+    if (!assetId) {
+      return "";
+    }
+    const cached = state.workspace.assets[assetId];
+    if (cached && String(cached.text || "")) {
+      return String(cached.text || "");
+    }
+    void loadWorkspaceAsset(assetId, { render: true });
+    return "";
+  }
+
+  function lightHtmlDocument(record, fallbackText = "Generated page is loading.") {
+    const html = workspaceHtml(record);
+    if (!html) {
+      return lightCopySection("Generated page", fallbackText);
+    }
+    const frame = el("iframe", "light-html-frame");
+    frame.setAttribute("sandbox", "");
+    frame.setAttribute("title", String(record?.title || "Generated page"));
+    frame.srcdoc = html;
+    const wrap = el("section", "light-card light-html-card");
+    wrap.append(frame);
+    return wrap;
   }
 
   function filteredFeedEmptyView() {
@@ -10808,6 +11217,12 @@
     }
   }, MEETING_STATUS_POLL_MS);
 
+  setInterval(() => {
+    if (document.visibilityState === "visible" && (state.route === "tasks" || state.route === "task-detail")) {
+      void loadWorkspaceCollection("tasks", { render: true, force: true });
+    }
+  }, WORKSPACE_TASK_REFRESH_MS);
+
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
@@ -10833,7 +11248,9 @@
     }
     if (state.route === "settings") {
       loadSettingsState({ render: true });
+      return;
     }
+    void loadWorkspaceForRoute(state.route, { render: true, force: true });
   });
 
   window.PuckyHandleAndroidBack = handleAndroidBack;
@@ -10853,6 +11270,7 @@
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCardIconRegistry({ render: false });
   loadCards();
+  void loadWorkspaceForRoute(state.route, { render: true, force: true });
   if (state.route === "links") {
     linksDebugStartSession("route", { reason: "boot_route" });
     linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");

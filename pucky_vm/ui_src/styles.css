@@ -4407,6 +4407,23 @@ button {
   background: color-mix(in srgb, #226fe8 16%, var(--home-shell-card));
 }
 
+.light-html-card {
+  padding: 0;
+  min-height: min(62vh, 620px);
+}
+
+.light-html-frame {
+  width: 100%;
+  min-height: min(62vh, 620px);
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+.light-task-toggle {
+  justify-self: start;
+}
+
 .light-empty-state {
   min-height: 250px;
   border-radius: 24px;

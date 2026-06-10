@@ -38,6 +38,7 @@ from .providers import DeepgramSTT, KokoroTTS
 from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
+from .workspace_store import WORKSPACE_COLLECTIONS, WorkspaceStore
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
@@ -523,6 +524,7 @@ class Config:
     feed_db_path: str
     codex_base_instructions: str | None = None
     action_ledger_path: str = ""
+    workspace_db_path: str = ""
     turn_status_ttl_seconds: float = 900.0
     codex_home: str | None = None
     codex_sandbox: str = "danger-full-access"
@@ -571,6 +573,10 @@ class Config:
             action_ledger_path=os.environ.get(
                 "PUCKY_ACTION_LEDGER_PATH",
                 str((Path.cwd() / "pucky_action_ledger.sqlite3").resolve()),
+            ),
+            workspace_db_path=os.environ.get(
+                "PUCKY_WORKSPACE_DB_PATH",
+                str((Path.cwd() / "pucky_workspace.sqlite3").resolve()),
             ),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
@@ -849,6 +855,8 @@ class PuckyVoiceService:
         self.codex = codex or self._build_codex_client(meeting=False)
         self.meeting_codex = meeting_codex or self._build_codex_client(meeting=True)
         self.feed = FeedStore(config.feed_db_path)
+        workspace_path = config.workspace_db_path or str(Path(config.feed_db_path).with_name("pucky_workspace.sqlite3"))
+        self.workspace = WorkspaceStore(workspace_path)
         self.composio = composio or ComposioClient(
             config.composio_api_key,
             config.composio_base_url,
@@ -906,6 +914,8 @@ class PuckyVoiceService:
             "thread": "per_turn",
             "feed_store": "ready",
             "feed_items_count": self.feed.count_items(),
+            "workspace_store": "ready",
+            "workspace_items_count": self.workspace.count_items(),
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
@@ -5807,6 +5817,9 @@ def make_handler(service: PuckyVoiceService):
                     return
                 self._json(HTTPStatus.OK, status)
                 return
+            if path.startswith("/api/workspace/"):
+                self._handle_workspace_get(parsed)
+                return
             if path == "/ui/pucky/latest/manifest.json":
                 self._json(HTTPStatus.OK, latest_ui_manifest())
                 return
@@ -5948,6 +5961,9 @@ def make_handler(service: PuckyVoiceService):
                     return
                 self._json(HTTPStatus.OK, result)
                 return
+            if path.startswith("/api/workspace/"):
+                self._handle_workspace_write(parsed, "POST")
+                return
             if path == "/api/turn/text":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -6026,6 +6042,132 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "turn_failed", "detail": str(exc)})
                 return
             self._json(HTTPStatus.OK, result)
+
+        def do_PATCH(self) -> None:
+            parsed = urlsplit(self.path)
+            if parsed.path.startswith("/api/workspace/"):
+                self._handle_workspace_write(parsed, "PATCH")
+                return
+            self.send_error(int(HTTPStatus.NOT_FOUND))
+
+        def do_DELETE(self) -> None:
+            parsed = urlsplit(self.path)
+            if parsed.path.startswith("/api/workspace/"):
+                self._handle_workspace_write(parsed, "DELETE")
+                return
+            self.send_error(int(HTTPStatus.NOT_FOUND))
+
+        def _handle_workspace_get(self, parsed) -> None:
+            parts = self._workspace_parts(parsed.path)
+            query = parse_qs(parsed.query)
+            if not parts:
+                self._json(HTTPStatus.OK, {
+                    "schema": "pucky.workspace.catalog.v1",
+                    "collections": sorted(WORKSPACE_COLLECTIONS.keys()),
+                })
+                return
+            if parts[0] == "assets" and len(parts) == 2:
+                asset = service.workspace.get_asset(parts[1])
+                if asset is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "asset_not_found"})
+                    return
+                self._json(HTTPStatus.OK, asset)
+                return
+            if parts[0] not in WORKSPACE_COLLECTIONS:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_collection_not_found"})
+                return
+            try:
+                if len(parts) == 1:
+                    payload = service.workspace.list_records(
+                        parts[0],
+                        include_archived=_truthy_query(query.get("include_archived", ["0"])[0]),
+                        include_deleted=_truthy_query(query.get("include_deleted", ["0"])[0]),
+                        date=query.get("date", [""])[0],
+                        limit=int(query.get("limit", ["200"])[0]),
+                    )
+                    self._json(HTTPStatus.OK, payload)
+                    return
+                if len(parts) == 2:
+                    record = service.workspace.get_record(
+                        parts[0],
+                        parts[1],
+                        include_deleted=_truthy_query(query.get("include_deleted", ["0"])[0]),
+                    )
+                    if record is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_record_not_found"})
+                        return
+                    self._json(HTTPStatus.OK, record)
+                    return
+            except ValueError as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "workspace_read_failed", "detail": str(exc)})
+                return
+            self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_route_not_found"})
+
+        def _handle_workspace_write(self, parsed, method: str) -> None:
+            if not self._is_authorized():
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            parts = self._workspace_parts(parsed.path)
+            if not parts:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_route_not_found"})
+                return
+            try:
+                payload = {} if method == "DELETE" else self._read_json_payload(1024 * 1024)
+                if parts[0] == "assets" and method == "POST":
+                    result = service.workspace.create_asset(payload)
+                    self._json(HTTPStatus.OK, result)
+                    return
+                if parts[0] == "links" and method == "POST":
+                    result = service.workspace.upsert_link(payload)
+                    self._json(HTTPStatus.OK, result)
+                    return
+                if parts[0] == "links" and method == "DELETE" and len(parts) == 2:
+                    deleted = service.workspace.delete_link(parts[1])
+                    self._json(HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND, {"ok": deleted})
+                    return
+                if parts[0] not in WORKSPACE_COLLECTIONS:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_collection_not_found"})
+                    return
+                if method == "POST" and len(parts) == 1:
+                    result = service.workspace.upsert_record(parts[0], payload)
+                    self._json(HTTPStatus.OK, result)
+                    return
+                if method == "PATCH" and len(parts) == 2:
+                    result = service.workspace.patch_record(parts[0], parts[1], payload)
+                    if result is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_record_not_found"})
+                        return
+                    self._json(HTTPStatus.OK, result)
+                    return
+                if method == "DELETE" and len(parts) == 2:
+                    result = service.workspace.delete_record(parts[0], parts[1])
+                    if result is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_record_not_found"})
+                        return
+                    self._json(HTTPStatus.OK, result)
+                    return
+            except ValueError as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "workspace_write_failed", "detail": str(exc)})
+                return
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "unsupported_workspace_write"})
+
+        def _read_json_payload(self, limit: int) -> dict[str, object]:
+            payload = json.loads(self._read_body(limit).decode("utf-8") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("workspace_payload_must_be_object")
+            return payload
+
+        def _workspace_parts(self, path: str) -> list[str]:
+            suffix = str(path or "").removeprefix("/api/workspace/").strip("/")
+            if not suffix:
+                return []
+            return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
 
         def log_message(self, fmt: str, *args: object) -> None:
             print(f"{self.address_string()} - {fmt % args}", flush=True)

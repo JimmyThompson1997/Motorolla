@@ -298,7 +298,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "selectedTaskId:" in app
     assert "selectedProjectId:" in app
     assert "selectedFeedId:" in app
-    assert "selectedCalendarDay:" in app
+    assert "selectedCalendarDate:" in app
     assert "taskFilter:" in app
     assert "function resolveInitialTheme()" in app
     assert "function syncThemeQueryParam(theme)" in app
@@ -634,6 +634,133 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert ".app-shell[data-theme=\"light\"] .timestamp-row" not in styles
     assert "lightLinksPage" not in app
     assert "function loadLightLinks" not in app
+
+
+def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    server = (ROOT / "server.py").read_text(encoding="utf-8")
+    store = (ROOT / "workspace_store.py").read_text(encoding="utf-8")
+
+    assert "class WorkspaceStore" in store
+    assert '"notes": "note"' in store
+    assert '"tasks": "task"' in store
+    assert '"calendar-events": "calendar_event"' in store
+    assert '"feed-items": "feed_item"' in store
+    assert '"projects": "project"' in store
+    assert '"contacts": "contact"' in store
+    assert "def derive_task_group(" in store
+    assert 'return "overdue"' in store
+    assert 'return "soon"' in store
+    assert "default_workspace_records" in store
+    assert '"Design critique overlap"' in store
+    assert '"calendar_change"' in store
+    assert '"note_update"' in store
+    assert '"threads": ["PRD review thread", "Budget approval DM"]' in store
+    assert '"threads": ["Migration update", "Tom objections", "Slack launch notes"]' in store
+    assert '"target_kind": "calendar_event"' in store
+    assert '"target_kind": "feed_item"' in store
+
+    assert "WorkspaceStore" in server
+    assert "workspace_db_path" in server
+    assert "PUCKY_WORKSPACE_DB_PATH" in server
+    assert 'path.startswith("/api/workspace/")' in server
+    assert "def do_PATCH" in server
+    assert "def do_DELETE" in server
+    assert "service.workspace.list_records" in server
+    assert "service.workspace.upsert_record" in server
+    assert "service.workspace.patch_record" in server
+    assert "service.workspace.create_asset" in server
+    assert "service.workspace.upsert_link" in server
+    assert "if not self._is_authorized()" in server
+
+    assert "const WORKSPACE_ROUTE_COLLECTIONS = {" in app
+    for route, collection in [
+        ("notes", "notes"),
+        ("note-detail", "notes"),
+        ("tasks", "tasks"),
+        ("task-detail", "tasks"),
+        ("calendar", "calendar-events"),
+        ("meeting-detail", "calendar-events"),
+        ("feed-preview", "feed-items"),
+        ("feed-preview-detail", "feed-items"),
+        ("projects", "projects"),
+        ("project-detail", "projects"),
+        ("contacts", "contacts"),
+        ("contact-detail", "contacts"),
+    ]:
+        assert f'{route}: "{collection}"' in app or f'"{route}": "{collection}"' in app
+
+    assert "async function workspaceApiRequest" in app
+    assert "async function loadWorkspaceCollection" in app
+    assert "async function loadWorkspaceForRoute" in app
+    assert "async function upsertWorkspaceRecord" in app
+    assert "async function patchWorkspaceRecord" in app
+    assert "async function loadWorkspaceAsset" in app
+    assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in app
+    assert "WORKSPACE_TASK_REFRESH_MS" in app
+    assert "loadWorkspaceCollection(\"tasks\", { render: true, force: true })" in app
+
+    assert "const LIGHT_NOTES" not in app
+    assert "const LIGHT_TASKS" not in app
+    assert "const LIGHT_EVENTS" not in app
+    assert "const LIGHT_FEED" not in app
+    assert "const LIGHT_PROJECTS" not in app
+    assert "const LIGHT_CONTACTS" not in app
+
+    light_notes = function_block(app, "lightNotesPage")
+    light_tasks = function_block(app, "lightTasksPage")
+    light_calendar = function_block(app, "lightCalendarPage")
+    light_date_picker = function_block(app, "lightDatePicker")
+    light_timeline = function_block(app, "lightTimeline")
+    light_feed = function_block(app, "lightFeedPage")
+    light_projects = function_block(app, "lightProjectsPage")
+    light_project_detail = function_block(app, "lightProjectDetailPage")
+    light_contacts = function_block(app, "lightContactsPage")
+    filtered_tasks = function_block(app, "filteredTasks")
+    all_projects = function_block(app, "allProjects")
+    note_detail = function_block(app, "lightNoteDetailPage")
+    task_detail = function_block(app, "lightTaskDetailPage")
+    event_detail = function_block(app, "lightMeetingDetailPage")
+    feed_detail = function_block(app, "lightFeedDetailPage")
+    contact_detail = function_block(app, "lightContactDetailPage")
+    html_document = function_block(app, "lightHtmlDocument")
+
+    assert 'workspaceItems("notes")' in light_notes
+    assert 'lightWorkspaceStatus("notes"' in light_notes
+    assert 'lightHtmlDocument(note' in note_detail
+    assert 'filteredTasks(group)' in light_tasks
+    assert 'workspaceItems("tasks")' in filtered_tasks
+    assert '"DO SOON"' in light_tasks
+    assert 'task.derived_group' in app
+    assert 'patchWorkspaceRecord("tasks"' in app
+    assert 'lightHtmlDocument(task' in task_detail
+    assert 'selectedCalendarDateKey()' in light_date_picker
+    assert 'lightWorkspaceStatus("calendar-events"' in light_calendar
+    assert 'workspaceItems("calendar-events")' in light_timeline
+    assert 'calendarEventHour(event)' in light_timeline
+    assert "events.length > 1" in light_timeline
+    assert "block.style.top" in light_timeline
+    assert 'lightHtmlDocument(meeting' in event_detail
+    assert 'workspaceItems("feed-items")' in light_feed
+    assert 'metadata?.type' in feed_detail
+    assert 'lightHtmlDocument(item' in feed_detail
+    assert 'allProjects().map(project' in light_projects
+    assert 'workspaceItems("projects")' in all_projects
+    assert 'projectThreads(project)' in light_project_detail
+    assert 'projectLinked(project, "task")' in light_project_detail
+    assert 'projectLinked(project, "calendar_event")' in light_project_detail
+    assert 'projectLinked(project, "feed_item")' in light_project_detail
+    assert 'lightHtmlDocument(project' in light_project_detail
+    assert 'upsertWorkspaceRecord("projects"' in app
+    assert 'workspaceItems("contacts")' in light_contacts
+    assert 'upsertWorkspaceRecord("contacts"' in app
+    assert 'lightHtmlDocument(contact' in contact_detail
+
+    assert 'frame.srcdoc = html;' in html_document
+    assert 'loadWorkspaceAsset(assetId, { render: true })' in app
+    assert ".light-html-card" in styles
+    assert ".light-html-frame" in styles
 
 
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
