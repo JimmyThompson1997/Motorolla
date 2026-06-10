@@ -1434,6 +1434,7 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "async function loadWakeStatus(options = {})" in app
     assert "async function loadUiSurfaceStatus(options = {})" in app
     assert "function ensureSettingsSurfaceCurrent()" in app
+    assert 'if (state.homeShellActive) {' in app
     assert 'if (state.route === "settings") {' in app
     assert "feed.replaceChildren(settingsPageView());" in app
     assert '`${current?.label || "Page"} will live here.`' in app

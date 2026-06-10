@@ -118,7 +118,7 @@ async function waitForCanonicalDirect(page, { theme, route, readySelector, timeo
 async function clickTile(page, label, timeoutMs) {
   const tile = page.locator(`.light-app-tile[data-app-label="${label}"]`);
   await tile.first().waitFor({ state: "visible", timeout: timeoutMs });
-  await tile.first().click();
+  await tile.first().evaluate((node) => node.click());
 }
 
 async function captureShellState(page) {
@@ -165,6 +165,18 @@ async function openFirstMeetingDetail(page, timeoutMs) {
   return false;
 }
 
+async function backToHome(page, theme, timeoutMs) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const alreadyHome = await page.evaluate(() => Boolean(document.querySelector(".light-shell[data-light-route=\"home\"] .light-app-grid")));
+    if (alreadyHome) {
+      return;
+    }
+    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+    await page.waitForTimeout(250);
+  }
+  await waitForHome(page, theme, timeoutMs);
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -202,8 +214,7 @@ async function main() {
     summary.inbox = await captureShellState(page);
     summary.inbox.detail_opened = await openFirstFeedDetail(page, config.timeoutMs);
     summary.screenshots.inbox = await saveScreenshot(page, config.reportDir, "03-inbox-home-shell");
-    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-    await waitForHome(page, "light", config.timeoutMs);
+    await backToHome(page, "light", config.timeoutMs);
 
     await clickTile(page, "Connect", config.timeoutMs);
     await waitForCanonicalHomeShell(page, { route: "links", readySelector: ".light-shell[data-light-route=\"links\"] .links-page", timeoutMs: config.timeoutMs });
@@ -213,38 +224,40 @@ async function main() {
       await search.fill("g");
     }
     summary.screenshots.connect = await saveScreenshot(page, config.reportDir, "04-connect-home-shell");
-    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-    await waitForHome(page, "light", config.timeoutMs);
+    await backToHome(page, "light", config.timeoutMs);
 
     await clickTile(page, "Meetings", config.timeoutMs);
     await waitForCanonicalHomeShell(page, { route: "meetings", readySelector: ".light-shell[data-light-route=\"meetings\"] .meetings-page", timeoutMs: config.timeoutMs });
     summary.meetings = await captureShellState(page);
     summary.meetings.detail_opened = await openFirstMeetingDetail(page, config.timeoutMs);
     summary.screenshots.meetings = await saveScreenshot(page, config.reportDir, "05-meetings-home-shell");
-    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-    await waitForHome(page, "light", config.timeoutMs);
+    await backToHome(page, "light", config.timeoutMs);
 
-    await clickTile(page, "Settings", config.timeoutMs);
-    await waitForCanonicalHomeShell(page, { route: "settings", readySelector: ".light-shell[data-light-route=\"settings\"] .settings-page", timeoutMs: config.timeoutMs });
-    summary.settings = await captureShellState(page);
-    summary.screenshots.settings = await saveScreenshot(page, config.reportDir, "06-settings-home-shell");
-    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+    await goto(page, buildPageUrl(config.baseUrl, { theme: "light" }), config.timeoutMs);
     await waitForHome(page, "light", config.timeoutMs);
+    await clickTile(page, "Settings", config.timeoutMs);
+    await page.waitForTimeout(1500);
+    summary.settings_probe = await captureShellState(page);
+    summary.screenshots.settings_probe = await saveScreenshot(page, config.reportDir, "06-settings-probe");
+    await waitForCanonicalHomeShell(page, { route: "settings", readySelector: ".light-shell[data-light-route=\"settings\"] .light-settings-surface", timeoutMs: config.timeoutMs });
+    summary.settings = await captureShellState(page);
+    summary.screenshots.settings = await saveScreenshot(page, config.reportDir, "07-settings-home-shell");
+    await backToHome(page, "light", config.timeoutMs);
 
     await clickTile(page, "Tasks", config.timeoutMs);
     await page.waitForSelector(".light-shell[data-light-route=\"tasks\"] .light-tasks-page", { timeout: config.timeoutMs });
     summary.tasks = await captureShellState(page);
-    summary.screenshots.tasks = await saveScreenshot(page, config.reportDir, "07-tasks-home-shell");
+    summary.screenshots.tasks = await saveScreenshot(page, config.reportDir, "08-tasks-home-shell");
 
     await goto(page, buildPageUrl(config.baseUrl, { theme: "light", route: "feed" }), config.timeoutMs);
     await waitForCanonicalDirect(page, { theme: "light", route: "feed", readySelector: "#feed article.card, #feed .empty", timeoutMs: config.timeoutMs });
     summary.direct_feed = await captureShellState(page);
-    summary.screenshots.direct_feed = await saveScreenshot(page, config.reportDir, "08-direct-feed-canonical");
+    summary.screenshots.direct_feed = await saveScreenshot(page, config.reportDir, "09-direct-feed-canonical");
 
     await goto(page, buildPageUrl(config.baseUrl, { theme: "light", route: "links" }), config.timeoutMs);
     await waitForCanonicalDirect(page, { theme: "light", route: "links", readySelector: ".links-page", timeoutMs: config.timeoutMs });
     summary.direct_links = await captureShellState(page);
-    summary.screenshots.direct_links = await saveScreenshot(page, config.reportDir, "09-direct-links-canonical");
+    summary.screenshots.direct_links = await saveScreenshot(page, config.reportDir, "10-direct-links-canonical");
 
     assert(summary.dark_home.chrome_mode === "home-shell", "Dark default entry did not open the home shell");
     assert(summary.light_home.chrome_mode === "home-shell", "Light default entry did not open the home shell");

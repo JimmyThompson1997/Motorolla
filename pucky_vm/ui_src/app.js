@@ -2006,6 +2006,14 @@
     if (state.route !== "settings") {
       return false;
     }
+    if (state.homeShellActive) {
+      try {
+        sessionStorage.removeItem(SETTINGS_SURFACE_RELOAD_KEY);
+      } catch (_) {
+        // Session storage is a best-effort guardrail.
+      }
+      return false;
+    }
     const sourceKind = String(state.uiSurface.source_kind || "");
     const entrypointUrl = String(state.uiSurface.entrypoint_url || "");
     if (sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
