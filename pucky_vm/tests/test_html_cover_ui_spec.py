@@ -448,6 +448,10 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     light_navigate = function_block(app, "lightNavigate")
     light_tasks = function_block(app, "lightTasksPage")
     light_task_sections = function_block(app, "lightTaskSectionTitle")
+    light_task_counts = function_block(app, "lightTaskCounts")
+    light_task_count_line = function_block(app, "lightTaskCountLine")
+    light_task_filters = function_block(app, "lightTaskFilters")
+    filtered_tasks = function_block(app, "filteredTasks")
     light_back = function_block(app, "lightBack")
     filtered_feed_cards = function_block(app, "filteredFeedCards")
     desired_thread_scope = function_block(app, "desiredThreadScope")
@@ -571,10 +575,16 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
 
     assert '"DUE SOON"' in light_tasks
+    assert 'counts.dueSoon' in light_task_counts
+    assert '"light-task-count due-soon"' in light_task_count_line
+    assert '`${counts.dueSoon} due soon`' in light_task_count_line
     assert 'lightSectionTitle("DO")' in light_task_sections
     assert 'lightSectionTitle("DUE SOON")' in light_task_sections
     assert 'lightSectionTitle("OVERDUE")' in light_task_sections
     assert 'lightSectionTitle("DONE")' in light_task_sections
+    assert '["soon", "Due Soon"]' in light_task_filters
+    assert 'state.taskFilter === key' in light_task_filters
+    assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
     assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
