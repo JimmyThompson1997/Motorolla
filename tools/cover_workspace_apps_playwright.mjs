@@ -53,10 +53,13 @@ function dayAt(offsetDays, hour, minute = 0) {
   return date.getTime();
 }
 
-function pageUrl(baseUrl, theme) {
+function pageUrl(baseUrl, theme, apiToken = "") {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
+  if (String(apiToken || "").trim()) {
+    url.searchParams.set("api_token", String(apiToken || "").trim());
+  }
   return url.toString();
 }
 
@@ -843,7 +846,7 @@ async function proveContacts(page, config, seed, theme, screenshots) {
 
 async function runTheme(page, config, seed, theme, summary) {
   const screenshots = {};
-  await page.goto(pageUrl(config.baseUrl, theme), { waitUntil: "commit", timeout: config.timeoutMs });
+  await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
   await proveNotes(page, config, seed, theme, screenshots);

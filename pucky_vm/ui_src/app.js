@@ -5,6 +5,7 @@
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
+  const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -2018,7 +2019,12 @@
   }
 
   async function ensureLinksApiConfig() {
-    if (state.links.apiBaseUrl || !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+    if (state.links.apiBaseUrl) {
+      return;
+    }
+    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+      state.links.apiToken = resolveBrowserApiToken();
       return;
     }
     try {
@@ -10086,6 +10092,20 @@
       return normalizeTheme(localStorage.getItem(THEME_STATE_KEY)) || "dark";
     } catch (_) {
       return "dark";
+    }
+  }
+
+  function resolveBrowserApiToken() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryToken = String(params.get("api_token") || "").trim();
+      if (queryToken) {
+        localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, queryToken);
+        return queryToken;
+      }
+      return String(localStorage.getItem(BROWSER_API_TOKEN_STATE_KEY) || "").trim();
+    } catch (_) {
+      return "";
     }
   }
 

@@ -727,6 +727,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "async function upsertWorkspaceRecord" in app
     assert "async function patchWorkspaceRecord" in app
     assert "async function loadWorkspaceAsset" in app
+    assert 'const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";' in app
+    assert "function resolveBrowserApiToken()" in app
+    assert 'state.links.apiToken = resolveBrowserApiToken();' in app
+    assert 'const queryToken = String(params.get("api_token") || "").trim();' in app
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in app
     assert "WORKSPACE_TASK_REFRESH_MS" in app
     assert "loadWorkspaceCollection(\"tasks\", { render: true, force: true })" in app
