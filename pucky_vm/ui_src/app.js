@@ -4175,7 +4175,12 @@
 
   function lightReminderRow(reminder) {
     const group = reminderGroup(reminder);
-    const row = el("button", `light-card light-graph-row light-reminder-row ${group || ""} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
+    const row = el("button", `light-card light-reminder-row ${group || ""} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
+    const copy = el("span", "light-text-stack");
+    copy.append(el("strong", "", reminder.title || "Untitled reminder"));
+    if (String(reminder.summary || "").trim()) {
+      copy.append(el("span", "", reminder.summary));
+    }
     row.type = "button";
     row.dataset.recordId = reminder.id;
     row.dataset.reminderId = reminder.id;
@@ -4185,9 +4190,8 @@
     });
     row.append(
       lightSmallIcon("bell"),
-      lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`),
-      graphObjectChips(reminder),
-      el("span", "light-chevron", ">")
+      copy,
+      el("span", "light-reminder-time", reminderDueLabel(reminder))
     );
     return row;
   }

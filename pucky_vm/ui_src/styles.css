@@ -3789,6 +3789,37 @@ button {
   text-decoration-thickness: 1px;
 }
 
+.light-reminder-row {
+  min-height: 74px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.light-reminder-row .light-text-stack {
+  gap: 4px;
+}
+
+.light-reminder-row .light-text-stack span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.light-reminder-time {
+  color: var(--home-shell-text-muted);
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 700;
+  white-space: nowrap;
+  align-self: start;
+  padding-top: 2px;
+}
+
 .light-graph-document .light-info-section {
   margin-top: 2px;
 }

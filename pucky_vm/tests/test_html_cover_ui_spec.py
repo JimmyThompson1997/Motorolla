@@ -817,6 +817,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_meeting_notes = function_block(app, "lightMeetingNotesPage")
     meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
     light_reminders = function_block(app, "lightRemindersPage")
+    reminder_row = function_block(app, "lightReminderRow")
     reminder_detail = function_block(app, "lightReminderDetailPage")
     graph_detail = function_block(app, "lightGraphDetailPage")
     light_feed = function_block(app, "lightFeedPage")
@@ -891,6 +892,11 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightSectionTitle("Done")' in light_reminders
     assert '"Due soon"' not in light_reminders
     assert '"Later"' not in light_reminders
+    assert 'const row = el("button", `light-card light-reminder-row ${group || ""}' in reminder_row
+    assert 'graphObjectChips(reminder)' not in reminder_row
+    assert 'lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`)' not in reminder_row
+    assert 'el("span", "light-reminder-time", reminderDueLabel(reminder))' in reminder_row
+    assert 'copy.append(el("span", "", reminder.summary));' in reminder_row
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
     assert 'reminderDetailRows(reminder)' in reminder_detail
@@ -902,6 +908,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'allProjects().map(project' in light_projects
     assert 'workspaceItems("projects")' in all_projects
     assert 'projectThreads(project)' in light_project_detail
+    assert ".light-reminder-row" in styles
+    assert ".light-reminder-time" in styles
     assert 'projectLinked(project, "task")' in light_project_detail
     assert 'projectLinked(project, "calendar_event")' in light_project_detail
     assert 'projectLinked(project, "feed_item")' in light_project_detail
