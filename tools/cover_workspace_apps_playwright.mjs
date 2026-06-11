@@ -595,6 +595,15 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
 
   const flipId = seed.writeEnabled ? seed.taskIds?.flip : null;
   await openTile(page, "Tasks", "tasks", config.timeoutMs);
+  await page.waitForFunction(() => {
+    const taskPage = document.querySelector(".light-tasks-page");
+    if (!taskPage) {
+      return false;
+    }
+    const hasRows = document.querySelectorAll("[data-task-id]").length > 0;
+    const text = String(taskPage.textContent || "");
+    return hasRows && !/\bLoading\b/.test(text);
+  }, { timeout: config.timeoutMs }).catch(() => null);
 
   const availableLabels = [];
   for (const label of ["DO", "DUE SOON", "Due Soon", "OVERDUE", "DONE"]) {
