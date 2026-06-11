@@ -23,6 +23,9 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
     "feed-items": "feed_item",
     "projects": "project",
     "contacts": "contact",
+    "messages": "message",
+    "meeting-notes": "meeting_note",
+    "reminders": "reminder",
 }
 
 KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
@@ -127,6 +130,12 @@ class WorkspaceStore:
             order = "ORDER BY updated_at_ms DESC, title ASC"
         elif kind == "contact":
             order = "ORDER BY title COLLATE NOCASE ASC"
+        elif kind == "message":
+            order = "ORDER BY event_at_ms DESC, updated_at_ms DESC"
+        elif kind == "meeting_note":
+            order = "ORDER BY start_at_ms DESC, event_at_ms DESC, updated_at_ms DESC"
+        elif kind == "reminder":
+            order = "ORDER BY status = 'done', due_at_ms = 0, due_at_ms ASC, updated_at_ms DESC"
         query.append(order)
         query.append("LIMIT ?")
         params.append(max(1, min(500, int(limit or 200))))
@@ -311,23 +320,36 @@ class WorkspaceStore:
     def seed_defaults(self) -> None:
         with self._lock:
             seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_v1'").fetchone()
-        if seeded:
-            return
+            graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v1'").fetchone()
         now = self.now_ms()
-        defaults = default_workspace_records(now)
-        for collection, records in defaults.items():
-            for record in records:
-                self.upsert_record(collection, record)
-        for asset in default_workspace_assets(now):
-            self.create_asset(asset)
-        for link in default_workspace_links():
-            self.upsert_link(link)
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
-                ("seeded_v1", "1", now),
-            )
-            self._conn.commit()
+        if not seeded:
+            defaults = default_workspace_records(now)
+            for collection, records in defaults.items():
+                for record in records:
+                    self.upsert_record(collection, record)
+            for asset in default_workspace_assets(now):
+                self.create_asset(asset)
+            for link in default_workspace_links():
+                self.upsert_link(link)
+            with self._lock:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                    ("seeded_v1", "1", now),
+                )
+                self._conn.commit()
+        if not graph_seeded:
+            graph_defaults = default_workspace_graph_records(now)
+            for collection, records in graph_defaults.items():
+                for record in records:
+                    self.upsert_record(collection, record)
+            for link in default_workspace_graph_links():
+                self.upsert_link(link)
+            with self._lock:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                    ("seeded_graph_v1", "1", now),
+                )
+                self._conn.commit()
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
@@ -581,6 +603,17 @@ def _task_html(title: str, intro: str, bullets: list[str], footer: str) -> str:
         f"<p>{intro}</p>"
         f"<ul>{bullet_html}</ul>"
         f"<p>{footer}</p>"
+        "</body></html>"
+    )
+
+
+def _personal_html(title: str, intro: str, bullets: list[str]) -> str:
+    bullet_html = "".join(f"<li>{item}</li>" for item in bullets)
+    return (
+        "<!doctype html><html><body>"
+        f"<h1>{title}</h1>"
+        f"<p>{intro}</p>"
+        f"<ul>{bullet_html}</ul>"
         "</body></html>"
     )
 
@@ -920,4 +953,215 @@ def default_workspace_links() -> list[dict[str, object]]:
         {"id": "migration-task-archive", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "demo-task-done-archive", "label": "Tasks"},
         {"id": "migration-calendar-vendor", "source_kind": "project", "source_id": "migration", "target_kind": "calendar_event", "target_id": "vendor", "label": "Vendor review"},
         {"id": "migration-feed-task", "source_kind": "project", "source_id": "migration", "target_kind": "feed_item", "target_id": "task-complete", "label": "Migration notes archived"},
+    ]
+
+
+def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, object]]]:
+    day = time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000))
+    tomorrow_ms = now_ms + 24 * 60 * 60 * 1000
+    tomorrow = time.strftime("%Y-%m-%d", time.localtime(tomorrow_ms / 1000))
+    return {
+        "notes": [
+            {
+                "id": "house-paint-notes",
+                "title": "House paint notes",
+                "summary": "Maya can bring paint swatches; compare warm white against hallway light.",
+                "html": _personal_html(
+                    "House paint notes",
+                    "Maya can bring paint swatches and help compare the upstairs hallway samples.",
+                    ["Check afternoon light", "Photograph the trim", "Decide between linen and warm white"],
+                ),
+                "metadata": {"context": "Home refresh", "icon": "note"},
+            }
+        ],
+        "tasks": [
+            {
+                "id": "demo-task-do-paint-samples",
+                "title": "Bring paint samples upstairs",
+                "summary": "Set the samples near the window before Maya arrives.",
+                "status": "open",
+                "due_at_ms": now_ms + 3 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Bring paint samples upstairs",
+                    "Put the sample cards where the light actually changes during the day.",
+                    ["Carry the swatches upstairs", "Tape each one by the hallway trim", "Text Maya a picture before the walkthrough"],
+                    "This task is linked from a message, a meeting note, a reminder, and the Home refresh project.",
+                ),
+                "metadata": {"owner": "Maya Chen", "project": "Home refresh", "source": "demo-message-house-repair"},
+            }
+        ],
+        "calendar-events": [
+            {
+                "id": "house-walkthrough",
+                "title": "Home refresh walkthrough",
+                "summary": "Walk the hallway, paint samples, and loose repair list.",
+                "date": day,
+                "start_at_ms": now_ms + 4 * 60 * 60 * 1000,
+                "end_at_ms": now_ms + 5 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Home refresh walkthrough",
+                    "A practical walkthrough for hallway paint, small repairs, and the weekend supply list.",
+                    ["Maya checks paint tones", "Confirm which repair needs a contractor", "Turn decisions into tasks"],
+                ),
+                "metadata": {"place": "Home", "attendees": ["Maya Chen"], "type": "personal"},
+            },
+            {
+                "id": "trip-dinner-planning",
+                "title": "Dinner and trip planning",
+                "summary": "Sketch dinner timing and train options for tomorrow.",
+                "date": tomorrow,
+                "start_at_ms": tomorrow_ms + 18 * 60 * 60 * 1000,
+                "end_at_ms": tomorrow_ms + 19 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Dinner and trip planning",
+                    "Small logistics meeting for dinner, packing, and the train window.",
+                    ["Pick dinner spot", "Check train timing", "Share the note with family"],
+                ),
+                "metadata": {"place": "Kitchen table", "attendees": ["Maya Chen"], "type": "family"},
+            },
+        ],
+        "projects": [
+            {
+                "id": "home-refresh",
+                "title": "Home refresh",
+                "summary": "Paint, small repairs, and weekend decisions in one personal project.",
+                "html": _personal_html(
+                    "Home refresh",
+                    "A lightweight project for turning house-repair chatter into a few useful next actions.",
+                    ["Paint samples upstairs", "Hallway repair estimate", "Weekend supply run"],
+                ),
+                "metadata": {"threads": ["Paint samples", "Repair walkthrough"], "chips": ["personal", "house", "Maya"], "assets": ["Paint photos", "Repair list"]},
+            }
+        ],
+        "messages": [
+            {
+                "id": "demo-message-house-repair",
+                "title": "Maya can bring paint swatches",
+                "summary": "Text from Maya about paint samples and the hallway repair list.",
+                "event_at_ms": now_ms - 24 * 60 * 1000,
+                "html": _personal_html(
+                    "Maya can bring paint swatches",
+                    "Maya offered to bring the paint swatches before the home refresh walkthrough.",
+                    ["Ask for linen and warm white", "Tie it to the walkthrough", "Spawn the upstairs sample task"],
+                ),
+                "metadata": {"channel": "Messages", "sender": "Maya Chen", "participants": ["Maya Chen"], "extracted_topics": ["home refresh", "paint", "repair"]},
+            },
+            {
+                "id": "demo-message-dinner-plan",
+                "title": "Dinner timing for tomorrow",
+                "summary": "Family logistics message about dinner and the train window.",
+                "event_at_ms": now_ms - 2 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Dinner timing for tomorrow",
+                    "A low-stakes logistics thread that can still become reminders or calendar events.",
+                    ["Confirm the table time", "Check train arrival", "Share note after work"],
+                ),
+                "metadata": {"channel": "Messages", "sender": "Family", "participants": ["Maya Chen"], "extracted_topics": ["dinner", "trip"]},
+            },
+            {
+                "id": "demo-message-freelance-followup",
+                "title": "Freelance client follow-up",
+                "summary": "Client wants the revised HTML concept and one invoice note.",
+                "event_at_ms": now_ms - 5 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Freelance client follow-up",
+                    "A work-adjacent message that belongs in the personal workspace without feeling corporate.",
+                    ["Send the HTML concept", "Flag invoice timing", "Make one follow-up reminder"],
+                ),
+                "metadata": {"channel": "Email", "sender": "Sam Rivera", "participants": ["Sam Rivera"], "extracted_topics": ["freelance", "invoice"]},
+            },
+        ],
+        "meeting-notes": [
+            {
+                "id": "demo-meeting-home-refresh",
+                "title": "Home refresh walkthrough",
+                "summary": "Meeting-style note for paint, repairs, and follow-up tasks.",
+                "date": day,
+                "start_at_ms": now_ms + 4 * 60 * 60 * 1000,
+                "end_at_ms": now_ms + 5 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Home refresh walkthrough",
+                    "Graph meeting note that links a calendar block, attendee, project, note, task, and reminder.",
+                    ["Compare paint samples", "Confirm contractor question", "Turn final decisions into weekend tasks"],
+                ),
+                "metadata": {"participants": ["Maya Chen"], "source": "house-walkthrough", "extracted_topics": ["paint", "repair", "home refresh"]},
+            },
+            {
+                "id": "demo-meeting-trip-plan",
+                "title": "Trip planning check-in",
+                "summary": "A personal planning session for family logistics and packing reminders.",
+                "date": tomorrow,
+                "start_at_ms": tomorrow_ms + 18 * 60 * 60 * 1000,
+                "end_at_ms": tomorrow_ms + 19 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Trip planning check-in",
+                    "Small meeting note that keeps travel logistics connected to messages and reminders.",
+                    ["Dinner timing", "Train arrival", "Packing reminder"],
+                ),
+                "metadata": {"participants": ["Maya Chen"], "source": "trip-dinner-planning", "extracted_topics": ["trip", "family logistics"]},
+            },
+        ],
+        "reminders": [
+            {
+                "id": "demo-reminder-paint-samples",
+                "title": "Bring paint samples upstairs",
+                "summary": "Nudge before the home refresh walkthrough.",
+                "status": "open",
+                "due_at_ms": now_ms + 2 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Bring paint samples upstairs",
+                    "Reminder attached to the paint task and meeting note.",
+                    ["Bring swatches upstairs", "Photograph each option", "Have them ready before Maya arrives"],
+                ),
+                "metadata": {"source_kind": "task", "source_id": "demo-task-do-paint-samples", "snooze_state": "ready"},
+            },
+            {
+                "id": "demo-reminder-health-call",
+                "title": "Call clinic before lunch",
+                "summary": "Standalone health appointment reminder.",
+                "status": "open",
+                "due_at_ms": now_ms + 20 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Call clinic before lunch",
+                    "A simple standalone reminder that is not a task yet.",
+                    ["Ask about appointment slot", "Write down prep instructions", "Add calendar block if confirmed"],
+                ),
+                "metadata": {"source_kind": "contact", "source_id": "", "snooze_state": "ready"},
+            },
+            {
+                "id": "demo-reminder-book-note",
+                "title": "Turn book note into project idea",
+                "summary": "Review the scratch note this weekend.",
+                "status": "open",
+                "due_at_ms": now_ms + 3 * 24 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Turn book note into project idea",
+                    "A reminder can attach to memory without becoming a formal task first.",
+                    ["Reread the highlighted page", "Write one paragraph", "Decide if it becomes a project"],
+                ),
+                "metadata": {"source_kind": "note", "source_id": "house-paint-notes", "snooze_state": "later"},
+            },
+        ],
+    }
+
+
+def default_workspace_graph_links() -> list[dict[str, object]]:
+    return [
+        {"id": "graph-message-house-contact", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "graph-message-house-note", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
+        {"id": "graph-message-house-task", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-message-house-project", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
+        {"id": "graph-message-house-reminder", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-meeting-home-contact", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "graph-meeting-home-calendar", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "calendar_event", "target_id": "house-walkthrough", "label": "Home refresh walkthrough"},
+        {"id": "graph-meeting-home-note", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
+        {"id": "graph-meeting-home-task", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-meeting-home-project", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
+        {"id": "graph-meeting-home-reminder", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-project-home-contact", "source_kind": "project", "source_id": "home-refresh", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "graph-project-home-note", "source_kind": "project", "source_id": "home-refresh", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
+        {"id": "graph-project-home-task", "source_kind": "project", "source_id": "home-refresh", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-project-home-reminder", "source_kind": "project", "source_id": "home-refresh", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-reminder-paint-task", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-reminder-paint-meeting", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
     ]

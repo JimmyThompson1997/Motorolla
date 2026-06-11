@@ -114,6 +114,9 @@ def test_workspace_api_requires_auth_for_writes_and_allows_reads(tmp_path: Path)
 def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
+        catalog = request_json(base_url, "/api/workspace/")
+        assert {"messages", "meeting-notes", "reminders"}.issubset(set(catalog["collections"]))
+
         asset = request_json(
             base_url,
             "/api/workspace/assets",
@@ -202,6 +205,51 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
         assert link["target_id"] == "api-note"
         linked_project = request_json(base_url, "/api/workspace/projects/api-project")
         assert any(item["target_id"] == "api-note" for item in linked_project["links"])
+
+        message = request_json(
+            base_url,
+            "/api/workspace/messages",
+            method="POST",
+            token="test-token",
+            body={"id": "api-message", "title": "API Message", "summary": "Standalone message", "metadata": {"channel": "Messages", "sender": "Maya"}},
+        )
+        assert message["kind"] == "message"
+
+        meeting_note = request_json(
+            base_url,
+            "/api/workspace/meeting-notes",
+            method="POST",
+            token="test-token",
+            body={"id": "api-meeting-note", "title": "API Meeting Note", "summary": "Graph meeting", "metadata": {"participants": ["Maya"]}},
+        )
+        assert meeting_note["kind"] == "meeting_note"
+
+        reminder = request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={"id": "api-reminder", "title": "API Reminder", "status": "open", "due_at_ms": 1000, "metadata": {"source_kind": "message", "source_id": "api-message"}},
+        )
+        assert reminder["kind"] == "reminder"
+
+        graph_link = request_json(
+            base_url,
+            "/api/workspace/links",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "api-message-reminder",
+                "source_kind": "message",
+                "source_id": "api-message",
+                "target_kind": "reminder",
+                "target_id": "api-reminder",
+                "label": "follow_up",
+            },
+        )
+        assert graph_link["source_kind"] == "message"
+        linked_message = request_json(base_url, "/api/workspace/messages/api-message")
+        assert any(item["target_kind"] == "reminder" for item in linked_message["links"])
     finally:
         server.shutdown()
 

@@ -211,17 +211,35 @@
     { route: "calls", icon: "phone", label: "Calls" },
     { route: "settings", icon: "settings", label: "Settings" }
   ];
+  const HOME_APP_ACCENT_PALETTE = {
+    inbox: { dark: "#8b63ff", light: "#8b63ff" },
+    connect: { dark: "#4f61d8", light: "#4f61d8" },
+    meetings: { dark: "#0a84ff", light: "#0a84ff" },
+    settings: { dark: "#64748b", light: "#64748b" },
+    messages: { dark: "#226fe8", light: "#226fe8" },
+    meeting_notes: { dark: "#0ea5e9", light: "#0ea5e9" },
+    reminders: { dark: "#f59e0b", light: "#f59e0b" },
+    notes: { dark: "#f2a000", light: "#f2a000" },
+    tasks: { dark: "#22c55e", light: "#22c55e" },
+    calendar: { dark: "#ff443a", light: "#ff443a" },
+    feed_preview: { dark: "#226fe8", light: "#226fe8" },
+    projects: { dark: "#0f9fb8", light: "#0f9fb8" },
+    contacts: { dark: "#f43f68", light: "#f43f68" }
+  };
   const LIGHT_APPS = [
-    { route: "feed", label: "Inbox", icon: "mail", color: "purple", kind: "real" },
-    { route: "links", label: "Connect", icon: "link", color: "navy", kind: "real" },
-    { route: "meetings", label: "Meetings", icon: "mic", color: "sky", kind: "real" },
-    { route: "settings", label: "Settings", icon: "settings", color: "gray", kind: "real" },
-    { route: "notes", label: "Notes", icon: "note", color: "orange", kind: "mock" },
-    { route: "tasks", label: "Tasks", icon: "checklist", color: "green", kind: "mock" },
-    { route: "calendar", label: "Calendar", icon: "calendar", color: "red", kind: "mock" },
-    { route: "feed-preview", label: "Feed", icon: "text", color: "blue", kind: "mock" },
-    { route: "projects", label: "Projects", icon: "folder", color: "cyan", kind: "mock" },
-    { route: "contacts", label: "Contacts", icon: "contacts", color: "pink", kind: "mock" }
+    { route: "feed", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" },
+    { route: "links", label: "Connect", icon: "link", accent: "connect", kind: "real" },
+    { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
+    { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
+    { route: "messages", label: "Messages", icon: "chat", accent: "messages", kind: "mock" },
+    { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "mock" },
+    { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "mock" },
+    { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" },
+    { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" },
+    { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" },
+    { route: "feed-preview", label: "Feed", icon: "text", accent: "feed_preview", kind: "mock" },
+    { route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "mock" },
+    { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "mock" }
   ];
   const LIGHT_ROUTES = new Set([
     "home",
@@ -231,6 +249,12 @@
     "task-detail",
     "calendar",
     "meeting-detail",
+    "messages",
+    "message-detail",
+    "meeting-notes",
+    "meeting-note-detail",
+    "reminders",
+    "reminder-detail",
     "feed-preview",
     "feed-preview-detail",
     "projects",
@@ -245,6 +269,9 @@
     "note-detail": "notes",
     "task-detail": "tasks",
     "meeting-detail": "calendar",
+    "message-detail": "messages",
+    "meeting-note-detail": "meeting-notes",
+    "reminder-detail": "reminders",
     "feed-preview-detail": "feed-preview",
     "project-detail": "projects",
     "project-new": "projects",
@@ -258,6 +285,12 @@
     "task-detail": "tasks",
     calendar: "calendar-events",
     "meeting-detail": "calendar-events",
+    messages: "messages",
+    "message-detail": "messages",
+    "meeting-notes": "meeting-notes",
+    "meeting-note-detail": "meeting-notes",
+    reminders: "reminders",
+    "reminder-detail": "reminders",
     "feed-preview": "feed-items",
     "feed-preview-detail": "feed-items",
     projects: "projects",
@@ -266,6 +299,17 @@
     contacts: "contacts",
     "contact-detail": "contacts",
     "contact-new": "contacts"
+  };
+  const WORKSPACE_KIND_COLLECTIONS = {
+    note: "notes",
+    task: "tasks",
+    calendar_event: "calendar-events",
+    feed_item: "feed-items",
+    project: "projects",
+    contact: "contacts",
+    message: "messages",
+    meeting_note: "meeting-notes",
+    reminder: "reminders"
   };
 
   const DEFAULT_HOME_MENU_ICONS = [
@@ -306,6 +350,9 @@
     previousLightRoute: "home",
     selectedContactId: "sarah",
     selectedMeetingId: "vendor",
+    selectedMessageId: "demo-message-house-repair",
+    selectedMeetingNoteId: "demo-meeting-home-refresh",
+    selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
     selectedTaskId: "budget",
     selectedProjectId: "aurora",
@@ -326,6 +373,9 @@
       "feed-items": { items: [], loaded: false, loading: false, error: "" },
       projects: { items: [], loaded: false, loading: false, error: "" },
       contacts: { items: [], loaded: false, loading: false, error: "" },
+      messages: { items: [], loaded: false, loading: false, error: "" },
+      "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
+      reminders: { items: [], loaded: false, loading: false, error: "" },
       assets: {}
     },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
@@ -3418,6 +3468,24 @@
       case "meeting-detail":
         view.append(lightMeetingDetailPage());
         break;
+      case "messages":
+        view.append(lightMessagesPage());
+        break;
+      case "message-detail":
+        view.append(lightMessageDetailPage());
+        break;
+      case "meeting-notes":
+        view.append(lightMeetingNotesPage());
+        break;
+      case "meeting-note-detail":
+        view.append(lightMeetingNoteDetailPage());
+        break;
+      case "reminders":
+        view.append(lightRemindersPage());
+        break;
+      case "reminder-detail":
+        view.append(lightReminderDetailPage());
+        break;
       case "notes":
         view.append(lightNotesPage());
         break;
@@ -3471,14 +3539,28 @@
     tile.dataset.appLabel = app.label;
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => lightNavigate(app.route));
-    const icon = lightAppIcon(app.icon, app.color);
+    const icon = lightAppIcon(app);
     tile.append(icon, el("span", "light-app-label", app.label));
     return tile;
   }
 
-  function lightAppIcon(icon, color) {
-    const wrap = el("span", `light-app-icon color-${color || "blue"}`);
-    wrap.innerHTML = iconSvg(icon, { filled: false });
+  function homeAppAccentValue(accentKey, theme = effectiveTheme()) {
+    const key = String(accentKey || "").trim().toLowerCase();
+    const palette = HOME_APP_ACCENT_PALETTE[key] || HOME_APP_ACCENT_PALETTE.inbox;
+    const mode = normalizeTheme(theme) === "light" ? "light" : "dark";
+    return String(palette[mode] || palette.dark || palette.light || "#8b63ff").trim();
+  }
+
+  function applyHomeAppAccent(node, app) {
+    const accent = homeAppAccentValue(app?.accent, effectiveTheme());
+    node.dataset.appAccent = String(app?.accent || "inbox");
+    node.style.setProperty("--icon-accent", accent);
+  }
+
+  function lightAppIcon(app) {
+    const wrap = el("span", "light-app-icon");
+    applyHomeAppAccent(wrap, app);
+    wrap.innerHTML = iconSvg(app.icon, { filled: false });
     return wrap;
   }
 
@@ -3577,6 +3659,7 @@
     if (!contact) {
       return lightPage("Contact", { subtitle: "Contact not found." });
     }
+    ensureLinkedCollections(contact);
     const page = lightPage("Contact");
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
@@ -3597,7 +3680,7 @@
       }))));
     }
     if (contact.links && contact.links.length) {
-      page.append(lightInfoSection("Linked records", contact.links.map(link => ({ icon: "link", label: link.label || link.target_kind, value: `${link.target_kind}:${link.target_id}` }))));
+      page.append(lightInfoSection("Linked records", lightLinkedRecordRows(contact)));
     }
     page.append(lightHtmlDocument(contact, "No generated contact page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
@@ -3718,8 +3801,334 @@
     if (docs.length) {
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
     }
-    page.append(lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
+    page.append(lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" }));
     return page;
+  }
+
+  function lightMessagesPage() {
+    return lightGraphListPage({
+      title: "Messages",
+      collection: "messages",
+      icon: "chat",
+      detailRoute: "message-detail",
+      selectedKey: "selectedMessageId",
+      emptyTitle: "No messages yet"
+    });
+  }
+
+  function lightMessageDetailPage() {
+    const message = selectedMessage();
+    return lightGraphDetailPage(message, {
+      title: "Message",
+      eyebrow: "Message",
+      icon: "chat",
+      rows: messageDetailRows(message),
+      fallback: "No generated message page yet."
+    });
+  }
+
+  function lightMeetingNotesPage() {
+    return lightGraphListPage({
+      title: "Meeting Notes",
+      collection: "meeting-notes",
+      icon: "record_voice_over",
+      detailRoute: "meeting-note-detail",
+      selectedKey: "selectedMeetingNoteId",
+      emptyTitle: "No meeting notes yet"
+    });
+  }
+
+  function lightMeetingNoteDetailPage() {
+    const meeting = selectedMeetingNote();
+    return lightGraphDetailPage(meeting, {
+      title: "Meeting Note",
+      eyebrow: "Graph meeting",
+      icon: "record_voice_over",
+      rows: meetingNoteDetailRows(meeting),
+      fallback: "No generated meeting note page yet."
+    });
+  }
+
+  function lightRemindersPage() {
+    const page = lightPage("Reminders", { large: true });
+    page.classList.add("light-graph-page", "light-reminders-page");
+    const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    const grouped = workspaceItems("reminders").reduce((memo, reminder) => {
+      const group = reminderGroup(reminder);
+      memo[group] = memo[group] || [];
+      memo[group].push(reminder);
+      return memo;
+    }, {});
+    [
+      ["overdue", "Overdue"],
+      ["today", "Due soon"],
+      ["later", "Later"],
+      ["done", "Done"]
+    ].forEach(([group, label]) => {
+      const reminders = grouped[group] || [];
+      if (!reminders.length) return;
+      const list = el("div", "light-list light-graph-list");
+      reminders.forEach(reminder => list.append(lightReminderRow(reminder, group)));
+      page.append(lightSectionTitle(label), list);
+    });
+    return page;
+  }
+
+  function lightReminderDetailPage() {
+    const reminder = selectedReminder();
+    return lightGraphDetailPage(reminder, {
+      title: "Reminder",
+      eyebrow: "Reminder",
+      icon: "bell",
+      rows: reminderDetailRows(reminder),
+      fallback: "No generated reminder page yet."
+    });
+  }
+
+  function lightGraphListPage(options = {}) {
+    const page = lightPage(options.title || "Workspace", { large: true });
+    page.classList.add("light-graph-page");
+    const status = lightWorkspaceStatus(options.collection, options.icon || "apps", options.emptyTitle || "No records yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    const list = el("div", "light-list light-graph-list");
+    list.append(...workspaceItems(options.collection).map(record => lightGraphRow(record, options)));
+    page.append(list);
+    return page;
+  }
+
+  function lightGraphRow(record, options = {}) {
+    const row = el("button", "light-card light-graph-row");
+    row.type = "button";
+    row.dataset.recordId = record.id;
+    row.addEventListener("click", () => {
+      state[options.selectedKey] = record.id;
+      lightNavigate(options.detailRoute, { from: options.collection });
+    });
+    row.append(
+      lightSmallIcon(options.icon || graphKindIcon(record.kind)),
+      lightTextStack(record.title, graphListLabel(record)),
+      graphObjectChips(record),
+      el("span", "light-chevron", ">")
+    );
+    return row;
+  }
+
+  function lightReminderRow(reminder, group) {
+    const row = el("button", `light-card light-graph-row light-reminder-row ${group || ""} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
+    row.type = "button";
+    row.dataset.recordId = reminder.id;
+    row.dataset.reminderId = reminder.id;
+    row.addEventListener("click", () => {
+      state.selectedReminderId = reminder.id;
+      lightNavigate("reminder-detail", { from: "reminders" });
+    });
+    row.append(
+      lightSmallIcon("bell"),
+      lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`),
+      graphObjectChips(reminder),
+      el("span", "light-chevron", ">")
+    );
+    return row;
+  }
+
+  function lightGraphDetailPage(record, options = {}) {
+    if (!record) {
+      return lightPage(options.title || "Workspace", { subtitle: "Record not found." });
+    }
+    ensureLinkedCollections(record);
+    const page = lightPage(options.title || graphKindLabel(record.kind));
+    page.classList.add("light-document-page", "light-graph-document");
+    const article = el("article", "light-doc-article");
+    article.append(
+      lightDocumentEyebrow(options.eyebrow || graphKindLabel(record.kind), workspaceTimestamp(record.event_at_ms || record.start_at_ms || record.due_at_ms || record.updated_at_ms, "Updated")),
+      el("h1", "", record.title),
+      el("p", "light-note-body", record.summary || "")
+    );
+    page.append(article);
+    if (Array.isArray(options.rows) && options.rows.length) {
+      page.append(lightInfoSection("Context", options.rows));
+    }
+    const linkedRows = lightLinkedRecordRows(record);
+    if (linkedRows.length) {
+      page.append(lightInfoSection("Linked records", linkedRows));
+    }
+    page.append(lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" }));
+    return page;
+  }
+
+  function messageDetailRows(message) {
+    const meta = message?.metadata || {};
+    const participants = Array.isArray(meta.participants) ? meta.participants : [];
+    return [
+      { icon: "text", label: "Channel", value: meta.channel || "Messages" },
+      { icon: "contacts", label: "Sender", value: meta.sender || "Unknown" },
+      { icon: "clock", label: "When", value: workspaceTimestamp(message?.event_at_ms || message?.updated_at_ms, "Recent") },
+      { icon: "apps", label: "Participants", value: participants.length ? participants.join(", ") : "Just me" }
+    ];
+  }
+
+  function meetingNoteDetailRows(meeting) {
+    const meta = meeting?.metadata || {};
+    const participants = Array.isArray(meta.participants) ? meta.participants : [];
+    return [
+      { icon: "calendar", label: "Time", value: meetingTimeLabel(meeting) },
+      { icon: "contacts", label: "Attendees", value: participants.length ? participants.join(", ") : "No attendees tagged" },
+      { icon: "note", label: "Topics", value: Array.isArray(meta.extracted_topics) ? meta.extracted_topics.join(", ") : "No topics yet" }
+    ];
+  }
+
+  function reminderDetailRows(reminder) {
+    const meta = reminder?.metadata || {};
+    return [
+      { icon: "clock", label: "Due", value: reminderDueLabel(reminder) },
+      { icon: "checklist", label: "Status", value: reminder?.status || "open" },
+      { icon: graphKindIcon(meta.source_kind), label: "Source", value: meta.source_id ? `${graphKindLabel(meta.source_kind)}${DOT}${meta.source_id}` : "Standalone" }
+    ];
+  }
+
+  function graphObjectChips(record) {
+    const chips = el("span", "light-graph-chip-row");
+    const meta = record?.metadata || {};
+    const linkCount = Array.isArray(record?.links) ? record.links.length : 0;
+    const values = [];
+    if (record?.kind) {
+      values.push(graphKindLabel(record.kind));
+    }
+    if (linkCount) {
+      values.push(`${linkCount} link${linkCount === 1 ? "" : "s"}`);
+    }
+    if (meta.channel) {
+      values.push(meta.channel);
+    }
+    values.slice(0, 3).forEach(value => chips.append(el("span", "light-graph-chip", value)));
+    return chips;
+  }
+
+  function graphListLabel(record) {
+    const timestamp = workspaceTimestamp(record.event_at_ms || record.start_at_ms || record.due_at_ms || record.updated_at_ms, "Updated");
+    return `${timestamp}${DOT}${record.summary || graphKindLabel(record.kind)}`;
+  }
+
+  function meetingTimeLabel(meeting) {
+    if (!meeting) {
+      return "Any time";
+    }
+    if (meeting.start_at_ms) {
+      return `${meeting.date || "Scheduled"}${DOT}${calendarEventTimeRange(meeting)}`;
+    }
+    return meeting.date || "Any time";
+  }
+
+  function reminderDueLabel(reminder) {
+    const due = Number(reminder?.due_at_ms || 0);
+    if (!Number.isFinite(due) || due <= 0) {
+      return "Anytime";
+    }
+    const delta = due - Date.now();
+    if (delta < 0) {
+      return `Overdue ${workspaceTimestamp(due, "")}`;
+    }
+    if (delta <= 60 * 60 * 1000) {
+      return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
+    }
+    if (delta <= 24 * 60 * 60 * 1000) {
+      return `today ${new Date(due).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    }
+    return workspaceTimestamp(due, "Later");
+  }
+
+  function reminderGroup(reminder) {
+    if (String(reminder?.status || "").toLowerCase() === "done") {
+      return "done";
+    }
+    const due = Number(reminder?.due_at_ms || 0);
+    if (Number.isFinite(due) && due > 0 && due < Date.now()) {
+      return "overdue";
+    }
+    if (Number.isFinite(due) && due > 0 && due <= Date.now() + 24 * 60 * 60 * 1000) {
+      return "today";
+    }
+    return "later";
+  }
+
+  function graphKindLabel(kind) {
+    return ({
+      note: "Note",
+      task: "Task",
+      calendar_event: "Calendar",
+      feed_item: "Feed",
+      project: "Project",
+      contact: "Contact",
+      message: "Message",
+      meeting_note: "Meeting note",
+      reminder: "Reminder",
+      asset: "Asset"
+    })[String(kind || "")] || "Record";
+  }
+
+  function graphKindIcon(kind) {
+    return ({
+      note: "note",
+      task: "checklist",
+      calendar_event: "calendar",
+      feed_item: "text",
+      project: "folder",
+      contact: "contacts",
+      message: "chat",
+      meeting_note: "record_voice_over",
+      reminder: "bell",
+      asset: "attachment"
+    })[String(kind || "")] || "apps";
+  }
+
+  function workspaceCollectionForKind(kind) {
+    return WORKSPACE_KIND_COLLECTIONS[String(kind || "")] || "";
+  }
+
+  function workspaceRecordByKind(kind, id) {
+    const collection = workspaceCollectionForKind(kind);
+    if (!collection) {
+      return null;
+    }
+    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || null;
+  }
+
+  function ensureLinkedCollections(record) {
+    const links = Array.isArray(record?.links) ? record.links : [];
+    links.forEach(link => {
+      const currentKind = String(record.kind || "");
+      const currentId = String(record.id || record.record_id || "");
+      const relatedKind = String(link.source_kind) === currentKind && String(link.source_id) === currentId
+        ? link.target_kind
+        : link.source_kind;
+      const collection = workspaceCollectionForKind(relatedKind);
+      const bucket = collection ? workspaceBucket(collection) : null;
+      if (bucket && !bucket.loaded && !bucket.loading) {
+        void loadWorkspaceCollection(collection, { render: true });
+      }
+    });
+  }
+
+  function lightLinkedRecordRows(record) {
+    const currentKind = String(record?.kind || "");
+    const currentId = String(record?.id || record?.record_id || "");
+    const links = Array.isArray(record?.links) ? record.links : [];
+    return links.map(link => {
+      const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
+      const relatedKind = isSource ? link.target_kind : link.source_kind;
+      const relatedId = isSource ? link.target_id : link.source_id;
+      const related = workspaceRecordByKind(relatedKind, relatedId);
+      const label = related?.title || link.label || relatedId || graphKindLabel(relatedKind);
+      const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
+      return { icon: graphKindIcon(relatedKind), label, value: relation };
+    });
   }
 
   function lightNotesPage() {
@@ -4048,6 +4457,7 @@
     if (!project) {
       return lightPage("Project", { subtitle: "Project not found." });
     }
+    ensureLinkedCollections(project);
     const page = lightPage(project.title);
     page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`, "folder"));
     page.append(lightChipCloud(projectChips(project)));
@@ -4055,11 +4465,14 @@
     [
       ["Threads", "chat", projectThreads(project)],
       ["Artifacts", "attachment", projectAssets(project)],
+      ["Messages", "chat", projectLinked(project, "message")],
+      ["Meetings", "record_voice_over", projectLinked(project, "meeting_note")],
       ["Notes", "note", projectLinked(project, "note")],
       ["Tasks", "checklist", projectLinked(project, "task")],
       ["Calendar", "calendar", projectLinked(project, "calendar_event")],
       ["Feed", "text", projectLinked(project, "feed_item")],
-      ["People", "contacts", projectLinked(project, "contact")]
+      ["People", "contacts", projectLinked(project, "contact")],
+      ["Reminders", "bell", projectLinked(project, "reminder")]
     ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
     page.append(grid);
     page.append(lightHtmlDocument(project, "No generated project page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
@@ -4470,6 +4883,18 @@
     return selectedWorkspaceRecord("calendar-events", state.selectedMeetingId);
   }
 
+  function selectedMessage() {
+    return selectedWorkspaceRecord("messages", state.selectedMessageId);
+  }
+
+  function selectedMeetingNote() {
+    return selectedWorkspaceRecord("meeting-notes", state.selectedMeetingNoteId);
+  }
+
+  function selectedReminder() {
+    return selectedWorkspaceRecord("reminders", state.selectedReminderId);
+  }
+
   function selectedNote() {
     return selectedWorkspaceRecord("notes", state.selectedNoteId);
   }
@@ -4509,8 +4934,16 @@
   function projectLinked(project, kind) {
     const links = Array.isArray(project?.links) ? project.links : [];
     return links
-      .filter(link => String(link.source_kind) === "project" && String(link.target_kind) === kind)
-      .map(link => String(link.label || link.target_id || kind));
+      .filter(link => (
+        String(link.source_kind) === "project" && String(link.target_kind) === kind
+      ) || (
+        String(link.target_kind) === "project" && String(link.source_kind) === kind
+      ))
+      .map(link => {
+        const isSource = String(link.source_kind) === "project";
+        const related = workspaceRecordByKind(isSource ? link.target_kind : link.source_kind, isSource ? link.target_id : link.source_id);
+        return String(related?.title || link.label || (isSource ? link.target_id : link.source_id) || kind);
+      });
   }
 
   function selectedFeedItem() {
@@ -4567,6 +5000,98 @@
     return "";
   }
 
+  function workspaceHtmlThemePalette() {
+    if (effectiveTheme() === "dark") {
+      return {
+        theme: "dark",
+        background: "#08111c",
+        text: "#f7f9fc",
+        muted: "#9fb0c7",
+        link: "#6ea8ff",
+        surface: "rgba(247, 249, 252, 0.08)",
+        border: "rgba(255, 255, 255, 0.12)"
+      };
+    }
+    return {
+      theme: "light",
+      background: "#ffffff",
+      text: "#111827",
+      muted: "#667085",
+      link: "#226fe8",
+      surface: "#f4f7fb",
+      border: "rgba(17, 24, 39, 0.08)"
+    };
+  }
+
+  function workspaceHtmlBaseCss() {
+    const palette = workspaceHtmlThemePalette();
+    const fontStack = '"Aptos","Segoe UI",system-ui,sans-serif';
+    return [
+      `:root{color-scheme:${palette.theme};--pucky-doc-bg:${palette.background};--pucky-doc-text:${palette.text};--pucky-doc-muted:${palette.muted};--pucky-doc-link:${palette.link};--pucky-doc-surface:${palette.surface};--pucky-doc-border:${palette.border};}`,
+      `html{background:var(--pucky-doc-bg);color:var(--pucky-doc-text);font-family:${fontStack};-webkit-text-size-adjust:100%;text-size-adjust:100%;}`,
+      "*,:before,:after{box-sizing:border-box;}",
+      `body{min-height:100vh;margin:0;padding:18px 16px 28px;background:var(--pucky-doc-bg);color:var(--pucky-doc-text);font-family:${fontStack};font-size:16px;line-height:1.6;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere;}`,
+      "body>:first-child{margin-top:0!important;}",
+      "body>:last-child{margin-bottom:0!important;}",
+      `h1,h2,h3,h4,h5,h6{margin:0 0 12px;color:var(--pucky-doc-text);font-family:${fontStack};line-height:1.08;letter-spacing:0;}`,
+      "h1{font-size:clamp(1.9rem,5vw,2.5rem);font-weight:820;}",
+      "h2{font-size:clamp(1.4rem,4vw,1.9rem);font-weight:780;}",
+      "p,ul,ol,blockquote,pre,table{margin:0 0 14px;}",
+      "ul,ol{padding-left:22px;}",
+      "li+li{margin-top:6px;}",
+      "a{color:var(--pucky-doc-link);}",
+      "img,svg,video,canvas,table,iframe{max-width:100%;height:auto;}",
+      "pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}",
+      "pre{padding:12px 14px;border-radius:14px;background:var(--pucky-doc-surface);white-space:pre-wrap;word-break:break-word;}",
+      "table{width:100%;border-collapse:collapse;}",
+      "td,th{padding:8px 0;border-top:1px solid var(--pucky-doc-border);text-align:left;vertical-align:top;}",
+      "blockquote{padding-left:14px;border-left:3px solid var(--pucky-doc-border);color:var(--pucky-doc-muted);}"
+    ].join("");
+  }
+
+  function normalizedWorkspaceHtmlDocument(sourceHtml) {
+    const raw = String(sourceHtml || "").trim();
+    if (!raw) {
+      return "";
+    }
+    const fallbackDocument = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><style data-pucky-embedded-html="true">${workspaceHtmlBaseCss()}</style></head><body data-pucky-embedded-body="true">${raw}</body></html>`;
+    try {
+      const doc = new DOMParser().parseFromString(raw, "text/html");
+      const root = doc.documentElement;
+      const head = doc.head || doc.createElement("head");
+      const body = doc.body || doc.createElement("body");
+      if (!doc.head) {
+        root.insertBefore(head, body);
+      }
+      if (!doc.body) {
+        root.append(body);
+      }
+      if (!root.getAttribute("lang")) {
+        root.setAttribute("lang", "en");
+      }
+      root.setAttribute("data-pucky-embedded-theme", workspaceHtmlThemePalette().theme);
+      let viewport = head.querySelector('meta[name="viewport"]');
+      if (!viewport) {
+        viewport = doc.createElement("meta");
+        head.prepend(viewport);
+      }
+      viewport.setAttribute("name", "viewport");
+      viewport.setAttribute("content", "width=device-width, initial-scale=1");
+      const existingStyle = head.querySelector('style[data-pucky-embedded-html="true"]');
+      if (existingStyle) {
+        existingStyle.remove();
+      }
+      const style = doc.createElement("style");
+      style.setAttribute("data-pucky-embedded-html", "true");
+      style.textContent = workspaceHtmlBaseCss();
+      head.append(style);
+      body.setAttribute("data-pucky-embedded-body", "true");
+      return `<!doctype html>${root.outerHTML}`;
+    } catch (error) {
+      return fallbackDocument;
+    }
+  }
+
   function lightHtmlDocument(record, fallbackText = "Generated page is loading.", options = {}) {
     const html = workspaceHtml(record);
     const untitledFallback = Boolean(options && options.untitledFallback);
@@ -4580,7 +5105,7 @@
     const frame = el("iframe", "light-html-frame");
     frame.setAttribute("sandbox", "");
     frame.setAttribute("title", String(record?.title || "Generated page"));
-    frame.srcdoc = html;
+    frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     const wrap = el("section", `light-card light-html-card ${extraClassName}`.trim());
     wrap.append(frame);
     return wrap;
@@ -6063,9 +6588,11 @@
 
   function outboundCardView(card) {
     const wrapper = el("div", "card-wrap");
+    wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound");
+    cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, "pending_outbound");
     applyCardActionData(cardEl, "transcript", card, "pending_outbound");
     cardEl.setAttribute("role", "button");

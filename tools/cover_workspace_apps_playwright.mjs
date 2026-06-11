@@ -110,7 +110,20 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       `${runId}-beta-task`,
       `${runId}-beta-calendar`,
       `${runId}-beta-feed`,
-      `${runId}-beta-contact`
+      `${runId}-beta-contact`,
+      `${runId}-message-contact`,
+      `${runId}-message-task`,
+      `${runId}-message-project`,
+      `${runId}-message-reminder`,
+      `${runId}-meeting-contact`,
+      `${runId}-meeting-calendar`,
+      `${runId}-meeting-note`,
+      `${runId}-meeting-task`,
+      `${runId}-meeting-project`,
+      `${runId}-meeting-reminder`,
+      `${runId}-project-reminder`,
+      `${runId}-reminder-task`,
+      `${runId}-reminder-meeting`
     ],
     recordIds: {
       notes: [`${runId}-pinned-note`, `${runId}-recent-note`],
@@ -131,7 +144,10 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
         `${runId}-calendar-change`
       ],
       projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
-      contacts: [`${runId}-contact-one`, `${runId}-contact-two`]
+      contacts: [`${runId}-contact-one`, `${runId}-contact-two`],
+      messages: [`${runId}-graph-message`],
+      "meeting-notes": [`${runId}-graph-meeting`],
+      reminders: [`${runId}-graph-reminder`]
     }
   };
 }
@@ -373,6 +389,52 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       }
     });
 
+    await apiRequest(config, "POST", "/api/workspace/messages", {
+      id: `${runId}-graph-message`,
+      title: "Proof Graph Message",
+      summary: "Message created through workspace API and linked into the graph.",
+      event_at_ms: Date.now() - 90_000,
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Graph Message</h1>",
+        "<p>This message links to a contact, task, project, and reminder.</p>",
+        "<ul><li>Contact: Proof Contact One</li><li>Task: Proof Future Task</li><li>Reminder: Proof Graph Reminder</li></ul>",
+        "</body></html>"
+      ].join(""),
+      metadata: { channel: "Messages", sender: "Proof Contact One", participants: ["Proof Contact One"], project: "Proof Alpha Project", topics: ["graph", "message"] }
+    });
+    await apiRequest(config, "POST", "/api/workspace/meeting-notes", {
+      id: `${runId}-graph-meeting`,
+      title: "Proof Graph Meeting",
+      summary: "Meeting note created through workspace API with linked attendees and follow-ups.",
+      date: today,
+      start_at_ms: dayAt(0, 12),
+      end_at_ms: dayAt(0, 12, 45),
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Graph Meeting</h1>",
+        "<p>This meeting links attendee, calendar, note, task, project, and reminder context.</p>",
+        "<ol><li>Review proof graph</li><li>Confirm linked task</li><li>Schedule reminder</li></ol>",
+        "</body></html>"
+      ].join(""),
+      metadata: { participants: ["Proof Contact One"], project: "Proof Alpha Project", extracted_topics: ["graph", "meeting", "follow-up"] }
+    });
+    await apiRequest(config, "POST", "/api/workspace/reminders", {
+      id: `${runId}-graph-reminder`,
+      title: "Proof Graph Reminder",
+      summary: "Reminder attached to a task and meeting note.",
+      status: "open",
+      due_at_ms: Date.now() + 2 * 60 * 60 * 1000,
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Graph Reminder</h1>",
+        "<p>This reminder proves reminders can attach to non-task objects too.</p>",
+        "<ul><li>Task: Proof Future Task</li><li>Meeting: Proof Graph Meeting</li></ul>",
+        "</body></html>"
+      ].join(""),
+      metadata: { source_kind: "task", source_id: `${runId}-future-task`, snooze_state: "ready" }
+    });
+
     for (const link of [
       ["alpha-note", "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["alpha-task", "task", `${runId}-future-task`, "Proof Future Task"],
@@ -391,6 +453,31 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         target_kind: link[1],
         target_id: link[2],
         label: link[3]
+      });
+    }
+
+    for (const link of [
+      ["message-contact", "message", `${runId}-graph-message`, "contact", `${runId}-contact-one`, "Proof Contact One"],
+      ["message-task", "message", `${runId}-graph-message`, "task", `${runId}-future-task`, "Proof Future Task"],
+      ["message-project", "message", `${runId}-graph-message`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
+      ["message-reminder", "message", `${runId}-graph-message`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
+      ["meeting-contact", "meeting_note", `${runId}-graph-meeting`, "contact", `${runId}-contact-one`, "Proof Contact One"],
+      ["meeting-calendar", "meeting_note", `${runId}-graph-meeting`, "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
+      ["meeting-note", "meeting_note", `${runId}-graph-meeting`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["meeting-task", "meeting_note", `${runId}-graph-meeting`, "task", `${runId}-future-task`, "Proof Future Task"],
+      ["meeting-project", "meeting_note", `${runId}-graph-meeting`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
+      ["meeting-reminder", "meeting_note", `${runId}-graph-meeting`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
+      ["project-reminder", "project", `${runId}-alpha-project`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
+      ["reminder-task", "reminder", `${runId}-graph-reminder`, "task", `${runId}-future-task`, "Proof Future Task"],
+      ["reminder-meeting", "reminder", `${runId}-graph-reminder`, "meeting_note", `${runId}-graph-meeting`, "Proof Graph Meeting"]
+    ]) {
+      await apiRequest(config, "POST", "/api/workspace/links", {
+        id: `${runId}-${link[0]}`,
+        source_kind: link[1],
+        source_id: link[2],
+        target_kind: link[3],
+        target_id: link[4],
+        label: link[5]
       });
     }
 
@@ -416,19 +503,27 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         rowA: `${runId}-future-task`,
         rowB: `${runId}-overdue-task`,
         flip: deadlineFlipId
+      },
+      graphIds: {
+        message: `${runId}-graph-message`,
+        meeting: `${runId}-graph-meeting`,
+        reminder: `${runId}-graph-reminder`
       }
     };
   } catch (error) {
     if (!isUnauthorizedError(error)) {
       throw error;
     }
-    const [notes, tasks, events, feeds, projects, contacts] = await Promise.all([
+    const [notes, tasks, events, feeds, projects, contacts, messages, meetingNotes, reminders] = await Promise.all([
       readCollection(config, "notes"),
       readCollection(config, "tasks"),
       readCollection(config, "calendar-events"),
       readCollection(config, "feed-items"),
       readCollection(config, "projects"),
-      readCollection(config, "contacts")
+      readCollection(config, "contacts"),
+      readCollection(config, "messages"),
+      readCollection(config, "meeting-notes"),
+      readCollection(config, "reminders")
     ]);
     return {
       runId,
@@ -441,7 +536,10 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       calendarEvents: events,
       feedItems: feeds,
       projects,
-      contacts
+      contacts,
+      messages,
+      meetingNotes,
+      reminders
     };
   }
 }
@@ -599,6 +697,53 @@ async function readDetailHtmlBodyMetrics(page) {
   });
 }
 
+async function readDetailFrameDocumentMetrics(page) {
+  const iframeHandle = await page.locator(".light-html-frame").first().elementHandle();
+  if (!iframeHandle) {
+    return null;
+  }
+  const frame = await iframeHandle.contentFrame();
+  if (!frame) {
+    return null;
+  }
+  return frame.evaluate(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    const style = body ? getComputedStyle(body) : null;
+    return {
+      viewport: document.querySelector('meta[name="viewport"]')?.getAttribute("content") || "",
+      theme: root?.getAttribute("data-pucky-embedded-theme") || "",
+      documentWidth: root?.clientWidth || 0,
+      bodyWidth: body?.clientWidth || 0,
+      bodyMarginTop: style?.marginTop || "",
+      bodyMarginRight: style?.marginRight || "",
+      bodyMarginBottom: style?.marginBottom || "",
+      bodyMarginLeft: style?.marginLeft || "",
+      bodyPaddingTop: style?.paddingTop || "",
+      bodyPaddingRight: style?.paddingRight || "",
+      bodyPaddingBottom: style?.paddingBottom || "",
+      bodyPaddingLeft: style?.paddingLeft || "",
+      bodyFontFamily: style?.fontFamily || "",
+      bodyFontSize: style?.fontSize || "",
+      bodyLineHeight: style?.lineHeight || "",
+      bodyColor: style?.color || "",
+      bodyBackground: style?.backgroundColor || "",
+      firstTag: body?.firstElementChild?.tagName || ""
+    };
+  });
+}
+
+function assertDetailFrameMetrics(metrics, label, theme) {
+  assert(metrics, `Expected ${label} frame metrics`);
+  assert(/width=device-width/i.test(metrics.viewport || ""), `Expected ${label} viewport meta, got ${metrics?.viewport}`);
+  assert(/initial-scale=1/i.test(metrics.viewport || ""), `Expected ${label} initial-scale=1, got ${metrics?.viewport}`);
+  assert(Number(metrics.documentWidth || 0) > 0 && Number(metrics.documentWidth || 0) <= VIEWPORT.width + 24, `Expected ${label} document width near mobile viewport, got ${metrics?.documentWidth}`);
+  assert(metrics.bodyMarginTop === "0px", `Expected ${label} body margin-top reset, got ${metrics?.bodyMarginTop}`);
+  assert(metrics.bodyMarginLeft === "0px", `Expected ${label} body margin-left reset, got ${metrics?.bodyMarginLeft}`);
+  assert(!/Times New Roman|Georgia/i.test(metrics.bodyFontFamily || ""), `Expected ${label} font stack to avoid default serif, got ${metrics?.bodyFontFamily}`);
+  assert(String(metrics.theme || "") === theme, `Expected ${label} embedded theme ${theme}, got ${metrics?.theme}`);
+}
+
 function countTaskRequestEvents(networkLog, startMs, endMs) {
   return networkLog.filter(event => (
     event.type === "request" &&
@@ -639,7 +784,7 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
   }, { rowTaskId, siblingTaskId });
 }
 
-async function proveNotes(page, config, seed, theme, screenshots) {
+async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
   const note = seed.writeEnabled
     ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
@@ -653,9 +798,13 @@ async function proveNotes(page, config, seed, theme, screenshots) {
   await page.locator(`[data-note-id="${note.id}"]`).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(layout.body && layout.page, "Expected note detail to expose a measurable HTML body");
   assert(layout.body.left <= layout.page.left + 2, `Expected note HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected note HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "note detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "note-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_notes_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
@@ -875,12 +1024,20 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Proof Future Task", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
   let detailState = await readTaskDetailState(page);
+  let detailLayout = await readDetailHtmlBodyMetrics(page);
+  let detailFrameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
   assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
   assert(detailState.hasHtmlFrame, "Expected inline HTML task to render an iframe body");
   assert(!detailState.hasNotes, "Did not expect NOTES section on task detail");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
+  assert(detailLayout.body && detailLayout.page, "Expected task detail to expose a measurable HTML body");
+  assert(detailLayout.body.left <= detailLayout.page.left + 2, `Expected task HTML body to reach page left edge, got ${detailLayout.body.left} vs ${detailLayout.page.left}`);
+  assert(detailLayout.body.right >= detailLayout.page.right - 2, `Expected task HTML body to reach page right edge, got ${detailLayout.body.right} vs ${detailLayout.page.right}`);
+  assertDetailFrameMetrics(detailFrameMetrics, "task detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "task-detail", layout: detailLayout, frame: detailFrameMetrics });
   screenshots[`${theme}_tasks_inline_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-html`);
   screenshots[`${theme}_task_detail_open_0s`] = await saveScreenshot(page, config.reportDir, `${theme}-task-detail-open-0s`);
   const idleStartMs = Date.now() + 250;
@@ -1014,7 +1171,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function proveCalendar(page, config, seed, theme, screenshots) {
+async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Calendar", "calendar", config.timeoutMs);
   const events = seed.writeEnabled ? [] : (seed.calendarEvents || []);
   const seededEventId = seed.writeEnabled ? seed.calendarIds?.todayRoadmap : null;
@@ -1034,14 +1191,18 @@ async function proveCalendar(page, config, seed, theme, screenshots) {
   await eventCards.first().click();
   await expectFrameHeading(page, expectedTitle, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(layout.body && layout.page, "Expected calendar detail to expose a measurable HTML body");
   assert(layout.body.left <= layout.page.left + 2, `Expected calendar HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected calendar HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "calendar detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "meeting-detail", layout, frame: frameMetrics });
   await backHome(page, theme, config.timeoutMs);
   return;
 }
 
-async function proveFeed(page, config, seed, theme, screenshots) {
+async function proveFeed(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Feed", "feed-preview", config.timeoutMs);
   const feedItems = seed.writeEnabled ? null : (seed.feedItems || []);
   const feedCards = page.locator('[data-feed-id]');
@@ -1063,14 +1224,18 @@ async function proveFeed(page, config, seed, theme, screenshots) {
     await expectFrameHeading(page, item?.title || "Feed item", config.timeoutMs);
   }
   const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(layout.body && layout.page, "Expected feed detail to expose a measurable HTML body");
   assert(layout.body.left <= layout.page.left + 2, `Expected feed HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected feed HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "feed detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "feed-preview-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_feed_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function proveProjects(page, config, seed, theme, screenshots) {
+async function proveProjects(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Projects", "projects", config.timeoutMs);
   const projects = seed.writeEnabled ? null : (seed.projects || []);
   if (seed.writeEnabled) {
@@ -1095,14 +1260,18 @@ async function proveProjects(page, config, seed, theme, screenshots) {
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
   const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(layout.body && layout.page, "Expected project detail to expose a measurable HTML body");
   assert(layout.body.left <= layout.page.left + 2, `Expected project HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected project HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "project detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "project-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function proveContacts(page, config, seed, theme, screenshots) {
+async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
   if (seed.writeEnabled) {
@@ -1124,11 +1293,101 @@ async function proveContacts(page, config, seed, theme, screenshots) {
     await expectFrameHeading(page, firstContact.title, config.timeoutMs);
   }
   const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(layout.body && layout.page, "Expected contact detail to expose a measurable HTML body");
   assert(layout.body.left <= layout.page.left + 2, `Expected contact HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected contact HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "contact detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "contact-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   await backHome(page, theme, config.timeoutMs);
+}
+
+async function readGraphDetailState(page) {
+  return page.evaluate(() => ({
+    route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
+    text: document.querySelector(".light-shell")?.textContent || "",
+    hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame"))
+  }));
+}
+
+async function waitForGraphText(page, text, timeoutMs) {
+  await page.waitForFunction((targetText) => {
+    const shell = document.querySelector(".light-shell");
+    return Boolean(shell && String(shell.textContent || "").includes(targetText));
+  }, text, { timeout: timeoutMs });
+}
+
+async function proveGraphObjects(page, config, seed, theme, screenshots, summary) {
+  if (!seed.writeEnabled) {
+    summary.assertions.push("graph object proof skipped write ripple checks because API token was unavailable");
+    return;
+  }
+  const { message, meeting, reminder } = seed.graphIds || {};
+  assert(message && meeting && reminder, "Expected graph proof IDs from seedWorkspace");
+
+  await openTile(page, "Messages", "messages", config.timeoutMs);
+  await page.locator(`[data-record-id="${message}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_graph_messages`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-messages-list`);
+  await page.locator(`[data-record-id="${message}"]`).click();
+  await expectFrameHeading(page, "Proof Graph Message", config.timeoutMs);
+  for (const text of ["Proof Contact One", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
+    await waitForGraphText(page, text, config.timeoutMs);
+  }
+  let graphState = await readGraphDetailState(page);
+  assert(graphState.route === "message-detail", `Expected message-detail route, got ${graphState.route}`);
+  assert(graphState.hasHtmlFrame, "Expected message detail to render generated HTML iframe");
+  screenshots[`${theme}_graph_message_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-message-detail`);
+  await backHome(page, theme, config.timeoutMs);
+
+  await openTile(page, "Meeting Notes", "meeting-notes", config.timeoutMs);
+  await page.locator(`[data-record-id="${meeting}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_graph_meetings`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-notes-list`);
+  await page.locator(`[data-record-id="${meeting}"]`).click();
+  await expectFrameHeading(page, "Proof Graph Meeting", config.timeoutMs);
+  for (const text of ["Proof Contact One", "Proof Today Roadmap", "Proof Pinned Note", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
+    await waitForGraphText(page, text, config.timeoutMs);
+  }
+  graphState = await readGraphDetailState(page);
+  assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
+  assert(graphState.hasHtmlFrame, "Expected meeting note detail to render generated HTML iframe");
+  screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
+  await backHome(page, theme, config.timeoutMs);
+
+  await openTile(page, "Reminders", "reminders", config.timeoutMs);
+  await page.locator(`[data-reminder-id="${reminder}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
+  await page.locator(`[data-reminder-id="${reminder}"]`).click();
+  await expectFrameHeading(page, "Proof Graph Reminder", config.timeoutMs);
+  for (const text of ["Proof Future Task", "Proof Graph Meeting"]) {
+    await waitForGraphText(page, text, config.timeoutMs);
+  }
+  graphState = await readGraphDetailState(page);
+  assert(graphState.route === "reminder-detail", `Expected reminder-detail route, got ${graphState.route}`);
+  assert(graphState.hasHtmlFrame, "Expected reminder detail to render generated HTML iframe");
+  screenshots[`${theme}_graph_reminder_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminder-detail`);
+  await backHome(page, theme, config.timeoutMs);
+
+  await openTile(page, "Projects", "projects", config.timeoutMs);
+  await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
+  for (const text of ["Proof Graph Message", "Proof Graph Meeting", "Proof Graph Reminder"]) {
+    await waitForGraphText(page, text, config.timeoutMs);
+  }
+  screenshots[`${theme}_graph_project_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-project-ripple`);
+  await backHome(page, theme, config.timeoutMs);
+
+  await openTile(page, "Contacts", "contacts", config.timeoutMs);
+  await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
+  for (const text of ["Proof Graph Message", "Proof Graph Meeting"]) {
+    await waitForGraphText(page, text, config.timeoutMs);
+  }
+  screenshots[`${theme}_graph_contact_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-contact-ripple`);
+  await backHome(page, theme, config.timeoutMs);
+
+  summary.graphRipple = summary.graphRipple || [];
+  summary.graphRipple.push({ theme, message, meeting, reminder, project: `${seed.runId}-alpha-project`, contact: `${seed.runId}-contact-one` });
+  summary.assertions.push(`${theme} messages/meeting-notes/reminders ripple through linked UI records`);
 }
 
 async function runTheme(page, config, seed, theme, summary, networkLog) {
@@ -1136,12 +1395,13 @@ async function runTheme(page, config, seed, theme, summary, networkLog) {
   await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
-  await proveNotes(page, config, seed, theme, screenshots);
+  await proveNotes(page, config, seed, theme, screenshots, summary);
   await proveTasks(page, config, seed, theme, screenshots, summary, networkLog);
-  await proveCalendar(page, config, seed, theme, screenshots);
-  await proveFeed(page, config, seed, theme, screenshots);
-  await proveProjects(page, config, seed, theme, screenshots);
-  await proveContacts(page, config, seed, theme, screenshots);
+  await proveCalendar(page, config, seed, theme, screenshots, summary);
+  await proveFeed(page, config, seed, theme, screenshots, summary);
+  await proveProjects(page, config, seed, theme, screenshots, summary);
+  await proveContacts(page, config, seed, theme, screenshots, summary);
+  await proveGraphObjects(page, config, seed, theme, screenshots, summary);
   return screenshots;
 }
 
@@ -1200,8 +1460,8 @@ async function main() {
       ...(await runTheme(page, config, darkSeed, "dark", summary, networkLog))
     };
     summary.assertions.push("light and dark home-shell loaded");
-    summary.assertions.push("notes/tasks/calendar/feed/projects/contacts read /api/workspace records");
-    summary.assertions.push("generated HTML iframes rendered for all six apps");
+    summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/messages/meeting-notes/reminders read /api/workspace records");
+    summary.assertions.push("generated HTML iframes rendered for workspace object apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();

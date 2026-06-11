@@ -97,7 +97,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'icon: "coffee"' in app
     assert 'route: "calls"' in app
     assert 'icon: "phone"' in app
-    assert 'route: "messages"' not in app
+    assert '{ route: "messages", label: "Messages"' in app
     assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
     assert "linksPageView()" in app
@@ -281,9 +281,18 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'route: "notes"' in app
     assert 'route: "tasks"' in app
     assert 'route: "calendar"' in app
+    assert 'route: "messages"' in app
+    assert 'route: "meeting-notes"' in app
+    assert 'route: "reminders"' in app
     assert 'route: "feed"' in app
     assert 'route: "projects"' in app
     assert 'route: "contacts"' in app
+    light_apps_block = app.split("const LIGHT_APPS = [", 1)[1].split("];", 1)[0]
+    assert re.search(
+        r'\{ route: "feed", label: "Inbox".*?\},\s*\{ route: "links", label: "Connect".*?\},\s*\{ route: "meetings", label: "Meetings".*?\},\s*\{ route: "settings", label: "Settings".*?\},\s*\{ route: "messages", label: "Messages"',
+        light_apps_block,
+        re.S,
+    )
     assert '{ route: "links", label: "Connect"' in app
     assert '{ route: "meetings", label: "Meetings"' in app
     assert '{ route: "meeting-capture", label: "Meetings"' not in app
@@ -294,6 +303,9 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "previousLightRoute:" in app
     assert "selectedContactId:" in app
     assert "selectedMeetingId:" in app
+    assert "selectedMessageId:" in app
+    assert "selectedMeetingNoteId:" in app
+    assert "selectedReminderId:" in app
     assert "selectedNoteId:" in app
     assert "selectedTaskId:" in app
     assert "selectedProjectId:" in app
@@ -327,6 +339,12 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "function lightSettingsSurface()" in app
     assert "function lightInboxPage()" in app
     assert "function lightMeetingsPage()" in app
+    assert "function lightMessagesPage()" in app
+    assert "function lightMessageDetailPage()" in app
+    assert "function lightMeetingNotesPage()" in app
+    assert "function lightMeetingNoteDetailPage()" in app
+    assert "function lightRemindersPage()" in app
+    assert "function lightReminderDetailPage()" in app
     assert "function homeFeedContentNodes()" in app
     assert "function lightRealFeedPage(" not in app
     assert "function lightNotesPage()" in app
@@ -364,6 +382,18 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'view.append(lightFeedPage())' in app
     assert 'case "feed-preview-detail":' in app
     assert 'view.append(lightFeedDetailPage())' in app
+    assert 'case "messages":' in app
+    assert 'view.append(lightMessagesPage())' in app
+    assert 'case "message-detail":' in app
+    assert 'view.append(lightMessageDetailPage())' in app
+    assert 'case "meeting-notes":' in app
+    assert 'view.append(lightMeetingNotesPage())' in app
+    assert 'case "meeting-note-detail":' in app
+    assert 'view.append(lightMeetingNoteDetailPage())' in app
+    assert 'case "reminders":' in app
+    assert 'view.append(lightRemindersPage())' in app
+    assert 'case "reminder-detail":' in app
+    assert 'view.append(lightReminderDetailPage())' in app
     assert 'case "note-detail":' in app
     assert 'case "task-detail":' in app
     assert 'case "meeting-detail":' in app
@@ -394,6 +424,8 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".light-document-page" in styles
     assert ".light-project-row" in styles
     assert ".light-contact-row" in styles
+    assert ".light-graph-row" in styles
+    assert ".light-reminder-row.is-done" in styles
     assert ".app-shell[data-theme=\"light\"] {" in styles
     assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
     assert "--surface-app:" in styles
@@ -698,11 +730,20 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '"feed-items": "feed_item"' in store
     assert '"projects": "project"' in store
     assert '"contacts": "contact"' in store
+    assert '"messages": "message"' in store
+    assert '"meeting-notes": "meeting_note"' in store
+    assert '"reminders": "reminder"' in store
     assert "def derive_task_group(" in store
     assert 'return "overdue"' in store
     assert 'return "soon"' in store
     assert "default_workspace_records" in store
+    assert "default_workspace_graph_records" in store
+    assert "default_workspace_graph_links" in store
+    assert '"seeded_graph_v1"' in store
     assert '"Design critique overlap"' in store
+    assert '"Maya can bring paint swatches"' in store
+    assert '"Home refresh walkthrough"' in store
+    assert '"Bring paint samples upstairs"' in store
     assert '"calendar_change"' in store
     assert '"note_update"' in store
     assert '"threads": ["PRD review thread", "Budget approval DM"]' in store
@@ -731,6 +772,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
         ("task-detail", "tasks"),
         ("calendar", "calendar-events"),
         ("meeting-detail", "calendar-events"),
+        ("messages", "messages"),
+        ("message-detail", "messages"),
+        ("meeting-notes", "meeting-notes"),
+        ("meeting-note-detail", "meeting-notes"),
+        ("reminders", "reminders"),
+        ("reminder-detail", "reminders"),
         ("feed-preview", "feed-items"),
         ("feed-preview-detail", "feed-items"),
         ("projects", "projects"),
@@ -768,6 +815,13 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_calendar = function_block(app, "lightCalendarPage")
     light_date_picker = function_block(app, "lightDatePicker")
     light_timeline = function_block(app, "lightTimeline")
+    light_messages = function_block(app, "lightMessagesPage")
+    message_detail = function_block(app, "lightMessageDetailPage")
+    light_meeting_notes = function_block(app, "lightMeetingNotesPage")
+    meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
+    light_reminders = function_block(app, "lightRemindersPage")
+    reminder_detail = function_block(app, "lightReminderDetailPage")
+    graph_detail = function_block(app, "lightGraphDetailPage")
     light_feed = function_block(app, "lightFeedPage")
     light_projects = function_block(app, "lightProjectsPage")
     light_project_detail = function_block(app, "lightProjectDetailPage")
@@ -821,7 +875,21 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'calendarEventHour(event)' in light_timeline
     assert "events.length > 1" in light_timeline
     assert "block.style.top" in light_timeline
-    assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in event_detail
+    assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
+    assert 'collection: "messages"' in light_messages
+    assert 'detailRoute: "message-detail"' in light_messages
+    assert 'selectedMessage()' in message_detail
+    assert 'messageDetailRows(message)' in message_detail
+    assert 'collection: "meeting-notes"' in light_meeting_notes
+    assert 'detailRoute: "meeting-note-detail"' in light_meeting_notes
+    assert 'selectedMeetingNote()' in meeting_note_detail
+    assert 'meetingNoteDetailRows(meeting)' in meeting_note_detail
+    assert 'lightWorkspaceStatus("reminders"' in light_reminders
+    assert 'lightReminderRow(reminder, group)' in light_reminders
+    assert 'selectedReminder()' in reminder_detail
+    assert 'reminderDetailRows(reminder)' in reminder_detail
+    assert 'lightLinkedRecordRows(record)' in graph_detail
+    assert 'lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" })' in graph_detail
     assert 'workspaceItems("feed-items")' in light_feed
     assert 'metadata?.type' in feed_detail
     assert 'lightHtmlDocument(item, "No generated feed page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in feed_detail
@@ -837,7 +905,15 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'upsertWorkspaceRecord("contacts"' in app
     assert 'lightHtmlDocument(contact, "No generated contact page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in contact_detail
 
-    assert 'frame.srcdoc = html;' in html_document
+    assert "function workspaceHtmlThemePalette()" in app
+    assert "function workspaceHtmlBaseCss()" in app
+    assert "function normalizedWorkspaceHtmlDocument(sourceHtml)" in app
+    assert 'const fallbackDocument = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><style data-pucky-embedded-html="true">${workspaceHtmlBaseCss()}</style></head><body data-pucky-embedded-body="true">${raw}</body></html>`;' in app
+    assert 'new DOMParser().parseFromString(raw, "text/html")' in app
+    assert 'root.setAttribute("data-pucky-embedded-theme", workspaceHtmlThemePalette().theme);' in app
+    assert 'viewport.setAttribute("content", "width=device-width, initial-scale=1");' in app
+    assert 'style.setAttribute("data-pucky-embedded-html", "true");' in app
+    assert 'frame.srcdoc = normalizedWorkspaceHtmlDocument(html);' in html_document
     assert "const untitledFallback = Boolean(options && options.untitledFallback);" in html_document
     assert 'return el("section", `light-html-empty ${extraClassName}`.trim(), fallbackText);' in html_document
     assert 'loadWorkspaceAsset(assetId, { render: true })' in app
@@ -847,6 +923,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-detail-toggle" in styles
     assert ".light-html-empty" in styles
     assert ".light-task-row-title" in styles
+    assert ".light-event-detail-html-body.light-html-card" in styles
+    assert 'margin-top: -4px;' in styles
+    assert 'margin-top: -8px;' in styles
     assert 'if (state.route === "task-detail") {' in app
     visibility_listener = app.split('document.addEventListener("visibilitychange", () => {', 1)[1].split("window.PuckyHandleAndroidBack =", 1)[0]
     assert 'if (state.route === "task-detail") {' in visibility_listener
@@ -1403,6 +1482,45 @@ def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
     assert deploy_cards["fixture_book"].get("archived") is not True
 
 
+def test_light_home_apps_share_a_semantic_accent_palette() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    light_app_tile = function_block(app, "lightAppTile")
+    light_app_icon = function_block(app, "lightAppIcon")
+    apply_accent = function_block(app, "applyHomeAppAccent")
+
+    assert "const HOME_APP_ACCENT_PALETTE = {" in app
+    assert '{ route: "feed", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" }' in app
+    assert '{ route: "links", label: "Connect", icon: "link", accent: "connect", kind: "real" }' in app
+    assert '{ route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" }' in app
+    assert '{ route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" }' in app
+    assert '{ route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" }' in app
+    assert '{ route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" }' in app
+    assert '{ route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" }' in app
+    assert '{ route: "feed-preview", label: "Feed", icon: "text", accent: "feed_preview", kind: "mock" }' in app
+    assert '{ route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "mock" }' in app
+    assert '{ route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "mock" }' in app
+    assert "function homeAppAccentValue(accentKey, theme = effectiveTheme())" in app
+    assert "function applyHomeAppAccent(node, app)" in app
+    assert "const icon = lightAppIcon(app);" in light_app_tile
+    assert 'const wrap = el("span", "light-app-icon");' in light_app_icon
+    assert "color-" not in light_app_icon
+    assert 'applyHomeAppAccent(wrap, app);' in light_app_icon
+    assert 'node.dataset.appAccent = String(app?.accent || "inbox");' in apply_accent
+    assert 'node.style.setProperty("--icon-accent", accent);' in apply_accent
+    assert ".light-app-icon.color-orange" not in styles
+    assert ".light-app-icon.color-green" not in styles
+    assert ".light-app-icon.color-red" not in styles
+    assert ".light-app-icon.color-purple" not in styles
+    assert ".light-app-icon.color-blue" not in styles
+    assert ".light-app-icon.color-cyan" not in styles
+    assert ".light-app-icon.color-pink" not in styles
+    assert ".light-app-icon.color-yellow" not in styles
+    assert ".light-app-icon.color-navy" not in styles
+    assert ".light-app-icon.color-sky" not in styles
+    assert ".light-app-icon.color-gray" not in styles
+
+
 def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filters() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -1471,6 +1589,25 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "shouldSuppressCardActivation()" in app
     assert "toggleCardStar(card);" not in app
     assert ".archive-reveal-action" in styles
+
+
+def test_pending_outbound_cards_use_theme_surface_tokens_in_light_mode() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    outbound = function_block(app, "outboundCardView")
+
+    assert 'cardEl.style.setProperty("--accent", card.accent || "#72c2ff");' in outbound
+    outbound_block = css_block(styles, ".card.card-outbound")
+    thinking_block = css_block(styles, ".card-outbound-status.is-thinking")
+    placeholder_block = css_block(styles, ".card-outbound-preview.is-placeholder")
+
+    assert "var(--surface-card)" in outbound_block
+    assert "rgba(10, 14, 18, 0.92)" not in outbound_block
+    assert "color-mix(in srgb, var(--accent, #72c2ff)" in outbound_block
+    assert "var(--text-strong)" in css_block(styles, ".card-outbound-preview")
+    assert "var(--text-muted" in placeholder_block
+    assert "var(--accent" in thinking_block
+    assert "var(--text-warning-strong)" not in thinking_block
 
 
 def test_pending_outbound_transcript_synthesizes_user_and_assistant_bubbles() -> None:
