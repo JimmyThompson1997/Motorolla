@@ -111,10 +111,6 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       `${runId}-beta-calendar`,
       `${runId}-beta-feed`,
       `${runId}-beta-contact`,
-      `${runId}-message-contact`,
-      `${runId}-message-task`,
-      `${runId}-message-project`,
-      `${runId}-message-reminder`,
       `${runId}-meeting-contact`,
       `${runId}-meeting-calendar`,
       `${runId}-meeting-note`,
@@ -1356,7 +1352,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Projects", "projects", config.timeoutMs);
   await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
-  for (const text of ["Proof Graph Message", "Proof Graph Meeting", "Proof Graph Reminder"]) {
+  for (const text of ["Proof Graph Meeting", "Proof Pinned Note", "Proof Future Task"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   screenshots[`${theme}_graph_project_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-project-ripple`);
@@ -1364,14 +1360,14 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
-  for (const text of ["Proof Graph Message", "Proof Graph Meeting"]) {
+  for (const text of ["Proof Graph Meeting", "Proof Alpha Project"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   screenshots[`${theme}_graph_contact_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-contact-ripple`);
   await backHome(page, theme, config.timeoutMs);
 
   summary.graphRipple = summary.graphRipple || [];
-  summary.graphRipple.push({ theme, message, meeting, reminder, project: `${seed.runId}-alpha-project`, contact: `${seed.runId}-contact-one` });
+  summary.graphRipple.push({ theme, meeting, reminder, project: `${seed.runId}-alpha-project`, contact: `${seed.runId}-contact-one` });
   summary.assertions.push(`${theme} meeting-notes/reminders/projects/contacts ripple through linked UI records`);
 }
 
