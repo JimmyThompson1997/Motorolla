@@ -688,7 +688,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }, { timeout: config.timeoutMs }).catch(() => null);
 
   const availableLabels = [];
-  for (const label of ["DO", "DUE SOON", "Due Soon", "OVERDUE", "DONE"]) {
+  for (const label of ["DUE SOON", "Due Soon", "DUE", "OVERDUE", "DONE"]) {
     try {
       const count = await page.getByText(label, { exact: true }).count();
       if (count > 0) {

@@ -579,11 +579,14 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'counts.dueSoon' in light_task_counts
     assert '"light-task-count due-soon"' in light_task_count_line
     assert '`${counts.dueSoon} due soon`' in light_task_count_line
+    assert '`${counts.due} due`' in light_task_count_line
+    assert 'el("span", "light-task-count due-soon", `${counts.dueSoon} due soon`),' in light_task_count_line
+    assert 'el("span", "light-task-count due", `${counts.due} due`),' in light_task_count_line
     assert 'page.append(appbar);' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
     assert "lightTaskFilters()" not in light_tasks
-    assert 'lightSectionTitle("DO")' in light_task_sections
     assert 'lightSectionTitle("DUE SOON")' in light_task_sections
+    assert 'lightSectionTitle("DUE")' in light_task_sections
     assert 'lightSectionTitle("OVERDUE")' in light_task_sections
     assert 'lightSectionTitle("DONE")' in light_task_sections
     assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
@@ -627,6 +630,11 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert ".light-task-row:focus-visible" in styles
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block
+    assert ".light-task-detail-body.light-html-card" in styles
+    assert "width: calc(100% + 40px);" in styles
+    assert "margin-left: -20px;" in styles
+    assert "margin-right: -20px;" in styles
+    assert "border-radius: 0;" in styles
     assert "color-scheme: light;" in light_theme_block
     assert "--surface-app:" in light_theme_block
     assert "--text-primary:" in light_theme_block

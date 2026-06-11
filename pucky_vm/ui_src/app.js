@@ -3781,8 +3781,8 @@
     }
     page.append(lightTaskCountLine());
     [
-      ["do", "DO"],
       ["soon", "DUE SOON"],
+      ["do", "DUE"],
       ["overdue", "OVERDUE"],
       ["done", "DONE"]
     ].forEach(([group, label]) => {
@@ -3794,11 +3794,11 @@
   }
 
   function lightTaskSectionTitle(label) {
-    if (label === "DO") {
-      return lightSectionTitle("DO");
-    }
     if (label === "DUE SOON") {
       return lightSectionTitle("DUE SOON");
+    }
+    if (label === "DUE") {
+      return lightSectionTitle("DUE");
     }
     if (label === "DONE") {
       return lightSectionTitle("DONE");
@@ -3826,9 +3826,9 @@
     const counts = lightTaskCounts();
     const line = el("p", "light-task-counts");
     line.append(
-      el("span", "light-task-count due", `${counts.due} due`),
-      DOT,
       el("span", "light-task-count due-soon", `${counts.dueSoon} due soon`),
+      DOT,
+      el("span", "light-task-count due", `${counts.due} due`),
       DOT,
       el("span", "light-task-count overdue", `${counts.overdue} overdue`),
       DOT,

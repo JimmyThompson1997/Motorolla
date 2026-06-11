@@ -4526,6 +4526,25 @@ button {
   margin-top: 2px;
 }
 
+.light-task-detail-body.light-html-card {
+  width: calc(100% + 40px);
+  margin-left: -20px;
+  margin-right: -20px;
+  border-radius: 0;
+}
+
+.light-task-detail-body.light-html-card .light-html-frame {
+  min-height: min(68vh, 720px);
+}
+
+.light-task-detail-body.light-html-empty {
+  width: calc(100% + 40px);
+  margin-left: -20px;
+  margin-right: -20px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
 .light-task-toggle {
   justify-self: start;
 }
