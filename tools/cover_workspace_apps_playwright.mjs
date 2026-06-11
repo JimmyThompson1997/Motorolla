@@ -322,6 +322,11 @@ async function seedWorkspace(config) {
       tomorrow,
       writeEnabled: true,
       pinnedNoteId: `${runId}-pinned-note`,
+      calendarIds: {
+        todayRoadmap: `${runId}-today-roadmap`,
+        todayOverlap: `${runId}-today-overlap`,
+        tomorrow: `${runId}-tomorrow-event`
+      },
       tasks: seededTasks,
       taskIds: {
         inline: `${runId}-future-task`,
@@ -490,7 +495,7 @@ async function proveNotes(page, config, seed, theme, screenshots) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  await page.getByText(note.title).waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.locator(`[data-note-id="${note.id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(`[data-note-id="${note.id}"]`).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);
@@ -748,20 +753,23 @@ async function proveTasks(page, config, seed, theme, screenshots, summary) {
 
 async function proveCalendar(page, config, seed, theme, screenshots) {
   await openTile(page, "Calendar", "calendar", config.timeoutMs);
-  const events = seed.writeEnabled
-    ? []
-    : (seed.calendarEvents || []);
-  const eventCards = page.locator('[data-event-id]');
+  const events = seed.writeEnabled ? [] : (seed.calendarEvents || []);
+  const seededEventId = seed.writeEnabled ? seed.calendarIds?.todayRoadmap : null;
+  const eventCards = seededEventId
+    ? page.locator(`[data-event-id="${seededEventId}"]`)
+    : page.locator('[data-event-id]');
   const eventCount = await eventCards.count();
   if (!eventCount) {
     screenshots[`${theme}_calendar_today`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-today`);
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const firstEventText = await eventCards.first().innerText();
+  const expectedTitle = seed.writeEnabled
+    ? "Proof Today Roadmap"
+    : ((await eventCards.first().innerText()).split("\n")[0].trim() || "Calendar");
   screenshots[`${theme}_calendar_today`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-today`);
   await eventCards.first().click();
-  await expectFrameHeading(page, firstEventText.trim() || `Calendar`, config.timeoutMs);
+  await expectFrameHeading(page, expectedTitle, config.timeoutMs);
   await backHome(page, theme, config.timeoutMs);
   return;
 }
@@ -795,10 +803,10 @@ async function proveProjects(page, config, seed, theme, screenshots) {
   await openTile(page, "Projects", "projects", config.timeoutMs);
   const projects = seed.writeEnabled ? null : (seed.projects || []);
   if (seed.writeEnabled) {
-    await page.getByText("Proof Alpha Project").waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.getByText("Proof Beta Project").waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-project-id="${seed.runId}-beta-project"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   } else if (projects.length) {
-    await page.getByText(projects[0].title).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-project-id="${projects[0].id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   } else {
     await backHome(page, theme, config.timeoutMs);
     return;
@@ -823,9 +831,9 @@ async function proveContacts(page, config, seed, theme, screenshots) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
   if (seed.writeEnabled) {
-    await page.getByText("Proof Contact One").waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   } else if (contacts.length) {
-    await page.getByText(contacts[0].title).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`button[data-contact-id="${contacts[0].id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   } else {
     await backHome(page, theme, config.timeoutMs);
     return;
@@ -878,8 +886,10 @@ async function main() {
   let browser;
   let context;
   try {
-    const seed = await seedWorkspace(config);
-    summary.seed = seed;
+    const lightSeed = await seedWorkspace(config);
+    const darkSeed = await seedWorkspace(config);
+    summary.seed = lightSeed;
+    summary.seeds = { light: lightSeed, dark: darkSeed };
     browser = await chromium.launch({
       executablePath: resolveChromePath(),
       headless: true
@@ -905,8 +915,8 @@ async function main() {
     });
 
     summary.screenshots = {
-      ...(await runTheme(page, config, seed, "light", summary)),
-      ...(await runTheme(page, config, seed, "dark", summary))
+      ...(await runTheme(page, config, lightSeed, "light", summary)),
+      ...(await runTheme(page, config, darkSeed, "dark", summary))
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts read /api/workspace records");
