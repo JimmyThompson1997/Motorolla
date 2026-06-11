@@ -115,7 +115,14 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
     server, base_url = start_server(tmp_path)
     try:
         catalog = request_json(base_url, "/api/workspace/")
-        assert {"messages", "meeting-notes", "reminders"}.issubset(set(catalog["collections"]))
+        assert "messages" not in set(catalog["collections"])
+        assert {"meeting-notes", "reminders"}.issubset(set(catalog["collections"]))
+        try:
+            urllib.request.urlopen(f"{base_url}/api/workspace/messages")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("messages endpoint should be removed")
 
         asset = request_json(
             base_url,
@@ -206,21 +213,33 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
         linked_project = request_json(base_url, "/api/workspace/projects/api-project")
         assert any(item["target_id"] == "api-note" for item in linked_project["links"])
 
-        message = request_json(
+        contact = request_json(
             base_url,
-            "/api/workspace/messages",
+            "/api/workspace/contacts",
             method="POST",
             token="test-token",
-            body={"id": "api-message", "title": "API Message", "summary": "Standalone message", "metadata": {"channel": "Messages", "sender": "Maya"}},
+            body={"id": "api-contact", "title": "API Contact", "summary": "Personal contact", "metadata": {"email": "api@example.com"}},
         )
-        assert message["kind"] == "message"
-
+        assert contact["kind"] == "contact"
+        calendar_event = request_json(
+            base_url,
+            "/api/workspace/calendar-events",
+            method="POST",
+            token="test-token",
+            body={"id": "api-event", "title": "API Event", "date": "2026-06-11", "start_at_ms": 1000, "end_at_ms": 2000},
+        )
+        assert calendar_event["kind"] == "calendar_event"
         meeting_note = request_json(
             base_url,
             "/api/workspace/meeting-notes",
             method="POST",
             token="test-token",
-            body={"id": "api-meeting-note", "title": "API Meeting Note", "summary": "Graph meeting", "metadata": {"participants": ["Maya"]}},
+            body={
+                "id": "api-meeting-note",
+                "title": "API Meeting Note",
+                "summary": "Graph meeting",
+                "metadata": {"participants": ["API Contact"], "source_kind": "calendar_event", "source_id": "api-event"},
+            },
         )
         assert meeting_note["kind"] == "meeting_note"
 
@@ -229,27 +248,58 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
             "/api/workspace/reminders",
             method="POST",
             token="test-token",
-            body={"id": "api-reminder", "title": "API Reminder", "status": "open", "due_at_ms": 1000, "metadata": {"source_kind": "message", "source_id": "api-message"}},
+            body={"id": "api-reminder", "title": "API Reminder", "status": "open", "due_at_ms": 1000, "metadata": {"source_kind": "task", "source_id": "api-task"}},
         )
         assert reminder["kind"] == "reminder"
 
-        graph_link = request_json(
-            base_url,
-            "/api/workspace/links",
-            method="POST",
-            token="test-token",
-            body={
-                "id": "api-message-reminder",
-                "source_kind": "message",
-                "source_id": "api-message",
-                "target_kind": "reminder",
-                "target_id": "api-reminder",
-                "label": "follow_up",
-            },
-        )
-        assert graph_link["source_kind"] == "message"
-        linked_message = request_json(base_url, "/api/workspace/messages/api-message")
-        assert any(item["target_kind"] == "reminder" for item in linked_message["links"])
+        for link_id, source_kind, source_id, target_kind, target_id, label in [
+            ("api-meeting-contact", "meeting_note", "api-meeting-note", "contact", "api-contact", "API Contact"),
+            ("api-meeting-calendar", "meeting_note", "api-meeting-note", "calendar_event", "api-event", "API Event"),
+            ("api-meeting-note", "meeting_note", "api-meeting-note", "note", "api-note", "API Note Updated"),
+            ("api-meeting-task", "meeting_note", "api-meeting-note", "task", "api-task", "API Task"),
+            ("api-meeting-project", "meeting_note", "api-meeting-note", "project", "api-project", "API Project"),
+            ("api-meeting-reminder", "meeting_note", "api-meeting-note", "reminder", "api-reminder", "API Reminder"),
+            ("api-project-contact", "project", "api-project", "contact", "api-contact", "API Contact"),
+            ("api-project-task", "project", "api-project", "task", "api-task", "API Task"),
+            ("api-project-note", "project", "api-project", "note", "api-note", "API Note Updated"),
+            ("api-reminder-task", "reminder", "api-reminder", "task", "api-task", "API Task"),
+            ("api-reminder-meeting", "reminder", "api-reminder", "meeting_note", "api-meeting-note", "API Meeting Note"),
+        ]:
+            graph_link = request_json(
+                base_url,
+                "/api/workspace/links",
+                method="POST",
+                token="test-token",
+                body={
+                    "id": link_id,
+                    "source_kind": source_kind,
+                    "source_id": source_id,
+                    "target_kind": target_kind,
+                    "target_id": target_id,
+                    "label": label,
+                },
+            )
+            assert graph_link["source_kind"] == source_kind
+
+        linked_meeting = request_json(base_url, "/api/workspace/meeting-notes/api-meeting-note")
+        assert any(item["target_kind"] == "contact" and item["target_id"] == "api-contact" for item in linked_meeting["links"])
+        assert any(item["target_kind"] == "calendar_event" and item["target_id"] == "api-event" for item in linked_meeting["links"])
+        assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_meeting["links"])
+        assert any(item["target_kind"] == "project" and item["target_id"] == "api-project" for item in linked_meeting["links"])
+        assert any(item["target_kind"] == "reminder" and item["target_id"] == "api-reminder" for item in linked_meeting["links"])
+
+        linked_reminder = request_json(base_url, "/api/workspace/reminders/api-reminder")
+        assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_reminder["links"])
+        assert any(item["target_kind"] == "meeting_note" and item["target_id"] == "api-meeting-note" for item in linked_reminder["links"])
+
+        linked_project = request_json(base_url, "/api/workspace/projects/api-project")
+        assert any(item["target_kind"] == "contact" and item["target_id"] == "api-contact" for item in linked_project["links"])
+        assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_project["links"])
+        assert any(item["target_kind"] == "note" and item["target_id"] == "api-note" for item in linked_project["links"])
+
+        linked_contact = request_json(base_url, "/api/workspace/contacts/api-contact")
+        assert any(item["source_kind"] == "meeting_note" and item["source_id"] == "api-meeting-note" for item in linked_contact["links"])
+        assert any(item["source_kind"] == "project" and item["source_id"] == "api-project" for item in linked_contact["links"])
     finally:
         server.shutdown()
 

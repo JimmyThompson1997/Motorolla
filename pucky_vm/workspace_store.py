@@ -23,7 +23,6 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
     "feed-items": "feed_item",
     "projects": "project",
     "contacts": "contact",
-    "messages": "message",
     "meeting-notes": "meeting_note",
     "reminders": "reminder",
 }
@@ -321,6 +320,7 @@ class WorkspaceStore:
         with self._lock:
             seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_v1'").fetchone()
             graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v1'").fetchone()
+            graph_v2_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v2'").fetchone()
         now = self.now_ms()
         if not seeded:
             defaults = default_workspace_records(now)
@@ -350,6 +350,8 @@ class WorkspaceStore:
                     ("seeded_graph_v1", "1", now),
                 )
                 self._conn.commit()
+        if not graph_v2_seeded:
+            self._reseed_graph_v2(now)
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
@@ -357,6 +359,63 @@ class WorkspaceStore:
         if not kind:
             raise ValueError("unknown_workspace_collection")
         return kind
+
+    def _reseed_graph_v2(self, now_ms: int) -> None:
+        graph_record_ids = [
+            "house-paint-notes",
+            "clinic-prep-note",
+            "freelance-homepage-note",
+            "demo-task-do-paint-samples",
+            "demo-task-send-freelance-mockup",
+            "house-walkthrough",
+            "clinic-checkin",
+            "freelance-review",
+            "home-refresh",
+            "freelance-followup",
+            "sam-rivera",
+            "clinic-front-desk",
+            "demo-message-house-repair",
+            "demo-message-dinner-plan",
+            "demo-message-freelance-followup",
+            "demo-message-clinic-followup",
+            "demo-meeting-home-refresh",
+            "demo-meeting-trip-plan",
+            "demo-meeting-freelance-followup",
+            "demo-reminder-paint-samples",
+            "demo-reminder-health-call",
+            "demo-reminder-book-note",
+            "demo-reminder-freelance-followup",
+        ]
+        placeholders = ",".join("?" for _ in graph_record_ids)
+        link_params = tuple(graph_record_ids) + tuple(graph_record_ids)
+        with self._lock:
+            self._conn.execute(
+                f"""
+                DELETE FROM workspace_links
+                WHERE source_kind = 'message'
+                   OR target_kind = 'message'
+                   OR link_id LIKE 'graph-%'
+                   OR source_id IN ({placeholders})
+                   OR target_id IN ({placeholders})
+                """,
+                link_params,
+            )
+            self._conn.execute(
+                f"DELETE FROM workspace_records WHERE kind = 'message' OR record_id IN ({placeholders})",
+                tuple(graph_record_ids),
+            )
+            self._conn.commit()
+        for collection, records in default_workspace_graph_records(now_ms).items():
+            for record in records:
+                self.upsert_record(collection, record)
+        for link in default_workspace_graph_links():
+            self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_graph_v2", "1", now_ms),
+            )
+            self._conn.commit()
 
     def _normalize_record(self, kind: str, record_id: str, payload: dict[str, object], *, now_ms: int) -> dict[str, object]:
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -960,6 +1019,8 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
     day = time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000))
     tomorrow_ms = now_ms + 24 * 60 * 60 * 1000
     tomorrow = time.strftime("%Y-%m-%d", time.localtime(tomorrow_ms / 1000))
+    day_after_ms = now_ms + 2 * 24 * 60 * 60 * 1000
+    day_after = time.strftime("%Y-%m-%d", time.localtime(day_after_ms / 1000))
     return {
         "notes": [
             {
@@ -972,7 +1033,29 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     ["Check afternoon light", "Photograph the trim", "Decide between linen and warm white"],
                 ),
                 "metadata": {"context": "Home refresh", "icon": "note"},
-            }
+            },
+            {
+                "id": "clinic-prep-note",
+                "title": "Clinic prep note",
+                "summary": "Questions to ask before the appointment and a short prep checklist.",
+                "html": _personal_html(
+                    "Clinic prep note",
+                    "Keep the call short and make sure the appointment window is still right.",
+                    ["Confirm arrival time", "Ask about prep instructions", "Write down what to bring"],
+                ),
+                "metadata": {"context": "Health appointment", "icon": "note"},
+            },
+            {
+                "id": "freelance-homepage-note",
+                "title": "Freelance homepage revision",
+                "summary": "Small list of copy, layout, and invoice follow-ups for the next client pass.",
+                "html": _personal_html(
+                    "Freelance homepage revision",
+                    "Capture the last homepage changes before the next client review.",
+                    ["Tighten the headline", "Swap the proof image", "Pair the invoice note with the mockup"],
+                ),
+                "metadata": {"context": "Freelance follow-up", "icon": "note"},
+            },
         ],
         "tasks": [
             {
@@ -985,10 +1068,24 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Bring paint samples upstairs",
                     "Put the sample cards where the light actually changes during the day.",
                     ["Carry the swatches upstairs", "Tape each one by the hallway trim", "Text Maya a picture before the walkthrough"],
-                    "This task is linked from a message, a meeting note, a reminder, and the Home refresh project.",
+                    "This task is linked from the meeting note, the reminder, and the Home refresh project.",
                 ),
-                "metadata": {"owner": "Maya Chen", "project": "Home refresh", "source": "demo-message-house-repair"},
-            }
+                "metadata": {"owner": "Maya Chen", "project": "Home refresh", "source": "demo-meeting-home-refresh"},
+            },
+            {
+                "id": "demo-task-send-freelance-mockup",
+                "title": "Send homepage pass to Sam",
+                "summary": "Ship the revised HTML and the invoice note before the client review.",
+                "status": "open",
+                "due_at_ms": tomorrow_ms + 15 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Send homepage pass to Sam",
+                    "Package the latest HTML pass and the invoice note so the review stays calm and small.",
+                    ["Export the latest mockup", "Attach the invoice note", "Send it before the review window"],
+                    "This one keeps the freelance project, meeting note, and reminder tied together.",
+                ),
+                "metadata": {"owner": "Sam Rivera", "project": "Freelance follow-up", "source": "demo-meeting-freelance-followup"},
+            },
         ],
         "calendar-events": [
             {
@@ -1006,18 +1103,32 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"place": "Home", "attendees": ["Maya Chen"], "type": "personal"},
             },
             {
-                "id": "trip-dinner-planning",
-                "title": "Dinner and trip planning",
-                "summary": "Sketch dinner timing and train options for tomorrow.",
+                "id": "clinic-checkin",
+                "title": "Clinic check-in",
+                "summary": "Short appointment block for the check-in and follow-up questions.",
                 "date": tomorrow,
-                "start_at_ms": tomorrow_ms + 18 * 60 * 60 * 1000,
-                "end_at_ms": tomorrow_ms + 19 * 60 * 60 * 1000,
+                "start_at_ms": tomorrow_ms + 11 * 60 * 60 * 1000,
+                "end_at_ms": tomorrow_ms + 11 * 60 * 60 * 1000 + 30 * 60 * 1000,
                 "html": _personal_html(
-                    "Dinner and trip planning",
-                    "Small logistics meeting for dinner, packing, and the train window.",
-                    ["Pick dinner spot", "Check train timing", "Share the note with family"],
+                    "Clinic check-in",
+                    "Keep the appointment block simple and make sure the prep questions are already answered.",
+                    ["Arrive a few minutes early", "Bring the question list", "Turn any follow-up into a note"],
                 ),
-                "metadata": {"place": "Kitchen table", "attendees": ["Maya Chen"], "type": "family"},
+                "metadata": {"place": "Clinic", "attendees": ["Clinic front desk"], "type": "health"},
+            },
+            {
+                "id": "freelance-review",
+                "title": "Freelance review call",
+                "summary": "Quick client review for the homepage pass and remaining invoice notes.",
+                "date": day_after,
+                "start_at_ms": day_after_ms + 15 * 60 * 60 * 1000,
+                "end_at_ms": day_after_ms + 16 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Freelance review call",
+                    "Keep the review focused on the homepage pass and the one invoice detail that still matters.",
+                    ["Walk through the new HTML", "Confirm the next edit round", "Close the invoice question"],
+                ),
+                "metadata": {"place": "Phone", "attendees": ["Sam Rivera"], "type": "freelance"},
             },
         ],
         "projects": [
@@ -1031,94 +1142,54 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     ["Paint samples upstairs", "Hallway repair estimate", "Weekend supply run"],
                 ),
                 "metadata": {"threads": ["Paint samples", "Repair walkthrough"], "chips": ["personal", "house", "Maya"], "assets": ["Paint photos", "Repair list"]},
-            }
+            },
+            {
+                "id": "freelance-followup",
+                "title": "Freelance follow-up",
+                "summary": "Homepage revision, invoice timing, and the next review window.",
+                "html": _personal_html(
+                    "Freelance follow-up",
+                    "Keep the homepage revision, invoice question, and next review pass together in one small project shell.",
+                    ["Homepage pass", "Invoice note", "Next review"],
+                ),
+                "metadata": {"threads": ["Homepage revision", "Invoice note"], "chips": ["Freelance", "2 follow-ups"]},
+            },
         ],
-        "messages": [
+        "contacts": [
             {
-                "id": "demo-message-house-repair",
-                "title": "Maya can bring paint swatches",
-                "summary": "Text from Maya about paint samples and the hallway repair list.",
-                "event_at_ms": now_ms - 24 * 60 * 1000,
+                "id": "sam-rivera",
+                "title": "Sam Rivera",
+                "summary": "Freelance client",
                 "html": _personal_html(
-                    "Maya can bring paint swatches",
-                    "Maya offered to bring the paint swatches before the home refresh walkthrough.",
-                    ["Ask for linen and warm white", "Tie it to the walkthrough", "Spawn the upstairs sample task"],
+                    "Sam Rivera",
+                    "Client contact for the homepage revision and invoice follow-up.",
+                    ["Homepage revision", "Invoice timing", "Review call"],
                 ),
                 "metadata": {
-                    "channel": "Messages",
-                    "sender": "Maya Chen",
-                    "participants": ["Maya Chen"],
-                    "unread_count": 1,
-                    "transcript": [
-                        {"role": "assistant", "sender": "Maya Chen", "text": "I can bring the paint swatches around 6 if that still helps.", "time": "5:36 PM"},
-                        {"role": "user", "sender": "You", "text": "Perfect. Bring warm white and linen too so we can decide before dinner.", "time": "5:41 PM"},
-                    ],
-                    "extracted_topics": ["home refresh", "paint", "repair"],
+                    "first_name": "Sam",
+                    "last_name": "Rivera",
+                    "avatar": "SR",
+                    "email": "sam.rivera@example.com",
+                    "phone": "+1 (415) 555-0168",
+                    "endpoints": [{"label": "Email", "value": "sam.rivera@example.com"}],
+                    "activity": ["Email - asked for the revised homepage pass", "Calendar - review call in two days"],
                 },
             },
             {
-                "id": "demo-message-dinner-plan",
-                "title": "Dinner timing for tomorrow",
-                "summary": "Family logistics message about dinner and the train window.",
-                "event_at_ms": now_ms - 2 * 60 * 60 * 1000,
+                "id": "clinic-front-desk",
+                "title": "Clinic front desk",
+                "summary": "Call to confirm the appointment window and prep notes.",
                 "html": _personal_html(
-                    "Dinner timing for tomorrow",
-                    "A low-stakes logistics thread that can still become reminders or calendar events.",
-                    ["Confirm the table time", "Check train arrival", "Share note after work"],
+                    "Clinic front desk",
+                    "Short contact card for appointment timing and prep questions.",
+                    ["Confirm the time", "Ask about prep", "Write down follow-up instructions"],
                 ),
                 "metadata": {
-                    "channel": "Messages",
-                    "sender": "Family",
-                    "participants": ["Maya Chen"],
-                    "transcript": [
-                        {"role": "assistant", "sender": "Family", "text": "Can we push dinner to 7:30 if the train is running late?", "time": "3:08 PM"},
-                        {"role": "user", "sender": "You", "text": "Yep. I'll check the arrival window when I leave work.", "time": "3:14 PM"},
-                    ],
-                    "extracted_topics": ["dinner", "trip"],
-                },
-            },
-            {
-                "id": "demo-message-freelance-followup",
-                "title": "Freelance client follow-up",
-                "summary": "Client wants the revised HTML concept and one invoice note.",
-                "event_at_ms": now_ms - 5 * 60 * 60 * 1000,
-                "html": _personal_html(
-                    "Freelance client follow-up",
-                    "A work-adjacent message that belongs in the personal workspace without feeling corporate.",
-                    ["Send the HTML concept", "Flag invoice timing", "Make one follow-up reminder"],
-                ),
-                "metadata": {
-                    "channel": "Email",
-                    "sender": "Sam Rivera",
-                    "participants": ["Sam Rivera"],
-                    "unread_count": 1,
-                    "transcript": [
-                        {"role": "assistant", "sender": "Sam Rivera", "text": "Could you send the revised HTML concept tonight and add one invoice note?", "time": "11:02 AM"},
-                        {"role": "user", "sender": "You", "text": "Yes. I'll send the concept after I clean up the layout pass.", "time": "11:19 AM"},
-                    ],
-                    "reply_preview": "I'll send the revised concept tonight.",
-                    "extracted_topics": ["freelance", "invoice"],
-                },
-            },
-            {
-                "id": "demo-message-clinic-followup",
-                "title": "Clinic reschedule text",
-                "summary": "Quick scheduling note that may become a reminder and a calendar block.",
-                "event_at_ms": now_ms - 9 * 60 * 60 * 1000,
-                "html": _personal_html(
-                    "Clinic reschedule text",
-                    "A tiny logistics thread that still belongs in the same personal graph.",
-                    ["Confirm the new slot", "Add it to calendar", "Set a reminder the night before"],
-                ),
-                "metadata": {
-                    "channel": "Messages",
-                    "sender": "Dr. Patel Office",
-                    "participants": ["Dr. Patel Office"],
-                    "transcript": [
-                        {"role": "assistant", "sender": "Dr. Patel Office", "text": "We can move your appointment to Friday at 11 if that helps.", "time": "9:12 AM"},
-                        {"role": "user", "sender": "You", "text": "Friday at 11 works. Please send the prep note again.", "time": "9:19 AM"},
-                    ],
-                    "extracted_topics": ["health", "appointment"],
+                    "avatar": "CF",
+                    "email": "frontdesk@clinic.example.com",
+                    "phone": "+1 (415) 555-0133",
+                    "endpoints": [{"label": "Phone", "value": "+1 (415) 555-0133"}],
+                    "activity": ["Call - confirm the appointment time", "Reminder - check prep instructions"],
                 },
             },
         ],
@@ -1138,18 +1209,18 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"participants": ["Maya Chen"], "source": "house-walkthrough", "source_kind": "calendar_event", "source_id": "house-walkthrough", "extracted_topics": ["paint", "repair", "home refresh"]},
             },
             {
-                "id": "demo-meeting-trip-plan",
-                "title": "Trip planning check-in",
-                "summary": "A personal planning session for family logistics and packing reminders.",
+                "id": "demo-meeting-freelance-followup",
+                "title": "Freelance review prep",
+                "summary": "Small planning note for the homepage pass and invoice follow-up before the client review.",
                 "date": tomorrow,
-                "start_at_ms": tomorrow_ms + 18 * 60 * 60 * 1000,
-                "end_at_ms": tomorrow_ms + 19 * 60 * 60 * 1000,
+                "start_at_ms": tomorrow_ms + 14 * 60 * 60 * 1000,
+                "end_at_ms": tomorrow_ms + 14 * 60 * 60 * 1000 + 45 * 60 * 1000,
                 "html": _personal_html(
-                    "Trip planning check-in",
-                    "Small meeting note that keeps travel logistics connected to messages and reminders.",
-                    ["Dinner timing", "Train arrival", "Packing reminder"],
+                    "Freelance review prep",
+                    "Keep the review call practical: ship the revised HTML, answer the invoice question, and leave with one clear next step.",
+                    ["Send the revised HTML", "Answer the invoice question", "Agree on the next edit round"],
                 ),
-                "metadata": {"participants": ["Maya Chen"], "source": "trip-dinner-planning", "source_kind": "calendar_event", "source_id": "trip-dinner-planning", "extracted_topics": ["trip", "family logistics"]},
+                "metadata": {"participants": ["Sam Rivera"], "source": "freelance-review", "source_kind": "calendar_event", "source_id": "freelance-review", "extracted_topics": ["freelance", "homepage", "invoice"]},
             },
         ],
         "reminders": [
@@ -1169,28 +1240,28 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
             {
                 "id": "demo-reminder-health-call",
                 "title": "Call clinic before lunch",
-                "summary": "Standalone health appointment reminder.",
+                "summary": "Confirm the appointment window and ask the prep questions.",
                 "status": "open",
-                "due_at_ms": now_ms + 20 * 60 * 60 * 1000,
+                "due_at_ms": tomorrow_ms + 9 * 60 * 60 * 1000,
                 "html": _personal_html(
                     "Call clinic before lunch",
-                    "A simple standalone reminder that is not a task yet.",
+                    "A simple health reminder that links directly to the appointment block and prep note.",
                     ["Ask about appointment slot", "Write down prep instructions", "Add calendar block if confirmed"],
                 ),
-                "metadata": {"source_kind": "contact", "source_id": "", "snooze_state": "ready"},
+                "metadata": {"source_kind": "calendar_event", "source_id": "clinic-checkin", "snooze_state": "ready"},
             },
             {
-                "id": "demo-reminder-book-note",
-                "title": "Turn book note into project idea",
-                "summary": "Review the scratch note this weekend.",
+                "id": "demo-reminder-freelance-followup",
+                "title": "Send homepage pass before review",
+                "summary": "Get the revised HTML and invoice note out before the client review window.",
                 "status": "open",
-                "due_at_ms": now_ms + 3 * 24 * 60 * 60 * 1000,
+                "due_at_ms": tomorrow_ms + 13 * 60 * 60 * 1000,
                 "html": _personal_html(
-                    "Turn book note into project idea",
-                    "A reminder can attach to memory without becoming a formal task first.",
-                    ["Reread the highlighted page", "Write one paragraph", "Decide if it becomes a project"],
+                    "Send homepage pass before review",
+                    "Small reminder that keeps the freelance task and meeting note in sync.",
+                    ["Export the latest HTML", "Attach the invoice note", "Send it before the review starts"],
                 ),
-                "metadata": {"source_kind": "note", "source_id": "house-paint-notes", "snooze_state": "later"},
+                "metadata": {"source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "snooze_state": "ready"},
             },
         ],
     }
@@ -1198,11 +1269,6 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
 
 def default_workspace_graph_links() -> list[dict[str, object]]:
     return [
-        {"id": "graph-message-house-contact", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
-        {"id": "graph-message-house-note", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
-        {"id": "graph-message-house-task", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
-        {"id": "graph-message-house-project", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
-        {"id": "graph-message-house-reminder", "source_kind": "message", "source_id": "demo-message-house-repair", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-meeting-home-contact", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
         {"id": "graph-meeting-home-calendar", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "calendar_event", "target_id": "house-walkthrough", "label": "Home refresh walkthrough"},
         {"id": "graph-meeting-home-note", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
@@ -1210,9 +1276,28 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-meeting-home-project", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
         {"id": "graph-meeting-home-reminder", "source_kind": "meeting_note", "source_id": "demo-meeting-home-refresh", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-project-home-contact", "source_kind": "project", "source_id": "home-refresh", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "graph-project-home-calendar", "source_kind": "project", "source_id": "home-refresh", "target_kind": "calendar_event", "target_id": "house-walkthrough", "label": "Home refresh walkthrough"},
+        {"id": "graph-project-home-meeting", "source_kind": "project", "source_id": "home-refresh", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
         {"id": "graph-project-home-note", "source_kind": "project", "source_id": "home-refresh", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
         {"id": "graph-project-home-task", "source_kind": "project", "source_id": "home-refresh", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-project-home-reminder", "source_kind": "project", "source_id": "home-refresh", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-reminder-paint-task", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-reminder-paint-meeting", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
+        {"id": "graph-reminder-health-contact", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
+        {"id": "graph-reminder-health-calendar", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "calendar_event", "target_id": "clinic-checkin", "label": "Clinic check-in"},
+        {"id": "graph-reminder-health-note", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
+        {"id": "graph-meeting-freelance-contact", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "contact", "target_id": "sam-rivera", "label": "Sam Rivera"},
+        {"id": "graph-meeting-freelance-calendar", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "calendar_event", "target_id": "freelance-review", "label": "Freelance review call"},
+        {"id": "graph-meeting-freelance-note", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},
+        {"id": "graph-meeting-freelance-task", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
+        {"id": "graph-meeting-freelance-project", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "project", "target_id": "freelance-followup", "label": "Freelance follow-up"},
+        {"id": "graph-meeting-freelance-reminder", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "reminder", "target_id": "demo-reminder-freelance-followup", "label": "Send homepage pass before review"},
+        {"id": "graph-project-freelance-contact", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "contact", "target_id": "sam-rivera", "label": "Sam Rivera"},
+        {"id": "graph-project-freelance-calendar", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "calendar_event", "target_id": "freelance-review", "label": "Freelance review call"},
+        {"id": "graph-project-freelance-meeting", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "meeting_note", "target_id": "demo-meeting-freelance-followup", "label": "Freelance review prep"},
+        {"id": "graph-project-freelance-note", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},
+        {"id": "graph-project-freelance-task", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
+        {"id": "graph-project-freelance-reminder", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "reminder", "target_id": "demo-reminder-freelance-followup", "label": "Send homepage pass before review"},
+        {"id": "graph-reminder-freelance-task", "source_kind": "reminder", "source_id": "demo-reminder-freelance-followup", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
+        {"id": "graph-reminder-freelance-meeting", "source_kind": "reminder", "source_id": "demo-reminder-freelance-followup", "target_kind": "meeting_note", "target_id": "demo-meeting-freelance-followup", "label": "Freelance review prep"},
     ]

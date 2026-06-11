@@ -145,7 +145,6 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       ],
       projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
       contacts: [`${runId}-contact-one`, `${runId}-contact-two`],
-      messages: [`${runId}-graph-message`],
       "meeting-notes": [`${runId}-graph-meeting`],
       reminders: [`${runId}-graph-reminder`]
     }
@@ -388,32 +387,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         activity: ["Created by proof", "Linked to Beta"]
       }
     });
-
-    await apiRequest(config, "POST", "/api/workspace/messages", {
-      id: `${runId}-graph-message`,
-      title: "Proof Graph Message",
-      summary: "Message created through workspace API and linked into the graph.",
-      event_at_ms: Date.now() - 90_000,
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Proof Graph Message</h1>",
-        "<p>This message links to a contact, task, project, and reminder.</p>",
-        "<ul><li>Contact: Proof Contact One</li><li>Task: Proof Future Task</li><li>Reminder: Proof Graph Reminder</li></ul>",
-        "</body></html>"
-      ].join(""),
-      metadata: {
-        channel: "Messages",
-        sender: "Proof Contact One",
-        participants: ["Proof Contact One"],
-        project: "Proof Alpha Project",
-        topics: ["graph", "message"],
-        unread_count: 1,
-        transcript: [
-          { role: "assistant", sender: "Proof Contact One", text: "Can we turn this note into a task and a reminder?", time: "Now" },
-          { role: "user", sender: "You", text: "Yes. I'll attach it to the project and the follow-up.", time: "Now" }
-        ]
-      }
-    });
     await apiRequest(config, "POST", "/api/workspace/meeting-notes", {
       id: `${runId}-graph-meeting`,
       title: "Proof Graph Meeting",
@@ -474,10 +447,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     }
 
     for (const link of [
-      ["message-contact", "message", `${runId}-graph-message`, "contact", `${runId}-contact-one`, "Proof Contact One"],
-      ["message-task", "message", `${runId}-graph-message`, "task", `${runId}-future-task`, "Proof Future Task"],
-      ["message-project", "message", `${runId}-graph-message`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
-      ["message-reminder", "message", `${runId}-graph-message`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
       ["meeting-contact", "meeting_note", `${runId}-graph-meeting`, "contact", `${runId}-contact-one`, "Proof Contact One"],
       ["meeting-calendar", "meeting_note", `${runId}-graph-meeting`, "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["meeting-note", "meeting_note", `${runId}-graph-meeting`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
@@ -522,7 +491,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         flip: deadlineFlipId
       },
       graphIds: {
-        message: `${runId}-graph-message`,
         meeting: `${runId}-graph-meeting`,
         reminder: `${runId}-graph-reminder`
       }
@@ -531,14 +499,13 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     if (!isUnauthorizedError(error)) {
       throw error;
     }
-    const [notes, tasks, events, feeds, projects, contacts, messages, meetingNotes, reminders] = await Promise.all([
+    const [notes, tasks, events, feeds, projects, contacts, meetingNotes, reminders] = await Promise.all([
       readCollection(config, "notes"),
       readCollection(config, "tasks"),
       readCollection(config, "calendar-events"),
       readCollection(config, "feed-items"),
       readCollection(config, "projects"),
       readCollection(config, "contacts"),
-      readCollection(config, "messages"),
       readCollection(config, "meeting-notes"),
       readCollection(config, "reminders")
     ]);
@@ -554,7 +521,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       feedItems: feeds,
       projects,
       contacts,
-      messages,
       meetingNotes,
       reminders
     };
@@ -1347,28 +1313,10 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
     summary.assertions.push("graph object proof skipped write ripple checks because API token was unavailable");
     return;
   }
-  const { message, meeting, reminder } = seed.graphIds || {};
-  assert(message && meeting && reminder, "Expected graph proof IDs from seedWorkspace");
+  const { meeting, reminder } = seed.graphIds || {};
+  assert(meeting && reminder, "Expected graph proof IDs from seedWorkspace");
 
-  await openTile(page, "Messages", "messages", config.timeoutMs);
-  assert(await page.locator(".light-message-thread-row").count() > 0, "Expected message list to render thread-style rows");
-  await page.locator(`[data-record-id="${message}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-  screenshots[`${theme}_graph_messages`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-messages-list`);
-  await page.locator(`[data-record-id="${message}"]`).click();
-  await expectFrameHeading(page, "Proof Graph Message", config.timeoutMs);
-  for (const text of ["Proof Contact One", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
-    await waitForGraphText(page, text, config.timeoutMs);
-  }
-  assert(await page.locator(".light-message-conversation").count() > 0, "Expected message detail to render a conversation surface");
-  let graphState = await readGraphDetailState(page);
-  assert(graphState.route === "message-detail", `Expected message-detail route, got ${graphState.route}`);
-  assert(graphState.hasHtmlFrame, "Expected message detail to render generated HTML iframe");
-  screenshots[`${theme}_graph_message_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-message-detail`);
-  await page.locator(`[data-workspace-target-route="contact-detail"][data-workspace-target-id="${seed.runId}-contact-one"]`).first().click();
-  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-  screenshots[`${theme}_graph_message_contact_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-message-contact-detail`);
-  await backHome(page, theme, config.timeoutMs);
+  let graphState;
 
   await openTile(page, "Meeting Notes", "meeting-notes", config.timeoutMs);
   await page.locator(`[data-record-id="${meeting}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1424,7 +1372,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   summary.graphRipple = summary.graphRipple || [];
   summary.graphRipple.push({ theme, message, meeting, reminder, project: `${seed.runId}-alpha-project`, contact: `${seed.runId}-contact-one` });
-  summary.assertions.push(`${theme} messages/meeting-notes/reminders ripple through linked UI records`);
+  summary.assertions.push(`${theme} meeting-notes/reminders/projects/contacts ripple through linked UI records`);
 }
 
 async function runTheme(page, config, seed, theme, summary, networkLog) {
@@ -1497,7 +1445,7 @@ async function main() {
       ...(await runTheme(page, config, darkSeed, "dark", summary, networkLog))
     };
     summary.assertions.push("light and dark home-shell loaded");
-    summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/messages/meeting-notes/reminders read /api/workspace records");
+    summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
     summary.assertions.push("generated HTML iframes rendered for workspace object apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");

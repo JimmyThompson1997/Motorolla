@@ -231,7 +231,6 @@
     { route: "links", label: "Connect", icon: "link", accent: "connect", kind: "real" },
     { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
     { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
-    { route: "messages", label: "Messages", icon: "chat", accent: "messages", kind: "mock" },
     { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "mock" },
     { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "mock" },
     { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" },
@@ -249,8 +248,6 @@
     "task-detail",
     "calendar",
     "meeting-detail",
-    "messages",
-    "message-detail",
     "meeting-notes",
     "meeting-note-detail",
     "reminders",
@@ -269,7 +266,6 @@
     "note-detail": "notes",
     "task-detail": "tasks",
     "meeting-detail": "calendar",
-    "message-detail": "messages",
     "meeting-note-detail": "meeting-notes",
     "reminder-detail": "reminders",
     "feed-preview-detail": "feed-preview",
@@ -285,7 +281,6 @@
     "task-detail": "tasks",
     calendar: "calendar-events",
     "meeting-detail": "calendar-events",
-    messages: "messages",
     "message-detail": "messages",
     "meeting-notes": "meeting-notes",
     "meeting-note-detail": "meeting-notes",
@@ -307,7 +302,6 @@
     feed_item: "feed-items",
     project: "projects",
     contact: "contacts",
-    message: "messages",
     meeting_note: "meeting-notes",
     reminder: "reminders"
   };
@@ -350,7 +344,6 @@
     previousLightRoute: "home",
     selectedContactId: "sarah",
     selectedMeetingId: "vendor",
-    selectedMessageId: "demo-message-house-repair",
     selectedMeetingNoteId: "demo-meeting-home-refresh",
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
@@ -3471,12 +3464,6 @@
       case "meeting-detail":
         view.append(lightMeetingDetailPage());
         break;
-      case "messages":
-        view.append(lightMessagesPage());
-        break;
-      case "message-detail":
-        view.append(lightMessageDetailPage());
-        break;
       case "meeting-notes":
         view.append(lightMeetingNotesPage());
         break;
@@ -3848,243 +3835,6 @@
     return page;
   }
 
-  function lightMessagesPage() {
-    const page = lightPage("Messages", { large: true });
-    page.classList.add("light-messages-page");
-    const status = lightWorkspaceStatus("messages", "chat", "No messages yet");
-    const contacts = workspaceBucket("contacts");
-    if (contacts && !contacts.loaded && !contacts.loading) {
-      void loadWorkspaceCollection("contacts", { render: true });
-    }
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    const list = el("div", "light-message-thread-list");
-    workspaceItems("messages")
-      .slice()
-      .sort((left, right) => Number(right.event_at_ms || right.updated_at_ms || 0) - Number(left.event_at_ms || left.updated_at_ms || 0))
-      .forEach(message => list.append(lightMessageThreadRow(message)));
-    page.append(list);
-    return page;
-  }
-
-  function lightMessageDetailPage() {
-    const message = selectedMessage();
-    if (!message) {
-      return lightPage("Message", { subtitle: "Message not found." });
-    }
-    ensureLinkedCollections(message);
-    const page = lightPage("Messages");
-    page.classList.add("light-document-page", "light-message-detail-page");
-    page.append(lightMessageHero(message));
-    const conversation = lightMessageConversation(message);
-    if (conversation) {
-      page.append(conversation);
-    }
-    const rows = messageDetailRows(message);
-    if (rows.length) {
-      page.append(lightInfoSection("Context", rows));
-    }
-    const linkedRows = lightLinkedRecordRows(message);
-    if (linkedRows.length) {
-      page.append(lightInfoSection("Linked records", linkedRows));
-    }
-    page.append(lightHtmlDocument(message, "No generated message page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
-    return page;
-  }
-
-  function lightMessageThreadRow(message) {
-    const row = el("button", "light-card light-message-thread-row");
-    row.type = "button";
-    row.dataset.recordId = message.id;
-    row.dataset.messageId = message.id;
-    row.addEventListener("click", () => {
-      state.selectedMessageId = message.id;
-      lightNavigate("message-detail", { from: "messages" });
-    });
-    row.append(
-      lightMessageAvatar(message),
-      lightMessageThreadCopy(message),
-      lightMessageThreadMeta(message)
-    );
-    return row;
-  }
-
-  function lightMessageHero(message) {
-    const hero = el("section", "light-card light-message-hero");
-    const copy = el("div", "light-message-hero-copy");
-    copy.append(
-      el("p", "light-doc-eyebrow", `${messageThreadSender(message)}${DOT}${messageChannelLabel(message)}${DOT}${messageThreadTimeLabel(message)}`),
-      el("h1", "", message.title || messageThreadTitle(message)),
-      el("p", "light-note-body", message.summary || messageThreadSnippet(message))
-    );
-    hero.append(lightMessageAvatar(message, "large"), copy);
-    return hero;
-  }
-
-  function lightMessageConversation(message) {
-    const entries = messageTranscriptEntries(message);
-    if (!entries.length) {
-      return null;
-    }
-    const section = el("section", "light-card light-message-conversation");
-    const stack = el("div", "light-message-chat-stack");
-    entries.forEach(entry => {
-      const bubble = el("article", `light-message-bubble ${entry.role === "user" ? "user" : "assistant"}`);
-      const meta = el("div", "light-message-bubble-meta");
-      meta.append(
-        el("span", "", entry.sender || (entry.role === "user" ? "You" : messageThreadTitle(message))),
-        el("span", "", entry.time || "")
-      );
-      bubble.append(meta, el("p", "light-message-bubble-text", entry.text));
-      stack.append(bubble);
-    });
-    section.append(el("div", "light-message-conversation-label", "Conversation"), stack);
-    return section;
-  }
-
-  function lightMessageAvatar(message, size = "") {
-    const contact = messagePrimaryContact(message);
-    if (contact) {
-      return lightAvatar(contact, size);
-    }
-    const label = messageThreadTitle(message) || messageThreadSender(message) || "Message";
-    const initials = label.split(/\s+/).map(part => part[0] || "").join("").slice(0, 2).toUpperCase() || "M";
-    const avatar = el("span", `light-avatar light-message-avatar ${size}`.trim(), initials);
-    avatar.setAttribute("aria-label", label);
-    avatar.style.background = "linear-gradient(135deg,#2563eb,#06b6d4)";
-    return avatar;
-  }
-
-  function lightMessageThreadCopy(message) {
-    const copy = el("div", "light-message-thread-copy");
-    copy.append(
-      el("strong", "light-message-thread-title", messageThreadTitle(message)),
-      el("span", "light-message-thread-snippet", messageThreadSnippet(message))
-    );
-    return copy;
-  }
-
-  function lightMessageThreadMeta(message) {
-    const meta = el("div", "light-message-thread-meta");
-    meta.append(
-      el("span", "light-message-thread-time", messageThreadTimeLabel(message)),
-      lightMessageBadges(message)
-    );
-    return meta;
-  }
-
-  function lightMessageBadges(message) {
-    const badges = el("div", "light-message-thread-badges");
-    badges.append(el("span", "light-message-thread-badge", messageChannelLabel(message)));
-    const unread = messageUnreadCount(message);
-    if (unread) {
-      badges.append(el("span", "light-message-thread-badge is-unread", `${unread} new`));
-    }
-    const links = Array.isArray(message?.links) ? message.links.length : 0;
-    if (links) {
-      badges.append(el("span", "light-message-thread-badge", `${links} linked`));
-    }
-    return badges;
-  }
-
-  function messageThreadTitle(message) {
-    const meta = message?.metadata || {};
-    return String(meta.thread_title || meta.sender || message?.title || "Conversation");
-  }
-
-  function messageThreadSender(message) {
-    const meta = message?.metadata || {};
-    return String(meta.sender || messageThreadTitle(message) || "Unknown");
-  }
-
-  function messageThreadSnippet(message) {
-    const entries = messageTranscriptEntries(message);
-    const last = entries[entries.length - 1];
-    if (last?.text) {
-      return last.text;
-    }
-    return String(message?.summary || message?.title || messagePlainText(message?.html) || "No message yet.");
-  }
-
-  function messageThreadTimeLabel(message) {
-    return workspaceTimestamp(message?.event_at_ms || message?.updated_at_ms, "Recent");
-  }
-
-  function messageChannelLabel(message) {
-    return String(message?.metadata?.channel || "Messages");
-  }
-
-  function messageUnreadCount(message) {
-    const count = Number(message?.metadata?.unread_count || 0);
-    return Number.isFinite(count) && count > 0 ? count : 0;
-  }
-
-  function messagePrimaryContact(message) {
-    const meta = message?.metadata || {};
-    const participants = Array.isArray(meta.participants) ? meta.participants : [];
-    return workspaceContactByName(meta.sender) || workspaceContactByName(participants[0] || "");
-  }
-
-  function messageTranscriptEntries(message) {
-    const meta = message?.metadata || {};
-    const source = [meta.transcript, meta.messages, meta.transcript_messages].find(Array.isArray) || [];
-    const entries = source.map((entry, index) => normalizeMessageTranscriptEntry(entry, index)).filter(Boolean);
-    return entries.length ? entries : synthesizedMessageEntries(message);
-  }
-
-  function normalizeMessageTranscriptEntry(entry, index = 0) {
-    const text = String(entry?.text || entry?.body || entry?.summary || "").trim();
-    if (!text) {
-      return null;
-    }
-    const rawRole = String(entry?.role || "").trim().toLowerCase();
-    const role = rawRole === "user" || rawRole === "me" || rawRole === "outgoing" ? "user" : "assistant";
-    return {
-      id: String(entry?.id || `message-entry-${index}`),
-      role,
-      sender: String(entry?.sender || entry?.author || (role === "user" ? "You" : "")).trim(),
-      text,
-      time: String(entry?.time || entry?.timestamp || "").trim()
-    };
-  }
-
-  function synthesizedMessageEntries(message) {
-    const meta = message?.metadata || {};
-    const preview = String(message?.summary || message?.title || messagePlainText(message?.html) || "").trim();
-    if (!preview) {
-      return [];
-    }
-    const entries = [{
-      id: `${message?.id || "message"}-incoming`,
-      role: "assistant",
-      sender: messageThreadSender(message),
-      text: preview,
-      time: ""
-    }];
-    const reply = String(meta.reply_preview || "").trim();
-    if (reply) {
-      entries.push({
-        id: `${message?.id || "message"}-reply`,
-        role: "user",
-        sender: "You",
-        text: reply,
-        time: ""
-      });
-    }
-    return entries;
-  }
-
-  function messagePlainText(html) {
-    return String(html || "")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
   function lightMeetingNotesPage() {
     return lightGraphListPage({
       title: "Meeting Notes",
@@ -4445,7 +4195,6 @@
       feed_item: "feed-preview-detail",
       project: "project-detail",
       contact: "contact-detail",
-      message: "message-detail",
       meeting_note: "meeting-note-detail",
       reminder: "reminder-detail"
     })[normalizedKind] || "";
@@ -4456,7 +4205,6 @@
       feed_item: "selectedFeedId",
       project: "selectedProjectId",
       contact: "selectedContactId",
-      message: "selectedMessageId",
       meeting_note: "selectedMeetingNoteId",
       reminder: "selectedReminderId"
     })[normalizedKind] || "";
@@ -4867,7 +4615,6 @@
     [
       ["Threads", "chat", projectThreads(project)],
       ["Artifacts", "attachment", projectAssets(project)],
-      ["Messages", "chat", projectLinked(project, "message")],
       ["Meetings", "record_voice_over", projectLinked(project, "meeting_note")],
       ["Notes", "note", projectLinked(project, "note")],
       ["Tasks", "checklist", projectLinked(project, "task")],
@@ -5315,9 +5062,6 @@
     return selectedWorkspaceRecord("calendar-events", state.selectedMeetingId);
   }
 
-  function selectedMessage() {
-    return selectedWorkspaceRecord("messages", state.selectedMessageId);
-  }
 
   function selectedMeetingNote() {
     return selectedWorkspaceRecord("meeting-notes", state.selectedMeetingNoteId);

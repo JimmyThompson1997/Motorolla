@@ -97,7 +97,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'icon: "coffee"' in app
     assert 'route: "calls"' in app
     assert 'icon: "phone"' in app
-    assert '{ route: "messages", label: "Messages"' in app
+    assert '{ route: "messages", label: "Messages"' not in app
     assert 'route: "sensors"' not in app
     assert "placeholder-page" in app
     assert "linksPageView()" in app
@@ -281,7 +281,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'route: "notes"' in app
     assert 'route: "tasks"' in app
     assert 'route: "calendar"' in app
-    assert 'route: "messages"' in app
+    assert 'route: "messages"' not in app
     assert 'route: "meeting-notes"' in app
     assert 'route: "reminders"' in app
     assert 'route: "feed"' in app
@@ -289,7 +289,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'route: "contacts"' in app
     light_apps_block = app.split("const LIGHT_APPS = [", 1)[1].split("];", 1)[0]
     assert re.search(
-        r'\{ route: "feed", label: "Inbox".*?\},\s*\{ route: "links", label: "Connect".*?\},\s*\{ route: "meetings", label: "Meetings".*?\},\s*\{ route: "settings", label: "Settings".*?\},\s*\{ route: "messages", label: "Messages"',
+        r'\{ route: "feed", label: "Inbox".*?\},\s*\{ route: "links", label: "Connect".*?\},\s*\{ route: "meetings", label: "Meetings".*?\},\s*\{ route: "settings", label: "Settings".*?\},\s*\{ route: "meeting-notes", label: "Meeting Notes"',
         light_apps_block,
         re.S,
     )
@@ -303,7 +303,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "previousLightRoute:" in app
     assert "selectedContactId:" in app
     assert "selectedMeetingId:" in app
-    assert "selectedMessageId:" in app
+    assert "selectedMessageId:" not in app
     assert "selectedMeetingNoteId:" in app
     assert "selectedReminderId:" in app
     assert "selectedNoteId:" in app
@@ -339,8 +339,8 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "function lightSettingsSurface()" in app
     assert "function lightInboxPage()" in app
     assert "function lightMeetingsPage()" in app
-    assert "function lightMessagesPage()" in app
-    assert "function lightMessageDetailPage()" in app
+    assert "function lightMessagesPage()" not in app
+    assert "function lightMessageDetailPage()" not in app
     assert "function lightMeetingNotesPage()" in app
     assert "function lightMeetingNoteDetailPage()" in app
     assert "function lightRemindersPage()" in app
@@ -382,10 +382,10 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert 'view.append(lightFeedPage())' in app
     assert 'case "feed-preview-detail":' in app
     assert 'view.append(lightFeedDetailPage())' in app
-    assert 'case "messages":' in app
-    assert 'view.append(lightMessagesPage())' in app
-    assert 'case "message-detail":' in app
-    assert 'view.append(lightMessageDetailPage())' in app
+    assert 'case "messages":' not in app
+    assert 'view.append(lightMessagesPage())' not in app
+    assert 'case "message-detail":' not in app
+    assert 'view.append(lightMessageDetailPage())' not in app
     assert 'case "meeting-notes":' in app
     assert 'view.append(lightMeetingNotesPage())' in app
     assert 'case "meeting-note-detail":' in app
@@ -727,7 +727,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '"feed-items": "feed_item"' in store
     assert '"projects": "project"' in store
     assert '"contacts": "contact"' in store
-    assert '"messages": "message"' in store
+    assert '"messages": "message"' not in store
     assert '"meeting-notes": "meeting_note"' in store
     assert '"reminders": "reminder"' in store
     assert "def derive_task_group(" in store
@@ -738,9 +738,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "default_workspace_graph_links" in store
     assert '"seeded_graph_v1"' in store
     assert '"Design critique overlap"' in store
-    assert '"Maya can bring paint swatches"' in store
+    assert '"Clinic prep note"' in store
     assert '"Home refresh walkthrough"' in store
     assert '"Bring paint samples upstairs"' in store
+    assert '"Freelance follow-up"' in store
     assert '"calendar_change"' in store
     assert '"note_update"' in store
     assert '"threads": ["PRD review thread", "Budget approval DM"]' in store
@@ -769,8 +770,6 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
         ("task-detail", "tasks"),
         ("calendar", "calendar-events"),
         ("meeting-detail", "calendar-events"),
-        ("messages", "messages"),
-        ("message-detail", "messages"),
         ("meeting-notes", "meeting-notes"),
         ("meeting-note-detail", "meeting-notes"),
         ("reminders", "reminders"),
@@ -812,8 +811,6 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_calendar = function_block(app, "lightCalendarPage")
     light_date_picker = function_block(app, "lightDatePicker")
     light_timeline = function_block(app, "lightTimeline")
-    light_messages = function_block(app, "lightMessagesPage")
-    message_detail = function_block(app, "lightMessageDetailPage")
     light_meeting_notes = function_block(app, "lightMeetingNotesPage")
     meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
     light_reminders = function_block(app, "lightRemindersPage")
@@ -874,13 +871,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "events.length > 1" in light_timeline
     assert "block.style.top" in light_timeline
     assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
-    assert 'workspaceItems("messages")' in light_messages
-    assert 'lightMessageThreadRow(message)' in light_messages
-    assert 'lightGraphListPage(' not in light_messages
-    assert 'selectedMessage()' in message_detail
-    assert 'lightMessageConversation(message)' in message_detail
-    assert 'messageDetailRows(message)' in message_detail
-    assert 'lightGraphDetailPage(message' not in message_detail
+    assert "function lightMessagesPage()" not in app
+    assert "function lightMessageDetailPage()" not in app
+    assert 'route: "meeting-notes"' in app
     assert 'collection: "meeting-notes"' in light_meeting_notes
     assert 'detailRoute: "meeting-note-detail"' in light_meeting_notes
     assert 'selectedMeetingNote()' in meeting_note_detail
@@ -939,8 +932,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-detail-toggle" in styles
     assert ".light-html-empty" in styles
     assert ".light-task-row-title" in styles
-    assert ".light-message-thread-row" in styles
-    assert ".light-message-conversation" in styles
+    assert ".light-message-thread-row" not in styles
+    assert ".light-message-conversation" not in styles
     assert ".light-event-detail-html-body.light-html-card" in styles
     assert 'margin-top: -4px;' in styles
     assert 'margin-top: -8px;' in styles
@@ -2436,8 +2429,8 @@ def test_workspace_graph_info_rows_become_clickable_and_messages_use_thread_surf
 
     assert "function workspaceTargetForKind(kind, id)" in app
     assert "function openWorkspaceTarget(target, fromRoute = \"\")" in app
-    assert "function lightMessageThreadRow(message)" in app
-    assert "function messageTranscriptEntries(message)" in app
+    assert "function lightMessageThreadRow(message)" not in app
+    assert "function messageTranscriptEntries(message)" not in app
     assert 'const item = el(isInteractive ? "button" : "div"' in light_info_section
     assert 'item.dataset.workspaceTargetRoute = row.target.route;' in light_info_section
     assert 'item.dataset.workspaceTargetId = row.target.id;' in light_info_section
@@ -2446,8 +2439,8 @@ def test_workspace_graph_info_rows_become_clickable_and_messages_use_thread_surf
     assert 'openWorkspaceTarget(item.target, "project-detail")' in project_section_item
     assert ".light-info-row.is-clickable" in styles
     assert ".light-project-section-item.is-clickable" in styles
-    assert ".light-message-thread-badge" in styles
-    assert ".light-message-bubble" in styles
+    assert ".light-message-thread-badge" not in styles
+    assert ".light-message-bubble" not in styles
 
 
 def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:

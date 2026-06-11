@@ -131,8 +131,8 @@ def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> No
     counts = {"do": 0, "soon": 0, "overdue": 0, "done": 0}
     for task in tasks:
         counts[str(task["derived_group"])] += 1
-    assert counts == {"do": 4, "soon": 3, "overdue": 3, "done": 3}
-    assert len(tasks) == 13
+    assert counts == {"do": 4, "soon": 4, "overdue": 3, "done": 3}
+    assert len(tasks) == 14
     assert all(task["html"] for task in tasks)
 
 
@@ -174,6 +174,73 @@ def test_multiple_projects_threads_and_cross_links(tmp_path: Path) -> None:
     alpha = store.get_record("projects", "alpha")
     assert alpha is not None
     assert any(item["target_id"] == "alpha-note" for item in alpha["links"])
+
+
+def test_workspace_store_cleans_legacy_message_records_when_graph_v2_runs(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    record_row = store._conn.execute("SELECT * FROM workspace_records LIMIT 1").fetchone()
+    link_row = store._conn.execute("SELECT * FROM workspace_links LIMIT 1").fetchone()
+    assert record_row is not None
+    assert link_row is not None
+
+    record_template = dict(record_row)
+    record_template.update(
+        {
+            "record_id": "legacy-message",
+            "kind": "message",
+            "title": "Legacy message",
+            "summary": "Experimental message record from the removed app",
+            "status": "",
+            "event_at_ms": clock.value,
+            "html": "<!doctype html><html><body><h1>Legacy message</h1></body></html>",
+            "html_asset_id": "",
+            "metadata_json": "{}",
+            "archived": 0,
+            "deleted": 0,
+            "created_at_ms": clock.value,
+            "updated_at_ms": clock.value,
+        }
+    )
+    columns = list(record_template.keys())
+    placeholders = ", ".join("?" for _ in columns)
+    store._conn.execute(
+        f"INSERT OR REPLACE INTO workspace_records ({', '.join(columns)}) VALUES ({placeholders})",
+        tuple(record_template[column] for column in columns),
+    )
+
+    link_template = dict(link_row)
+    link_template.update(
+        {
+            "link_id": "legacy-message-link",
+            "source_kind": "message",
+            "source_id": "legacy-message",
+            "target_kind": "note",
+            "target_id": "q4",
+            "label": "Legacy note",
+            "metadata_json": "{}",
+            "created_at_ms": clock.value,
+            "updated_at_ms": clock.value,
+        }
+    )
+    link_columns = list(link_template.keys())
+    link_placeholders = ", ".join("?" for _ in link_columns)
+    store._conn.execute(
+        f"INSERT OR REPLACE INTO workspace_links ({', '.join(link_columns)}) VALUES ({link_placeholders})",
+        tuple(link_template[column] for column in link_columns),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_graph_v2'")
+    store._conn.commit()
+    store._conn.close()
+
+    reseeded = WorkspaceStore(str(db_path), clock_ms=clock)
+    assert reseeded._conn.execute("SELECT COUNT(*) FROM workspace_records WHERE kind = 'message'").fetchone()[0] == 0
+    assert reseeded._conn.execute("SELECT COUNT(*) FROM workspace_links WHERE source_kind = 'message' OR target_kind = 'message'").fetchone()[0] == 0
+    reminders = {item["id"] for item in reseeded.list_records("reminders")["items"]}
+    meetings = {item["id"] for item in reseeded.list_records("meeting-notes")["items"]}
+    assert "demo-reminder-health-call" in reminders
+    assert "demo-meeting-freelance-followup" in meetings
 
 
 def test_calendar_multi_day_and_feed_archive_visibility(tmp_path: Path) -> None:
