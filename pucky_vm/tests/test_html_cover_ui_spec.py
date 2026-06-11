@@ -447,7 +447,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     home_feed_content = function_block(app, "homeFeedContentNodes")
     light_navigate = function_block(app, "lightNavigate")
     light_tasks = function_block(app, "lightTasksPage")
-    light_task_sections = function_block(app, "lightTaskSectionTitle")
+    light_task_sections = function_block(app, "lightTaskSectionHeader")
     light_task_counts = function_block(app, "lightTaskCounts")
     light_task_count_line = function_block(app, "lightTaskCountLine")
     filtered_tasks = function_block(app, "filteredTasks")
@@ -474,7 +474,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
     task_row_base_block = None
     for block in task_row_blocks:
-      if "min-height: 50px;" in block:
+      if "min-height: 48px;" in block:
         task_row_base_block = block
         break
     assert task_row_base_block, "Missing .light-task-row base CSS block"
@@ -575,20 +575,25 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
 
-    assert '"DUE SOON"' in light_tasks
+    assert '"Upcoming"' in light_tasks
+    assert '"Today"' in light_tasks
+    assert '"Overdue"' in light_tasks
+    assert '"Done"' in light_tasks
     assert 'counts.dueSoon' in light_task_counts
     assert '"light-task-count due-soon"' in light_task_count_line
-    assert '`${counts.dueSoon} due soon`' in light_task_count_line
-    assert '`${counts.due} due`' in light_task_count_line
-    assert 'el("span", "light-task-count due-soon", `${counts.dueSoon} due soon`),' in light_task_count_line
-    assert 'el("span", "light-task-count due", `${counts.due} due`),' in light_task_count_line
+    assert '`${counts.dueSoon} upcoming`' in light_task_count_line
+    assert '`${counts.due} today`' in light_task_count_line
+    assert 'el("span", "light-task-count overdue", `${counts.overdue} overdue`),' in light_task_count_line
+    assert 'el("span", "light-task-count due", `${counts.due} today`),' in light_task_count_line
+    assert 'el("span", "light-task-count due-soon", `${counts.dueSoon} upcoming`),' in light_task_count_line
     assert 'page.append(appbar);' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
     assert "lightTaskFilters()" not in light_tasks
-    assert 'lightSectionTitle("DUE SOON")' in light_task_sections
-    assert 'lightSectionTitle("DUE")' in light_task_sections
-    assert 'lightSectionTitle("OVERDUE")' in light_task_sections
-    assert 'lightSectionTitle("DONE")' in light_task_sections
+    assert 'const header = el("div", "light-task-section-header");' in light_task_sections
+    assert 'el("h3", "light-task-section-title", label)' in light_task_sections
+    assert 'if (group === "done") {' in light_task_sections
+    assert 'state.taskDoneExpanded = !state.taskDoneExpanded;' in light_task_sections
+    assert 'state.taskDoneExpanded ? "expand_more" : "navigate_next"' in light_task_sections
     assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
@@ -630,6 +635,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert ".light-task-row:focus-visible" in styles
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block
+    assert ".light-task-section-header" in styles
+    assert ".light-task-section-toggle" in styles
+    assert ".light-task-section-count" in styles
     assert ".light-task-detail-body.light-html-card" in styles
     assert "width: calc(100% + 40px);" in styles
     assert "margin-left: -20px;" in styles
@@ -783,7 +791,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightTextStack(task.title, task.summary)' not in task_group
     assert 'el("strong", "light-task-row-title", task.title || "Untitled task")' in task_group
     assert 'workspaceItems("tasks")' in filtered_tasks
-    assert '"DUE SOON"' in light_tasks
+    assert '"Upcoming"' in light_tasks
+    assert '"Today"' in light_tasks
+    assert 'group !== "done" || state.taskDoneExpanded' in light_tasks
+    assert 'taskDoneExpanded: false,' in app
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
     task_due_label = function_block(app, "taskDueLabel")

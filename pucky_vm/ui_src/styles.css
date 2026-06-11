@@ -4185,14 +4185,16 @@ button {
 }
 
 .light-task-counts {
-  margin: -2px 0 10px;
-  color: var(--home-shell-text-muted);
-  font-size: 15px;
+  margin: -4px 0 8px;
+  color: var(--home-shell-text-subtle);
+  font-size: 13px;
+  line-height: 1.2;
 }
 
 .light-task-count.due { color: #226fe8; }
 .light-task-count.overdue { color: #ff3b30; }
 .light-task-count.done { color: var(--home-shell-text-muted); }
+.light-task-count.due-soon { color: var(--home-shell-text-muted); }
 
 .light-segmented {
   display: grid;
@@ -4220,9 +4222,60 @@ button {
   flex-direction: column;
 }
 
+.light-task-section-header {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 2px;
+}
+
+.light-task-section-title {
+  margin: 0;
+  color: var(--home-shell-text-subtle);
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 780;
+}
+
+.light-task-section-toggle {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--home-shell-text-subtle);
+  font: inherit;
+}
+
+.light-task-section-count {
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 720;
+}
+
+.light-small-icon-button.light-task-section-chevron {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--home-shell-text-subtle);
+}
+
+.light-small-icon-button.light-task-section-chevron .material-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .light-task-card {
-  border-radius: 16px;
+  border-radius: 15px;
   background: var(--home-shell-card-strong);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.055);
 }
 
 .light-task-card:active {
@@ -4232,13 +4285,13 @@ button {
 }
 
 .light-task-row {
-  min-height: 50px;
+  min-height: 48px;
   width: 100%;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 9px 16px;
+  gap: 9px;
+  padding: 8px 14px;
   text-align: left;
   color: inherit;
   font: inherit;
@@ -4266,10 +4319,10 @@ button {
 }
 
 .light-check-circle {
-  width: 27px;
-  height: 27px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  border: 2px solid #98a2b3;
+  border: 1.8px solid #a5afbf;
   display: grid;
   place-items: center;
 }
@@ -4282,7 +4335,7 @@ button {
 
 .light-check-circle.overdue::before {
   content: "!";
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
   font-weight: 850;
 }
@@ -4295,8 +4348,8 @@ button {
 
 .light-check-circle.done::before {
   content: "";
-  width: 11px;
-  height: 6px;
+  width: 10px;
+  height: 5px;
   border-left: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: rotate(-45deg) translate(1px, -1px);
@@ -4305,9 +4358,9 @@ button {
 .light-task-row-title {
   min-width: 0;
   color: var(--home-shell-text);
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.2;
-  font-weight: 790;
+  font-weight: 760;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4326,9 +4379,9 @@ button {
 .light-due,
 .light-chevron {
   color: #226fe8;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.1;
-  font-weight: 750;
+  font-weight: 740;
   white-space: nowrap;
 }
 
@@ -4461,15 +4514,15 @@ button {
 
 .light-task-detail-card {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 10px 12px;
 }
 
 .light-task-detail-card .light-check-circle {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   align-self: start;
   margin-top: 1px;
 }
@@ -4477,22 +4530,22 @@ button {
 .light-task-detail-copy {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .light-task-detail-title {
   min-width: 0;
   color: var(--home-shell-text);
-  font-size: 15px;
-  line-height: 1.25;
-  font-weight: 820;
+  font-size: 14px;
+  line-height: 1.22;
+  font-weight: 790;
 }
 
 .light-task-detail-due {
   color: #226fe8;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.15;
-  font-weight: 760;
+  font-weight: 730;
   white-space: nowrap;
 }
 
@@ -4551,15 +4604,15 @@ button {
 
 .light-task-toggle.light-task-detail-toggle {
   justify-self: end;
-  min-height: 32px;
-  padding: 0 11px;
+  min-height: 28px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(34, 111, 232, 0.14);
   background: rgba(34, 111, 232, 0.08);
   color: #226fe8;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
-  font-weight: 780;
+  font-weight: 760;
   white-space: nowrap;
 }
 

@@ -312,6 +312,7 @@
     selectedFeedId: "maya-budget",
     selectedCalendarDate: todayDateKey(),
     calendarPickerOpen: false,
+    taskDoneExpanded: false,
     taskFilter: "all",
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
@@ -3781,29 +3782,42 @@
     }
     page.append(lightTaskCountLine());
     [
-      ["soon", "DUE SOON"],
-      ["do", "DUE"],
-      ["overdue", "OVERDUE"],
-      ["done", "DONE"]
+      ["overdue", "Overdue"],
+      ["do", "Today"],
+      ["soon", "Upcoming"],
+      ["done", "Done"]
     ].forEach(([group, label]) => {
       const tasks = filteredTasks(group);
       if (!tasks.length) return;
-      page.append(lightTaskSectionTitle(label), lightTaskGroup(tasks, group));
+      page.append(lightTaskSectionHeader(label, group, tasks.length));
+      if (group !== "done" || state.taskDoneExpanded) {
+        page.append(lightTaskGroup(tasks, group));
+      }
     });
     return page;
   }
 
-  function lightTaskSectionTitle(label) {
-    if (label === "DUE SOON") {
-      return lightSectionTitle("DUE SOON");
+  function lightTaskSectionHeader(label, group, count) {
+    const header = el("div", "light-task-section-header");
+    header.append(el("h3", "light-task-section-title", label));
+    if (group === "done") {
+      const toggle = el("button", state.taskDoneExpanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", state.taskDoneExpanded ? "true" : "false");
+      toggle.setAttribute("aria-label", state.taskDoneExpanded ? "Collapse done tasks" : "Expand done tasks");
+      const chevron = el("span", "light-small-icon-button light-task-section-chevron");
+      chevron.innerHTML = iconSvg(state.taskDoneExpanded ? "expand_more" : "navigate_next");
+      toggle.append(
+        el("span", "light-task-section-count", `${count}`),
+        chevron
+      );
+      toggle.addEventListener("click", () => {
+        state.taskDoneExpanded = !state.taskDoneExpanded;
+        render();
+      });
+      header.append(toggle);
     }
-    if (label === "DUE") {
-      return lightSectionTitle("DUE");
-    }
-    if (label === "DONE") {
-      return lightSectionTitle("DONE");
-    }
-    return lightSectionTitle("OVERDUE");
+    return header;
   }
 
   function lightTaskCounts() {
@@ -3826,11 +3840,11 @@
     const counts = lightTaskCounts();
     const line = el("p", "light-task-counts");
     line.append(
-      el("span", "light-task-count due-soon", `${counts.dueSoon} due soon`),
-      DOT,
-      el("span", "light-task-count due", `${counts.due} due`),
-      DOT,
       el("span", "light-task-count overdue", `${counts.overdue} overdue`),
+      DOT,
+      el("span", "light-task-count due", `${counts.due} today`),
+      DOT,
+      el("span", "light-task-count due-soon", `${counts.dueSoon} upcoming`),
       DOT,
       el("span", "light-task-count done", `${counts.done} done`)
     );

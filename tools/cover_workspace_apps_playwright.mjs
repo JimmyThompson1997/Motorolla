@@ -174,8 +174,7 @@ async function cleanupWorkspaceSeed(config, seed) {
   return true;
 }
 
-async function seedWorkspace(config) {
-  const runId = PROOF_RUN_ID;
+async function seedWorkspace(config, runId = PROOF_RUN_ID) {
   const manifest = buildSeedManifest(runId);
   const today = dateKey(new Date());
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
@@ -239,7 +238,7 @@ async function seedWorkspace(config) {
       html: [
         "<!doctype html><html><body>",
         "<h1>Proof Future Task</h1>",
-        "<p>This due-soon task demonstrates the new HTML-first body layout.</p>",
+        "<p>This upcoming task demonstrates the new HTML-first body layout.</p>",
         "<ol><li>Pull product feedback</li><li>Refine the launch checklist</li><li>Share the final summary</li></ol>",
         "<p>Body length is intentional so the iframe has enough content to prove scrolling and spacing.</p>",
         "</body></html>"
@@ -537,6 +536,21 @@ async function readTaskDetailState(page) {
   });
 }
 
+async function readTaskListState(page) {
+  return page.evaluate(() => {
+    const headers = Array.from(document.querySelectorAll(".light-task-section-title")).map(node => node.textContent?.trim() || "");
+    const countLine = document.querySelector(".light-task-counts")?.textContent?.trim() || "";
+    const doneToggle = document.querySelector(".light-task-section-toggle");
+    const visibleTaskIds = Array.from(document.querySelectorAll("[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
+    return {
+      headers,
+      countLine,
+      doneExpanded: doneToggle ? doneToggle.getAttribute("aria-expanded") === "true" : null,
+      visibleTaskIds
+    };
+  });
+}
+
 async function probeTaskDetailIdle(page, idleMs = 5200) {
   return page.evaluate(async (waitMs) => {
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -688,7 +702,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }, { timeout: config.timeoutMs }).catch(() => null);
 
   const availableLabels = [];
-  for (const label of ["DUE SOON", "Due Soon", "DUE", "OVERDUE", "DONE"]) {
+  for (const label of ["Overdue", "Today", "Upcoming", "Done"]) {
     try {
       const count = await page.getByText(label, { exact: true }).count();
       if (count > 0) {
@@ -707,6 +721,27 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     screenshots[`${theme}_tasks_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list`);
     await backHome(page, theme, config.timeoutMs);
     return;
+  }
+  const listState = await readTaskListState(page);
+  summary.taskSections = summary.taskSections || [];
+  summary.taskSections.push({
+    theme,
+    headers: listState.headers,
+    countLine: listState.countLine,
+    doneExpanded: listState.doneExpanded
+  });
+  if (seed.writeEnabled) {
+    assert(
+      JSON.stringify(listState.headers) === JSON.stringify(["Overdue", "Today", "Upcoming", "Done"]),
+      `Expected task section order Overdue/Today/Upcoming/Done, got ${JSON.stringify(listState.headers)}`
+    );
+    assert(listState.doneExpanded === false, "Expected Done section to start collapsed");
+    if (seed.taskIds?.done) {
+      assert(
+        !listState.visibleTaskIds.includes(seed.taskIds.done),
+        "Expected done task rows to be hidden while Done is collapsed"
+      );
+    }
   }
 
   if (!rowA?.id || !rowB?.id) {
@@ -866,6 +901,30 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
+  const doneToggle = page.locator('.light-task-section-toggle');
+  if (await doneToggle.count()) {
+    await doneToggle.click();
+    await page.waitForTimeout(250);
+    const expandedState = await readTaskListState(page);
+    summary.taskSections.push({
+      theme,
+      headers: expandedState.headers,
+      countLine: expandedState.countLine,
+      doneExpanded: expandedState.doneExpanded,
+      phase: "done_expanded"
+    });
+    assert(expandedState.doneExpanded === true, "Expected Done section to expand after tapping the toggle");
+    screenshots[`${theme}_tasks_done_expanded`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-expanded`);
+    await doneToggle.click();
+    await page.waitForTimeout(250);
+    const collapsedAgain = await readTaskListState(page);
+    assert(collapsedAgain.doneExpanded === false, "Expected Done section to collapse again after second tap");
+  }
+
+  if (await doneToggle.count()) {
+    await doneToggle.click();
+    await page.waitForTimeout(250);
+  }
   await page.locator(`[data-task-id="${doneId}"]`).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
@@ -1039,8 +1098,8 @@ async function main() {
   let lightSeed = null;
   let darkSeed = null;
   try {
-    lightSeed = await seedWorkspace(config);
-    darkSeed = await seedWorkspace(config);
+    lightSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-light`);
+    darkSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-dark`);
     summary.seed = lightSeed;
     summary.seeds = { light: lightSeed, dark: darkSeed };
     browser = await chromium.launch({

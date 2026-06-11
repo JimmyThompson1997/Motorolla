@@ -637,7 +637,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "Review Connect onboarding brief",
                     "Trim the opening copy and verify the first-run screen order.",
                     ["Check the new app labels", "Confirm the back-header behavior", "Flag any screens that still feel too busy"],
-                    "This one is intentionally close enough to feel urgent without falling into overdue."
+                    "This one is intentionally close enough to feel urgent without falling into the overdue bucket."
                 ),
                 "metadata": {"owner": "Pucky", "project": "Project Aurora"},
             },
@@ -665,7 +665,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "Prep roadmap review deck",
                     "Build the next revision of the roadmap deck for the standing review.",
                     ["Update the milestones slide", "Trim the risks section", "Add the launch-readiness note from Maya"],
-                    "This sits in DUE SOON so the date treatment should stay compact."
+                    "This sits in Upcoming so the date treatment should stay compact."
                 ),
                 "metadata": {"owner": "Pucky", "project": "Project Aurora"},
             },
@@ -906,21 +906,6 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "activity": ["Slack DM - approved the engineering budget", "Meeting - Roadmap sync today"],
                 },
             },
-            {
-                "id": "tom",
-                "title": "Tom Reyes",
-                "summary": "Staff Engineer",
-                "metadata": {
-                    "first_name": "Tom",
-                    "last_name": "Reyes",
-                    "avatar": "TR",
-                    "photo": "fixtures/contact_photos/tom.svg",
-                    "email": "tom.reyes@email.com",
-                    "phone": "+1 (415) 555-0177",
-                    "endpoints": [{"label": "Gmail", "value": "tom.reyes@email.com"}],
-                    "activity": ["Email - migration thread 1h ago", "Meeting - Vendor review today"],
-                },
-            },
         ],
     }
 
@@ -933,7 +918,6 @@ def default_workspace_links() -> list[dict[str, object]]:
         {"id": "aurora-calendar-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "calendar_event", "target_id": "roadmap", "label": "Roadmap sync"},
         {"id": "aurora-feed-decision", "source_kind": "project", "source_id": "aurora", "target_kind": "feed_item", "target_id": "project-decision", "label": "Aurora launch decision"},
         {"id": "migration-task-archive", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "demo-task-done-archive", "label": "Tasks"},
-        {"id": "migration-contact-tom", "source_kind": "project", "source_id": "migration", "target_kind": "contact", "target_id": "tom", "label": "People"},
         {"id": "migration-calendar-vendor", "source_kind": "project", "source_id": "migration", "target_kind": "calendar_event", "target_id": "vendor", "label": "Vendor review"},
         {"id": "migration-feed-task", "source_kind": "project", "source_id": "migration", "target_kind": "feed_item", "target_id": "task-complete", "label": "Migration notes archived"},
     ]
