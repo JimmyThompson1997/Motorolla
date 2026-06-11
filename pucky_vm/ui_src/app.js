@@ -3731,11 +3731,14 @@
         counts.overdue += 1;
       } else if (group === "done") {
         counts.done += 1;
-      } else if (group === "do" || group === "soon") {
+      } else if (group === "do") {
         counts.due += 1;
+      } else if (group === "soon") {
+        counts.due += 1;
+        counts.dueSoon += 1;
       }
       return counts;
-    }, { due: 0, overdue: 0, done: 0 });
+    }, { due: 0, dueSoon: 0, overdue: 0, done: 0 });
   }
 
   function lightTaskCountLine() {
@@ -3743,6 +3746,8 @@
     const line = el("p", "light-task-counts");
     line.append(
       el("span", "light-task-count due", `${counts.due} due`),
+      DOT,
+      el("span", "light-task-count due-soon", `${counts.dueSoon} due soon`),
       DOT,
       el("span", "light-task-count overdue", `${counts.overdue} overdue`),
       DOT,
@@ -3752,7 +3757,7 @@
   }
 
   function lightTaskFilters() {
-    const filters = [["all", "All"], ["due", "Due"], ["overdue", "Overdue"], ["done", "Done"]];
+    const filters = [["all", "All"], ["due", "Due"], ["soon", "Due Soon"], ["overdue", "Overdue"], ["done", "Done"]];
     const wrap = el("div", "light-segmented light-task-segmented");
     filters.forEach(([key, label]) => wrap.append(lightPillButton(label, () => { state.taskFilter = key; render(); }, state.taskFilter === key)));
     return wrap;
@@ -4327,6 +4332,7 @@
       const taskGroup = String(task.derived_group || "do");
       const byFilter = state.taskFilter === "all"
         || (state.taskFilter === "due" && (taskGroup === "do" || taskGroup === "soon"))
+        || (state.taskFilter === "soon" && taskGroup === "soon")
         || taskGroup === state.taskFilter;
       return taskGroup === group && byFilter;
     });
