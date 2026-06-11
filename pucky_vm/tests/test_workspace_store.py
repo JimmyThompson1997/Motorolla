@@ -75,6 +75,55 @@ def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> 
     assert still_done["derived_group"] == "done"
 
 
+def test_task_records_support_inline_html_asset_html_and_empty_html(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+    asset = store.create_asset(
+        {
+            "id": "task-proof-html",
+            "title": "Task proof page",
+            "mime_type": "text/html; charset=utf-8",
+            "html": "<!doctype html><html><body><h1>Asset task</h1><p>Asset-backed task page.</p><ul><li>One</li></ul></body></html>",
+        }
+    )
+
+    inline_task = store.upsert_record(
+        "tasks",
+        {
+            "id": "inline-task",
+            "title": "Inline task",
+            "status": "open",
+            "due_at_ms": 2_000,
+            "html": "<!doctype html><html><body><h1>Inline task</h1><p>Inline HTML body.</p></body></html>",
+        },
+    )
+    asset_task = store.upsert_record(
+        "tasks",
+        {
+            "id": "asset-task",
+            "title": "Asset task",
+            "status": "open",
+            "due_at_ms": 3_000,
+            "html_asset_id": asset["asset_id"],
+        },
+    )
+    empty_task = store.upsert_record(
+        "tasks",
+        {
+            "id": "empty-task",
+            "title": "Empty task",
+            "status": "open",
+            "due_at_ms": 4_000,
+        },
+    )
+
+    assert inline_task["html"].startswith("<!doctype html>")
+    assert inline_task["html_asset_id"] == ""
+    assert asset_task["html"] == ""
+    assert asset_task["html_asset_id"] == "task-proof-html"
+    assert empty_task["html"] == ""
+    assert empty_task["html_asset_id"] == ""
+
+
 def test_multiple_projects_threads_and_cross_links(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
     first = store.upsert_record(

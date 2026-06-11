@@ -3818,20 +3818,30 @@
     return button;
   }
 
+  function lightTaskDetailCard(task) {
+    const group = String(task?.derived_group || "do");
+    const card = el("section", `light-card light-task-detail-card ${group}`);
+    const iconClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
+    const titleGroup = el("div", "light-task-detail-copy");
+    titleGroup.append(
+      el("strong", "light-task-detail-title", task.title || "Untitled task"),
+      el("span", "light-task-detail-due", taskDueLabel(task))
+    );
+    const action = taskToggleButton(task);
+    action.classList.add("light-task-detail-toggle");
+    card.append(el("span", iconClass), titleGroup, action);
+    return card;
+  }
+
   function lightTaskDetailPage() {
     const task = selectedTask();
     if (!task) {
       return lightPage("Task", { subtitle: "Task not found." });
     }
     const page = lightPage("Task");
-    page.append(lightHeroDetail(task.title, taskDueLabel(task), task.derived_group === "overdue" ? "warning" : "checklist"));
-    page.append(taskToggleButton(task));
-    page.append(lightCopySection("Notes", task.summary || "No extra notes yet."));
-    page.append(lightInfoSection("Related", [
-      { icon: "contacts", label: "Owner", value: task.metadata?.owner || "Pucky" },
-      { icon: "folder", label: "Project", value: task.metadata?.project || "General" }
-    ]));
-    page.append(lightHtmlDocument(task, "No generated task page yet."));
+    page.classList.add("light-task-detail-page");
+    page.append(lightTaskDetailCard(task));
+    page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-task-detail-body" }));
     return page;
   }
 
@@ -4447,16 +4457,21 @@
     return "";
   }
 
-  function lightHtmlDocument(record, fallbackText = "Generated page is loading.") {
+  function lightHtmlDocument(record, fallbackText = "Generated page is loading.", options = {}) {
     const html = workspaceHtml(record);
+    const untitledFallback = Boolean(options && options.untitledFallback);
+    const extraClassName = String(options && options.className || "").trim();
     if (!html) {
+      if (untitledFallback) {
+        return el("section", `light-html-empty ${extraClassName}`.trim(), fallbackText);
+      }
       return lightCopySection("Generated page", fallbackText);
     }
     const frame = el("iframe", "light-html-frame");
     frame.setAttribute("sandbox", "");
     frame.setAttribute("title", String(record?.title || "Generated page"));
     frame.srcdoc = html;
-    const wrap = el("section", "light-card light-html-card");
+    const wrap = el("section", `light-card light-html-card ${extraClassName}`.trim());
     wrap.append(frame);
     return wrap;
   }

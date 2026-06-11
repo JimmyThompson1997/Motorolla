@@ -752,6 +752,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     all_projects = function_block(app, "allProjects")
     note_detail = function_block(app, "lightNoteDetailPage")
     task_detail = function_block(app, "lightTaskDetailPage")
+    task_detail_card = function_block(app, "lightTaskDetailCard")
     event_detail = function_block(app, "lightMeetingDetailPage")
     feed_detail = function_block(app, "lightFeedDetailPage")
     contact_detail = function_block(app, "lightContactDetailPage")
@@ -770,6 +771,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
     assert 'lightHtmlDocument(task' in task_detail
+    assert 'lightTaskDetailCard(task)' in task_detail
+    assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-task-detail-body" })' in task_detail
+    assert 'lightCopySection("Notes"' not in task_detail
+    assert 'lightInfoSection("Related"' not in task_detail
+    assert 'const card = el("section", `light-card light-task-detail-card ${group}`);' in task_detail_card
+    assert 'action.classList.add("light-task-detail-toggle");' in task_detail_card
     assert 'selectedCalendarDateKey()' in light_date_picker
     assert 'lightWorkspaceStatus("calendar-events"' in light_calendar
     assert 'workspaceItems("calendar-events")' in light_timeline
@@ -793,9 +800,14 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightHtmlDocument(contact' in contact_detail
 
     assert 'frame.srcdoc = html;' in html_document
+    assert "const untitledFallback = Boolean(options && options.untitledFallback);" in html_document
+    assert 'return el("section", `light-html-empty ${extraClassName}`.trim(), fallbackText);' in html_document
     assert 'loadWorkspaceAsset(assetId, { render: true })' in app
     assert ".light-html-card" in styles
     assert ".light-html-frame" in styles
+    assert ".light-task-detail-card" in styles
+    assert ".light-task-detail-toggle" in styles
+    assert ".light-html-empty" in styles
 
 
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:

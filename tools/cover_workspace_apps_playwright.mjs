@@ -119,13 +119,33 @@ async function seedWorkspace(config) {
       metadata: { context: "Browser proof", icon: "note" }
     });
 
+    const taskAsset = await apiRequest(config, "POST", "/api/workspace/assets", {
+      id: `${runId}-task-asset-html`,
+      title: "Proof task asset HTML",
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Asset-backed task page</h1>",
+        "<p>This task uses an HTML asset instead of inline record HTML.</p>",
+        "<ul><li>Review the latest legal edits</li><li>Sync with procurement</li><li>Send the signed version</li></ul>",
+        "<p>Open questions: redlines, final signer, delivery timing.</p>",
+        "</body></html>"
+      ].join("")
+    });
+
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-overdue-task`,
       title: "Proof Overdue Task",
       summary: "Starts overdue.",
       status: "open",
       due_at_ms: Date.now() - 60_000,
-      html: "<!doctype html><h1>Proof Overdue Task</h1>"
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Overdue Task</h1>",
+        "<p>This overdue task proves the detail page can render a realistic inline task document.</p>",
+        "<ul><li>Confirm the missing response</li><li>Escalate blocker to the project owner</li><li>Update the rollout note</li></ul>",
+        "<p>Status note: this one should already be overdue when the browser proof opens.</p>",
+        "</body></html>"
+      ].join("")
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-future-task`,
@@ -133,7 +153,14 @@ async function seedWorkspace(config) {
       summary: "Due later.",
       status: "open",
       due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000,
-      html: "<!doctype html><h1>Proof Future Task</h1>"
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Future Task</h1>",
+        "<p>This due-soon task demonstrates the new HTML-first body layout.</p>",
+        "<ol><li>Pull product feedback</li><li>Refine the launch checklist</li><li>Share the final summary</li></ol>",
+        "<p>Body length is intentional so the iframe has enough content to prove scrolling and spacing.</p>",
+        "</body></html>"
+      ].join("")
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-done-task`,
@@ -141,7 +168,28 @@ async function seedWorkspace(config) {
       summary: "Done stays done even after deadline.",
       status: "done",
       due_at_ms: Date.now() - 120_000,
-      html: "<!doctype html><h1>Proof Done Task</h1>"
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Done Task</h1>",
+        "<p>This task proves the same detail shell works after completion and can be reopened.</p>",
+        "<ul><li>Archive the draft</li><li>Note final approval</li><li>Close the loop with the team</li></ul>",
+        "</body></html>"
+      ].join("")
+    });
+    await apiRequest(config, "POST", "/api/workspace/tasks", {
+      id: `${runId}-asset-task`,
+      title: "Proof Asset Task",
+      summary: "Uses html_asset_id instead of inline html.",
+      status: "open",
+      due_at_ms: Date.now() + 24 * 60 * 60 * 1000,
+      html_asset_id: taskAsset.asset_id
+    });
+    await apiRequest(config, "POST", "/api/workspace/tasks", {
+      id: `${runId}-empty-task`,
+      title: "Proof Empty Task",
+      summary: "No generated HTML yet.",
+      status: "open",
+      due_at_ms: Date.now() + 2 * 24 * 60 * 60 * 1000
     });
     const deadlineFlipId = `${runId}-deadline-flip`;
     await apiRequest(config, "POST", "/api/workspace/tasks", {
@@ -150,7 +198,7 @@ async function seedWorkspace(config) {
       summary: "Moves to overdue after timestamp passes.",
       status: "open",
       due_at_ms: Date.now() + 6_500,
-      html: "<!doctype html><h1>Proof Deadline Flip</h1><p>Use to verify task auto-overdue transition.</p>"
+      html: "<!doctype html><html><body><h1>Proof Deadline Flip</h1><p>Use to verify task auto-overdue transition.</p></body></html>"
     });
 
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -273,6 +321,10 @@ async function seedWorkspace(config) {
       pinnedNoteId: `${runId}-pinned-note`,
       tasks: seededTasks,
       taskIds: {
+        inline: `${runId}-future-task`,
+        asset: `${runId}-asset-task`,
+        empty: `${runId}-empty-task`,
+        done: `${runId}-done-task`,
         rowA: `${runId}-future-task`,
         rowB: `${runId}-overdue-task`,
         flip: deadlineFlipId
@@ -367,6 +419,32 @@ async function expectFrameHeading(page, text, timeoutMs) {
     return;
   }
   await page.frameLocator(".light-html-frame").locator(`text=${text}`).first().waitFor({ state: "visible", timeout: timeoutMs });
+}
+
+async function readTaskDetailState(page) {
+  return page.evaluate(() => {
+    const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
+    const pageText = document.querySelector(".light-shell")?.textContent || "";
+    const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
+    const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
+    const toggle = document.querySelector(".light-task-detail-toggle")?.textContent?.trim() || "";
+    const hasNotes = /\bNOTES\b/.test(pageText);
+    const hasRelated = /\bRELATED\b/.test(pageText);
+    const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
+    const htmlFrame = document.querySelector(".light-task-detail-body.light-html-card iframe");
+    const htmlFallback = document.querySelector(".light-task-detail-body.light-html-empty")?.textContent?.trim() || "";
+    return {
+      route,
+      title,
+      due,
+      toggle,
+      hasNotes,
+      hasRelated,
+      hasGeneratedPage,
+      hasHtmlFrame: Boolean(htmlFrame),
+      htmlFallback
+    };
+  });
 }
 
 async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
@@ -588,6 +666,65 @@ async function proveTasks(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
+
+  const inlineId = seed.taskIds?.inline;
+  const assetId = seed.taskIds?.asset;
+  const emptyId = seed.taskIds?.empty;
+  const doneId = seed.taskIds?.done;
+  summary.taskDetail = summary.taskDetail || [];
+
+  await page.locator(`[data-task-id="${inlineId}"]`).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Proof Future Task", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
+  let detailState = await readTaskDetailState(page);
+  assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
+  assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
+  assert(detailState.hasHtmlFrame, "Expected inline HTML task to render an iframe body");
+  assert(!detailState.hasNotes, "Did not expect NOTES section on task detail");
+  assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
+  assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
+  screenshots[`${theme}_tasks_inline_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-html`);
+  summary.taskDetail.push({ theme, type: "inline_html", taskId: inlineId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+
+  await page.locator(`[data-task-id="${assetId}"]`).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Asset-backed task page", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
+  detailState = await readTaskDetailState(page);
+  assert(detailState.title === "Proof Asset Task", `Expected asset task title, got ${detailState.title}`);
+  assert(detailState.hasHtmlFrame, "Expected asset-backed task to render an iframe body");
+  screenshots[`${theme}_tasks_asset_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-html`);
+  summary.taskDetail.push({ theme, type: "asset_html", taskId: assetId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+
+  await page.locator(`[data-task-id="${emptyId}"]`).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  detailState = await readTaskDetailState(page);
+  assert(detailState.title === "Proof Empty Task", `Expected empty task title, got ${detailState.title}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect iframe body for no-HTML task");
+  assert(detailState.htmlFallback === "No task page yet.", `Expected minimal empty fallback, got ${detailState.htmlFallback}`);
+  screenshots[`${theme}_tasks_empty_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-html`);
+  summary.taskDetail.push({ theme, type: "no_html", taskId: emptyId, title: detailState.title, toggle: detailState.toggle, due: detailState.due, fallback: detailState.htmlFallback });
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+
+  await page.locator(`[data-task-id="${doneId}"]`).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  detailState = await readTaskDetailState(page);
+  assert(detailState.toggle === "Reopen task", `Expected done task toggle to say Reopen task, got ${detailState.toggle}`);
+  await page.locator(".light-task-detail-toggle").click();
+  await page.waitForFunction(() => {
+    const button = document.querySelector(".light-task-detail-toggle");
+    return Boolean(button && button.textContent && button.textContent.includes("Mark done"));
+  }, { timeout: config.timeoutMs });
+  detailState = await readTaskDetailState(page);
+  assert(detailState.toggle === "Mark done", `Expected reopened task toggle to say Mark done, got ${detailState.toggle}`);
+  screenshots[`${theme}_tasks_done_toggle`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-toggle`);
+  summary.taskDetail.push({ theme, type: "done_reopen", taskId: doneId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
   screenshots[`${theme}_tasks_before_deadline`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-before-deadline`);
   await page.waitForTimeout(8500);

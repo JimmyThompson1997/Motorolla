@@ -157,6 +157,24 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
             body={"status": "done"},
         )
         assert done["derived_group"] == "done"
+        task_asset = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={"id": "api-task-asset", "title": "API Task Asset", "status": "open", "due_at_ms": 1000, "html_asset_id": "api-html"},
+        )
+        assert task_asset["html_asset_id"] == "api-html"
+        assert task_asset["html"] == ""
+        task_empty = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={"id": "api-task-empty", "title": "API Task Empty", "status": "open", "due_at_ms": 2000},
+        )
+        assert task_empty["html"] == ""
+        assert task_empty["html_asset_id"] == ""
 
         project = request_json(
             base_url,
