@@ -734,6 +734,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in app
     assert "WORKSPACE_TASK_REFRESH_MS" in app
     assert "loadWorkspaceCollection(\"tasks\", { render: true, force: true })" in app
+    assert 'document.visibilityState === "visible" && state.route === "tasks"' in app
+    assert '(state.route === "tasks" || state.route === "task-detail")' not in app
 
     assert "const LIGHT_NOTES" not in app
     assert "const LIGHT_TASKS" not in app
@@ -812,6 +814,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-detail-card" in styles
     assert ".light-task-detail-toggle" in styles
     assert ".light-html-empty" in styles
+    assert 'if (state.route === "task-detail") {' in app
+    visibility_listener = app.split('document.addEventListener("visibilitychange", () => {', 1)[1].split("window.PuckyHandleAndroidBack =", 1)[0]
+    assert 'if (state.route === "task-detail") {' in visibility_listener
+    assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in visibility_listener
 
 
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:

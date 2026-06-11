@@ -11263,7 +11263,7 @@
   }, MEETING_STATUS_POLL_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && (state.route === "tasks" || state.route === "task-detail")) {
+    if (document.visibilityState === "visible" && state.route === "tasks") {
       void loadWorkspaceCollection("tasks", { render: true, force: true });
     }
   }, WORKSPACE_TASK_REFRESH_MS);
@@ -11293,6 +11293,9 @@
     }
     if (state.route === "settings") {
       loadSettingsState({ render: true });
+      return;
+    }
+    if (state.route === "task-detail") {
       return;
     }
     void loadWorkspaceForRoute(state.route, { render: true, force: true });

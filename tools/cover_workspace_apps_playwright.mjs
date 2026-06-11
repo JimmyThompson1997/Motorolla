@@ -455,6 +455,35 @@ async function readTaskDetailState(page) {
   });
 }
 
+async function probeTaskDetailIdle(page, idleMs = 5200) {
+  return page.evaluate(async (waitMs) => {
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const firstShell = document.querySelector(".light-shell");
+    const firstTitleNode = document.querySelector(".light-task-detail-title");
+    const firstFrame = document.querySelector(".light-task-detail-body .light-html-frame");
+    await sleep(waitMs);
+    const currentShell = document.querySelector(".light-shell");
+    const currentTitleNode = document.querySelector(".light-task-detail-title");
+    const currentFrame = document.querySelector(".light-task-detail-body .light-html-frame");
+    return {
+      sameShellNode: currentShell === firstShell,
+      sameTitleNode: currentTitleNode === firstTitleNode,
+      sameIframeNode: currentFrame === firstFrame,
+      route: currentShell?.getAttribute("data-light-route") || "",
+      title: currentTitleNode?.textContent?.trim() || ""
+    };
+  }, idleMs);
+}
+
+function countTaskRequestEvents(networkLog, startMs, endMs) {
+  return networkLog.filter(event => (
+    event.type === "request" &&
+    event.url.includes("/api/workspace/tasks") &&
+    Number(event.at_ms || 0) >= Number(startMs || 0) &&
+    Number(event.at_ms || 0) <= Number(endMs || 0)
+  )).length;
+}
+
 async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
   return page.evaluate((args) => {
     const row = document.querySelector(`[data-task-id="${args.rowTaskId}"]`);
@@ -503,7 +532,7 @@ async function proveNotes(page, config, seed, theme, screenshots) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function proveTasks(page, config, seed, theme, screenshots, summary) {
+async function proveTasks(page, config, seed, theme, screenshots, summary, networkLog) {
   let seedTasks = Array.isArray(seed.tasks) ? [...seed.tasks] : [];
   if (seed.writeEnabled && !seedTasks.length) {
     seedTasks = await readCollection(config, "tasks");
@@ -692,9 +721,37 @@ async function proveTasks(page, config, seed, theme, screenshots, summary) {
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
   screenshots[`${theme}_tasks_inline_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-html`);
+  screenshots[`${theme}_task_detail_open_0s`] = await saveScreenshot(page, config.reportDir, `${theme}-task-detail-open-0s`);
+  const idleStartMs = Date.now() + 250;
+  await page.waitForTimeout(250);
+  const idleProbe = await probeTaskDetailIdle(page, 5200);
+  const idleEndMs = Date.now();
+  const idleTaskRequests = countTaskRequestEvents(networkLog, idleStartMs, idleEndMs);
+  screenshots[`${theme}_task_detail_open_5s`] = await saveScreenshot(page, config.reportDir, `${theme}-task-detail-open-5s`);
+  summary.taskDetailIdle = summary.taskDetailIdle || [];
+  summary.taskDetailIdle.push({
+    theme,
+    taskId: inlineId,
+    networkTaskRequests: idleTaskRequests,
+    sameIframeNode: idleProbe.sameIframeNode,
+    sameShellNode: idleProbe.sameShellNode,
+    sameTitleNode: idleProbe.sameTitleNode
+  });
+  assert(idleTaskRequests === 0, `Expected no task polling while task-detail idles, saw ${idleTaskRequests} task requests`);
+  assert(idleProbe.sameIframeNode, "Expected task-detail iframe node to remain stable while idling");
+  assert(idleProbe.sameShellNode, "Expected task-detail shell node to remain stable while idling");
+  assert(idleProbe.sameTitleNode, "Expected task-detail title node to remain stable while idling");
   summary.taskDetail.push({ theme, type: "inline_html", taskId: inlineId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+  screenshots[`${theme}_tasks_list_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list-after-back`);
+  const listPollStartMs = Date.now() + 250;
+  await page.waitForTimeout(2500);
+  const listPollEndMs = Date.now();
+  const listTaskRequests = countTaskRequestEvents(networkLog, listPollStartMs, listPollEndMs);
+  summary.listPollingStillActive = summary.listPollingStillActive || [];
+  summary.listPollingStillActive.push({ theme, networkTaskRequests: listTaskRequests });
+  assert(listTaskRequests >= 1, `Expected task polling to remain active on list view, saw ${listTaskRequests} task requests`);
 
   await page.locator(`[data-task-id="${assetId}"]`).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
@@ -743,6 +800,9 @@ async function proveTasks(page, config, seed, theme, screenshots, summary) {
     }, flipId, { timeout: config.timeoutMs });
   }
   screenshots[`${theme}_tasks_after`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-after-deadline`);
+  screenshots[`${theme}_tasks_list_after_deadline_move`] = screenshots[`${theme}_tasks_after`];
+  summary.deadlineAutoMoveStillActive = summary.deadlineAutoMoveStillActive || [];
+  summary.deadlineAutoMoveStillActive.push({ theme, taskId: flipId, movedToOverdue: Boolean(flipId) });
   if (flipId) {
     await page.locator(`[data-task-id="${flipId}"]`).click();
     await expectFrameHeading(page, `Proof Deadline Flip`, config.timeoutMs);
@@ -852,13 +912,13 @@ async function proveContacts(page, config, seed, theme, screenshots) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function runTheme(page, config, seed, theme, summary) {
+async function runTheme(page, config, seed, theme, summary, networkLog) {
   const screenshots = {};
   await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
   await proveNotes(page, config, seed, theme, screenshots);
-  await proveTasks(page, config, seed, theme, screenshots, summary);
+  await proveTasks(page, config, seed, theme, screenshots, summary, networkLog);
   await proveCalendar(page, config, seed, theme, screenshots);
   await proveFeed(page, config, seed, theme, screenshots);
   await proveProjects(page, config, seed, theme, screenshots);
@@ -904,19 +964,19 @@ async function main() {
     page.on("request", request => {
       const url = request.url();
       if (url.includes("/api/workspace/")) {
-        networkLog.push({ type: "request", method: request.method(), url, at: new Date().toISOString() });
+        networkLog.push({ type: "request", method: request.method(), url, at: new Date().toISOString(), at_ms: Date.now() });
       }
     });
     page.on("response", response => {
       const url = response.url();
       if (url.includes("/api/workspace/")) {
-        networkLog.push({ type: "response", status: response.status(), url, at: new Date().toISOString() });
+        networkLog.push({ type: "response", status: response.status(), url, at: new Date().toISOString(), at_ms: Date.now() });
       }
     });
 
     summary.screenshots = {
-      ...(await runTheme(page, config, lightSeed, "light", summary)),
-      ...(await runTheme(page, config, darkSeed, "dark", summary))
+      ...(await runTheme(page, config, lightSeed, "light", summary, networkLog)),
+      ...(await runTheme(page, config, darkSeed, "dark", summary, networkLog))
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts read /api/workspace records");
