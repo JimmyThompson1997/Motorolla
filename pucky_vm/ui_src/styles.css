@@ -47,9 +47,7 @@
   --icon-subtle: rgba(245, 249, 255, 0.58);
   --icon-detail-muted: rgba(245, 249, 255, 0.72);
   --icon-card-neutral: var(--text-primary);
-  --icon-card-identity-unread: var(--accent, #72c2ff);
   --icon-card-action-unread: var(--icon-card-neutral);
-  --icon-card-action-active: var(--accent, #72c2ff);
   --border-card: #213448;
   --border-subtle: rgba(245, 249, 255, 0.08);
   --border-soft: rgba(245, 249, 255, 0.1);
@@ -202,9 +200,11 @@ button {
 }
 
 .tab.is-active {
-  color: var(--icon-primary);
-  background: var(--surface-control-strong);
-  box-shadow: var(--shadow-control);
+  color: var(--tab-accent, var(--icon-primary));
+  background: color-mix(in srgb, var(--tab-accent, var(--surface-control-strong)) 18%, var(--surface-control-strong));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--tab-accent, var(--border-control)) 34%, transparent),
+    0 0 16px color-mix(in srgb, var(--tab-accent, var(--accent-primary)) 12%, transparent);
 }
 
 .tab:not(.is-active) {
@@ -1386,7 +1386,7 @@ button {
 }
 
 .identity.is-unread {
-  color: var(--icon-card-identity-unread);
+  color: var(--accent, #72c2ff);
 }
 
 .action.is-unread {
@@ -1575,7 +1575,7 @@ button {
 }
 
 .action-audio.is-playing {
-  color: var(--icon-card-action-active);
+  color: var(--accent, #72c2ff);
 }
 
 .wave-row {

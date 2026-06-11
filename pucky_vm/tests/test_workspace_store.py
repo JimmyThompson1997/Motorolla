@@ -131,8 +131,8 @@ def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> No
     counts = {"do": 0, "soon": 0, "overdue": 0, "done": 0}
     for task in tasks:
         counts[str(task["derived_group"])] += 1
-    assert counts == {"do": 3, "soon": 3, "overdue": 3, "done": 3}
-    assert len(tasks) == 12
+    assert counts == {"do": 4, "soon": 3, "overdue": 3, "done": 3}
+    assert len(tasks) == 13
     assert all(task["html"] for task in tasks)
 
 

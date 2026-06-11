@@ -204,14 +204,14 @@
   };
 
   const PAGE_TABS = [
-    { route: "feed", icon: "mail", label: "Home" },
-    { route: "links", icon: "link", label: "Connect" },
-    { route: "meetings", icon: "mic", label: "Meetings" },
+    { route: "feed", icon: "mail", label: "Home", accent: "inbox" },
+    { route: "links", icon: "link", label: "Connect", accent: "connect" },
+    { route: "meetings", icon: "mic", label: "Meetings", accent: "meetings" },
     { route: "morning", icon: "coffee", label: "Morning" },
     { route: "calls", icon: "phone", label: "Calls" },
-    { route: "settings", icon: "settings", label: "Settings" }
+    { route: "settings", icon: "settings", label: "Settings", accent: "settings" }
   ];
-  const HOME_APP_ACCENT_PALETTE = {
+  const SEMANTIC_ICON_ACCENT_PALETTE = {
     inbox: { dark: "#8b63ff", light: "#8b63ff" },
     connect: { dark: "#4f61d8", light: "#4f61d8" },
     meetings: { dark: "#0a84ff", light: "#0a84ff" },
@@ -3223,6 +3223,7 @@
     button.type = "button";
     button.disabled = linksHandoffLocked();
     button.dataset.route = tab.route;
+    applySemanticIconAccent(button, tab.accent, { propertyName: "--tab-accent" });
     button.setAttribute("aria-label", tab.label);
     button.setAttribute("aria-current", tab.route === route ? "page" : "false");
     button.innerHTML = iconSvg(tab.icon, { filled: false });
@@ -3340,9 +3341,11 @@
   function filterIconButton(filter) {
     const selected = !state.showArchivedFeed && isFeedIconIncluded(filter.key);
     const button = el("button", selected ? "filter-icon is-selected" : "filter-icon");
+    const semanticAccentKey = canonicalIconAccentKey(filter.icon || filter.key);
     button.type = "button";
     button.dataset.filterIcon = filter.key;
-    button.style.setProperty("--filter-accent", filter.accent || "#f5f9ff");
+    button.dataset.appAccent = semanticAccentKey || "";
+    button.style.setProperty("--filter-accent", resolvedFilterAccentValue(filter));
     button.setAttribute("aria-label", filter.label);
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.innerHTML = replyCardIconSvg(filter.icon, { filled: selected });
@@ -3544,22 +3547,56 @@
     return tile;
   }
 
-  function homeAppAccentValue(accentKey, theme = effectiveTheme()) {
+  function semanticIconAccentKey(accentKey) {
     const key = String(accentKey || "").trim().toLowerCase();
-    const palette = HOME_APP_ACCENT_PALETTE[key] || HOME_APP_ACCENT_PALETTE.inbox;
+    return SEMANTIC_ICON_ACCENT_PALETTE[key] ? key : "inbox";
+  }
+
+  function semanticIconAccentValue(accentKey, theme = effectiveTheme()) {
+    const key = semanticIconAccentKey(accentKey);
+    const palette = SEMANTIC_ICON_ACCENT_PALETTE[key] || SEMANTIC_ICON_ACCENT_PALETTE.inbox;
     const mode = normalizeTheme(theme) === "light" ? "light" : "dark";
     return String(palette[mode] || palette.dark || palette.light || "#8b63ff").trim();
   }
 
-  function applyHomeAppAccent(node, app) {
-    const accent = homeAppAccentValue(app?.accent, effectiveTheme());
-    node.dataset.appAccent = String(app?.accent || "inbox");
-    node.style.setProperty("--icon-accent", accent);
+  function applySemanticIconAccent(node, accentKey, options = {}) {
+    const key = semanticIconAccentKey(accentKey);
+    const propertyName = String(options?.propertyName || "--icon-accent");
+    const accent = semanticIconAccentValue(key, options?.theme || effectiveTheme());
+    node.dataset.appAccent = key;
+    node.style.setProperty(propertyName, accent);
+    return accent;
+  }
+
+  function canonicalIconAccentKey(iconKey) {
+    const key = normalizeReplyCardIcon(iconKey);
+    if (key === "mail") return "inbox";
+    if (key === "link") return "connect";
+    if (key === "mic") return "meetings";
+    if (key === "settings") return "settings";
+    if (key === "chat") return "messages";
+    if (key === "record_voice_over") return "meeting_notes";
+    if (key === "bell") return "reminders";
+    if (key === "note") return "notes";
+    if (key === "checklist") return "tasks";
+    if (key === "calendar") return "calendar";
+    if (key === "text") return "feed_preview";
+    if (key === "folder") return "projects";
+    if (key === "contacts") return "contacts";
+    return "";
+  }
+
+  function resolvedFilterAccentValue(filter, theme = effectiveTheme()) {
+    const semanticAccentKey = canonicalIconAccentKey(filter.icon || filter.key);
+    if (semanticAccentKey) {
+      return semanticIconAccentValue(semanticAccentKey, theme);
+    }
+    return String(filter?.accent || "#f5f9ff");
   }
 
   function lightAppIcon(app) {
     const wrap = el("span", "light-app-icon");
-    applyHomeAppAccent(wrap, app);
+    applySemanticIconAccent(wrap, app?.accent);
     wrap.innerHTML = iconSvg(app.icon, { filled: false });
     return wrap;
   }

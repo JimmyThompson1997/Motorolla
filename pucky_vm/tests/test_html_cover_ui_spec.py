@@ -80,7 +80,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert 'icon: "mailbox"' not in app
     assert 'icon: "mail"' in app
     assert 'label: "Home"' in app
-    assert '{ route: "feed", icon: "mail", label: "Home" },\n    { route: "links", icon: "link", label: "Connect" },\n    { route: "meetings", icon: "mic", label: "Meetings" }' in app
+    assert '{ route: "feed", icon: "mail", label: "Home", accent: "inbox" },\n    { route: "links", icon: "link", label: "Connect", accent: "connect" },\n    { route: "meetings", icon: "mic", label: "Meetings", accent: "meetings" }' in app
     assert "link:" in app
     assert 'route: "links"' in app
     assert 'icon: "link"' in app
@@ -432,8 +432,6 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert "--surface-card:" in styles
     assert "--text-primary:" in styles
     assert "--icon-card-neutral:" in styles
-    assert "--icon-card-identity-unread:" in styles
-    assert "--icon-card-action-active:" in styles
     assert "--shadow-card:" in styles
     assert ".app-shell[data-theme=\"light\"] .settings-page" not in styles
     assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
@@ -643,8 +641,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "background: var(--surface-app);" in app_shell_block
     assert "background: transparent;" in tab_block
     assert "color: var(--icon-primary);" in tab_block
-    assert "background: var(--surface-control-strong);" in active_tab_block
-    assert "color: var(--icon-primary);" in active_tab_block
+    assert "background:" in active_tab_block
+    assert "var(--tab-accent" in active_tab_block
+    assert "color: var(--tab-accent, var(--icon-primary));" in active_tab_block
     assert "background: var(--surface-card-elevated);" in route_tray_block
     assert "background: var(--surface-control);" in settings_selector_button_block
     assert "color: var(--text-placeholder);" in links_search_placeholder_block
@@ -652,10 +651,10 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "box-shadow: var(--shadow-card);" in card_block
     assert "color: var(--text-primary);" in card_block
     assert "color: var(--text-muted-strong);" in timestamp_block
-    assert "color: var(--icon-card-identity-unread);" in identity_unread_block
+    assert "color: var(--accent, #72c2ff);" in identity_unread_block
     assert "color: var(--icon-card-action-unread);" in action_unread_block
     assert "color: var(--icon-card-neutral);" in action_block
-    assert "color: var(--icon-card-action-active);" in action_playing_block
+    assert "color: var(--accent, #72c2ff);" in action_playing_block
     assert "background: var(--surface-header);" in detail_header_block
     assert "background: var(--surface-control);" in meeting_row_block
     assert ".light-task-row:active" in styles
@@ -703,9 +702,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
         "overflow",
         "transform",
     )
-    assert "--icon-card-identity-unread:" not in light_theme_block
     assert "--icon-card-action-unread:" not in light_theme_block
-    assert "--icon-card-action-active:" not in light_theme_block
     assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
     assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
     assert ".app-shell[data-theme=\"light\"] .card" not in styles
@@ -1376,6 +1373,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert 'label: "All replies"' not in app
     assert 'data-filter-icon="all"' not in app
     assert "button.style.setProperty(\"--filter-accent\"" in app
+    assert "canonicalIconAccentKey(filter.icon || filter.key)" in app
     assert 'accent: card.accent || "#f5f9ff"' in app
     assert '"route-tray-label"' not in app
     assert '"Show"' not in app
@@ -1482,32 +1480,46 @@ def test_home_menu_keeps_a_stored_book_icon_and_trims_fixture_feed() -> None:
     assert deploy_cards["fixture_book"].get("archived") is not True
 
 
-def test_light_home_apps_share_a_semantic_accent_palette() -> None:
+def test_icon_surfaces_share_a_semantic_accent_registry() -> None:
     app = read("app.js")
     styles = read("styles.css")
+    tab_view = function_block(app, "tabView")
+    filter_icon_button = function_block(app, "filterIconButton")
     light_app_tile = function_block(app, "lightAppTile")
     light_app_icon = function_block(app, "lightAppIcon")
-    apply_accent = function_block(app, "applyHomeAppAccent")
+    apply_accent = function_block(app, "applySemanticIconAccent")
+    active_tab_block = css_block(styles, ".tab.is-active")
 
-    assert "const HOME_APP_ACCENT_PALETTE = {" in app
+    assert "const SEMANTIC_ICON_ACCENT_PALETTE = {" in app
+    assert "const HOME_APP_ACCENT_PALETTE = {" not in app
     assert '{ route: "feed", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" }' in app
     assert '{ route: "links", label: "Connect", icon: "link", accent: "connect", kind: "real" }' in app
     assert '{ route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" }' in app
     assert '{ route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" }' in app
+    assert '{ route: "feed", icon: "mail", label: "Home", accent: "inbox" }' in app
+    assert '{ route: "links", icon: "link", label: "Connect", accent: "connect" }' in app
+    assert '{ route: "meetings", icon: "mic", label: "Meetings", accent: "meetings" }' in app
+    assert '{ route: "settings", icon: "settings", label: "Settings", accent: "settings" }' in app
     assert '{ route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" }' in app
     assert '{ route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" }' in app
     assert '{ route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" }' in app
     assert '{ route: "feed-preview", label: "Feed", icon: "text", accent: "feed_preview", kind: "mock" }' in app
     assert '{ route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "mock" }' in app
     assert '{ route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "mock" }' in app
-    assert "function homeAppAccentValue(accentKey, theme = effectiveTheme())" in app
-    assert "function applyHomeAppAccent(node, app)" in app
+    assert "function semanticIconAccentValue(accentKey, theme = effectiveTheme())" in app
+    assert "function applySemanticIconAccent(node, accentKey, options = {})" in app
+    assert "const key = semanticIconAccentKey(accentKey);" in app
     assert "const icon = lightAppIcon(app);" in light_app_tile
     assert 'const wrap = el("span", "light-app-icon");' in light_app_icon
     assert "color-" not in light_app_icon
-    assert 'applyHomeAppAccent(wrap, app);' in light_app_icon
-    assert 'node.dataset.appAccent = String(app?.accent || "inbox");' in apply_accent
-    assert 'node.style.setProperty("--icon-accent", accent);' in apply_accent
+    assert 'applySemanticIconAccent(wrap, app?.accent);' in light_app_icon
+    assert 'applySemanticIconAccent(button, tab.accent, { propertyName: "--tab-accent" });' in tab_view
+    assert "const semanticAccentKey = canonicalIconAccentKey(filter.icon || filter.key);" in filter_icon_button
+    assert "resolvedFilterAccentValue(filter)" in filter_icon_button
+    assert 'node.dataset.appAccent = key;' in apply_accent
+    assert 'const propertyName = String(options?.propertyName || "--icon-accent");' in apply_accent
+    assert "node.style.setProperty(propertyName, accent);" in apply_accent
+    assert "color: var(--tab-accent, var(--icon-primary));" in active_tab_block
     assert ".light-app-icon.color-orange" not in styles
     assert ".light-app-icon.color-green" not in styles
     assert ".light-app-icon.color-red" not in styles
@@ -1519,6 +1531,23 @@ def test_light_home_apps_share_a_semantic_accent_palette() -> None:
     assert ".light-app-icon.color-navy" not in styles
     assert ".light-app-icon.color-sky" not in styles
     assert ".light-app-icon.color-gray" not in styles
+
+
+def test_unread_identity_icons_use_local_card_accent_and_read_icons_stay_neutral() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    card_view = function_block(app, "cardView")
+    identity_unread_block = css_block(styles, ".identity.is-unread")
+    identity_read_block = css_block(styles, ".identity.is-read,\n.action.is-read")
+    action_playing_block = css_block(styles, ".action-audio.is-playing")
+
+    assert 'wrapper.style.setProperty("--accent", card.accent || "#72c2ff");' in card_view
+    assert 'cardEl.style.setProperty("--accent", card.accent || "#72c2ff");' in card_view
+    assert "--icon-card-identity-unread: var(--accent, #72c2ff);" not in styles
+    assert "--icon-card-action-active: var(--accent, #72c2ff);" not in styles
+    assert "color: var(--accent, #72c2ff);" in identity_unread_block
+    assert "color: var(--icon-card-neutral);" in identity_read_block
+    assert "color: var(--accent, #72c2ff);" in action_playing_block
 
 
 def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filters() -> None:
@@ -1998,7 +2027,7 @@ def test_card_actions_have_local_read_state() -> None:
     assert "action-transcript" not in app
     assert "action-page" not in app
     assert ".identity.is-unread" in styles
-    assert "color: var(--accent" in styles
+    assert "color: var(--accent, #72c2ff);" in styles
     assert ".card.card-unread" in styles
     assert "border-color: color-mix" in styles
     assert ".action.is-unread" in styles
