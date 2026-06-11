@@ -1044,7 +1044,17 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Maya offered to bring the paint swatches before the home refresh walkthrough.",
                     ["Ask for linen and warm white", "Tie it to the walkthrough", "Spawn the upstairs sample task"],
                 ),
-                "metadata": {"channel": "Messages", "sender": "Maya Chen", "participants": ["Maya Chen"], "extracted_topics": ["home refresh", "paint", "repair"]},
+                "metadata": {
+                    "channel": "Messages",
+                    "sender": "Maya Chen",
+                    "participants": ["Maya Chen"],
+                    "unread_count": 1,
+                    "transcript": [
+                        {"role": "assistant", "sender": "Maya Chen", "text": "I can bring the paint swatches around 6 if that still helps.", "time": "5:36 PM"},
+                        {"role": "user", "sender": "You", "text": "Perfect. Bring warm white and linen too so we can decide before dinner.", "time": "5:41 PM"},
+                    ],
+                    "extracted_topics": ["home refresh", "paint", "repair"],
+                },
             },
             {
                 "id": "demo-message-dinner-plan",
@@ -1056,7 +1066,16 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "A low-stakes logistics thread that can still become reminders or calendar events.",
                     ["Confirm the table time", "Check train arrival", "Share note after work"],
                 ),
-                "metadata": {"channel": "Messages", "sender": "Family", "participants": ["Maya Chen"], "extracted_topics": ["dinner", "trip"]},
+                "metadata": {
+                    "channel": "Messages",
+                    "sender": "Family",
+                    "participants": ["Maya Chen"],
+                    "transcript": [
+                        {"role": "assistant", "sender": "Family", "text": "Can we push dinner to 7:30 if the train is running late?", "time": "3:08 PM"},
+                        {"role": "user", "sender": "You", "text": "Yep. I'll check the arrival window when I leave work.", "time": "3:14 PM"},
+                    ],
+                    "extracted_topics": ["dinner", "trip"],
+                },
             },
             {
                 "id": "demo-message-freelance-followup",
@@ -1068,7 +1087,39 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "A work-adjacent message that belongs in the personal workspace without feeling corporate.",
                     ["Send the HTML concept", "Flag invoice timing", "Make one follow-up reminder"],
                 ),
-                "metadata": {"channel": "Email", "sender": "Sam Rivera", "participants": ["Sam Rivera"], "extracted_topics": ["freelance", "invoice"]},
+                "metadata": {
+                    "channel": "Email",
+                    "sender": "Sam Rivera",
+                    "participants": ["Sam Rivera"],
+                    "unread_count": 1,
+                    "transcript": [
+                        {"role": "assistant", "sender": "Sam Rivera", "text": "Could you send the revised HTML concept tonight and add one invoice note?", "time": "11:02 AM"},
+                        {"role": "user", "sender": "You", "text": "Yes. I'll send the concept after I clean up the layout pass.", "time": "11:19 AM"},
+                    ],
+                    "reply_preview": "I'll send the revised concept tonight.",
+                    "extracted_topics": ["freelance", "invoice"],
+                },
+            },
+            {
+                "id": "demo-message-clinic-followup",
+                "title": "Clinic reschedule text",
+                "summary": "Quick scheduling note that may become a reminder and a calendar block.",
+                "event_at_ms": now_ms - 9 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Clinic reschedule text",
+                    "A tiny logistics thread that still belongs in the same personal graph.",
+                    ["Confirm the new slot", "Add it to calendar", "Set a reminder the night before"],
+                ),
+                "metadata": {
+                    "channel": "Messages",
+                    "sender": "Dr. Patel Office",
+                    "participants": ["Dr. Patel Office"],
+                    "transcript": [
+                        {"role": "assistant", "sender": "Dr. Patel Office", "text": "We can move your appointment to Friday at 11 if that helps.", "time": "9:12 AM"},
+                        {"role": "user", "sender": "You", "text": "Friday at 11 works. Please send the prep note again.", "time": "9:19 AM"},
+                    ],
+                    "extracted_topics": ["health", "appointment"],
+                },
             },
         ],
         "meeting-notes": [
@@ -1084,7 +1135,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Graph meeting note that links a calendar block, attendee, project, note, task, and reminder.",
                     ["Compare paint samples", "Confirm contractor question", "Turn final decisions into weekend tasks"],
                 ),
-                "metadata": {"participants": ["Maya Chen"], "source": "house-walkthrough", "extracted_topics": ["paint", "repair", "home refresh"]},
+                "metadata": {"participants": ["Maya Chen"], "source": "house-walkthrough", "source_kind": "calendar_event", "source_id": "house-walkthrough", "extracted_topics": ["paint", "repair", "home refresh"]},
             },
             {
                 "id": "demo-meeting-trip-plan",
@@ -1098,7 +1149,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Small meeting note that keeps travel logistics connected to messages and reminders.",
                     ["Dinner timing", "Train arrival", "Packing reminder"],
                 ),
-                "metadata": {"participants": ["Maya Chen"], "source": "trip-dinner-planning", "extracted_topics": ["trip", "family logistics"]},
+                "metadata": {"participants": ["Maya Chen"], "source": "trip-dinner-planning", "source_kind": "calendar_event", "source_id": "trip-dinner-planning", "extracted_topics": ["trip", "family logistics"]},
             },
         ],
         "reminders": [

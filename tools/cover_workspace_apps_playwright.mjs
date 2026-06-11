@@ -401,7 +401,18 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         "<ul><li>Contact: Proof Contact One</li><li>Task: Proof Future Task</li><li>Reminder: Proof Graph Reminder</li></ul>",
         "</body></html>"
       ].join(""),
-      metadata: { channel: "Messages", sender: "Proof Contact One", participants: ["Proof Contact One"], project: "Proof Alpha Project", topics: ["graph", "message"] }
+      metadata: {
+        channel: "Messages",
+        sender: "Proof Contact One",
+        participants: ["Proof Contact One"],
+        project: "Proof Alpha Project",
+        topics: ["graph", "message"],
+        unread_count: 1,
+        transcript: [
+          { role: "assistant", sender: "Proof Contact One", text: "Can we turn this note into a task and a reminder?", time: "Now" },
+          { role: "user", sender: "You", text: "Yes. I'll attach it to the project and the follow-up.", time: "Now" }
+        ]
+      }
     });
     await apiRequest(config, "POST", "/api/workspace/meeting-notes", {
       id: `${runId}-graph-meeting`,
@@ -417,7 +428,13 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         "<ol><li>Review proof graph</li><li>Confirm linked task</li><li>Schedule reminder</li></ol>",
         "</body></html>"
       ].join(""),
-      metadata: { participants: ["Proof Contact One"], project: "Proof Alpha Project", extracted_topics: ["graph", "meeting", "follow-up"] }
+      metadata: {
+        participants: ["Proof Contact One"],
+        project: "Proof Alpha Project",
+        source_kind: "calendar_event",
+        source_id: `${runId}-today-roadmap`,
+        extracted_topics: ["graph", "meeting", "follow-up"]
+      }
     });
     await apiRequest(config, "POST", "/api/workspace/reminders", {
       id: `${runId}-graph-reminder`,
@@ -1319,6 +1336,12 @@ async function waitForGraphText(page, text, timeoutMs) {
   }, text, { timeout: timeoutMs });
 }
 
+async function waitForLightRoute(page, route, timeoutMs) {
+  await page.waitForFunction((targetRoute) => {
+    return document.querySelector(".light-shell")?.getAttribute("data-light-route") === targetRoute;
+  }, route, { timeout: timeoutMs });
+}
+
 async function proveGraphObjects(page, config, seed, theme, screenshots, summary) {
   if (!seed.writeEnabled) {
     summary.assertions.push("graph object proof skipped write ripple checks because API token was unavailable");
@@ -1328,6 +1351,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(message && meeting && reminder, "Expected graph proof IDs from seedWorkspace");
 
   await openTile(page, "Messages", "messages", config.timeoutMs);
+  assert(await page.locator(".light-message-thread-row").count() > 0, "Expected message list to render thread-style rows");
   await page.locator(`[data-record-id="${message}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_graph_messages`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-messages-list`);
   await page.locator(`[data-record-id="${message}"]`).click();
@@ -1335,10 +1359,15 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   for (const text of ["Proof Contact One", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
+  assert(await page.locator(".light-message-conversation").count() > 0, "Expected message detail to render a conversation surface");
   let graphState = await readGraphDetailState(page);
   assert(graphState.route === "message-detail", `Expected message-detail route, got ${graphState.route}`);
   assert(graphState.hasHtmlFrame, "Expected message detail to render generated HTML iframe");
   screenshots[`${theme}_graph_message_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-message-detail`);
+  await page.locator(`[data-workspace-target-route="contact-detail"][data-workspace-target-id="${seed.runId}-contact-one"]`).first().click();
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
+  screenshots[`${theme}_graph_message_contact_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-message-contact-detail`);
   await backHome(page, theme, config.timeoutMs);
 
   await openTile(page, "Meeting Notes", "meeting-notes", config.timeoutMs);
@@ -1353,6 +1382,10 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
   assert(graphState.hasHtmlFrame, "Expected meeting note detail to render generated HTML iframe");
   screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
+  await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.runId}-pinned-note"]`).first().click();
+  await waitForLightRoute(page, "note-detail", config.timeoutMs);
+  await waitForGraphText(page, "Proof Pinned Note", config.timeoutMs);
+  screenshots[`${theme}_graph_meeting_linked_note`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-linked-note`);
   await backHome(page, theme, config.timeoutMs);
 
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
@@ -1367,6 +1400,10 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(graphState.route === "reminder-detail", `Expected reminder-detail route, got ${graphState.route}`);
   assert(graphState.hasHtmlFrame, "Expected reminder detail to render generated HTML iframe");
   screenshots[`${theme}_graph_reminder_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminder-detail`);
+  await page.locator(`[data-workspace-target-route="task-detail"][data-workspace-target-id="${seed.runId}-future-task"]`).first().click();
+  await waitForLightRoute(page, "task-detail", config.timeoutMs);
+  await waitForGraphText(page, "Proof Future Task", config.timeoutMs);
+  screenshots[`${theme}_graph_reminder_source_task`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminder-source-task`);
   await backHome(page, theme, config.timeoutMs);
 
   await openTile(page, "Projects", "projects", config.timeoutMs);

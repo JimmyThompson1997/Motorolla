@@ -3999,6 +3999,28 @@ button {
   padding: 10px 14px;
 }
 
+.light-info-row.is-clickable {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.light-info-row.is-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 28%, transparent);
+  outline-offset: -2px;
+}
+
+.light-info-row.is-clickable:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 82%, transparent);
+}
+
 .light-info-row + .light-info-row,
 .light-task-row + .light-task-row {
   border-top: 1px solid var(--home-shell-border);
@@ -4506,6 +4528,201 @@ button {
   gap: 7px;
   color: var(--home-shell-text-muted);
   font-size: 13px;
+}
+
+.light-project-section-item {
+  min-height: 28px;
+  display: grid;
+  align-items: center;
+  color: inherit;
+}
+
+.light-project-section-item.is-clickable {
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--home-shell-text);
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.light-project-section-item.is-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.light-message-thread-list {
+  display: grid;
+  gap: 10px;
+}
+
+.light-message-thread-row {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+  text-align: left;
+}
+
+.light-message-thread-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.light-message-thread-title {
+  min-width: 0;
+  color: var(--home-shell-text);
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 810;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.light-message-thread-snippet {
+  color: var(--home-shell-text-muted);
+  font-size: 14px;
+  line-height: 1.38;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.light-message-thread-meta {
+  display: grid;
+  justify-items: end;
+  align-content: space-between;
+  gap: 8px;
+}
+
+.light-message-thread-time {
+  color: var(--home-shell-text-subtle);
+  font-size: 11px;
+  line-height: 1.15;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.light-message-thread-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.light-message-thread-badge {
+  min-height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  color: #4b5563;
+  background: #f3f6fb;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.light-message-thread-badge.is-unread {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.light-message-hero {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+}
+
+.light-message-hero-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.light-message-hero-copy h1 {
+  margin: 0;
+  color: var(--home-shell-text);
+  font-size: 30px;
+  line-height: 1.04;
+  font-weight: 860;
+}
+
+.light-message-conversation {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.light-message-conversation-label {
+  color: var(--home-shell-text-subtle);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.light-message-chat-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.light-message-bubble {
+  max-width: min(86%, 420px);
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+}
+
+.light-message-bubble.assistant {
+  align-self: flex-start;
+  color: var(--home-shell-text);
+  background: var(--home-shell-card-strong);
+  border: 1px solid var(--home-shell-border);
+}
+
+.light-message-bubble.user {
+  align-self: flex-end;
+  color: var(--text-on-accent);
+  background: var(--accent-primary);
+}
+
+.light-message-bubble-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 720;
+  opacity: 0.82;
+}
+
+.light-message-bubble-text {
+  margin: 0;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 .light-project-create-card,

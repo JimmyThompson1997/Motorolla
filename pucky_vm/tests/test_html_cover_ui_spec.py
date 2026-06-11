@@ -873,16 +873,25 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "events.length > 1" in light_timeline
     assert "block.style.top" in light_timeline
     assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
-    assert 'collection: "messages"' in light_messages
-    assert 'detailRoute: "message-detail"' in light_messages
+    assert 'workspaceItems("messages")' in light_messages
+    assert 'lightMessageThreadRow(message)' in light_messages
+    assert 'lightGraphListPage(' not in light_messages
     assert 'selectedMessage()' in message_detail
+    assert 'lightMessageConversation(message)' in message_detail
     assert 'messageDetailRows(message)' in message_detail
+    assert 'lightGraphDetailPage(message' not in message_detail
     assert 'collection: "meeting-notes"' in light_meeting_notes
     assert 'detailRoute: "meeting-note-detail"' in light_meeting_notes
     assert 'selectedMeetingNote()' in meeting_note_detail
     assert 'meetingNoteDetailRows(meeting)' in meeting_note_detail
     assert 'lightWorkspaceStatus("reminders"' in light_reminders
-    assert 'lightReminderRow(reminder, group)' in light_reminders
+    assert 'chronologicalReminders()' in light_reminders
+    assert 'active.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
+    assert 'done.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
+    assert 'lightSectionTitle("Done")' in light_reminders
+    assert '"Due soon"' not in light_reminders
+    assert '"Later"' not in light_reminders
+    assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
     assert 'reminderDetailRows(reminder)' in reminder_detail
     assert 'lightLinkedRecordRows(record)' in graph_detail
@@ -920,6 +929,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-detail-toggle" in styles
     assert ".light-html-empty" in styles
     assert ".light-task-row-title" in styles
+    assert ".light-message-thread-row" in styles
+    assert ".light-message-conversation" in styles
     assert ".light-event-detail-html-body.light-html-card" in styles
     assert 'margin-top: -4px;' in styles
     assert 'margin-top: -8px;' in styles
@@ -1513,10 +1524,10 @@ def test_icon_surfaces_share_a_semantic_accent_registry() -> None:
     assert 'const wrap = el("span", "light-app-icon");' in light_app_icon
     assert "color-" not in light_app_icon
     assert 'applySemanticIconAccent(wrap, app?.accent);' in light_app_icon
-    assert 'applySemanticIconAccent(button, tab.accent, { propertyName: "--tab-accent" });' in tab_view
+    assert 'applySemanticIconAccent(button, tab.accent, { propertyName: "--tab-accent", allowEmpty: true });' in tab_view
     assert "const semanticAccentKey = canonicalIconAccentKey(filter.icon || filter.key);" in filter_icon_button
     assert "resolvedFilterAccentValue(filter)" in filter_icon_button
-    assert 'node.dataset.appAccent = key;' in apply_accent
+    assert 'node.dataset.appAccent = resolvedKey;' in apply_accent
     assert 'const propertyName = String(options?.propertyName || "--icon-accent");' in apply_accent
     assert "node.style.setProperty(propertyName, accent);" in apply_accent
     assert "color: var(--tab-accent, var(--icon-primary));" in active_tab_block
@@ -2403,6 +2414,30 @@ def test_transcript_initial_open_scrolls_to_latest_message() -> None:
     assert "min-height: 100%;" in chat_stack
     assert "display: flex;" in chat_stack
     assert "justify-content: flex-end;" in chat_stack
+
+
+def test_workspace_graph_info_rows_become_clickable_and_messages_use_thread_surfaces() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    light_info_section = function_block(app, "lightInfoSection")
+    linked_rows = function_block(app, "lightLinkedRecordRows")
+    project_section_item = function_block(app, "lightProjectSectionItem")
+
+    assert "function workspaceTargetForKind(kind, id)" in app
+    assert "function openWorkspaceTarget(target, fromRoute = \"\")" in app
+    assert "function lightMessageThreadRow(message)" in app
+    assert "function messageTranscriptEntries(message)" in app
+    assert 'const item = el(isInteractive ? "button" : "div"' in light_info_section
+    assert 'item.dataset.workspaceTargetRoute = row.target.route;' in light_info_section
+    assert 'item.dataset.workspaceTargetId = row.target.id;' in light_info_section
+    assert 'openWorkspaceTarget(row.target, state.route)' in light_info_section
+    assert 'target: workspaceTargetForKind(relatedKind, related?.id || relatedId)' in linked_rows
+    assert 'openWorkspaceTarget(item.target, "project-detail")' in project_section_item
+    assert ".light-info-row.is-clickable" in styles
+    assert ".light-project-section-item.is-clickable" in styles
+    assert ".light-message-thread-badge" in styles
+    assert ".light-message-bubble" in styles
 
 
 def test_audio_detail_uses_full_screen_top_bar_and_compact_controls() -> None:
