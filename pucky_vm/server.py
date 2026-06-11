@@ -248,6 +248,19 @@ def _run_staged_operation(
     raise RuntimeError("unreachable")
 
 
+def _unwrap_staged_exception(exc: BaseException, *, fallback_stage: str) -> tuple[str, BaseException]:
+    if isinstance(exc, _StagedOperationError):
+        stage = str(exc.stage or fallback_stage).strip() or fallback_stage
+        return stage, exc.original
+    stage = str(fallback_stage or "unknown").strip() or "unknown"
+    return stage, exc
+
+
+def _failure_reason_from_exception(exc: BaseException) -> str:
+    message = str(exc).strip()
+    return message or exc.__class__.__name__
+
+
 def load_codex_base_instructions_file(path: str | None) -> str | None:
     clean = str(path or "").strip()
     if not clean:
@@ -3541,10 +3554,14 @@ class PuckyVoiceService:
                 reasoning_effort=requested_reasoning_effort or None,
             )
         except Exception as exc:
+            failed_stage, root = _unwrap_staged_exception(exc, fallback_stage="stt_running")
             telemetry["event"] = "pucky.turn.failed"
             telemetry["status"] = "failed"
-            telemetry["stage"] = str(telemetry.get("stage") or "stt_running")
-            telemetry["error_type"] = exc.__class__.__name__
+            telemetry["stage"] = failed_stage
+            telemetry["failed_stage"] = failed_stage
+            telemetry["error_type"] = root.__class__.__name__
+            telemetry["error_message"] = str(root).strip()
+            telemetry["failure_reason"] = _failure_reason_from_exception(root)
             telemetry["total_ms"] = _elapsed_ms(total_start)
             self._update_turn_status(turn_id, "failed", "failed", telemetry)
             _log_json(telemetry)
@@ -3617,10 +3634,14 @@ class PuckyVoiceService:
                 reasoning_effort=requested_reasoning_effort or None,
             )
         except Exception as exc:
+            failed_stage, root = _unwrap_staged_exception(exc, fallback_stage="codex_running")
             telemetry["event"] = "pucky.turn.failed"
             telemetry["status"] = "failed"
-            telemetry["stage"] = str(telemetry.get("stage") or "codex_running")
-            telemetry["error_type"] = exc.__class__.__name__
+            telemetry["stage"] = failed_stage
+            telemetry["failed_stage"] = failed_stage
+            telemetry["error_type"] = root.__class__.__name__
+            telemetry["error_message"] = str(root).strip()
+            telemetry["failure_reason"] = _failure_reason_from_exception(root)
             telemetry["total_ms"] = _elapsed_ms(total_start)
             self._update_turn_status(turn_id, "failed", "failed", telemetry)
             _log_json(telemetry)
@@ -4959,7 +4980,10 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "total_ms",
         "card_id",
         "feed_persisted",
+        "failed_stage",
         "error_type",
+        "error_message",
+        "failure_reason",
     )
     return {key: telemetry[key] for key in allowed if key in telemetry}
 
@@ -5014,6 +5038,10 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "total_ms",
         "card_id",
         "feed_persisted",
+        "failed_stage",
+        "error_type",
+        "error_message",
+        "failure_reason",
     )
     return {key: telemetry[key] for key in allowed if key in telemetry}
 

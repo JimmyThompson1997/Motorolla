@@ -2659,6 +2659,37 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("exc", error)
         self.assertIsInstance(result["body"], dict)
 
+    def test_turn_status_surfaces_root_failure_reason_and_failed_stage(self) -> None:
+        class FailingCodex(FakeCodex):
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                model: str | None = None,
+                reasoning_effort: str | None = None,
+                output_schema: dict[str, object] | None = None,
+                developer_instructions: str | None = None,
+                **_kwargs,
+            ):
+                self.turns.append(text)
+                self.output_schemas.append(output_schema)
+                raise RuntimeError("Codex turn failed: refresh token revoked")
+
+        self.service.codex = FailingCodex()
+
+        with self.assertRaises(RuntimeError):
+            self.service.handle_text_turn("Show the live failure", turn_id="client_turn_status_failed")
+
+        status = self.service.turn_status("client_turn_status_failed")
+        self.assertIsNotNone(status)
+        self.assertEqual(status["stage"], "failed")
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["failed_stage"], "codex_turn")
+        self.assertEqual(status["error_type"], "RuntimeError")
+        self.assertEqual(status["error_message"], "Codex turn failed: refresh token revoked")
+        self.assertEqual(status["failure_reason"], "Codex turn failed: refresh token revoked")
+
     def test_text_turn_reuses_existing_thread_and_falls_back_on_invalid_thread(self) -> None:
         scripted = ScriptedCodex(invalid_thread_ids={"thread-missing"})
         self.service.codex = scripted
