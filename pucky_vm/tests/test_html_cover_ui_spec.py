@@ -589,11 +589,13 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'page.append(appbar);' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
     assert "lightTaskFilters()" not in light_tasks
-    assert 'const header = el("div", "light-task-section-header");' in light_task_sections
+    assert 'const expanded = taskSectionExpanded(group);' in light_task_sections
+    assert 'const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");' in light_task_sections
+    assert 'toggle.dataset.taskSection = group;' in light_task_sections
     assert 'el("h3", "light-task-section-title", label)' in light_task_sections
-    assert 'if (group === "done") {' in light_task_sections
-    assert 'state.taskDoneExpanded = !state.taskDoneExpanded;' in light_task_sections
-    assert 'state.taskDoneExpanded ? "expand_more" : "navigate_next"' in light_task_sections
+    assert 'el("span", "light-task-section-spacer")' in light_task_sections
+    assert 'toggleTaskSection(group)' in light_task_sections
+    assert 'expanded ? "expand_more" : "navigate_next"' in light_task_sections
     assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
@@ -635,9 +637,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert ".light-task-row:focus-visible" in styles
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block
-    assert ".light-task-section-header" in styles
     assert ".light-task-section-toggle" in styles
     assert ".light-task-section-count" in styles
+    assert ".light-task-section-spacer" in styles
     assert ".light-task-detail-body.light-html-card" in styles
     assert "width: calc(100% + 40px);" in styles
     assert "margin-left: -20px;" in styles
@@ -793,8 +795,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'workspaceItems("tasks")' in filtered_tasks
     assert '"Upcoming"' in light_tasks
     assert '"Today"' in light_tasks
-    assert 'group !== "done" || state.taskDoneExpanded' in light_tasks
-    assert 'taskDoneExpanded: false,' in app
+    assert 'if (taskSectionExpanded(group)) {' in light_tasks
+    assert 'taskSectionsExpanded:' in app
+    assert 'overdue: true' in app
+    assert 'do: true' in app
+    assert 'soon: true' in app
+    assert 'done: false' in app
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
     task_due_label = function_block(app, "taskDueLabel")

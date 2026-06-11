@@ -540,12 +540,17 @@ async function readTaskListState(page) {
   return page.evaluate(() => {
     const headers = Array.from(document.querySelectorAll(".light-task-section-title")).map(node => node.textContent?.trim() || "");
     const countLine = document.querySelector(".light-task-counts")?.textContent?.trim() || "";
-    const doneToggle = document.querySelector(".light-task-section-toggle");
+    const sectionExpanded = Object.fromEntries(
+      Array.from(document.querySelectorAll(".light-task-section-toggle")).map(node => [
+        node.getAttribute("data-task-section") || "",
+        node.getAttribute("aria-expanded") === "true"
+      ])
+    );
     const visibleTaskIds = Array.from(document.querySelectorAll("[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
     return {
       headers,
       countLine,
-      doneExpanded: doneToggle ? doneToggle.getAttribute("aria-expanded") === "true" : null,
+      sectionExpanded,
       visibleTaskIds
     };
   });
@@ -728,14 +733,17 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     theme,
     headers: listState.headers,
     countLine: listState.countLine,
-    doneExpanded: listState.doneExpanded
+    sectionExpanded: listState.sectionExpanded
   });
   if (seed.writeEnabled) {
     assert(
       JSON.stringify(listState.headers) === JSON.stringify(["Overdue", "Today", "Upcoming", "Done"]),
       `Expected task section order Overdue/Today/Upcoming/Done, got ${JSON.stringify(listState.headers)}`
     );
-    assert(listState.doneExpanded === false, "Expected Done section to start collapsed");
+    assert(listState.sectionExpanded.done === false, "Expected Done section to start collapsed");
+    assert(listState.sectionExpanded.overdue === true, "Expected Overdue section to start expanded");
+    assert(listState.sectionExpanded.do === true, "Expected Today section to start expanded");
+    assert(listState.sectionExpanded.soon === true, "Expected Upcoming section to start expanded");
     if (seed.taskIds?.done) {
       assert(
         !listState.visibleTaskIds.includes(seed.taskIds.done),
@@ -901,29 +909,47 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
-  const doneToggle = page.locator('.light-task-section-toggle');
-  if (await doneToggle.count()) {
-    await doneToggle.click();
+  const toggleSection = async (group) => {
+    const toggle = page.locator(`.light-task-section-toggle[data-task-section="${group}"]`);
+    if (!(await toggle.count())) return null;
+    await toggle.click();
     await page.waitForTimeout(250);
-    const expandedState = await readTaskListState(page);
+    return readTaskListState(page);
+  };
+  const ensureExpanded = async (group) => {
+    const sectionState = await readTaskListState(page);
+    if (sectionState.sectionExpanded[group] === false) {
+      return toggleSection(group);
+    }
+    return sectionState;
+  };
+
+  const doneExpandedState = await toggleSection("done");
+  if (doneExpandedState) {
     summary.taskSections.push({
       theme,
-      headers: expandedState.headers,
-      countLine: expandedState.countLine,
-      doneExpanded: expandedState.doneExpanded,
+      headers: doneExpandedState.headers,
+      countLine: doneExpandedState.countLine,
+      sectionExpanded: doneExpandedState.sectionExpanded,
       phase: "done_expanded"
     });
-    assert(expandedState.doneExpanded === true, "Expected Done section to expand after tapping the toggle");
+    assert(doneExpandedState.sectionExpanded.done === true, "Expected Done section to expand after tapping the header");
     screenshots[`${theme}_tasks_done_expanded`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-expanded`);
-    await doneToggle.click();
-    await page.waitForTimeout(250);
-    const collapsedAgain = await readTaskListState(page);
-    assert(collapsedAgain.doneExpanded === false, "Expected Done section to collapse again after second tap");
+    const collapsedAgain = await toggleSection("done");
+    assert(collapsedAgain.sectionExpanded.done === false, "Expected Done section to collapse again after second tap");
   }
 
-  if (await doneToggle.count()) {
-    await doneToggle.click();
-    await page.waitForTimeout(250);
+  for (const [group, label] of [["overdue", "Overdue"], ["do", "Today"], ["soon", "Upcoming"]]) {
+    const collapsed = await toggleSection(group);
+    if (!collapsed) continue;
+    assert(collapsed.sectionExpanded[group] === false, `Expected ${label} to collapse after tapping the header`);
+    const reopened = await toggleSection(group);
+    assert(reopened.sectionExpanded[group] === true, `Expected ${label} to expand again after second tap`);
+  }
+
+  const expandedForDone = await ensureExpanded("done");
+  if (expandedForDone?.sectionExpanded?.done !== true) {
+    throw new Error("Expected Done section to be expanded before opening done task detail");
   }
   await page.locator(`[data-task-id="${doneId}"]`).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });

@@ -312,7 +312,12 @@
     selectedFeedId: "maya-budget",
     selectedCalendarDate: todayDateKey(),
     calendarPickerOpen: false,
-    taskDoneExpanded: false,
+    taskSectionsExpanded: {
+      overdue: true,
+      do: true,
+      soon: true,
+      done: false
+    },
     taskFilter: "all",
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
@@ -3790,7 +3795,7 @@
       const tasks = filteredTasks(group);
       if (!tasks.length) return;
       page.append(lightTaskSectionHeader(label, group, tasks.length));
-      if (group !== "done" || state.taskDoneExpanded) {
+      if (taskSectionExpanded(group)) {
         page.append(lightTaskGroup(tasks, group));
       }
     });
@@ -3798,26 +3803,39 @@
   }
 
   function lightTaskSectionHeader(label, group, count) {
-    const header = el("div", "light-task-section-header");
-    header.append(el("h3", "light-task-section-title", label));
-    if (group === "done") {
-      const toggle = el("button", state.taskDoneExpanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");
-      toggle.type = "button";
-      toggle.setAttribute("aria-expanded", state.taskDoneExpanded ? "true" : "false");
-      toggle.setAttribute("aria-label", state.taskDoneExpanded ? "Collapse done tasks" : "Expand done tasks");
-      const chevron = el("span", "light-small-icon-button light-task-section-chevron");
-      chevron.innerHTML = iconSvg(state.taskDoneExpanded ? "expand_more" : "navigate_next");
-      toggle.append(
-        el("span", "light-task-section-count", `${count}`),
-        chevron
-      );
-      toggle.addEventListener("click", () => {
-        state.taskDoneExpanded = !state.taskDoneExpanded;
-        render();
-      });
-      header.append(toggle);
-    }
-    return header;
+    const expanded = taskSectionExpanded(group);
+    const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");
+    toggle.type = "button";
+    toggle.dataset.taskSection = group;
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${label.toLowerCase()} tasks`);
+    const chevron = el("span", "light-small-icon-button light-task-section-chevron");
+    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "navigate_next");
+    toggle.append(
+      el("h3", "light-task-section-title", label),
+      el("span", "light-task-section-spacer"),
+      el("span", "light-task-section-count", `${count}`),
+      chevron
+    );
+    toggle.addEventListener("click", () => toggleTaskSection(group));
+    return toggle;
+  }
+
+  function taskSectionExpanded(group) {
+    const sections = state.taskSectionsExpanded || {};
+    if (typeof sections[group] === "boolean") return sections[group];
+    return group !== "done";
+  }
+
+  function toggleTaskSection(group) {
+    state.taskSectionsExpanded = {
+      overdue: taskSectionExpanded("overdue"),
+      do: taskSectionExpanded("do"),
+      soon: taskSectionExpanded("soon"),
+      done: taskSectionExpanded("done"),
+      [group]: !taskSectionExpanded(group)
+    };
+    render();
   }
 
   function lightTaskCounts() {

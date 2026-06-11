@@ -4222,15 +4222,6 @@ button {
   flex-direction: column;
 }
 
-.light-task-section-header {
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 6px 0 2px;
-}
-
 .light-task-section-title {
   margin: 0;
   color: var(--home-shell-text-subtle);
@@ -4240,15 +4231,29 @@ button {
 }
 
 .light-task-section-toggle {
-  min-height: 24px;
-  display: inline-flex;
+  width: 100%;
+  min-height: 28px;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 6px 0 2px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--home-shell-text-subtle);
   font: inherit;
+  text-align: left;
+}
+
+.light-task-section-toggle.is-expanded .light-task-section-title,
+.light-task-section-toggle:focus-visible .light-task-section-title,
+.light-task-section-toggle:hover .light-task-section-title {
+  color: var(--home-shell-text);
+}
+
+.light-task-section-spacer {
+  flex: 1;
 }
 
 .light-task-section-count {
@@ -4270,6 +4275,12 @@ button {
 .light-small-icon-button.light-task-section-chevron .material-icon {
   width: 16px;
   height: 16px;
+}
+
+.light-task-section-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--home-shell-accent) 28%, transparent);
+  outline-offset: 3px;
+  border-radius: 10px;
 }
 
 .light-task-card {
