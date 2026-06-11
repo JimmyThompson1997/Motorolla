@@ -921,6 +921,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
 
     assert "function workspaceHtmlThemePalette()" in app
     assert "function workspaceHtmlBaseCss()" in app
+    workspace_html_css = function_block(app, "workspaceHtmlBaseCss")
+    assert "padding:18px 16px 28px" not in workspace_html_css
     assert "function normalizedWorkspaceHtmlDocument(sourceHtml)" in app
     assert 'const fallbackDocument = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><style data-pucky-embedded-html="true">${workspaceHtmlBaseCss()}</style></head><body data-pucky-embedded-body="true">${raw}</body></html>`;' in app
     assert 'new DOMParser().parseFromString(raw, "text/html")' in app
