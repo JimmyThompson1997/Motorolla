@@ -470,6 +470,8 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     action_playing_block = css_block(styles, ".action-audio.is-playing")
     detail_header_block = css_block(styles, ".detail-header")
     meeting_row_block = css_block(styles, ".meeting-row")
+    task_card_active_block = css_block(styles, ".light-task-card:active")
+    task_row_press_block = css_block(styles, ".light-task-row.is-pressed")
     task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
     task_row_base_block = None
     for block in task_row_blocks:
@@ -615,6 +617,13 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "background: var(--surface-header);" in detail_header_block
     assert "background: var(--surface-control);" in meeting_row_block
     assert ".light-task-row:active" in styles
+    assert ".light-task-card:active" in styles
+    assert ".light-task-row.is-pressed" in styles
+    assert "transform: none;" in task_card_active_block
+    assert "background: var(--home-shell-card-strong);" in task_card_active_block
+    assert "box-shadow: none;" in task_card_active_block
+    assert "transform: scale(0.995);" in task_row_press_block
+    assert "background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);" in task_row_press_block
     assert ".light-task-row:focus-visible" in styles
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block

@@ -4218,6 +4218,12 @@ button {
   background: var(--home-shell-card-strong);
 }
 
+.light-task-card:active {
+  transform: none;
+  background: var(--home-shell-card-strong);
+  box-shadow: none;
+}
+
 .light-task-row {
   min-height: 54px;
   width: 100%;
@@ -4238,6 +4244,11 @@ button {
 }
 
 .light-task-row:active {
+  transform: scale(0.995);
+  background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
+}
+
+.light-task-row.is-pressed {
   transform: scale(0.995);
   background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
 }

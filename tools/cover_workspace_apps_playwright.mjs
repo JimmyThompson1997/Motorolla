@@ -264,12 +264,14 @@ async function seedWorkspace(config) {
       });
     }
 
+    const seededTasks = await readCollection(config, "tasks", Date.now());
     return {
       runId,
       today,
       tomorrow,
       writeEnabled: true,
       pinnedNoteId: `${runId}-pinned-note`,
+      tasks: seededTasks,
       taskIds: {
         rowA: `${runId}-future-task`,
         rowB: `${runId}-overdue-task`,
@@ -367,6 +369,37 @@ async function expectFrameHeading(page, text, timeoutMs) {
   await page.frameLocator(".light-html-frame").locator(`text=${text}`).first().waitFor({ state: "visible", timeout: timeoutMs });
 }
 
+async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
+  return page.evaluate((args) => {
+    const row = document.querySelector(`[data-task-id="${args.rowTaskId}"]`);
+    const parent = row ? row.closest(".light-task-card") : null;
+    const sibling = parent && args.siblingTaskId
+      ? parent.querySelector(`[data-task-id="${args.siblingTaskId}"]`)
+      : null;
+    const capture = (node) => {
+      if (!node) {
+        return null;
+      }
+      const style = getComputedStyle(node);
+      return {
+        className: String(node.className || ""),
+        transform: String(style.transform || ""),
+        backgroundColor: String(style.backgroundColor || "")
+      };
+    };
+    return {
+      row: capture(row),
+      parent: capture(parent),
+      sibling: capture(sibling),
+      found: {
+        row: Boolean(row),
+        parent: Boolean(parent),
+        sibling: Boolean(sibling)
+      }
+    };
+  }, { rowTaskId, siblingTaskId });
+}
+
 async function proveNotes(page, config, seed, theme, screenshots) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
   const note = seed.writeEnabled
@@ -384,17 +417,43 @@ async function proveNotes(page, config, seed, theme, screenshots) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function proveTasks(page, config, seed, theme, screenshots) {
-  const seedTasks = Array.isArray(seed.tasks) ? [...seed.tasks] : [];
-  const soonTasks = seedTasks.filter((task) => String(task.derived_group || "").toLowerCase() === "soon");
-  const overdueTasks = seedTasks.filter((task) => String(task.derived_group || "").toLowerCase() === "overdue");
-  const dueFallback = seedTasks.filter((task) => String(task.derived_group || "").toLowerCase() === "do");
+async function proveTasks(page, config, seed, theme, screenshots, summary) {
+  let seedTasks = Array.isArray(seed.tasks) ? [...seed.tasks] : [];
+  if (seed.writeEnabled && !seedTasks.length) {
+    seedTasks = await readCollection(config, "tasks");
+  }
+  const matchGroup = (group) => seedTasks.filter((task) => String(task.derived_group || "").toLowerCase() === group);
+  const soonTasks = matchGroup("soon");
+  const overdueTasks = matchGroup("overdue");
+  const doneTasks = matchGroup("done");
+  const dueFallback = matchGroup("do");
 
   let rowA;
   let rowB;
+
   if (seed.writeEnabled) {
-    rowA = { id: seed.taskIds?.rowA || `${seed.runId}-${theme}-row-a`, title: "Proof Future Task" };
-    rowB = { id: seed.taskIds?.rowB || `${seed.runId}-${theme}-row-b`, title: "Proof Overdue Task" };
+    const sameGroupPair =
+      (soonTasks.length >= 2 ? soonTasks : null) ||
+      (overdueTasks.length >= 2 ? overdueTasks : null) ||
+      (doneTasks.length >= 2 ? doneTasks : null) ||
+      (dueFallback.length >= 2 ? dueFallback : null);
+    if (sameGroupPair) {
+      [rowA, rowB] = sameGroupPair;
+    }
+    if (!rowA || !rowB) {
+      rowA = {
+        id: (seed.taskIds?.rowA || `${seed.runId}-${theme}-row-a`),
+        title: "Proof Future Task"
+      };
+      rowB = {
+        id: (seed.taskIds?.rowB || `${seed.runId}-${theme}-row-b`),
+        title: "Proof Overdue Task"
+      };
+      const rowATask = seedTasks.find((task) => String(task.id) === String(rowA.id));
+      const rowBTask = seedTasks.find((task) => String(task.id) === String(rowB.id));
+      if (rowATask) rowA = rowATask;
+      if (rowBTask) rowB = rowBTask;
+    }
   } else if (soonTasks.length >= 2) {
     rowA = soonTasks[0];
     rowB = soonTasks[1];
@@ -411,8 +470,17 @@ async function proveTasks(page, config, seed, theme, screenshots) {
     rowA = seedTasks[0];
     rowB = seedTasks[1];
   }
+
+  if (rowA) {
+    rowA.title = rowA.title || `Proof ${theme} Row A`;
+  }
+  if (rowB) {
+    rowB.title = rowB.title || `Proof ${theme} Row B`;
+  }
+
   const flipId = seed.writeEnabled ? seed.taskIds?.flip : null;
   await openTile(page, "Tasks", "tasks", config.timeoutMs);
+
   const availableLabels = [];
   for (const label of ["DO", "DUE SOON", "Due Soon", "OVERDUE", "DONE"]) {
     try {
@@ -445,9 +513,65 @@ async function proveTasks(page, config, seed, theme, screenshots) {
   await rowAButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   await rowBButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list`);
+
+  const baselinePress = await readTaskPressMetrics(page, rowA.id, rowB.id);
+  assert(baselinePress.found.row, `Missing task row ${rowA.id}`);
   await rowAButton.dispatchEvent("pointerdown");
+  await rowAButton.evaluate((button) => {
+    if (button instanceof HTMLButtonElement) {
+      button.classList.add("is-pressed");
+    }
+  });
+  const pressedPress = await readTaskPressMetrics(page, rowA.id, rowB.id);
+  assert(pressedPress.found.row, `Pressed task row ${rowA.id} not found`);
+  assert(pressedPress.found.parent, `Missing press parent card for task row ${rowA.id}`);
+  assert(
+    pressedPress.parent?.transform === baselinePress.parent?.transform,
+    "Expected task row parent transform to remain stable"
+  );
+  assert(
+    String(pressedPress.row?.transform || "") !== String(baselinePress.row?.transform || "") ||
+    String(pressedPress.row?.backgroundColor || "") !== String(baselinePress.row?.backgroundColor || ""),
+    "Expected row-level press feedback to change"
+  );
+  if (baselinePress.sibling) {
+    assert(
+      String(pressedPress.sibling?.transform || "") === String(baselinePress.sibling?.transform || ""),
+      "Expected sibling row transform to remain stable"
+    );
+    assert(
+      String(pressedPress.sibling?.backgroundColor || "") === String(baselinePress.sibling?.backgroundColor || ""),
+      "Expected sibling row background to remain stable"
+    );
+  }
   await page.waitForTimeout(120);
   screenshots[`${theme}_tasks_row_press`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-row-press`);
+  await rowAButton.evaluate((button) => {
+    if (button instanceof HTMLButtonElement) {
+      button.classList.remove("is-pressed");
+    }
+  });
+
+  summary.taskPress.push({
+    theme,
+    rowA: { id: rowA.id, title: rowA.title },
+    rowB: { id: rowB.id, title: rowB.title },
+    baseline: {
+      parentTransform: baselinePress.parent?.transform,
+      parentBackground: baselinePress.parent?.backgroundColor,
+      rowTransform: baselinePress.row?.transform,
+      rowBackground: baselinePress.row?.backgroundColor,
+      siblingTransform: baselinePress.sibling?.transform
+    },
+    pressed: {
+      parentTransform: pressedPress.parent?.transform,
+      parentBackground: pressedPress.parent?.backgroundColor,
+      rowTransform: pressedPress.row?.transform,
+      rowBackground: pressedPress.row?.backgroundColor,
+      siblingTransform: pressedPress.sibling?.transform
+    }
+  });
+
   await rowAButton.dispatchEvent("pointerup");
   await rowAButton.click();
   await expectFrameHeading(page, rowA.title || `Proof ${theme} Row A`, config.timeoutMs);
@@ -580,13 +704,13 @@ async function proveContacts(page, config, seed, theme, screenshots) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function runTheme(page, config, seed, theme) {
+async function runTheme(page, config, seed, theme, summary) {
   const screenshots = {};
   await page.goto(pageUrl(config.baseUrl, theme), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
   await proveNotes(page, config, seed, theme, screenshots);
-  await proveTasks(page, config, seed, theme, screenshots);
+  await proveTasks(page, config, seed, theme, screenshots, summary);
   await proveCalendar(page, config, seed, theme, screenshots);
   await proveFeed(page, config, seed, theme, screenshots);
   await proveProjects(page, config, seed, theme, screenshots);
@@ -607,7 +731,8 @@ async function main() {
     report_dir: config.reportDir,
     started_at: new Date().toISOString(),
     screenshots: {},
-    assertions: []
+    assertions: [],
+    taskPress: []
   };
 
   let browser;
@@ -640,8 +765,8 @@ async function main() {
     });
 
     summary.screenshots = {
-      ...(await runTheme(page, config, seed, "light")),
-      ...(await runTheme(page, config, seed, "dark"))
+      ...(await runTheme(page, config, seed, "light", summary)),
+      ...(await runTheme(page, config, seed, "dark", summary))
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts read /api/workspace records");

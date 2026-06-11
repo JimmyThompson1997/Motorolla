@@ -3769,6 +3769,10 @@
       const row = el("button", `light-task-row ${group}`);
       row.type = "button";
       row.dataset.taskId = task.id;
+      row.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
+      row.addEventListener("pointerup", () => row.classList.remove("is-pressed"));
+      row.addEventListener("pointercancel", () => row.classList.remove("is-pressed"));
+      row.addEventListener("blur", () => row.classList.remove("is-pressed"));
       row.addEventListener("click", () => {
         state.selectedTaskId = task.id;
         lightNavigate("task-detail", { from: "tasks" });
