@@ -593,10 +593,13 @@
     },
     __event(name, payload) {
       if (name === "player.state") {
+        const previousPlayer = state.player;
         state.player = payload || state.player;
         syncActivePathFromPlayer(state.player);
         rememberPlayerProgress(state.player);
-        render();
+        if (shouldRenderForPlayerState(previousPlayer, state.player)) {
+          render();
+        }
       }
       if (name === "voice.state") {
         applyVoiceState(payload);
@@ -2195,20 +2198,25 @@
       : wakeProofState !== "idle"
         ? "wake matched"
         : turnStateLabel(visualState);
+    const suppressed = shouldSuppressGlobalVoiceStatus(visualState, state.turn);
+    const renderedVisualState = suppressed ? "idle" : visualState;
+    const renderedLabel = suppressed ? "idle" : label;
     const turnId = turnStatusTurnId(state.turn);
-    if (state.lastRenderedTurnVisualState !== visualState || state.lastRenderedTurnId !== turnId) {
-      state.lastRenderedTurnVisualState = visualState;
+    if (state.lastRenderedTurnVisualState !== renderedVisualState || state.lastRenderedTurnId !== turnId) {
+      state.lastRenderedTurnVisualState = renderedVisualState;
       state.lastRenderedTurnId = turnId;
       recordTurnUiEvent("voice_status_rendered", {
         turn_id: turnId,
-        visual_state: visualState,
-        label
+        visual_state: renderedVisualState,
+        label: renderedLabel
       });
     }
     indicators.forEach(indicator => {
-      indicator.className = `voice-status voice-status-${visualState}`;
-      indicator.setAttribute("aria-label", `Turn state: ${label}`);
-      indicator.title = `Turn: ${label}`;
+      indicator.hidden = suppressed;
+      indicator.setAttribute("aria-hidden", suppressed ? "true" : "false");
+      indicator.className = `voice-status voice-status-${renderedVisualState}`;
+      indicator.setAttribute("aria-label", `Turn state: ${renderedLabel}`);
+      indicator.title = `Turn: ${renderedLabel}`;
     });
   }
 
@@ -2432,7 +2440,7 @@
     const feedStyle = feed ? window.getComputedStyle(feed) : null;
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
-    const cards = Array.from(document.querySelectorAll("article[data-card-id]")).map(node => ({
+    const cards = Array.from(document.querySelectorAll("article[data-card-id], article[data-card-session-id]")).map(node => ({
       kind: node.getAttribute("data-card-kind") || "",
       card_id: node.getAttribute("data-card-id") || "",
       session_id: node.getAttribute("data-card-session-id") || "",
@@ -3077,6 +3085,73 @@
       || indicator.active || turnVisualState(status) !== "idle");
   }
 
+  function turnRequestedThreadMode(status) {
+    return String(normalizeTurnStatus(status).requested_thread_mode || "").trim().toLowerCase();
+  }
+
+  function turnRequestedThreadId(status) {
+    return String(normalizeTurnStatus(status).requested_thread_id || "").trim();
+  }
+
+  function turnUserTranscript(status) {
+    return String(normalizeTurnStatus(status).user_transcript || "").trim();
+  }
+
+  function turnStatusTimestamp(status) {
+    const normalized = normalizeTurnStatus(status);
+    return String(normalized.updated_at || normalized.created_at || normalized.timestamp || "").trim();
+  }
+
+  function turnFailed(status) {
+    const normalized = normalizeTurnStatus(status);
+    const indicator = turnIndicatorFromStatus(normalized);
+    const stage = String(normalized.stage || "").trim().toLowerCase();
+    const value = String(normalized.status || "").trim().toLowerCase();
+    return Boolean(indicator.failed || stage === "failed" || value === "failed");
+  }
+
+  function turnFailureSummary(status) {
+    const normalized = normalizeTurnStatus(status);
+    const failureReason = String(
+      normalized.failure_reason
+      || normalized.detail
+      || normalized.error
+      || normalized.error_message
+      || ""
+    ).trim();
+    if (failureReason) {
+      return failureReason;
+    }
+    const errorType = String(normalized.error_type || "").trim();
+    if (errorType) {
+      return `Turn failed before a reply was produced (${errorType}).`;
+    }
+    return "Turn failed before a reply was produced.";
+  }
+
+  function pendingTurnState(status) {
+    if (turnFailed(status)) {
+      return "failed";
+    }
+    const normalized = normalizeTurnStatus(status);
+    const stage = String(normalized.stage || "").trim().toLowerCase();
+    const visualState = turnVisualState(normalized);
+    if (visualState === "thinking" || stage === "codex_running" || stage === "tts_running") {
+      return "thinking";
+    }
+    return "sending";
+  }
+
+  function shouldSuppressGlobalVoiceStatus(visualState, status = state.turn, route = effectiveRoute()) {
+    if (!usesHomeFeedRoute(route)) {
+      return false;
+    }
+    if (turnFailed(status)) {
+      return true;
+    }
+    return visualState === "uploading" || visualState === "thinking";
+  }
+
   function truthy(value) {
     return value === true || value === 1 || value === "1" || value === "true";
   }
@@ -3296,7 +3371,8 @@
   }
 
   function homeFeedContentNodes() {
-    if (state.feedLoadError && !state.cards.length) {
+    const displayCards = feedDisplayCards();
+    if (state.feedLoadError && !displayCards.length) {
       const empty = el("div", "empty feed-load-error");
       empty.append(
         el("strong", "", "Could not load the Home feed."),
@@ -3304,12 +3380,12 @@
       );
       return [empty];
     }
-    if (!state.cards.length) {
+    if (!displayCards.length) {
       const empty = el("div", "empty");
       empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
       return [empty];
     }
-    const cards = filteredFeedCards();
+    const cards = filteredFeedCards(displayCards);
     if (!cards.length) {
       return [filteredFeedEmptyView()];
     }
@@ -3698,12 +3774,12 @@
       el("span", "light-appbar-empty")
     );
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
-    page.append(appbar, el("h1", "light-tasks-title", "Tasks"));
+    page.append(appbar);
     if (status) {
       page.append(status);
       return page;
     }
-    page.append(lightTaskCountLine(), lightTaskFilters());
+    page.append(lightTaskCountLine());
     [
       ["do", "DO"],
       ["soon", "DUE SOON"],
@@ -3740,7 +3816,6 @@
       } else if (group === "do") {
         counts.due += 1;
       } else if (group === "soon") {
-        counts.due += 1;
         counts.dueSoon += 1;
       }
       return counts;
@@ -3762,13 +3837,6 @@
     return line;
   }
 
-  function lightTaskFilters() {
-    const filters = [["all", "All"], ["due", "Due"], ["soon", "Due Soon"], ["overdue", "Overdue"], ["done", "Done"]];
-    const wrap = el("div", "light-segmented light-task-segmented");
-    filters.forEach(([key, label]) => wrap.append(lightPillButton(label, () => { state.taskFilter = key; render(); }, state.taskFilter === key)));
-    return wrap;
-  }
-
   function lightTaskGroup(tasks, group) {
     const card = el("div", "light-card light-task-card light-task-group");
     tasks.forEach(task => {
@@ -3784,7 +3852,11 @@
         lightNavigate("task-detail", { from: "tasks" });
       });
       const checkClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
-      row.append(el("span", checkClass), lightTextStack(task.title, task.summary), el("span", "light-due", taskDueLabel(task)));
+      row.append(
+        el("span", checkClass),
+        el("strong", "light-task-row-title", task.title || "Untitled task"),
+        el("span", "light-due", taskDueLabel(task))
+      );
       card.append(row);
     });
     return card;
@@ -3806,10 +3878,10 @@
       return `${workspaceTimestamp(due, "overdue")}`;
     }
     if (day === todayDateKey()) {
-      return `today ${time}`;
+      return time;
     }
     if (day === todayDateKey(1)) {
-      return `tomorrow ${time}`;
+      return time;
     }
     return date.toLocaleDateString([], { month: "short", day: "numeric" });
   }
@@ -4493,8 +4565,59 @@
     return empty;
   }
 
-  function filteredFeedCards() {
-    return state.cards.filter(card => {
+  function pendingTurnCard(status = state.turn, cards = state.cards) {
+    const normalized = normalizeTurnStatus(status);
+    const turnId = turnStatusTurnId(normalized);
+    const transcript = turnUserTranscript(normalized);
+    if (!turnId || !transcript) {
+      return null;
+    }
+    const active = isTurnActive(normalized);
+    const failed = turnFailed(normalized);
+    if (!active && !failed) {
+      return null;
+    }
+    const hasPersistedCard = (Array.isArray(cards) ? cards : []).some(card =>
+      cardSessionId(card) === turnId || String(card?.card_id || "").trim() === turnId
+    );
+    if (hasPersistedCard) {
+      return null;
+    }
+    const requestedThreadId = turnRequestedThreadId(normalized);
+    const timestamp = turnStatusTimestamp(normalized) || new Date().toISOString();
+    const pendingState = pendingTurnState(normalized);
+    return {
+      card_id: `pending:${turnId}`,
+      session_id: turnId,
+      turn_id: turnId,
+      title: requestedThreadId ? "Continuing Thread" : "New Message",
+      summary: transcript,
+      transcript,
+      created_at: timestamp,
+      updated_at: timestamp,
+      pending_outbound: true,
+      pending_state: pendingState,
+      pending_placeholder: pendingState === "sending",
+      pending_user_transcript: transcript,
+      pending_error: failed ? turnFailureSummary(normalized) : "",
+      requested_thread_mode: turnRequestedThreadMode(normalized),
+      requested_thread_id: requestedThreadId,
+      synthetic_pending: true,
+      origin: {
+        thread_id: requestedThreadId
+      }
+    };
+  }
+
+  function feedDisplayCards(cards = state.cards) {
+    const base = Array.isArray(cards) ? cards.filter(Boolean) : [];
+    const pendingCard = pendingTurnCard(state.turn, base);
+    return pendingCard ? [pendingCard, ...base] : base;
+  }
+
+  function filteredFeedCards(cards) {
+    const displayCards = Array.isArray(cards) ? cards : feedDisplayCards();
+    return displayCards.filter(card => {
       if (card && card.deleted) {
         return false;
       }
@@ -5912,6 +6035,22 @@
       ? "card card-outbound is-failed"
       : "card card-outbound");
     applyCardDataAttributes(cardEl, card, "pending_outbound");
+    applyCardActionData(cardEl, "transcript", card, "pending_outbound");
+    cardEl.setAttribute("role", "button");
+    cardEl.tabIndex = 0;
+    cardEl.setAttribute("aria-disabled", "false");
+    cardEl.setAttribute("aria-label", `Open transcript for ${card.title || "pending reply"}`);
+    cardEl.addEventListener("click", () => {
+      if (!shouldSuppressCardActivation()) {
+        showTranscript(card);
+      }
+    });
+    cardEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showTranscript(card);
+      }
+    });
     const copy = el("div", "card-outbound-copy");
     const preview = el("p", card?.pending_placeholder ? "card-outbound-preview is-placeholder" : "card-outbound-preview", pendingOutboundSummary(card));
     copy.append(preview);
@@ -6135,13 +6274,18 @@
       if (message.role !== "user" && images.length) {
         stack.append(chatMediaBubble(card, images));
       }
-      const bubble = el("div", `bubble ${message.role === "user" ? "user" : "assistant"}`);
+      const bubble = el("div", [
+        "bubble",
+        message.role === "user" ? "user" : "assistant",
+        message.pending_placeholder ? "is-thinking" : "",
+        message.pending_failed ? "is-failed" : "",
+      ].filter(Boolean).join(" "));
       const attachments = messageAttachmentRow(card, message, index);
       if (attachments) {
         bubble.append(attachments);
       }
       bubble.append(document.createTextNode(message.text || ""));
-      if (message.role !== "user") {
+      if (message.role !== "user" && !message.synthetic) {
         const actions = el("div", "bubble-actions");
         const meta = el("button", "bubble-origin-action");
         meta.type = "button";
@@ -8630,6 +8774,9 @@
     if (Boolean(card?.archived)) {
       return false;
     }
+    if (Boolean(card?.synthetic_pending)) {
+      return false;
+    }
     if (!cardSessionId(card) && !String(card?.card_id || "").trim()) {
       return false;
     }
@@ -9236,6 +9383,9 @@
   }
 
   function messagesForCard(card) {
+    if (isPendingOutboundCard(card)) {
+      return pendingOutboundMessages(card);
+    }
     if (Array.isArray(card.transcript_messages) && card.transcript_messages.length) {
       return card.transcript_messages.map(item => ({
         role: item.role || item.sender || "assistant",
@@ -9254,6 +9404,29 @@
       });
     }
     return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
+  }
+
+  function pendingOutboundMessages(card) {
+    const transcript = String(card?.pending_user_transcript || card?.summary || card?.transcript || "").trim()
+      || "Message sent.";
+    const createdAt = String(card?.created_at || card?.updated_at || "");
+    const failed = isFailedPendingOutboundCard(card);
+    return [
+      {
+        role: "user",
+        text: transcript,
+        created_at: createdAt,
+        synthetic: true
+      },
+      {
+        role: "assistant",
+        text: failed ? String(card?.pending_error || turnFailureSummary(state.turn)) : "Thinking...",
+        created_at: String(card?.updated_at || createdAt),
+        synthetic: true,
+        pending_placeholder: !failed,
+        pending_failed: failed
+      }
+    ];
   }
 
   function scrollTranscriptToLatest(content) {
@@ -9359,7 +9532,8 @@
   }
 
   function hasTranscript(card) {
-    return Boolean(card.transcript || (Array.isArray(card.transcript_messages) && card.transcript_messages.length));
+    return isPendingOutboundCard(card)
+      || Boolean(card.transcript || (Array.isArray(card.transcript_messages) && card.transcript_messages.length));
   }
 
   function cardImages(card) {
@@ -9797,12 +9971,34 @@
     return Boolean(player && (player.path || player.source));
   }
 
+  function isAudioDetailOpen() {
+    const panel = document.getElementById("detail");
+    return Boolean(panel?.classList.contains("is-open") && panel.getAttribute("data-detail-type") === "audio");
+  }
+
+  function shouldRenderForPlayerState(previousPlayer, nextPlayer) {
+    const previous = previousPlayer && typeof previousPlayer === "object" ? previousPlayer : {};
+    const next = nextPlayer && typeof nextPlayer === "object" ? nextPlayer : {};
+    const presentationChanged = String(previous.path || "") !== String(next.path || "")
+      || String(previous.source || "") !== String(next.source || "")
+      || String(previous.state || "") !== String(next.state || "")
+      || Boolean(previous.is_playing) !== Boolean(next.is_playing)
+      || Number(previous.duration_ms || 0) !== Number(next.duration_ms || 0)
+      || Number(previous.speed || 0) !== Number(next.speed || 0)
+      || String(previous.title || "") !== String(next.title || "");
+    if (presentationChanged) {
+      return true;
+    }
+    return isAudioDetailOpen()
+      && Number(previous.position_ms || 0) !== Number(next.position_ms || 0);
+  }
+
   function syncActivePathFromPlayer(player) {
     if (!playerHasAudioIdentity(player)) {
       state.activePath = "";
       return;
     }
-    const matched = state.cards.find(card => isSameAudioCard(player, card));
+    const matched = feedDisplayCards().find(card => isSameAudioCard(player, card));
     if (matched) {
       state.activePath = audioControlKey(matched);
       return;
@@ -10481,7 +10677,7 @@
 
   function findCardBySessionId(sessionId) {
     const target = String(sessionId || "");
-    return target ? state.cards.find(card => cardSessionId(card) === target) || null : null;
+    return target ? feedDisplayCards().find(card => cardSessionId(card) === target) || null : null;
   }
 
   function findCardByIdentity(sourceCard) {
@@ -10496,7 +10692,7 @@
 
   function findCardByThreadId(threadId) {
     const target = String(threadId || "").trim();
-    return target ? state.cards.find(card => cardThreadId(card) === target) || null : null;
+    return target ? feedDisplayCards().find(card => cardThreadId(card) === target) || null : null;
   }
 
   function findFocusedCard() {
@@ -11221,12 +11417,13 @@
       let changed = false;
       try {
         if (state.activePath) {
+          const previousPlayer = state.player;
           state.player = await Pucky.request({ command: "player.state", args: {} });
           syncActivePathFromPlayer(state.player);
           if (state.player.path) {
             rememberPlayerProgress(state.player);
           }
-          changed = true;
+          changed = changed || shouldRenderForPlayerState(previousPlayer, state.player);
         }
         if (state.route === "feed" || isTurnActive(state.turn)) {
           const wasTurnActive = isTurnActive(state.turn);
@@ -11251,7 +11448,7 @@
   }, 250);
 
   setInterval(() => {
-    if (state.activePath && state.player.is_playing) {
+    if (state.activePath && state.player.is_playing && isAudioDetailOpen()) {
       render();
     }
   }, 90);

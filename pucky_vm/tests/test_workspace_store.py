@@ -124,6 +124,18 @@ def test_task_records_support_inline_html_asset_html_and_empty_html(tmp_path: Pa
     assert empty_task["html_asset_id"] == ""
 
 
+def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+    tasks = store.list_records("tasks")["items"]
+    counts = {"do": 0, "soon": 0, "overdue": 0, "done": 0}
+    for task in tasks:
+        counts[str(task["derived_group"])] += 1
+    assert counts == {"do": 3, "soon": 3, "overdue": 3, "done": 3}
+    assert len(tasks) == 12
+    assert all(task["html"] for task in tasks)
+
+
 def test_multiple_projects_threads_and_cross_links(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
     first = store.upsert_record(

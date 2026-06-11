@@ -13,6 +13,7 @@ import {
 
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
+const PROOF_RUN_ID = "proof-workspace";
 
 function parseArgs(argv) {
   const config = {
@@ -96,13 +97,92 @@ async function readCollection(config, collection, now = null) {
   }
 }
 
+function buildSeedManifest(runId = PROOF_RUN_ID) {
+  return {
+    runId,
+    assetIds: [`${runId}-note-html`, `${runId}-task-asset-html`],
+    linkIds: [
+      `${runId}-alpha-note`,
+      `${runId}-alpha-task`,
+      `${runId}-alpha-calendar`,
+      `${runId}-alpha-feed`,
+      `${runId}-alpha-contact`,
+      `${runId}-beta-task`,
+      `${runId}-beta-calendar`,
+      `${runId}-beta-feed`,
+      `${runId}-beta-contact`
+    ],
+    recordIds: {
+      notes: [`${runId}-pinned-note`, `${runId}-recent-note`],
+      tasks: [
+        `${runId}-overdue-task`,
+        `${runId}-future-task`,
+        `${runId}-done-task`,
+        `${runId}-asset-task`,
+        `${runId}-empty-task`,
+        `${runId}-deadline-flip`
+      ],
+      "calendar-events": [`${runId}-today-roadmap`, `${runId}-today-overlap`, `${runId}-tomorrow-event`],
+      "feed-items": [
+        `${runId}-note-update`,
+        `${runId}-task-completion`,
+        `${runId}-project-decision`,
+        `${runId}-contact-activity`,
+        `${runId}-calendar-change`
+      ],
+      projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
+      contacts: [`${runId}-contact-one`, `${runId}-contact-two`]
+    }
+  };
+}
+
+async function deleteWorkspaceRecord(config, collection, recordId) {
+  try {
+    await apiRequest(config, "DELETE", `/api/workspace/${collection}/${recordId}`);
+  } catch (error) {
+    if (/\(404\)/.test(String(error?.message || ""))) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function deleteWorkspaceLink(config, linkId) {
+  try {
+    await apiRequest(config, "DELETE", `/api/workspace/links/${linkId}`);
+  } catch (error) {
+    if (/\(404\)/.test(String(error?.message || ""))) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function cleanupWorkspaceSeed(config, seed) {
+  if (!seed?.writeEnabled) {
+    return false;
+  }
+  const manifest = buildSeedManifest(seed.runId || PROOF_RUN_ID);
+  for (const linkId of manifest.linkIds) {
+    await deleteWorkspaceLink(config, linkId);
+  }
+  for (const [collection, ids] of Object.entries(manifest.recordIds)) {
+    for (const recordId of ids) {
+      await deleteWorkspaceRecord(config, collection, recordId);
+    }
+  }
+  return true;
+}
+
 async function seedWorkspace(config) {
-  const runId = `proof-${Date.now()}`;
+  const runId = PROOF_RUN_ID;
+  const manifest = buildSeedManifest(runId);
   const today = dateKey(new Date());
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   try {
+    await cleanupWorkspaceSeed(config, { runId, writeEnabled: true });
     const asset = await apiRequest(config, "POST", "/api/workspace/assets", {
-      id: `${runId}-note-html`,
+      id: manifest.assetIds[0],
       title: "Proof pinned note HTML",
       html: "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>"
     });
@@ -123,7 +203,7 @@ async function seedWorkspace(config) {
     });
 
     const taskAsset = await apiRequest(config, "POST", "/api/workspace/assets", {
-      id: `${runId}-task-asset-html`,
+      id: manifest.assetIds[1],
       title: "Proof task asset HTML",
       html: [
         "<!doctype html><html><body>",
@@ -321,6 +401,7 @@ async function seedWorkspace(config) {
       today,
       tomorrow,
       writeEnabled: true,
+      manifest,
       pinnedNoteId: `${runId}-pinned-note`,
       calendarIds: {
         todayRoadmap: `${runId}-today-roadmap`,
@@ -355,6 +436,7 @@ async function seedWorkspace(config) {
       today,
       tomorrow,
       writeEnabled: false,
+      manifest,
       notes,
       tasks,
       calendarEvents: events,
@@ -954,9 +1036,11 @@ async function main() {
 
   let browser;
   let context;
+  let lightSeed = null;
+  let darkSeed = null;
   try {
-    const lightSeed = await seedWorkspace(config);
-    const darkSeed = await seedWorkspace(config);
+    lightSeed = await seedWorkspace(config);
+    darkSeed = await seedWorkspace(config);
     summary.seed = lightSeed;
     summary.seeds = { light: lightSeed, dark: darkSeed };
     browser = await chromium.launch({
@@ -991,6 +1075,7 @@ async function main() {
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts read /api/workspace records");
     summary.assertions.push("generated HTML iframes rendered for all six apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
+    summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();
     summary.ok = true;
     await context.tracing.stop({ path: path.join(config.reportDir, "trace.zip") });
@@ -1020,6 +1105,27 @@ async function main() {
       // Ignore cleanup failures.
     }
     throw error;
+  } finally {
+    try {
+      const cleanupResults = [];
+      if (lightSeed?.writeEnabled) {
+        cleanupResults.push(await cleanupWorkspaceSeed(config, lightSeed));
+      }
+      if (darkSeed?.writeEnabled && (!lightSeed || darkSeed.runId !== lightSeed.runId)) {
+        cleanupResults.push(await cleanupWorkspaceSeed(config, darkSeed));
+      }
+      if (cleanupResults.length) {
+        summary.cleanup = { attempted: true, cleaned: cleanupResults.every(Boolean) };
+        writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
+      }
+    } catch (cleanupError) {
+      summary.cleanup = {
+        attempted: true,
+        cleaned: false,
+        error: String(cleanupError?.stack || cleanupError?.message || cleanupError)
+      };
+      writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
+    }
   }
 }
 

@@ -450,7 +450,6 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     light_task_sections = function_block(app, "lightTaskSectionTitle")
     light_task_counts = function_block(app, "lightTaskCounts")
     light_task_count_line = function_block(app, "lightTaskCountLine")
-    light_task_filters = function_block(app, "lightTaskFilters")
     filtered_tasks = function_block(app, "filteredTasks")
     light_back = function_block(app, "lightBack")
     filtered_feed_cards = function_block(app, "filteredFeedCards")
@@ -475,7 +474,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
     task_row_base_block = None
     for block in task_row_blocks:
-      if "min-height: 54px;" in block:
+      if "min-height: 50px;" in block:
         task_row_base_block = block
         break
     assert task_row_base_block, "Missing .light-task-row base CSS block"
@@ -552,7 +551,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "settingsPageView()" in light_settings
     assert "homeFeedContentNodes()" in light_inbox
     assert 'surface.append(meetingsPageView({ embedded: true }));' in light_meetings
-    assert "filteredFeedCards()" in home_feed_content
+    assert "filteredFeedCards(displayCards)" in home_feed_content
     assert "cards.map(cardView)" in home_feed_content
     assert "renderHomeFeedInto(feed);" in render_feed
     assert "Real Home tiles will appear here." not in app
@@ -580,12 +579,13 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'counts.dueSoon' in light_task_counts
     assert '"light-task-count due-soon"' in light_task_count_line
     assert '`${counts.dueSoon} due soon`' in light_task_count_line
+    assert 'page.append(appbar);' in light_tasks
+    assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
+    assert "lightTaskFilters()" not in light_tasks
     assert 'lightSectionTitle("DO")' in light_task_sections
     assert 'lightSectionTitle("DUE SOON")' in light_task_sections
     assert 'lightSectionTitle("OVERDUE")' in light_task_sections
     assert 'lightSectionTitle("DONE")' in light_task_sections
-    assert '["soon", "Due Soon"]' in light_task_filters
-    assert 'state.taskFilter === key' in light_task_filters
     assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
@@ -772,10 +772,16 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'row.type = "button";' in task_group
     assert 'row.dataset.taskId = task.id;' in task_group
     assert 'lightNavigate("task-detail", { from: "tasks" })' in task_group
+    assert 'lightTextStack(task.title, task.summary)' not in task_group
+    assert 'el("strong", "light-task-row-title", task.title || "Untitled task")' in task_group
     assert 'workspaceItems("tasks")' in filtered_tasks
     assert '"DUE SOON"' in light_tasks
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
+    task_due_label = function_block(app, "taskDueLabel")
+    assert "return time;" in task_due_label
+    assert '`today ${time}`' not in task_due_label
+    assert '`tomorrow ${time}`' not in task_due_label
     assert 'lightHtmlDocument(task' in task_detail
     assert 'lightTaskDetailCard(task)' in task_detail
     assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-task-detail-body" })' in task_detail
@@ -814,6 +820,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-detail-card" in styles
     assert ".light-task-detail-toggle" in styles
     assert ".light-html-empty" in styles
+    assert ".light-task-row-title" in styles
     assert 'if (state.route === "task-detail") {' in app
     visibility_listener = app.split('document.addEventListener("visibilitychange", () => {', 1)[1].split("window.PuckyHandleAndroidBack =", 1)[0]
     assert 'if (state.route === "task-detail") {' in visibility_listener
@@ -1165,12 +1172,17 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
     assert "function isTurnActive(status)" in app
+    assert "function shouldSuppressGlobalVoiceStatus(visualState, status = state.turn, route = effectiveRoute())" in app
     assert "function turnVisualState(status)" in app
     assert "function wakeProofVisualState(status)" in app
     assert "proof_indicator: normalizeWakeProof(raw.proof_indicator)" in app
     assert 'const wakeProofState = turnState === "idle" ? wakeProofVisualState(state.wakeStatus) : "idle"' in app
     assert 'const meetingState = meetingRecordingVisualState();' in app
     assert 'const label = meetingState !== "idle"' in app
+    assert 'const suppressed = shouldSuppressGlobalVoiceStatus(visualState, state.turn);' in app
+    assert 'const renderedVisualState = suppressed ? "idle" : visualState;' in app
+    assert 'indicator.hidden = suppressed;' in app
+    assert 'indicator.setAttribute("aria-hidden", suppressed ? "true" : "false");' in app
     assert "hasNativeVisualState" not in app
     assert "indicator.visual_state = \"thinking\"" not in app
     assert "indicator.visual_state = \"speaking\"" not in app
@@ -1234,7 +1246,7 @@ def test_active_home_tab_opens_real_icon_filter_tray() -> None:
     assert "function filterIconButton(filter)" in app
     assert "function uniqueFeedIconFilters()" in app
     assert "function uniqueFeedIcons()" in app
-    assert "function filteredFeedCards()" in app
+    assert "function filteredFeedCards(cards)" in app
     assert "function cardIconKey(card)" in app
     assert "function clearMissingFeedIconFilter()" in app
     assert "function isFeedIconIncluded(icon)" in app
@@ -1321,7 +1333,7 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert "function toggleCardStar(card)" not in app
     assert "function isCardStarred(card)" not in app
     assert "function installCardLongPressMenu(wrapper, card)" not in app
-    assert "filteredFeedCards()" in app
+    assert "filteredFeedCards(" in app
     assert "const archived = Boolean(card && card.archived);" in app
     assert "state.cards = state.cards.filter" not in app
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
@@ -1388,7 +1400,9 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "card-outbound-preview" in outbound
     assert "card-outbound-status" in outbound
     assert "card-outbound-time" in outbound
-    assert "showTranscript(card)" not in outbound
+    assert 'applyCardActionData(cardEl, "transcript", card, "pending_outbound");' in outbound
+    assert 'cardEl.setAttribute("role", "button");' in outbound
+    assert "showTranscript(card);" in outbound
     assert "toggleAudio(card)" not in outbound
     assert "showRichPage(card)" not in outbound
     assert "identity" not in outbound
@@ -1399,7 +1413,9 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "installArchiveReveal(wrapper, card, {" in outbound
 
     assert "function canArchiveHomeCard(card)" in app
-    assert "if (!isPendingOutboundCard(card)) {\n      return true;\n    }\n    return isFailedPendingOutboundCard(card);" in can_archive
+    assert "if (Boolean(card?.synthetic_pending)) {\n      return false;\n    }" in can_archive
+    assert "if (!isPendingOutboundCard(card)) {\n      return true;\n    }" in can_archive
+    assert "return isFailedPendingOutboundCard(card);" in can_archive
     assert "function installArchiveReveal(wrapper, item, config)" in app
     assert "function canRevealHomeArchive(card)" in app
     assert "return canArchiveHomeCard(card);" in can_reveal
@@ -1407,6 +1423,7 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "function shouldHandleTouchLikePointerEvent(event, preferTouchEvents = false)" in app
 
     assert ".card.card-outbound" in styles
+    assert ".card.card-outbound:focus-visible" in styles
     assert ".card.card-outbound.is-failed" in styles
     assert ".card-outbound-copy" in styles
     assert ".card-outbound-preview" in styles
@@ -1425,6 +1442,32 @@ def test_pending_outbound_cards_render_as_quiet_feed_items_and_ignore_icon_filte
     assert "shouldSuppressCardActivation()" in app
     assert "toggleCardStar(card);" not in app
     assert ".archive-reveal-action" in styles
+
+
+def test_pending_outbound_transcript_synthesizes_user_and_assistant_bubbles() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    pending_messages = function_block(app, "pendingOutboundMessages")
+    message_lookup = function_block(app, "messagesForCard")
+    show_transcript = function_block(app, "showTranscript")
+    has_transcript = function_block(app, "hasTranscript")
+    find_by_session = function_block(app, "findCardBySessionId")
+    find_by_thread = function_block(app, "findCardByThreadId")
+
+    assert "function pendingOutboundMessages(card)" in app
+    assert "if (isPendingOutboundCard(card)) {\n      return pendingOutboundMessages(card);\n    }" in message_lookup
+    assert 'role: "user"' in pending_messages
+    assert 'text: failed ? String(card?.pending_error || turnFailureSummary(state.turn)) : "Thinking..."' in pending_messages
+    assert "pending_placeholder: !failed" in pending_messages
+    assert "pending_failed: failed" in pending_messages
+    assert 'message.pending_placeholder ? "is-thinking" : ""' in show_transcript
+    assert 'message.pending_failed ? "is-failed" : ""' in show_transcript
+    assert 'if (message.role !== "user" && !message.synthetic) {' in show_transcript
+    assert "return isPendingOutboundCard(card)" in has_transcript
+    assert "feedDisplayCards().find(card => cardSessionId(card) === target)" in find_by_session
+    assert "feedDisplayCards().find(card => cardThreadId(card) === target)" in find_by_thread
+    assert ".bubble.assistant.is-thinking" in styles
+    assert ".bubble.assistant.is-failed" in styles
 
 
 def test_left_identity_icon_restores_persistent_read_unread_toggle() -> None:
@@ -2063,9 +2106,28 @@ def test_paused_player_events_keep_active_card_lane_when_identity_matches() -> N
     assert "!playerHasAudioIdentity(player)" in sync_body
     assert "!player.is_playing" not in sync_body
     assert 'state.activePath = "";' in sync_body
-    assert "const matched = state.cards.find(card => isSameAudioCard(player, card));" in sync_body
+    assert "const matched = feedDisplayCards().find(card => isSameAudioCard(player, card));" in sync_body
     assert "state.activePath = audioControlKey(matched);" in sync_body
     assert "samePath(playerStateKey(player), state.activePath)" in sync_body
+
+
+def test_audio_player_updates_render_only_when_surface_state_changes() -> None:
+    app = read("app.js")
+
+    render_policy = function_block(app, "shouldRenderForPlayerState")
+    assert "function isAudioDetailOpen()" in app
+    assert "function shouldRenderForPlayerState(previousPlayer, nextPlayer)" in app
+    assert 'String(previous.path || "") !== String(next.path || "")' in render_policy
+    assert 'Boolean(previous.is_playing) !== Boolean(next.is_playing)' in render_policy
+    assert 'return isAudioDetailOpen()' in render_policy
+    assert 'Number(previous.position_ms || 0) !== Number(next.position_ms || 0)' in render_policy
+    player_event = app.split('if (name === "player.state") {', 1)[1].split('      if (name === "voice.state") {', 1)[0]
+    assert "const previousPlayer = state.player;" in player_event
+    assert "if (shouldRenderForPlayerState(previousPlayer, state.player)) {" in player_event
+    poll_block = app.split("setInterval(async () => {", 1)[1].split("  }, 250);", 1)[0]
+    assert "const previousPlayer = state.player;" in poll_block
+    assert "changed = changed || shouldRenderForPlayerState(previousPlayer, state.player);" in poll_block
+    assert "if (state.activePath && state.player.is_playing && isAudioDetailOpen()) {" in app
 
 
 def test_audiobook_card_uses_single_file_with_timestamps() -> None:
@@ -2767,6 +2829,7 @@ def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surf
     assert 'applyCardActionData(page, "page", card, "reply");' in app
     assert 'applyCardActionData(file, "attachment", card, "reply");' in app
     assert 'applyCardDataAttributes(cardEl, card, "pending_outbound");' in app
+    assert 'applyCardActionData(cardEl, "transcript", card, "pending_outbound");' in app
     assert 'applyDetailDataAttributes(panel, "transcript", card);' in app
     assert 'applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });' in app
     assert 'applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });' in app
@@ -2792,6 +2855,7 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app
     assert "dispatch: uiDebugDispatch" in app
+    assert 'document.querySelectorAll("article[data-card-id], article[data-card-session-id]")' in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
     assert "thread_scope: {" in app
@@ -2829,6 +2893,7 @@ def test_walkie_thread_phone_proof_dom_hooks_expose_card_actions_and_detail_surf
     assert 'applyCardActionData(page, "page", card, "reply");' in app
     assert 'applyCardActionData(file, "attachment", card, "reply");' in app
     assert 'applyCardDataAttributes(cardEl, card, "pending_outbound");' in app
+    assert 'applyCardActionData(cardEl, "transcript", card, "pending_outbound");' in app
     assert 'applyDetailDataAttributes(panel, "transcript", card);' in app
     assert 'applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });' in app
     assert 'applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });' in app
@@ -2866,6 +2931,7 @@ def test_walkie_thread_emulator_surface_status_exposes_dom_truth_and_debug_navig
     assert "window.PuckyUiDebug = {" in app
     assert "describe: describeUiSurface" in app
     assert "dispatch: uiDebugDispatch" in app
+    assert 'document.querySelectorAll("article[data-card-id], article[data-card-session-id]")' in app
     assert 'route: shell?.getAttribute("data-view") || ""' in app
     assert "detail: {" in app
     assert "focused_card: {" in app

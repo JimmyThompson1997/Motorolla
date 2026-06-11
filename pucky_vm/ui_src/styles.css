@@ -1260,9 +1260,15 @@ button {
   min-height: 72px;
   padding: 12px 14px;
   border-color: rgba(84, 101, 120, 0.42);
+  cursor: pointer;
   background:
     linear-gradient(180deg, rgba(245, 249, 255, 0.03), rgba(245, 249, 255, 0.015)),
     rgba(10, 14, 18, 0.92);
+}
+
+.card.card-outbound:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #72c2ff) 58%, white);
+  outline-offset: 2px;
 }
 
 .card.card-outbound.is-failed {
@@ -1753,6 +1759,15 @@ button {
   box-sizing: border-box;
   padding-right: 38px;
   padding-bottom: 30px;
+}
+
+.bubble.assistant.is-thinking {
+  color: color-mix(in srgb, var(--text-primary) 74%, var(--text-subtle));
+}
+
+.bubble.assistant.is-failed {
+  background: color-mix(in srgb, rgba(255, 143, 124, 0.18) 82%, var(--surface-bubble-assistant));
+  color: #ffd0c7;
 }
 
 .bubble.user {
@@ -4169,18 +4184,10 @@ button {
   padding-bottom: 128px;
 }
 
-.light-tasks-title {
-  margin: 0;
-  color: var(--home-shell-text);
-  font-size: 36px;
-  line-height: 0.98;
-  font-weight: 870;
-}
-
 .light-task-counts {
-  margin: -4px 0 6px;
+  margin: -2px 0 10px;
   color: var(--home-shell-text-muted);
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .light-task-count.due { color: #226fe8; }
@@ -4225,13 +4232,13 @@ button {
 }
 
 .light-task-row {
-  min-height: 54px;
+  min-height: 50px;
   width: 100%;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(54px, auto);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 7px 16px 7px 18px;
+  gap: 10px;
+  padding: 9px 16px;
   text-align: left;
   color: inherit;
   font: inherit;
@@ -4295,13 +4302,23 @@ button {
   transform: rotate(-45deg) translate(1px, -1px);
 }
 
-.light-task-row.done .light-text-stack strong {
+.light-task-row-title {
+  min-width: 0;
+  color: var(--home-shell-text);
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 790;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.light-task-row.done .light-task-row-title {
   color: #8a93a3;
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
 
-.light-task-row.done .light-text-stack span,
 .light-task-row.done .light-due {
   color: #9aa3b2;
 }
@@ -4309,7 +4326,7 @@ button {
 .light-due,
 .light-chevron {
   color: #226fe8;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.1;
   font-weight: 750;
   white-space: nowrap;

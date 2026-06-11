@@ -573,6 +573,18 @@ def default_workspace_assets(now_ms: int) -> list[dict[str, object]]:
     ]
 
 
+def _task_html(title: str, intro: str, bullets: list[str], footer: str) -> str:
+    bullet_html = "".join(f"<li>{item}</li>" for item in bullets)
+    return (
+        "<!doctype html><html><body>"
+        f"<h1>{title}</h1>"
+        f"<p>{intro}</p>"
+        f"<ul>{bullet_html}</ul>"
+        f"<p>{footer}</p>"
+        "</body></html>"
+    )
+
+
 def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]:
     day = time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000))
     tomorrow_ms = now_ms + 24 * 60 * 60 * 1000
@@ -602,52 +614,172 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
         ],
         "tasks": [
             {
-                "id": "budget",
-                "title": "Sign off on Maya's budget",
-                "summary": "Final Q4 engineering budget review.",
+                "id": "demo-task-do-budget",
+                "title": "Approve partner launch budget",
+                "summary": "Final sign-off for this week's launch spend.",
                 "status": "open",
                 "due_at_ms": now_ms + 2 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Approve partner launch budget",
+                    "Confirm the final launch spend before tomorrow morning's review.",
+                    ["Review the revised cost table", "Confirm finance sign-off", "Post the approved total in the rollout thread"],
+                    "Budget is expected to close today so this card should stay in the active DO bucket."
+                ),
                 "metadata": {"owner": "Maya Chen", "project": "Project Aurora"},
             },
             {
-                "id": "roadmap-v2",
-                "title": "Prep Q4 roadmap review deck v2",
-                "summary": "Align with design and leadership.",
+                "id": "demo-task-do-connect-brief",
+                "title": "Review Connect onboarding brief",
+                "summary": "Tighten the opening flow copy before review.",
                 "status": "open",
-                "due_at_ms": now_ms + 18 * 60 * 60 * 1000,
+                "due_at_ms": now_ms + 7 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Review Connect onboarding brief",
+                    "Trim the opening copy and verify the first-run screen order.",
+                    ["Check the new app labels", "Confirm the back-header behavior", "Flag any screens that still feel too busy"],
+                    "This one is intentionally close enough to feel urgent without falling into overdue."
+                ),
                 "metadata": {"owner": "Pucky", "project": "Project Aurora"},
             },
             {
-                "id": "nda-revisions",
-                "title": "Reply to legal NDA with latest edits",
-                "summary": "They sent a second redline after our Tuesday sync.",
+                "id": "demo-task-do-vendor-followup",
+                "title": "Send vendor follow-up notes",
+                "summary": "Close the loop on today's migration call.",
                 "status": "open",
-                "due_at_ms": now_ms + 30 * 60 * 60 * 1000,
+                "due_at_ms": now_ms + 20 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Send vendor follow-up notes",
+                    "Package the migration call decisions into a concise next-steps note.",
+                    ["List the blockers still open", "Assign owners for the two missing inputs", "Send the summary to the shared thread"],
+                    "If it slips past tonight it should still read cleanly on the task page."
+                ),
                 "metadata": {"owner": "Tom Reyes", "project": "Migration"},
             },
             {
-                "id": "maya-call",
-                "title": "Call Maya for final budget line items",
-                "summary": "Confirm final numbers before CFO review.",
+                "id": "demo-task-soon-roadmap",
+                "title": "Prep roadmap review deck",
+                "summary": "Align the next pass with design and leadership.",
                 "status": "open",
-                "due_at_ms": now_ms + 42 * 60 * 60 * 1000,
-                "metadata": {"owner": "Maya Chen", "project": "Project Aurora"},
+                "due_at_ms": now_ms + 2 * 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Prep roadmap review deck",
+                    "Build the next revision of the roadmap deck for the standing review.",
+                    ["Update the milestones slide", "Trim the risks section", "Add the launch-readiness note from Maya"],
+                    "This sits in DUE SOON so the date treatment should stay compact."
+                ),
+                "metadata": {"owner": "Pucky", "project": "Project Aurora"},
             },
             {
-                "id": "audit",
-                "title": "Resolve overdue invoice approval",
-                "summary": "This item passed deadline and needs immediate follow-up.",
+                "id": "demo-task-soon-nda",
+                "title": "Reply to legal NDA edits",
+                "summary": "Second redline still needs a response.",
                 "status": "open",
-                "due_at_ms": now_ms - 36 * 60 * 60 * 1000,
+                "due_at_ms": now_ms + 4 * 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Reply to legal NDA edits",
+                    "Collect the current redline, legal notes, and final signer before replying.",
+                    ["Confirm the indemnity language", "Note the requested signature path", "Send the next response back to legal"],
+                    "The body is intentionally richer so the detail page feels like a real generated brief."
+                ),
+                "metadata": {"owner": "Tom Reyes", "project": "Migration"},
+            },
+            {
+                "id": "demo-task-soon-customer-recap",
+                "title": "Draft customer migration recap",
+                "summary": "Pull the key decisions into one page for the sponsor.",
+                "status": "open",
+                "due_at_ms": now_ms + 6 * 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Draft customer migration recap",
+                    "Turn the latest migration thread into a clean sponsor-facing recap.",
+                    ["Summarize the main decisions", "Call out the unresolved blocker", "Propose the next check-in date"],
+                    "This is farther out, so the list should show a short date instead of a time."
+                ),
+                "metadata": {"owner": "Priya Shah", "project": "Migration"},
+            },
+            {
+                "id": "demo-task-overdue-invoice",
+                "title": "Resolve overdue invoice approval",
+                "summary": "Finance still needs the missing approval chain.",
+                "status": "open",
+                "due_at_ms": now_ms - 3 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Resolve overdue invoice approval",
+                    "This invoice missed its window and now needs an immediate follow-up.",
+                    ["Confirm the final approver", "Ping finance for the blocked step", "Update the migration tracker once cleared"],
+                    "Overdue tasks should still feel crisp in the list and on detail."
+                ),
                 "metadata": {"owner": "Finance", "project": "Migration"},
             },
             {
-                "id": "cleanup",
+                "id": "demo-task-overdue-security",
+                "title": "Close security questionnaire gaps",
+                "summary": "Two answers are still missing from the vendor packet.",
+                "status": "open",
+                "due_at_ms": now_ms - 28 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Close security questionnaire gaps",
+                    "Fill the final questionnaire gaps before the next review loop.",
+                    ["Answer the data retention question", "Attach the vendor policy PDF", "Send the completed packet back to procurement"],
+                    "This is a good overdue example because the body has enough structure to scroll."
+                ),
+                "metadata": {"owner": "Security", "project": "Migration"},
+            },
+            {
+                "id": "demo-task-overdue-launch-copy",
+                "title": "Finalize launch copy edits",
+                "summary": "The last copy pass slipped past deadline.",
+                "status": "open",
+                "due_at_ms": now_ms - 72 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Finalize launch copy edits",
+                    "The remaining copy nits need a final decision so the page can ship.",
+                    ["Resolve the headline choice", "Confirm the CTA wording", "Hand the approved copy back to design"],
+                    "This one is intentionally stale so the overdue bucket has variety."
+                ),
+                "metadata": {"owner": "Maya Chen", "project": "Project Aurora"},
+            },
+            {
+                "id": "demo-task-done-archive",
                 "title": "Archive migration notes",
                 "summary": "Moved into Project Migration.",
                 "status": "done",
                 "due_at_ms": now_ms - 2 * 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Archive migration notes",
+                    "The migration notes were reviewed, moved, and closed out cleanly.",
+                    ["Confirm the archive location", "Link the final note in the project", "Mark the cleanup complete"],
+                    "Done tasks keep their native state handling but still show a full page."
+                ),
                 "metadata": {"owner": "Pucky", "project": "Migration"},
+            },
+            {
+                "id": "demo-task-done-handbook",
+                "title": "Publish onboarding checklist",
+                "summary": "The revised first-run checklist is already live.",
+                "status": "done",
+                "due_at_ms": now_ms - 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Publish onboarding checklist",
+                    "The checklist shipped and the owner just needs the historical page for context.",
+                    ["Confirm the launch note", "Link the checklist in Connect", "Record the release timestamp"],
+                    "This is a clean completed example for the DONE section."
+                ),
+                "metadata": {"owner": "Pucky", "project": "Project Aurora"},
+            },
+            {
+                "id": "demo-task-done-retro",
+                "title": "Log roadmap retro decisions",
+                "summary": "The retro decisions were captured and distributed.",
+                "status": "done",
+                "due_at_ms": now_ms - 5 * 24 * 60 * 60 * 1000,
+                "html": _task_html(
+                    "Log roadmap retro decisions",
+                    "Capture the final retro decisions so the next planning cycle has a stable reference.",
+                    ["Record the tradeoffs", "Link the approved follow-ups", "Share the final retro summary"],
+                    "This one helps the done group feel less repetitive."
+                ),
+                "metadata": {"owner": "Priya Shah", "project": "Project Aurora"},
             },
         ],
         "calendar-events": [
@@ -796,11 +928,11 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
 def default_workspace_links() -> list[dict[str, object]]:
     return [
         {"id": "aurora-note-q4", "source_kind": "project", "source_id": "aurora", "target_kind": "note", "target_id": "q4", "label": "Notes"},
-        {"id": "aurora-task-slides", "source_kind": "project", "source_id": "aurora", "target_kind": "task", "target_id": "slides", "label": "Tasks"},
+        {"id": "aurora-task-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "task", "target_id": "demo-task-soon-roadmap", "label": "Tasks"},
         {"id": "aurora-contact-maya", "source_kind": "project", "source_id": "aurora", "target_kind": "contact", "target_id": "maya", "label": "People"},
         {"id": "aurora-calendar-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "calendar_event", "target_id": "roadmap", "label": "Roadmap sync"},
         {"id": "aurora-feed-decision", "source_kind": "project", "source_id": "aurora", "target_kind": "feed_item", "target_id": "project-decision", "label": "Aurora launch decision"},
-        {"id": "migration-task-cleanup", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "cleanup", "label": "Tasks"},
+        {"id": "migration-task-archive", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "demo-task-done-archive", "label": "Tasks"},
         {"id": "migration-contact-tom", "source_kind": "project", "source_id": "migration", "target_kind": "contact", "target_id": "tom", "label": "People"},
         {"id": "migration-calendar-vendor", "source_kind": "project", "source_id": "migration", "target_kind": "calendar_event", "target_id": "vendor", "label": "Vendor review"},
         {"id": "migration-feed-task", "source_kind": "project", "source_id": "migration", "target_kind": "feed_item", "target_id": "task-complete", "label": "Migration notes archived"},
