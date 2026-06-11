@@ -2981,9 +2981,9 @@
     const raw = input && typeof input === "object" ? input : {};
     const rawIndicator = raw.indicator && typeof raw.indicator === "object" ? raw.indicator : {};
     const rawLast = raw.last_status && typeof raw.last_status === "object" ? raw.last_status : {};
-    const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || rawLast.remote_stage || "").trim();
-    const rawState = String(rawIndicator.state || raw.state || rawLast.state || "idle").trim();
-    const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || rawLast.visual_state || rawState).trim();
+    const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || raw.stage || rawLast.remote_stage || rawLast.stage || "").trim();
+    const rawState = String(rawIndicator.state || raw.state || raw.stage || rawLast.state || rawLast.stage || "idle").trim();
+    const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || raw.stage || rawLast.visual_state || rawLast.stage || rawState).trim();
     const indicator = {
       schema: "pucky.turn_indicator.v1",
       state: normalizeTurnState(rawState),

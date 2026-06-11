@@ -1197,6 +1197,9 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "function renderVoiceStatus()" in app
     assert "function applyTurnStatus(input)" in app
     assert "function normalizeTurnStatus(input)" in app
+    assert 'const remoteStage = String(rawIndicator.remote_stage || raw.remote_stage || raw.stage || rawLast.remote_stage || rawLast.stage || "").trim();' in app
+    assert 'const rawState = String(rawIndicator.state || raw.state || raw.stage || rawLast.state || rawLast.stage || "idle").trim();' in app
+    assert 'const rawVisualState = String(rawIndicator.visual_state || raw.visual_state || raw.stage || rawLast.visual_state || rawLast.stage || rawState).trim();' in app
     assert "function isTurnActive(status)" in app
     assert "function shouldSuppressGlobalVoiceStatus(visualState, status = state.turn, route = effectiveRoute())" in app
     assert "function turnVisualState(status)" in app
