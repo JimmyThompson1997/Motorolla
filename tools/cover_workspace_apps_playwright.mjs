@@ -576,6 +576,29 @@ async function probeTaskDetailIdle(page, idleMs = 5200) {
   }, idleMs);
 }
 
+async function readDetailHtmlBodyMetrics(page) {
+  return page.evaluate(() => {
+    const pageNode = document.querySelector(".light-shell .light-page");
+    const body = document.querySelector(".light-detail-html-body");
+    const frame = body?.querySelector(".light-html-frame");
+    const rect = (node) => {
+      if (!(node instanceof Element)) return null;
+      const box = node.getBoundingClientRect();
+      return {
+        left: box.left,
+        right: box.right,
+        width: box.width
+      };
+    };
+    return {
+      route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
+      page: rect(pageNode),
+      body: rect(body),
+      frame: rect(frame)
+    };
+  });
+}
+
 function countTaskRequestEvents(networkLog, startMs, endMs) {
   return networkLog.filter(event => (
     event.type === "request" &&
@@ -629,6 +652,10 @@ async function proveNotes(page, config, seed, theme, screenshots) {
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(`[data-note-id="${note.id}"]`).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);
+  const layout = await readDetailHtmlBodyMetrics(page);
+  assert(layout.body && layout.page, "Expected note detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected note HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected note HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   screenshots[`${theme}_notes_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
@@ -1006,6 +1033,10 @@ async function proveCalendar(page, config, seed, theme, screenshots) {
   screenshots[`${theme}_calendar_today`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-today`);
   await eventCards.first().click();
   await expectFrameHeading(page, expectedTitle, config.timeoutMs);
+  const layout = await readDetailHtmlBodyMetrics(page);
+  assert(layout.body && layout.page, "Expected calendar detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected calendar HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected calendar HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   await backHome(page, theme, config.timeoutMs);
   return;
 }
@@ -1031,6 +1062,10 @@ async function proveFeed(page, config, seed, theme, screenshots) {
     const item = feedItems.find((entry) => String(entry.id) === `${seed.runId}-project-decision`) || feedItems[0];
     await expectFrameHeading(page, item?.title || "Feed item", config.timeoutMs);
   }
+  const layout = await readDetailHtmlBodyMetrics(page);
+  assert(layout.body && layout.page, "Expected feed detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected feed HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected feed HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   screenshots[`${theme}_feed_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
@@ -1059,6 +1094,10 @@ async function proveProjects(page, config, seed, theme, screenshots) {
     await page.locator(`[data-project-id="${firstProject.id}"]`).click();
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
+  const layout = await readDetailHtmlBodyMetrics(page);
+  assert(layout.body && layout.page, "Expected project detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected project HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected project HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   await backHome(page, theme, config.timeoutMs);
 }
@@ -1084,6 +1123,10 @@ async function proveContacts(page, config, seed, theme, screenshots) {
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
     await expectFrameHeading(page, firstContact.title, config.timeoutMs);
   }
+  const layout = await readDetailHtmlBodyMetrics(page);
+  assert(layout.body && layout.page, "Expected contact detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected contact HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected contact HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   await backHome(page, theme, config.timeoutMs);
 }

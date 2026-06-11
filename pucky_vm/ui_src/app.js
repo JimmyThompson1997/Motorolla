@@ -3599,7 +3599,7 @@
     if (contact.links && contact.links.length) {
       page.append(lightInfoSection("Linked records", contact.links.map(link => ({ icon: "link", label: link.label || link.target_kind, value: `${link.target_kind}:${link.target_id}` }))));
     }
-    page.append(lightHtmlDocument(contact, "No generated contact page yet."));
+    page.append(lightHtmlDocument(contact, "No generated contact page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -3718,7 +3718,7 @@
     if (docs.length) {
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
     }
-    page.append(lightHtmlDocument(meeting, "No generated event page yet."));
+    page.append(lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -3767,7 +3767,7 @@
       el("p", "light-note-body", note.summary || "")
     );
     page.append(article);
-    page.append(lightHtmlDocument(note, "No generated note page yet."));
+    page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -3951,7 +3951,7 @@
     const page = lightPage("Task");
     page.classList.add("light-task-detail-page");
     page.append(lightTaskDetailCard(task));
-    page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-task-detail-body" }));
+    page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" }));
     return page;
   }
 
@@ -4013,7 +4013,7 @@
     if (item.links && item.links.length) {
       page.append(lightInfoSection("Related", item.links.map(link => ({ icon: "link", label: link.label || link.target_kind, value: `${link.target_kind}:${link.target_id}` }))));
     }
-    page.append(lightHtmlDocument(item, "No generated feed page yet."));
+    page.append(lightHtmlDocument(item, "No generated feed page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -4062,7 +4062,7 @@
       ["People", "contacts", projectLinked(project, "contact")]
     ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
     page.append(grid);
-    page.append(lightHtmlDocument(project, "No generated project page yet."));
+    page.append(lightHtmlDocument(project, "No generated project page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 

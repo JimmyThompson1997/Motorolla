@@ -4585,23 +4585,23 @@ button {
   padding: 4px 2px 0;
 }
 
-.light-task-detail-body.light-html-card,
-.light-task-detail-body.light-html-empty {
+.light-detail-html-body.light-html-card,
+.light-detail-html-body.light-html-empty {
   margin-top: 2px;
 }
 
-.light-task-detail-body.light-html-card {
+.light-detail-html-body.light-html-card {
   width: calc(100% + 40px);
   margin-left: -20px;
   margin-right: -20px;
   border-radius: 0;
 }
 
-.light-task-detail-body.light-html-card .light-html-frame {
+.light-detail-html-body.light-html-card .light-html-frame {
   min-height: min(68vh, 720px);
 }
 
-.light-task-detail-body.light-html-empty {
+.light-detail-html-body.light-html-empty {
   width: calc(100% + 40px);
   margin-left: -20px;
   margin-right: -20px;

@@ -640,7 +640,8 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert ".light-task-section-toggle" in styles
     assert ".light-task-section-count" in styles
     assert ".light-task-section-spacer" in styles
-    assert ".light-task-detail-body.light-html-card" in styles
+    assert ".light-detail-html-body.light-html-card" in styles
+    assert ".light-detail-html-body.light-html-empty" in styles
     assert "width: calc(100% + 40px);" in styles
     assert "margin-left: -20px;" in styles
     assert "margin-right: -20px;" in styles
@@ -784,7 +785,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
 
     assert 'workspaceItems("notes")' in light_notes
     assert 'lightWorkspaceStatus("notes"' in light_notes
-    assert 'lightHtmlDocument(note' in note_detail
+    assert 'lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in note_detail
     assert 'filteredTasks(group)' in light_tasks
     assert 'const row = el("button", `light-task-row ${group}`);' in task_group
     assert 'row.type = "button";' in task_group
@@ -809,7 +810,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '`tomorrow ${time}`' not in task_due_label
     assert 'lightHtmlDocument(task' in task_detail
     assert 'lightTaskDetailCard(task)' in task_detail
-    assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-task-detail-body" })' in task_detail
+    assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" })' in task_detail
     assert 'lightCopySection("Notes"' not in task_detail
     assert 'lightInfoSection("Related"' not in task_detail
     assert 'const card = el("section", `light-card light-task-detail-card ${group}`);' in task_detail_card
@@ -820,21 +821,21 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'calendarEventHour(event)' in light_timeline
     assert "events.length > 1" in light_timeline
     assert "block.style.top" in light_timeline
-    assert 'lightHtmlDocument(meeting' in event_detail
+    assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in event_detail
     assert 'workspaceItems("feed-items")' in light_feed
     assert 'metadata?.type' in feed_detail
-    assert 'lightHtmlDocument(item' in feed_detail
+    assert 'lightHtmlDocument(item, "No generated feed page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in feed_detail
     assert 'allProjects().map(project' in light_projects
     assert 'workspaceItems("projects")' in all_projects
     assert 'projectThreads(project)' in light_project_detail
     assert 'projectLinked(project, "task")' in light_project_detail
     assert 'projectLinked(project, "calendar_event")' in light_project_detail
     assert 'projectLinked(project, "feed_item")' in light_project_detail
-    assert 'lightHtmlDocument(project' in light_project_detail
+    assert 'lightHtmlDocument(project, "No generated project page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in light_project_detail
     assert 'upsertWorkspaceRecord("projects"' in app
     assert 'workspaceItems("contacts")' in light_contacts
     assert 'upsertWorkspaceRecord("contacts"' in app
-    assert 'lightHtmlDocument(contact' in contact_detail
+    assert 'lightHtmlDocument(contact, "No generated contact page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in contact_detail
 
     assert 'frame.srcdoc = html;' in html_document
     assert "const untitledFallback = Boolean(options && options.untitledFallback);" in html_document
