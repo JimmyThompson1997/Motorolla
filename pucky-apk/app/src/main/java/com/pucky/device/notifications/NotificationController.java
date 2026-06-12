@@ -23,8 +23,9 @@ import org.json.JSONObject;
 
 public final class NotificationController {
     private static final String CHANNEL_ID = "pucky_commands";
-    private static final String AUDIBLE_CHANNEL_ID = "pucky_commands_audible_v1";
+    private static final String AUDIBLE_CHANNEL_ID = "pucky_commands_audible_v2";
     private static final int NOTIFICATION_ID = 41002;
+    private static final long[] AUDIBLE_VIBRATION_PATTERN_MS = new long[] {0L, 120L, 80L, 180L};
 
     private final Context context;
 
@@ -60,7 +61,7 @@ public final class NotificationController {
                 .setOngoing(args.optBoolean("ongoing", false))
                 .setOnlyAlertOnce(args.optBoolean("only_alert_once", !audible));
         if (audible) {
-            builder.setDefaults(Notification.DEFAULT_SOUND);
+            builder.setDefaults(Notification.DEFAULT_SOUND | Notification.DEFAULT_VIBRATE);
             if (Build.VERSION.SDK_INT < 26) {
                 builder.setPriority(Notification.PRIORITY_HIGH);
             }
@@ -83,7 +84,7 @@ public final class NotificationController {
         Json.put(out, "id", notificationId);
         Json.put(out, "channel", channelId);
         Json.put(out, "sound", audible);
-        Json.put(out, "vibration", false);
+        Json.put(out, "vibration", audible);
         return out;
     }
 
@@ -140,7 +141,7 @@ public final class NotificationController {
                 .setOnlyAlertOnce(args.optBoolean("only_alert_once", !audible))
                 .addAction(replyAction);
         if (audible) {
-            builder.setDefaults(Notification.DEFAULT_SOUND);
+            builder.setDefaults(Notification.DEFAULT_SOUND | Notification.DEFAULT_VIBRATE);
             if (Build.VERSION.SDK_INT < 26) {
                 builder.setPriority(Notification.PRIORITY_HIGH);
             }
@@ -162,6 +163,7 @@ public final class NotificationController {
         Json.put(out, "prompt_id", promptId);
         Json.put(out, "command_id", commandId);
         Json.put(out, "sound", audible);
+        Json.put(out, "vibration", audible);
         return out;
     }
 
@@ -243,8 +245,11 @@ public final class NotificationController {
                 audible ? NotificationManager.IMPORTANCE_HIGH : NotificationManager.IMPORTANCE_LOW);
         if (!audible) {
             channel.setSound(null, null);
+            channel.enableVibration(false);
+        } else {
+            channel.enableVibration(true);
+            channel.setVibrationPattern(AUDIBLE_VIBRATION_PATTERN_MS);
         }
-        channel.enableVibration(false);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         manager.createNotificationChannel(channel);
     }
