@@ -3854,7 +3854,7 @@
   }
 
   function lightRemindersPage() {
-    const page = lightPage("Reminders", { large: true });
+    const page = lightPage("Reminders");
     page.classList.add("light-graph-page", "light-reminders-page");
     const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
     if (status) {
@@ -3903,7 +3903,7 @@
   }
 
   function lightGraphListPage(options = {}) {
-    const page = lightPage(options.title || "Workspace", { large: true });
+    const page = lightPage(options.title || "Workspace");
     page.classList.add("light-graph-page");
     const status = lightWorkspaceStatus(options.collection, options.icon || "apps", options.emptyTitle || "No records yet");
     if (status) {
@@ -4390,7 +4390,7 @@
   }
 
   function lightNotesPage() {
-    const page = lightPage("Notes", { large: true });
+    const page = lightPage("Notes");
     const status = lightWorkspaceStatus("notes", "note", "No notes yet");
     if (status) {
       page.append(status);
@@ -4617,14 +4617,14 @@
   }
 
   function lightAppsPage() {
-    const page = lightPage("Connect", { large: true });
+    const page = lightPage("Connect");
     page.classList.add("light-apps-page");
     page.append(linksPageView());
     return page;
   }
 
   function lightFeedPage() {
-    const page = lightPage("Feed", { large: true });
+    const page = lightPage("Feed");
     const status = lightWorkspaceStatus("feed-items", "text", "No feed items yet");
     if (status) {
       page.append(status);
@@ -4681,7 +4681,7 @@
   }
 
   function lightProjectsPage() {
-    const page = lightPage("Projects", { large: true });
+    const page = lightPage("Projects");
     const list = el("div", "light-list");
     page.append(lightPillButton("New project", () => lightNavigate("project-new", { from: "projects" })));
     const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
@@ -4802,11 +4802,13 @@
   }
 
   function lightSettingsSurface() {
-    const page = el("section", "light-page light-settings-surface");
+    const page = el("section", "light-page light-canonical-port-page light-settings-page");
     page.append(lightHeader("Settings"));
+    const surface = el("section", "light-canonical-port-surface light-settings-surface");
     const settings = settingsPageView();
     settings.classList.add("light-settings-real");
-    page.append(settings);
+    surface.append(settings);
+    page.append(surface);
     return page;
   }
 

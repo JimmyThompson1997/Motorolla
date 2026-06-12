@@ -631,11 +631,21 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     styles = read("styles.css")
 
     chrome_mode = function_block(app, "chromeMode")
+    light_apps = function_block(app, "lightAppsPage")
+    light_calendar = function_block(app, "lightCalendarPage")
+    light_feed = function_block(app, "lightFeedPage")
     light_header = function_block(app, "lightHeader")
     light_contacts = function_block(app, "lightContactsPage")
+    light_meeting_notes = function_block(app, "lightMeetingNotesPage")
+    light_meetings = function_block(app, "lightMeetingsPage")
+    light_notes = function_block(app, "lightNotesPage")
+    light_projects = function_block(app, "lightProjectsPage")
+    light_reminders = function_block(app, "lightRemindersPage")
+    light_settings = function_block(app, "lightSettingsSurface")
     light_tasks = function_block(app, "lightTasksPage")
     light_task_sections = function_block(app, "lightTaskSectionHeader")
     filtered_tasks = function_block(app, "filteredTasks")
+    graph_list = function_block(app, "lightGraphListPage")
     handle_back = function_block(app, "handleAndroidBack")
     light_back = function_block(app, "lightBack")
     light_theme_block = css_block(styles, '.app-shell[data-theme="light"]')
@@ -662,18 +672,42 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
             task_row_base_block = block
             break
     assert task_row_base_block, "Missing .light-task-row base CSS block"
+    contacts_page_block = css_block(styles, ".light-contacts-page")
+    tasks_page_block = css_block(styles, ".light-tasks-page")
     voice_status_home_shell = top_level_css_block(styles, '.app-shell[data-chrome-mode="home-shell"] .voice-status')
     light_page_header = top_level_css_block(styles, ".light-page-header")
 
     assert 'return isHomeShellRoute() ? "home-shell" : "legacy-shell";' in chrome_mode
     assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
     assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
+    assert 'const page = lightPage("Connect");' in light_apps
+    assert "{ large: true }" not in light_apps
+    assert 'const page = lightPage(calendarDayTitle());' in light_calendar
+    assert 'const page = lightPage("Feed");' in light_feed
+    assert "{ large: true }" not in light_feed
     assert 'const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });' in light_contacts
     assert 'page.classList.add("light-contacts-page");' in light_contacts
     assert 'light-appbar' not in light_contacts
+    assert "padding-top:" not in contacts_page_block
+    assert "return lightGraphListPage({" in light_meeting_notes
+    assert 'const page = el("section", "light-page light-canonical-port-page light-meetings-page");' in light_meetings
+    assert 'page.append(lightHeader("Meetings"));' in light_meetings
+    assert 'const page = lightPage("Notes");' in light_notes
+    assert "{ large: true }" not in light_notes
+    assert 'const page = lightPage("Projects");' in light_projects
+    assert "{ large: true }" not in light_projects
+    assert 'const page = lightPage("Reminders");' in light_reminders
+    assert "{ large: true }" not in light_reminders
+    assert 'const page = el("section", "light-page light-canonical-port-page light-settings-page");' in light_settings
+    assert 'const surface = el("section", "light-canonical-port-surface light-settings-surface");' in light_settings
+    assert "surface.append(settings);" in light_settings
+    assert "page.append(surface);" in light_settings
     assert 'const page = lightPage("Tasks");' in light_tasks
     assert 'page.classList.add("light-tasks-page");' in light_tasks
     assert 'light-appbar' not in light_tasks
+    assert "padding-top:" not in tasks_page_block
+    assert 'const page = lightPage(options.title || "Workspace");' in graph_list
+    assert "{ large: true }" not in graph_list
     assert "display: none;" in voice_status_home_shell
     assert "position: sticky;" in light_page_header
     assert "top: 0;" in light_page_header
@@ -701,6 +735,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'if (isHomeShellRoute() && lightBack()) {' in handle_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
     assert ".light-shell[data-light-route=\"meetings\"] .meetings-page" in styles
+    assert ".light-shell[data-light-route=\"settings\"] .light-canonical-port-surface" in styles
     assert "color: var(--text-primary);" in app_shell_block
     assert "background: var(--surface-app);" in app_shell_block
     assert "background: transparent;" in tab_block

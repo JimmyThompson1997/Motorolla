@@ -3946,7 +3946,6 @@ button {
 
 .light-contacts-page {
   gap: 18px;
-  padding-top: 12px;
 }
 
 .light-contact-list {
@@ -4302,7 +4301,6 @@ button {
 
 .light-tasks-page {
   gap: 10px;
-  padding-top: 6px;
   padding-bottom: 128px;
 }
 
@@ -4815,8 +4813,7 @@ button {
   line-height: 1.35;
 }
 
-.light-apps-page,
-.light-settings-surface {
+.light-apps-page {
   min-height: calc(var(--viewport-h) - 42px);
   padding-bottom: 28px;
 }
@@ -4866,7 +4863,15 @@ button {
   padding-bottom: 92px;
 }
 
+.light-settings-surface {
+  min-width: 0;
+}
+
 .light-shell[data-light-route="feed"] .light-canonical-port-surface {
+  padding-top: 6px;
+}
+
+.light-shell[data-light-route="settings"] .light-canonical-port-surface {
   padding-top: 6px;
 }
 
