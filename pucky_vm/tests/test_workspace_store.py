@@ -124,6 +124,50 @@ def test_task_records_support_inline_html_asset_html_and_empty_html(tmp_path: Pa
     assert empty_task["html_asset_id"] == ""
 
 
+def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+    reminder = store.upsert_record(
+        "reminders",
+        {
+            "id": "proof-reminder",
+            "title": "Proof reminder",
+            "status": "open",
+            "due_at_ms": 25_000,
+            "metadata": {"source_kind": "task", "source_id": "proof-task"},
+        },
+    )
+
+    assert reminder["metadata"]["delivery_state"] == "pending"
+    assert reminder["metadata"]["last_fired_at_ms"] == 0
+    assert reminder["metadata"]["last_fired_due_at_ms"] == 0
+    assert reminder["metadata"]["last_delivery_error"] == ""
+    assert reminder["metadata"]["notification_device_id"] == ""
+    assert reminder["metadata"]["snoozed_until_ms"] == 0
+
+    patched = store.patch_record(
+        "reminders",
+        "proof-reminder",
+        {
+            "metadata": {
+                "delivery_state": "failed",
+                "last_delivery_error": "no_online_device",
+                "notification_device_id": "phone-1",
+                "last_fired_due_at_ms": 25_000,
+            }
+        },
+    )
+    assert patched is not None
+    assert patched["metadata"]["delivery_state"] == "failed"
+    assert patched["metadata"]["last_delivery_error"] == "no_online_device"
+    assert patched["metadata"]["notification_device_id"] == "phone-1"
+    assert patched["metadata"]["last_fired_due_at_ms"] == 25_000
+
+    done = store.patch_record("reminders", "proof-reminder", {"status": "done", "metadata": {"snoozed_until_ms": 99}})
+    assert done is not None
+    assert done["status"] == "done"
+    assert done["metadata"]["snoozed_until_ms"] == 0
+
+
 def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)

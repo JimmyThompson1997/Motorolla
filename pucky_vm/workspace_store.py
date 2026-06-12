@@ -60,6 +60,22 @@ def _int_or_zero(value: object) -> int:
         return 0
 
 
+def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    delivery_state = str(normalized.get("delivery_state") or "").strip().lower()
+    if delivery_state not in {"pending", "sent", "failed"}:
+        delivery_state = "pending"
+    normalized["delivery_state"] = delivery_state
+    normalized["last_fired_at_ms"] = _int_or_zero(normalized.get("last_fired_at_ms"))
+    normalized["last_fired_due_at_ms"] = _int_or_zero(normalized.get("last_fired_due_at_ms"))
+    normalized["snoozed_until_ms"] = _int_or_zero(normalized.get("snoozed_until_ms"))
+    normalized["last_delivery_error"] = str(normalized.get("last_delivery_error") or "").strip()
+    normalized["notification_device_id"] = str(normalized.get("notification_device_id") or "").strip()
+    if str(status or "").strip().lower() == "done":
+        normalized["snoozed_until_ms"] = 0
+    return normalized
+
+
 def derive_task_group(record: dict[str, Any], now_ms: int | None = None) -> str:
     status = str(record.get("status") or "").strip().lower()
     if status == "done":
@@ -434,6 +450,9 @@ class WorkspaceStore:
         pinned = bool(payload.get("pinned", False))
         if kind == "task":
             status = status or "open"
+        if kind == "reminder":
+            status = status or "open"
+            metadata = _normalize_reminder_metadata(metadata, status=status)
         if kind == "calendar_event" and not date_key and start_at_ms:
             date_key = time.strftime("%Y-%m-%d", time.localtime(start_at_ms / 1000))
         if kind == "feed_item":

@@ -142,7 +142,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
       contacts: [`${runId}-contact-one`, `${runId}-contact-two`],
       "meeting-notes": [`${runId}-graph-meeting`],
-      reminders: [`${runId}-graph-reminder`]
+      reminders: [`${runId}-graph-reminder`, `${runId}-due-reminder`]
     }
   };
 }
@@ -1283,6 +1283,77 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await backHome(page, theme, config.timeoutMs);
 }
 
+async function proveReminders(page, config, seed, theme, screenshots, summary) {
+  if (!seed.writeEnabled) {
+    summary.assertions.push("reminder delivery proof skipped because API token was unavailable");
+    return;
+  }
+  const dueReminderId = `${seed.runId}-due-reminder`;
+  const dueAtMs = Date.now() + 5_000;
+  await deleteWorkspaceRecord(config, "reminders", dueReminderId);
+  await apiRequest(config, "POST", "/api/workspace/reminders", {
+    id: dueReminderId,
+    title: "Proof Due Reminder",
+    summary: "Reminder should fire through VM delivery polling.",
+    status: "open",
+    due_at_ms: dueAtMs,
+    html: "<!doctype html><html><body><h1>Proof Due Reminder</h1><p>Reminder detail HTML body.</p><ul><li>Pending</li><li>Sent</li><li>Done</li></ul></body></html>",
+    metadata: { source_kind: "task", source_id: `${seed.runId}-future-task` }
+  });
+
+  await openTile(page, "Reminders", "reminders", config.timeoutMs);
+  const row = page.locator(`[data-reminder-id="${dueReminderId}"]`);
+  await row.waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_reminders_list_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-pending`);
+  await row.click();
+  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+  await expectFrameHeading(page, "Proof Due Reminder", config.timeoutMs);
+  await page.waitForFunction(() => (document.body.innerText || "").includes("Pending"), { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_detail_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-pending`);
+
+  await page.waitForTimeout(22_000);
+  await page.waitForFunction(() => {
+    const text = document.body.innerText || "";
+    return text.includes("Sent to phone") || text.includes("Couldn't reach phone");
+  }, { timeout: 10_000 });
+  const firedState = await page.evaluate(() => {
+    const text = document.body.innerText || "";
+    if (text.includes("Sent to phone")) {
+      return "sent";
+    }
+    if (text.includes("Couldn't reach phone")) {
+      return "failed";
+    }
+    return "unknown";
+  });
+  assert(firedState === "sent" || firedState === "failed", `Expected reminder delivery result, got ${firedState}`);
+  screenshots[`${theme}_reminder_detail_fired`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-fired`);
+
+  await page.getByRole("button", { name: "Snooze 10 min" }).click({ timeout: config.timeoutMs });
+  await page.waitForTimeout(800);
+  const snoozedRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${dueReminderId}`);
+  assert(String(snoozedRecord?.metadata?.delivery_state || "") === "pending", "Expected snoozed reminder to reset delivery_state to pending");
+  assert(Number(snoozedRecord?.due_at_ms || 0) > Date.now() + 9 * 60 * 1000, "Expected snoozed reminder due_at_ms to move into the future");
+  screenshots[`${theme}_reminder_detail_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed`);
+
+  await page.getByRole("button", { name: "Mark done" }).click({ timeout: config.timeoutMs });
+  await page.waitForTimeout(800);
+  const doneRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${dueReminderId}`);
+  assert(String(doneRecord?.status || "") === "done", "Expected reminder status to become done");
+  screenshots[`${theme}_reminder_detail_done`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-done`);
+  await backHome(page, theme, config.timeoutMs);
+
+  summary.reminders = summary.reminders || [];
+  summary.reminders.push({
+    theme,
+    reminderId: dueReminderId,
+    firedState,
+    snoozedDueAtMs: Number(snoozedRecord?.due_at_ms || 0),
+    finalStatus: String(doneRecord?.status || "")
+  });
+  summary.assertions.push(`${theme} reminders show pending, fired, snoozed, and done states through the shared workspace API`);
+}
+
 async function readGraphDetailState(page) {
   return page.evaluate(() => ({
     route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
@@ -1382,6 +1453,7 @@ async function runTheme(page, config, seed, theme, summary, networkLog) {
   await proveFeed(page, config, seed, theme, screenshots, summary);
   await proveProjects(page, config, seed, theme, screenshots, summary);
   await proveContacts(page, config, seed, theme, screenshots, summary);
+  await proveReminders(page, config, seed, theme, screenshots, summary);
   await proveGraphObjects(page, config, seed, theme, screenshots, summary);
   return screenshots;
 }

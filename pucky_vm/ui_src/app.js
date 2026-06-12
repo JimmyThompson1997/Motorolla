@@ -29,6 +29,7 @@
   ]);
   const MEETING_STATUS_POLL_MS = 1000;
   const WORKSPACE_TASK_REFRESH_MS = 2000;
+  const WORKSPACE_REMINDER_REFRESH_MS = 15000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -232,7 +233,7 @@
     { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
     { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
     { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "mock" },
-    { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "mock" },
+    { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "real" },
     { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" },
     { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" },
     { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" },
@@ -3878,13 +3879,27 @@
 
   function lightReminderDetailPage() {
     const reminder = selectedReminder();
-    return lightGraphDetailPage(reminder, {
-      title: "Reminder",
-      eyebrow: "Reminder",
-      icon: "bell",
-      rows: reminderDetailRows(reminder),
-      fallback: "No generated reminder page yet."
-    });
+    if (!reminder) {
+      return lightPage("Reminder", { subtitle: "Reminder not found." });
+    }
+    ensureLinkedCollections(reminder);
+    const page = lightPage("Reminder");
+    page.classList.add("light-document-page", "light-reminder-document");
+    const article = el("article", "light-doc-article");
+    article.append(
+      lightDocumentEyebrow("Reminder", reminderDueLabel(reminder)),
+      el("h1", "", reminder.title),
+      el("p", "light-note-body", reminder.summary || "")
+    );
+    page.append(article);
+    page.append(lightReminderActionRow(reminder));
+    page.append(lightInfoSection("Context", reminderDetailRows(reminder)));
+    const linkedRows = lightLinkedRecordRows(reminder);
+    if (linkedRows.length) {
+      page.append(lightInfoSection("Linked records", linkedRows));
+    }
+    page.append(lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
+    return page;
   }
 
   function lightGraphListPage(options = {}) {
@@ -3920,7 +3935,8 @@
 
   function lightReminderRow(reminder) {
     const group = reminderGroup(reminder);
-    const row = el("button", `light-card light-reminder-row ${group || ""} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
+    const deliveryClass = reminderDeliveryClass(reminder);
+    const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     if (String(reminder.summary || "").trim()) {
@@ -4063,7 +4079,8 @@
     const sourceId = String(meta.source_id || "").trim();
     return [
       { icon: "clock", label: "Due", value: reminderDueLabel(reminder) },
-      { icon: "checklist", label: "Status", value: reminder?.status || "open" },
+      { icon: "checklist", label: "Status", value: reminderStatusLabel(reminder) },
+      { icon: "bell", label: "Delivery", value: reminderDeliveryLabel(reminder) },
       {
         icon: graphKindIcon(sourceKind),
         label: "Source",
@@ -4122,6 +4139,104 @@
       return `today ${new Date(due).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
     }
     return workspaceTimestamp(due, "Later");
+  }
+
+  function reminderStatusLabel(reminder) {
+    const status = String(reminder?.status || "").trim().toLowerCase();
+    if (status === "done") {
+      return "done";
+    }
+    return status || "open";
+  }
+
+  function reminderDeliveryLabel(reminder) {
+    const meta = reminder?.metadata || {};
+    const status = String(reminder?.status || "").trim().toLowerCase();
+    if (status === "done") {
+      return "Done";
+    }
+    const dueAtMs = Number(reminder?.due_at_ms || 0);
+    const deliveryState = String(meta.delivery_state || "").trim().toLowerCase();
+    const snoozedUntilMs = Number(meta.snoozed_until_ms || 0);
+    const lastFiredDueAtMs = Number(meta.last_fired_due_at_ms || 0);
+    if (deliveryState === "sent" && dueAtMs > 0 && lastFiredDueAtMs === dueAtMs) {
+      return "Sent to phone";
+    }
+    if (deliveryState === "failed" && dueAtMs > 0 && dueAtMs <= Date.now()) {
+      return "Couldn't reach phone";
+    }
+    if (snoozedUntilMs > Date.now() && snoozedUntilMs === dueAtMs) {
+      return "Snoozed";
+    }
+    return "Pending";
+  }
+
+  function reminderDeliveryClass(reminder) {
+    const label = reminderDeliveryLabel(reminder);
+    if (label === "Sent to phone") {
+      return "delivery-sent";
+    }
+    if (label === "Couldn't reach phone") {
+      return "delivery-failed";
+    }
+    if (label === "Snoozed") {
+      return "delivery-snoozed";
+    }
+    return "delivery-pending";
+  }
+
+  function reminderSnoozePayload(reminder, reopen = false) {
+    const nextDueAtMs = Date.now() + 10 * 60 * 1000;
+    return {
+      status: reopen ? "open" : String(reminder?.status || "").trim().toLowerCase() === "done" ? "open" : (reminder?.status || "open"),
+      due_at_ms: nextDueAtMs,
+      metadata: {
+        delivery_state: "pending",
+        last_fired_at_ms: 0,
+        last_fired_due_at_ms: 0,
+        last_delivery_error: "",
+        snoozed_until_ms: nextDueAtMs
+      }
+    };
+  }
+
+  function reminderToggleButton(reminder) {
+    const done = String(reminder?.status || "").trim().toLowerCase() === "done";
+    const button = lightPillButton(done ? "Reopen" : "Mark done", async () => {
+      button.disabled = true;
+      await patchWorkspaceRecord("reminders", reminder.id, {
+        status: done ? "open" : "done",
+        metadata: done
+          ? {
+            delivery_state: "pending",
+            last_fired_at_ms: 0,
+            last_fired_due_at_ms: 0,
+            last_delivery_error: "",
+            snoozed_until_ms: 0
+          }
+          : {}
+      }, { render: true });
+    }, false);
+    button.classList.add("light-reminder-toggle");
+    return button;
+  }
+
+  function reminderSnoozeButton(reminder) {
+    const button = lightPillButton("Snooze 10 min", async () => {
+      button.disabled = true;
+      await patchWorkspaceRecord("reminders", reminder.id, reminderSnoozePayload(reminder), { render: true });
+    }, false);
+    button.classList.add("light-reminder-snooze");
+    return button;
+  }
+
+  function lightReminderActionRow(reminder) {
+    const row = el("div", "light-reminder-actions");
+    row.append(reminderToggleButton(reminder));
+    if (String(reminder?.status || "").trim().toLowerCase() !== "done") {
+      row.append(reminderSnoozeButton(reminder));
+    }
+    return row;
   }
 
   function reminderGroup(reminder) {
@@ -12209,6 +12324,12 @@
       void loadWorkspaceCollection("tasks", { render: true, force: true });
     }
   }, WORKSPACE_TASK_REFRESH_MS);
+
+  setInterval(() => {
+    if (document.visibilityState === "visible" && (state.route === "reminders" || state.route === "reminder-detail")) {
+      void loadWorkspaceCollection("reminders", { render: true, force: true });
+    }
+  }, WORKSPACE_REMINDER_REFRESH_MS);
 
   window.addEventListener("pagehide", persistNavState);
   document.addEventListener("visibilitychange", () => {

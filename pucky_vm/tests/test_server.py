@@ -848,6 +848,10 @@ class ServerTests(unittest.TestCase):
         self.env_patch.stop()
         self.tmp.cleanup()
 
+    def clear_active_reminders(self) -> None:
+        for item in self.service.workspace.list_records("reminders", include_archived=True, include_deleted=True)["items"]:
+            self.service.workspace.patch_record("reminders", str(item["id"]), {"archived": True, "deleted": True})
+
     def test_healthz_reports_ready_without_secrets(self) -> None:
         payload = self.get_json("/healthz")
 
@@ -2959,6 +2963,122 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(summaries["thread-A"], "Reply for alpha request")
         self.assertEqual(summaries["thread-B"], "Reply for beta request")
         self.assertTrue(any(summary == "Reply for fresh request" for summary in summaries.values()))
+
+    def test_due_reminder_sends_once_and_marks_sent(self) -> None:
+        self.clear_active_reminders()
+        reminder = self.service.workspace.upsert_record(
+            "reminders",
+            {
+                "id": "due-reminder",
+                "title": "Due reminder",
+                "summary": "Reminder due now",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+            },
+        )
+        self.assertIsNotNone(reminder)
+
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", return_value=None) as ws_send:
+            first = self.service.process_due_reminders()
+            second = self.service.process_due_reminders()
+
+        self.assertEqual(first["count"], 1)
+        self.assertEqual(second["count"], 0)
+        ws_send.assert_called_once()
+        updated = self.service.workspace.get_record("reminders", "due-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        self.assertEqual(updated["metadata"]["notification_device_id"], "phone-1")
+        self.assertEqual(updated["metadata"]["last_fired_due_at_ms"], updated["due_at_ms"])
+
+    def test_due_reminder_without_online_device_marks_failed(self) -> None:
+        self.clear_active_reminders()
+        self.service.workspace.upsert_record(
+            "reminders",
+            {
+                "id": "failed-reminder",
+                "title": "Failed reminder",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+            },
+        )
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker):
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        updated = self.service.workspace.get_record("reminders", "failed-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "failed")
+        self.assertEqual(updated["metadata"]["last_delivery_error"], "no_online_device")
+        self.assertEqual(updated["metadata"]["last_fired_due_at_ms"], 0)
+
+    def test_due_reminder_prefers_specific_device_and_does_not_fallback(self) -> None:
+        self.clear_active_reminders()
+        self.service.workspace.upsert_record(
+            "reminders",
+            {
+                "id": "preferred-reminder",
+                "title": "Preferred reminder",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {"notification_device_id": "offline-phone"},
+            },
+        )
+        self.broker.set_device("other-phone", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["other-phone"] = {"socket": object()}
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", return_value=None) as ws_send:
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        ws_send.assert_not_called()
+        updated = self.service.workspace.get_record("reminders", "preferred-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "failed")
+        self.assertEqual(updated["metadata"]["last_delivery_error"], "preferred_device_offline")
+        self.assertEqual(updated["metadata"]["notification_device_id"], "offline-phone")
+
+    def test_failed_reminder_retries_and_multiple_due_reminders_fire_independently(self) -> None:
+        self.clear_active_reminders()
+        now_ms = self.service.workspace.now_ms()
+        self.service.workspace.upsert_record(
+            "reminders",
+            {"id": "retry-a", "title": "Retry A", "status": "open", "due_at_ms": now_ms - 5_000},
+        )
+        self.service.workspace.upsert_record(
+            "reminders",
+            {"id": "retry-b", "title": "Retry B", "status": "open", "due_at_ms": now_ms - 4_000},
+        )
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker):
+            first = self.service.process_due_reminders()
+        self.assertEqual(first["count"], 2)
+        failed_a = self.service.workspace.get_record("reminders", "retry-a")
+        failed_b = self.service.workspace.get_record("reminders", "retry-b")
+        self.assertEqual(failed_a["metadata"]["delivery_state"], "failed")
+        self.assertEqual(failed_b["metadata"]["delivery_state"], "failed")
+
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", return_value=None) as ws_send:
+            second = self.service.process_due_reminders()
+
+        self.assertEqual(second["count"], 2)
+        self.assertEqual(ws_send.call_count, 2)
+        sent_a = self.service.workspace.get_record("reminders", "retry-a")
+        sent_b = self.service.workspace.get_record("reminders", "retry-b")
+        self.assertEqual(sent_a["metadata"]["delivery_state"], "sent")
+        self.assertEqual(sent_b["metadata"]["delivery_state"], "sent")
+        self.assertEqual(sent_a["metadata"]["last_fired_due_at_ms"], sent_a["due_at_ms"])
+        self.assertEqual(sent_b["metadata"]["last_fired_due_at_ms"], sent_b["due_at_ms"])
 
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

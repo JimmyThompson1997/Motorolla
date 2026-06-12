@@ -3824,6 +3824,30 @@ button {
   padding-top: 2px;
 }
 
+.light-reminder-row.delivery-sent .light-reminder-time {
+  color: #1f8b4c;
+}
+
+.light-reminder-row.delivery-failed .light-reminder-time {
+  color: #d04646;
+}
+
+.light-reminder-row.delivery-snoozed .light-reminder-time {
+  color: #a36411;
+}
+
+.light-reminder-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -2px 0 10px;
+}
+
+.light-reminder-toggle,
+.light-reminder-snooze {
+  min-width: 118px;
+}
+
 .light-graph-document .light-info-section {
   margin-top: 2px;
 }

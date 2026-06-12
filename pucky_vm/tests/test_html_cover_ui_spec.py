@@ -1042,7 +1042,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightSectionTitle("Done")' in light_reminders
     assert '"Due soon"' not in light_reminders
     assert '"Later"' not in light_reminders
+    assert '{ route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "real" }' in app
     assert 'const row = el("button", `light-card light-reminder-row ${group || ""}' in reminder_row
+    assert 'const deliveryClass = reminderDeliveryClass(reminder);' in reminder_row
     assert 'graphObjectChips(reminder)' not in reminder_row
     assert 'lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`)' not in reminder_row
     assert 'el("span", "light-reminder-time", reminderDueLabel(reminder))' in reminder_row
@@ -1050,6 +1052,15 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
     assert 'reminderDetailRows(reminder)' in reminder_detail
+    assert 'lightReminderActionRow(reminder)' in reminder_detail
+    assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in reminder_detail
+    assert 'lightGraphDetailPage(reminder' not in reminder_detail
+    assert 'patchWorkspaceRecord("reminders", reminder.id' in app
+    assert '"Snooze 10 min"' in app
+    assert '"Mark done"' in app
+    assert '"Reopen"' in app
+    assert '"Sent to phone"' in app
+    assert '"Couldn\'t reach phone"' in app
     assert 'lightLinkedRecordRows(record)' in graph_detail
     assert 'lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" })' in graph_detail
     assert 'workspaceItems("feed-items")' in light_feed
@@ -1060,6 +1071,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'projectThreads(project)' in light_project_detail
     assert ".light-reminder-row" in styles
     assert ".light-reminder-time" in styles
+    assert ".light-reminder-actions" in styles
+    assert ".light-reminder-row.delivery-sent .light-reminder-time" in styles
+    assert ".light-reminder-row.delivery-failed .light-reminder-time" in styles
+    assert ".light-reminder-row.delivery-snoozed .light-reminder-time" in styles
     assert 'projectLinked(project, "task")' in light_project_detail
     assert 'projectLinked(project, "calendar_event")' in light_project_detail
     assert 'projectLinked(project, "feed_item")' in light_project_detail
@@ -1095,6 +1110,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'margin-top: -4px;' in styles
     assert 'margin-top: -8px;' in styles
     assert 'if (state.route === "task-detail") {' in app
+    assert 'if (document.visibilityState === "visible" && (state.route === "reminders" || state.route === "reminder-detail")) {' in app
+    assert 'loadWorkspaceCollection("reminders", { render: true, force: true })' in app
     visibility_listener = app.split('document.addEventListener("visibilitychange", () => {', 1)[1].split("window.PuckyHandleAndroidBack =", 1)[0]
     assert 'if (state.route === "task-detail") {' in visibility_listener
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in visibility_listener

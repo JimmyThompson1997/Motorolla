@@ -328,3 +328,73 @@ def test_workspace_api_multi_day_calendar_and_archived_contacts(tmp_path: Path) 
         assert "api-contact" in {item["id"] for item in all_contacts["items"]}
     finally:
         server.shutdown()
+
+
+def test_workspace_api_reminder_delivery_metadata_and_snooze_done_paths(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        created = request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "api-reminder-proof",
+                "title": "Reminder proof",
+                "summary": "Reminder summary",
+                "status": "open",
+                "due_at_ms": 60_000,
+                "metadata": {"source_kind": "task", "source_id": "api-task"},
+            },
+        )
+        assert created["metadata"]["delivery_state"] == "pending"
+
+        snoozed = request_json(
+            base_url,
+            "/api/workspace/reminders/api-reminder-proof",
+            method="PATCH",
+            token="test-token",
+            body={
+                "due_at_ms": 120_000,
+                "metadata": {
+                    "delivery_state": "pending",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                    "snoozed_until_ms": 120_000,
+                },
+            },
+        )
+        assert snoozed["due_at_ms"] == 120_000
+        assert snoozed["metadata"]["delivery_state"] == "pending"
+        assert snoozed["metadata"]["snoozed_until_ms"] == 120_000
+
+        failed = request_json(
+            base_url,
+            "/api/workspace/reminders/api-reminder-proof",
+            method="PATCH",
+            token="test-token",
+            body={
+                "metadata": {
+                    "delivery_state": "failed",
+                    "last_delivery_error": "no_online_device",
+                    "notification_device_id": "phone-1",
+                }
+            },
+        )
+        assert failed["metadata"]["delivery_state"] == "failed"
+        assert failed["metadata"]["last_delivery_error"] == "no_online_device"
+        assert failed["metadata"]["notification_device_id"] == "phone-1"
+
+        done = request_json(
+            base_url,
+            "/api/workspace/reminders/api-reminder-proof",
+            method="PATCH",
+            token="test-token",
+            body={"status": "done"},
+        )
+        assert done["status"] == "done"
+        assert done["metadata"]["delivery_state"] == "failed"
+        assert done["metadata"]["snoozed_until_ms"] == 0
+    finally:
+        server.shutdown()

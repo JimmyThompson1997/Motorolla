@@ -69,6 +69,7 @@ DEFAULT_OPENAI_TURN_MODEL = "gpt-5.4-mini"
 DEFAULT_OPENAI_TURN_REASONING_EFFORT = "low"
 OPENAI_TURN_MODELS = ("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano")
 OPENAI_TURN_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh")
+REMINDER_POLL_INTERVAL_SECONDS = 15.0
 MAX_CARD_TITLE_CHARS = 64
 MAX_CARD_ICON_NAME_CHARS = 48
 CARD_ICON_NAME_RE = re.compile(r"^[a-z0-9_]{1,48}$")
@@ -887,6 +888,9 @@ class PuckyVoiceService:
         self._meetings_index_path = self._meetings_dir / "meetings.json"
         self._meeting_agent_state_lock = threading.Lock()
         self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
+        self._reminder_poll_lock = threading.Lock()
+        self._reminder_stop_event = threading.Event()
+        self._reminder_poll_thread: threading.Thread | None = None
 
     def _build_codex_client(self, *, meeting: bool) -> CodexAppServerClient:
         role = "meeting" if meeting else "default"
@@ -918,6 +922,14 @@ class PuckyVoiceService:
         self.codex.start()
         if self.meeting_codex is not self.codex:
             self.meeting_codex.start()
+        if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
+            self._reminder_stop_event.clear()
+            self._reminder_poll_thread = threading.Thread(
+                target=self._reminder_poll_loop,
+                name="pucky-reminder-poll",
+                daemon=True,
+            )
+            self._reminder_poll_thread.start()
 
     def health(self) -> dict[str, object]:
         return {
@@ -934,6 +946,166 @@ class PuckyVoiceService:
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
             "composio": "present" if self.config.composio_api_key else "missing",
         }
+
+    def _reminder_poll_loop(self) -> None:
+        while not self._reminder_stop_event.is_set():
+            try:
+                self.process_due_reminders()
+            except Exception as exc:
+                self.record_action(
+                    surface="reminders",
+                    action="poll",
+                    tool="notify.show",
+                    target="reminder_poll",
+                    status=f"error:{str(exc)[:120]}",
+                )
+            self._reminder_stop_event.wait(REMINDER_POLL_INTERVAL_SECONDS)
+
+    def _reminder_target_device_id(self, reminder: dict[str, object]) -> tuple[str, str]:
+        metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+        preferred = str(metadata.get("notification_device_id") or "").strip()
+        broker = ensure_broker_initialized()
+        devices = [item for item in broker.list_devices() if bool(item.get("online"))]
+        if preferred:
+            for device in devices:
+                if str(device.get("device_id") or "") == preferred:
+                    return preferred, ""
+            return "", "preferred_device_offline"
+        if devices:
+            return str(devices[0].get("device_id") or "").strip(), ""
+        return "", "no_online_device"
+
+    def _queue_device_command(self, device_id: str, command_type: str, args: dict[str, object]) -> dict[str, object]:
+        broker = ensure_broker_initialized()
+        clean_device_id = str(device_id or "").strip()
+        if not clean_device_id:
+            raise RuntimeError("missing_device_id")
+        command = {
+            "id": f"cmd_{uuid.uuid4()}",
+            "type": str(command_type or "").strip() or "ping",
+            "args": args if isinstance(args, dict) else {},
+            "ttl_ms": 30000,
+            "created_at": broker.now(),
+            "device_id": clean_device_id,
+            "status": "queued",
+        }
+        broker.persist_command(command)
+        broker.record({"event": "command_queued", "command": command})
+        with broker.LOCK:
+            device = broker.DEVICES.get(clean_device_id)
+        if not device:
+            command["status"] = "device_offline"
+            broker.persist_command(command)
+            broker.record({"event": "command_offline", "command": command})
+            raise RuntimeError("DEVICE_OFFLINE")
+        try:
+            broker.ws_send(device["socket"], broker.compact_json({
+                "schema": "pucky.command.v1",
+                "id": command["id"],
+                "type": command["type"],
+                "args": command["args"],
+                "created_at": command["created_at"],
+                "ttl_ms": command["ttl_ms"],
+            }))
+        except Exception as exc:
+            command["status"] = "send_failed"
+            command["error"] = {"message": str(exc)}
+            broker.persist_command(command)
+            broker.record({"event": "command_send_failed", "command": command})
+            raise RuntimeError(str(exc)) from exc
+        command["status"] = "sent"
+        broker.persist_command(command)
+        broker.record({"event": "command_sent", "command": command})
+        return command
+
+    def _reminder_is_due_for_delivery(self, reminder: dict[str, object], now_ms: int) -> bool:
+        if not isinstance(reminder, dict):
+            return False
+        if bool(reminder.get("archived")) or bool(reminder.get("deleted")):
+            return False
+        if str(reminder.get("status") or "").strip().lower() == "done":
+            return False
+        due_at_ms = int(reminder.get("due_at_ms") or 0)
+        if due_at_ms <= 0 or due_at_ms > now_ms:
+            return False
+        metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+        return int(metadata.get("last_fired_due_at_ms") or 0) != due_at_ms
+
+    def _reminder_delivery_patch(
+        self,
+        reminder: dict[str, object],
+        *,
+        delivery_state: str,
+        now_ms: int,
+        device_id: str = "",
+        error: str = "",
+        mark_fired: bool = False,
+    ) -> dict[str, object] | None:
+        metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+        due_at_ms = int(reminder.get("due_at_ms") or 0)
+        normalized_error = str(error or "").strip()
+        payload = {
+            "metadata": {
+                "delivery_state": delivery_state,
+                "last_delivery_error": normalized_error,
+                "notification_device_id": device_id or str(metadata.get("notification_device_id") or "").strip(),
+                "snoozed_until_ms": 0,
+            }
+        }
+        if mark_fired:
+            payload["metadata"]["last_fired_at_ms"] = now_ms
+            payload["metadata"]["last_fired_due_at_ms"] = due_at_ms
+        return self.workspace.patch_record("reminders", str(reminder.get("id") or reminder.get("record_id") or ""), payload)
+
+    def process_due_reminders(self) -> dict[str, object]:
+        if not self._reminder_poll_lock.acquire(blocking=False):
+            return {"schema": "pucky.reminder_delivery_poll.v1", "skipped": True, "reason": "already_running"}
+        try:
+            now_ms = self.workspace.now_ms()
+            reminders = list(self.workspace.list_records("reminders", limit=500).get("items") or [])
+            processed: list[dict[str, object]] = []
+            for reminder in reminders:
+                if not self._reminder_is_due_for_delivery(reminder, now_ms):
+                    continue
+                reminder_id = str(reminder.get("id") or "")
+                device_id, device_error = self._reminder_target_device_id(reminder)
+                if device_error:
+                    existing_meta = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+                    if str(existing_meta.get("delivery_state") or "") != "failed" or str(existing_meta.get("last_delivery_error") or "") != device_error:
+                        self._reminder_delivery_patch(reminder, delivery_state="failed", now_ms=now_ms, error=device_error)
+                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or "reminder", status=device_error)
+                    processed.append({"id": reminder_id, "ok": False, "error": device_error})
+                    continue
+                title = str(reminder.get("title") or "Reminder").strip() or "Reminder"
+                summary = str(reminder.get("summary") or "").strip()
+                text = summary or "Reminder due now."
+                try:
+                    command = self._queue_device_command(device_id, "notify.show", {
+                        "id": f"reminder_{reminder_id or uuid.uuid4().hex[:12]}",
+                        "title": title,
+                        "text": text,
+                        "big_text": summary or title,
+                        "audible": True,
+                        "auto_cancel": True,
+                        "only_alert_once": True,
+                    })
+                    self._reminder_delivery_patch(reminder, delivery_state="sent", now_ms=now_ms, device_id=device_id, mark_fired=True)
+                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status="sent")
+                    processed.append({"id": reminder_id, "ok": True, "device_id": device_id, "command_id": str(command.get("id") or "")})
+                except Exception as exc:
+                    error = str(exc) or "send_failed"
+                    self._reminder_delivery_patch(reminder, delivery_state="failed", now_ms=now_ms, device_id=device_id, error=error)
+                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status=f"failed:{error[:80]}")
+                    processed.append({"id": reminder_id, "ok": False, "device_id": device_id, "error": error})
+            return {
+                "schema": "pucky.reminder_delivery_poll.v1",
+                "ok": True,
+                "count": len(processed),
+                "processed": processed,
+                "now_ms": now_ms,
+            }
+        finally:
+            self._reminder_poll_lock.release()
 
     def composio_user_id(self) -> str:
         return self.config.composio_default_user_id
