@@ -679,6 +679,9 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "top: 0;" in light_page_header
     assert "z-index:" in light_page_header
     assert "background:" in light_page_header
+    assert "transparent 100%" not in light_page_header
+    assert "box-shadow:" in light_page_header
+    assert "-webkit-backdrop-filter:" in light_page_header
     assert "backdrop-filter:" in light_page_header
     assert 'const expanded = taskSectionExpanded(group);' in light_task_sections
     assert 'const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");' in light_task_sections
