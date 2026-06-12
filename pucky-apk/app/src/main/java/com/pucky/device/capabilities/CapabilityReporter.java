@@ -10,6 +10,7 @@ import android.speech.SpeechRecognizer;
 
 import com.pucky.device.accessibility.PuckyAccessibilityService;
 import com.pucky.device.notifications.PuckyNotificationLedger;
+import com.pucky.device.phone.PhoneRoleController;
 import com.pucky.device.status.AppIdentity;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -40,6 +41,7 @@ public final class CapabilityReporter {
         Json.put(out, "android_sdk", Build.VERSION.SDK_INT);
         Json.put(out, "generated_at", Instant.now().toString());
         Json.put(out, "capabilities", capabilities());
+        Json.put(out, "control_surfaces", controlSurfaces());
         Json.put(out, "permission_warnings", permissionReporter.activeWarnings());
         return out;
     }
@@ -113,6 +115,20 @@ public final class CapabilityReporter {
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
                 "not_recorded", "Locks the screen through Pucky's user-enabled AccessibilityService; no ADB or shell command required."));
+        Json.add(out, cap("phone.role", "phone.role.status/phone.role.request_setup", phoneRoleStatus(),
+                "user_mediated", "visible", null, "self_reported",
+                "Reports whether Pucky is dialer-role eligible/held and opens the default phone-app setup flow."));
+        Json.add(out, cap("phone.history", "phone.history.list", historyStatus(), "yes", "privacy_sensitive",
+                Manifest.permission.READ_CALL_LOG, "not_recorded",
+                "First-class call-history readback surface for recent device call logs."));
+        Json.add(out, cap("ui.a11y.stable", "ui.a11y.status/ui.a11y.snapshot/ui.a11y.wait_for/ui.a11y.action/ui.a11y.type/ui.a11y.global_action",
+                accessibilityStableStatus(), "user_enabled_accessibility", "visible",
+                "android.permission.BIND_ACCESSIBILITY_SERVICE", "self_reported",
+                "Curated accessibility-backed UI automation for Phone, Settings, Browser, Calendar, and notification flows."));
+        Json.add(out, cap("ui.a11y.lab", "ui.a11y.lab.status/ui.a11y.lab.snapshot/ui.a11y.lab.action/ui.a11y.lab.gesture/ui.a11y.lab.type",
+                accessibilityLabStatus(), "internal_setting", "visible",
+                "android.permission.BIND_ACCESSIBILITY_SERVICE", "self_reported",
+                "Experimental broader accessibility lab layer. It stays off by default until explicitly enabled in Pucky settings."));
         Json.add(out, cap("camera.inventory", "camera.info", hasCamera() ? "implemented" : "blocked_by_hardware",
                 "yes", "quiet", null, "not_recorded", "Camera2 inventory and default JPEG size."));
         Json.add(out, cap("camera.photo_capture", "photo.capture", cameraStatus(), "yes", "visible",
@@ -247,7 +263,7 @@ public final class CapabilityReporter {
                         ? "implemented_untested" : "blocked_by_permission",
                 "yes", "privacy_sensitive", Manifest.permission.READ_SMS, "not_recorded",
                 "Lists recent SMS, supports deep history windows, reads a thread by address or thread id, and sends direct SMS through the Android communications room."));
-        Json.add(out, cap("phone.calls", "phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.hangup",
+        Json.add(out, cap("phone.calls", "phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.decline/phone.calls.hangup",
                 permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CALL_LOG)
                         && permissionReporter.isEffectivelyGranted(Manifest.permission.CALL_PHONE)
                         ? "implemented_untested" : "blocked_by_permission",
@@ -296,6 +312,25 @@ public final class CapabilityReporter {
                 "Development-only installation path."));
         Json.add(out, cap("root.shell", null, "requires_root", "root_only", "visible", null, "not_applicable",
                 "The APK exposes no raw shell command; root remains unavailable."));
+        return out;
+    }
+
+    private JSONObject controlSurfaces() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "phone_role", PhoneRoleController.status(context));
+        Json.put(out, "accessibility_enabled_in_settings", PuckyAccessibilityService.isEnabledInSettings(context));
+        Json.put(out, "accessibility_connected", PuckyAccessibilityService.canInspectUi(context));
+        Json.put(out, "accessibility_lab_enabled", settingsStore.isAccessibilityLabEnabled());
+        Json.put(out, "telephony_permissions_ready",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.CALL_PHONE)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.ANSWER_PHONE_CALLS)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.READ_PHONE_STATE));
+        Json.put(out, "contacts_permissions_ready",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CONTACTS)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.WRITE_CONTACTS));
+        Json.put(out, "calendar_permissions_ready",
+                permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CALENDAR)
+                        && permissionReporter.isEffectivelyGranted(Manifest.permission.WRITE_CALENDAR));
         return out;
     }
 
@@ -410,6 +445,38 @@ public final class CapabilityReporter {
     private boolean hasAnySensor() {
         SensorManager manager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         return manager != null && !manager.getSensorList(Sensor.TYPE_ALL).isEmpty();
+    }
+
+    private String phoneRoleStatus() {
+        JSONObject status = PhoneRoleController.status(context);
+        if (status.optBoolean("role_held", false)) {
+            return "implemented";
+        }
+        if (status.optBoolean("eligible", false)) {
+            return "implemented_guarded";
+        }
+        return "requires_manifest_and_role";
+    }
+
+    private String historyStatus() {
+        return permissionReporter.isEffectivelyGranted(Manifest.permission.READ_CALL_LOG)
+                ? "implemented_untested"
+                : "blocked_by_permission";
+    }
+
+    private String accessibilityStableStatus() {
+        return PuckyAccessibilityService.canInspectUi(context)
+                ? "implemented_guarded"
+                : "blocked_by_permission";
+    }
+
+    private String accessibilityLabStatus() {
+        if (!settingsStore.isAccessibilityLabEnabled()) {
+            return "disabled_by_setting";
+        }
+        return PuckyAccessibilityService.canInspectUi(context)
+                ? "experimental"
+                : "blocked_by_permission";
     }
 
     private static String shortPermission(String permission) {

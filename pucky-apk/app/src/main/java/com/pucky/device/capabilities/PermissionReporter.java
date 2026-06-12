@@ -60,6 +60,24 @@ public final class PermissionReporter {
                 && !isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
             Json.add(warnings, "LOCATION denied: location.get and location.watch are blocked");
         }
+        if (!isGranted(Manifest.permission.CALL_PHONE)) {
+            Json.add(warnings, "CALL_PHONE denied: phone.calls.place is blocked");
+        }
+        if (!isGranted(Manifest.permission.ANSWER_PHONE_CALLS)) {
+            Json.add(warnings, "ANSWER_PHONE_CALLS denied: phone.calls.answer/decline/hangup are blocked");
+        }
+        if (!isGranted(Manifest.permission.READ_CONTACTS)) {
+            Json.add(warnings, "READ_CONTACTS denied: phone.contacts.search and phone.contacts.get are blocked");
+        }
+        if (!isGranted(Manifest.permission.WRITE_CONTACTS)) {
+            Json.add(warnings, "WRITE_CONTACTS denied: phone.contacts.create/replace/delete are blocked");
+        }
+        if (!isGranted(Manifest.permission.READ_CALENDAR)) {
+            Json.add(warnings, "READ_CALENDAR denied: Android calendar readbacks are blocked");
+        }
+        if (!isGranted(Manifest.permission.WRITE_CALENDAR)) {
+            Json.add(warnings, "WRITE_CALENDAR denied: Android calendar mutation is blocked");
+        }
         return warnings;
     }
 
@@ -117,11 +135,11 @@ public final class PermissionReporter {
         add(out, Manifest.permission.CALL_PHONE, declared, true, true, "dangerous",
                 array("android.substrate place call", "android.calls.place", "phone.calls.place"));
         add(out, Manifest.permission.ANSWER_PHONE_CALLS, declared, true, true, "dangerous",
-                array("android.substrate hang up or answer calls", "android.calls.answer", "android.calls.hangup", "phone.calls.answer", "phone.calls.hangup"));
+                array("android.substrate hang up or answer calls", "android.calls.answer", "android.calls.hangup", "phone.calls.answer", "phone.calls.decline", "phone.calls.hangup"));
         add(out, Manifest.permission.READ_PHONE_STATE, declared, true, true, "dangerous",
                 array("android.substrate phone state", "android.calls.state", "phone.telephony.status", "phone.calls.state"));
         add(out, Manifest.permission.READ_CALL_LOG, declared, true, true, "dangerous",
-                array("android.substrate call log query", "android.calls.list", "android.voicemail.list", "phone.calls.list", "phone.voicemail.list"));
+                array("android.substrate call log query", "android.calls.list", "android.voicemail.list", "phone.calls.list", "phone.history.list", "phone.voicemail.list"));
         add(out, Manifest.permission.WRITE_CALL_LOG, declared, true, true, "dangerous",
                 array("android.substrate call log mutation"));
         add(out, Manifest.permission.READ_CONTACTS, declared, true, true, "dangerous",

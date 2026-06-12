@@ -76,6 +76,17 @@
         </activity>
 
         <activity
+            android:name=".phone.PhoneHubActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true" />
+
+        <activity
+            android:name=".phone.PhoneRoleSetupActivity"
+            android:exported="false"
+            android:theme="@style/PuckyTheme" />
+
+        <activity
             android:name=".calls.PuckyDialerActivity"
             android:exported="true"
             android:launchMode="singleTop"

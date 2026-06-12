@@ -2,6 +2,7 @@ package com.pucky.device.command;
 
 import com.pucky.device.util.Json;
 
+import com.pucky.device.accessibility.PuckyAccessibilityController;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
 import com.pucky.device.battery.BatteryProvider;
@@ -21,6 +22,7 @@ import com.pucky.device.network.NetworkProvider;
 import com.pucky.device.notes.NoteController;
 import com.pucky.device.notifications.NotificationController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.phone.PhoneRoleController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.sensors.SensorController;
 import com.pucky.device.speech.NativeSpeechController;
@@ -58,6 +60,10 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "storage.get", "runtime.stats", "system.memory.get", "system.thermal.get",
             "service.status", "power.policy.get", "compute.benchmark",
             "screen.lock.status", "screen.lock.request", "screen.lock.open_accessibility_settings",
+            "ui.a11y.status", "ui.a11y.snapshot", "ui.a11y.wait_for", "ui.a11y.action",
+            "ui.a11y.type", "ui.a11y.global_action",
+            "ui.a11y.lab.status", "ui.a11y.lab.snapshot", "ui.a11y.lab.action",
+            "ui.a11y.lab.gesture", "ui.a11y.lab.type",
             "artifact.list", "artifact.hash", "artifact.read_base64", "artifact.url", "artifact.delete",
             "pucky.clipboard.list", "pucky.clipboard.last", "pucky.clipboard.read",
             "pucky.clipboard.delete", "pucky.clipboard.clear",
@@ -121,9 +127,11 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "android.notifications.listener.status", "android.notifications.listener.messages",
             "phone.telephony.status",
             "phone.sms.list", "phone.sms.get_thread", "phone.sms.send",
-            "phone.calls.list", "phone.calls.state", "phone.calls.place", "phone.calls.answer", "phone.calls.hangup",
+            "phone.role.status", "phone.role.request_setup",
+            "phone.calls.list", "phone.calls.state", "phone.calls.place", "phone.calls.answer", "phone.calls.decline", "phone.calls.hangup",
             "phone.contacts.search", "phone.contacts.get", "phone.contacts.create",
             "phone.contacts.replace", "phone.contacts.delete",
+            "phone.history.list",
             "phone.voicemail.list",
             "phone.blocked_numbers.list", "phone.blocked_numbers.add", "phone.blocked_numbers.remove",
             "note.create_local", "note.list_local", "note.delete_local", "ui.state.get",
@@ -160,6 +168,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final MediaExportController mediaExportController;
     private final PlayerController playerController;
     private final ButtonController buttonController;
+    private final PuckyAccessibilityController accessibilityController;
     private final VoiceCaptureController voiceCaptureController;
     private final NativeSpeechController nativeSpeechController;
     private final SpeechEchoController speechEchoController;
@@ -199,6 +208,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             MediaExportController mediaExportController,
             PlayerController playerController,
             ButtonController buttonController,
+            PuckyAccessibilityController accessibilityController,
             VoiceCaptureController voiceCaptureController,
             NativeSpeechController nativeSpeechController,
             SpeechEchoController speechEchoController,
@@ -235,6 +245,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.mediaExportController = mediaExportController;
         this.playerController = playerController;
         this.buttonController = buttonController;
+        this.accessibilityController = accessibilityController;
         this.voiceCaptureController = voiceCaptureController;
         this.nativeSpeechController = nativeSpeechController;
         this.speechEchoController = speechEchoController;
@@ -328,6 +339,27 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return systemController.screenLockRequest();
             case "screen.lock.open_accessibility_settings":
                 return systemController.openAccessibilitySettings();
+            case "ui.a11y.status":
+            case "ui.a11y.lab.status":
+                return accessibilityController.status();
+            case "ui.a11y.snapshot":
+                return accessibilityController.snapshot(command.args(), false);
+            case "ui.a11y.wait_for":
+                return accessibilityController.waitFor(command.args(), false);
+            case "ui.a11y.action":
+                return accessibilityController.action(command.args(), false);
+            case "ui.a11y.type":
+                return accessibilityController.type(command.args(), false);
+            case "ui.a11y.global_action":
+                return accessibilityController.globalAction(command.args());
+            case "ui.a11y.lab.snapshot":
+                return accessibilityController.snapshot(command.args(), true);
+            case "ui.a11y.lab.action":
+                return accessibilityController.action(command.args(), true);
+            case "ui.a11y.lab.gesture":
+                return accessibilityController.gesture(command.args());
+            case "ui.a11y.lab.type":
+                return accessibilityController.type(command.args(), true);
             case "compute.benchmark":
                 return systemController.benchmark(command.args());
             case "artifact.list":
@@ -568,6 +600,13 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return intentController.dialIntent(command.args());
             case "phone.telephony.status":
                 return phoneDataController.telephonyStatus();
+            case "phone.role.status":
+                return PhoneRoleController.status(settingsStore.context());
+            case "phone.role.request_setup":
+                return PhoneRoleController.requestSetup(
+                        settingsStore.context(),
+                        command.args().optBoolean("show_notification", true),
+                        command.args().optBoolean("open_setup_ui", true));
             case "phone.sms.list":
                 return phoneDataController.smsList(command.args());
             case "phone.sms.get_thread":
@@ -582,6 +621,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return phoneDataController.callsPlace(command.args());
             case "phone.calls.answer":
                 return phoneDataController.callsAnswer(command.args());
+            case "phone.calls.decline":
+                return phoneDataController.callsDecline(command.args());
             case "phone.calls.hangup":
                 return phoneDataController.callsHangup(command.args());
             case "phone.contacts.search":
@@ -594,6 +635,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return phoneDataController.contactsReplace(command.args());
             case "phone.contacts.delete":
                 return phoneDataController.contactsDelete(command.args());
+            case "phone.history.list":
+                return phoneDataController.historyList(command.args());
             case "phone.voicemail.list":
                 return phoneDataController.voicemailList(command.args());
             case "phone.blocked_numbers.list":

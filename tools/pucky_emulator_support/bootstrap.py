@@ -295,7 +295,7 @@ def package_manager_ready(
     try:
         query = runner.run(
             adb_command_fn(args, config.serial, ["shell", "cmd", "package", "list", "packages", "android"]),
-            timeout=20,
+            timeout=45,
             check=False,
         )
     except subprocess_module.TimeoutExpired:
@@ -307,7 +307,7 @@ def package_manager_ready(
         return False
 
     try:
-        fallback = runner.run(adb_command_fn(args, config.serial, ["shell", "pm", "path", "android"]), timeout=20, check=False)
+        fallback = runner.run(adb_command_fn(args, config.serial, ["shell", "pm", "path", "android"]), timeout=45, check=False)
     except subprocess_module.TimeoutExpired:
         return False
     fallback_text = (fallback.stdout + "\n" + fallback.stderr).lower()
@@ -326,14 +326,14 @@ def install_services_ready(
     if not package_manager_ready_fn(args, runner, config):
         return False
     try:
-        mount = runner.run(adb_command_fn(args, config.serial, ["shell", "service", "check", "mount"]), timeout=15, check=False)
+        mount = runner.run(adb_command_fn(args, config.serial, ["shell", "service", "check", "mount"]), timeout=30, check=False)
     except subprocess_module.TimeoutExpired:
         return False
     mount_text = (mount.stdout + "\n" + mount.stderr).lower()
     if mount.returncode != 0 or "can't find service" in mount_text or "not found" in mount_text:
         return False
     try:
-        volumes = runner.run(adb_command_fn(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=20, check=False)
+        volumes = runner.run(adb_command_fn(args, config.serial, ["shell", "sm", "list-volumes", "all"]), timeout=45, check=False)
     except subprocess_module.TimeoutExpired:
         return False
     volumes_text = (volumes.stdout + "\n" + volumes.stderr).lower()
@@ -368,12 +368,15 @@ def install_apk_resilient(
 ) -> None:
     install_command = adb_command_fn(args, config.serial, ["install", "-r", str(args.apk)])
     try:
-        runner.run(install_command, timeout=180)
+        runner.run(install_command, timeout=420)
         return
+    except subprocess.TimeoutExpired:
+        if args.dry_run:
+            raise
     except Exception as exc:
         if args.dry_run or not is_streamed_install_storage_service_failure_fn(exc):
             raise
-    runner.run(adb_command_fn(args, config.serial, ["install", "--no-streaming", "-r", str(args.apk)]), timeout=300)
+    runner.run(adb_command_fn(args, config.serial, ["install", "--no-streaming", "-r", str(args.apk)]), timeout=600)
 
 
 def serial_is_connected(

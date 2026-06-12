@@ -268,6 +268,21 @@ public final class PhoneDataController {
         });
     }
 
+    public JSONObject callsDecline(JSONObject args) throws CommandException {
+        return safe(() -> {
+            JSONObject payload = new JSONObject();
+            Json.put(payload, "op", "manager.call");
+            Json.put(payload, "action", "hangup_active");
+            JSONObject raw = substrate(payload);
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_call_decline.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "declined", raw.optBoolean("ended", false));
+            Json.put(out, "ended", raw.optBoolean("ended", false));
+            return out;
+        });
+    }
+
     public JSONObject callsHangup(JSONObject args) throws CommandException {
         return safe(() -> {
             JSONObject payload = new JSONObject();
@@ -393,6 +408,29 @@ public final class PhoneDataController {
             Json.put(out, "schema", "pucky.phone_contact_create.v1");
             Json.put(out, "generated_at", Instant.now().toString());
             Json.put(out, "contact", contact);
+            return out;
+        });
+    }
+
+    public JSONObject historyList(JSONObject args) throws CommandException {
+        return safe(() -> {
+            requirePermission(Manifest.permission.READ_CALL_LOG);
+            int limit = boundedLimit(args);
+            JSONObject result = substrate(historyQueryArgs(
+                    "content://call_log/calls",
+                    array("_id", "number", "formatted_number", "date", "type", "duration", "new", "is_read", "name", "voicemail_uri", "transcription"),
+                    null,
+                    null,
+                    "date DESC, _id DESC",
+                    limit,
+                    args));
+            JSONArray rows = normalizeCallRows(result.optJSONArray("rows"));
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.phone_history_list.v1");
+            Json.put(out, "generated_at", Instant.now().toString());
+            Json.put(out, "rows", rows);
+            Json.put(out, "count", rows.length());
+            Json.put(out, "truncated", result.optBoolean("truncated", false));
             return out;
         });
     }

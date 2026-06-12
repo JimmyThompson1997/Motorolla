@@ -32,6 +32,7 @@ import com.pucky.device.PuckyApplication;
 import com.pucky.device.MainActivity;
 import com.pucky.device.audio.AudioController;
 import com.pucky.device.artifacts.ArtifactController;
+import com.pucky.device.accessibility.PuckyAccessibilityController;
 import com.pucky.device.battery.BatteryProvider;
 import com.pucky.device.buttons.ButtonController;
 import com.pucky.device.broker.BrokerControlClient;
@@ -259,6 +260,7 @@ public final class PuckyForegroundService extends Service {
                 new MediaExportController(this),
                 PlayerController.shared(this),
                 new ButtonController(this),
+                new PuckyAccessibilityController(this, settings),
                 VoiceCaptureController.shared(this),
                 NativeSpeechController.shared(this),
                 SpeechEchoController.shared(this),

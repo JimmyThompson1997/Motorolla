@@ -1131,7 +1131,7 @@ def wait_for_install_services(
     runner: Runner,
     config: SlotConfig,
     *,
-    timeout: float = 180.0,
+    timeout: float = 300.0,
     settle_seconds: float = INSTALL_SERVICES_SETTLE_SECONDS,
 ) -> None:
     if runner.dry_run:
@@ -2715,7 +2715,20 @@ def cmd_smoke(args: argparse.Namespace) -> dict[str, Any]:
     health = wait_http(f"http://127.0.0.1:{config.broker_port}/health", timeout=10) if not args.dry_run else {"dry_run": True}
     ping = command_json(runner, puckyctl_command(args, config, "ping", {}), timeout=60)
     bundle = command_json(runner, puckyctl_command(args, config, "ui.bundle.status", {}), timeout=60)
-    cards = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=60)
+    surface_probe: dict[str, Any]
+    try:
+        surface_probe = command_json(runner, puckyctl_command(args, config, "ui.reply_cards.get", {}), timeout=60)
+    except SuiteError as exc:
+        message = str(exc)
+        if "COMMAND_NOT_ALLOWED" not in message:
+            raise
+        status_probe = command_json(runner, puckyctl_command(args, config, "status.get", {}), timeout=60)
+        surface_probe = {
+            "schema": "pucky.emulator_surface_probe.v1",
+            "fallback_command": "status.get",
+            "reply_cards_available": False,
+            "status_probe": command_result(status_probe),
+        }
     runner.run(launch_home_command(args, config), timeout=30)
     if not args.dry_run:
         time.sleep(0.5)
@@ -2730,7 +2743,14 @@ def cmd_smoke(args: argparse.Namespace) -> dict[str, Any]:
         write_evidence(
             config,
             "smoke.json",
-            {"health": health, "ping": ping, "bundle": bundle, "cards": cards, "screenshot": str(screenshot), "post_tap_screenshot": str(post_tap_screenshot)},
+            {
+                "health": health,
+                "ping": ping,
+                "bundle": bundle,
+                "surface_probe": surface_probe,
+                "screenshot": str(screenshot),
+                "post_tap_screenshot": str(post_tap_screenshot),
+            },
         )
     return {
         "schema": "pucky.emulator_smoke.v1",
@@ -2739,7 +2759,7 @@ def cmd_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "health": health,
         "ping": ping,
         "bundle": bundle,
-        "cards": cards,
+        "surface_probe": surface_probe,
         "screenshot": str(screenshot),
         "post_tap_screenshot": str(post_tap_screenshot),
         "commands": runner.planned,

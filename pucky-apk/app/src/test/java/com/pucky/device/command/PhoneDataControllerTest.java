@@ -159,16 +159,20 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("\"phone.sms.list\""));
         assertTrue(executor.contains("\"phone.sms.get_thread\""));
         assertTrue(executor.contains("\"phone.sms.send\""));
+        assertTrue(executor.contains("\"phone.role.status\""));
+        assertTrue(executor.contains("\"phone.role.request_setup\""));
         assertTrue(executor.contains("\"phone.calls.list\""));
         assertTrue(executor.contains("\"phone.calls.state\""));
         assertTrue(executor.contains("\"phone.calls.place\""));
         assertTrue(executor.contains("\"phone.calls.answer\""));
+        assertTrue(executor.contains("\"phone.calls.decline\""));
         assertTrue(executor.contains("\"phone.calls.hangup\""));
         assertTrue(executor.contains("\"phone.contacts.search\""));
         assertTrue(executor.contains("\"phone.contacts.get\""));
         assertTrue(executor.contains("\"phone.contacts.create\""));
         assertTrue(executor.contains("\"phone.contacts.replace\""));
         assertTrue(executor.contains("\"phone.contacts.delete\""));
+        assertTrue(executor.contains("\"phone.history.list\""));
         assertTrue(executor.contains("\"phone.voicemail.list\""));
         assertTrue(executor.contains("\"phone.blocked_numbers.list\""));
         assertTrue(executor.contains("\"phone.blocked_numbers.add\""));
@@ -180,7 +184,9 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("return phoneDataController.callsState(command.args())"));
         assertTrue(executor.contains("return phoneDataController.callsPlace(command.args())"));
         assertTrue(executor.contains("return phoneDataController.callsAnswer(command.args())"));
+        assertTrue(executor.contains("return phoneDataController.callsDecline(command.args())"));
         assertTrue(executor.contains("return phoneDataController.contactsReplace(command.args())"));
+        assertTrue(executor.contains("return phoneDataController.historyList(command.args())"));
         assertTrue(executor.contains("return phoneDataController.blockedNumbersRemove(command.args())"));
         assertTrue(executor.contains("return notificationController.listenerStatus(command.args())"));
         assertTrue(executor.contains("return notificationController.listenerMessages(command.args())"));
@@ -188,10 +194,12 @@ public final class PhoneDataControllerTest {
         assertTrue(service.contains("AndroidSubstrateController substrateController = new AndroidSubstrateController(this);"));
         assertTrue(service.contains("new PhoneDataController(this, settings, substrateController)"));
 
+        assertTrue(capability.contains("phone.role.status/phone.role.request_setup"));
         assertTrue(capability.contains("phone.telephony.status"));
         assertTrue(capability.contains("phone.sms.list/phone.sms.get_thread/phone.sms.send"));
-        assertTrue(capability.contains("phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.hangup"));
+        assertTrue(capability.contains("phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.decline/phone.calls.hangup"));
         assertTrue(capability.contains("phone.contacts.search/phone.contacts.get/phone.contacts.create/phone.contacts.replace/phone.contacts.delete"));
+        assertTrue(capability.contains("phone.history.list"));
         assertTrue(capability.contains("phone.voicemail.list"));
         assertTrue(capability.contains("phone.blocked_numbers.list/phone.blocked_numbers.add/phone.blocked_numbers.remove"));
         assertTrue(capability.contains("notify.listener.status/notify.listener.messages"));
@@ -201,10 +209,12 @@ public final class PhoneDataControllerTest {
         assertTrue(permission.contains("phone.sms.send"));
         assertTrue(permission.contains("phone.calls.place"));
         assertTrue(permission.contains("phone.calls.answer"));
+        assertTrue(permission.contains("phone.calls.decline"));
         assertTrue(permission.contains("phone.calls.hangup"));
         assertTrue(permission.contains("phone.calls.state"));
         assertTrue(permission.contains("phone.telephony.status"));
         assertTrue(permission.contains("phone.calls.list"));
+        assertTrue(permission.contains("phone.history.list"));
         assertTrue(permission.contains("phone.contacts.search"));
         assertTrue(permission.contains("phone.contacts.create"));
         assertTrue(permission.contains("phone.voicemail.list"));

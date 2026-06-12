@@ -37,6 +37,7 @@ public final class SettingsStore {
     public static final String PUCKY_TURN_REASONING_XHIGH = "xhigh";
     private static final String UI_SHELL_MODE = "ui_shell_mode";
     private static final String DEFAULT_TILE_AUDIO_SPEED = "default_tile_audio_speed";
+    private static final String ACCESSIBILITY_LAB_ENABLED = "accessibility_lab_enabled";
     private static final String AUTO_CONNECT = "auto_connect";
     private static final String AUTOSTART = "autostart";
     private static final String[] LEGACY_REMOTE_ADB_KEYS = new String[] {
@@ -179,6 +180,14 @@ public final class SettingsStore {
         prefs.edit().putFloat(DEFAULT_TILE_AUDIO_SPEED, clampPlaybackSpeed(speed)).commit();
     }
 
+    public boolean isAccessibilityLabEnabled() {
+        return prefs.getBoolean(ACCESSIBILITY_LAB_ENABLED, false);
+    }
+
+    public void setAccessibilityLabEnabled(boolean enabled) {
+        prefs.edit().putBoolean(ACCESSIBILITY_LAB_ENABLED, enabled).commit();
+    }
+
     public boolean isAutoConnectEnabled() {
         return prefs.getBoolean(AUTO_CONNECT, false);
     }
@@ -238,6 +247,7 @@ public final class SettingsStore {
             editor.putBoolean(PUCKY_TURN_ACCEPTED_CHIME_ENABLED, acceptedChimeEnabled);
         }
         putString(editor, input, "ui_shell_mode", UI_SHELL_MODE);
+        putBoolean(editor, input, "accessibility_lab_enabled", ACCESSIBILITY_LAB_ENABLED);
         editor.commit();
         JSONObject out = new JSONObject();
         Json.put(out, "schema", schema);
