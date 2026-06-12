@@ -428,6 +428,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".light-reminder-row.is-done" in styles
     assert ".app-shell[data-theme=\"light\"] {" in styles
     assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
+    assert ".app-shell[data-chrome-mode=\"home-shell\"] .voice-status" in styles
     assert "--surface-app:" in styles
     assert "--surface-card:" in styles
     assert "--text-primary:" in styles
@@ -477,6 +478,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     home_feed_content = function_block(app, "homeFeedContentNodes")
     light_navigate = function_block(app, "lightNavigate")
     light_tasks = function_block(app, "lightTasksPage")
+    light_header = function_block(app, "lightHeader")
     light_task_sections = function_block(app, "lightTaskSectionHeader")
     light_task_counts = function_block(app, "lightTaskCounts")
     light_task_count_line = function_block(app, "lightTaskCountLine")
@@ -592,7 +594,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'if (!isHomeShellCanonicalRoute(value)) {' in embedded_light_app
     assert 'if (value === "feed") return "inbox";' in embedded_light_app
     assert 'if (value === "links") return "connect";' in embedded_light_app
-    assert 'return isHomeShellRoute() ? "home-shell" : "canonical";' in chrome_mode
+    assert 'return isHomeShellRoute() ? "home-shell" : "legacy-shell";' in chrome_mode
     assert "canonicalLaunchForRoute" not in app
     assert "activeCanonicalLaunch" not in app
     assert "handleCanonicalLaunchBack" not in app
@@ -616,9 +618,161 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'el("span", "light-task-count overdue", `${counts.overdue} overdue`),' in light_task_count_line
     assert 'el("span", "light-task-count due", `${counts.due} today`),' in light_task_count_line
     assert 'el("span", "light-task-count due-soon", `${counts.dueSoon} upcoming`),' in light_task_count_line
-    assert 'page.append(appbar);' in light_tasks
+    assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
+    assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
+    assert 'const page = lightPage("Tasks");' in light_tasks
+    assert 'page.classList.add("light-tasks-page");' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
     assert "lightTaskFilters()" not in light_tasks
+
+
+def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    chrome_mode = function_block(app, "chromeMode")
+    light_header = function_block(app, "lightHeader")
+    light_contacts = function_block(app, "lightContactsPage")
+    light_tasks = function_block(app, "lightTasksPage")
+    light_task_sections = function_block(app, "lightTaskSectionHeader")
+    filtered_tasks = function_block(app, "filteredTasks")
+    handle_back = function_block(app, "handleAndroidBack")
+    light_back = function_block(app, "lightBack")
+    light_theme_block = css_block(styles, '.app-shell[data-theme="light"]')
+    app_shell_block = css_block(styles, ".app-shell")
+    tab_block = css_block(styles, ".tab")
+    active_tab_block = css_block(styles, ".tab.is-active")
+    route_tray_block = css_block(styles, ".route-tray-shell")
+    settings_selector_button_block = css_block(styles, ".settings-selector-button")
+    links_search_placeholder_block = css_block(styles, ".links-search::placeholder")
+    card_block = top_level_css_block(styles, ".card")
+    timestamp_block = css_block(styles, ".card-timestamp")
+    identity_unread_block = css_block(styles, ".identity.is-unread")
+    action_unread_block = css_block(styles, ".action.is-unread")
+    action_block = css_block(styles, ".action")
+    action_playing_block = css_block(styles, ".action-audio.is-playing")
+    detail_header_block = css_block(styles, ".detail-header")
+    meeting_row_block = css_block(styles, ".meeting-row")
+    task_card_active_block = css_block(styles, ".light-task-card:active")
+    task_row_press_block = css_block(styles, ".light-task-row.is-pressed")
+    task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
+    task_row_base_block = None
+    for block in task_row_blocks:
+        if "min-height: 48px;" in block:
+            task_row_base_block = block
+            break
+    assert task_row_base_block, "Missing .light-task-row base CSS block"
+    voice_status_home_shell = top_level_css_block(styles, '.app-shell[data-chrome-mode="home-shell"] .voice-status')
+    light_page_header = top_level_css_block(styles, ".light-page-header")
+
+    assert 'return isHomeShellRoute() ? "home-shell" : "legacy-shell";' in chrome_mode
+    assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
+    assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
+    assert 'const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });' in light_contacts
+    assert 'page.classList.add("light-contacts-page");' in light_contacts
+    assert 'light-appbar' not in light_contacts
+    assert 'const page = lightPage("Tasks");' in light_tasks
+    assert 'page.classList.add("light-tasks-page");' in light_tasks
+    assert 'light-appbar' not in light_tasks
+    assert "display: none;" in voice_status_home_shell
+    assert "position: sticky;" in light_page_header
+    assert "top: 0;" in light_page_header
+    assert "z-index:" in light_page_header
+    assert "background:" in light_page_header
+    assert "backdrop-filter:" in light_page_header
+    assert 'const expanded = taskSectionExpanded(group);' in light_task_sections
+    assert 'const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");' in light_task_sections
+    assert 'toggle.dataset.taskSection = group;' in light_task_sections
+    assert 'el("h3", "light-task-section-title", label)' in light_task_sections
+    assert 'el("span", "light-task-section-spacer")' in light_task_sections
+    assert 'toggleTaskSection(group)' in light_task_sections
+    assert 'expanded ? "expand_more" : "navigate_next"' in light_task_sections
+    assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
+    assert 'lightNavigate("note-detail", { from: "notes" })' in app
+    assert 'lightNavigate("task-detail", { from: "tasks" })' in app
+    assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
+    assert 'lightNavigate("feed-preview-detail", { from: "feed-preview" })' in app
+    assert 'lightNavigate("project-detail", { from: "projects" })' in app
+    assert 'lightNavigate("contact-detail", { from: "contacts" })' in app
+
+    assert 'if (isHomeShellRoute() && lightBack()) {' in handle_back
+    assert 'state.route = parent === state.route ? "home" : parent;' in light_back
+    assert ".light-shell[data-light-route=\"meetings\"] .meetings-page" in styles
+    assert "color: var(--text-primary);" in app_shell_block
+    assert "background: var(--surface-app);" in app_shell_block
+    assert "background: transparent;" in tab_block
+    assert "color: var(--icon-primary);" in tab_block
+    assert "background:" in active_tab_block
+    assert "var(--tab-accent" in active_tab_block
+    assert "color: var(--tab-accent, var(--icon-primary));" in active_tab_block
+    assert "background: var(--surface-card-elevated);" in route_tray_block
+    assert "background: var(--surface-control);" in settings_selector_button_block
+    assert "color: var(--text-placeholder);" in links_search_placeholder_block
+    assert "background: var(--surface-card);" in card_block
+    assert "box-shadow: var(--shadow-card);" in card_block
+    assert "color: var(--text-primary);" in card_block
+    assert "color: var(--text-muted-strong);" in timestamp_block
+    assert "color: var(--accent, #72c2ff);" in identity_unread_block
+    assert "color: var(--icon-card-action-unread);" in action_unread_block
+    assert "color: var(--icon-card-neutral);" in action_block
+    assert "color: var(--accent, #72c2ff);" in action_playing_block
+    assert "background: var(--surface-header);" in detail_header_block
+    assert "background: var(--surface-control);" in meeting_row_block
+    assert ".light-task-row:active" in styles
+    assert ".light-task-card:active" in styles
+    assert ".light-task-row.is-pressed" in styles
+    assert "transform: none;" in task_card_active_block
+    assert "background: var(--home-shell-card-strong);" in task_card_active_block
+    assert "box-shadow: none;" in task_card_active_block
+    assert "transform: scale(0.995);" in task_row_press_block
+    assert "background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);" in task_row_press_block
+    assert ".light-task-row:focus-visible" in styles
+    assert 'appearance: none;' in task_row_base_block
+    assert 'touch-action: manipulation;' in task_row_base_block
+    assert ".light-task-section-toggle" in styles
+    assert ".light-task-section-count" in styles
+    assert ".light-task-section-spacer" in styles
+    assert ".light-detail-html-body.light-html-card" in styles
+    assert ".light-detail-html-body.light-html-empty" in styles
+    assert "width: calc(100% + 40px);" in styles
+    assert "margin-left: -20px;" in styles
+    assert "margin-right: -20px;" in styles
+    assert "border-radius: 0;" in styles
+    assert "color-scheme: light;" in light_theme_block
+    assert "--surface-app:" in light_theme_block
+    assert "--text-primary:" in light_theme_block
+    assert "--icon-card-neutral:" in light_theme_block
+    assert_css_block_omits_properties(
+        light_theme_block,
+        "padding",
+        "margin",
+        "gap",
+        "display",
+        "position",
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "height",
+        "min-height",
+        "max-height",
+        "width",
+        "flex",
+        "grid-template-columns",
+        "grid-template-rows",
+        "overflow",
+        "transform",
+    )
+    assert "--icon-card-action-unread:" not in light_theme_block
+    assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
+    assert ".app-shell[data-theme=\"light\"] .links-page" not in styles
+    assert ".app-shell[data-theme=\"light\"] .card" not in styles
+    assert ".app-shell[data-theme=\"light\"] .meetings-refresh" not in styles
+    assert ".app-shell[data-theme=\"light\"] .chat-media" not in styles
+    assert ".app-shell[data-theme=\"light\"] .audio-detail" not in styles
+    assert ".app-shell[data-theme=\"light\"] .timestamp-row" not in styles
+    assert "lightLinksPage" not in app
+    assert "function loadLightLinks" not in app
     assert 'const expanded = taskSectionExpanded(group);' in light_task_sections
     assert 'const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");' in light_task_sections
     assert 'toggle.dataset.taskSection = group;' in light_task_sections

@@ -3609,17 +3609,12 @@
   }
 
   function lightContactsPage() {
-    const page = el("section", "light-page light-contacts-page");
-    const appbar = el("header", "light-appbar light-contacts-appbar");
-    appbar.append(
-      lightIconButton("chevron_left", "Back", () => lightNavigate("home"), "light-appbar-back"),
-      el("h2", "light-appbar-title", "Contacts"),
-      el("span", "light-appbar-empty")
-    );
+    const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
+    page.classList.add("light-contacts-page");
     const list = el("div", "light-contact-list");
     const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
     if (status) {
-      page.append(appbar, status);
+      page.append(status);
       return page;
     }
     list.append(...workspaceItems("contacts").map(contact => {
@@ -3633,7 +3628,7 @@
       row.append(lightAvatar(contact), lightContactCopy(contact));
       return row;
     }));
-    page.append(appbar, list, lightCircleButton("plus", "Add contact", () => lightNavigate("contact-new", { from: "contacts" }), "light-contact-add-fab"));
+    page.append(list, lightCircleButton("plus", "Add contact", () => lightNavigate("contact-new", { from: "contacts" }), "light-contact-add-fab"));
     return page;
   }
 
@@ -4329,15 +4324,9 @@
   }
 
   function lightTasksPage() {
-    const page = el("section", "light-page light-tasks-page");
-    const appbar = el("header", "light-appbar light-tasks-appbar");
-    appbar.append(
-      lightIconButton("chevron_left", "Back", () => lightBack(), "light-appbar-back"),
-      el("h2", "light-appbar-title", "Tasks"),
-      el("span", "light-appbar-empty")
-    );
+    const page = lightPage("Tasks");
+    page.classList.add("light-tasks-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
-    page.append(appbar);
     if (status) {
       page.append(status);
       return page;
@@ -4735,9 +4724,10 @@
 
   function lightHeader(title, options = {}) {
     const header = el("header", "light-page-header");
+    const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();
     const left = options.back === false
       ? el("div", "light-nav-slot")
-      : lightCircleButton("chevron_left", "Back", () => lightBack(), "light-back-button");
+      : lightCircleButton("chevron_left", "Back", onBack, "light-back-button");
     const heading = el(options.large ? "h1" : "h2", options.large ? "light-page-title large" : "light-page-title", title);
     const right = options.action || el("div", "light-nav-slot");
     header.append(left, heading, right);
@@ -11107,7 +11097,7 @@
   }
 
   function chromeMode() {
-    return isHomeShellRoute() ? "home-shell" : "canonical";
+    return isHomeShellRoute() ? "home-shell" : "legacy-shell";
   }
 
   function isLightTheme() {

@@ -3546,7 +3546,8 @@ button {
 
 .app-shell[data-chrome-mode="home-shell"] .header,
 .app-shell[data-chrome-mode="home-shell"] .page-tabs,
-.app-shell[data-chrome-mode="home-shell"] .route-tray {
+.app-shell[data-chrome-mode="home-shell"] .route-tray,
+.app-shell[data-chrome-mode="home-shell"] .voice-status {
   display: none;
 }
 
@@ -3642,17 +3643,27 @@ button {
   padding-top: 8px;
 }
 
-.light-page-header,
-.light-appbar {
+.light-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 12;
   min-height: 54px;
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr) 46px;
   align-items: center;
   gap: 8px;
+  padding: 6px 0 10px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-app) 97%, white 3%) 0%,
+      color-mix(in srgb, var(--surface-app) 92%, transparent) 72%,
+      transparent 100%
+    );
+  backdrop-filter: blur(18px);
 }
 
-.light-page-title,
-.light-appbar-title {
+.light-page-title {
   margin: 0;
   color: var(--home-shell-text);
   text-align: center;
@@ -3708,10 +3719,6 @@ button {
   stroke-width: 2.1;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.light-appbar-back {
-  color: var(--accent-primary);
 }
 
 .light-card {
