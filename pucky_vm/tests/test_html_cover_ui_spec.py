@@ -687,6 +687,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "{ large: true }" not in light_feed
     assert 'const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });' in light_contacts
     assert 'page.classList.add("light-contacts-page");' in light_contacts
+    assert 'lightCircleButton("plus", "Add contact"' not in light_contacts
+    assert 'lightNavigate("contact-new", { from: "contacts" })' not in light_contacts
     assert 'light-appbar' not in light_contacts
     assert "padding-top:" not in contacts_page_block
     assert "return lightGraphListPage({" in light_meeting_notes
@@ -695,6 +697,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'const page = lightPage("Notes");' in light_notes
     assert "{ large: true }" not in light_notes
     assert 'const page = lightPage("Projects");' in light_projects
+    assert 'lightPillButton("New project"' not in light_projects
+    assert 'lightNavigate("project-new", { from: "projects" })' not in light_projects
     assert "{ large: true }" not in light_projects
     assert 'const page = lightPage("Reminders");' in light_reminders
     assert "{ large: true }" not in light_reminders
@@ -768,6 +772,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block
     assert ".light-task-section-toggle" in styles
+    assert ".light-contact-add-fab" not in styles
     assert ".light-task-section-count" in styles
     assert ".light-task-section-spacer" in styles
     assert ".light-detail-html-body.light-html-card" in styles

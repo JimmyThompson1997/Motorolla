@@ -3980,17 +3980,6 @@ button {
   line-height: 1.15;
 }
 
-.light-contact-add-fab {
-  position: fixed;
-  right: max(26px, env(safe-area-inset-right));
-  bottom: max(34px, env(safe-area-inset-bottom));
-  width: 60px;
-  height: 60px;
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 20%, var(--home-shell-card));
-  z-index: 5;
-}
-
 .light-profile-card {
   display: grid;
   justify-items: center;

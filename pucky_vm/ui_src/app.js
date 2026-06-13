@@ -3629,7 +3629,7 @@
       row.append(lightAvatar(contact), lightContactCopy(contact));
       return row;
     }));
-    page.append(list, lightCircleButton("plus", "Add contact", () => lightNavigate("contact-new", { from: "contacts" }), "light-contact-add-fab"));
+    page.append(list);
     return page;
   }
 
@@ -4683,7 +4683,6 @@
   function lightProjectsPage() {
     const page = lightPage("Projects");
     const list = el("div", "light-list");
-    page.append(lightPillButton("New project", () => lightNavigate("project-new", { from: "projects" })));
     const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
     if (status) {
       page.append(status);
