@@ -37,6 +37,7 @@
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
+  const TASK_SPLIT_MIN_WIDTH_PX = 900;
   const MIN_PLAYBACK_SPEED = 0.5;
   const MAX_PLAYBACK_SPEED = 3;
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
@@ -349,6 +350,7 @@
   const initialCalendarTimeZonePreference = resolveCalendarTimezonePreference();
   const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);
   const initialHomeShellActiveValue = initialHomeShellActive(persistedNavState.route, initialTheme);
+  const initialTaskSectionsExpandedValue = initialTaskSectionsExpanded(persistedNavState.task_sections_expanded);
   const state = {
     cards: [],
     cardIconRegistry: {},
@@ -366,18 +368,15 @@
     selectedMeetingNoteId: "demo-meeting-home-refresh",
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
-    selectedTaskId: "budget",
+    selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples",
     selectedProjectId: "aurora",
     selectedFeedId: "maya-budget",
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarTimeZone: initialCalendarTimeZonePreference,
-    taskSectionsExpanded: {
-      overdue: true,
-      do: true,
-      soon: true,
-      done: false
-    },
-    taskFilter: "all",
+    taskSectionsExpanded: initialTaskSectionsExpandedValue,
+    taskFilter: initialTaskFilter(persistedNavState.task_filter),
+    taskNavOrigin: null,
+    reminderHistoryExpanded: false,
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
       tasks: { items: [], loaded: false, loading: false, error: "" },
@@ -5128,13 +5127,41 @@
     return people;
   }
 
-  function openWorkspaceTarget(target, fromRoute = "") {
+  function taskUsesSplitLayout() {
+    return typeof window !== "undefined" && window.innerWidth >= TASK_SPLIT_MIN_WIDTH_PX;
+  }
+
+  function taskDetailReturnRoute() {
+    return taskUsesSplitLayout() ? "tasks" : "task-detail";
+  }
+
+  function rememberTaskNavOrigin(taskId, route = taskDetailReturnRoute()) {
+    const normalizedTaskId = String(taskId || "").trim();
+    const normalizedRoute = String(route || "").trim();
+    if (!normalizedTaskId || !normalizedRoute) {
+      state.taskNavOrigin = null;
+      return null;
+    }
+    const origin = { taskId: normalizedTaskId, route: normalizedRoute };
+    state.taskNavOrigin = origin;
+    return origin;
+  }
+
+  function openWorkspaceTarget(target, fromRoute = "", options = {}) {
     if (!target || !target.route || !target.selectedKey || !target.id) {
       return false;
     }
+    if (options && options.taskOrigin) {
+      state.taskNavOrigin = {
+        taskId: String(options.taskOrigin.taskId || "").trim(),
+        route: String(options.taskOrigin.route || "").trim() || taskDetailReturnRoute()
+      };
+    }
+    state[target.selectedKey] = target.id;
     lightNavigate(target.route, {
       from: fromRoute || state.route || "",
-      selectionPatch: { [target.selectedKey]: target.id }
+      selectionPatch: { [target.selectedKey]: target.id },
+      preserveTaskOrigin: Boolean(options && options.taskOrigin),
     });
     return true;
   }
@@ -5225,6 +5252,9 @@
   }
 
   function lightTasksPage() {
+    if (taskUsesSplitLayout()) {
+      return lightTaskWorkspacePage();
+    }
     const page = lightPage("Tasks");
     page.classList.add("light-tasks-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
@@ -5232,20 +5262,8 @@
       page.append(status);
       return page;
     }
-    page.append(lightTaskCountLine());
-    [
-      ["overdue", "Overdue"],
-      ["do", "Today"],
-      ["soon", "Upcoming"],
-      ["done", "Done"]
-    ].forEach(([group, label]) => {
-      const tasks = filteredTasks(group);
-      if (!tasks.length) return;
-      page.append(lightTaskSectionHeader(label, group, tasks.length));
-      if (taskSectionExpanded(group)) {
-        page.append(lightTaskGroup(tasks, group));
-      }
-    });
+    page.append(lightTaskCountLine(), lightTaskFilters());
+    renderTaskGroups(page);
     return page;
   }
 
@@ -5272,6 +5290,21 @@
     const sections = state.taskSectionsExpanded || {};
     if (typeof sections[group] === "boolean") return sections[group];
     return group !== "done";
+  }
+
+  function initialTaskSectionsExpanded(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      overdue: typeof source.overdue === "boolean" ? source.overdue : true,
+      do: typeof source.do === "boolean" ? source.do : true,
+      soon: typeof source.soon === "boolean" ? source.soon : true,
+      done: typeof source.done === "boolean" ? source.done : false,
+    };
+  }
+
+  function initialTaskFilter(value) {
+    const normalized = String(value || "").trim();
+    return ["all", "todo", "in_progress", "waiting", "done"].includes(normalized) ? normalized : "all";
   }
 
   function toggleTaskSection(group) {
@@ -5316,39 +5349,162 @@
     return line;
   }
 
+  function taskStatusLabel(status) {
+    const value = String(status || "").trim();
+    return ({
+      todo: "To do",
+      in_progress: "In progress",
+      waiting: "Waiting",
+      done: "Done",
+    })[value] || "To do";
+  }
+
+  function normalizedTaskStatus(task) {
+    const raw = String(task?.status || "").trim().toLowerCase();
+    if (!raw || raw === "open") return "todo";
+    if (raw === "in-progress" || raw === "in progress") return "in_progress";
+    if (raw === "blocked") return "waiting";
+    return ["todo", "in_progress", "waiting", "done"].includes(raw) ? raw : "todo";
+  }
+
+  function taskStatusFilterChoices() {
+    return [
+      ["all", "All"],
+      ["todo", "To do"],
+      ["in_progress", "In progress"],
+      ["waiting", "Waiting"],
+      ["done", "Done"],
+    ];
+  }
+
   function lightTaskGroup(tasks, group) {
     const card = el("div", "light-card light-task-card light-task-group");
     tasks.forEach(task => {
-      const row = el("button", `light-task-row ${group}`);
+      const row = el("button", `light-task-row ${taskRowTone(task)}`);
       row.type = "button";
       row.dataset.taskId = task.id;
+      row.dataset.taskStatus = normalizedTaskStatus(task);
       row.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
       row.addEventListener("pointerup", () => row.classList.remove("is-pressed"));
       row.addEventListener("pointercancel", () => row.classList.remove("is-pressed"));
       row.addEventListener("blur", () => row.classList.remove("is-pressed"));
-      row.addEventListener("click", () => {
-        state.selectedTaskId = task.id;
-        lightNavigate("task-detail", { from: "tasks" });
-      });
-      const checkClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
-      row.append(
-        el("span", checkClass),
+      row.addEventListener("click", () => openTaskFromList(task));
+      const copy = el("span", "light-task-row-copy");
+      copy.append(
         el("strong", "light-task-row-title", task.title || "Untitled task"),
-        el("span", "light-due", taskDueLabel(task))
+        el("span", "light-task-row-summary", taskRowSummary(task))
+      );
+      const trailing = el("span", "light-task-row-trailing");
+      const badge = lightTaskStatusBadge(normalizedTaskStatus(task), { compact: true });
+      if (badge) {
+        trailing.append(badge);
+      }
+      trailing.append(el("span", "light-due", taskDueLabel(task)));
+      row.append(
+        el("span", taskCheckCircleClass(task)),
+        copy,
+        trailing
       );
       card.append(row);
     });
     return card;
   }
 
+  function lightTaskFilters() {
+    const wrap = el("div", "light-task-filter-strip");
+    taskStatusFilterChoices().forEach(([key, label]) => {
+      const button = lightPillButton(label, () => {
+        state.taskFilter = key;
+        render();
+      }, state.taskFilter === key);
+      button.dataset.taskFilter = key;
+      wrap.append(button);
+    });
+    return wrap;
+  }
+
+  function taskCheckCircleClass(task) {
+    const classes = ["light-check-circle"];
+    const tone = taskRowTone(task);
+    if (tone !== "todo") {
+      classes.push(tone);
+    }
+    return classes.join(" ");
+  }
+
+  function taskRowTone(task) {
+    const status = normalizedTaskStatus(task);
+    if (status === "done") {
+      return "done";
+    }
+    if (String(task?.derived_group || "") === "overdue") {
+      return "overdue";
+    }
+    return status;
+  }
+
+  function taskCreatedBy(task) {
+    return String(task?.created_by || task?.metadata?.owner || task?.metadata?.created_by || "").trim();
+  }
+
+  function taskDescription(task) {
+    return String(task?.description || task?.summary || task?.metadata?.description || "").trim();
+  }
+
+  function taskChecklist(task) {
+    return Array.isArray(task?.checklist) ? task.checklist : [];
+  }
+
+  function taskRowSummary(task) {
+    const summary = taskDescription(task);
+    if (summary) {
+      return summary;
+    }
+    const parts = [];
+    const createdBy = taskCreatedBy(task);
+    if (createdBy) {
+      parts.push(`Created by ${createdBy}`);
+    }
+    const status = normalizedTaskStatus(task);
+    if (status !== "todo" && status !== "done") {
+      parts.push(taskStatusLabel(status));
+    }
+    return parts.join(DOT) || "No extra notes";
+  }
+
+  function lightTaskStatusBadge(status, options = {}) {
+    const value = String(status || "").trim();
+    if (!["in_progress", "waiting", "done"].includes(value)) {
+      return null;
+    }
+    const className = options.compact
+      ? `light-task-status-badge ${value} is-compact`
+      : `light-task-status-badge ${value}`;
+    return el("span", className, taskStatusLabel(value));
+  }
+
+  function openTaskFromList(task) {
+    state.selectedTaskId = task.id;
+    if (taskUsesSplitLayout()) {
+      state.route = "tasks";
+      state.homeShellActive = true;
+      state.previousLightRoute = "tasks";
+      state.openTrayRoute = null;
+      persistNavState();
+      render();
+      return;
+    }
+    lightNavigate("task-detail", { from: "tasks" });
+  }
+
   function taskDueLabel(task) {
     const group = String(task?.derived_group || "do");
     const due = Number(task?.due_at_ms || 0);
-    if (group === "done") {
-      return "done";
+    if (normalizedTaskStatus(task) === "done") {
+      return "Done";
     }
     if (!Number.isFinite(due) || due <= 0) {
-      return "no due";
+      return "No due";
     }
     const date = new Date(due);
     const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -5365,40 +5521,225 @@
     return date.toLocaleDateString([], { month: "short", day: "numeric" });
   }
 
-  function taskToggleButton(task) {
-    const done = String(task?.derived_group || "") === "done" || String(task?.status || "").toLowerCase() === "done";
-    const button = lightPillButton(done ? "Reopen task" : "Mark done", async () => {
-      button.disabled = true;
-      await patchWorkspaceRecord("tasks", task.id, { status: done ? "open" : "done" }, { render: true });
-    }, false);
-    button.classList.add("light-task-toggle");
-    return button;
+  function taskDateTimeLabel(timestampMs, fallback) {
+    const value = Number(timestampMs || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      return fallback;
+    }
+    return new Date(value).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  function taskDetailRows(task) {
+    return [
+      { icon: "clock", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
+      { icon: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
+      { icon: "contacts", label: "Created by", value: taskCreatedBy(task) || "Unknown" },
+    ];
+  }
+
+  function taskAttachmentTargets(task) {
+    const links = Array.isArray(task?.links) ? task.links : [];
+    const seen = new Set();
+    const allowedKinds = new Set(["calendar_event", "contact", "project", "note", "meeting_note", "reminder"]);
+    const ordered = [];
+    links.forEach(link => {
+      const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
+      const relatedKind = String(isSource ? link.target_kind : link.source_kind);
+      if (!allowedKinds.has(relatedKind)) {
+        return;
+      }
+      const relatedId = String(isSource ? link.target_id : link.source_id);
+      const related = workspaceRecordByKind(relatedKind, relatedId);
+      const target = workspaceTargetForKind(relatedKind, related?.id || relatedId);
+      const key = target?.kind && target?.id ? `${target.kind}:${target.id}` : `${relatedKind}:${relatedId}`;
+      if (!target || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      ordered.push({
+        label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        target,
+        kind: relatedKind
+      });
+    });
+    const order = ["calendar_event", "contact", "project", "note", "meeting_note", "reminder"];
+    ordered.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
+    return ordered;
+  }
+
+  async function updateTaskStatus(task, nextStatus) {
+    await patchWorkspaceRecord("tasks", task.id, { status: nextStatus }, { render: true });
+  }
+
+  async function toggleTaskChecklistItem(task, itemId) {
+    const items = taskChecklist(task).map(item => (
+      String(item.id || "") === String(itemId || "")
+        ? { ...item, done: !Boolean(item.done) }
+        : item
+    ));
+    await patchWorkspaceRecord("tasks", task.id, { checklist: items }, { render: true });
+  }
+
+  function lightTaskStatusControl(task) {
+    const control = el("div", "light-task-status-control");
+    const current = normalizedTaskStatus(task);
+    [
+      ["todo", "To do"],
+      ["in_progress", "In progress"],
+      ["waiting", "Waiting"],
+      ["done", "Done"],
+    ].forEach(([value, label]) => {
+      const button = lightPillButton(label, async () => {
+        button.disabled = true;
+        await updateTaskStatus(task, value);
+      }, current === value);
+      button.dataset.taskStatus = value;
+      control.append(button);
+    });
+    return control;
+  }
+
+  function lightTaskChecklistSection(task) {
+    const items = taskChecklist(task);
+    if (!items.length) {
+      return null;
+    }
+    const section = el("section", "light-info-section");
+    section.append(lightSectionTitle("Checklist"));
+    const card = el("div", "light-card light-task-checklist-card");
+    items.forEach(item => {
+      const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
+      row.type = "button";
+      row.dataset.checklistItemId = String(item.id || "");
+      row.addEventListener("click", async () => {
+        row.disabled = true;
+        await toggleTaskChecklistItem(task, item.id);
+      });
+      row.append(
+        el("span", item.done ? "light-check-circle done" : "light-check-circle"),
+        el("span", "light-task-checklist-label", String(item.label || "Checklist item"))
+      );
+      card.append(row);
+    });
+    section.append(card);
+    return section;
+  }
+
+  function lightTaskAttachmentsSection(task) {
+    const attachments = taskAttachmentTargets(task);
+    if (!attachments.length) {
+      return null;
+    }
+    const section = el("section", "light-info-section");
+    section.append(lightSectionTitle("Attached"));
+    const card = el("div", "light-card light-task-attachment-card");
+    const cloud = el("div", "light-chip-cloud light-task-chip-cloud");
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
+    attachments.forEach(entry => {
+      cloud.append(lightRecordChip(entry, {
+        fromRoute: origin.route,
+        taskOrigin: origin
+      }));
+    });
+    card.append(cloud);
+    section.append(card);
+    return section;
   }
 
   function lightTaskDetailCard(task) {
-    const group = String(task?.derived_group || "do");
-    const card = el("section", `light-card light-task-detail-card ${group}`);
-    const iconClass = group === "overdue" ? "light-check-circle overdue" : group === "done" ? "light-check-circle done" : "light-check-circle";
-    const titleGroup = el("div", "light-task-detail-copy");
-    titleGroup.append(
+    const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
+    const copy = el("div", "light-task-detail-copy");
+    copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    const action = taskToggleButton(task);
-    action.classList.add("light-task-detail-toggle");
-    card.append(el("span", iconClass), titleGroup, action);
+    const badge = lightTaskStatusBadge(normalizedTaskStatus(task));
+    if (badge) {
+      copy.append(badge);
+    }
+    card.append(el("span", taskCheckCircleClass(task)), copy, lightTaskStatusControl(task));
     return card;
   }
 
+  function lightTaskDetailSurface(task) {
+    const surface = el("div", "light-task-detail-surface");
+    surface.dataset.taskDetailId = String(task?.id || "");
+    surface.dataset.taskStatus = normalizedTaskStatus(task);
+    surface.append(lightTaskDetailCard(task));
+    surface.append(lightInfoSection("Details", taskDetailRows(task)));
+    const description = taskDescription(task);
+    if (description) {
+      surface.append(lightCopySection("Description", description));
+    }
+    const checklist = lightTaskChecklistSection(task);
+    if (checklist) {
+      surface.append(checklist);
+    }
+    const attachments = lightTaskAttachmentsSection(task);
+    if (attachments) {
+      surface.append(attachments);
+    }
+    return surface;
+  }
+
+  function renderTaskGroups(container) {
+    [
+      ["overdue", "Overdue"],
+      ["do", "Today"],
+      ["soon", "Upcoming"],
+      ["done", "Done"]
+    ].forEach(([group, label]) => {
+      const tasks = filteredTasks(group);
+      if (!tasks.length) return;
+      container.append(lightTaskSectionHeader(label, group, tasks.length));
+      if (taskSectionExpanded(group)) {
+        container.append(lightTaskGroup(tasks, group));
+      }
+    });
+  }
+
+  function lightTaskWorkspacePage() {
+    const page = lightPage("Tasks");
+    page.classList.add("light-tasks-page", "light-task-workspace-page");
+    const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
+    if (status) {
+      page.append(status);
+      return page;
+    }
+    const shell = el("div", "light-task-workspace");
+    const listPane = el("section", "light-task-list-pane");
+    listPane.append(lightTaskCountLine(), lightTaskFilters());
+    renderTaskGroups(listPane);
+    const detailPane = el("section", "light-task-detail-pane");
+    const task = selectedTask();
+    if (task) {
+      ensureLinkedCollections(task);
+      detailPane.append(lightTaskDetailSurface(task));
+    } else {
+      detailPane.append(lightEmptyState("checklist", "No task selected", "Pick a task from the list to open its details."));
+    }
+    shell.append(listPane, detailPane);
+    page.append(shell);
+    return page;
+  }
+
   function lightTaskDetailPage() {
+    if (taskUsesSplitLayout()) {
+      return lightTaskWorkspacePage();
+    }
     const task = selectedTask();
     if (!task) {
       return lightPage("Task", { subtitle: "Task not found.", detail: true });
     }
+    ensureLinkedCollections(task);
     const page = lightPage(task.title || "Task", { detail: true });
     page.classList.add("light-task-detail-page");
-    page.append(lightTaskDetailCard(task));
-    page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" }));
+    page.append(lightTaskDetailSurface(task));
     return page;
   }
 
@@ -5856,6 +6197,9 @@
         })
       : null;
     dismissTransientUiForRouteChange();
+    if (!options.preserveTaskOrigin) {
+      state.taskNavOrigin = null;
+    }
     if (currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
       pushLightRouteHistory(currentSnapshot);
     }
@@ -5886,7 +6230,22 @@
     }
     const snapshot = popLightRouteHistory();
     if (snapshot) {
+      state.taskNavOrigin = null;
       return restoreLightRouteSnapshot(snapshot);
+    }
+    if (state.taskNavOrigin && state.route !== state.taskNavOrigin.route) {
+      state.selectedTaskId = state.taskNavOrigin.taskId;
+      state.route = state.taskNavOrigin.route;
+      state.homeShellActive = true;
+      state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
+      state.openTrayRoute = null;
+      state.lightReturnRoute = state.route === "home" ? "" : "home";
+      state.taskNavOrigin = null;
+      persistNavState();
+      render();
+      void syncVoiceThreadScope({ reason: "light_back", render: true });
+      void loadWorkspaceForRoute(state.route, { render: true, force: true });
+      return true;
     }
     const detailParent = isLightDetailRoute(state.previousLightRoute) ? state.previousLightRoute : "";
     const parent = isHomeShellCanonicalRoute()
@@ -6122,9 +6481,12 @@
     const chip = el(target ? "button" : "span", target ? "light-attendee-chip light-calendar-link-chip is-link" : "light-attendee-chip light-calendar-link-chip", label);
     if (target) {
       chip.type = "button";
+      chip.dataset.workspaceTargetRoute = target.route;
+      chip.dataset.workspaceTargetId = target.id;
+      chip.dataset.workspaceTargetKind = target.kind || "";
       chip.addEventListener("click", event => {
         event.stopPropagation();
-        openWorkspaceTarget(target, options.fromRoute || state.route || "");
+        openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });
       });
     }
     return chip;
@@ -6361,9 +6723,7 @@
     return workspaceItems("tasks").filter(task => {
       const taskGroup = String(task.derived_group || "do");
       const byFilter = state.taskFilter === "all"
-        || (state.taskFilter === "due" && (taskGroup === "do" || taskGroup === "soon"))
-        || (state.taskFilter === "soon" && taskGroup === "soon")
-        || taskGroup === state.taskFilter;
+        || normalizedTaskStatus(task) === state.taskFilter;
       return taskGroup === group && byFilter;
     });
   }
@@ -12824,11 +13184,14 @@
   }
 
   function resolveInitialRouteState(route, theme = "dark") {
-    void route;
     void theme;
     const queryRoute = routeQueryParam();
     if (queryRoute) {
       return resolveRequestedRouteState(queryRoute);
+    }
+    const persistedRoute = String(route || "").trim();
+    if (persistedRoute) {
+      return resolveRequestedRouteState(persistedRoute);
     }
     return { route: "home", homeShellActive: true };
   }
@@ -13159,6 +13522,9 @@
         home_shell_active: Boolean(state.homeShellActive),
         open_tray_route: state.openTrayRoute || null,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
+        selected_task_id: state.selectedTaskId || null,
+        task_filter: state.taskFilter || "all",
+        task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),
         updated_at: Date.now()
@@ -13848,7 +14214,7 @@
   }, MEETING_STATUS_POLL_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && state.route === "tasks") {
+    if (document.visibilityState === "visible" && (state.route === "tasks" || state.route === "task-detail")) {
       void loadWorkspaceCollection("tasks", { render: true, force: true });
     }
   }, WORKSPACE_TASK_REFRESH_MS);
@@ -13860,6 +14226,21 @@
   }, WORKSPACE_REMINDER_REFRESH_MS);
 
   window.addEventListener("pagehide", persistNavState);
+  let previousTaskSplitLayout = taskUsesSplitLayout();
+  window.addEventListener("resize", debounce(() => {
+    const nextTaskSplitLayout = taskUsesSplitLayout();
+    if (nextTaskSplitLayout === previousTaskSplitLayout) {
+      return;
+    }
+    previousTaskSplitLayout = nextTaskSplitLayout;
+    if (state.route === "tasks" || state.route === "task-detail") {
+      if (nextTaskSplitLayout && state.route === "task-detail") {
+        state.route = "tasks";
+      }
+      persistNavState();
+      render();
+    }
+  }, 120));
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       if (state.links.handoffLocked) {

@@ -482,6 +482,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     light_task_sections = function_block(app, "lightTaskSectionHeader")
     light_task_counts = function_block(app, "lightTaskCounts")
     light_task_count_line = function_block(app, "lightTaskCountLine")
+    render_task_groups = function_block(app, "renderTaskGroups")
     filtered_tasks = function_block(app, "filteredTasks")
     light_back = function_block(app, "lightBack")
     filtered_feed_cards = function_block(app, "filteredFeedCards")
@@ -506,7 +507,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
     task_row_base_block = None
     for block in task_row_blocks:
-      if "min-height: 48px;" in block:
+      if "touch-action: manipulation;" in block and "grid-template-columns: 30px minmax(0, 1fr) auto;" in block:
         task_row_base_block = block
         break
     assert task_row_base_block, "Missing .light-task-row base CSS block"
@@ -607,10 +608,10 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
 
-    assert '"Upcoming"' in light_tasks
-    assert '"Today"' in light_tasks
-    assert '"Overdue"' in light_tasks
-    assert '"Done"' in light_tasks
+    assert '"Upcoming"' in render_task_groups
+    assert '"Today"' in render_task_groups
+    assert '"Overdue"' in render_task_groups
+    assert '"Done"' in render_task_groups
     assert 'counts.dueSoon' in light_task_counts
     assert '"light-task-count due-soon"' in light_task_count_line
     assert '`${counts.dueSoon} upcoming`' in light_task_count_line
@@ -627,7 +628,9 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'const page = lightPage("Tasks");' in light_tasks
     assert 'page.classList.add("light-tasks-page");' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
-    assert "lightTaskFilters()" not in light_tasks
+    assert "lightTaskFilters()" in light_tasks
+    assert 'renderTaskGroups(page);' in light_tasks
+    assert "function lightTaskWorkspacePage()" in app
 
 
 def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -> None:
@@ -673,7 +676,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     task_row_blocks = re.findall(r"\.light-task-row[^\\{]*\{(?P<body>.*?)\n\}", styles, re.S)
     task_row_base_block = None
     for block in task_row_blocks:
-        if "min-height: 48px;" in block:
+        if "touch-action: manipulation;" in block and "grid-template-columns: 30px minmax(0, 1fr) auto;" in block:
             task_row_base_block = block
             break
     assert task_row_base_block, "Missing .light-task-row base CSS block"
@@ -723,6 +726,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'page.classList.add("light-tasks-page");' in light_tasks
     assert 'light-appbar' not in light_tasks
     assert "padding-top:" not in tasks_page_block
+    assert 'lightTaskFilters()' in light_tasks
+    assert 'renderTaskGroups(page);' in light_tasks
     assert 'const page = lightPage(options.title || "Workspace");' in graph_list
     assert 'input.type = "date";' in light_date_picker
     assert "position: sticky;" in light_date_picker_block
@@ -750,7 +755,9 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'el("span", "light-task-section-spacer")' in light_task_sections
     assert 'toggleTaskSection(group)' in light_task_sections
     assert 'expanded ? "expand_more" : "navigate_next"' in light_task_sections
-    assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
+    assert 'const byFilter = state.taskFilter === "all"' in filtered_tasks
+    assert '|| normalizedTaskStatus(task) === state.taskFilter;' in filtered_tasks
+    assert 'button.dataset.taskFilter = key;' in app
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
     assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
@@ -793,6 +800,13 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert ".light-task-row:focus-visible" in styles
     assert 'appearance: none;' in task_row_base_block
     assert 'touch-action: manipulation;' in task_row_base_block
+    assert ".light-task-filter-strip" in styles
+    assert ".light-task-workspace" in styles
+    assert ".light-task-detail-surface" in styles
+    assert ".light-task-status-control" in styles
+    assert ".light-task-checklist-card" in styles
+    assert ".light-task-attachment-card" in styles
+    assert "@media (min-width: 900px)" in styles
     assert ".light-task-section-toggle" in styles
     assert ".light-contact-add-fab" not in styles
     assert ".light-task-section-count" in styles
@@ -845,7 +859,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'el("span", "light-task-section-spacer")' in light_task_sections
     assert 'toggleTaskSection(group)' in light_task_sections
     assert 'expanded ? "expand_more" : "navigate_next"' in light_task_sections
-    assert 'state.taskFilter === "soon" && taskGroup === "soon"' in filtered_tasks
+    assert 'const byFilter = state.taskFilter === "all"' in filtered_tasks
+    assert '|| normalizedTaskStatus(task) === state.taskFilter;' in filtered_tasks
     assert 'lightNavigate("note-detail", { from: "notes" })' in app
     assert 'lightNavigate("task-detail", { from: "tasks" })' in app
     assert 'lightNavigate("meeting-detail", { from: "calendar" })' in app
@@ -1035,8 +1050,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "function openLightApp(route)" in app
     assert 'state.selectedCalendarDate = calendarTodayDateKey();' in app
     assert "loadWorkspaceCollection(\"tasks\", { render: true, force: true })" in app
-    assert 'document.visibilityState === "visible" && state.route === "tasks"' in app
-    assert '(state.route === "tasks" || state.route === "task-detail")' not in app
+    assert 'document.visibilityState === "visible" && (state.route === "tasks" || state.route === "task-detail")' in app
 
     assert "const LIGHT_NOTES" not in app
     assert "const LIGHT_TASKS" not in app
@@ -1065,6 +1079,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_project_detail = function_block(app, "lightProjectDetailPage")
     light_contacts = function_block(app, "lightContactsPage")
     filtered_tasks = function_block(app, "filteredTasks")
+    render_task_groups = function_block(app, "renderTaskGroups")
     task_group = function_block(app, "lightTaskGroup")
     all_projects = function_block(app, "allProjects")
     note_detail = function_block(app, "lightNoteDetailPage")
@@ -1079,36 +1094,50 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'workspaceItems("notes")' in light_notes
     assert 'lightWorkspaceStatus("notes"' in light_notes
     assert 'lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in note_detail
-    assert 'filteredTasks(group)' in light_tasks
-    assert 'const row = el("button", `light-task-row ${group}`);' in task_group
+    assert 'renderTaskGroups(page);' in light_tasks
+    assert 'const row = el("button", `light-task-row ${taskRowTone(task)}`);' in task_group
     assert 'row.type = "button";' in task_group
     assert 'row.dataset.taskId = task.id;' in task_group
-    assert 'lightNavigate("task-detail", { from: "tasks" })' in task_group
+    assert 'row.dataset.taskStatus = normalizedTaskStatus(task);' in task_group
+    assert 'row.addEventListener("click", () => openTaskFromList(task));' in task_group
     assert 'lightTextStack(task.title, task.summary)' not in task_group
     assert 'el("strong", "light-task-row-title", task.title || "Untitled task")' in task_group
     assert 'workspaceItems("tasks")' in filtered_tasks
-    assert '"Upcoming"' in light_tasks
-    assert '"Today"' in light_tasks
-    assert 'if (taskSectionExpanded(group)) {' in light_tasks
+    assert 'lightTaskFilters()' in light_tasks
+    assert '"Upcoming"' in render_task_groups
+    assert '"Today"' in render_task_groups
+    assert '"Overdue"' in render_task_groups
+    assert '"Done"' in render_task_groups
     assert 'taskSectionsExpanded:' in app
-    assert 'overdue: true' in app
-    assert 'do: true' in app
-    assert 'soon: true' in app
-    assert 'done: false' in app
+    assert "function initialTaskSectionsExpanded(value)" in app
+    assert 'overdue: typeof source.overdue === "boolean" ? source.overdue : true' in app
+    assert 'do: typeof source.do === "boolean" ? source.do : true' in app
+    assert 'soon: typeof source.soon === "boolean" ? source.soon : true' in app
+    assert 'done: typeof source.done === "boolean" ? source.done : false' in app
     assert 'task.derived_group' in app
     assert 'patchWorkspaceRecord("tasks"' in app
+    assert "function lightTaskWorkspacePage()" in app
+    assert "function lightTaskDetailSurface(task)" in app
+    assert "function lightTaskAttachmentsSection(task)" in app
+    assert "function lightTaskChecklistSection(task)" in app
+    assert 'await patchWorkspaceRecord("tasks", task.id, { checklist: items }, { render: true });' in app
+    assert "function openTaskFromList(task)" in app
+    assert "function taskStatusFilterChoices()" in app
+    assert 'button.dataset.taskFilter = key;' in app
+    assert 'return [\n      ["all", "All"],\n      ["todo", "To do"],\n      ["in_progress", "In progress"],\n      ["waiting", "Waiting"],\n      ["done", "Done"],\n    ];' in app
     task_due_label = function_block(app, "taskDueLabel")
     assert "return time;" in task_due_label
     assert '`today ${time}`' not in task_due_label
     assert '`tomorrow ${time}`' not in task_due_label
-    assert 'lightHtmlDocument(task' in task_detail
-    assert 'lightTaskDetailCard(task)' in task_detail
+    assert 'taskUsesSplitLayout()' in task_detail
+    assert 'return lightTaskWorkspacePage();' in task_detail
+    assert 'lightTaskDetailSurface(task)' in task_detail
     assert 'const page = lightPage(task.title || "Task", { detail: true });' in task_detail
-    assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" })' in task_detail
+    assert 'lightHtmlDocument(task' not in task_detail
     assert 'lightCopySection("Notes"' not in task_detail
     assert 'lightInfoSection("Related"' not in task_detail
-    assert 'const card = el("section", `light-card light-task-detail-card ${group}`);' in task_detail_card
-    assert 'action.classList.add("light-task-detail-toggle");' in task_detail_card
+    assert 'const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
+    assert 'card.append(el("span", taskCheckCircleClass(task)), copy, lightTaskStatusControl(task));' in task_detail_card
     assert 'selectedCalendarDateKey()' in light_date_picker
     assert 'input.type = "date";' in light_date_picker
     assert 'input.setAttribute("aria-label", "Calendar date")' in light_date_picker
@@ -1284,7 +1313,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-html-card" in styles
     assert ".light-html-frame" in styles
     assert ".light-task-detail-card" in styles
-    assert ".light-task-detail-toggle" in styles
+    assert ".light-task-status-control" in styles
     assert ".light-html-empty" in styles
     assert ".light-task-row-title" in styles
     assert ".light-message-thread-row" not in styles
@@ -1299,6 +1328,61 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'if (state.route === "home") {' in visibility_listener
     assert 'if (state.route === "task-detail") {' in visibility_listener
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in visibility_listener
+
+
+def test_tasks_use_structured_detail_split_layout_and_origin_aware_graph_navigation() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    light_task_workspace = function_block(app, "lightTaskWorkspacePage")
+    light_task_detail = function_block(app, "lightTaskDetailPage")
+    light_task_surface = function_block(app, "lightTaskDetailSurface")
+    light_task_attachments = function_block(app, "lightTaskAttachmentsSection")
+    light_record_chip = function_block(app, "lightRecordChip")
+    open_workspace_target = function_block(app, "openWorkspaceTarget")
+    light_back = function_block(app, "lightBack")
+
+    assert "const TASK_SPLIT_MIN_WIDTH_PX = 900;" in app
+    assert "taskNavOrigin: null," in app
+    assert "function taskUsesSplitLayout()" in app
+    assert 'return typeof window !== "undefined" && window.innerWidth >= TASK_SPLIT_MIN_WIDTH_PX;' in app
+    assert "function taskDetailReturnRoute()" in app
+    assert 'return taskUsesSplitLayout() ? "tasks" : "task-detail";' in app
+    assert "function rememberTaskNavOrigin(taskId, route = taskDetailReturnRoute())" in app
+    assert 'surface.dataset.taskDetailId = String(task?.id || "");' in light_task_surface
+    assert 'surface.dataset.taskStatus = normalizedTaskStatus(task);' in light_task_surface
+    assert 'surface.append(lightInfoSection("Details", taskDetailRows(task)));' in light_task_surface
+    assert 'surface.append(lightCopySection("Description", description));' in light_task_surface
+    assert 'const checklist = lightTaskChecklistSection(task);' in light_task_surface
+    assert 'const attachments = lightTaskAttachmentsSection(task);' in light_task_surface
+    assert 'const origin = { taskId: task.id, route: taskDetailReturnRoute() };' in light_task_attachments
+    assert "taskOrigin: origin" in light_task_attachments
+    assert 'chip.dataset.workspaceTargetRoute = target.route;' in light_record_chip
+    assert 'chip.dataset.workspaceTargetId = target.id;' in light_record_chip
+    assert 'chip.dataset.workspaceTargetKind = target.kind || "";' in light_record_chip
+    assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
+    assert 'preserveTaskOrigin: Boolean(options && options.taskOrigin),' in open_workspace_target
+    assert "if (state.taskNavOrigin && state.route !== state.taskNavOrigin.route) {" in light_back
+    assert "state.selectedTaskId = state.taskNavOrigin.taskId;" in light_back
+    assert "state.route = state.taskNavOrigin.route;" in light_back
+    assert "state.taskNavOrigin = null;" in light_back
+    assert 'if (taskUsesSplitLayout()) {' in light_task_detail
+    assert 'return lightTaskWorkspacePage();' in light_task_detail
+    assert 'page.classList.add("light-task-detail-page");' in light_task_detail
+    assert 'lightHtmlDocument(task' not in light_task_detail
+    assert 'const shell = el("div", "light-task-workspace");' in light_task_workspace
+    assert 'const listPane = el("section", "light-task-list-pane");' in light_task_workspace
+    assert 'const detailPane = el("section", "light-task-detail-pane");' in light_task_workspace
+    assert 'detailPane.append(lightTaskDetailSurface(task));' in light_task_workspace
+    assert ".light-task-workspace" in styles
+    assert ".light-task-list-pane" in styles
+    assert ".light-task-detail-pane" in styles
+    assert ".light-task-detail-surface" in styles
+    assert ".light-task-status-badge" in styles
+    assert ".light-task-status-control" in styles
+    assert ".light-task-checklist-card" in styles
+    assert ".light-task-attachment-card" in styles
+    assert "@media (min-width: 900px)" in styles
 
 
 def test_meetings_route_lists_recordings_and_opens_summary_first() -> None:
@@ -2859,7 +2943,7 @@ def test_workspace_graph_info_rows_become_clickable_and_messages_use_thread_surf
     project_section_item = function_block(app, "lightProjectSectionItem")
 
     assert "function workspaceTargetForKind(kind, id)" in app
-    assert "function openWorkspaceTarget(target, fromRoute = \"\")" in app
+    assert "function openWorkspaceTarget(target, fromRoute = \"\", options = {})" in app
     assert "function lightMessageThreadRow(message)" not in app
     assert "function messageTranscriptEntries(message)" not in app
     assert 'const item = el(isInteractive ? "button" : "div"' in light_info_section
@@ -3012,7 +3096,11 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert 'const NAV_STATE_KEY = "pucky.cover.nav_state.v1"' in app
     assert "const persistedNavState = loadNavState();" in app
     assert "const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);" in app
+    assert "const initialTaskSectionsExpandedValue = initialTaskSectionsExpanded(persistedNavState.task_sections_expanded);" in app
     assert "route: initialRouteValue" in app
+    assert 'selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples"' in app
+    assert "taskSectionsExpanded: initialTaskSectionsExpandedValue" in app
+    assert "taskFilter: initialTaskFilter(persistedNavState.task_filter)" in app
     assert "openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme)" in app
     assert "feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top)" in app
     assert "navDetail: normalizeNavDetail(persistedNavState.detail)" in app
@@ -3039,6 +3127,14 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert "dismissTraceSheet();" in app
     assert "closeSpeedPicker();" in app
     assert 'window.addEventListener("pagehide", persistNavState)' in app
+    assert "const persistedRoute = String(route || \"\").trim();" in app
+    assert "if (persistedRoute) {" in app
+    assert "return resolveRequestedRouteState(persistedRoute);" in app
+    assert "selected_task_id: state.selectedTaskId || null," in app
+    assert 'task_filter: state.taskFilter || "all",' in app
+    assert "task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded)," in app
+    assert "function initialTaskSectionsExpanded(value)" in app
+    assert "function initialTaskFilter(value)" in app
     assert 'document.addEventListener("visibilitychange"' in app
     assert "installFeedScrollPersistence();" in app
 

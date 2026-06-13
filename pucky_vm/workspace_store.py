@@ -246,8 +246,73 @@ def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> di
     return normalized
 
 
+TASK_STATUS_ALIASES = {
+    "": "todo",
+    "open": "todo",
+    "todo": "todo",
+    "to_do": "todo",
+    "in_progress": "in_progress",
+    "in-progress": "in_progress",
+    "in progress": "in_progress",
+    "waiting": "waiting",
+    "blocked": "waiting",
+    "done": "done",
+    "complete": "done",
+    "completed": "done",
+}
+
+
+def normalize_task_status(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    return TASK_STATUS_ALIASES.get(raw, "todo")
+
+
+def _normalize_task_checklist(items: object) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    normalized: list[dict[str, object]] = []
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("title") or item.get("text") or "").strip()
+            if not label:
+                continue
+            normalized.append(
+                {
+                    "id": str(item.get("id") or f"item-{index}").strip() or f"item-{index}",
+                    "label": label,
+                    "done": bool(item.get("done") or item.get("checked")),
+                }
+            )
+            continue
+        label = str(item or "").strip()
+        if not label:
+            continue
+        normalized.append({"id": f"item-{index}", "label": label, "done": False})
+    return normalized
+
+
+def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object], *, summary: str) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    created_by = str(
+        payload.get("created_by")
+        or normalized.get("created_by")
+        or normalized.get("owner")
+        or ""
+    ).strip()
+    if created_by:
+        normalized["created_by"] = created_by
+        normalized["owner"] = str(normalized.get("owner") or created_by).strip() or created_by
+    description = str(payload.get("description") or normalized.get("description") or summary or "").strip()
+    if description:
+        normalized["description"] = description
+    checklist = payload.get("checklist") if "checklist" in payload else normalized.get("checklist")
+    normalized["checklist"] = _normalize_task_checklist(checklist)
+    normalized["status"] = normalize_task_status(payload.get("status") or normalized.get("status") or "")
+    return normalized
+
+
 def derive_task_group(record: dict[str, Any], now_ms: int | None = None) -> str:
-    status = str(record.get("status") or "").strip().lower()
+    status = normalize_task_status(record.get("status"))
     if status == "done":
         return "done"
     due_at_ms = _int_or_zero(record.get("due_at_ms"))
@@ -507,6 +572,7 @@ class WorkspaceStore:
             seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_v1'").fetchone()
             graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v1'").fetchone()
             graph_v2_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v2'").fetchone()
+            graph_v3_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v3'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
@@ -539,6 +605,8 @@ class WorkspaceStore:
                 self._conn.commit()
         if not graph_v2_seeded:
             self._reseed_graph_v2(now)
+        if not graph_v3_seeded:
+            self._reseed_graph_v3(now)
         if not proof_cleanup_seeded:
             self._cleanup_proof_artifacts(now)
 
@@ -606,6 +674,51 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
+    def _reseed_graph_v3(self, now_ms: int) -> None:
+        graph_record_ids = {
+            "demo-task-do-paint-samples",
+            "demo-task-send-freelance-mockup",
+            "house-paint-notes",
+            "freelance-homepage-note",
+            "house-walkthrough",
+            "freelance-review",
+            "home-refresh",
+            "freelance-followup",
+            "maya",
+            "sam-rivera",
+        }
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM workspace_links
+                WHERE link_id IN (
+                    'graph-task-home-contact',
+                    'graph-task-home-calendar',
+                    'graph-task-home-note',
+                    'graph-task-home-project',
+                    'graph-task-freelance-contact',
+                    'graph-task-freelance-calendar',
+                    'graph-task-freelance-note',
+                    'graph-task-freelance-project'
+                )
+                """
+            )
+            self._conn.commit()
+        defaults = default_workspace_graph_records(now_ms)
+        for collection, records in defaults.items():
+            for record in records:
+                if str(record.get("id") or "") in graph_record_ids:
+                    self.upsert_record(collection, record)
+        for link in default_workspace_graph_links():
+            if str(link.get("id") or "").startswith("graph-task-"):
+                self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_graph_v3", "1", now_ms),
+            )
+            self._conn.commit()
+
     def _cleanup_proof_artifacts(self, now_ms: int) -> None:
         proof_like = "proof-%"
         with self._lock:
@@ -654,7 +767,8 @@ class WorkspaceStore:
         deleted = bool(payload.get("deleted", False))
         pinned = bool(payload.get("pinned", False))
         if kind == "task":
-            status = status or "open"
+            metadata = _normalize_task_metadata(metadata, payload, summary=summary)
+            status = normalize_task_status(status or metadata.get("status") or "todo")
         if kind == "reminder":
             status = status or "open"
             metadata = _normalize_reminder_metadata(metadata, status=status)
@@ -764,6 +878,10 @@ class WorkspaceStore:
             "updated_at_ms": int(row["updated_at_ms"] or 0),
         }
         if row["kind"] == "task":
+            record["status"] = normalize_task_status(record["status"])
+            record["created_by"] = str(metadata.get("created_by") or metadata.get("owner") or "").strip()
+            record["description"] = str(metadata.get("description") or record["summary"] or "").strip()
+            record["checklist"] = _normalize_task_checklist(metadata.get("checklist"))
             record["derived_group"] = derive_task_group(record, self.now_ms())
         record["links"] = self.linked_records(str(row["kind"]), str(row["record_id"]))
         return record
@@ -1301,6 +1419,11 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "summary": "Set the samples near the window before Maya arrives.",
                 "status": "open",
                 "due_at_ms": now_ms + 3 * 60 * 60 * 1000,
+                "checklist": [
+                    {"id": "paint-stairs", "label": "Carry the swatches upstairs", "done": True},
+                    {"id": "paint-trim", "label": "Tape each sample by the hallway trim", "done": False},
+                    {"id": "paint-photo", "label": "Text Maya a quick photo before the walkthrough", "done": False},
+                ],
                 "html": _task_html(
                     "Bring paint samples upstairs",
                     "Put the sample cards where the light actually changes during the day.",
@@ -1310,15 +1433,16 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"owner": "Maya Chen", "project": "Home refresh", "source": "demo-meeting-home-refresh"},
             },
                 {
-                    "id": "demo-task-send-freelance-mockup",
-                    "title": "Send homepage pass to Sam",
-                    "summary": "Ship the revised HTML and the invoice note before the client review.",
-                    "status": "open",
-                    "due_at_ms": freelance_start_ms - 90 * 60 * 1000,
-                    "html": _task_html(
-                        "Send homepage pass to Sam",
-                        "Package the latest HTML pass and the invoice note so the review stays calm and small.",
-                        ["Export the latest mockup", "Attach the invoice note", "Send it before the review window"],
+                "id": "demo-task-send-freelance-mockup",
+                "title": "Send homepage pass to Sam",
+                "summary": "Ship the revised HTML and the invoice note before the client review.",
+                "status": "open",
+                "due_at_ms": freelance_start_ms - 90 * 60 * 1000,
+                "checklist": [],
+                "html": _task_html(
+                    "Send homepage pass to Sam",
+                    "Package the latest HTML pass and the invoice note so the review stays calm and small.",
+                    ["Export the latest mockup", "Attach the invoice note", "Send it before the review window"],
                     "This one keeps the freelance project, meeting note, and reminder tied together.",
                 ),
                 "metadata": {"owner": "Sam Rivera", "project": "Freelance follow-up", "source": "demo-meeting-freelance-followup"},
@@ -1597,6 +1721,10 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-project-home-note", "source_kind": "project", "source_id": "home-refresh", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
         {"id": "graph-project-home-task", "source_kind": "project", "source_id": "home-refresh", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-project-home-reminder", "source_kind": "project", "source_id": "home-refresh", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
+        {"id": "graph-task-home-contact", "source_kind": "task", "source_id": "demo-task-do-paint-samples", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "graph-task-home-calendar", "source_kind": "task", "source_id": "demo-task-do-paint-samples", "target_kind": "calendar_event", "target_id": "house-walkthrough", "label": "Home refresh walkthrough"},
+        {"id": "graph-task-home-note", "source_kind": "task", "source_id": "demo-task-do-paint-samples", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
+        {"id": "graph-task-home-project", "source_kind": "task", "source_id": "demo-task-do-paint-samples", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
         {"id": "graph-reminder-paint-task", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-reminder-paint-meeting", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
         {"id": "graph-reminder-health-contact", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
@@ -1633,6 +1761,10 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-project-freelance-note", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},
         {"id": "graph-project-freelance-task", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
         {"id": "graph-project-freelance-reminder", "source_kind": "project", "source_id": "freelance-followup", "target_kind": "reminder", "target_id": "demo-reminder-freelance-followup", "label": "Send homepage pass before review"},
+        {"id": "graph-task-freelance-contact", "source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "target_kind": "contact", "target_id": "sam-rivera", "label": "Sam Rivera"},
+        {"id": "graph-task-freelance-calendar", "source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "target_kind": "calendar_event", "target_id": "freelance-review", "label": "Freelance review call"},
+        {"id": "graph-task-freelance-note", "source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},
+        {"id": "graph-task-freelance-project", "source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "target_kind": "project", "target_id": "freelance-followup", "label": "Freelance follow-up"},
         {"id": "graph-reminder-freelance-task", "source_kind": "reminder", "source_id": "demo-reminder-freelance-followup", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
         {"id": "graph-reminder-freelance-meeting", "source_kind": "reminder", "source_id": "demo-reminder-freelance-followup", "target_kind": "meeting_note", "target_id": "demo-meeting-freelance-followup", "label": "Freelance review prep"},
     ]

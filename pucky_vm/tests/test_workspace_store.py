@@ -223,6 +223,26 @@ def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> No
     assert all(task["html"] for task in tasks)
 
 
+def test_task_records_expose_structured_metadata_and_graph_attached_items(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+
+    task = store.get_record("tasks", "demo-task-do-paint-samples")
+    assert task is not None
+    assert task["status"] == "todo"
+    assert task["created_by"] == "Maya Chen"
+    assert task["description"] == "Set the samples near the window before Maya arrives."
+    assert [item["id"] for item in task["checklist"]] == ["paint-stairs", "paint-trim", "paint-photo"]
+    assert task["checklist"][0]["done"] is True
+    assert task["checklist"][1]["done"] is False
+
+    linked_targets = {(link["target_kind"], link["target_id"]) for link in task["links"] if link["source_kind"] == "task"}
+    assert ("calendar_event", "house-walkthrough") in linked_targets
+    assert ("contact", "maya") in linked_targets
+    assert ("project", "home-refresh") in linked_targets
+    assert ("note", "house-paint-notes") in linked_targets
+
+
 def test_multiple_projects_threads_and_cross_links(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
     first = store.upsert_record(
