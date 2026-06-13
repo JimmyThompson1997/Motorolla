@@ -361,6 +361,13 @@ async function waitForHeaderText(page, text) {
   }, text);
 }
 
+async function waitForSelectorText(page, selector, text) {
+  await page.waitForFunction(({ targetSelector, targetText }) => {
+    const node = document.querySelector(String(targetSelector || ""));
+    return Boolean(node && String(node.textContent || "").includes(String(targetText || "")));
+  }, { targetSelector: selector, targetText: text });
+}
+
 async function stickyMetrics(page) {
   return page.evaluate(() => {
     const feed = document.querySelector(".feed");
@@ -429,8 +436,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert((await pageHeaderText(page)).includes("Proof freelance review call"), "Expected the event detail header to use the real event title.");
     await saveShot(page, reportDir, "calendar-desktop-event-detail.png", summary);
     await page.locator('.light-attendee-chip.is-link', { hasText: "Jimmy T." }).click();
-    await waitForHeaderText(page, "Jimmy Torres");
-    assert((await pageHeaderText(page)).includes("Jimmy Torres"), "Expected attendee chip navigation to open the linked contact detail.");
+    await waitForHeaderText(page, "Contact");
+    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    assert((await page.locator(".light-profile-card h1").textContent()).includes("Jimmy Torres"), "Expected attendee chip navigation to open the linked contact detail.");
     await saveShot(page, reportDir, "calendar-desktop-attendee-chip.png", summary);
     await page.getByRole("button", { name: "Back" }).click();
     await waitForHeaderText(page, "Proof freelance review call");
