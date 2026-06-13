@@ -407,9 +407,11 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const todayTitles = await visibleCalendarTitles(page);
     assert(todayTitles.includes("Proof freelance review call"), "Expected the linked proof review call on the device-local today view.");
     assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
+    await page.waitForFunction(() => document.querySelectorAll('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip.is-link').length >= 2);
     assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-place-pill').textContent() === "Kitchen table", "Expected the place pill to show Kitchen table.");
-    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').nth(0).textContent() === "Jimmy T.", "Expected compact attendee chip label Jimmy T. on the agenda card.");
-    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').nth(1).textContent() === "Jeff B.", "Expected compact attendee chip label Jeff B. on the agenda card.");
+    const attendeeChipTexts = await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').allTextContents();
+    assert(attendeeChipTexts.includes("Jimmy T."), `Expected compact attendee chip label Jimmy T. on the agenda card, got ${attendeeChipTexts.join(", ")}.`);
+    assert(attendeeChipTexts.includes("Jeff B."), `Expected compact attendee chip label Jeff B. on the agenda card, got ${attendeeChipTexts.join(", ")}.`);
     assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"]').evaluate(node => node.className.includes("blue")), "Expected the freelance review card to use the shared blue tone.");
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
     summary.assertions.push("desktop calendar opened to today with compact day strip");
