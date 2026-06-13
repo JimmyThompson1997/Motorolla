@@ -3598,7 +3598,7 @@ button {
   --home-shell-text-subtle: var(--text-muted-strong);
   min-height: var(--viewport-h);
   max-width: 520px;
-  margin: 0 auto;
+  margin: calc(-1 * var(--safe-area-top-pad)) auto 0;
   padding: 0 20px calc(92px + env(safe-area-inset-bottom));
   color: var(--home-shell-text);
   font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
