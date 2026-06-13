@@ -1143,14 +1143,22 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "function calendarEventTone(event)" in app
     assert "function calendarContactChipLabel(contact)" in app
     assert "function calendarEventPeople(event)" in app
+    assert "function calendarEventChipTargets(event)" in app
+    assert "function lightRecordChip(entry, options = {})" in app
+    assert "function calendarEventDetailRows(event, attendees = calendarEventPeople(event))" in app
     assert "function lightCalendarEventChips(event, options = {})" in app
     assert 'return `${first} ${last.charAt(0).toUpperCase()}.`;' in app
     assert "calendarPickerOpen" not in app
-    assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
     assert 'ensureLinkedCollections(meeting);' in event_detail
     assert 'const attendees = calendarEventPeople(meeting);' in event_detail
     assert 'const page = lightPage(meeting.title || "Event", { detail: true });' in event_detail
-    assert 'page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));' in event_detail
+    assert 'const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });' in event_detail
+    assert 'const detailRows = calendarEventDetailRows(meeting, attendees);' in event_detail
+    assert 'lightInfoSection("Details", detailRows)' in event_detail
+    assert 'light-card light-attendee-chip-card light-event-connected-card' in event_detail
+    assert 'page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));' not in event_detail
+    assert 'lightDocumentMeta([' not in event_detail
+    assert 'lightHtmlDocument(meeting, "No generated event page yet."' not in event_detail
     assert 'const linkedRows = lightLinkedRecordRows(meeting);' in event_detail
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' in event_detail
     assert "function lightMessagesPage()" not in app
@@ -1226,9 +1234,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".calendar-settings-sheet" in styles
     assert ".light-event-main" in styles
     assert ".light-event-chip-row" in styles
-    assert ".light-event-place-pill" in styles
     assert ".light-attendee-chip" in styles
     assert ".light-attendee-chip-card" in styles
+    assert ".light-event-connected-card" in styles
     assert ".light-event-block.purple" in styles
     assert ".light-event-block.amber" in styles
     assert '.light-shell[data-light-route="calendar"]' in styles
@@ -1268,9 +1276,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-task-row-title" in styles
     assert ".light-message-thread-row" not in styles
     assert ".light-message-conversation" not in styles
-    assert ".light-event-detail-html-body.light-html-card" in styles
+    assert ".light-event-detail-html-body.light-html-card" not in styles
     assert 'margin-top: -4px;' in styles
-    assert 'margin-top: -8px;' in styles
+    assert 'margin-top: -8px;' not in styles
     assert 'if (state.route === "task-detail") {' in app
     assert 'if (document.visibilityState === "visible" && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")) {' in app
     assert 'loadWorkspaceCollection("reminders", { render: true, force: true })' in app

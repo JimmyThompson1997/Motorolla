@@ -4164,25 +4164,31 @@
       void loadWorkspaceCollection("contacts", { render: true });
     }
     const page = lightPage(meeting.title || "Event", { detail: true });
-    page.classList.add("light-document-page", "light-event-document");
+    page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
     const article = el("article", "light-doc-article");
     article.append(
       lightDocumentEyebrow("Calendar event", `${calendarEventDayLabel(meeting)}${DOT}${calendarEventTimeRange(meeting)}`),
-      el("h1", "", meeting.title),
-      lightDocumentMeta([
-        ["Time", calendarEventTimeRange(meeting)],
-        ["Time zone", calendarEffectiveTimeZone()],
-        ["Place", meta.place || "Unspecified"],
-        ["Attendees", `${attendees.length} attendees`]
-      ])
+      el("h1", "", meeting.title || "Untitled event")
     );
+    if (String(meeting.summary || "").trim()) {
+      article.append(el("p", "light-note-body light-event-summary-copy", meeting.summary));
+    }
     page.append(article);
-    page.append(lightCopySection("Agent brief", meeting.summary || "No brief yet."));
+    const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });
+    if (chips) {
+      const section = el("section", "light-info-section");
+      section.append(lightSectionTitle("Connected"));
+      const card = el("div", "light-card light-attendee-chip-card light-event-connected-card");
+      card.append(chips);
+      section.append(card);
+      page.append(section);
+    }
+    const detailRows = calendarEventDetailRows(meeting, attendees);
+    if (detailRows.length) {
+      page.append(lightInfoSection("Details", detailRows));
+    }
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
-    }
-    if (attendees.length) {
-      page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));
     }
     if (docs.length) {
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
@@ -4191,7 +4197,6 @@
     if (linkedRows.length) {
       page.append(lightInfoSection("Linked records", linkedRows));
     }
-    page.append(lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" }));
     return page;
   }
 
@@ -4519,6 +4524,38 @@
   function graphListLabel(record) {
     const timestamp = workspaceTimestamp(record.event_at_ms || record.start_at_ms || record.due_at_ms || record.updated_at_ms, "Updated");
     return `${timestamp}${DOT}${record.summary || graphKindLabel(record.kind)}`;
+  }
+
+  function calendarEventDetailRows(event, attendees = calendarEventPeople(event)) {
+    if (!event) {
+      return [];
+    }
+    const meta = event.metadata || {};
+    const rows = [{
+      icon: "clock",
+      label: "When",
+      value: `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`
+    }];
+    const place = String(meta.place || "").trim();
+    if (place) {
+      rows.push({ icon: "pin", label: "Place", value: place });
+    }
+    const eventTimeZone = String(meta.time_zone || "").trim();
+    if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
+      rows.push({ icon: "globe", label: "Time zone", value: eventTimeZone });
+    }
+    const guests = attendees
+      .filter(person => !person.recognized)
+      .map(person => String(person?.fullLabel || person?.label || "").trim())
+      .filter(Boolean);
+    if (guests.length) {
+      rows.push({
+        icon: "contacts",
+        label: guests.length === 1 ? "Guest" : "Guests",
+        value: guests.join(", ")
+      });
+    }
+    return rows;
   }
 
   function meetingTimeLabel(meeting) {
@@ -4881,12 +4918,23 @@
   }
 
   function ensureCalendarAgendaCollections(events) {
-    if (!Array.isArray(events) || !events.some(calendarEventNeedsContacts)) {
+    if (!Array.isArray(events) || !events.length) {
       return;
     }
-    const bucket = workspaceBucket("contacts");
-    if (!bucket.loaded && !bucket.loading) {
-      void loadWorkspaceCollection("contacts", { render: true });
+    let needsContacts = false;
+    events.forEach(event => {
+      if (calendarEventNeedsContacts(event)) {
+        needsContacts = true;
+      }
+      if (Array.isArray(event?.links) && event.links.length) {
+        ensureLinkedCollections(event);
+      }
+    });
+    if (needsContacts) {
+      const bucket = workspaceBucket("contacts");
+      if (!bucket.loaded && !bucket.loading) {
+        void loadWorkspaceCollection("contacts", { render: true });
+      }
     }
   }
 
@@ -5697,29 +5745,80 @@
     return chip;
   }
 
-  function lightCalendarPlacePill(event) {
-    const place = String(event?.metadata?.place || "").trim();
-    return place ? el("span", "light-event-place-pill", place) : null;
-  }
-
   function lightCalendarEventChips(event, options = {}) {
     const row = el("div", "light-event-chip-row");
-    const place = lightCalendarPlacePill(event);
-    if (place) {
-      row.append(place);
-    }
-    const people = calendarEventPeople(event);
+    const chipTargets = calendarEventChipTargets(event);
     const limit = Math.max(0, Number(options.limit || 0) || 0);
-    const visible = limit > 0 ? people.slice(0, limit) : people;
+    const visible = limit > 0 ? chipTargets.slice(0, limit) : chipTargets;
     if (visible.length) {
-      const attendees = el("div", "light-event-attendees");
-      visible.forEach(person => attendees.append(lightAttendeeChip(person, { fromRoute: options.fromRoute || state.route || "" })));
-      if (limit > 0 && people.length > limit) {
-        attendees.append(el("span", "light-attendee-chip light-attendee-overflow", `+${people.length - limit}`));
+      visible.forEach(entry => row.append(lightRecordChip(entry, { fromRoute: options.fromRoute || state.route || "" })));
+      if (limit > 0 && chipTargets.length > limit) {
+        row.append(el("span", "light-attendee-chip light-attendee-overflow", `+${chipTargets.length - limit}`));
       }
-      row.append(attendees);
     }
     return row.childElementCount ? row : null;
+  }
+
+  function calendarEventChipTargets(event) {
+    const chips = [];
+    const seen = new Set();
+    const remember = entry => {
+      const label = String(entry?.label || "").trim();
+      const target = entry?.target || null;
+      const key = target?.kind && target?.id
+        ? `${target.kind}:${target.id}`
+        : `${String(entry?.kind || "")}:${label.toLowerCase()}`;
+      if (!label || !key || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      chips.push({
+        label,
+        target,
+        kind: String(entry?.kind || target?.kind || "").trim()
+      });
+    };
+    calendarEventPeople(event)
+      .filter(person => person.recognized && person.target)
+      .forEach(person => remember({
+        label: person.label,
+        target: person.target,
+        kind: "contact"
+      }));
+    const currentKind = String(event?.kind || "calendar_event");
+    const currentId = String(event?.id || event?.record_id || "");
+    const links = Array.isArray(event?.links) ? event.links : [];
+    const allowedKinds = new Set(["project", "task", "note", "meeting_note", "reminder"]);
+    links.forEach(link => {
+      const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
+      const relatedKind = String(isSource ? link.target_kind : link.source_kind);
+      if (!allowedKinds.has(relatedKind)) {
+        return;
+      }
+      const relatedId = String(isSource ? link.target_id : link.source_id);
+      const related = workspaceRecordByKind(relatedKind, relatedId);
+      const target = workspaceTargetForKind(relatedKind, related?.id || relatedId);
+      remember({
+        label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        target,
+        kind: relatedKind
+      });
+    });
+    return chips;
+  }
+
+  function lightRecordChip(entry, options = {}) {
+    const label = String(entry?.label || graphKindLabel(entry?.kind)).trim() || "Linked";
+    const target = entry?.target || null;
+    const chip = el(target ? "button" : "span", target ? "light-attendee-chip light-calendar-link-chip is-link" : "light-attendee-chip light-calendar-link-chip", label);
+    if (target) {
+      chip.type = "button";
+      chip.addEventListener("click", event => {
+        event.stopPropagation();
+        openWorkspaceTarget(target, options.fromRoute || state.route || "");
+      });
+    }
+    return chip;
   }
 
   function lightAttendeeRow(name) {

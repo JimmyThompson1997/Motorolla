@@ -4502,7 +4502,6 @@ button {
   flex-wrap: wrap;
 }
 
-.light-event-place-pill,
 .light-event-chip-row .light-attendee-chip {
   min-height: 26px;
   border-radius: 999px;
@@ -4564,6 +4563,24 @@ button {
   font-size: 20px;
   line-height: 1.15;
   font-weight: 820;
+}
+
+.light-event-detail-page .light-doc-article {
+  gap: 12px;
+}
+
+.light-event-summary-copy {
+  color: var(--home-shell-text-muted);
+  font-size: 15px;
+  line-height: 1.52;
+}
+
+.light-event-connected-card {
+  padding: 14px;
+}
+
+.light-event-connected-card .light-event-chip-row {
+  gap: 8px;
 }
 
 .light-doc-eyebrow {
@@ -5143,11 +5160,6 @@ button {
   padding-top: 0;
   padding-left: 20px;
   padding-right: 20px;
-}
-
-.light-event-detail-html-body.light-html-card,
-.light-event-detail-html-body.light-html-empty {
-  margin-top: -8px;
 }
 
 .light-task-toggle {

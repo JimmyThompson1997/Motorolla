@@ -406,6 +406,21 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert seeded["freelance-review"]["metadata"]["place"] == "Kitchen table"
     assert seeded["katy-handoff"]["metadata"]["place"] == "North field gate"
 
+    house_links = {
+        (row[0], row[1])
+        for row in store._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'calendar_event' AND source_id = 'house-walkthrough'
+            """
+        ).fetchall()
+    }
+    assert ("contact", "maya") in house_links
+    assert ("project", "home-refresh") in house_links
+    assert ("meeting_note", "demo-meeting-home-refresh") in house_links
+    assert ("reminder", "demo-reminder-paint-samples") in house_links
+
     freelance_links = {
         (row[0], row[1])
         for row in store._conn.execute(
