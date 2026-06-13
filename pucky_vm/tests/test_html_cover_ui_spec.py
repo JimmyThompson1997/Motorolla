@@ -737,7 +737,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" in light_page_header_shell_block
     assert "margin-left: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
     assert "margin-right: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
-    assert "width: calc(100% - (var(--app-shell-side-pad) * 2));" in light_page_header
+    assert "width: calc(100% - (var(--app-shell-side-pad) * 2));" in styles
     assert "background:" in light_page_header_shell_block
     assert "transparent 100%" not in light_page_header_shell_block
     assert "box-shadow:" in light_page_header_shell_block
