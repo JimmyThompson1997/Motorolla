@@ -143,21 +143,29 @@ public final class CapabilityReporter {
                 "user_enabled_accessibility", "visible", "BIND_ACCESSIBILITY_SERVICE", "local_artifact",
                 "Volume-down keyword lab screenshot action uses Pucky AccessibilityService takeScreenshot on API 30+ and publishes image artifacts."));
         Json.add(out, cap("notification.show", "notify.show", notificationStatus(), "yes", "visible",
-                Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "Quiet local notification."));
+                Manifest.permission.POST_NOTIFICATIONS, "not_recorded",
+                "Raw notification payload surface with shade, heads-up, full-screen, grouping, actions, inline reply, custom sound, custom vibration, and companion tone or haptic cues."));
         Json.add(out, cap("notification.ask_reply", "notify.ask", notificationStatus(), "yes", "visible",
-                Manifest.permission.POST_NOTIFICATIONS, "not_recorded", "Android RemoteInput direct reply notification posted back to broker reply inbox."));
+                Manifest.permission.POST_NOTIFICATIONS, "not_recorded",
+                "Backward-compatible ask alias that builds a reply notification on top of the raw notify.show payload surface."));
         Json.add(out, cap("notification.cancel", "notify.cancel", "implemented_untested", "yes", "quiet",
                 null, "not_recorded", "Cancels Pucky-posted notification id."));
         Json.add(out, cap("notification.active", "notify.list_active", "implemented_untested", "yes", "quiet",
                 null, "not_recorded", "Lists this app's active notifications where platform supports it."));
         Json.add(out, cap("notification.channels", "notify.channels.get", Build.VERSION.SDK_INT >= 26 ? "implemented" : "blocked_by_platform",
-                "yes", "quiet", null, "not_recorded", "Lists app notification channels."));
+                "yes", "quiet", null, "not_recorded", "Lists app notification channels and the effective sound or vibration settings Android is actually using."));
+        Json.add(out, cap("notification.policy", "notify.policy.status/notify.policy.open_settings",
+                Build.VERSION.SDK_INT >= 34 ? "implemented" : "implemented_guarded",
+                "user_mediated", "visible", null, "self_reported",
+                "Reports Do Not Disturb policy access, interruption filter state, and full-screen notification permission readiness, and can open the relevant system settings."));
         Json.add(out, cap("notification.listener", "notify.listener.status/notify.listener.messages",
                 notificationListenerStatus(), "user_enabled_notification_access", "privacy_sensitive",
                 null, "not_recorded",
                 "Reads cross-app messaging-style notifications after the user or adb enables notification access, which is the live fallback for normal inbound replies that do not surface through content://sms rows."));
         Json.add(out, cap("audio.tone", "audio.tone", "implemented_untested", "yes", "audible", null, "not_recorded",
-                "Short bounded ToneGenerator beep."));
+                "ToneGenerator cue with custom duration, volume, tone, and bounded repeat support for notification gauntlets and audible debugging."));
+        Json.add(out, cap("haptic.custom", "haptic.vibrate", "implemented_untested", "yes", "haptic", Manifest.permission.VIBRATE, "not_recorded",
+                "Custom one-shot or waveform vibration command with optional amplitudes and repeat support for notification debugging."));
         Json.add(out, cap("audio.route", "audio.route.get", "implemented", "yes", "quiet", null, "not_recorded",
                 "Modern AudioDeviceInfo input-route snapshot plus legacy debug booleans and media volume."));
         Json.add(out, cap("audio.volume", "audio.volume.set", "implemented_untested", "yes", "audible", null, "not_recorded",

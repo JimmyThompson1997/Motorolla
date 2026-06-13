@@ -39,11 +39,24 @@ public final class BrokerReplyPoster {
         Json.put(body, "prompt_id", promptId == null ? JSONObject.NULL : promptId);
         Json.put(body, "text", text == null ? "" : text);
         Json.put(body, "received_at", Instant.now().toString());
+        return postEvent(body);
+    }
+
+    public JSONObject postEvent(JSONObject body) throws IOException {
+        JSONObject payload;
+        try {
+            payload = body == null ? new JSONObject() : new JSONObject(body.toString());
+        } catch (Exception exc) {
+            payload = new JSONObject();
+        }
+        if (!payload.has("received_at")) {
+            Json.put(payload, "received_at", Instant.now().toString());
+        }
         HttpUrl url = replyUrl();
         Request request = new Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer " + settings.getToken())
-                .post(RequestBody.create(body.toString(), JSON))
+                .post(RequestBody.create(payload.toString(), JSON))
                 .build();
         try (Response response = client.newCall(request).execute()) {
             JSONObject out = new JSONObject();

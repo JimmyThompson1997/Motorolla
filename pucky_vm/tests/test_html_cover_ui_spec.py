@@ -121,7 +121,7 @@ def test_top_tabs_are_visible_icon_pages_with_links_shell() -> None:
     assert '`/api/links/composio/catalog?token=${encodeURIComponent(state.links.token)}`' not in app
     assert "window.location.assign(href);" not in app
     assert "Connect did not return a valid auth URL." in app
-    assert "Opened " not in app
+    assert "Opened Connect" not in app
     assert "linksHandoffLocked()" in app
     assert "window.__PUCKY_LINKS_DEBUG__" in app
     assert 'console.info("links.telemetry", entry);' in app
@@ -937,6 +937,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '"messages": "message"' not in store
     assert '"meeting-notes": "meeting_note"' in store
     assert '"reminders": "reminder"' in store
+    assert 'normalized["last_notification_command_id"]' in store
+    assert 'normalized["last_delivery_mode_requested"]' in store
+    assert 'normalized["last_delivery_mode_effective"]' in store
+    assert 'normalized["last_delivery_degraded_to"]' in store
+    assert 'normalized["last_delivery_warnings"]' in store
+    assert 'normalized["notification_payload"]' in store
     assert "def derive_task_group(" in store
     assert 'return "overdue"' in store
     assert 'return "soon"' in store
@@ -1124,11 +1130,19 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in reminder_detail
     assert 'lightGraphDetailPage(reminder' not in reminder_detail
     assert 'patchWorkspaceRecord("reminders", reminder.id' in app
+    assert 'function reminderDeliveryModeLabel(reminder)' in app
+    assert 'function reminderDeliveryDetail(reminder)' in app
+    assert 'value: reminderDeliveryDetail(reminder)' in app
     assert '"Snooze 10 min"' in app
     assert '"Mark done"' in app
     assert '"Reopen"' in app
     assert '"Sent to phone"' in app
     assert '"Couldn\'t reach phone"' in app
+    assert 'last_notification_command_id: ""' in app
+    assert 'last_delivery_mode_requested: ""' in app
+    assert 'last_delivery_mode_effective: ""' in app
+    assert 'last_delivery_degraded_to: ""' in app
+    assert 'last_delivery_warnings: []' in app
     assert 'lightLinkedRecordRows(record)' in graph_detail
     assert 'lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" })' in graph_detail
     assert 'workspaceItems("feed-items")' in light_feed

@@ -2982,7 +2982,25 @@ class ServerTests(unittest.TestCase):
         with self.broker.LOCK:
             self.broker.DEVICES["phone-1"] = {"socket": object()}
 
-        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", return_value=None) as ws_send:
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {
+                        "shown": True,
+                        "requested_surface_mode": "heads_up",
+                        "effective_surface_mode": "heads_up",
+                        "warnings": [],
+                    },
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect) as ws_send:
             first = self.service.process_due_reminders()
             second = self.service.process_due_reminders()
 
@@ -2994,6 +3012,67 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(updated["metadata"]["delivery_state"], "sent")
         self.assertEqual(updated["metadata"]["notification_device_id"], "phone-1")
         self.assertEqual(updated["metadata"]["last_fired_due_at_ms"], updated["due_at_ms"])
+        self.assertTrue(str(updated["metadata"]["last_notification_command_id"]).startswith("cmd_"))
+        self.assertEqual(updated["metadata"]["last_delivery_mode_requested"], "heads_up")
+        self.assertEqual(updated["metadata"]["last_delivery_mode_effective"], "heads_up")
+        self.assertEqual(updated["metadata"]["last_delivery_degraded_to"], "")
+        self.assertEqual(updated["metadata"]["last_delivery_warnings"], [])
+
+    def test_due_reminder_custom_payload_records_effective_mode_and_downgrade(self) -> None:
+        self.clear_active_reminders()
+        self.service.workspace.upsert_record(
+            "reminders",
+            {
+                "id": "custom-reminder",
+                "title": "Custom reminder",
+                "summary": "Escalate now",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {
+                    "notification_payload": {
+                        "surface": {"mode": "full_screen"},
+                        "full_screen_activity": "home",
+                        "importance": "high",
+                        "category": "reminder",
+                        "default_sound": True,
+                    }
+                },
+            },
+        )
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {
+                        "shown": True,
+                        "requested_surface_mode": "full_screen",
+                        "effective_surface_mode": "heads_up",
+                        "degraded_to": "heads_up",
+                        "warnings": ["full_screen_permission_missing"],
+                    },
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        updated = self.service.workspace.get_record("reminders", "custom-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        self.assertEqual(updated["metadata"]["last_delivery_mode_requested"], "full_screen")
+        self.assertEqual(updated["metadata"]["last_delivery_mode_effective"], "heads_up")
+        self.assertEqual(updated["metadata"]["last_delivery_degraded_to"], "heads_up")
+        self.assertEqual(updated["metadata"]["last_delivery_warnings"], ["full_screen_permission_missing"])
 
     def test_due_reminder_without_online_device_marks_failed(self) -> None:
         self.clear_active_reminders()

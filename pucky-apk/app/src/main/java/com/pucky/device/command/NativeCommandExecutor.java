@@ -12,6 +12,7 @@ import com.pucky.device.capabilities.CapabilityReporter;
 import com.pucky.device.capabilities.PermissionReporter;
 import com.pucky.device.clipboard.PuckyClipboardController;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.haptics.HapticController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.media.MediaControlController;
@@ -71,7 +72,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "pucky.recipes.clear", "pucky.recipes.schema", "device.primitives.list",
             "log.tail", "notify.show", "notify.ask", "notify.cancel", "notify.list_active",
             "notify.channels.get", "notify.listener.status", "notify.listener.messages",
-            "audio.tone", "audio.route.get", "audio.volume.set",
+            "notify.policy.status", "notify.policy.open_settings",
+            "audio.tone", "audio.route.get", "audio.volume.set", "haptic.vibrate",
             "media.state.get", "media.key", "media.open_uri", "media.export.audio",
             "media.export.list", "media.export.delete", "media.cache.status", "media.cache.ensure",
             "player.asset.prepare", "player.load",
@@ -149,6 +151,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
     private final StorageProvider storageProvider;
     private final NotificationController notificationController;
     private final AudioController audioController;
+    private final HapticController hapticController;
     private final CameraController cameraController;
     private final TimerController timerController;
     private final CommandLogStore commandLogStore;
@@ -189,6 +192,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             StorageProvider storageProvider,
             NotificationController notificationController,
             AudioController audioController,
+            HapticController hapticController,
             CameraController cameraController,
             TimerController timerController,
             CommandLogStore commandLogStore,
@@ -226,6 +230,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
         this.storageProvider = storageProvider;
         this.notificationController = notificationController;
         this.audioController = audioController;
+        this.hapticController = hapticController;
         this.cameraController = cameraController;
         this.timerController = timerController;
         this.commandLogStore = commandLogStore;
@@ -397,7 +402,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             case "log.tail":
                 return logTail(command.args());
             case "notify.show":
-                return notificationController.show(command.args());
+                return notificationController.show(command.id(), command.args());
             case "notify.ask":
                 return notificationController.ask(command.id(), command.args());
             case "notify.cancel":
@@ -410,12 +415,18 @@ public final class NativeCommandExecutor implements CommandExecutor {
                 return notificationController.listenerStatus(command.args());
             case "notify.listener.messages":
                 return notificationController.listenerMessages(command.args());
+            case "notify.policy.status":
+                return notificationController.policyStatus(command.args());
+            case "notify.policy.open_settings":
+                return notificationController.policyOpenSettings(command.args());
             case "audio.tone":
                 return audioController.tone(command.args());
             case "audio.route.get":
                 return audioController.route();
             case "audio.volume.set":
                 return audioController.setVolume(command.args());
+            case "haptic.vibrate":
+                return hapticController.vibrate(command.args());
             case "media.state.get":
                 return mediaControlController.state();
             case "media.key":

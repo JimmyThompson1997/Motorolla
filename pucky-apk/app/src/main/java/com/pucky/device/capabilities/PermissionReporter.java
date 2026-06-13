@@ -126,6 +126,8 @@ public final class PermissionReporter {
                 array("location.get", "location.watch"));
         add(out, Manifest.permission.POST_NOTIFICATIONS, declared, true, Build.VERSION.SDK_INT >= 33, "dangerous",
                 array("notify.show", "timer.set", "foreground service notification"));
+        add(out, Manifest.permission.VIBRATE, declared, false, true, "normal",
+                array("notify.show", "haptic.vibrate", "companion notification haptics"));
         add(out, Manifest.permission.READ_SMS, declared, true, true, "dangerous",
                 array("android.substrate SMS query", "android.sms.list", "android.sms.thread", "phone.sms.list", "phone.sms.get_thread"));
         add(out, Manifest.permission.SEND_SMS, declared, true, true, "dangerous",

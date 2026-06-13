@@ -70,6 +70,53 @@ class ParseTests(unittest.TestCase):
 
         self.assertEqual(ctx["operator_token"], "personal-token")
 
+    def test_notify_show_payload_json_dispatches_raw_payload(self):
+        parser = puckyctl.build_parser()
+        args = parser.parse_args([
+            "notify",
+            "show",
+            "--payload-json",
+            '{"title":"Hello","surface":{"mode":"heads_up"},"actions":[{"id":"ack","title":"Acknowledge","kind":"button"}]}',
+        ])
+        ctx = puckyctl.build_context({"broker_base_url": "http://127.0.0.1:1", "operator_token": "token"})
+        with mock.patch.object(puckyctl, "run_command", return_value={"ok": True}) as run_command:
+            result = puckyctl.dispatch(ctx, args)
+
+        self.assertEqual({"ok": True}, result)
+        self.assertEqual(run_command.call_args.args[2], "notify.show")
+        self.assertEqual(run_command.call_args.args[3]["surface"]["mode"], "heads_up")
+        self.assertEqual(run_command.call_args.args[3]["actions"][0]["id"], "ack")
+
+    def test_notify_policy_status_dispatches(self):
+        parser = puckyctl.build_parser()
+        args = parser.parse_args(["notify", "policy-status"])
+        ctx = puckyctl.build_context({"broker_base_url": "http://127.0.0.1:1", "operator_token": "token"})
+        with mock.patch.object(puckyctl, "run_command", return_value={"ok": True}) as run_command:
+            puckyctl.dispatch(ctx, args)
+
+        self.assertEqual(run_command.call_args.args[2], "notify.policy.status")
+        self.assertEqual(run_command.call_args.args[3], {})
+
+    def test_haptic_vibrate_dispatches_pattern(self):
+        parser = puckyctl.build_parser()
+        args = parser.parse_args([
+            "haptic",
+            "vibrate",
+            "--duration",
+            "240",
+            "--pattern-json",
+            "[0,120,80,240]",
+            "--amplitudes-json",
+            "[-1,180,0,255]",
+        ])
+        ctx = puckyctl.build_context({"broker_base_url": "http://127.0.0.1:1", "operator_token": "token"})
+        with mock.patch.object(puckyctl, "run_command", return_value={"ok": True}) as run_command:
+            puckyctl.dispatch(ctx, args)
+
+        self.assertEqual(run_command.call_args.args[2], "haptic.vibrate")
+        self.assertEqual(run_command.call_args.args[3]["pattern_ms"], [0, 120, 80, 240])
+        self.assertEqual(run_command.call_args.args[3]["amplitudes"], [-1, 180, 0, 255])
+
 
 class BrokerIntegrationTests(unittest.TestCase):
     def setUp(self):

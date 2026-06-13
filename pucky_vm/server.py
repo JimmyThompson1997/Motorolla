@@ -1013,10 +1013,74 @@ class PuckyVoiceService:
             broker.persist_command(command)
             broker.record({"event": "command_send_failed", "command": command})
             raise RuntimeError(str(exc)) from exc
+        latest = broker.get_command(str(command.get("id") or "")) or {}
+        latest_status = str(latest.get("status") or "").strip().lower()
+        if latest_status in {"completed", "failed", "rejected", "device_offline", "send_failed"}:
+            broker.record({"event": "command_result_arrived_before_sent", "command": latest})
+            return latest
+        if latest_status and latest_status != "queued":
+            broker.record({"event": "command_status_updated_before_sent", "command": latest})
+            return latest
         command["status"] = "sent"
         broker.persist_command(command)
         broker.record({"event": "command_sent", "command": command})
         return command
+
+    def _await_device_command_result(
+        self,
+        command_id: str,
+        *,
+        timeout_ms: int = 1_200,
+        interval_ms: int = 100,
+    ) -> dict[str, object] | None:
+        clean_command_id = str(command_id or "").strip()
+        if not clean_command_id:
+            return None
+        broker = ensure_broker_initialized()
+        deadline = time.time() + max(0.1, timeout_ms / 1000.0)
+        while time.time() < deadline:
+            command = broker.get_command(clean_command_id)
+            if isinstance(command, dict) and str(command.get("status") or "").strip().lower() in {
+                "completed",
+                "failed",
+                "rejected",
+                "device_offline",
+                "send_failed",
+            }:
+                return command
+            time.sleep(max(0.05, interval_ms / 1000.0))
+        return broker.get_command(clean_command_id)
+
+    def _default_reminder_notification_payload(self, reminder: dict[str, object]) -> dict[str, object]:
+        reminder_id = str(reminder.get("id") or reminder.get("record_id") or "").strip()
+        title = str(reminder.get("title") or "Reminder").strip() or "Reminder"
+        summary = str(reminder.get("summary") or "").strip()
+        text = summary or "Reminder due now."
+        return {
+            "id": f"reminder_{reminder_id or uuid.uuid4().hex[:12]}",
+            "title": title,
+            "text": text,
+            "big_text": summary or title,
+            "surface": {"mode": "heads_up"},
+            "importance": "high",
+            "category": "reminder",
+            "default_sound": True,
+            "vibration_pattern_ms": [0, 120, 80, 180],
+            "auto_cancel": True,
+            "only_alert_once": True,
+        }
+
+    def _reminder_notification_payload(self, reminder: dict[str, object]) -> dict[str, object]:
+        metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+        custom = _coerce_json_object(metadata.get("notification_payload"))
+        payload = custom if custom else self._default_reminder_notification_payload(reminder)
+        payload.setdefault("id", f"reminder_{str(reminder.get('id') or reminder.get('record_id') or uuid.uuid4().hex[:12]).strip()}")
+        payload.setdefault("title", str(reminder.get("title") or "Reminder").strip() or "Reminder")
+        summary = str(reminder.get("summary") or "").strip()
+        payload.setdefault("text", summary or "Reminder due now.")
+        if summary and not str(payload.get("big_text") or "").strip():
+            payload["big_text"] = summary
+        return payload
 
     def _reminder_is_due_for_delivery(self, reminder: dict[str, object], now_ms: int) -> bool:
         if not isinstance(reminder, dict):
@@ -1039,6 +1103,11 @@ class PuckyVoiceService:
         now_ms: int,
         device_id: str = "",
         error: str = "",
+        command_id: str = "",
+        requested_mode: str = "",
+        effective_mode: str = "",
+        degraded_to: str = "",
+        warnings: list[str] | None = None,
         mark_fired: bool = False,
     ) -> dict[str, object] | None:
         metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
@@ -1049,6 +1118,11 @@ class PuckyVoiceService:
                 "delivery_state": delivery_state,
                 "last_delivery_error": normalized_error,
                 "notification_device_id": device_id or str(metadata.get("notification_device_id") or "").strip(),
+                "last_notification_command_id": command_id or str(metadata.get("last_notification_command_id") or "").strip(),
+                "last_delivery_mode_requested": requested_mode or str(metadata.get("last_delivery_mode_requested") or "").strip(),
+                "last_delivery_mode_effective": effective_mode or str(metadata.get("last_delivery_mode_effective") or "").strip(),
+                "last_delivery_degraded_to": degraded_to or str(metadata.get("last_delivery_degraded_to") or "").strip(),
+                "last_delivery_warnings": list(warnings or []),
                 "snoozed_until_ms": 0,
             }
         }
@@ -1076,25 +1150,72 @@ class PuckyVoiceService:
                     self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or "reminder", status=device_error)
                     processed.append({"id": reminder_id, "ok": False, "error": device_error})
                     continue
-                title = str(reminder.get("title") or "Reminder").strip() or "Reminder"
-                summary = str(reminder.get("summary") or "").strip()
-                text = summary or "Reminder due now."
+                payload = self._reminder_notification_payload(reminder)
+                requested_mode = str(
+                    (_coerce_json_object(payload.get("surface")).get("mode"))
+                    or payload.get("surface_mode")
+                    or "shade"
+                ).strip() or "shade"
                 try:
-                    command = self._queue_device_command(device_id, "notify.show", {
-                        "id": f"reminder_{reminder_id or uuid.uuid4().hex[:12]}",
-                        "title": title,
-                        "text": text,
-                        "big_text": summary or title,
-                        "audible": True,
-                        "auto_cancel": True,
-                        "only_alert_once": True,
-                    })
-                    self._reminder_delivery_patch(reminder, delivery_state="sent", now_ms=now_ms, device_id=device_id, mark_fired=True)
+                    command = self._queue_device_command(device_id, "notify.show", payload)
+                    final_command = self._await_device_command_result(str(command.get("id") or ""))
+                    command_result = final_command.get("result") if isinstance(final_command, dict) and isinstance(final_command.get("result"), dict) else {}
+                    result_body = command_result.get("result") if isinstance(command_result.get("result"), dict) else {}
+                    effective_mode = str(result_body.get("effective_surface_mode") or result_body.get("requested_surface_mode") or "").strip()
+                    degraded_to = str(result_body.get("degraded_to") or "").strip()
+                    raw_warnings = result_body.get("warnings")
+                    warning_list = [str(item).strip() for item in raw_warnings] if isinstance(raw_warnings, list) else []
+                    command_status = str((final_command or {}).get("status") or command.get("status") or "").strip().lower()
+                    if command_status == "failed":
+                        error = str((((final_command or {}).get("error") or {}) if isinstance((final_command or {}).get("error"), dict) else {}).get("message") or "failed").strip()
+                        self._reminder_delivery_patch(
+                            reminder,
+                            delivery_state="failed",
+                            now_ms=now_ms,
+                            device_id=device_id,
+                            error=error,
+                            command_id=str(command.get("id") or ""),
+                            requested_mode=requested_mode,
+                            effective_mode=effective_mode,
+                            degraded_to=degraded_to,
+                            warnings=warning_list,
+                        )
+                        self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status=f"failed:{error[:80]}")
+                        processed.append({"id": reminder_id, "ok": False, "device_id": device_id, "error": error, "command_id": str(command.get("id") or "")})
+                        continue
+                    self._reminder_delivery_patch(
+                        reminder,
+                        delivery_state="sent",
+                        now_ms=now_ms,
+                        device_id=device_id,
+                        command_id=str(command.get("id") or ""),
+                        requested_mode=requested_mode,
+                        effective_mode=effective_mode,
+                        degraded_to=degraded_to,
+                        warnings=warning_list,
+                        mark_fired=True,
+                    )
                     self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status="sent")
-                    processed.append({"id": reminder_id, "ok": True, "device_id": device_id, "command_id": str(command.get("id") or "")})
+                    processed.append({
+                        "id": reminder_id,
+                        "ok": True,
+                        "device_id": device_id,
+                        "command_id": str(command.get("id") or ""),
+                        "requested_mode": requested_mode,
+                        "effective_mode": effective_mode,
+                        "degraded_to": degraded_to,
+                        "warnings": warning_list,
+                    })
                 except Exception as exc:
                     error = str(exc) or "send_failed"
-                    self._reminder_delivery_patch(reminder, delivery_state="failed", now_ms=now_ms, device_id=device_id, error=error)
+                    self._reminder_delivery_patch(
+                        reminder,
+                        delivery_state="failed",
+                        now_ms=now_ms,
+                        device_id=device_id,
+                        error=error,
+                        requested_mode=requested_mode,
+                    )
                     self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status=f"failed:{error[:80]}")
                     processed.append({"id": reminder_id, "ok": False, "device_id": device_id, "error": error})
             return {

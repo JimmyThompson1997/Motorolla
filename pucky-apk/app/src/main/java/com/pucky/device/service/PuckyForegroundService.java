@@ -44,6 +44,7 @@ import com.pucky.device.command.CommandRouter;
 import com.pucky.device.command.NativeCommandExecutor;
 import com.pucky.device.command.PhoneDataController;
 import com.pucky.device.files.FileDownloadController;
+import com.pucky.device.haptics.HapticController;
 import com.pucky.device.intents.IntentController;
 import com.pucky.device.location.LocationController;
 import com.pucky.device.media.MediaControlController;
@@ -241,6 +242,7 @@ public final class PuckyForegroundService extends Service {
                 new StorageProvider(this),
                 new NotificationController(this),
                 new AudioController(this),
+                new HapticController(this),
                 new CameraController(this),
                 new TimerController(this),
                 logStore,

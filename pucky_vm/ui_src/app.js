@@ -4291,7 +4291,7 @@
     return [
       { icon: "clock", label: "Due", value: reminderDueLabel(reminder) },
       { icon: "checklist", label: "Status", value: reminderStatusLabel(reminder) },
-      { icon: "bell", label: "Delivery", value: reminderDeliveryLabel(reminder) },
+      { icon: "bell", label: "Delivery", value: reminderDeliveryDetail(reminder) },
       {
         icon: graphKindIcon(sourceKind),
         label: "Source",
@@ -4396,6 +4396,38 @@
     return "delivery-pending";
   }
 
+  function reminderDeliveryModeLabel(reminder) {
+    const meta = reminder?.metadata || {};
+    const effective = String(meta.last_delivery_mode_effective || "").trim();
+    const requested = String(meta.last_delivery_mode_requested || "").trim();
+    const degraded = String(meta.last_delivery_degraded_to || "").trim();
+    if (!requested && !effective && !degraded) {
+      return "";
+    }
+    const format = value => String(value || "").trim().replace(/_/g, " ");
+    if (degraded) {
+      return `${format(requested || effective)} -> ${format(degraded)}`;
+    }
+    if (requested && effective && requested !== effective) {
+      return `${format(requested)} -> ${format(effective)}`;
+    }
+    return format(effective || requested);
+  }
+
+  function reminderDeliveryDetail(reminder) {
+    const label = reminderDeliveryLabel(reminder);
+    const meta = reminder?.metadata || {};
+    const mode = reminderDeliveryModeLabel(reminder);
+    const error = String(meta.last_delivery_error || "").trim();
+    if (label === "Couldn't reach phone" && error) {
+      return `${label}${DOT}${error}`;
+    }
+    if (mode) {
+      return `${label}${DOT}${mode}`;
+    }
+    return label;
+  }
+
   function reminderSnoozePayload(reminder, reopen = false) {
     const nextDueAtMs = Date.now() + 10 * 60 * 1000;
     return {
@@ -4406,6 +4438,11 @@
         last_fired_at_ms: 0,
         last_fired_due_at_ms: 0,
         last_delivery_error: "",
+        last_notification_command_id: "",
+        last_delivery_mode_requested: "",
+        last_delivery_mode_effective: "",
+        last_delivery_degraded_to: "",
+        last_delivery_warnings: [],
         snoozed_until_ms: nextDueAtMs
       }
     };
@@ -4423,6 +4460,11 @@
             last_fired_at_ms: 0,
             last_fired_due_at_ms: 0,
             last_delivery_error: "",
+            last_notification_command_id: "",
+            last_delivery_mode_requested: "",
+            last_delivery_mode_effective: "",
+            last_delivery_degraded_to: "",
+            last_delivery_warnings: [],
             snoozed_until_ms: 0
           }
           : {}

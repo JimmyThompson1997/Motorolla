@@ -71,6 +71,14 @@ def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> di
     normalized["snoozed_until_ms"] = _int_or_zero(normalized.get("snoozed_until_ms"))
     normalized["last_delivery_error"] = str(normalized.get("last_delivery_error") or "").strip()
     normalized["notification_device_id"] = str(normalized.get("notification_device_id") or "").strip()
+    normalized["last_notification_command_id"] = str(normalized.get("last_notification_command_id") or "").strip()
+    normalized["last_delivery_mode_requested"] = str(normalized.get("last_delivery_mode_requested") or "").strip()
+    normalized["last_delivery_mode_effective"] = str(normalized.get("last_delivery_mode_effective") or "").strip()
+    normalized["last_delivery_degraded_to"] = str(normalized.get("last_delivery_degraded_to") or "").strip()
+    warnings = normalized.get("last_delivery_warnings")
+    normalized["last_delivery_warnings"] = list(warnings) if isinstance(warnings, list) else []
+    notification_payload = normalized.get("notification_payload")
+    normalized["notification_payload"] = dict(notification_payload) if isinstance(notification_payload, dict) else {}
     if str(status or "").strip().lower() == "done":
         normalized["snoozed_until_ms"] = 0
     return normalized

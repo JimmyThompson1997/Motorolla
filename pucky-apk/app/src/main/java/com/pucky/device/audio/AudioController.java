@@ -18,23 +18,40 @@ public final class AudioController {
     public JSONObject tone(JSONObject args) {
         int durationMs = Math.max(50, Math.min(1000, args.optInt("duration_ms", 200)));
         int volume = Math.max(1, Math.min(100, args.optInt("volume", 35)));
-        int tone = args.optInt("tone", ToneGenerator.TONE_PROP_BEEP);
-        ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, volume);
-        generator.startTone(tone, durationMs);
+        int tone = args.has("tone") ? args.optInt("tone", ToneGenerator.TONE_PROP_BEEP) : ToneGenerator.TONE_PROP_BEEP;
+        int repeatCount = Math.max(0, Math.min(25, args.optInt("repeat_count", 0)));
+        int repeatGapMs = Math.max(0, Math.min(10000, args.optInt("repeat_gap_ms", 800)));
+        playTone(durationMs, volume, tone, repeatCount, repeatGapMs);
+        JSONObject out = new JSONObject();
+        Json.put(out, "played", true);
+        Json.put(out, "duration_ms", durationMs);
+        Json.put(out, "volume", volume);
+        Json.put(out, "repeat_count", repeatCount);
+        Json.put(out, "repeat_gap_ms", repeatGapMs);
+        Json.put(out, "stream", "music");
+        return out;
+    }
+
+    public static void playTone(int durationMs, int volume, int tone, int repeatCount, int repeatGapMs) {
+        final int safeDurationMs = Math.max(50, Math.min(5000, durationMs));
+        final int safeVolume = Math.max(1, Math.min(100, volume));
+        final int safeTone = tone <= 0 ? ToneGenerator.TONE_PROP_BEEP : tone;
+        final int safeRepeatCount = Math.max(0, Math.min(25, repeatCount));
+        final int safeRepeatGapMs = Math.max(0, Math.min(10000, repeatGapMs));
+        ToneGenerator generator = new ToneGenerator(AudioManager.STREAM_MUSIC, safeVolume);
+        generator.startTone(safeTone, safeDurationMs);
         new Thread(() -> {
             try {
-                Thread.sleep(durationMs + 100L);
+                for (int index = 0; index < safeRepeatCount; index++) {
+                    Thread.sleep(safeDurationMs + safeRepeatGapMs);
+                    generator.startTone(safeTone, safeDurationMs);
+                }
+                Thread.sleep(safeDurationMs + 100L);
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
             generator.release();
         }, "pucky-tone-release").start();
-        JSONObject out = new JSONObject();
-        Json.put(out, "played", true);
-        Json.put(out, "duration_ms", durationMs);
-        Json.put(out, "volume", volume);
-        Json.put(out, "stream", "music");
-        return out;
     }
 
     public JSONObject route() {

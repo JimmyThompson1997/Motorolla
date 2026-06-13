@@ -285,6 +285,8 @@ def build_parser():
     notify_show.add_argument("--channel")
     notify_show.add_argument("--silent", action="store_true")
     notify_show.add_argument("--audible", action="store_true")
+    notify_show.add_argument("--payload-json", default="")
+    notify_show.add_argument("--payload-file", default="")
     add_command_flags(notify_show)
     notify_ask = notify_sub.add_parser("ask")
     notify_ask.add_argument("--title", default="Pucky")
@@ -293,10 +295,21 @@ def build_parser():
     notify_ask.add_argument("--reply-label", default="Reply")
     notify_ask.add_argument("--audible", action="store_true")
     notify_ask.add_argument("--silent", action="store_true")
+    notify_ask.add_argument("--payload-json", default="")
+    notify_ask.add_argument("--payload-file", default="")
     add_command_flags(notify_ask)
     notify_cancel = notify_sub.add_parser("cancel")
     notify_cancel.add_argument("--id", required=True)
     add_command_flags(notify_cancel)
+    notify_active = notify_sub.add_parser("active")
+    add_command_flags(notify_active)
+    notify_channels = notify_sub.add_parser("channels")
+    add_command_flags(notify_channels)
+    notify_policy = notify_sub.add_parser("policy-status")
+    add_command_flags(notify_policy)
+    notify_policy_settings = notify_sub.add_parser("policy-open-settings")
+    notify_policy_settings.add_argument("--target", choices=["policy", "full_screen"], default="policy")
+    add_command_flags(notify_policy_settings)
 
     timer = sub.add_parser("timer")
     timer_sub = timer.add_subparsers(dest="action")
@@ -316,6 +329,8 @@ def build_parser():
     audio_tone.add_argument("--duration", type=int, default=150)
     audio_tone.add_argument("--volume", type=int, default=20)
     audio_tone.add_argument("--tone", type=int)
+    audio_tone.add_argument("--repeat-count", type=int, default=0)
+    audio_tone.add_argument("--repeat-gap-ms", type=int, default=800)
     add_command_flags(audio_tone)
 
     audio_route = audio_sub.add_parser("route")
@@ -324,6 +339,17 @@ def build_parser():
     audio_volume.add_argument("--level", type=int)
     audio_volume.add_argument("--percent", type=int)
     add_command_flags(audio_volume)
+
+    haptic = sub.add_parser("haptic")
+    haptic_sub = haptic.add_subparsers(dest="action")
+    haptic_vibrate = haptic_sub.add_parser("vibrate")
+    haptic_vibrate.add_argument("--duration", type=int, default=180)
+    haptic_vibrate.add_argument("--amplitude", type=int, default=220)
+    haptic_vibrate.add_argument("--pattern-json", default="")
+    haptic_vibrate.add_argument("--amplitudes-json", default="")
+    haptic_vibrate.add_argument("--repeat-count", type=int, default=0)
+    haptic_vibrate.add_argument("--repeat-gap-ms", type=int, default=800)
+    add_command_flags(haptic_vibrate)
 
     voice = sub.add_parser("voice")
     voice_sub = voice.add_subparsers(dest="action")
@@ -875,6 +901,28 @@ def parse_args_json(text):
     return value
 
 
+def parse_json_option(label, text, *, require_object=False):
+    if not text:
+        return {} if require_object else None
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise CliError("ARGUMENT_ERROR", f"{label} is invalid JSON: {exc}", exit_code=2)
+    if require_object and not isinstance(value, dict):
+        raise CliError("ARGUMENT_ERROR", f"{label} must decode to an object", exit_code=2)
+    return value
+
+
+def load_json_path(label, path, *, require_object=False):
+    if not path:
+        return {} if require_object else None
+    try:
+        text = pathlib.Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CliError("ARGUMENT_ERROR", f"{label} could not be read: {exc}", exit_code=2)
+    return parse_json_option(label, text, require_object=require_object)
+
+
 def merge_command_args(args_json, key_values):
     merged = parse_args_json(args_json)
     merged.update(parse_key_values(key_values))
@@ -1190,7 +1238,11 @@ def dispatch(ctx, args):
     if args.resource == "notify":
         require_action(args.action, "notify")
         if args.action == "show":
-            payload = {"title": args.title, "text": args.text}
+            payload = load_json_path("--payload-file", args.payload_file, require_object=True)
+            if not payload:
+                payload = parse_json_option("--payload-json", args.payload_json, require_object=True)
+            if not payload:
+                payload = {"title": args.title, "text": args.text}
             if args.channel:
                 payload["channel"] = args.channel
             if args.silent:
@@ -1199,18 +1251,32 @@ def dispatch(ctx, args):
                 payload["audible"] = True
             return run_command(ctx, None, "notify.show", payload, args, wait_default=True)
         if args.action == "ask":
-            payload = {
-                "title": args.title,
-                "text": args.text,
-                "reply_label": args.reply_label,
-            }
+            payload = load_json_path("--payload-file", args.payload_file, require_object=True)
+            if not payload:
+                payload = parse_json_option("--payload-json", args.payload_json, require_object=True)
+            if not payload:
+                payload = {
+                    "title": args.title,
+                    "text": args.text,
+                    "reply_label": args.reply_label,
+                }
             if args.prompt_id:
                 payload["prompt_id"] = args.prompt_id
+            if "reply_label" not in payload:
+                payload["reply_label"] = args.reply_label
             if args.silent:
                 payload["silent"] = True
             if args.audible:
                 payload["audible"] = True
             return run_command(ctx, None, "notify.ask", payload, args, wait_default=True)
+        if args.action == "active":
+            return run_command(ctx, None, "notify.list_active", {}, args, wait_default=True)
+        if args.action == "channels":
+            return run_command(ctx, None, "notify.channels.get", {}, args, wait_default=True)
+        if args.action == "policy-status":
+            return run_command(ctx, None, "notify.policy.status", {}, args, wait_default=True)
+        if args.action == "policy-open-settings":
+            return run_command(ctx, None, "notify.policy.open_settings", {"target": args.target}, args, wait_default=True)
         return run_command(ctx, None, "notify.cancel", {"id": args.id}, args, wait_default=True)
     if args.resource == "timer":
         require_action(args.action, "timer")
@@ -1231,10 +1297,30 @@ def dispatch(ctx, args):
             if args.percent is not None:
                 payload["percent"] = args.percent
             return run_command(ctx, None, "audio.volume.set", payload, args, wait_default=True)
-        payload = {"duration_ms": args.duration, "volume": args.volume}
+        payload = {
+            "duration_ms": args.duration,
+            "volume": args.volume,
+            "repeat_count": args.repeat_count,
+            "repeat_gap_ms": args.repeat_gap_ms,
+        }
         if args.tone is not None:
             payload["tone"] = args.tone
         return run_command(ctx, None, "audio.tone", payload, args, wait_default=True)
+    if args.resource == "haptic":
+        require_action(args.action, "haptic")
+        payload = {
+            "duration_ms": args.duration,
+            "amplitude": args.amplitude,
+            "repeat_count": args.repeat_count,
+            "repeat_gap_ms": args.repeat_gap_ms,
+        }
+        pattern = parse_json_option("--pattern-json", args.pattern_json)
+        amplitudes = parse_json_option("--amplitudes-json", args.amplitudes_json)
+        if pattern is not None:
+            payload["pattern_ms"] = pattern
+        if amplitudes is not None:
+            payload["amplitudes"] = amplitudes
+        return run_command(ctx, None, "haptic.vibrate", payload, args, wait_default=True)
     if args.resource == "voice":
         require_action(args.action, "voice")
         if args.action == "status":

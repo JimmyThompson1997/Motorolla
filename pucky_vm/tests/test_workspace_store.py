@@ -142,6 +142,12 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
     assert reminder["metadata"]["last_fired_due_at_ms"] == 0
     assert reminder["metadata"]["last_delivery_error"] == ""
     assert reminder["metadata"]["notification_device_id"] == ""
+    assert reminder["metadata"]["last_notification_command_id"] == ""
+    assert reminder["metadata"]["last_delivery_mode_requested"] == ""
+    assert reminder["metadata"]["last_delivery_mode_effective"] == ""
+    assert reminder["metadata"]["last_delivery_degraded_to"] == ""
+    assert reminder["metadata"]["last_delivery_warnings"] == []
+    assert reminder["metadata"]["notification_payload"] == {}
     assert reminder["metadata"]["snoozed_until_ms"] == 0
 
     patched = store.patch_record(
@@ -153,6 +159,11 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
                 "last_delivery_error": "no_online_device",
                 "notification_device_id": "phone-1",
                 "last_fired_due_at_ms": 25_000,
+                "last_notification_command_id": "cmd_123",
+                "last_delivery_mode_requested": "full_screen",
+                "last_delivery_mode_effective": "heads_up",
+                "last_delivery_degraded_to": "heads_up",
+                "last_delivery_warnings": ["full_screen_permission_missing"],
             }
         },
     )
@@ -161,6 +172,11 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
     assert patched["metadata"]["last_delivery_error"] == "no_online_device"
     assert patched["metadata"]["notification_device_id"] == "phone-1"
     assert patched["metadata"]["last_fired_due_at_ms"] == 25_000
+    assert patched["metadata"]["last_notification_command_id"] == "cmd_123"
+    assert patched["metadata"]["last_delivery_mode_requested"] == "full_screen"
+    assert patched["metadata"]["last_delivery_mode_effective"] == "heads_up"
+    assert patched["metadata"]["last_delivery_degraded_to"] == "heads_up"
+    assert patched["metadata"]["last_delivery_warnings"] == ["full_screen_permission_missing"]
 
     done = store.patch_record("reminders", "proof-reminder", {"status": "done", "metadata": {"snoozed_until_ms": 99}})
     assert done is not None

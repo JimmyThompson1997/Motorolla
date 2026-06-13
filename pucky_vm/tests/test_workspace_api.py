@@ -348,6 +348,12 @@ def test_workspace_api_reminder_delivery_metadata_and_snooze_done_paths(tmp_path
             },
         )
         assert created["metadata"]["delivery_state"] == "pending"
+        assert created["metadata"]["last_notification_command_id"] == ""
+        assert created["metadata"]["last_delivery_mode_requested"] == ""
+        assert created["metadata"]["last_delivery_mode_effective"] == ""
+        assert created["metadata"]["last_delivery_degraded_to"] == ""
+        assert created["metadata"]["last_delivery_warnings"] == []
+        assert created["metadata"]["notification_payload"] == {}
 
         snoozed = request_json(
             base_url,
@@ -379,12 +385,18 @@ def test_workspace_api_reminder_delivery_metadata_and_snooze_done_paths(tmp_path
                     "delivery_state": "failed",
                     "last_delivery_error": "no_online_device",
                     "notification_device_id": "phone-1",
+                    "last_notification_command_id": "cmd_api",
+                    "last_delivery_mode_requested": "heads_up",
+                    "last_delivery_mode_effective": "heads_up",
                 }
             },
         )
         assert failed["metadata"]["delivery_state"] == "failed"
         assert failed["metadata"]["last_delivery_error"] == "no_online_device"
         assert failed["metadata"]["notification_device_id"] == "phone-1"
+        assert failed["metadata"]["last_notification_command_id"] == "cmd_api"
+        assert failed["metadata"]["last_delivery_mode_requested"] == "heads_up"
+        assert failed["metadata"]["last_delivery_mode_effective"] == "heads_up"
 
         done = request_json(
             base_url,
