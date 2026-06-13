@@ -4282,7 +4282,7 @@
       return lightPage("Reminder", { subtitle: "Reminder not found.", detail: true });
     }
     ensureLinkedCollections(reminder);
-    const page = lightPage("Reminder", { detail: true });
+    const page = lightPage(reminder.title || "Reminder", { detail: true });
     page.classList.add("light-document-page", "light-reminder-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -4397,7 +4397,7 @@
       return lightPage(options.title || "Workspace", { subtitle: "Record not found.", detail: true });
     }
     ensureLinkedCollections(record);
-    const page = lightPage(options.title || graphKindLabel(record.kind), { detail: true });
+    const page = lightPage(record.title || options.title || graphKindLabel(record.kind), { detail: true });
     page.classList.add("light-document-page", "light-graph-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -5232,7 +5232,7 @@
     if (!task) {
       return lightPage("Task", { subtitle: "Task not found.", detail: true });
     }
-    const page = lightPage("Task", { detail: true });
+    const page = lightPage(task.title || "Task", { detail: true });
     page.classList.add("light-task-detail-page");
     page.append(lightTaskDetailCard(task));
     page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" }));

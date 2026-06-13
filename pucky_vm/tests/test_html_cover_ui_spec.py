@@ -737,6 +737,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" in light_page_header_shell_block
     assert "margin-left: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
     assert "margin-right: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
+    assert "width: calc(100% - (var(--app-shell-side-pad) * 2));" in light_page_header
     assert "background:" in light_page_header_shell_block
     assert "transparent 100%" not in light_page_header_shell_block
     assert "box-shadow:" in light_page_header_shell_block
@@ -1098,6 +1099,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '`tomorrow ${time}`' not in task_due_label
     assert 'lightHtmlDocument(task' in task_detail
     assert 'lightTaskDetailCard(task)' in task_detail
+    assert 'const page = lightPage(task.title || "Task", { detail: true });' in task_detail
     assert 'lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" })' in task_detail
     assert 'lightCopySection("Notes"' not in task_detail
     assert 'lightInfoSection("Related"' not in task_detail
@@ -1177,6 +1179,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'copy.append(el("span", "", reminder.summary));' in reminder_row
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
+    assert 'const page = lightPage(reminder.title || "Reminder", { detail: true });' in reminder_detail
     assert 'reminderDetailRows(reminder)' in reminder_detail
     assert 'lightReminderActionRow(reminder)' in reminder_detail
     assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in reminder_detail
@@ -1201,6 +1204,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "new Notification(" not in app
     assert "showNotification(" not in app
     assert 'lightLinkedRecordRows(record)' in graph_detail
+    assert 'const page = lightPage(record.title || options.title || graphKindLabel(record.kind), { detail: true });' in graph_detail
     assert 'lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" })' in graph_detail
     assert 'workspaceItems("feed-items")' in light_feed
     assert 'metadata?.type' in feed_detail
