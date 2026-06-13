@@ -3631,6 +3631,7 @@ button {
   display: grid;
   justify-items: center;
   gap: 9px;
+  position: relative;
   color: var(--home-shell-text);
   text-align: center;
 }
@@ -3667,6 +3668,27 @@ button {
   line-height: 1.05;
   font-weight: 720;
   white-space: nowrap;
+}
+
+.light-app-badge {
+  position: absolute;
+  top: -4px;
+  right: 6px;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ff5a5a;
+  color: #fff;
+  border: 2px solid var(--home-shell-bg);
+  box-shadow: 0 8px 18px rgba(255, 90, 90, 0.22);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .light-page {
@@ -3821,12 +3843,6 @@ button {
   white-space: nowrap;
 }
 
-.light-reminder-row.is-done .light-text-stack strong {
-  color: var(--home-shell-text-muted);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-
 .light-reminder-row {
   min-height: 74px;
   display: grid;
@@ -3862,12 +3878,39 @@ button {
   color: #1f8b4c;
 }
 
-.light-reminder-row.delivery-failed .light-reminder-time {
-  color: #d04646;
-}
-
 .light-reminder-row.delivery-snoozed .light-reminder-time {
   color: #a36411;
+}
+
+.light-section-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 2px 0;
+  color: var(--home-shell-text);
+  text-align: left;
+}
+
+.light-section-toggle-label {
+  font-size: 14px;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.light-section-toggle-meta,
+.light-section-toggle-chevron {
+  color: var(--home-shell-text-muted);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.light-section-toggle.is-expanded .light-section-toggle-chevron {
+  color: var(--home-shell-text);
 }
 
 .light-reminder-actions {
@@ -3877,7 +3920,7 @@ button {
   margin: -2px 0 10px;
 }
 
-.light-reminder-toggle,
+.light-reminder-dismiss,
 .light-reminder-snooze {
   min-width: 118px;
 }

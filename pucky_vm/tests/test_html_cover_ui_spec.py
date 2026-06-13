@@ -425,7 +425,7 @@ def test_native_light_mode_defaults_to_canonical_routes_and_parks_walkthrough_pr
     assert ".light-project-row" in styles
     assert ".light-contact-row" in styles
     assert ".light-graph-row" in styles
-    assert ".light-reminder-row.is-done" in styles
+    assert ".light-reminder-row.delivery-sent" in styles
     assert ".app-shell[data-theme=\"light\"] {" in styles
     assert ".app-shell[data-chrome-mode=\"home-shell\"] .header" in styles
     assert ".app-shell[data-chrome-mode=\"home-shell\"] .voice-status" in styles
@@ -1041,6 +1041,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_reminders = function_block(app, "lightRemindersPage")
     reminder_row = function_block(app, "lightReminderRow")
     reminder_detail = function_block(app, "lightReminderDetailPage")
+    reminder_actions = function_block(app, "lightReminderActionRow")
+    reminder_dismiss = function_block(app, "reminderDismissButton")
     graph_detail = function_block(app, "lightGraphDetailPage")
     light_feed = function_block(app, "lightFeedPage")
     light_projects = function_block(app, "lightProjectsPage")
@@ -1143,16 +1145,19 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightWorkspaceStatus("reminders"' in light_reminders
     assert 'chronologicalReminders()' in light_reminders
     assert 'active.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
-    assert 'done.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
-    assert 'lightSectionTitle("Done")' in light_reminders
+    assert 'sent.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
+    assert 'lightReminderHistoryHeader(sent.length)' in light_reminders
+    assert 'lightSectionTitle("Done")' not in light_reminders
     assert '"Due soon"' not in light_reminders
     assert '"Later"' not in light_reminders
+    assert '"Overdue "' not in app
     assert '{ route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "real" }' in app
+    assert 'return workspaceItems("reminders").filter(reminder => reminderIsActive(reminder)).length;' in app
     assert 'const row = el("button", `light-card light-reminder-row ${group || ""}' in reminder_row
     assert 'const deliveryClass = reminderDeliveryClass(reminder);' in reminder_row
     assert 'graphObjectChips(reminder)' not in reminder_row
     assert 'lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`)' not in reminder_row
-    assert 'el("span", "light-reminder-time", reminderDueLabel(reminder))' in reminder_row
+    assert 'el("span", "light-reminder-time", reminderRowLabel(reminder))' in reminder_row
     assert 'copy.append(el("span", "", reminder.summary));' in reminder_row
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
@@ -1165,15 +1170,20 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'function reminderDeliveryDetail(reminder)' in app
     assert 'value: reminderDeliveryDetail(reminder)' in app
     assert '"Snooze 10 min"' in app
-    assert '"Mark done"' in app
-    assert '"Reopen"' in app
+    assert '"Dismiss"' in reminder_dismiss
+    assert '"Mark done"' not in reminder_actions
+    assert '"Reopen"' not in reminder_actions
     assert '"Sent to phone"' in app
-    assert '"Couldn\'t reach phone"' in app
+    assert '"Couldn\'t reach phone"' not in app
+    assert '"Failed"' not in reminder_detail
     assert 'last_notification_command_id: ""' in app
     assert 'last_delivery_mode_requested: ""' in app
     assert 'last_delivery_mode_effective: ""' in app
     assert 'last_delivery_degraded_to: ""' in app
     assert 'last_delivery_warnings: []' in app
+    assert "Notification.requestPermission" not in app
+    assert "new Notification(" not in app
+    assert "showNotification(" not in app
     assert 'lightLinkedRecordRows(record)' in graph_detail
     assert 'lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" })' in graph_detail
     assert 'workspaceItems("feed-items")' in light_feed
@@ -1186,8 +1196,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-reminder-time" in styles
     assert ".light-reminder-actions" in styles
     assert ".light-reminder-row.delivery-sent .light-reminder-time" in styles
-    assert ".light-reminder-row.delivery-failed .light-reminder-time" in styles
     assert ".light-reminder-row.delivery-snoozed .light-reminder-time" in styles
+    assert ".light-app-badge" in styles
+    assert ".light-section-toggle" in styles
     assert ".light-calendar-day-strip" in styles
     assert ".light-calendar-day-chip" in styles
     assert ".calendar-settings-sheet" in styles
@@ -1236,9 +1247,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'margin-top: -4px;' in styles
     assert 'margin-top: -8px;' in styles
     assert 'if (state.route === "task-detail") {' in app
-    assert 'if (document.visibilityState === "visible" && (state.route === "reminders" || state.route === "reminder-detail")) {' in app
+    assert 'if (document.visibilityState === "visible" && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")) {' in app
     assert 'loadWorkspaceCollection("reminders", { render: true, force: true })' in app
     visibility_listener = app.split('document.addEventListener("visibilitychange", () => {', 1)[1].split("window.PuckyHandleAndroidBack =", 1)[0]
+    assert 'if (state.route === "home") {' in visibility_listener
     assert 'if (state.route === "task-detail") {' in visibility_listener
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in visibility_listener
 
@@ -1825,6 +1837,9 @@ def test_icon_surfaces_share_a_semantic_accent_registry() -> None:
     assert "function applySemanticIconAccent(node, accentKey, options = {})" in app
     assert "const key = semanticIconAccentKey(accentKey);" in app
     assert "const icon = lightAppIcon(app);" in light_app_tile
+    assert "const badge = lightAppBadge(app);" in light_app_tile
+    assert "function lightAppBadge(app)" in app
+    assert "function lightAppBadgeValue(app)" in app
     assert 'tile.addEventListener("click", () => openLightApp(app.route));' in light_app_tile
     assert 'const wrap = el("span", "light-app-icon");' in light_app_icon
     assert "color-" not in light_app_icon
@@ -1847,6 +1862,7 @@ def test_icon_surfaces_share_a_semantic_accent_registry() -> None:
     assert ".light-app-icon.color-navy" not in styles
     assert ".light-app-icon.color-sky" not in styles
     assert ".light-app-icon.color-gray" not in styles
+    assert ".light-app-badge" in styles
 
 
 def test_unread_identity_icons_use_local_card_accent_and_read_icons_stay_neutral() -> None:

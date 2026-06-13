@@ -366,6 +366,7 @@
       done: false
     },
     taskFilter: "all",
+    reminderHistoryExpanded: false,
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
       tasks: { items: [], loaded: false, loading: false, error: "" },
@@ -3704,6 +3705,10 @@
   }
 
   function lightHomePage() {
+    const reminderBucket = workspaceBucket("reminders");
+    if (!reminderBucket.loaded && !reminderBucket.loading) {
+      void loadWorkspaceCollection("reminders", { render: true });
+    }
     const page = el("section", "light-home");
     const grid = el("div", "light-app-grid");
     grid.append(...LIGHT_APPS.map(lightAppTile));
@@ -3720,8 +3725,33 @@
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
+    const badge = lightAppBadge(app);
     tile.append(icon, el("span", "light-app-label", app.label));
+    if (badge) {
+      tile.append(badge);
+    }
     return tile;
+  }
+
+  function lightAppBadge(app) {
+    const value = lightAppBadgeValue(app);
+    if (!value) {
+      return null;
+    }
+    const badge = el("span", "light-app-badge", value);
+    badge.setAttribute("aria-label", `${app.label} active count ${value}`);
+    return badge;
+  }
+
+  function lightAppBadgeValue(app) {
+    if (String(app?.route || "") !== "reminders") {
+      return "";
+    }
+    const count = activeReminderCount();
+    if (!count) {
+      return "";
+    }
+    return count > 99 ? "99+" : String(count);
   }
 
   function openLightApp(route) {
@@ -4201,19 +4231,54 @@
       return page;
     }
     const reminders = chronologicalReminders();
-    const active = reminders.filter(reminder => reminderGroup(reminder) !== "done");
-    const done = reminders.filter(reminder => reminderGroup(reminder) === "done");
+    const active = reminders.filter(reminder => reminderIsActive(reminder));
+    const sent = reminders.filter(reminder => reminderIsSentHistory(reminder));
+    if (!active.length && !sent.length) {
+      page.append(lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."));
+      return page;
+    }
     if (active.length) {
       const list = el("div", "light-list light-graph-list");
       active.forEach(reminder => list.append(lightReminderRow(reminder)));
       page.append(list);
     }
-    if (done.length) {
+    if (sent.length) {
+      page.append(lightReminderHistoryHeader(sent.length));
+      if (reminderHistoryExpanded()) {
       const list = el("div", "light-list light-graph-list");
-      done.forEach(reminder => list.append(lightReminderRow(reminder)));
-      page.append(lightSectionTitle("Done"), list);
+        sent.forEach(reminder => list.append(lightReminderRow(reminder)));
+        page.append(list);
+      }
     }
     return page;
+  }
+
+  function lightReminderHistoryHeader(count) {
+    const button = el(
+      "button",
+      reminderHistoryExpanded()
+        ? "light-section-toggle is-expanded"
+        : "light-section-toggle",
+    );
+    button.type = "button";
+    button.dataset.reminderHistoryToggle = "sent";
+    button.setAttribute("aria-expanded", reminderHistoryExpanded() ? "true" : "false");
+    button.addEventListener("click", toggleReminderHistory);
+    button.append(
+      el("span", "light-section-toggle-label", "Sent"),
+      el("span", "light-section-toggle-meta", `${count}`),
+      el("span", "light-section-toggle-chevron", reminderHistoryExpanded() ? "v" : ">")
+    );
+    return button;
+  }
+
+  function reminderHistoryExpanded() {
+    return Boolean(state.reminderHistoryExpanded);
+  }
+
+  function toggleReminderHistory() {
+    state.reminderHistoryExpanded = !state.reminderHistoryExpanded;
+    render();
   }
 
   function lightReminderDetailPage() {
@@ -4226,7 +4291,7 @@
     page.classList.add("light-document-page", "light-reminder-document");
     const article = el("article", "light-doc-article");
     article.append(
-      lightDocumentEyebrow("Reminder", reminderDueLabel(reminder)),
+      lightDocumentEyebrow("Reminder", reminderDetailEyebrow(reminder)),
       el("h1", "", reminder.title),
       el("p", "light-note-body", reminder.summary || "")
     );
@@ -4275,7 +4340,7 @@
   function lightReminderRow(reminder) {
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
-    const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass} ${String(reminder.status || "").toLowerCase() === "done" ? "is-done" : ""}`.trim());
+    const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass}`.trim());
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     if (String(reminder.summary || "").trim()) {
@@ -4291,35 +4356,45 @@
     row.append(
       lightSmallIcon("bell"),
       copy,
-      el("span", "light-reminder-time", reminderDueLabel(reminder))
+      el("span", "light-reminder-time", reminderRowLabel(reminder))
     );
     return row;
   }
 
   function chronologicalReminders() {
-    return workspaceItems("reminders").slice().sort((left, right) => {
-      const leftDone = reminderGroup(left) === "done";
-      const rightDone = reminderGroup(right) === "done";
-      if (leftDone !== rightDone) {
-        return leftDone ? 1 : -1;
-      }
-      const leftDue = Number(left?.due_at_ms || 0);
-      const rightDue = Number(right?.due_at_ms || 0);
-      const leftHasDue = Number.isFinite(leftDue) && leftDue > 0;
-      const rightHasDue = Number.isFinite(rightDue) && rightDue > 0;
-      if (leftHasDue && rightHasDue && leftDue !== rightDue) {
-        return leftDue - rightDue;
-      }
-      if (leftHasDue !== rightHasDue) {
-        return leftHasDue ? -1 : 1;
-      }
-      const leftEvent = Number(left?.event_at_ms || left?.updated_at_ms || 0);
-      const rightEvent = Number(right?.event_at_ms || right?.updated_at_ms || 0);
-      if (leftEvent !== rightEvent) {
-        return leftEvent - rightEvent;
-      }
-      return String(left?.title || "").localeCompare(String(right?.title || ""));
-    });
+    return workspaceItems("reminders")
+      .filter(reminder => !reminderIsDismissed(reminder))
+      .slice()
+      .sort((left, right) => {
+        const leftSent = reminderIsSentHistory(left);
+        const rightSent = reminderIsSentHistory(right);
+        if (leftSent !== rightSent) {
+          return leftSent ? 1 : -1;
+        }
+        if (leftSent && rightSent) {
+          const leftSentAt = reminderSentAtMs(left);
+          const rightSentAt = reminderSentAtMs(right);
+          if (leftSentAt !== rightSentAt) {
+            return rightSentAt - leftSentAt;
+          }
+        }
+        const leftDue = Number(left?.due_at_ms || 0);
+        const rightDue = Number(right?.due_at_ms || 0);
+        const leftHasDue = Number.isFinite(leftDue) && leftDue > 0;
+        const rightHasDue = Number.isFinite(rightDue) && rightDue > 0;
+        if (leftHasDue && rightHasDue && leftDue !== rightDue) {
+          return leftDue - rightDue;
+        }
+        if (leftHasDue !== rightHasDue) {
+          return leftHasDue ? -1 : 1;
+        }
+        const leftEvent = Number(left?.event_at_ms || left?.updated_at_ms || 0);
+        const rightEvent = Number(right?.event_at_ms || right?.updated_at_ms || 0);
+        if (leftEvent !== rightEvent) {
+          return leftEvent - rightEvent;
+        }
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      });
   }
 
   function lightGraphDetailPage(record, options = {}) {
@@ -4417,8 +4492,7 @@
     const sourceKind = String(meta.source_kind || "").trim();
     const sourceId = String(meta.source_id || "").trim();
     return [
-      { icon: "clock", label: "Due", value: reminderDueLabel(reminder) },
-      { icon: "checklist", label: "Status", value: reminderStatusLabel(reminder) },
+      { icon: "clock", label: "When", value: reminderScheduleLabel(reminder) },
       { icon: "bell", label: "Delivery", value: reminderDeliveryDetail(reminder) },
       {
         icon: graphKindIcon(sourceKind),
@@ -4464,20 +4538,24 @@
 
   function reminderDueLabel(reminder) {
     const due = Number(reminder?.due_at_ms || 0);
+    const sentAtMs = reminderSentAtMs(reminder);
+    if (sentAtMs > 0 && reminderIsSentHistory(reminder)) {
+      return `Sent ${reminderClockLabel(sentAtMs, { includeDay: true })}`;
+    }
+    if (reminderIsSnoozed(reminder)) {
+      return `Snoozed until ${reminderClockLabel(due)}`;
+    }
     if (!Number.isFinite(due) || due <= 0) {
       return "Anytime";
     }
     const delta = due - Date.now();
     if (delta < 0) {
-      return `Overdue ${workspaceTimestamp(due, "")}`;
+      return "Now";
     }
     if (delta <= 60 * 60 * 1000) {
       return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
     }
-    if (delta <= 24 * 60 * 60 * 1000) {
-      return `today ${new Date(due).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-    }
-    return workspaceTimestamp(due, "Later");
+    return reminderClockLabel(due, { includeDay: delta > 24 * 60 * 60 * 1000 });
   }
 
   function reminderStatusLabel(reminder) {
@@ -4489,22 +4567,11 @@
   }
 
   function reminderDeliveryLabel(reminder) {
-    const meta = reminder?.metadata || {};
-    const status = String(reminder?.status || "").trim().toLowerCase();
-    if (status === "done") {
-      return "Done";
-    }
-    const dueAtMs = Number(reminder?.due_at_ms || 0);
-    const deliveryState = String(meta.delivery_state || "").trim().toLowerCase();
-    const snoozedUntilMs = Number(meta.snoozed_until_ms || 0);
-    const lastFiredDueAtMs = Number(meta.last_fired_due_at_ms || 0);
-    if (deliveryState === "sent" && dueAtMs > 0 && lastFiredDueAtMs === dueAtMs) {
+    const deliveryState = reminderMetadata(reminder).deliveryState;
+    if (deliveryState === "sent" && reminderIsSentHistory(reminder)) {
       return "Sent to phone";
     }
-    if (deliveryState === "failed" && dueAtMs > 0 && dueAtMs <= Date.now()) {
-      return "Couldn't reach phone";
-    }
-    if (snoozedUntilMs > Date.now() && snoozedUntilMs === dueAtMs) {
+    if (reminderIsSnoozed(reminder)) {
       return "Snoozed";
     }
     return "Pending";
@@ -4514,9 +4581,6 @@
     const label = reminderDeliveryLabel(reminder);
     if (label === "Sent to phone") {
       return "delivery-sent";
-    }
-    if (label === "Couldn't reach phone") {
-      return "delivery-failed";
     }
     if (label === "Snoozed") {
       return "delivery-snoozed";
@@ -4544,12 +4608,7 @@
 
   function reminderDeliveryDetail(reminder) {
     const label = reminderDeliveryLabel(reminder);
-    const meta = reminder?.metadata || {};
     const mode = reminderDeliveryModeLabel(reminder);
-    const error = String(meta.last_delivery_error || "").trim();
-    if (label === "Couldn't reach phone" && error) {
-      return `${label}${DOT}${error}`;
-    }
     if (mode) {
       return `${label}${DOT}${mode}`;
     }
@@ -4576,29 +4635,17 @@
     };
   }
 
-  function reminderToggleButton(reminder) {
-    const done = String(reminder?.status || "").trim().toLowerCase() === "done";
-    const button = lightPillButton(done ? "Reopen" : "Mark done", async () => {
+  function reminderDismissButton(reminder) {
+    const button = lightPillButton("Dismiss", async () => {
       button.disabled = true;
       await patchWorkspaceRecord("reminders", reminder.id, {
-        status: done ? "open" : "done",
-        metadata: done
-          ? {
-            delivery_state: "pending",
-            last_fired_at_ms: 0,
-            last_fired_due_at_ms: 0,
-            last_delivery_error: "",
-            last_notification_command_id: "",
-            last_delivery_mode_requested: "",
-            last_delivery_mode_effective: "",
-            last_delivery_degraded_to: "",
-            last_delivery_warnings: [],
-            snoozed_until_ms: 0
-          }
-          : {}
+        status: "done"
       }, { render: true });
+      if (state.route === "reminder-detail") {
+        lightNavigate("reminders", { from: "reminders" });
+      }
     }, false);
-    button.classList.add("light-reminder-toggle");
+    button.classList.add("light-reminder-dismiss");
     return button;
   }
 
@@ -4613,25 +4660,104 @@
 
   function lightReminderActionRow(reminder) {
     const row = el("div", "light-reminder-actions");
-    row.append(reminderToggleButton(reminder));
-    if (String(reminder?.status || "").trim().toLowerCase() !== "done") {
-      row.append(reminderSnoozeButton(reminder));
-    }
+    row.append(reminderDismissButton(reminder), reminderSnoozeButton(reminder));
     return row;
   }
 
   function reminderGroup(reminder) {
-    if (String(reminder?.status || "").toLowerCase() === "done") {
-      return "done";
+    if (reminderIsSentHistory(reminder)) {
+      return "sent";
+    }
+    if (reminderIsSnoozed(reminder)) {
+      return "snoozed";
     }
     const due = Number(reminder?.due_at_ms || 0);
-    if (Number.isFinite(due) && due > 0 && due < Date.now()) {
-      return "overdue";
+    if (Number.isFinite(due) && due > 0 && due <= Date.now()) {
+      return "now";
     }
-    if (Number.isFinite(due) && due > 0 && due <= Date.now() + 24 * 60 * 60 * 1000) {
-      return "today";
+    if (Number.isFinite(due) && due > 0) {
+      return "active";
     }
-    return "later";
+    return "unscheduled";
+  }
+
+  function reminderClockLabel(ms, options = {}) {
+    const value = Number(ms || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      return "Anytime";
+    }
+    const date = new Date(value);
+    const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (!options.includeDay) {
+      return time;
+    }
+    const weekday = date.toLocaleDateString([], { weekday: "short" });
+    return `${weekday} ${time}`;
+  }
+
+  function reminderRowLabel(reminder) {
+    return reminderDueLabel(reminder);
+  }
+
+  function reminderScheduleLabel(reminder) {
+    const due = Number(reminder?.due_at_ms || 0);
+    if (!Number.isFinite(due) || due <= 0) {
+      return "Anytime";
+    }
+    return workspaceTimestamp(due, "Scheduled");
+  }
+
+  function reminderDetailEyebrow(reminder) {
+    if (reminderIsSentHistory(reminder)) {
+      return reminderDueLabel(reminder);
+    }
+    if (reminderIsSnoozed(reminder)) {
+      return reminderDueLabel(reminder);
+    }
+    return reminderScheduleLabel(reminder);
+  }
+
+  function reminderMetadata(reminder) {
+    const meta = reminder?.metadata || {};
+    return {
+      deliveryState: String(meta.delivery_state || "").trim().toLowerCase(),
+      snoozedUntilMs: Number(meta.snoozed_until_ms || 0),
+      lastFiredAtMs: Number(meta.last_fired_at_ms || 0),
+      lastFiredDueAtMs: Number(meta.last_fired_due_at_ms || 0)
+    };
+  }
+
+  function reminderIsDismissed(reminder) {
+    return String(reminder?.status || "").trim().toLowerCase() === "done";
+  }
+
+  function reminderSentAtMs(reminder) {
+    return reminderMetadata(reminder).lastFiredAtMs;
+  }
+
+  function reminderIsSentHistory(reminder) {
+    if (reminderIsDismissed(reminder)) {
+      return false;
+    }
+    const meta = reminderMetadata(reminder);
+    const dueAtMs = Number(reminder?.due_at_ms || 0);
+    return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
+  }
+
+  function reminderIsSnoozed(reminder) {
+    if (reminderIsDismissed(reminder) || reminderIsSentHistory(reminder)) {
+      return false;
+    }
+    const meta = reminderMetadata(reminder);
+    return meta.snoozedUntilMs > Date.now() && meta.snoozedUntilMs === Number(reminder?.due_at_ms || 0);
+  }
+
+  function reminderIsActive(reminder) {
+    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder);
+  }
+
+  function activeReminderCount() {
+    return workspaceItems("reminders").filter(reminder => reminderIsActive(reminder)).length;
   }
 
   function graphKindLabel(kind) {
@@ -13313,7 +13439,7 @@
   }, WORKSPACE_TASK_REFRESH_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && (state.route === "reminders" || state.route === "reminder-detail")) {
+    if (document.visibilityState === "visible" && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")) {
       void loadWorkspaceCollection("reminders", { render: true, force: true });
     }
   }, WORKSPACE_REMINDER_REFRESH_MS);
@@ -13343,6 +13469,10 @@
     }
     if (state.route === "settings") {
       loadSettingsState({ render: true });
+      return;
+    }
+    if (state.route === "home") {
+      void loadWorkspaceCollection("reminders", { render: true, force: true });
       return;
     }
     if (state.route === "task-detail") {
