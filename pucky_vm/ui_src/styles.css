@@ -133,7 +133,7 @@ button {
   flex-direction: column;
   background: var(--surface-app);
   color: var(--text-primary);
-  padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);
+  padding: 0 14px var(--safe-area-bottom-pad);
 }
 
 .sr-only {
@@ -3598,11 +3598,15 @@ button {
   --home-shell-text-subtle: var(--text-muted-strong);
   min-height: var(--viewport-h);
   max-width: 520px;
-  margin: calc(-1 * var(--safe-area-top-pad)) auto 0;
+  margin: 0 auto;
   padding: 0 20px calc(92px + env(safe-area-inset-bottom));
   color: var(--home-shell-text);
   font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0;
+}
+
+.light-shell[data-light-route="home"] {
+  padding-top: var(--safe-area-top-pad);
 }
 
 .light-home {

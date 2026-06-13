@@ -1703,7 +1703,8 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
     assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
-    assert "padding: var(--safe-area-top-pad) 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
+    assert "padding: 0 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
+    assert 'padding-top: var(--safe-area-top-pad);' in css_block(styles, '.light-shell[data-light-route="home"]')
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
     assert "--archive-reveal-offset: 0px;" in css_block(styles, ".card-wrap")
