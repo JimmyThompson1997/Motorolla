@@ -58,6 +58,7 @@ function pageUrl(baseUrl, apiToken = "") {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", "light");
   url.searchParams.set("reset_nav", "1");
+  url.searchParams.set("_pucky_refresh", String(Date.now()));
   if (String(apiToken || "").trim()) {
     url.searchParams.set("api_token", String(apiToken || "").trim());
   }
@@ -196,6 +197,16 @@ async function openHomeCalendar(page) {
   await page.locator(".light-date-input").waitFor({ state: "visible" });
 }
 
+async function openCalendarSettings(page) {
+  await page.locator(".light-calendar-settings-button").click();
+  await page.locator(".calendar-settings-sheet").waitFor({ state: "visible" });
+}
+
+async function closeCalendarSettings(page) {
+  await page.locator(".calendar-settings-sheet-done").click();
+  await page.locator(".calendar-settings-sheet").waitFor({ state: "hidden" });
+}
+
 async function goHome(page) {
   await page.getByRole("button", { name: "Back" }).click();
   await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
@@ -268,10 +279,12 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
 
     const initialDate = await page.locator(".light-date-input").inputValue();
     assert(initialDate === seed.today, `Calendar should open on local today ${seed.today}, got ${initialDate}`);
+    const stripCount = await page.locator(".light-calendar-day-chip").count();
+    assert(stripCount >= 7, `Expected a compact day strip with at least seven chips, got ${stripCount}.`);
     const todayTitles = await visibleCalendarTitles(page);
     assert(todayTitles.includes("Proof late call"), "Expected late-call event on the device-local today view.");
     assert(todayTitles.includes("Proof school pickup"), "Expected clustered pickup event on today.");
-    summary.assertions.push("desktop calendar opened to today");
+    summary.assertions.push("desktop calendar opened to today with compact day strip");
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
 
     await setCalendarDate(page, seed.tomorrow);
@@ -297,12 +310,12 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, "calendar-desktop-scrolled.png", summary);
     summary.assertions.push("desktop sticky header and controls stayed pinned");
 
-    await goHome(page);
-    await page.locator('.light-app-tile[data-route="settings"]').click();
-    await page.locator('.settings-native-select').waitFor({ state: "visible" });
+    await openCalendarSettings(page);
+    const timezoneCount = await page.locator('.settings-native-select').count();
+    assert(timezoneCount === 1, `Expected one calendar-local time zone select, got ${timezoneCount}.`);
     await selectTimezone(page, "America/New_York");
-    await goHome(page);
-    await openHomeCalendar(page);
+    await saveShot(page, reportDir, "calendar-desktop-settings-sheet.png", summary);
+    await closeCalendarSettings(page);
     const nyTodayTitles = await visibleCalendarTitles(page);
     assert(!nyTodayTitles.includes("Proof late call"), "Expected late-call event to move off the selected day after timezone switch.");
     await setCalendarDate(page, seed.tomorrow);
@@ -343,11 +356,15 @@ async function runMobileScenario(browser, config, summary, consoleLog, networkLo
     await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
     await openHomeCalendar(page);
     assert(await page.locator(".light-date-input").count() === 1, "Expected a native date input on mobile.");
+    assert(await page.locator(".light-calendar-day-chip").count() >= 7, "Expected the mobile day strip to render.");
     await saveShot(page, reportDir, "calendar-mobile-top.png", summary);
     const metrics = await stickyMetrics(page);
     assert(metrics.headerTop <= 1, `Expected mobile header to stay pinned, got ${metrics.headerTop}`);
     assert(metrics.controlsTop >= 0 && metrics.controlsTop < 140, `Expected mobile controls row to stay pinned, got ${metrics.controlsTop}`);
     await saveShot(page, reportDir, "calendar-mobile-scrolled.png", summary);
+    await openCalendarSettings(page);
+    await saveShot(page, reportDir, "calendar-mobile-settings-sheet.png", summary);
+    await closeCalendarSettings(page);
     summary.assertions.push("mobile sticky header and controls stayed pinned");
   } finally {
     await context.tracing.stop({ path: path.join(reportDir, "trace-mobile.zip") });

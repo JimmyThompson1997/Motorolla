@@ -684,7 +684,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
     assert 'const page = lightPage("Connect");' in light_apps
     assert "{ large: true }" not in light_apps
-    assert 'const page = lightPage(calendarDayTitle());' in light_calendar
+    assert 'const page = lightPage("Calendar", {' in light_calendar
+    assert 'lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' in light_calendar
     assert 'page.append(lightDatePicker());' in light_calendar
     assert 'visibleCalendarEvents()' in light_calendar
     assert 'const page = lightPage("Feed");' in light_feed
@@ -718,6 +719,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'input.type = "date";' in light_date_picker
     assert "position: sticky;" in light_date_picker_block
     assert "top:" in light_date_picker_block
+    assert "border-bottom:" in light_date_picker_block
+    assert "border-radius:" not in light_date_picker_block
     assert "{ large: true }" not in graph_list
     assert "display: none;" in voice_status_home_shell
     assert "position: sticky;" in light_page_header
@@ -941,7 +944,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "default_workspace_graph_records" in store
     assert "default_workspace_graph_links" in store
     assert '"seeded_graph_v1"' in store
-    assert '"Design critique overlap"' in store
+    assert '"Dinner ingredient run"' in store
     assert '"Clinic prep note"' in store
     assert '"Home refresh walkthrough"' in store
     assert '"Bring paint samples upstairs"' in store
@@ -1074,12 +1077,20 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'input.type = "date";' in light_date_picker
     assert 'input.setAttribute("aria-label", "Calendar date")' in light_date_picker
     assert '"Today"' in light_date_picker
+    assert '"Jump to date"' in light_date_picker
+    assert 'calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));' in light_date_picker
     assert 'const events = visibleCalendarEvents();' in light_calendar
     assert 'calendarEmptyStateTitle()' in light_calendar
     assert 'visibleCalendarEvents()' in light_calendar
     assert 'const timeline = el("div", "light-timeline");' in light_timeline
     assert 'const agendaEvents = Array.isArray(events) ? events : visibleCalendarEvents();' in light_timeline
     assert 'calendarAgendaBlocks(agendaEvents)' in light_timeline
+    assert 'function lightCalendarDayChip(dayKey)' in app
+    assert 'function calendarStripDays(dayKey = selectedCalendarDateKey())' in app
+    assert 'function calendarMonthHeading(dayKey = selectedCalendarDateKey())' in app
+    assert 'function calendarDayMarkers(dayKey)' in app
+    assert 'function openCalendarSettingsSheet()' in app
+    assert 'openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);' in app
     assert 'calendarEventDateKey(event)' in app
     assert 'calendarFormatTime(untilMs)' in app
     assert "calendarPickerOpen" not in app
@@ -1131,6 +1142,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-reminder-row.delivery-sent .light-reminder-time" in styles
     assert ".light-reminder-row.delivery-failed .light-reminder-time" in styles
     assert ".light-reminder-row.delivery-snoozed .light-reminder-time" in styles
+    assert ".light-calendar-day-strip" in styles
+    assert ".light-calendar-day-chip" in styles
+    assert ".calendar-settings-sheet" in styles
     assert 'projectLinked(project, "task")' in light_project_detail
     assert 'projectLinked(project, "calendar_event")' in light_project_detail
     assert 'projectLinked(project, "feed_item")' in light_project_detail
@@ -2184,7 +2198,10 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert 'select.setAttribute("aria-label", "Calendar time zone");' in app
     assert "CALENDAR_TIMEZONE_STATE_KEY" in app
     assert 'Intl.supportedValuesOf("timeZone")' in app
-    assert "calendarTimeZoneSettingsCard()," in app
+    assert "calendarTimeZoneSettingsCard()," not in app
+    assert "function openCalendarSettingsSheet()" in app
+    assert "function closeCalendarSettingsSheet()" in app
+    assert ".calendar-settings-sheet" in styles
 
 
 def test_settings_tab_includes_default_audio_speed_control() -> None:

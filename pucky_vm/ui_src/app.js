@@ -3725,7 +3725,9 @@
   }
 
   function lightCalendarPage() {
-    const page = lightPage(calendarDayTitle());
+    const page = lightPage("Calendar", {
+      action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")
+    });
     page.classList.add("light-calendar-page");
     page.append(lightDatePicker());
     const bucket = workspaceBucket("calendar-events");
@@ -3748,14 +3750,15 @@
 
   function lightDatePicker() {
     const picker = el("section", "light-date-picker");
+    const top = el("div", "light-calendar-strip-top");
     const copy = el("div", "light-date-picker-copy");
     copy.append(
       el("p", "light-date-picker-eyebrow", calendarSelectedDayContext()),
-      el("h2", "light-date-picker-title", calendarSelectedDayHeadline())
+      el("h2", "light-date-picker-title", calendarMonthHeading())
     );
     const controls = el("div", "light-date-picker-controls");
     const field = el("label", "light-date-input-wrap");
-    field.append(el("span", "light-date-input-label", "Date"));
+    field.append(el("span", "light-date-input-label", "Jump to date"));
     const input = el("input", "light-date-input");
     input.type = "date";
     input.value = selectedCalendarDateKey();
@@ -3778,8 +3781,65 @@
       render();
     });
     controls.append(field, today);
-    picker.append(copy, controls);
+    top.append(copy, controls);
+    const strip = el("div", "light-calendar-day-strip");
+    calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));
+    picker.append(top, strip);
     return picker;
+  }
+
+  function openCalendarSettingsSheet() {
+    const sheet = el("section", "trace-sheet settings-sheet calendar-settings-sheet");
+    const header = el("div", "calendar-settings-sheet-header");
+    header.append(
+      el("div", "calendar-settings-sheet-copy",
+        el("h2", "calendar-settings-sheet-title", "Calendar settings"),
+        el("p", "calendar-settings-sheet-detail", "Choose whether Calendar follows your device time or stays pinned to one city.")
+      ),
+      (() => {
+        const button = el("button", "calendar-settings-sheet-done", "Done");
+        button.type = "button";
+        button.addEventListener("click", closeCalendarSettingsSheet);
+        return button;
+      })()
+    );
+    const body = el("div", "calendar-settings-sheet-body");
+    body.append(calendarTimeZoneSettingsCard());
+    sheet.append(header, body);
+    openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);
+  }
+
+  function closeCalendarSettingsSheet() {
+    closeOverlay("settingsSelectorOverlay");
+  }
+
+  function lightCalendarDayChip(dayKey) {
+    const selected = dayKey === selectedCalendarDateKey();
+    const isToday = dayKey === calendarTodayDateKey();
+    const day = Number(String(dayKey || "").split("-")[2] || 0);
+    const chip = el(
+      "button",
+      [
+        "light-calendar-day-chip",
+        selected ? "is-selected" : "",
+        isToday ? "is-today" : ""
+      ].filter(Boolean).join(" ")
+    );
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", selected ? "true" : "false");
+    chip.dataset.day = dayKey;
+    chip.addEventListener("click", () => {
+      state.selectedCalendarDate = dayKey;
+      render();
+    });
+    const dots = el("span", "light-calendar-day-dots");
+    calendarDayMarkers(dayKey).forEach(tone => dots.append(el("span", `light-calendar-day-dot ${tone}`, "")));
+    chip.append(
+      el("span", "light-calendar-day-weekday", calendarDayWeekdayLabel(dayKey)),
+      el("span", "light-calendar-day-number", String(day || "")),
+      dots
+    );
+    return chip;
   }
 
   function lightTimeline(events) {
@@ -5256,6 +5316,35 @@
     return headline === fullDate ? zoneLabel : `${fullDate}${DOT}${zoneLabel}`;
   }
 
+  function calendarMonthHeading(dayKey = selectedCalendarDateKey()) {
+    return formatCalendarDateKey(dayKey, { month: "long", year: "numeric" });
+  }
+
+  function calendarStripDays(dayKey = selectedCalendarDateKey()) {
+    return [-2, -1, 0, 1, 2, 3, 4].map(offset => shiftCalendarDateKey(dayKey, offset));
+  }
+
+  function calendarDayWeekdayLabel(dayKey) {
+    return formatCalendarDateKey(dayKey, { weekday: "short" }).replace(/\./g, "").toUpperCase();
+  }
+
+  function calendarDayMarkers(dayKey) {
+    return workspaceItems("calendar-events")
+      .filter(event => calendarEventDateKey(event) === dayKey)
+      .sort((a, b) => calendarEventStartMs(a) - calendarEventStartMs(b))
+      .slice(0, 4)
+      .map((event, index) => calendarEventMarkerTone(event, index));
+  }
+
+  function calendarEventMarkerTone(event, index = 0) {
+    const type = String(event?.metadata?.type || "").trim().toLowerCase();
+    if (type.includes("health")) return "amber";
+    if (type.includes("family")) return "green";
+    if (type.includes("freelance")) return "blue";
+    if (type.includes("meeting")) return "purple";
+    return ["blue", "green", "amber", "purple"][index % 4];
+  }
+
   function calendarEmptyStateTitle(dayKey = selectedCalendarDateKey()) {
     if (dayKey === calendarTodayDateKey()) {
       return "No events today";
@@ -5912,7 +6001,6 @@
     page.append(
       hero,
       appearanceSettingsCard(),
-      calendarTimeZoneSettingsCard(),
       defaultAudioSpeedSettingCard(),
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
@@ -5963,6 +6051,7 @@
     const control = el("label", "settings-native-select-control");
     const select = el("select", "settings-native-select");
     select.setAttribute("aria-label", "Calendar time zone");
+    const meta = el("span", "settings-native-select-meta", `Now using ${calendarEffectiveTimeZone()}`);
     const currentValue = normalizeCalendarTimezonePreference(state.calendarTimeZone);
     calendarTimeZoneOptions().forEach(option => {
       const optionEl = document.createElement("option");
@@ -5974,10 +6063,11 @@
     select.value = currentValue;
     select.addEventListener("change", () => {
       setCalendarTimezonePreference(select.value);
+      meta.textContent = `Now using ${calendarEffectiveTimeZone()}`;
     });
     control.append(
       select,
-      el("span", "settings-native-select-meta", `Now using ${calendarEffectiveTimeZone()}`)
+      meta
     );
     row.append(iconEl, copy, control);
     return row;
