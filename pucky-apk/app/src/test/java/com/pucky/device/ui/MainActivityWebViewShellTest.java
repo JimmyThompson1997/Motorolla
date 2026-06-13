@@ -94,6 +94,9 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"location.tracker.start\"")
                         && bridge.contains("case \"location.tracker.stop\"")
                         && bridge.contains("case \"location.tracker.query\"")
+                        && bridge.contains("case \"phone.role.status\"")
+                        && bridge.contains("case \"phone.role.request_setup\"")
+                        && bridge.contains("case \"phone.role.open_default_apps_settings\"")
                         && bridge.contains("case \"artifact.url\"")
                         && bridge.contains("case \"media.cache.status\"")
                         && bridge.contains("case \"media.cache.ensure\"")
@@ -219,6 +222,10 @@ public final class MainActivityWebViewShellTest {
                 client.contains("TRUSTED_HOST = \"pucky.local\"")
                         && executor.contains("\"meeting.recording.resolve_audio_link\"")
                         && read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java").contains("case \"meeting.recording.resolve_audio_link\":"));
+        assertTrue("HTML bridge should expose phone role controls for the hosted settings surface",
+                read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java").contains("return PhoneRoleController.status(context);")
+                        && read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java").contains("return PhoneRoleController.requestSetup(")
+                        && read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java").contains("return PhoneRoleController.openDefaultAppsSettings(context);"));
     }
 
     @Test

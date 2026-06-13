@@ -15,6 +15,7 @@ public final class PhoneCommandSurfaceTest {
 
         assertTrue(source.contains("\"phone.role.status\""));
         assertTrue(source.contains("\"phone.role.request_setup\""));
+        assertTrue(source.contains("\"phone.role.open_default_apps_settings\""));
         assertTrue(source.contains("\"phone.calls.decline\""));
         assertTrue(source.contains("\"phone.history.list\""));
         assertTrue(source.contains("\"ui.a11y.status\""));
@@ -68,6 +69,19 @@ public final class PhoneCommandSurfaceTest {
     public void foregroundServiceWiresAccessibilityController() throws Exception {
         String source = read("src/main/java/com/pucky/device/service/PuckyForegroundService.java");
         assertTrue(source.contains("new PuckyAccessibilityController(this, settings)"));
+    }
+
+    @Test
+    public void phoneRoleSurfaceExposesReversibleDialerManagementCopy() throws Exception {
+        String controller = read("src/main/java/com/pucky/device/phone/PhoneRoleController.java");
+        String hub = read("src/main/java/com/pucky/device/phone/PhoneHubActivity.java");
+
+        assertTrue(controller.contains("default_dialer_label"));
+        assertTrue(controller.contains("stock_incall_ui_replaced_when_held"));
+        assertTrue(controller.contains("openDefaultAppsSettings(Context context)"));
+        assertTrue(hub.contains("Enable Pucky dialer mode"));
+        assertTrue(hub.contains("Restore stock phone app"));
+        assertTrue(hub.contains("stock incoming-call UX may be replaced"));
     }
 
     private static String read(String path) throws Exception {

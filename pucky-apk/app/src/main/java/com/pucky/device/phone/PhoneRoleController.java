@@ -52,7 +52,10 @@ public final class PhoneRoleController {
         Json.put(out, "in_call_service_declared", inCallServiceDeclared);
         Json.put(out, "eligible", eligible);
         Json.put(out, "state", PhoneRoleState.classify(roleAvailable, handlesDialIntent, inCallServiceDeclared, roleHeld));
-        Json.put(out, "default_dialer_package", defaultDialerPackage(appContext));
+        String defaultDialerPackage = defaultDialerPackage(appContext);
+        Json.put(out, "default_dialer_package", defaultDialerPackage == null ? JSONObject.NULL : defaultDialerPackage);
+        Json.put(out, "default_dialer_label", defaultDialerLabel(appContext, defaultDialerPackage));
+        Json.put(out, "stock_incall_ui_replaced_when_held", true);
         Json.put(out, "setup_activity", PhoneRoleSetupActivity.class.getName());
         Json.put(out, "settings_action", Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
         return out;
@@ -76,6 +79,24 @@ public final class PhoneRoleController {
         Json.put(out, "requested", true);
         Json.put(out, "notification_posted", showNotification);
         Json.put(out, "setup_ui_launched", openSetupUi);
+        return out;
+    }
+
+    public static JSONObject openDefaultAppsSettings(Context context) throws CommandException {
+        Context appContext = context.getApplicationContext();
+        Intent intent = new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (intent.resolveActivity(appContext.getPackageManager()) == null) {
+            throw new CommandException(
+                    CommandErrorCodes.CAPABILITY_UNAVAILABLE,
+                    "Android default-app settings are unavailable on this device");
+        }
+        appContext.startActivity(intent);
+        JSONObject out = status(appContext);
+        Json.put(out, "requested", true);
+        Json.put(out, "opened", true);
+        Json.put(out, "user_mediated", true);
+        Json.put(out, "settings_ui_launched", true);
         return out;
     }
 
@@ -159,12 +180,27 @@ public final class PhoneRoleController {
         return false;
     }
 
-    private static Object defaultDialerPackage(Context context) {
+    private static String defaultDialerPackage(Context context) {
         TelecomManager telecom = (TelecomManager) context.getSystemService(Context.TELECOM_SERVICE);
         if (telecom == null) {
-            return JSONObject.NULL;
+            return null;
         }
         String holder = telecom.getDefaultDialerPackage();
-        return holder == null || holder.trim().isEmpty() ? JSONObject.NULL : holder;
+        return holder == null || holder.trim().isEmpty() ? null : holder;
+    }
+
+    private static Object defaultDialerLabel(Context context, String packageName) {
+        if (packageName == null || packageName.trim().isEmpty()) {
+            return JSONObject.NULL;
+        }
+        try {
+            PackageManager manager = context.getPackageManager();
+            CharSequence label = manager.getApplicationLabel(
+                    manager.getApplicationInfo(packageName, 0));
+            String value = label == null ? "" : label.toString().trim();
+            return value.isEmpty() ? packageName : value;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return packageName;
+        }
     }
 }

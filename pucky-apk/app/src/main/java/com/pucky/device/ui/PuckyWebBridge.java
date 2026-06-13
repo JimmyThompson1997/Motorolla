@@ -15,6 +15,7 @@ import com.pucky.device.location.LocationController;
 import com.pucky.device.media.MediaCacheController;
 import com.pucky.device.meeting.MeetingRecordingController;
 import com.pucky.device.player.PlayerController;
+import com.pucky.device.phone.PhoneRoleController;
 import com.pucky.device.pucky.PuckyTurnController;
 import com.pucky.device.storage.SettingsStore;
 import com.pucky.device.util.Json;
@@ -161,6 +162,15 @@ public final class PuckyWebBridge {
                 return new ArtifactController(context).url(args);
             case "browser.open":
                 return new IntentController(context).browserOpen(args);
+            case "phone.role.status":
+                return PhoneRoleController.status(context);
+            case "phone.role.request_setup":
+                return PhoneRoleController.requestSetup(
+                        context,
+                        args.optBoolean("show_notification", true),
+                        args.optBoolean("open_setup_ui", true));
+            case "phone.role.open_default_apps_settings":
+                return PhoneRoleController.openDefaultAppsSettings(context);
             case "ui.bundle.status":
                 return uiBundles.status();
             case "ui.bundle.install_downloaded":

@@ -161,6 +161,7 @@ public final class PhoneDataControllerTest {
         assertTrue(executor.contains("\"phone.sms.send\""));
         assertTrue(executor.contains("\"phone.role.status\""));
         assertTrue(executor.contains("\"phone.role.request_setup\""));
+        assertTrue(executor.contains("\"phone.role.open_default_apps_settings\""));
         assertTrue(executor.contains("\"phone.calls.list\""));
         assertTrue(executor.contains("\"phone.calls.state\""));
         assertTrue(executor.contains("\"phone.calls.place\""));
@@ -194,7 +195,7 @@ public final class PhoneDataControllerTest {
         assertTrue(service.contains("AndroidSubstrateController substrateController = new AndroidSubstrateController(this);"));
         assertTrue(service.contains("new PhoneDataController(this, settings, substrateController)"));
 
-        assertTrue(capability.contains("phone.role.status/phone.role.request_setup"));
+        assertTrue(capability.contains("phone.role.status/phone.role.request_setup/phone.role.open_default_apps_settings"));
         assertTrue(capability.contains("phone.telephony.status"));
         assertTrue(capability.contains("phone.sms.list/phone.sms.get_thread/phone.sms.send"));
         assertTrue(capability.contains("phone.calls.list/phone.calls.state/phone.calls.place/phone.calls.answer/phone.calls.decline/phone.calls.hangup"));

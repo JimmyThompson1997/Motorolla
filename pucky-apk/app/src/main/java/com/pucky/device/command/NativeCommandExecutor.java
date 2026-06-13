@@ -127,7 +127,7 @@ public final class NativeCommandExecutor implements CommandExecutor {
             "android.notifications.listener.status", "android.notifications.listener.messages",
             "phone.telephony.status",
             "phone.sms.list", "phone.sms.get_thread", "phone.sms.send",
-            "phone.role.status", "phone.role.request_setup",
+            "phone.role.status", "phone.role.request_setup", "phone.role.open_default_apps_settings",
             "phone.calls.list", "phone.calls.state", "phone.calls.place", "phone.calls.answer", "phone.calls.decline", "phone.calls.hangup",
             "phone.contacts.search", "phone.contacts.get", "phone.contacts.create",
             "phone.contacts.replace", "phone.contacts.delete",
@@ -607,6 +607,8 @@ public final class NativeCommandExecutor implements CommandExecutor {
                         settingsStore.context(),
                         command.args().optBoolean("show_notification", true),
                         command.args().optBoolean("open_setup_ui", true));
+            case "phone.role.open_default_apps_settings":
+                return PhoneRoleController.openDefaultAppsSettings(settingsStore.context());
             case "phone.sms.list":
                 return phoneDataController.smsList(command.args());
             case "phone.sms.get_thread":

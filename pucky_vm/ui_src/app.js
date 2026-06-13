@@ -388,6 +388,7 @@
     turnSettings: initialTurnSettings(),
     wakeStatus: initialWakeStatus(),
     uiSurface: initialUiSurfaceStatus(),
+    phoneRole: initialPhoneRoleStatus(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
     defaultAudioSpeed: 1,
@@ -698,6 +699,29 @@
     }
     if (command === "pucky.turn.settings.get") {
       return state.turnSettings;
+    }
+    if (command === "phone.role.status") {
+      return normalizePhoneRoleStatus(state.phoneRole);
+    }
+    if (command === "phone.role.request_setup") {
+      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: true });
+      return {
+        ...state.phoneRole,
+        requested: true,
+        notification_posted: args.show_notification !== false,
+        setup_ui_launched: args.open_setup_ui !== false,
+        user_mediated: true
+      };
+    }
+    if (command === "phone.role.open_default_apps_settings") {
+      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: true });
+      return {
+        ...state.phoneRole,
+        requested: true,
+        opened: true,
+        user_mediated: true,
+        settings_ui_launched: true
+      };
     }
     if (command === "pucky.turn.settings.set") {
       const mode = args.reply_mode !== undefined || args.mode !== undefined
@@ -1405,8 +1429,21 @@
     }
   }
 
+  async function loadPhoneRoleStatus(options = {}) {
+    try {
+      const snapshot = await Pucky.request({ command: "phone.role.status", args: {} });
+      state.phoneRole = normalizePhoneRoleStatus({ ...snapshot, loaded: true });
+    } catch (_) {
+      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: false });
+    }
+    if (options.render) {
+      render();
+    }
+  }
+
   async function loadSettingsState(options = {}) {
     await Promise.all([
+      loadPhoneRoleStatus({ render: false }),
       loadDefaultAudioSpeed({ render: false }),
       loadTurnSettings({ render: false }),
       loadWakeStatus({ render: false }),
@@ -2476,6 +2513,39 @@
       source_dirty: Boolean(config.source_dirty),
       source_kind: initialSurfaceKind(),
       bridge_connected: Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")
+    };
+  }
+
+  function initialPhoneRoleStatus() {
+    return normalizePhoneRoleStatus({
+      schema: "pucky.phone_role_status.v1",
+      state: "unknown",
+      role_held: false,
+      eligible: false,
+      role_available: false,
+      package_name: "com.pucky.device.debug",
+      default_dialer_package: "com.google.android.dialer",
+      default_dialer_label: "Phone by Google",
+      stock_incall_ui_replaced_when_held: true,
+      loaded: false
+    });
+  }
+
+  function normalizePhoneRoleStatus(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+      schema: "pucky.phone_role_status.v1",
+      state: String(raw.state || "unknown").trim() || "unknown",
+      role_held: truthy(raw.role_held),
+      eligible: truthy(raw.eligible),
+      role_available: truthy(raw.role_available),
+      package_name: String(raw.package_name || "").trim(),
+      default_dialer_package: String(raw.default_dialer_package || "").trim(),
+      default_dialer_label: String(raw.default_dialer_label || "").trim(),
+      stock_incall_ui_replaced_when_held: raw.stock_incall_ui_replaced_when_held !== undefined
+        ? truthy(raw.stock_incall_ui_replaced_when_held)
+        : true,
+      loaded: raw.loaded !== undefined ? truthy(raw.loaded) : true
     };
   }
 
@@ -6008,6 +6078,7 @@
       arrivalCueSettingsCard(),
       modelSettingsCard(),
       reasoningEffortSettingsCard(),
+      phoneRoleSettingsCard(),
       advancedSettingsCard()
     );
     return page;
@@ -6036,6 +6107,64 @@
 
   function appearanceThemeLabel(theme) {
     return normalizeTheme(theme) === "light" ? "Light" : "Dark";
+  }
+
+  function phoneRoleSettingsCard() {
+    const status = normalizePhoneRoleStatus(state.phoneRole);
+    return settingsSelectorCard({
+      settingId: "phone-role",
+      accent: status.role_held ? "#22c55e" : "#f59e0b",
+      icon: "phone",
+      title: "Phone app role",
+      detail: phoneRoleSettingsDetail(status),
+      valueLabel: status.role_held ? "On" : "Off",
+      onOpen: refreshPhoneRoleStatus,
+      actionLabel: phoneRolePrimaryActionLabel(status),
+      action: runPhoneRolePrimaryAction
+    });
+  }
+
+  function phoneRoleSettingsDetail(status) {
+    const holder = phoneRoleHolderLabel(status);
+    return `${holder}. Enabling dialer mode unlocks direct call control, stays user-mediated through Android settings, and may replace the stock in-call UI while active.`;
+  }
+
+  function phoneRoleHolderLabel(status) {
+    const label = String(status && status.default_dialer_label || "").trim();
+    const packageName = String(status && status.default_dialer_package || "").trim();
+    if (label && packageName && label !== packageName) {
+      return `Current default: ${label} (${packageName})`;
+    }
+    if (label) {
+      return `Current default: ${label}`;
+    }
+    if (packageName) {
+      return `Current default: ${packageName}`;
+    }
+    return "Current default phone app unavailable";
+  }
+
+  function phoneRolePrimaryActionLabel(status) {
+    return status && status.role_held ? "Restore stock phone app" : "Enable Pucky dialer mode";
+  }
+
+  async function runPhoneRolePrimaryAction() {
+    const roleHeld = truthy(state.phoneRole && state.phoneRole.role_held);
+    const command = roleHeld ? "phone.role.open_default_apps_settings" : "phone.role.request_setup";
+    const args = roleHeld ? {} : { show_notification: true, open_setup_ui: true };
+    try {
+      await Pucky.request({ command, args });
+      showToast(roleHeld
+        ? "Opened Android default-app settings so you can switch away from Pucky."
+        : "Opened the Android phone-app role flow for Pucky.");
+    } catch (error) {
+      showToast(String(error && error.message || "Phone role action failed"));
+    }
+    await loadPhoneRoleStatus({ render: true });
+  }
+
+  async function refreshPhoneRoleStatus() {
+    await loadPhoneRoleStatus({ render: true });
   }
 
   function calendarTimeZoneSettingsCard() {

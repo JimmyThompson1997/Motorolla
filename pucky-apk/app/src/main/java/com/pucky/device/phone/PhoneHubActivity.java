@@ -24,9 +24,13 @@ public final class PhoneHubActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private PhoneDataController phoneDataController;
     private EditText numberInput;
+    private TextView roleSummaryView;
+    private TextView roleWarningView;
     private TextView statusView;
     private TextView historyView;
     private TextView contactsView;
+    private Button enableRoleButton;
+    private Button restoreRoleButton;
 
     private final Runnable refreshRunnable = new Runnable() {
         @Override
@@ -72,9 +76,15 @@ public final class PhoneHubActivity extends Activity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Role status, call surface, call history, and contacts preview");
+        subtitle.setText("Role management, call surface, call history, and contacts preview");
         subtitle.setTextSize(14f);
         root.addView(subtitle);
+
+        roleSummaryView = monospaceText();
+        roleWarningView = new TextView(this);
+        roleWarningView.setTextSize(13f);
+        root.addView(section("Phone app role", roleSummaryView));
+        root.addView(roleWarningView);
 
         numberInput = new EditText(this);
         numberInput.setHint("Enter a phone number");
@@ -84,9 +94,12 @@ public final class PhoneHubActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setOrientation(LinearLayout.VERTICAL);
         buttons.addView(button("Place call", v -> placeCall()));
-        buttons.addView(button("Set default phone app", v -> requestDialerRole()));
+        enableRoleButton = button("Enable Pucky dialer mode", v -> requestDialerRole());
+        restoreRoleButton = button("Restore stock phone app", v -> openDefaultAppsSettings());
+        buttons.addView(enableRoleButton);
+        buttons.addView(restoreRoleButton);
         buttons.addView(button("Refresh", v -> render()));
         root.addView(buttons);
 
@@ -149,9 +162,35 @@ public final class PhoneHubActivity extends Activity {
         }
     }
 
+    private void openDefaultAppsSettings() {
+        try {
+            PhoneRoleController.openDefaultAppsSettings(this);
+            render();
+        } catch (Exception exc) {
+            statusView.setText("Open default-app settings failed:\n" + exc.getMessage());
+        }
+    }
+
     private void render() {
         try {
-            statusView.setText(PhoneRoleController.status(this).toString(2)
+            JSONObject roleStatus = PhoneRoleController.status(this);
+            boolean roleHeld = roleStatus.optBoolean("role_held", false);
+            String defaultDialerLabel = roleStatus.optString("default_dialer_label",
+                    roleStatus.optString("default_dialer_package", "Unavailable"));
+            String defaultDialerPackage = roleStatus.optString("default_dialer_package", "");
+            String holderLine = defaultDialerPackage.isEmpty()
+                    ? defaultDialerLabel
+                    : defaultDialerLabel + " (" + defaultDialerPackage + ")";
+            roleSummaryView.setText(
+                    "Current default phone app: " + holderLine + "\n"
+                            + "Dialer role state: " + roleStatus.optString("state", "unknown") + "\n"
+                            + "Pucky dialer mode: " + (roleHeld ? "On" : "Off"));
+            roleWarningView.setText(
+                    "When Pucky holds the role, it becomes the in-call UI owner and the stock incoming-call UX may be replaced. "
+                            + "Contacts, history, and calendar still stay in the shared Android providers.");
+            enableRoleButton.setEnabled(!roleHeld);
+            restoreRoleButton.setEnabled(roleHeld);
+            statusView.setText(roleStatus.toString(2)
                     + "\n\n"
                     + phoneDataController.callsState(new JSONObject()).toString(2));
             JSONObject historyArgs = new JSONObject();

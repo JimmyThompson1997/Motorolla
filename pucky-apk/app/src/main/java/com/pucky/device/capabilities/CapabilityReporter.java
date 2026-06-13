@@ -115,9 +115,9 @@ public final class CapabilityReporter {
                 PuckyAccessibilityService.canLockScreen(context) ? "implemented" : "blocked_by_permission",
                 "user_enabled_accessibility", "visible", "android.permission.BIND_ACCESSIBILITY_SERVICE",
                 "not_recorded", "Locks the screen through Pucky's user-enabled AccessibilityService; no ADB or shell command required."));
-        Json.add(out, cap("phone.role", "phone.role.status/phone.role.request_setup", phoneRoleStatus(),
+        Json.add(out, cap("phone.role", "phone.role.status/phone.role.request_setup/phone.role.open_default_apps_settings", phoneRoleStatus(),
                 "user_mediated", "visible", null, "self_reported",
-                "Reports whether Pucky is dialer-role eligible/held and opens the default phone-app setup flow."));
+                "Reports whether Pucky is dialer-role eligible or held, opens the enable flow, and opens Android default-app settings so the user can restore the stock phone app."));
         Json.add(out, cap("phone.history", "phone.history.list", historyStatus(), "yes", "privacy_sensitive",
                 Manifest.permission.READ_CALL_LOG, "not_recorded",
                 "First-class call-history readback surface for recent device call logs."));

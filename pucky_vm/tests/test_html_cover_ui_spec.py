@@ -2098,6 +2098,7 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "turnSettings: initialTurnSettings()" in app
     assert "wakeStatus: initialWakeStatus()" in app
     assert "uiSurface: initialUiSurfaceStatus()" in app
+    assert "phoneRole: initialPhoneRoleStatus()" in app
     assert 'state.route === "settings"' in app
     assert "settingsPageView()" in app
     assert "function settingsPageView()" in app
@@ -2105,6 +2106,12 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function wakeWordSettingsCard()" in app
     assert "function wakeStatusDetail(status)" in app
     assert "function arrivalCueSettingsCard()" in app
+    assert "function initialPhoneRoleStatus()" in app
+    assert "function normalizePhoneRoleStatus(input)" in app
+    assert "function phoneRoleSettingsCard()" in app
+    assert "function phoneRoleSettingsDetail(status)" in app
+    assert "function phoneRoleHolderLabel(status)" in app
+    assert "function phoneRolePrimaryActionLabel(status)" in app
     assert "function advancedSettingsCard()" in app
     assert "function replyModeSettingsCard()" in app
     assert "function settingsSelectorCard(" in app
@@ -2112,6 +2119,9 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function openSettingsSelector(" in app
     assert "function showAdvancedSettingsSheet()" in app
     assert "async function setTurnReplyMode(mode)" in app
+    assert "async function loadPhoneRoleStatus(options = {})" in app
+    assert "async function runPhoneRolePrimaryAction()" in app
+    assert "async function refreshPhoneRoleStatus()" in app
     assert "async function loadTurnSettings" in app
     assert "async function loadSettingsState(options = {})" in app
     assert "async function loadWakeStatus(options = {})" in app
@@ -2125,6 +2135,9 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert 'command === "pucky.turn.settings.set"' in app
     assert 'command === "wake.status"' in app
     assert 'command === "ui.surface.get"' in app
+    assert 'command === "phone.role.status"' in app
+    assert 'command === "phone.role.request_setup"' in app
+    assert 'command === "phone.role.open_default_apps_settings"' in app
     assert 'command === "pucky.turn.arrival_cue.test"' in app
     assert 'command === "pucky.turn.sent_cue.test"' in app
     assert 'command === "pucky.turn.received_cue.test"' in app
@@ -2141,10 +2154,15 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Message sent cue" in app
     assert "Session model" in app
     assert "Thinking level" in app
+    assert "Phone app role" in app
+    assert "Enable Pucky dialer mode" in app
+    assert "Restore stock phone app" in app
+    assert "may replace the stock in-call UI while active" in app
     assert "Default OpenAI model. Applies to new sessions." in app
     assert "Default reasoning effort. Applies to new sessions." in app
     assert 'settingId: "turn-model"' in app
     assert 'settingId: "turn-reasoning-effort"' in app
+    assert 'settingId: "phone-role"' in app
     assert 'row.setAttribute("data-setting-id", String(settingId));' in app
     assert 'button.setAttribute("data-selector-value", String(option.value || ""));' in app
     assert 'const TURN_MODEL_OPTIONS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]' in app
