@@ -5,6 +5,7 @@
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
+  const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
@@ -30,6 +31,8 @@
   const MEETING_STATUS_POLL_MS = 1000;
   const WORKSPACE_TASK_REFRESH_MS = 2000;
   const WORKSPACE_REMINDER_REFRESH_MS = 15000;
+  const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
+  const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -37,6 +40,7 @@
   const MAX_PLAYBACK_SPEED = 3;
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
   const DOT = " \u00b7 ";
+  let calendarTimeZoneOptionsCache = null;
   const MATERIAL_SYMBOLS = {
     mail: {
       filled: '<path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/>',
@@ -330,6 +334,7 @@
   const initialTheme = resolveInitialTheme();
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
+  const initialCalendarTimeZonePreference = resolveCalendarTimezonePreference();
   const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);
   const initialHomeShellActiveValue = initialHomeShellActive(persistedNavState.route, initialTheme);
   const state = {
@@ -351,8 +356,8 @@
     selectedTaskId: "budget",
     selectedProjectId: "aurora",
     selectedFeedId: "maya-budget",
-    selectedCalendarDate: todayDateKey(),
-    calendarPickerOpen: false,
+    selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
+    calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: {
       overdue: true,
       do: true,
@@ -1139,7 +1144,7 @@
     bucket.loading = true;
     bucket.error = "";
     try {
-      const date = collection === "calendar-events" ? selectedCalendarDateKey() : "";
+      const date = "";
       const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
       bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
       bucket.loaded = true;
@@ -3529,10 +3534,17 @@
     tile.dataset.lightAppRoute = app.route;
     tile.dataset.appLabel = app.label;
     tile.setAttribute("aria-label", app.label);
-    tile.addEventListener("click", () => lightNavigate(app.route));
+    tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
     tile.append(icon, el("span", "light-app-label", app.label));
     return tile;
+  }
+
+  function openLightApp(route) {
+    if (String(route || "") === "calendar") {
+      state.selectedCalendarDate = calendarTodayDateKey();
+    }
+    lightNavigate(route);
   }
 
   function semanticIconAccentKey(accentKey) {
@@ -3715,81 +3727,148 @@
   function lightCalendarPage() {
     const page = lightPage(calendarDayTitle());
     page.classList.add("light-calendar-page");
-    page.append(lightPillButton(state.calendarPickerOpen ? "Hide dates" : "Choose date", () => {
-      state.calendarPickerOpen = !state.calendarPickerOpen;
-      render();
-    }, state.calendarPickerOpen));
-    const status = lightWorkspaceStatus("calendar-events", "calendar", "No events today");
-    if (status) {
-      if (state.calendarPickerOpen) {
-        page.append(lightDatePicker());
-      }
-      page.append(status);
+    page.append(lightDatePicker());
+    const bucket = workspaceBucket("calendar-events");
+    if (bucket.error) {
+      page.append(lightEmptyState("calendar", "Could not load", bucket.error));
       return page;
     }
-    if (state.calendarPickerOpen) {
-      page.append(lightDatePicker());
+    if (!bucket.loaded) {
+      page.append(lightEmptyState("calendar", "Loading", "Pulling calendar records from the VM."));
+      return page;
     }
-    page.append(lightTimeline());
+    const events = visibleCalendarEvents();
+    if (!events.length) {
+      page.append(lightEmptyState("calendar", calendarEmptyStateTitle(), "Try Today or pick another date."));
+      return page;
+    }
+    page.append(lightTimeline(events));
     return page;
   }
 
   function lightDatePicker() {
     const picker = el("section", "light-date-picker");
-    const selected = new Date(`${selectedCalendarDateKey()}T12:00:00`);
-    const monthTitle = selected.toLocaleDateString([], { month: "long", year: "numeric" });
-    picker.append(el("div", "light-date-picker-title", monthTitle));
-    const grid = el("div", "light-date-grid");
-    Array.from({ length: 21 }, (_, index) => {
-      const date = new Date();
-      date.setDate(date.getDate() + index - 7);
-      return date;
-    }).forEach(date => {
-      const key = dateKey(date);
-      const isSelected = key === selectedCalendarDateKey();
-      const button = el("button", isSelected ? "light-date-cell is-selected" : "light-date-cell", String(date.getDate()));
-      button.type = "button";
-      button.dataset.date = key;
-      button.addEventListener("click", () => {
-        state.selectedCalendarDate = key;
-        state.calendarPickerOpen = false;
-        render();
-        void loadWorkspaceCollection("calendar-events", { render: true, force: true });
-      });
-      grid.append(button);
+    const copy = el("div", "light-date-picker-copy");
+    copy.append(
+      el("p", "light-date-picker-eyebrow", calendarSelectedDayContext()),
+      el("h2", "light-date-picker-title", calendarSelectedDayHeadline())
+    );
+    const controls = el("div", "light-date-picker-controls");
+    const field = el("label", "light-date-input-wrap");
+    field.append(el("span", "light-date-input-label", "Date"));
+    const input = el("input", "light-date-input");
+    input.type = "date";
+    input.value = selectedCalendarDateKey();
+    input.setAttribute("aria-label", "Calendar date");
+    input.addEventListener("change", () => {
+      state.selectedCalendarDate = normalizeCalendarDateKey(input.value) || calendarTodayDateKey();
+      render();
     });
-    picker.append(grid);
+    field.append(input);
+    const today = el(
+      "button",
+      selectedCalendarDateKey() === calendarTodayDateKey()
+        ? "light-calendar-today-button is-active"
+        : "light-calendar-today-button",
+      "Today"
+    );
+    today.type = "button";
+    today.addEventListener("click", () => {
+      state.selectedCalendarDate = calendarTodayDateKey();
+      render();
+    });
+    controls.append(field, today);
+    picker.append(copy, controls);
     return picker;
   }
 
-  function lightTimeline() {
+  function lightTimeline(events) {
     const timeline = el("div", "light-timeline");
-    for (let hour = 7; hour <= 18; hour += 1) {
-      const row = el("div", "light-time-row");
-      row.append(el("span", "light-time-label", hourLabel(hour)));
-      const lane = el("div", "light-time-lane");
-      const events = workspaceItems("calendar-events").filter(event => calendarEventHour(event) === hour);
-      if (events.length > 1) {
-        const height = 18 + events.length * 62;
-        row.style.minHeight = `${height}px`;
-        lane.style.minHeight = `${height}px`;
-      }
-      events.forEach((event, index) => {
-        const block = el("button", `light-event-block ${calendarEventColor(event, index)}`);
-        block.type = "button";
-        block.dataset.eventId = event.id;
-        block.style.top = `${10 + index * 58}px`;
-        block.addEventListener("click", () => {
-          state.selectedMeetingId = event.id;
-          lightNavigate("meeting-detail", { from: "calendar" });
-        });
-        block.append(el("strong", "", event.title), el("span", "", event.summary || calendarEventTimeRange(event)));
-        lane.append(block);
-      });
-      row.append(lane);
-      timeline.append(row);
-    }
+    const agendaEvents = Array.isArray(events) ? events : visibleCalendarEvents();
+    calendarAgendaBlocks(agendaEvents).forEach(block => timeline.append(block));
     return timeline;
+  }
+
+  function calendarAgendaBlocks(events) {
+    const clusters = [];
+    events.forEach(event => {
+      const start = calendarEventStartMs(event);
+      const end = calendarEventEndMs(event);
+      const last = clusters[clusters.length - 1];
+      if (last && start <= last.end + CALENDAR_CLUSTER_WINDOW_MS) {
+        last.events.push(event);
+        last.end = Math.max(last.end, end);
+        return;
+      }
+      clusters.push({ start, end, events: [event] });
+    });
+    return clusters.flatMap((cluster, index) => {
+      const blocks = [];
+      if (index > 0) {
+        const gap = cluster.start - clusters[index - 1].end;
+        if (gap >= CALENDAR_GAP_THRESHOLD_MS) {
+          blocks.push(lightCalendarGap(cluster.start, gap));
+        }
+      }
+      blocks.push(lightCalendarCluster(cluster, index));
+      return blocks;
+    });
+  }
+
+  function lightCalendarGap(untilMs, gapMs) {
+    const gap = el("section", "light-calendar-gap");
+    gap.append(
+      el("span", "light-calendar-gap-line"),
+      el("span", "light-calendar-gap-label", `Free until ${calendarFormatTime(untilMs)}${gapMs >= 4 * 60 * 60 * 1000 ? DOT + "Long break" : ""}`)
+    );
+    return gap;
+  }
+
+  function lightCalendarCluster(cluster, clusterIndex = 0) {
+    const section = el(
+      "section",
+      cluster.events.length > 1 ? "light-calendar-cluster is-busy" : "light-calendar-cluster"
+    );
+    if (cluster.events.length > 1) {
+      section.append(el("p", "light-calendar-cluster-label", "Busy window"));
+    }
+    cluster.events.forEach((event, eventIndex) => section.append(lightCalendarEventBlock(event, clusterIndex + eventIndex)));
+    return section;
+  }
+
+  function lightCalendarEventBlock(event, index = 0) {
+    const block = el("button", `light-event-block ${calendarEventColor(event, index)}`);
+    block.type = "button";
+    block.dataset.eventId = event.id;
+    block.addEventListener("click", () => {
+      state.selectedMeetingId = event.id;
+      lightNavigate("meeting-detail", { from: "calendar" });
+    });
+    const top = el("div", "light-event-topline");
+    top.append(
+      el("span", "light-event-time", calendarEventTimeRange(event)),
+      el("span", "light-event-badge", event.metadata?.place || event.metadata?.type || "Calendar")
+    );
+    block.append(
+      top,
+      el("strong", "light-event-title", event.title || "Untitled event"),
+      el("span", "light-event-summary", event.summary || event.metadata?.place || "Calendar event")
+    );
+    return block;
+  }
+
+  function visibleCalendarEvents() {
+    const selected = selectedCalendarDateKey();
+    return workspaceItems("calendar-events")
+      .filter(event => calendarEventDateKey(event) === selected)
+      .slice()
+      .sort((left, right) => {
+        const byStart = calendarEventStartMs(left) - calendarEventStartMs(right);
+        if (byStart !== 0) return byStart;
+        const byEnd = calendarEventEndMs(left) - calendarEventEndMs(right);
+        if (byEnd !== 0) return byEnd;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      });
   }
 
   function lightMeetingDetailPage() {
@@ -3808,10 +3887,11 @@
     page.classList.add("light-document-page", "light-event-document");
     const article = el("article", "light-doc-article");
     article.append(
-      lightDocumentEyebrow("Calendar event", `${meeting.date || selectedCalendarDateKey()}${DOT}${calendarEventTimeRange(meeting)}`),
+      lightDocumentEyebrow("Calendar event", `${calendarEventDayLabel(meeting)}${DOT}${calendarEventTimeRange(meeting)}`),
       el("h1", "", meeting.title),
       lightDocumentMeta([
         ["Time", calendarEventTimeRange(meeting)],
+        ["Time zone", calendarEffectiveTimeZone()],
         ["Place", meta.place || "Unspecified"],
         ["Attendees", `${attendees.length} attendees`]
       ])
@@ -5079,31 +5159,62 @@
     return cloud;
   }
 
-  function hourLabel(hour) {
-    const suffix = hour >= 12 ? "PM" : "AM";
-    const value = hour > 12 ? hour - 12 : hour;
-    return `${value} ${suffix}`;
-  }
-
-  function calendarEventHour(event) {
-    const start = Number(event?.start_at_ms || 0);
-    if (!Number.isFinite(start) || start <= 0) {
-      return 9;
-    }
-    return new Date(start).getHours();
-  }
-
-  function calendarEventTimeRange(event) {
-    const start = Number(event?.start_at_ms || 0);
-    const end = Number(event?.end_at_ms || 0);
-    if (!Number.isFinite(start) || start <= 0) {
+  function calendarFormatTime(timestampMs, timeZone = calendarEffectiveTimeZone()) {
+    const value = Number(timestampMs || 0);
+    if (!Number.isFinite(value) || value <= 0) {
       return "Any time";
     }
-    const startText = new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return new Date(value).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone
+    });
+  }
+
+  function calendarEventStartMs(event) {
+    const start = Number(event?.start_at_ms || 0);
+    if (!Number.isFinite(start) || start <= 0) {
+      return 0;
+    }
+    return start;
+  }
+
+  function calendarEventEndMs(event) {
+    const start = calendarEventStartMs(event);
+    const end = Number(event?.end_at_ms || 0);
     if (!Number.isFinite(end) || end <= start) {
+      return start;
+    }
+    return end;
+  }
+
+  function calendarEventDateKey(event, timeZone = calendarEffectiveTimeZone()) {
+    const start = calendarEventStartMs(event);
+    if (start > 0) {
+      return calendarDateKeyFromTimestamp(start, timeZone) || normalizeCalendarDateKey(event?.date) || selectedCalendarDateKey();
+    }
+    return normalizeCalendarDateKey(event?.date) || selectedCalendarDateKey();
+  }
+
+  function calendarEventDayLabel(event, timeZone = calendarEffectiveTimeZone()) {
+    return formatCalendarDateKey(calendarEventDateKey(event, timeZone), {
+      weekday: "long",
+      month: "long",
+      day: "numeric"
+    });
+  }
+
+  function calendarEventTimeRange(event, timeZone = calendarEffectiveTimeZone()) {
+    const start = calendarEventStartMs(event);
+    const end = calendarEventEndMs(event);
+    if (!start) {
+      return "Any time";
+    }
+    const startText = calendarFormatTime(start, timeZone);
+    if (!end || end <= start) {
       return startText;
     }
-    const endText = new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const endText = calendarFormatTime(end, timeZone);
     return `${startText} - ${endText}`;
   }
 
@@ -5119,11 +5230,40 @@
   }
 
   function calendarDayTitle() {
-    const date = new Date(`${selectedCalendarDateKey()}T12:00:00`);
-    if (Number.isNaN(date.getTime())) {
-      return "Calendar";
+    return "Calendar";
+  }
+
+  function selectedCalendarDateKey() {
+    return normalizeCalendarDateKey(state.selectedCalendarDate) || calendarTodayDateKey();
+  }
+
+  function calendarSelectedDayHeadline(dayKey = selectedCalendarDateKey()) {
+    if (dayKey === calendarTodayDateKey()) {
+      return "Today";
     }
-    return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    if (dayKey === shiftCalendarDateKey(calendarTodayDateKey(), 1)) {
+      return "Tomorrow";
+    }
+    return formatCalendarDateKey(dayKey, { weekday: "long", month: "long", day: "numeric" });
+  }
+
+  function calendarSelectedDayContext(dayKey = selectedCalendarDateKey()) {
+    const fullDate = formatCalendarDateKey(dayKey, { weekday: "long", month: "long", day: "numeric" });
+    const headline = calendarSelectedDayHeadline(dayKey);
+    const zoneLabel = normalizeCalendarTimezonePreference(state.calendarTimeZone) === "device-local"
+      ? `Device local${DOT}${calendarEffectiveTimeZone()}`
+      : `Pinned${DOT}${calendarEffectiveTimeZone()}`;
+    return headline === fullDate ? zoneLabel : `${fullDate}${DOT}${zoneLabel}`;
+  }
+
+  function calendarEmptyStateTitle(dayKey = selectedCalendarDateKey()) {
+    if (dayKey === calendarTodayDateKey()) {
+      return "No events today";
+    }
+    if (dayKey === shiftCalendarDateKey(calendarTodayDateKey(), 1)) {
+      return "No events tomorrow";
+    }
+    return `No events on ${formatCalendarDateKey(dayKey, { weekday: "long", month: "long", day: "numeric" })}`;
   }
 
   function ordinalSuffix(day) {
@@ -5256,14 +5396,170 @@
     return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || workspaceItems(collection)[0] || fallback;
   }
 
-  function selectedCalendarDateKey() {
-    return state.selectedCalendarDate || todayDateKey();
-  }
-
   function todayDateKey(offsetDays = 0) {
     const date = new Date();
     date.setDate(date.getDate() + Number(offsetDays || 0));
     return dateKey(date);
+  }
+
+  function normalizeCalendarDateKey(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim()) ? String(value || "").trim() : "";
+  }
+
+  function calendarDateFromKey(value) {
+    const key = normalizeCalendarDateKey(value);
+    if (!key) {
+      return null;
+    }
+    const [year, month, day] = key.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  }
+
+  function utcDateKey(date) {
+    const value = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(value.getTime())) {
+      return "";
+    }
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  function shiftCalendarDateKey(value, offsetDays = 0) {
+    const date = calendarDateFromKey(value);
+    if (!date) {
+      return calendarTodayDateKey();
+    }
+    date.setUTCDate(date.getUTCDate() + Number(offsetDays || 0));
+    return utcDateKey(date);
+  }
+
+  function browserLocalTimeZone() {
+    try {
+      return String(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    } catch (_) {
+      return "UTC";
+    }
+  }
+
+  function isValidCalendarTimeZone(value) {
+    try {
+      Intl.DateTimeFormat([], { timeZone: String(value || "") }).format(new Date(0));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function normalizeCalendarTimezonePreference(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "device-local") {
+      return "device-local";
+    }
+    return isValidCalendarTimeZone(raw) ? raw : "device-local";
+  }
+
+  function resolveCalendarTimeZone(preference) {
+    const normalized = normalizeCalendarTimezonePreference(preference);
+    return normalized === "device-local" ? browserLocalTimeZone() : normalized;
+  }
+
+  function calendarEffectiveTimeZone() {
+    return resolveCalendarTimeZone(state.calendarTimeZone);
+  }
+
+  function resolveCalendarTimezonePreference() {
+    try {
+      return normalizeCalendarTimezonePreference(localStorage.getItem(CALENDAR_TIMEZONE_STATE_KEY));
+    } catch (_) {
+      return "device-local";
+    }
+  }
+
+  function persistCalendarTimezonePreference(value) {
+    try {
+      localStorage.setItem(CALENDAR_TIMEZONE_STATE_KEY, normalizeCalendarTimezonePreference(value));
+    } catch (_) {
+      // Calendar timezone is a local preference and should never block the UI.
+    }
+  }
+
+  function calendarDateParts(value, timeZone = calendarEffectiveTimeZone()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(date);
+    const year = parts.find(part => part.type === "year")?.value;
+    const month = parts.find(part => part.type === "month")?.value;
+    const day = parts.find(part => part.type === "day")?.value;
+    if (!year || !month || !day) {
+      return null;
+    }
+    return { year, month, day };
+  }
+
+  function calendarDateKeyFromTimestamp(timestampMs, timeZone = calendarEffectiveTimeZone()) {
+    const parts = calendarDateParts(timestampMs, timeZone);
+    if (!parts) {
+      return "";
+    }
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }
+
+  function calendarTodayDateKey(timeZone = calendarEffectiveTimeZone()) {
+    return calendarDateKeyFromTimestamp(Date.now(), timeZone) || todayDateKey();
+  }
+
+  function formatCalendarDateKey(value, options) {
+    const date = calendarDateFromKey(value);
+    if (!date) {
+      return "Calendar";
+    }
+    return date.toLocaleDateString([], {
+      timeZone: "UTC",
+      ...options
+    });
+  }
+
+  function calendarTimeZoneOptions() {
+    if (Array.isArray(calendarTimeZoneOptionsCache)) {
+      return calendarTimeZoneOptionsCache;
+    }
+    const values = [];
+    try {
+      if (typeof Intl.supportedValuesOf === "function") {
+        values.push(...Intl.supportedValuesOf("timeZone"));
+      }
+    } catch (_) {
+      // Fall through to the shorter fallback list.
+    }
+    if (!values.length) {
+      values.push(
+        browserLocalTimeZone(),
+        "UTC",
+        "America/Los_Angeles",
+        "America/Denver",
+        "America/Chicago",
+        "America/New_York",
+        "Europe/London",
+        "Europe/Paris",
+        "Asia/Tokyo",
+        "Australia/Sydney"
+      );
+    }
+    const unique = Array.from(new Set(values.filter(isValidCalendarTimeZone)));
+    calendarTimeZoneOptionsCache = [
+      { value: "device-local", label: "Device local" },
+      ...unique.map(value => ({
+        value,
+        label: value.replace(/\//g, " / ").replace(/_/g, " ")
+      }))
+    ];
+    return calendarTimeZoneOptionsCache;
   }
 
   function dateKey(date) {
@@ -5616,6 +5912,7 @@
     page.append(
       hero,
       appearanceSettingsCard(),
+      calendarTimeZoneSettingsCard(),
       defaultAudioSpeedSettingCard(),
       replyModeSettingsCard(),
       wakeWordSettingsCard(),
@@ -5650,6 +5947,55 @@
 
   function appearanceThemeLabel(theme) {
     return normalizeTheme(theme) === "light" ? "Light" : "Dark";
+  }
+
+  function calendarTimeZoneSettingsCard() {
+    const row = el("article", "settings-card settings-native-select-card");
+    row.style.setProperty("--accent", "#ff6c5f");
+    row.setAttribute("data-setting-id", "calendar-time-zone");
+    const iconEl = el("div", "settings-card-icon");
+    iconEl.innerHTML = iconSvg("calendar", { filled: true });
+    const copy = el("div", "settings-card-copy");
+    copy.append(
+      el("h2", "settings-card-title", "Calendar time zone"),
+      el("p", "settings-card-detail", "Use your device clock or pin Calendar to a specific city.")
+    );
+    const control = el("label", "settings-native-select-control");
+    const select = el("select", "settings-native-select");
+    select.setAttribute("aria-label", "Calendar time zone");
+    const currentValue = normalizeCalendarTimezonePreference(state.calendarTimeZone);
+    calendarTimeZoneOptions().forEach(option => {
+      const optionEl = document.createElement("option");
+      optionEl.value = option.value;
+      optionEl.textContent = option.label;
+      optionEl.selected = option.value === currentValue;
+      select.append(optionEl);
+    });
+    select.value = currentValue;
+    select.addEventListener("change", () => {
+      setCalendarTimezonePreference(select.value);
+    });
+    control.append(
+      select,
+      el("span", "settings-native-select-meta", `Now using ${calendarEffectiveTimeZone()}`)
+    );
+    row.append(iconEl, copy, control);
+    return row;
+  }
+
+  function setCalendarTimezonePreference(value) {
+    const nextValue = normalizeCalendarTimezonePreference(value);
+    if (nextValue === state.calendarTimeZone) {
+      render();
+      return;
+    }
+    state.calendarTimeZone = nextValue;
+    persistCalendarTimezonePreference(nextValue);
+    if (!state.selectedCalendarDate) {
+      state.selectedCalendarDate = calendarTodayDateKey();
+    }
+    persistNavState();
+    render();
   }
 
   function defaultAudioSpeedSettingCard() {

@@ -633,6 +633,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     chrome_mode = function_block(app, "chromeMode")
     light_apps = function_block(app, "lightAppsPage")
     light_calendar = function_block(app, "lightCalendarPage")
+    light_date_picker = function_block(app, "lightDatePicker")
     light_feed = function_block(app, "lightFeedPage")
     light_header = function_block(app, "lightHeader")
     light_contacts = function_block(app, "lightContactsPage")
@@ -676,6 +677,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     tasks_page_block = css_block(styles, ".light-tasks-page")
     voice_status_home_shell = top_level_css_block(styles, '.app-shell[data-chrome-mode="home-shell"] .voice-status')
     light_page_header = top_level_css_block(styles, ".light-page-header")
+    light_date_picker_block = top_level_css_block(styles, ".light-date-picker")
 
     assert 'return isHomeShellRoute() ? "home-shell" : "legacy-shell";' in chrome_mode
     assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
@@ -683,6 +685,8 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'const page = lightPage("Connect");' in light_apps
     assert "{ large: true }" not in light_apps
     assert 'const page = lightPage(calendarDayTitle());' in light_calendar
+    assert 'page.append(lightDatePicker());' in light_calendar
+    assert 'visibleCalendarEvents()' in light_calendar
     assert 'const page = lightPage("Feed");' in light_feed
     assert "{ large: true }" not in light_feed
     assert 'const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });' in light_contacts
@@ -711,6 +715,9 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert 'light-appbar' not in light_tasks
     assert "padding-top:" not in tasks_page_block
     assert 'const page = lightPage(options.title || "Workspace");' in graph_list
+    assert 'input.type = "date";' in light_date_picker
+    assert "position: sticky;" in light_date_picker_block
+    assert "top:" in light_date_picker_block
     assert "{ large: true }" not in graph_list
     assert "display: none;" in voice_status_home_shell
     assert "position: sticky;" in light_page_header
@@ -992,6 +999,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'const queryToken = String(params.get("api_token") || "").trim();' in app
     assert "void loadWorkspaceForRoute(state.route, { render: true, force: true });" in app
     assert "WORKSPACE_TASK_REFRESH_MS" in app
+    assert "function openLightApp(route)" in app
+    assert 'state.selectedCalendarDate = calendarTodayDateKey();' in app
     assert "loadWorkspaceCollection(\"tasks\", { render: true, force: true })" in app
     assert 'document.visibilityState === "visible" && state.route === "tasks"' in app
     assert '(state.route === "tasks" || state.route === "task-detail")' not in app
@@ -1062,11 +1071,18 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'const card = el("section", `light-card light-task-detail-card ${group}`);' in task_detail_card
     assert 'action.classList.add("light-task-detail-toggle");' in task_detail_card
     assert 'selectedCalendarDateKey()' in light_date_picker
-    assert 'lightWorkspaceStatus("calendar-events"' in light_calendar
-    assert 'workspaceItems("calendar-events")' in light_timeline
-    assert 'calendarEventHour(event)' in light_timeline
-    assert "events.length > 1" in light_timeline
-    assert "block.style.top" in light_timeline
+    assert 'input.type = "date";' in light_date_picker
+    assert 'input.setAttribute("aria-label", "Calendar date")' in light_date_picker
+    assert '"Today"' in light_date_picker
+    assert 'const events = visibleCalendarEvents();' in light_calendar
+    assert 'calendarEmptyStateTitle()' in light_calendar
+    assert 'visibleCalendarEvents()' in light_calendar
+    assert 'const timeline = el("div", "light-timeline");' in light_timeline
+    assert 'const agendaEvents = Array.isArray(events) ? events : visibleCalendarEvents();' in light_timeline
+    assert 'calendarAgendaBlocks(agendaEvents)' in light_timeline
+    assert 'calendarEventDateKey(event)' in app
+    assert 'calendarFormatTime(untilMs)' in app
+    assert "calendarPickerOpen" not in app
     assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
     assert "function lightMessagesPage()" not in app
     assert "function lightMessageDetailPage()" not in app
@@ -1738,6 +1754,7 @@ def test_icon_surfaces_share_a_semantic_accent_registry() -> None:
     assert "function applySemanticIconAccent(node, accentKey, options = {})" in app
     assert "const key = semanticIconAccentKey(accentKey);" in app
     assert "const icon = lightAppIcon(app);" in light_app_tile
+    assert 'tile.addEventListener("click", () => openLightApp(app.route));' in light_app_tile
     assert 'const wrap = el("span", "light-app-icon");' in light_app_icon
     assert "color-" not in light_app_icon
     assert 'applySemanticIconAccent(wrap, app?.accent);' in light_app_icon
@@ -2161,6 +2178,13 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert ".settings-selector-overlay" in styles
     assert ".settings-selector-option" in styles
     assert ".settings-nav-card" in styles
+    assert "function calendarTimeZoneSettingsCard()" in app
+    assert "Calendar time zone" in app
+    assert 'row.setAttribute("data-setting-id", "calendar-time-zone");' in app
+    assert 'select.setAttribute("aria-label", "Calendar time zone");' in app
+    assert "CALENDAR_TIMEZONE_STATE_KEY" in app
+    assert 'Intl.supportedValuesOf("timeZone")' in app
+    assert "calendarTimeZoneSettingsCard()," in app
 
 
 def test_settings_tab_includes_default_audio_speed_control() -> None:
