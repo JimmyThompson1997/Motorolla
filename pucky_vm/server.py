@@ -1026,6 +1026,114 @@ class PuckyVoiceService:
         broker.record({"event": "command_sent", "command": command})
         return command
 
+    def _browser_phone_role_error_payload(
+        self,
+        error_code: str,
+        *,
+        device_id: str = "",
+        detail: str = "",
+    ) -> dict[str, object]:
+        return {
+            "schema": "pucky.phone_role_status.v1",
+            "state": "unavailable",
+            "role_held": False,
+            "eligible": False,
+            "default_dialer_package": "",
+            "default_dialer_label": "",
+            "source": "browser_live_api",
+            "device_id": str(device_id or "").strip(),
+            "read_only": True,
+            "error_code": str(error_code or "").strip() or "broker_command_failed",
+            "detail": str(detail or "").strip(),
+        }
+
+    def _normalize_browser_phone_role_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        device_id: str,
+    ) -> dict[str, object]:
+        raw = payload if isinstance(payload, dict) else {}
+        return {
+            "schema": "pucky.phone_role_status.v1",
+            "state": str(raw.get("state") or "unknown").strip() or "unknown",
+            "role_held": bool(raw.get("role_held")),
+            "eligible": bool(raw.get("eligible")),
+            "default_dialer_package": str(raw.get("default_dialer_package") or "").strip(),
+            "default_dialer_label": str(raw.get("default_dialer_label") or "").strip(),
+            "source": "browser_live_api",
+            "device_id": str(device_id or "").strip(),
+            "read_only": True,
+            "error_code": "",
+            "role_available": bool(raw.get("role_available")),
+            "package_name": str(raw.get("package_name") or "").strip(),
+            "stock_incall_ui_replaced_when_held": bool(
+                raw.get("stock_incall_ui_replaced_when_held", True)
+            ),
+        }
+
+    def _resolve_browser_phone_role_device(self, requested_device_id: str = "") -> tuple[str, str]:
+        broker = ensure_broker_initialized()
+        clean_requested = str(requested_device_id or "").strip()
+        devices = broker.list_devices()
+        if clean_requested:
+            for item in devices:
+                if str(item.get("device_id") or "").strip() == clean_requested:
+                    return clean_requested, "" if bool(item.get("online")) else "device_offline"
+            return clean_requested, "device_offline"
+        online = [item for item in devices if bool(item.get("online"))]
+        if len(online) == 1:
+            return str(online[0].get("device_id") or "").strip(), ""
+        return "", "device_context_unavailable"
+
+    def browser_phone_role_status(self, requested_device_id: str = "") -> tuple[HTTPStatus, dict[str, object]]:
+        device_id, resolution_error = self._resolve_browser_phone_role_device(requested_device_id)
+        if resolution_error == "device_context_unavailable":
+            return HTTPStatus.CONFLICT, self._browser_phone_role_error_payload(
+                "device_context_unavailable",
+                detail="Provide device_id or keep exactly one online device available.",
+            )
+        if resolution_error == "device_offline":
+            return HTTPStatus.SERVICE_UNAVAILABLE, self._browser_phone_role_error_payload(
+                "device_offline",
+                device_id=device_id or requested_device_id,
+                detail="Selected device is offline.",
+            )
+        try:
+            queued = self._queue_device_command(device_id, "phone.role.status", {})
+        except RuntimeError as exc:
+            detail = str(exc)
+            if detail == "DEVICE_OFFLINE":
+                return HTTPStatus.SERVICE_UNAVAILABLE, self._browser_phone_role_error_payload(
+                    "device_offline",
+                    device_id=device_id,
+                    detail="Selected device is offline.",
+                )
+            return HTTPStatus.BAD_GATEWAY, self._browser_phone_role_error_payload(
+                "broker_command_failed",
+                device_id=device_id,
+                detail=detail,
+            )
+        result = self._await_device_command_result(str(queued.get("id") or ""), timeout_ms=2_000, interval_ms=100) or queued
+        status = str(result.get("status") or "").strip().lower()
+        if status == "completed":
+            payload = result.get("result") if isinstance(result.get("result"), dict) else result
+            if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+                payload = payload.get("result")
+            if isinstance(payload, dict):
+                return HTTPStatus.OK, self._normalize_browser_phone_role_payload(payload, device_id=device_id)
+        if status == "device_offline":
+            return HTTPStatus.SERVICE_UNAVAILABLE, self._browser_phone_role_error_payload(
+                "device_offline",
+                device_id=device_id,
+                detail="Selected device went offline before returning a result.",
+            )
+        return HTTPStatus.BAD_GATEWAY, self._browser_phone_role_error_payload(
+            "broker_command_failed",
+            device_id=device_id,
+            detail=str(result.get("error") or result.get("status") or "broker command failed"),
+        )
+
     def _await_device_command_result(
         self,
         command_id: str,
@@ -5858,6 +5966,28 @@ def make_handler(service: PuckyVoiceService):
                     auth_mode=query.get("auth_mode", [""])[0],
                 )
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
+                self._json(status, payload)
+                return
+            if path == "/api/device/phone-role-status":
+                if not self._is_authorized():
+                    self._json(
+                        HTTPStatus.UNAUTHORIZED,
+                        {
+                            "schema": "pucky.phone_role_status.v1",
+                            "state": "unavailable",
+                            "role_held": False,
+                            "eligible": False,
+                            "default_dialer_package": "",
+                            "default_dialer_label": "",
+                            "source": "browser_live_api",
+                            "device_id": "",
+                            "read_only": True,
+                            "error_code": "unauthorized",
+                        },
+                    )
+                    return
+                query = parse_qs(parsed.query)
+                status, payload = service.browser_phone_role_status(query.get("device_id", [""])[0])
                 self._json(status, payload)
                 return
             if path == "/links/connect/apps":

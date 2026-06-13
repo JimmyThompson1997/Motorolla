@@ -2536,6 +2536,133 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, 401)
 
+    def test_phone_role_status_requires_auth(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/device/phone-role-status")
+
+        self.assertEqual(caught.exception.code, 401)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error_code"], "unauthorized")
+        self.assertTrue(payload["read_only"])
+
+    def test_phone_role_status_uses_single_online_device_fallback(self) -> None:
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {
+                        "schema": "pucky.phone_role_status.v1",
+                        "state": "held",
+                        "role_held": True,
+                        "eligible": True,
+                        "default_dialer_package": "com.pucky.device.debug",
+                        "default_dialer_label": "Pucky",
+                    },
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
+            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer secret"})
+
+        self.assertEqual(payload["source"], "browser_live_api")
+        self.assertEqual(payload["device_id"], "phone-1")
+        self.assertTrue(payload["role_held"])
+        self.assertEqual(payload["default_dialer_label"], "Pucky")
+        self.assertTrue(payload["read_only"])
+
+    def test_phone_role_status_honors_explicit_device_id(self) -> None:
+        socket_one = object()
+        socket_two = object()
+        self.broker.set_device("phone-1", True)
+        self.broker.set_device("phone-2", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": socket_one}
+            self.broker.DEVICES["phone-2"] = {"socket": socket_two}
+
+        def ws_send_side_effect(socket_value, message):
+            payload = json.loads(message)
+            label = "Desk Phone" if socket_value is socket_two else "Ignored Phone"
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {
+                        "schema": "pucky.phone_role_status.v1",
+                        "state": "not_held",
+                        "role_held": False,
+                        "eligible": True,
+                        "default_dialer_package": "com.google.android.dialer",
+                        "default_dialer_label": label,
+                    },
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
+            payload = self.get_json(
+                "/api/device/phone-role-status?device_id=phone-2",
+                headers={"Authorization": "Bearer secret"},
+            )
+
+        self.assertEqual(payload["device_id"], "phone-2")
+        self.assertEqual(payload["default_dialer_label"], "Desk Phone")
+        self.assertFalse(payload["role_held"])
+
+    def test_phone_role_status_requires_unambiguous_device_context(self) -> None:
+        self.broker.set_device("phone-1", True)
+        self.broker.set_device("phone-2", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+            self.broker.DEVICES["phone-2"] = {"socket": object()}
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer secret"})
+
+        self.assertEqual(caught.exception.code, 409)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error_code"], "device_context_unavailable")
+
+    def test_phone_role_status_reports_offline_device(self) -> None:
+        self.broker.set_device("phone-1", False)
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json(
+                "/api/device/phone-role-status?device_id=phone-1",
+                headers={"Authorization": "Bearer secret"},
+            )
+
+        self.assertEqual(caught.exception.code, 503)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error_code"], "device_offline")
+        self.assertEqual(payload["device_id"], "phone-1")
+
+    def test_phone_role_status_surfaces_broker_command_failure(self) -> None:
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", return_value=None), self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json(
+                "/api/device/phone-role-status?device_id=phone-1",
+                headers={"Authorization": "Bearer secret"},
+            )
+
+        self.assertEqual(caught.exception.code, 502)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error_code"], "broker_command_failed")
+        self.assertEqual(payload["device_id"], "phone-1")
+
     def test_broker_routes_share_the_same_server(self) -> None:
         health = self.get_json("/health")
         self.assertTrue(health["ok"])

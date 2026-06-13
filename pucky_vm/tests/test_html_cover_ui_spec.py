@@ -1010,6 +1010,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "async function patchWorkspaceRecord" in app
     assert "async function loadWorkspaceAsset" in app
     assert 'const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";' in app
+    assert 'const BROWSER_DEVICE_ID_STATE_KEY = "pucky.cover.browser_device_id.v1";' in app
     assert "function resolveBrowserApiToken()" in app
     assert 'state.links.apiToken = resolveBrowserApiToken();' in app
     assert 'const queryToken = String(params.get("api_token") || "").trim();' in app
@@ -2192,6 +2193,8 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert 'command === "phone.role.status"' in app
     assert 'command === "phone.role.request_setup"' in app
     assert 'command === "phone.role.open_default_apps_settings"' in app
+    assert 'throw new Error("Phone role setup is only available in the APK on your device.");' in app
+    assert 'throw new Error("Phone role settings are only available in the APK on your device.");' in app
     assert 'command === "pucky.turn.arrival_cue.test"' in app
     assert 'command === "pucky.turn.sent_cue.test"' in app
     assert 'command === "pucky.turn.received_cue.test"' in app
@@ -2212,6 +2215,13 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "Enable Pucky dialer mode" in app
     assert "Restore stock phone app" in app
     assert "may replace the stock in-call UI while active" in app
+    assert "Web preview is read-only for phone-role state." in app
+    assert "Add api_token and, when needed, device_id to sync a real device" in app
+    assert "Use the APK on your phone to change the phone-app role." in app
+    assert "Web preview could not authenticate device state." in app
+    assert "Web preview could not choose a device." in app
+    assert "The selected device is offline" in app
+    assert "Pucky reached the backend, but the device did not return phone-role state cleanly." in app
     assert "Default OpenAI model. Applies to new sessions." in app
     assert "Default reasoning effort. Applies to new sessions." in app
     assert 'settingId: "turn-model"' in app
@@ -2225,6 +2235,16 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function normalizeTurnReasoningEffort(reasoningEffort)" in app
     assert "function modelSettingsCard()" in app
     assert "function reasoningEffortSettingsCard()" in app
+    assert "async function fetchBrowserPhoneRoleStatus()" in app
+    assert "function normalizeBrowserPhoneRoleErrorCode(statusCode, payload)" in app
+    assert "function unavailableBrowserPhoneRoleStatus(errorCode, overrides = {})" in app
+    assert "function phoneRoleSettingsValueLabel(status)" in app
+    assert "function phoneRoleActionForStatus(status)" in app
+    assert "function resolveBrowserDeviceId()" in app
+    assert 'source: "native_bridge"' in app
+    assert 'source: "browser_live_api"' in app
+    assert 'source: "preview_unavailable"' in app
+    assert "/api/device/phone-role-status" in app
     assert "Wake word" in app
     assert "Listening while awake and unlocked" in app
     assert "Waiting for screen wake" in app
@@ -2268,6 +2288,7 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert ".settings-nav-card" in styles
     assert "function calendarTimeZoneSettingsCard()" in app
     assert "Calendar time zone" in app
+    assert "Phone by Google" not in app
     assert 'row.setAttribute("data-setting-id", "calendar-time-zone");' in app
     assert 'select.setAttribute("aria-label", "Calendar time zone");' in app
     assert "CALENDAR_TIMEZONE_STATE_KEY" in app

@@ -7,6 +7,7 @@
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
+  const BROWSER_DEVICE_ID_STATE_KEY = "pucky.cover.browser_device_id.v1";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -704,24 +705,10 @@
       return normalizePhoneRoleStatus(state.phoneRole);
     }
     if (command === "phone.role.request_setup") {
-      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: true });
-      return {
-        ...state.phoneRole,
-        requested: true,
-        notification_posted: args.show_notification !== false,
-        setup_ui_launched: args.open_setup_ui !== false,
-        user_mediated: true
-      };
+      throw new Error("Phone role setup is only available in the APK on your device.");
     }
     if (command === "phone.role.open_default_apps_settings") {
-      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: true });
-      return {
-        ...state.phoneRole,
-        requested: true,
-        opened: true,
-        user_mediated: true,
-        settings_ui_launched: true
-      };
+      throw new Error("Phone role settings are only available in the APK on your device.");
     }
     if (command === "pucky.turn.settings.set") {
       const mode = args.reply_mode !== undefined || args.mode !== undefined
@@ -1430,15 +1417,121 @@
   }
 
   async function loadPhoneRoleStatus(options = {}) {
-    try {
-      const snapshot = await Pucky.request({ command: "phone.role.status", args: {} });
-      state.phoneRole = normalizePhoneRoleStatus({ ...snapshot, loaded: true });
-    } catch (_) {
-      state.phoneRole = normalizePhoneRoleStatus({ ...state.phoneRole, loaded: false });
+    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    if (hasNativeBridge) {
+      try {
+        const snapshot = await Pucky.request({ command: "phone.role.status", args: {} });
+        state.phoneRole = normalizePhoneRoleStatus({
+          ...snapshot,
+          source: "native_bridge",
+          read_only: false,
+          loaded: true,
+          error_code: "",
+          error_detail: ""
+        });
+      } catch (error) {
+        state.phoneRole = normalizePhoneRoleStatus({
+          ...state.phoneRole,
+          source: "native_bridge",
+          read_only: false,
+          loaded: false,
+          error_code: "broker_command_failed",
+          error_detail: String(error && error.message || "")
+        });
+      }
+    } else {
+      state.phoneRole = await fetchBrowserPhoneRoleStatus();
     }
     if (options.render) {
       render();
     }
+  }
+
+  async function fetchBrowserPhoneRoleStatus() {
+    await ensureLinksApiConfig();
+    if (!state.links.apiToken) {
+      return unavailableBrowserPhoneRoleStatus("preview_unavailable", {
+        source: "preview_unavailable",
+        loaded: false
+      });
+    }
+    const params = new URLSearchParams();
+    if (state.links.deviceId) {
+      params.set("device_id", state.links.deviceId);
+    }
+    const response = await fetch(
+      `${linksApiBaseUrl()}/api/device/phone-role-status${params.toString() ? `?${params.toString()}` : ""}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${state.links.apiToken}`
+        }
+      }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const resolvedDeviceId = String(payload && payload.device_id || "").trim();
+      if (resolvedDeviceId) {
+        state.links.deviceId = resolvedDeviceId;
+      }
+      return normalizePhoneRoleStatus({
+        ...payload,
+        source: "browser_live_api",
+        read_only: true,
+        loaded: true,
+        error_code: "",
+        error_detail: ""
+      });
+    }
+    return unavailableBrowserPhoneRoleStatus(
+      normalizeBrowserPhoneRoleErrorCode(response.status, payload),
+      {
+        ...payload,
+        source: "browser_live_api",
+        read_only: true,
+        loaded: false
+      }
+    );
+  }
+
+  function normalizeBrowserPhoneRoleErrorCode(statusCode, payload) {
+    const explicit = String(payload && payload.error_code || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    if (statusCode === 401) {
+      return "unauthorized";
+    }
+    if (statusCode === 409) {
+      return "device_context_unavailable";
+    }
+    if (statusCode === 503) {
+      return "device_offline";
+    }
+    return "broker_command_failed";
+  }
+
+  function unavailableBrowserPhoneRoleStatus(errorCode, overrides = {}) {
+    return normalizePhoneRoleStatus({
+      schema: "pucky.phone_role_status.v1",
+      state: "unavailable",
+      role_held: false,
+      eligible: false,
+      role_available: false,
+      package_name: "com.pucky.device.debug",
+      default_dialer_package: "",
+      default_dialer_label: "",
+      stock_incall_ui_replaced_when_held: true,
+      source: "preview_unavailable",
+      read_only: true,
+      loaded: false,
+      error_code: String(errorCode || "preview_unavailable").trim() || "preview_unavailable",
+      error_detail: "",
+      device_id: String(state.links && state.links.deviceId || "").trim(),
+      ...overrides
+    });
   }
 
   async function loadSettingsState(options = {}) {
@@ -2115,20 +2208,29 @@
 
   async function ensureLinksApiConfig() {
     if (state.links.apiBaseUrl) {
+      if (!state.links.apiToken) {
+        state.links.apiToken = resolveBrowserApiToken();
+      }
+      if (!state.links.deviceId) {
+        state.links.deviceId = resolveBrowserDeviceId();
+      }
       return;
     }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
       state.links.apiToken = resolveBrowserApiToken();
+      state.links.deviceId = resolveBrowserDeviceId();
       return;
     }
     try {
       const config = await Pucky.request({ command: "pucky.config.get", args: {} });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
       state.links.apiToken = String(config && config.api_token || "");
+      state.links.deviceId = "";
     } catch (_) {
       state.links.apiBaseUrl = "";
       state.links.apiToken = "";
+      state.links.deviceId = "";
     }
   }
 
@@ -2519,20 +2621,26 @@
   function initialPhoneRoleStatus() {
     return normalizePhoneRoleStatus({
       schema: "pucky.phone_role_status.v1",
-      state: "unknown",
+      state: "unavailable",
       role_held: false,
       eligible: false,
       role_available: false,
       package_name: "com.pucky.device.debug",
-      default_dialer_package: "com.google.android.dialer",
-      default_dialer_label: "Phone by Google",
+      default_dialer_package: "",
+      default_dialer_label: "",
       stock_incall_ui_replaced_when_held: true,
-      loaded: false
+      loaded: false,
+      source: "preview_unavailable",
+      read_only: true,
+      error_code: "preview_unavailable",
+      error_detail: "",
+      device_id: ""
     });
   }
 
   function normalizePhoneRoleStatus(input) {
     const raw = input && typeof input === "object" ? input : {};
+    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     return {
       schema: "pucky.phone_role_status.v1",
       state: String(raw.state || "unknown").trim() || "unknown",
@@ -2545,7 +2653,12 @@
       stock_incall_ui_replaced_when_held: raw.stock_incall_ui_replaced_when_held !== undefined
         ? truthy(raw.stock_incall_ui_replaced_when_held)
         : true,
-      loaded: raw.loaded !== undefined ? truthy(raw.loaded) : true
+      loaded: raw.loaded !== undefined ? truthy(raw.loaded) : true,
+      source: String(raw.source || (hasNativeBridge ? "native_bridge" : "preview_unavailable")).trim() || "preview_unavailable",
+      read_only: raw.read_only !== undefined ? truthy(raw.read_only) : !hasNativeBridge,
+      error_code: String(raw.error_code || "").trim(),
+      error_detail: String(raw.error_detail || raw.detail || raw.error || "").trim(),
+      device_id: String(raw.device_id || "").trim()
     };
   }
 
@@ -2870,6 +2983,7 @@
       token: "",
       apiBaseUrl: "",
       apiToken: "",
+      deviceId: "",
       auth_mode: "browser",
       apps: [],
       connectedApps: [],
@@ -6363,22 +6477,52 @@
 
   function phoneRoleSettingsCard() {
     const status = normalizePhoneRoleStatus(state.phoneRole);
+    const action = phoneRoleActionForStatus(status);
     return settingsSelectorCard({
       settingId: "phone-role",
       accent: status.role_held ? "#22c55e" : "#f59e0b",
       icon: "phone",
       title: "Phone app role",
       detail: phoneRoleSettingsDetail(status),
-      valueLabel: status.role_held ? "On" : "Off",
+      valueLabel: phoneRoleSettingsValueLabel(status),
       onOpen: refreshPhoneRoleStatus,
-      actionLabel: phoneRolePrimaryActionLabel(status),
-      action: runPhoneRolePrimaryAction
+      actionLabel: action.label,
+      action: action.handler
     });
   }
 
   function phoneRoleSettingsDetail(status) {
     const holder = phoneRoleHolderLabel(status);
+    if (status.source === "preview_unavailable") {
+      return "Web preview is read-only for phone-role state. Add api_token and, when needed, device_id to sync a real device, or open the APK on your phone to manage it.";
+    }
+    if (status.source === "browser_live_api") {
+      if (status.error_code === "unauthorized") {
+        return "Web preview could not authenticate device state. Add a valid api_token to view the real phone-role status here.";
+      }
+      if (status.error_code === "device_context_unavailable") {
+        return "Web preview could not choose a device. Add device_id or bring exactly one online device into context before reloading.";
+      }
+      if (status.error_code === "device_offline") {
+        return "The selected device is offline, so phone-role state cannot be read right now. Bring the device online in Pucky, then reload.";
+      }
+      if (status.error_code === "broker_command_failed") {
+        return "Pucky reached the backend, but the device did not return phone-role state cleanly. Retry from the device once the bridge is healthy.";
+      }
+      const scope = status.device_id ? `Synced from ${status.device_id}` : "Synced from your device";
+      return `${holder}. ${scope} in read-only mode. Use the APK on your phone to change the phone-app role.`;
+    }
     return `${holder}. Enabling dialer mode unlocks direct call control, stays user-mediated through Android settings, and may replace the stock in-call UI while active.`;
+  }
+
+  function phoneRoleSettingsValueLabel(status) {
+    if (status.source === "preview_unavailable") {
+      return "Preview";
+    }
+    if (status.source === "browser_live_api" && status.error_code) {
+      return "Read-only";
+    }
+    return status.role_held ? "On" : "Off";
   }
 
   function phoneRoleHolderLabel(status) {
@@ -6398,6 +6542,16 @@
 
   function phoneRolePrimaryActionLabel(status) {
     return status && status.role_held ? "Restore stock phone app" : "Enable Pucky dialer mode";
+  }
+
+  function phoneRoleActionForStatus(status) {
+    if (status.source !== "native_bridge" || status.read_only) {
+      return { label: "", handler: null };
+    }
+    return {
+      label: phoneRolePrimaryActionLabel(status),
+      handler: runPhoneRolePrimaryAction
+    };
   }
 
   async function runPhoneRolePrimaryAction() {
@@ -11979,6 +12133,20 @@
         return queryToken;
       }
       return String(localStorage.getItem(BROWSER_API_TOKEN_STATE_KEY) || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function resolveBrowserDeviceId() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryDeviceId = String(params.get("device_id") || "").trim();
+      if (queryDeviceId) {
+        localStorage.setItem(BROWSER_DEVICE_ID_STATE_KEY, queryDeviceId);
+        return queryDeviceId;
+      }
+      return String(localStorage.getItem(BROWSER_DEVICE_ID_STATE_KEY) || "").trim();
     } catch (_) {
       return "";
     }
