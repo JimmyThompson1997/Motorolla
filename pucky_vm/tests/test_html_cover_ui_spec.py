@@ -955,12 +955,19 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '"Home refresh walkthrough"' in store
     assert '"Bring paint samples upstairs"' in store
     assert '"Freelance follow-up"' in store
+    assert '"Front porch repair window"' in store
+    assert '"Clinic paperwork check-in"' in store
+    assert '"Kitchen table"' in store
+    assert '"Dinner with the Forsters"' in store
+    assert '"Katy pickup handoff"' in store
+    assert '"Late-night design QA call"' in store
     assert '"calendar_change"' in store
     assert '"note_update"' in store
     assert '"threads": ["PRD review thread", "Budget approval DM"]' in store
     assert '"threads": ["Migration update", "Tom objections", "Slack launch notes"]' in store
     assert '"target_kind": "calendar_event"' in store
     assert '"target_kind": "feed_item"' in store
+    assert '"source_kind": "calendar_event", "source_id": "freelance-review", "target_kind": "contact"' in store
 
     assert "WorkspaceStore" in server
     assert "workspace_db_path" in server
@@ -1026,6 +1033,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     light_calendar = function_block(app, "lightCalendarPage")
     light_date_picker = function_block(app, "lightDatePicker")
     light_timeline = function_block(app, "lightTimeline")
+    light_event_block = function_block(app, "lightCalendarEventBlock")
+    calendar_day_markers = function_block(app, "calendarDayMarkers")
     light_meeting_notes = function_block(app, "lightMeetingNotesPage")
     meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
     light_reminders = function_block(app, "lightRemindersPage")
@@ -1046,6 +1055,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     feed_detail = function_block(app, "lightFeedDetailPage")
     contact_detail = function_block(app, "lightContactDetailPage")
     html_document = function_block(app, "lightHtmlDocument")
+    open_calendar_settings = function_block(app, "openCalendarSettingsSheet")
 
     assert 'workspaceItems("notes")' in light_notes
     assert 'lightWorkspaceStatus("notes"' in light_notes
@@ -1086,22 +1096,42 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert '"Jump to date"' in light_date_picker
     assert 'calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));' in light_date_picker
     assert 'const events = visibleCalendarEvents();' in light_calendar
+    assert 'ensureCalendarAgendaCollections(events);' in light_calendar
     assert 'calendarEmptyStateTitle()' in light_calendar
     assert 'visibleCalendarEvents()' in light_calendar
     assert 'const timeline = el("div", "light-timeline");' in light_timeline
     assert 'const agendaEvents = Array.isArray(events) ? events : visibleCalendarEvents();' in light_timeline
     assert 'calendarAgendaBlocks(agendaEvents)' in light_timeline
+    assert 'const block = el("article", `light-event-block ${calendarEventColor(event, index)}`);' in light_event_block
+    assert 'const open = el("button", "light-event-main");' in light_event_block
+    assert 'calendarEventTypeLabel(event)' in light_event_block
+    assert 'lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" })' in light_event_block
     assert 'function lightCalendarDayChip(dayKey)' in app
     assert 'function calendarStripDays(dayKey = selectedCalendarDateKey())' in app
     assert 'function calendarMonthHeading(dayKey = selectedCalendarDateKey())' in app
     assert 'function calendarDayMarkers(dayKey)' in app
+    assert '.map(event => calendarEventTone(event))' in calendar_day_markers
     assert 'function openCalendarSettingsSheet()' in app
     assert 'sheet.classList.add("is-open");' in app
     assert 'openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);' in app
+    assert 'const copy = el("div", "calendar-settings-sheet-copy");' in open_calendar_settings
+    assert 'copy.append(' in open_calendar_settings
+    assert 'el("div", "calendar-settings-sheet-copy",' not in open_calendar_settings
     assert 'calendarEventDateKey(event)' in app
     assert 'calendarFormatTime(untilMs)' in app
+    assert "function calendarEventTone(event)" in app
+    assert "function calendarContactChipLabel(contact)" in app
+    assert "function calendarEventPeople(event)" in app
+    assert "function lightCalendarEventChips(event, options = {})" in app
+    assert 'return `${first} ${last.charAt(0).toUpperCase()}.`;' in app
     assert "calendarPickerOpen" not in app
     assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
+    assert 'ensureLinkedCollections(meeting);' in event_detail
+    assert 'const attendees = calendarEventPeople(meeting);' in event_detail
+    assert 'const page = lightPage(meeting.title || "Event");' in event_detail
+    assert 'page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));' in event_detail
+    assert 'const linkedRows = lightLinkedRecordRows(meeting);' in event_detail
+    assert 'page.append(lightInfoSection("Linked records", linkedRows));' in event_detail
     assert "function lightMessagesPage()" not in app
     assert "function lightMessageDetailPage()" not in app
     assert 'route: "meeting-notes"' in app
@@ -1160,6 +1190,16 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-calendar-day-strip" in styles
     assert ".light-calendar-day-chip" in styles
     assert ".calendar-settings-sheet" in styles
+    assert ".light-event-main" in styles
+    assert ".light-event-chip-row" in styles
+    assert ".light-event-place-pill" in styles
+    assert ".light-attendee-chip" in styles
+    assert ".light-attendee-chip-card" in styles
+    assert ".light-event-block.purple" in styles
+    assert ".light-event-block.amber" in styles
+    assert ".light-event-block.slate" in styles
+    assert ".light-calendar-day-dot.red" in styles
+    assert ".light-calendar-day-dot.slate" in styles
     assert 'projectLinked(project, "task")' in light_project_detail
     assert 'projectLinked(project, "calendar_event")' in light_project_detail
     assert 'projectLinked(project, "feed_item")' in light_project_detail

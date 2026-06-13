@@ -96,12 +96,26 @@ async function deleteWorkspaceRecord(config, collection, recordId) {
   }
 }
 
+async function deleteWorkspaceLink(config, linkId) {
+  try {
+    await apiRequest(config, "DELETE", `/api/workspace/links/${linkId}`);
+  } catch (error) {
+    if (/\(404\)/.test(String(error?.message || ""))) {
+      return;
+    }
+    throw error;
+  }
+}
+
 async function cleanupWorkspaceSeed(config, seed) {
   if (!seed?.writeEnabled) {
     return false;
   }
-  for (const recordId of seed.recordIds) {
-    await deleteWorkspaceRecord(config, "calendar-events", recordId);
+  for (const linkId of [...(seed.linkIds || [])].reverse()) {
+    await deleteWorkspaceLink(config, linkId);
+  }
+  for (const record of [...(seed.records || [])].reverse()) {
+    await deleteWorkspaceRecord(config, record.collection, record.id);
   }
   return true;
 }
@@ -114,57 +128,112 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const dayAfter = dateKey(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
   const emptyDay = dateKey(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000));
-  const recordIds = [
-    `${runId}-brunch`,
-    `${runId}-handyman`,
-    `${runId}-pickup`,
-    `${runId}-pta`,
-    `${runId}-late-call`,
-    `${runId}-coffee`
-  ];
-  const seed = { runId, writeEnabled: true, recordIds, today, tomorrow, dayAfter, emptyDay };
+  const seed = { runId, writeEnabled: true, records: [], linkIds: [], today, tomorrow, dayAfter, emptyDay };
   await cleanupWorkspaceSeed(config, seed);
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
-    id: `${runId}-brunch`,
-    title: "Proof brunch plan",
-    summary: "Cedar Cafe",
+  const rememberRecord = async (collection, payload) => {
+    seed.records.push({ collection, id: payload.id });
+    await apiRequest(config, "POST", `/api/workspace/${collection}`, payload);
+  };
+  const rememberLink = async payload => {
+    seed.linkIds.push(payload.id);
+    await apiRequest(config, "POST", "/api/workspace/links", payload);
+  };
+
+  await rememberRecord("contacts", {
+    id: `${runId}-jimmy-torres`,
+    title: "Jimmy Torres",
+    summary: "Proof collaborator",
+    html: "<!doctype html><h1>Jimmy Torres</h1><p>Proof contact for the freelance review.</p>",
+    metadata: { first_name: "Jimmy", last_name: "Torres", email: "jimmy@example.com", phone: "+1 (415) 555-0101" }
+  });
+  await rememberRecord("contacts", {
+    id: `${runId}-jeff-bennett`,
+    title: "Jeff Bennett",
+    summary: "Proof family contact",
+    html: "<!doctype html><h1>Jeff Bennett</h1><p>Proof contact for family plans and review context.</p>",
+    metadata: { first_name: "Jeff", last_name: "Bennett", email: "jeff@example.com", phone: "+1 (415) 555-0102" }
+  });
+  await rememberRecord("projects", {
+    id: `${runId}-project`,
+    title: "Proof freelance follow-up",
+    summary: "Homepage edits, invoice note, and the next review loop.",
+    html: "<!doctype html><h1>Proof freelance follow-up</h1><p>Project shell for the review call, task, and reminder.</p>",
+    metadata: { threads: ["Homepage pass"], chips: ["Freelance", "Proof"] }
+  });
+  await rememberRecord("tasks", {
+    id: `${runId}-task`,
+    title: "Send proof review notes",
+    summary: "Ship the last homepage notes before the call starts.",
+    status: "open",
+    due_at_ms: dayAt(0, 8, 45),
+    html: "<!doctype html><h1>Send proof review notes</h1><p>Task linked to the review call and reminder.</p>",
+    metadata: { owner: "Jimmy Torres", project: "Proof freelance follow-up" }
+  });
+  await rememberRecord("meeting-notes", {
+    id: `${runId}-meeting-note`,
+    title: "Proof freelance prep",
+    summary: "Quick prep note for the linked review call.",
     date: today,
     start_at_ms: dayAt(0, 9, 0),
-    end_at_ms: dayAt(0, 9, 45),
-    html: "<!doctype html><h1>Proof brunch plan</h1><p>Late breakfast and errands.</p>",
-    metadata: { place: "Cedar Cafe", type: "personal", attendees: ["Alex"] }
+    end_at_ms: dayAt(0, 9, 20),
+    html: "<!doctype html><h1>Proof freelance prep</h1><p>Meeting note linked to the review call, task, reminder, and project.</p>",
+    metadata: {
+      participants: ["Jimmy Torres", "Jeff Bennett"],
+      source: `${runId}-freelance-review`,
+      source_kind: "calendar_event",
+      source_id: `${runId}-freelance-review`
+    }
   });
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
-    id: `${runId}-handyman`,
-    title: "Proof handyman window",
-    summary: "Front door and hallway light",
+  await rememberRecord("reminders", {
+    id: `${runId}-reminder`,
+    title: "Send proof HTML before call",
+    summary: "Small nudge tied directly to the review event.",
+    status: "open",
+    due_at_ms: dayAt(0, 8, 30),
+    html: "<!doctype html><h1>Send proof HTML before call</h1><p>Reminder linked back to the proof review event and task.</p>",
+    metadata: { source_kind: "calendar_event", source_id: `${runId}-freelance-review`, snooze_state: "ready" }
+  });
+  await rememberRecord("calendar-events", {
+    id: `${runId}-freelance-review`,
+    title: "Proof freelance review call",
+    summary: "Homepage pass, invoice cleanup, and the next edit round.",
     date: today,
-    start_at_ms: dayAt(0, 13, 30),
-    end_at_ms: dayAt(0, 14, 15),
-    html: "<!doctype html><h1>Proof handyman window</h1><p>Home repair follow-up.</p>",
-    metadata: { place: "Home", type: "personal", attendees: ["Lee"] }
+    start_at_ms: dayAt(0, 9, 30),
+    end_at_ms: dayAt(0, 10, 15),
+    html: "<!doctype html><h1>Proof freelance review call</h1><p>Graph-linked proof event for attendee chips and cross-app navigation.</p>",
+    metadata: { place: "Kitchen table", type: "freelance", attendees: ["Jimmy Torres", "Jeff Bennett"] }
   });
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
-    id: `${runId}-pickup`,
-    title: "Proof school pickup",
-    summary: "Leave before traffic stacks up",
+  await rememberRecord("calendar-events", {
+    id: `${runId}-katy-handoff`,
+    title: "Proof Katy pickup handoff",
+    summary: "School pickup switch before dinner.",
+    date: today,
+    start_at_ms: dayAt(0, 17, 45),
+    end_at_ms: dayAt(0, 18, 15),
+    html: "<!doctype html><h1>Proof Katy pickup handoff</h1><p>Family logistics proof event.</p>",
+    metadata: { place: "North field gate", type: "family", attendees: ["Jeff Bennett"] }
+  });
+  await rememberRecord("calendar-events", {
+    id: `${runId}-forsters`,
+    title: "Proof dinner with the Forsters",
+    summary: "Simple family dinner and summer-plan catch-up.",
     date: today,
     start_at_ms: dayAt(0, 18, 0),
-    end_at_ms: dayAt(0, 18, 30),
-    html: "<!doctype html><h1>Proof school pickup</h1><p>Evening family logistics.</p>",
-    metadata: { place: "Lincoln School", type: "personal" }
+    end_at_ms: dayAt(0, 19, 0),
+    html: "<!doctype html><h1>Proof dinner with the Forsters</h1><p>Overlap proof event for the compact agenda cluster.</p>",
+    metadata: { place: "Forster house", type: "family", attendees: ["Jeff Bennett"] }
   });
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
-    id: `${runId}-pta`,
-    title: "Proof PTA check-in",
-    summary: "Quick overlap after pickup",
-    date: today,
-    start_at_ms: dayAt(0, 18, 10),
-    end_at_ms: dayAt(0, 18, 40),
-    html: "<!doctype html><h1>Proof PTA check-in</h1><p>Small overlap event.</p>",
-    metadata: { place: "Phone", type: "personal" }
+  await rememberRecord("calendar-events", {
+    id: `${runId}-clinic`,
+    title: "Proof clinic paperwork check-in",
+    summary: "Forms, prep questions, and timing.",
+    date: tomorrow,
+    start_at_ms: dayAt(1, 11, 0),
+    end_at_ms: dayAt(1, 11, 30),
+    html: "<!doctype html><h1>Proof clinic paperwork check-in</h1><p>Health proof event.</p>",
+    metadata: { place: "Westside Clinic", type: "health", attendees: ["Clinic front desk"] }
   });
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
+  await rememberRecord("calendar-events", {
     id: `${runId}-late-call`,
     title: "Proof late call",
     summary: "Moves to tomorrow in New York",
@@ -172,9 +241,9 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     start_at_ms: dayAt(0, 23, 30),
     end_at_ms: dayAt(0, 23, 50),
     html: "<!doctype html><h1>Proof late call</h1><p>Timezone shift proof event.</p>",
-    metadata: { place: "Phone", type: "personal" }
+    metadata: { place: "Phone", type: "call", attendees: ["Jimmy Torres"] }
   });
-  await apiRequest(config, "POST", "/api/workspace/calendar-events", {
+  await rememberRecord("calendar-events", {
     id: `${runId}-coffee`,
     title: "Proof coffee catch-up",
     summary: "Intentional day-after event",
@@ -183,6 +252,55 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     end_at_ms: dayAt(2, 10, 30),
     html: "<!doctype html><h1>Proof coffee catch-up</h1><p>Day-after event for empty-day checks.</p>",
     metadata: { place: "Northside", type: "personal" }
+  });
+
+  await rememberLink({
+    id: `${runId}-link-contact-jimmy`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "contact",
+    target_id: `${runId}-jimmy-torres`,
+    label: "Jimmy Torres"
+  });
+  await rememberLink({
+    id: `${runId}-link-contact-jeff`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "contact",
+    target_id: `${runId}-jeff-bennett`,
+    label: "Jeff Bennett"
+  });
+  await rememberLink({
+    id: `${runId}-link-project`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "project",
+    target_id: `${runId}-project`,
+    label: "Proof freelance follow-up"
+  });
+  await rememberLink({
+    id: `${runId}-link-task`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "task",
+    target_id: `${runId}-task`,
+    label: "Send proof review notes"
+  });
+  await rememberLink({
+    id: `${runId}-link-meeting-note`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "meeting_note",
+    target_id: `${runId}-meeting-note`,
+    label: "Proof freelance prep"
+  });
+  await rememberLink({
+    id: `${runId}-link-reminder`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "reminder",
+    target_id: `${runId}-reminder`,
+    label: "Send proof HTML before call"
   });
   return seed;
 }
@@ -230,6 +348,10 @@ async function visibleCalendarTitles(page) {
 
 async function visibleCalendarTimes(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll(".light-event-time")).map(node => node.textContent?.trim()).filter(Boolean));
+}
+
+async function pageHeaderText(page) {
+  return String(await page.locator(".light-page-header").textContent() || "").replace(/\s+/g, " ").trim();
 }
 
 async function stickyMetrics(page) {
@@ -283,10 +405,38 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const stripCount = await page.locator(".light-calendar-day-chip").count();
     assert(stripCount >= 7, `Expected a compact day strip with at least seven chips, got ${stripCount}.`);
     const todayTitles = await visibleCalendarTitles(page);
-    assert(todayTitles.includes("Proof brunch plan"), "Expected a stable morning event on the device-local today view.");
-    assert(todayTitles.includes("Proof school pickup"), "Expected clustered pickup event on today.");
+    assert(todayTitles.includes("Proof freelance review call"), "Expected the linked proof review call on the device-local today view.");
+    assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
+    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-place-pill').textContent() === "Kitchen table", "Expected the place pill to show Kitchen table.");
+    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').nth(0).textContent() === "Jimmy T.", "Expected compact attendee chip label Jimmy T. on the agenda card.");
+    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').nth(1).textContent() === "Jeff B.", "Expected compact attendee chip label Jeff B. on the agenda card.");
+    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"]').evaluate(node => node.className.includes("blue")), "Expected the freelance review card to use the shared blue tone.");
+    assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
     summary.assertions.push("desktop calendar opened to today with compact day strip");
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
+
+    await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-main').click();
+    assert((await pageHeaderText(page)).includes("Proof freelance review call"), "Expected the event detail header to use the real event title.");
+    await saveShot(page, reportDir, "calendar-desktop-event-detail.png", summary);
+    await page.locator('.light-attendee-chip.is-link', { hasText: "Jimmy T." }).click();
+    assert((await pageHeaderText(page)).includes("Jimmy Torres"), "Expected attendee chip navigation to open the linked contact detail.");
+    await saveShot(page, reportDir, "calendar-desktop-attendee-chip.png", summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-page-header").getByText("Proof freelance review call").waitFor({ state: "visible" });
+    for (const label of [
+      "Proof freelance follow-up",
+      "Send proof review notes",
+      "Proof freelance prep",
+      "Send proof HTML before call"
+    ]) {
+      await page.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }).first().click();
+      assert((await pageHeaderText(page)).includes(label), `Expected linked record row to open ${label}.`);
+      await page.getByRole("button", { name: "Back" }).click();
+      await page.locator(".light-page-header").getByText("Proof freelance review call").waitFor({ state: "visible" });
+    }
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    summary.assertions.push("event detail showed title header, attendee chips, and linked graph navigation");
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
@@ -314,6 +464,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await openCalendarSettings(page);
     const timezoneCount = await page.locator('.settings-native-select').count();
     assert(timezoneCount === 1, `Expected one calendar-local time zone select, got ${timezoneCount}.`);
+    const settingsCopy = await page.locator(".calendar-settings-sheet").textContent();
+    assert(!String(settingsCopy || "").includes("[object HTMLHeadingElement]"), "Expected calendar settings sheet to render clean copy without object text.");
     await selectTimezone(page, "America/New_York");
     await saveShot(page, reportDir, "calendar-desktop-settings-sheet.png", summary);
     await closeCalendarSettings(page);
@@ -358,6 +510,7 @@ async function runMobileScenario(browser, config, summary, consoleLog, networkLo
     await openHomeCalendar(page);
     assert(await page.locator(".light-date-input").count() === 1, "Expected a native date input on mobile.");
     assert(await page.locator(".light-calendar-day-chip").count() >= 7, "Expected the mobile day strip to render.");
+    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip', { hasText: "Jimmy T." }).count() >= 1, "Expected compact attendee chips on the mobile agenda.");
     await saveShot(page, reportDir, "calendar-mobile-top.png", summary);
     const metrics = await stickyMetrics(page);
     assert(metrics.headerTop <= 1, `Expected mobile header to stay pinned, got ${metrics.headerTop}`);

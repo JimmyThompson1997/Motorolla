@@ -3810,6 +3810,7 @@
       return page;
     }
     const events = visibleCalendarEvents();
+    ensureCalendarAgendaCollections(events);
     if (!events.length) {
       page.append(lightEmptyState("calendar", calendarEmptyStateTitle(), "Try Today or pick another date."));
       return page;
@@ -3862,11 +3863,13 @@
     const sheet = el("section", "trace-sheet settings-sheet calendar-settings-sheet");
     sheet.classList.add("is-open");
     const header = el("div", "calendar-settings-sheet-header");
+    const copy = el("div", "calendar-settings-sheet-copy");
+    copy.append(
+      el("h2", "calendar-settings-sheet-title", "Calendar settings"),
+      el("p", "calendar-settings-sheet-detail", "Choose whether Calendar follows your device time or stays pinned to one city.")
+    );
     header.append(
-      el("div", "calendar-settings-sheet-copy",
-        el("h2", "calendar-settings-sheet-title", "Calendar settings"),
-        el("p", "calendar-settings-sheet-detail", "Choose whether Calendar follows your device time or stays pinned to one city.")
-      ),
+      copy,
       (() => {
         const button = el("button", "calendar-settings-sheet-done", "Done");
         button.type = "button";
@@ -3968,23 +3971,29 @@
   }
 
   function lightCalendarEventBlock(event, index = 0) {
-    const block = el("button", `light-event-block ${calendarEventColor(event, index)}`);
-    block.type = "button";
+    const block = el("article", `light-event-block ${calendarEventColor(event, index)}`);
     block.dataset.eventId = event.id;
-    block.addEventListener("click", () => {
+    const open = el("button", "light-event-main");
+    open.type = "button";
+    open.addEventListener("click", () => {
       state.selectedMeetingId = event.id;
       lightNavigate("meeting-detail", { from: "calendar" });
     });
     const top = el("div", "light-event-topline");
     top.append(
       el("span", "light-event-time", calendarEventTimeRange(event)),
-      el("span", "light-event-badge", event.metadata?.place || event.metadata?.type || "Calendar")
+      el("span", "light-event-badge", calendarEventTypeLabel(event))
     );
-    block.append(
+    open.append(
       top,
       el("strong", "light-event-title", event.title || "Untitled event"),
-      el("span", "light-event-summary", event.summary || event.metadata?.place || "Calendar event")
+      el("span", "light-event-summary", event.summary || "Calendar event")
     );
+    block.append(open);
+    const chips = lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" });
+    if (chips) {
+      block.append(chips);
+    }
     return block;
   }
 
@@ -4007,14 +4016,15 @@
     if (!meeting) {
       return lightPage("Event", { subtitle: "Event not found." });
     }
+    ensureLinkedCollections(meeting);
     const meta = meeting.metadata || {};
-    const attendees = Array.isArray(meta.attendees) ? meta.attendees : [];
+    const attendees = calendarEventPeople(meeting);
     const docs = Array.isArray(meta.docs) ? meta.docs : [];
     const contactBucket = workspaceBucket("contacts");
-    if (attendees.length && !contactBucket.loaded && !contactBucket.loading) {
+    if (calendarEventNeedsContacts(meeting) && !contactBucket.loaded && !contactBucket.loading) {
       void loadWorkspaceCollection("contacts", { render: true });
     }
-    const page = lightPage("Event");
+    const page = lightPage(meeting.title || "Event");
     page.classList.add("light-document-page", "light-event-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -4033,10 +4043,14 @@
       page.append(lightListSection("Agenda", meta.agenda));
     }
     if (attendees.length) {
-      page.append(lightAttendeesSection(attendees));
+      page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));
     }
     if (docs.length) {
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
+    }
+    const linkedRows = lightLinkedRecordRows(meeting);
+    if (linkedRows.length) {
+      page.append(lightInfoSection("Linked records", linkedRows));
     }
     page.append(lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" }));
     return page;
@@ -4595,6 +4609,127 @@
   function workspaceContactTargetByName(name) {
     const contact = workspaceContactByName(name);
     return contact ? workspaceTargetForKind("contact", contact.id) : null;
+  }
+
+  function calendarContactChipLabel(contact) {
+    const meta = contact?.metadata || {};
+    const first = String(meta.first_name || "").trim();
+    const last = String(meta.last_name || "").trim();
+    if (first && last) {
+      return `${first} ${last.charAt(0).toUpperCase()}.`;
+    }
+    if (first) {
+      return first;
+    }
+    const display = String(contact?.title || meta.display_name || "").trim();
+    const parts = display.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2 && /^[A-Z]/i.test(parts[0]) && /^[A-Z]/i.test(parts[1])) {
+      return `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.`;
+    }
+    return display || "Contact";
+  }
+
+  function calendarEventNeedsContacts(event) {
+    const attendees = Array.isArray(event?.metadata?.attendees) ? event.metadata.attendees : [];
+    if (attendees.length) {
+      return true;
+    }
+    const currentKind = String(event?.kind || "calendar_event");
+    const currentId = String(event?.id || event?.record_id || "");
+    const links = Array.isArray(event?.links) ? event.links : [];
+    return links.some(link => {
+      const relatedKind = String(link.source_kind) === currentKind && String(link.source_id) === currentId
+        ? link.target_kind
+        : link.source_kind;
+      return String(relatedKind || "") === "contact";
+    });
+  }
+
+  function ensureCalendarAgendaCollections(events) {
+    if (!Array.isArray(events) || !events.some(calendarEventNeedsContacts)) {
+      return;
+    }
+    const bucket = workspaceBucket("contacts");
+    if (!bucket.loaded && !bucket.loading) {
+      void loadWorkspaceCollection("contacts", { render: true });
+    }
+  }
+
+  function calendarEventPeople(event) {
+    const people = [];
+    const seenIds = new Set();
+    const seenNames = new Set();
+    const remember = person => {
+      const contactId = String(person?.contactId || "").trim();
+      const fullLabel = String(person?.fullLabel || person?.label || "").trim();
+      const nameKey = fullLabel.toLowerCase();
+      if (contactId && seenIds.has(contactId)) {
+        return;
+      }
+      if (!contactId && nameKey && seenNames.has(nameKey)) {
+        return;
+      }
+      if (contactId) {
+        seenIds.add(contactId);
+      }
+      if (nameKey) {
+        seenNames.add(nameKey);
+      }
+      people.push({
+        label: String(person?.label || fullLabel || "Guest").trim() || "Guest",
+        fullLabel: fullLabel || String(person?.label || "Guest").trim() || "Guest",
+        target: person?.target || null,
+        contactId,
+        recognized: Boolean(person?.recognized && person?.target)
+      });
+    };
+    const currentKind = String(event?.kind || "calendar_event");
+    const currentId = String(event?.id || event?.record_id || "");
+    const links = Array.isArray(event?.links) ? event.links : [];
+    links.forEach(link => {
+      const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
+      const relatedKind = isSource ? link.target_kind : link.source_kind;
+      if (String(relatedKind || "") !== "contact") {
+        return;
+      }
+      const relatedId = isSource ? link.target_id : link.source_id;
+      const contact = workspaceRecordByKind("contact", relatedId);
+      if (contact) {
+        const fullLabel = String(contact.title || contact.metadata?.display_name || "").trim() || String(link.label || relatedId || "Contact").trim();
+        remember({
+          label: calendarContactChipLabel(contact),
+          fullLabel,
+          target: workspaceTargetForKind("contact", contact.id),
+          contactId: contact.id,
+          recognized: true
+        });
+        return;
+      }
+      const fallback = String(link.label || relatedId || "").trim();
+      if (fallback) {
+        remember({ label: fallback, fullLabel: fallback });
+      }
+    });
+    const attendees = Array.isArray(event?.metadata?.attendees) ? event.metadata.attendees : [];
+    attendees.forEach(name => {
+      const fullLabel = String(name || "").trim();
+      if (!fullLabel) {
+        return;
+      }
+      const contact = workspaceContactByName(fullLabel);
+      if (contact) {
+        remember({
+          label: calendarContactChipLabel(contact),
+          fullLabel: String(contact.title || contact.metadata?.display_name || fullLabel).trim() || fullLabel,
+          target: workspaceTargetForKind("contact", contact.id),
+          contactId: contact.id,
+          recognized: true
+        });
+        return;
+      }
+      remember({ label: fullLabel, fullLabel });
+    });
+    return people;
   }
 
   function openWorkspaceTarget(target, fromRoute = "") {
@@ -5290,13 +5425,59 @@
     return section;
   }
 
-  function lightAttendeesSection(attendees) {
+  function lightAttendeesSection(attendees, options = {}) {
     const section = el("section", "light-info-section light-attendees-section");
     section.append(lightSectionTitle("Attendees"));
-    const card = el("div", "light-card light-info-card");
-    attendees.forEach(name => card.append(lightAttendeeRow(name)));
+    const card = el("div", "light-card light-attendee-chip-card");
+    const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
+    attendees.forEach(person => {
+      const entry = typeof person === "string"
+        ? { label: person, fullLabel: person, target: workspaceContactTargetByName(person) }
+        : person;
+      cloud.append(lightAttendeeChip(entry, { fromRoute: options.fromRoute || state.route || "" }));
+    });
+    card.append(cloud);
     section.append(card);
     return section;
+  }
+
+  function lightAttendeeChip(person, options = {}) {
+    const label = String(person?.label || person?.fullLabel || "Guest").trim() || "Guest";
+    const target = person?.target || null;
+    const chip = el(target ? "button" : "span", target ? "light-attendee-chip is-link" : "light-attendee-chip", label);
+    if (target) {
+      chip.type = "button";
+      chip.addEventListener("click", event => {
+        event.stopPropagation();
+        openWorkspaceTarget(target, options.fromRoute || state.route || "");
+      });
+    }
+    return chip;
+  }
+
+  function lightCalendarPlacePill(event) {
+    const place = String(event?.metadata?.place || "").trim();
+    return place ? el("span", "light-event-place-pill", place) : null;
+  }
+
+  function lightCalendarEventChips(event, options = {}) {
+    const row = el("div", "light-event-chip-row");
+    const place = lightCalendarPlacePill(event);
+    if (place) {
+      row.append(place);
+    }
+    const people = calendarEventPeople(event);
+    const limit = Math.max(0, Number(options.limit || 0) || 0);
+    const visible = limit > 0 ? people.slice(0, limit) : people;
+    if (visible.length) {
+      const attendees = el("div", "light-event-attendees");
+      visible.forEach(person => attendees.append(lightAttendeeChip(person, { fromRoute: options.fromRoute || state.route || "" })));
+      if (limit > 0 && people.length > limit) {
+        attendees.append(el("span", "light-attendee-chip light-attendee-overflow", `+${people.length - limit}`));
+      }
+      row.append(attendees);
+    }
+    return row.childElementCount ? row : null;
   }
 
   function lightAttendeeRow(name) {
@@ -5392,14 +5573,48 @@
   }
 
   function calendarEventColor(event, index = 0) {
-    const type = String(event?.metadata?.type || event?.status || "").toLowerCase();
-    if (type.includes("deadline") || type.includes("risk")) {
+    return calendarEventTone(event);
+  }
+
+  function calendarEventTone(event) {
+    const type = String(event?.metadata?.type || event?.status || "").trim().toLowerCase();
+    const title = String(event?.title || "").trim().toLowerCase();
+    const place = String(event?.metadata?.place || "").trim().toLowerCase();
+    const haystack = [type, title, place].filter(Boolean).join(" ");
+    if (haystack.includes("health") || haystack.includes("clinic") || haystack.includes("doctor")) {
       return "red";
     }
-    if (type.includes("personal") || type.includes("focus")) {
+    if (haystack.includes("family") || haystack.includes("school") || haystack.includes("dinner")) {
+      return "green";
+    }
+    if (haystack.includes("freelance") || haystack.includes("client") || haystack.includes("work")) {
       return "blue";
     }
-    return ["red", "blue", "green"][Math.abs(index) % 3] || "blue";
+    if (haystack.includes("meeting") || haystack.includes("call")) {
+      return "purple";
+    }
+    if (haystack.includes("personal") || haystack.includes("home")) {
+      return "amber";
+    }
+    return "slate";
+  }
+
+  function calendarEventTypeLabel(event) {
+    const raw = String(event?.metadata?.type || "").trim();
+    if (raw) {
+      return raw
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, char => char.toUpperCase());
+    }
+    const tone = calendarEventTone(event);
+    return {
+      red: "Health",
+      green: "Family",
+      blue: "Work",
+      purple: "Call",
+      amber: "Personal",
+      slate: "Calendar"
+    }[tone] || "Calendar";
   }
 
   function calendarDayTitle() {
@@ -5446,16 +5661,11 @@
       .filter(event => calendarEventDateKey(event) === dayKey)
       .sort((a, b) => calendarEventStartMs(a) - calendarEventStartMs(b))
       .slice(0, 4)
-      .map((event, index) => calendarEventMarkerTone(event, index));
+      .map(event => calendarEventTone(event));
   }
 
   function calendarEventMarkerTone(event, index = 0) {
-    const type = String(event?.metadata?.type || "").trim().toLowerCase();
-    if (type.includes("health")) return "amber";
-    if (type.includes("family")) return "green";
-    if (type.includes("freelance")) return "blue";
-    if (type.includes("meeting")) return "purple";
-    return ["blue", "green", "amber", "purple"][index % 4];
+    return calendarEventTone(event);
   }
 
   function calendarEmptyStateTitle(dayKey = selectedCalendarDateKey()) {
