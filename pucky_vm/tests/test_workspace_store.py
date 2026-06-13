@@ -393,6 +393,50 @@ def test_calendar_multi_day_and_feed_archive_visibility(tmp_path: Path) -> None:
     assert "archived" in with_archived
 
 
+def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+    seeded = {item["id"]: item for item in store.list_records("calendar-events")["items"]}
+    assert seeded["house-walkthrough"]["title"] == "Front porch repair window"
+    assert seeded["clinic-checkin"]["title"] == "Clinic paperwork check-in"
+    assert seeded["freelance-review"]["title"] == "Freelance review call"
+    assert seeded["forster-dinner"]["title"] == "Dinner with the Forsters"
+    assert seeded["katy-handoff"]["title"] == "Katy pickup handoff"
+    assert seeded["late-night-design-call"]["title"] == "Late-night design QA call"
+    assert seeded["clinic-checkin"]["metadata"]["place"] == "Westside Clinic"
+    assert seeded["freelance-review"]["metadata"]["place"] == "Kitchen table"
+    assert seeded["katy-handoff"]["metadata"]["place"] == "North field gate"
+
+    freelance_links = {
+        (row[0], row[1])
+        for row in store._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'calendar_event' AND source_id = 'freelance-review'
+            """
+        ).fetchall()
+    }
+    assert ("contact", "sam-rivera") in freelance_links
+    assert ("task", "demo-task-send-freelance-mockup") in freelance_links
+    assert ("project", "freelance-followup") in freelance_links
+    assert ("meeting_note", "demo-meeting-freelance-followup") in freelance_links
+    assert ("reminder", "demo-reminder-freelance-followup") in freelance_links
+
+    clinic_links = {
+        (row[0], row[1])
+        for row in store._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'calendar_event' AND source_id = 'clinic-checkin'
+            """
+        ).fetchall()
+    }
+    assert ("contact", "clinic-front-desk") in clinic_links
+    assert ("note", "clinic-prep-note") in clinic_links
+    assert ("reminder", "demo-reminder-health-call") in clinic_links
+
+
 def test_derive_task_group_boundaries() -> None:
     assert derive_task_group({"status": "done", "due_at_ms": 1}, 100) == "done"
     assert derive_task_group({"status": "open", "due_at_ms": 99}, 100) == "overdue"

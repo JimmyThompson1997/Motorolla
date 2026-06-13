@@ -1095,8 +1095,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'selectedCalendarDateKey()' in light_date_picker
     assert 'input.type = "date";' in light_date_picker
     assert 'input.setAttribute("aria-label", "Calendar date")' in light_date_picker
-    assert '"Today"' in light_date_picker
-    assert '"Jump to date"' in light_date_picker
+    assert 'if (selectedCalendarDateKey() !== calendarTodayDateKey()) {' in light_date_picker
+    assert '"Jump to date"' not in light_date_picker
+    assert "calendarSelectedDayContext()" not in light_date_picker
+    assert 'page.append(lightCalendarAgendaHeading());' in light_calendar
     assert 'calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));' in light_date_picker
     assert 'const events = visibleCalendarEvents();' in light_calendar
     assert 'ensureCalendarAgendaCollections(events);' in light_calendar
@@ -1107,9 +1109,12 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'calendarAgendaBlocks(agendaEvents)' in light_timeline
     assert 'const block = el("article", `light-event-block ${calendarEventColor(event, index)}`);' in light_event_block
     assert 'const open = el("button", "light-event-main");' in light_event_block
-    assert 'calendarEventTypeLabel(event)' in light_event_block
+    assert 'calendarEventTypeLabel(event)' not in light_event_block
+    assert 'lightEventMetaRow([' not in light_event_block
     assert 'lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" })' in light_event_block
+    assert 'function lightCalendarAgendaHeading()' in app
     assert 'function lightCalendarDayChip(dayKey)' in app
+    assert 'function calendarStripWindowSize()' in app
     assert 'function calendarStripDays(dayKey = selectedCalendarDateKey())' in app
     assert 'function calendarMonthHeading(dayKey = selectedCalendarDateKey())' in app
     assert 'function calendarDayMarkers(dayKey)' in app
@@ -1201,6 +1206,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-section-toggle" in styles
     assert ".light-calendar-day-strip" in styles
     assert ".light-calendar-day-chip" in styles
+    assert ".light-calendar-agenda-heading" in styles
     assert ".calendar-settings-sheet" in styles
     assert ".light-event-main" in styles
     assert ".light-event-chip-row" in styles
@@ -1209,6 +1215,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-attendee-chip-card" in styles
     assert ".light-event-block.purple" in styles
     assert ".light-event-block.amber" in styles
+    assert '.light-shell[data-light-route="calendar"]' in styles
+    assert "--event-surface:" in styles
+    assert ".light-event-badge" not in styles
     assert ".light-event-block.slate" in styles
     assert ".light-calendar-day-dot.red" in styles
     assert ".light-calendar-day-dot.slate" in styles
@@ -2313,6 +2322,21 @@ def test_settings_tab_renders_real_backed_settings_page() -> None:
     assert "function openCalendarSettingsSheet()" in app
     assert "function closeCalendarSettingsSheet()" in app
     assert ".calendar-settings-sheet" in styles
+
+
+def test_calendar_selected_day_chrome_is_compact_and_context_free() -> None:
+    app = read("app.js")
+    light_calendar = function_block(app, "lightCalendarPage")
+    light_date_picker = function_block(app, "lightDatePicker")
+    light_event_block = function_block(app, "lightCalendarEventBlock")
+
+    assert 'page.append(lightCalendarAgendaHeading());' in light_calendar
+    assert "light-date-picker-eyebrow" not in light_date_picker
+    assert "Pinned" not in light_date_picker
+    assert "Device local" not in light_date_picker
+    assert '"Jump to date"' not in light_date_picker
+    assert 'selectedCalendarDateKey() !== calendarTodayDateKey()' in light_date_picker
+    assert 'lightEventMetaRow([' not in light_event_block
 
 
 def test_settings_tab_includes_default_audio_speed_control() -> None:

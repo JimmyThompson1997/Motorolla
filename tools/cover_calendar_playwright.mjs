@@ -54,9 +54,9 @@ function dayAt(offsetDays, hour, minute = 0) {
   return date.getTime();
 }
 
-function pageUrl(baseUrl, apiToken = "") {
+function pageUrl(baseUrl, apiToken = "", theme = "light") {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
-  url.searchParams.set("theme", "light");
+  url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
   url.searchParams.set("_pucky_refresh", String(Date.now()));
   if (String(apiToken || "").trim()) {
@@ -384,13 +384,24 @@ async function stickyMetrics(page) {
   });
 }
 
+async function calendarChromeText(page) {
+  return page.evaluate(() => {
+    const chrome = document.querySelector(".light-date-picker");
+    return String(chrome?.textContent || "").replace(/\s+/g, " ").trim();
+  });
+}
+
+async function calendarLaneWidth(page) {
+  return page.evaluate(() => Math.round(document.querySelector(".light-calendar-page")?.getBoundingClientRect().width ?? 0));
+}
+
 async function selectTimezone(page, value) {
   const select = page.locator('.settings-native-select');
   await select.selectOption(value);
 }
 
-async function runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog) {
-  const reportDir = path.join(config.reportDir, "desktop");
+async function runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog, theme = "light") {
+  const reportDir = path.join(config.reportDir, `desktop-${theme}`);
   ensureDir(reportDir);
   const context = await browser.newContext({
     viewport: DESKTOP_VIEWPORT,
@@ -410,17 +421,25 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
   });
   try {
-    await page.goto(pageUrl(config.baseUrl, config.apiToken), { waitUntil: "networkidle", timeout: config.timeoutMs });
+    await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
     await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
     await openHomeCalendar(page);
 
     const initialDate = await page.locator(".light-date-input").inputValue();
     assert(initialDate === seed.today, `Calendar should open on local today ${seed.today}, got ${initialDate}`);
+    const chromeText = await calendarChromeText(page);
+    assert(!chromeText.includes("Pinned"), "Expected calendar chrome to hide Pinned copy.");
+    assert(!chromeText.includes("Device local"), "Expected calendar chrome to hide Device local copy.");
+    assert(!chromeText.includes("America/"), "Expected calendar chrome to hide raw timezone text.");
+    assert(!chromeText.includes("Jump to date"), "Expected compact calendar chrome without Jump to date copy.");
+    assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected Today chip to stay hidden when the selected day is already today.");
     const stripCount = await page.locator(".light-calendar-day-chip").count();
-    assert(stripCount >= 7, `Expected a compact day strip with at least seven chips, got ${stripCount}.`);
+    assert(stripCount === 7, `Expected the desktop day strip to render seven chips, got ${stripCount}.`);
+    assert(await page.locator(".light-event-badge").count() === 0, "Expected agenda cards to hide the legacy type badge.");
     const todayTitles = await visibleCalendarTitles(page);
     assert(todayTitles.includes("Proof freelance review call"), "Expected the linked proof review call on the device-local today view.");
     assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
+    assert(await calendarLaneWidth(page) >= 820, `Expected a widened desktop calendar lane, got ${await calendarLaneWidth(page)}px.`);
     await page.waitForFunction(() => document.querySelectorAll('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip.is-link').length >= 2);
     assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-place-pill').textContent() === "Kitchen table", "Expected the place pill to show Kitchen table.");
     const attendeeChipTexts = await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').allTextContents();
@@ -428,18 +447,18 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(attendeeChipTexts.includes("Jeff B."), `Expected compact attendee chip label Jeff B. on the agenda card, got ${attendeeChipTexts.join(", ")}.`);
     assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"]').evaluate(node => node.className.includes("blue")), "Expected the freelance review card to use the shared blue tone.");
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
-    summary.assertions.push("desktop calendar opened to today with compact day strip");
-    await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
+    summary.assertions.push(`desktop ${theme} calendar opened to today with compact day strip`);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
 
     await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-main').click();
     await waitForHeaderText(page, "Proof freelance review call");
     assert((await pageHeaderText(page)).includes("Proof freelance review call"), "Expected the event detail header to use the real event title.");
-    await saveShot(page, reportDir, "calendar-desktop-event-detail.png", summary);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail.png`, summary);
     await page.locator('.light-attendee-chip.is-link', { hasText: "Jimmy T." }).click();
     await waitForHeaderText(page, "Contact");
     await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
     assert((await page.locator(".light-profile-card h1").textContent()).includes("Jimmy Torres"), "Expected attendee chip navigation to open the linked contact detail.");
-    await saveShot(page, reportDir, "calendar-desktop-attendee-chip.png", summary);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-attendee-chip.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await waitForHeaderText(page, "Proof freelance review call");
     for (const label of [
@@ -456,7 +475,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
-    summary.assertions.push("event detail showed title header, attendee chips, and linked graph navigation");
+    summary.assertions.push(`desktop ${theme} detail showed title header, attendee chips, and linked graph navigation`);
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
@@ -465,21 +484,21 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       String(emptyCopy || "").includes("No events tomorrow") || String(emptyCopy || "").includes("No events on"),
       "Expected date-aware empty-state copy on an empty day."
     );
-    await saveShot(page, reportDir, "calendar-desktop-empty-day.png", summary);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-empty-day.png`, summary);
 
     await goHome(page);
     await openHomeCalendar(page);
     const reopenedDate = await page.locator(".light-date-input").inputValue();
     assert(reopenedDate === seed.today, `Calendar should reset to today after Home re-entry, got ${reopenedDate}`);
-    summary.assertions.push("calendar home entry resets to today");
+    summary.assertions.push(`desktop ${theme} calendar home entry resets to today`);
 
     const busyLabelCount = await page.getByText("Busy window", { exact: true }).count();
     assert(busyLabelCount >= 1, "Expected clustered events to render inside a busy window.");
     const scrollMetrics = await stickyMetrics(page);
     assert(scrollMetrics.headerTop <= 1, `Expected sticky header to pin at top, got ${scrollMetrics.headerTop}`);
     assert(scrollMetrics.controlsTop >= 0 && scrollMetrics.controlsTop < 140, `Expected sticky controls to remain visible, got ${scrollMetrics.controlsTop}`);
-    await saveShot(page, reportDir, "calendar-desktop-scrolled.png", summary);
-    summary.assertions.push("desktop sticky header and controls stayed pinned");
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-scrolled.png`, summary);
+    summary.assertions.push(`desktop ${theme} sticky header and controls stayed pinned`);
 
     await openCalendarSettings(page);
     const timezoneCount = await page.locator('.settings-native-select').count();
@@ -487,7 +506,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const settingsCopy = await page.locator(".calendar-settings-sheet").textContent();
     assert(!String(settingsCopy || "").includes("[object HTMLHeadingElement]"), "Expected calendar settings sheet to render clean copy without object text.");
     await selectTimezone(page, "America/New_York");
-    await saveShot(page, reportDir, "calendar-desktop-settings-sheet.png", summary);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-settings-sheet.png`, summary);
     await closeCalendarSettings(page);
     const nyTodayTitles = await visibleCalendarTitles(page);
     assert(!nyTodayTitles.includes("Proof late call"), "Expected late-call event to move off the selected day after timezone switch.");
@@ -496,16 +515,16 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const nyTomorrowTimes = await visibleCalendarTimes(page);
     assert(nyTomorrowTitles.includes("Proof late call"), "Expected late-call event to appear on tomorrow in New York.");
     assert(nyTomorrowTimes.some(value => value.includes("2:30 AM")), `Expected a shifted 2:30 AM time in New York, got ${nyTomorrowTimes.join(", ")}`);
-    await saveShot(page, reportDir, "calendar-desktop-timezone-shift.png", summary);
-    summary.assertions.push("timezone switch changed calendar grouping and times");
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-timezone-shift.png`, summary);
+    summary.assertions.push(`desktop ${theme} timezone switch changed calendar grouping and times`);
   } finally {
-    await context.tracing.stop({ path: path.join(reportDir, "trace-desktop.zip") });
+    await context.tracing.stop({ path: path.join(reportDir, `trace-desktop-${theme}.zip`) });
     await context.close();
   }
 }
 
-async function runMobileScenario(browser, config, summary, consoleLog, networkLog) {
-  const reportDir = path.join(config.reportDir, "mobile");
+async function runMobileScenario(browser, config, summary, consoleLog, networkLog, theme = "light") {
+  const reportDir = path.join(config.reportDir, `mobile-${theme}`);
   ensureDir(reportDir);
   const context = await browser.newContext({
     viewport: MOBILE_VIEWPORT,
@@ -525,23 +544,30 @@ async function runMobileScenario(browser, config, summary, consoleLog, networkLo
     }
   });
   try {
-    await page.goto(pageUrl(config.baseUrl, config.apiToken), { waitUntil: "networkidle", timeout: config.timeoutMs });
+    await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
     await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
     await openHomeCalendar(page);
+    const chromeText = await calendarChromeText(page);
     assert(await page.locator(".light-date-input").count() === 1, "Expected a native date input on mobile.");
-    assert(await page.locator(".light-calendar-day-chip").count() >= 7, "Expected the mobile day strip to render.");
+    assert(await page.locator(".light-calendar-day-chip").count() === 5, "Expected the mobile day strip to render five chips.");
+    assert(!chromeText.includes("Pinned"), "Expected mobile calendar chrome to hide Pinned copy.");
+    assert(!chromeText.includes("Device local"), "Expected mobile calendar chrome to hide Device local copy.");
+    assert(!chromeText.includes("America/"), "Expected mobile calendar chrome to hide raw timezone text.");
+    assert(!chromeText.includes("Jump to date"), "Expected mobile calendar chrome without Jump to date copy.");
+    assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected Today chip to stay hidden on the already-selected mobile today view.");
+    assert(await page.locator(".light-event-badge").count() === 0, "Expected mobile agenda cards to hide the legacy type badge.");
     assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip', { hasText: "Jimmy T." }).count() >= 1, "Expected compact attendee chips on the mobile agenda.");
-    await saveShot(page, reportDir, "calendar-mobile-top.png", summary);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-top.png`, summary);
     const metrics = await stickyMetrics(page);
     assert(metrics.headerTop <= 1, `Expected mobile header to stay pinned, got ${metrics.headerTop}`);
     assert(metrics.controlsTop >= 0 && metrics.controlsTop < 140, `Expected mobile controls row to stay pinned, got ${metrics.controlsTop}`);
-    await saveShot(page, reportDir, "calendar-mobile-scrolled.png", summary);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-scrolled.png`, summary);
     await openCalendarSettings(page);
-    await saveShot(page, reportDir, "calendar-mobile-settings-sheet.png", summary);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-settings-sheet.png`, summary);
     await closeCalendarSettings(page);
-    summary.assertions.push("mobile sticky header and controls stayed pinned");
+    summary.assertions.push(`mobile ${theme} sticky header and controls stayed pinned`);
   } finally {
-    await context.tracing.stop({ path: path.join(reportDir, "trace-mobile.zip") });
+    await context.tracing.stop({ path: path.join(reportDir, `trace-mobile-${theme}.zip`) });
     await context.close();
   }
 }
@@ -581,8 +607,10 @@ async function main() {
       executablePath: resolveChromePath(),
       headless: true
     });
-    await runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog);
-    await runMobileScenario(browser, config, summary, consoleLog, networkLog);
+    await runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog, "light");
+    await runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog, "dark");
+    await runMobileScenario(browser, config, summary, consoleLog, networkLog, "light");
+    await runMobileScenario(browser, config, summary, consoleLog, networkLog, "dark");
     summary.ok = true;
     summary.finished_at = new Date().toISOString();
     writeJsonFile(path.join(config.reportDir, "network.json"), networkLog);

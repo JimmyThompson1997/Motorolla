@@ -3944,6 +3944,7 @@
     });
     page.classList.add("light-calendar-page");
     page.append(lightDatePicker());
+    page.append(lightCalendarAgendaHeading());
     const bucket = workspaceBucket("calendar-events");
     if (bucket.error) {
       page.append(lightEmptyState("calendar", "Could not load", bucket.error));
@@ -3966,14 +3967,8 @@
   function lightDatePicker() {
     const picker = el("section", "light-date-picker");
     const top = el("div", "light-calendar-strip-top");
-    const copy = el("div", "light-date-picker-copy");
-    copy.append(
-      el("p", "light-date-picker-eyebrow", calendarSelectedDayContext()),
-      el("h2", "light-date-picker-title", calendarMonthHeading())
-    );
     const controls = el("div", "light-date-picker-controls");
-    const field = el("label", "light-date-input-wrap");
-    field.append(el("span", "light-date-input-label", "Jump to date"));
+    const field = el("div", "light-date-input-wrap");
     const input = el("input", "light-date-input");
     input.type = "date";
     input.value = selectedCalendarDateKey();
@@ -3983,24 +3978,27 @@
       render();
     });
     field.append(input);
-    const today = el(
-      "button",
-      selectedCalendarDateKey() === calendarTodayDateKey()
-        ? "light-calendar-today-button is-active"
-        : "light-calendar-today-button",
-      "Today"
-    );
-    today.type = "button";
-    today.addEventListener("click", () => {
-      state.selectedCalendarDate = calendarTodayDateKey();
-      render();
-    });
-    controls.append(field, today);
-    top.append(copy, controls);
+    controls.append(field);
+    if (selectedCalendarDateKey() !== calendarTodayDateKey()) {
+      const today = el("button", "light-calendar-today-button", "Today");
+      today.type = "button";
+      today.addEventListener("click", () => {
+        state.selectedCalendarDate = calendarTodayDateKey();
+        render();
+      });
+      controls.append(today);
+    }
+    top.append(el("h2", "light-date-picker-title", calendarMonthHeading()), controls);
     const strip = el("div", "light-calendar-day-strip");
     calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));
     picker.append(top, strip);
     return picker;
+  }
+
+  function lightCalendarAgendaHeading() {
+    const section = el("section", "light-calendar-agenda-heading");
+    section.append(el("h2", "light-calendar-agenda-title", calendarSelectedDayHeadline()));
+    return section;
   }
 
   function openCalendarSettingsSheet() {
@@ -4123,16 +4121,13 @@
       state.selectedMeetingId = event.id;
       lightNavigate("meeting-detail", { from: "calendar" });
     });
-    const top = el("div", "light-event-topline");
-    top.append(
-      el("span", "light-event-time", calendarEventTimeRange(event)),
-      el("span", "light-event-badge", calendarEventTypeLabel(event))
-    );
     open.append(
-      top,
+      el("span", "light-event-time", calendarEventTimeRange(event)),
       el("strong", "light-event-title", event.title || "Untitled event"),
-      el("span", "light-event-summary", event.summary || "Calendar event")
     );
+    if (String(event.summary || "").trim()) {
+      open.append(el("span", "light-event-summary", event.summary));
+    }
     block.append(open);
     const chips = lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" });
     if (chips) {
@@ -5888,8 +5883,14 @@
     return formatCalendarDateKey(dayKey, { month: "long", year: "numeric" });
   }
 
+  function calendarStripWindowSize() {
+    return typeof window !== "undefined" && window.innerWidth >= 768 ? 7 : 5;
+  }
+
   function calendarStripDays(dayKey = selectedCalendarDateKey()) {
-    return [-2, -1, 0, 1, 2, 3, 4].map(offset => shiftCalendarDateKey(dayKey, offset));
+    const count = calendarStripWindowSize();
+    const start = -Math.floor(count / 2);
+    return Array.from({ length: count }, (_, index) => shiftCalendarDateKey(dayKey, start + index));
   }
 
   function calendarDayWeekdayLabel(dayKey) {
