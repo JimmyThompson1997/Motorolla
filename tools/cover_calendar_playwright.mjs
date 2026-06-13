@@ -113,6 +113,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   const today = dateKey(new Date());
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const dayAfter = dateKey(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
+  const emptyDay = dateKey(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000));
   const recordIds = [
     `${runId}-brunch`,
     `${runId}-handyman`,
@@ -121,7 +122,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     `${runId}-late-call`,
     `${runId}-coffee`
   ];
-  const seed = { runId, writeEnabled: true, recordIds, today, tomorrow, dayAfter };
+  const seed = { runId, writeEnabled: true, recordIds, today, tomorrow, dayAfter, emptyDay };
   await cleanupWorkspaceSeed(config, seed);
   await apiRequest(config, "POST", "/api/workspace/calendar-events", {
     id: `${runId}-brunch`,
@@ -287,7 +288,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     summary.assertions.push("desktop calendar opened to today with compact day strip");
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
 
-    await setCalendarDate(page, seed.tomorrow);
+    await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
     const emptyCopy = await page.locator(".light-empty-state").textContent();
     assert(
