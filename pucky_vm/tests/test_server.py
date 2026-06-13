@@ -507,6 +507,7 @@ class FakeComposio:
         self.starts: list[dict[str, object]] = []
         self.deleted: list[tuple[str, str]] = []
         self.invalidated: list[str] = []
+        self.proxy_calls: list[dict[str, object]] = []
         self.list_apps_calls = 0
         self.list_connected_calls = 0
         self.apps = [
@@ -617,6 +618,27 @@ class FakeComposio:
         self.deleted.append((user_id, connection_id))
         self.connected = [item for item in self.connected if item["id"] != connection_id]
         return {"ok": True, "deleted": connection_id}
+
+    def execute_proxy(
+        self,
+        *,
+        connected_account_id: str,
+        endpoint: str,
+        method: str = "GET",
+        parameters: list[dict[str, object]] | None = None,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        call = {
+            "connected_account_id": connected_account_id,
+            "endpoint": endpoint,
+            "method": method,
+            "parameters": list(parameters or []),
+            "body": dict(body or {}),
+        }
+        self.proxy_calls.append(call)
+        if "fail" in endpoint:
+            raise RuntimeError("proxy_failed")
+        return {"ok": True, "endpoint": endpoint, "connected_account_id": connected_account_id}
 
 
 class BlockingSTT(FakeSTT):
@@ -802,6 +824,8 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         composio_default_auth_mode="browser",
         proof_reply_delay_enabled=proof_reply_delay_enabled,
         meeting_developer_instructions=meeting_instructions,
+        self_email="jimmy@example.com",
+        self_phone_number="+14155550123",
     )
 
 
@@ -3285,6 +3309,166 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(sent_b["metadata"]["delivery_state"], "sent")
         self.assertEqual(sent_a["metadata"]["last_fired_due_at_ms"], sent_a["due_at_ms"])
         self.assertEqual(sent_b["metadata"]["last_fired_due_at_ms"], sent_b["due_at_ms"])
+
+    def test_due_reminder_fans_out_to_phone_email_and_sms(self) -> None:
+        self.clear_active_reminders()
+        reminder = self.service.workspace_upsert_record(
+            "reminders",
+            {
+                "id": "fanout-reminder",
+                "title": "Fanout reminder",
+                "summary": "Use all the adapters",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "self", "kind": "self", "label": "Me"},
+                        {"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"},
+                    ],
+                    "destinations": [
+                        {"channel": "phone_notification", "recipient_ids": ["self"]},
+                        {"channel": "email", "recipient_ids": ["self"]},
+                        {"channel": "sms", "recipient_ids": ["sam-rivera"]},
+                    ],
+                },
+            },
+        )
+        self.assertIsNotNone(reminder)
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            if payload.get("type") == "notify.show":
+                self.broker.update_command_from_device(
+                    {
+                        "schema": "pucky.command_result.v1",
+                        "id": payload["id"],
+                        "type": payload["type"],
+                        "status": "completed",
+                        "result": {
+                            "shown": True,
+                            "requested_surface_mode": "heads_up",
+                            "effective_surface_mode": "heads_up",
+                            "warnings": [],
+                        },
+                    }
+                )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect) as ws_send:
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(ws_send.call_count, 2)
+        updated = self.service.workspace.get_record("reminders", "fanout-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        self.assertEqual(updated["metadata"]["last_fired_due_at_ms"], updated["due_at_ms"])
+        channels = {row["channel"] for row in updated["metadata"]["last_delivery_results"]}
+        self.assertEqual(channels, {"phone_notification", "email", "sms"})
+        self.assertEqual(len(self.composio.proxy_calls), 1)
+        email_call = self.composio.proxy_calls[0]
+        self.assertEqual(email_call["endpoint"], "/gmail/v1/users/me/messages/send")
+        self.assertIn("raw", email_call["body"])
+
+    def test_due_reminder_call_delivery_places_phone_call(self) -> None:
+        self.clear_active_reminders()
+        reminder = self.service.workspace_upsert_record(
+            "reminders",
+            {
+                "id": "call-reminder",
+                "title": "Call reminder",
+                "summary": "Place the real call",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "clinic-front-desk", "kind": "contact", "contact_id": "clinic-front-desk", "label": "Clinic front desk"},
+                    ],
+                    "destinations": [
+                        {"channel": "call", "recipient_ids": ["clinic-front-desk"]},
+                    ],
+                },
+            },
+        )
+        self.assertIsNotNone(reminder)
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {"ok": True},
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect) as ws_send:
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        ws_send.assert_called_once()
+        updated = self.service.workspace.get_record("reminders", "call-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        self.assertEqual(len(updated["metadata"]["last_delivery_results"]), 1)
+        self.assertEqual(updated["metadata"]["last_delivery_results"][0]["channel"], "call")
+        self.assertEqual(updated["metadata"]["last_delivery_results"][0]["target"], "+1 (415) 555-0133")
+
+    def test_due_reminder_connected_app_delivery_uses_proxy_template(self) -> None:
+        self.clear_active_reminders()
+        self.composio.connected.append(
+            {
+                "slug": "slack",
+                "name": "Slack",
+                "logo": "https://logos.example.invalid/slack.png",
+                "status": "active",
+                "id": "ca_slack_active",
+                "instance_name": "Workspace Slack",
+            }
+        )
+        reminder = self.service.workspace_upsert_record(
+            "reminders",
+            {
+                "id": "connected-reminder",
+                "title": "Connected reminder",
+                "summary": "Ping Slack too",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [
+                        {
+                            "channel": "connected_app",
+                            "recipient_ids": ["self"],
+                            "app_slug": "slack",
+                            "endpoint": "/chat.postMessage",
+                            "parameters": {"text": "{{title}} for {{recipient_name}}"},
+                        }
+                    ],
+                },
+            },
+        )
+        self.assertIsNotNone(reminder)
+
+        result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        updated = self.service.workspace.get_record("reminders", "connected-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        self.assertEqual(len(updated["metadata"]["last_delivery_results"]), 1)
+        self.assertEqual(updated["metadata"]["last_delivery_results"][0]["channel"], "connected_app")
+        self.assertEqual(self.composio.proxy_calls[-1]["endpoint"], "/chat.postMessage")
+        self.assertEqual(self.composio.proxy_calls[-1]["body"]["text"], "Connected reminder for Me")
 
     def test_empty_audio_is_rejected(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

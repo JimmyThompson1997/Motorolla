@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -38,7 +39,7 @@ from .providers import DeepgramSTT, KokoroTTS
 from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
-from .workspace_store import WORKSPACE_COLLECTIONS, WorkspaceStore
+from .workspace_store import WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
@@ -555,6 +556,8 @@ class Config:
     composio_default_auth_mode: str = "browser"
     proof_reply_delay_enabled: bool = False
     meeting_developer_instructions: str | None = None
+    self_email: str = ""
+    self_phone_number: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -623,6 +626,8 @@ class Config:
                 os.environ.get(MEETING_DEVELOPER_INSTRUCTIONS_FILE_ENV) or str(DEFAULT_MEETING_DEVELOPER_INSTRUCTIONS_PATH),
                 env_name=MEETING_DEVELOPER_INSTRUCTIONS_FILE_ENV,
             ),
+            self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
+            self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
         )
 
 
@@ -961,6 +966,188 @@ class PuckyVoiceService:
                 )
             self._reminder_stop_event.wait(REMINDER_POLL_INTERVAL_SECONDS)
 
+    def workspace_upsert_record(self, collection: str, payload: dict[str, object]) -> dict[str, object]:
+        clean_collection = str(collection or "").strip()
+        if clean_collection == "reminders":
+            payload = self._prepare_reminder_write_payload(payload, existing=None)
+        return self.workspace.upsert_record(clean_collection, payload)
+
+    def workspace_patch_record(self, collection: str, record_id: str, payload: dict[str, object]) -> dict[str, object] | None:
+        clean_collection = str(collection or "").strip()
+        if clean_collection != "reminders":
+            return self.workspace.patch_record(clean_collection, record_id, payload)
+        existing = self.workspace.get_record(clean_collection, record_id, include_deleted=True)
+        if existing is None:
+            return None
+        return self.workspace.patch_record(
+            clean_collection,
+            record_id,
+            self._prepare_reminder_write_payload(payload, existing=existing),
+        )
+
+    def _prepare_reminder_write_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        existing: dict[str, object] | None,
+    ) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ValueError("workspace_payload_must_be_object")
+        reminder = dict(payload)
+        incoming_metadata = payload.get("metadata")
+        if incoming_metadata is not None and not isinstance(incoming_metadata, dict):
+            raise ValueError("reminder_metadata_must_be_object")
+        merged_metadata = dict(existing.get("metadata") or {}) if isinstance(existing, dict) and isinstance(existing.get("metadata"), dict) else {}
+        if isinstance(incoming_metadata, dict):
+            merged_metadata.update(incoming_metadata)
+        status = str(
+            reminder.get("status")
+            or (existing.get("status") if isinstance(existing, dict) else "")
+            or "open"
+        ).strip().lower() or "open"
+        normalized = _normalize_reminder_metadata(merged_metadata, status=status)
+        self._validate_reminder_metadata(normalized)
+        reminder["metadata"] = normalized
+        return reminder
+
+    def _validate_reminder_metadata(self, metadata: dict[str, object]) -> None:
+        recipients = self._reminder_recipients_from_metadata(metadata)
+        recipient_ids = {str(item.get("id") or "").strip() for item in recipients}
+        if not recipient_ids:
+            raise ValueError("reminder_requires_at_least_one_recipient")
+        destinations = self._reminder_destinations_from_metadata(metadata)
+        if not destinations:
+            raise ValueError("reminder_requires_at_least_one_destination")
+        allowed_channels = {"phone_notification", "email", "sms", "call", "connected_app"}
+        for destination in destinations:
+            channel = str(destination.get("channel") or "").strip().lower()
+            if channel not in allowed_channels:
+                raise ValueError(f"unsupported_reminder_destination:{channel or 'missing'}")
+            refs = self._reminder_destination_recipient_refs(metadata, destination)
+            if not refs:
+                raise ValueError(f"reminder_destination_requires_recipient:{channel}")
+            for recipient in refs:
+                recipient_id = str(recipient.get("id") or "").strip()
+                if recipient_id not in recipient_ids:
+                    raise ValueError(f"unknown_reminder_recipient:{recipient_id}")
+            if channel == "email":
+                self._require_connected_app("gmail", destination)
+                for recipient in refs:
+                    if not self._resolve_reminder_email_target(recipient, destination):
+                        raise ValueError(f"reminder_email_target_missing:{recipient.get('id')}")
+            elif channel in {"sms", "call"}:
+                for recipient in refs:
+                    if not self._resolve_reminder_phone_target(recipient, destination):
+                        raise ValueError(f"reminder_phone_target_missing:{recipient.get('id')}")
+            elif channel == "connected_app":
+                app_slug = str(destination.get("app_slug") or "").strip().lower()
+                if not app_slug:
+                    raise ValueError("reminder_connected_app_slug_required")
+                if not str(destination.get("endpoint") or "").strip():
+                    raise ValueError("reminder_connected_app_endpoint_required")
+                self._require_connected_app(app_slug, destination)
+
+    def _reminder_recipients_from_metadata(self, metadata: dict[str, object]) -> list[dict[str, object]]:
+        values = metadata.get("recipients") if isinstance(metadata, dict) else []
+        return [item for item in list(values or []) if isinstance(item, dict)]
+
+    def _reminder_destinations_from_metadata(self, metadata: dict[str, object]) -> list[dict[str, object]]:
+        values = metadata.get("destinations") if isinstance(metadata, dict) else []
+        return [item for item in list(values or []) if isinstance(item, dict)]
+
+    def _reminder_recipient_by_id(self, metadata: dict[str, object], recipient_id: str) -> dict[str, object] | None:
+        clean_id = str(recipient_id or "").strip()
+        if not clean_id:
+            return None
+        for recipient in self._reminder_recipients_from_metadata(metadata):
+            if str(recipient.get("id") or "").strip() == clean_id:
+                return recipient
+        return None
+
+    def _reminder_contact_record(self, recipient: dict[str, object]) -> dict[str, object] | None:
+        if str(recipient.get("kind") or "").strip().lower() != "contact":
+            return None
+        contact_id = str(recipient.get("contact_id") or recipient.get("id") or "").strip()
+        if not contact_id:
+            return None
+        return self.workspace.get_record("contacts", contact_id)
+
+    def _reminder_destination_recipient_refs(
+        self,
+        metadata: dict[str, object],
+        destination: dict[str, object],
+    ) -> list[dict[str, object]]:
+        refs: list[dict[str, object]] = []
+        recipient_ids = [str(value).strip() for value in list(destination.get("recipient_ids") or []) if str(value).strip()]
+        if not recipient_ids:
+            recipient_ids = [str(item.get("id") or "").strip() for item in self._reminder_recipients_from_metadata(metadata)]
+        for recipient_id in recipient_ids:
+            recipient = self._reminder_recipient_by_id(metadata, recipient_id)
+            if recipient is not None:
+                refs.append(recipient)
+        return refs
+
+    def _contact_endpoint_value(self, contact: dict[str, object], labels: tuple[str, ...]) -> str:
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        endpoints = list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else []
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            label = str(endpoint.get("label") or endpoint.get("type") or "").strip().lower()
+            if not label:
+                continue
+            if any(term in label for term in labels):
+                value = str(endpoint.get("value") or endpoint.get("address") or endpoint.get("number") or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _resolve_reminder_email_target(self, recipient: dict[str, object], destination: dict[str, object]) -> str:
+        explicit = str(destination.get("address") or "").strip()
+        if explicit:
+            return explicit
+        if str(recipient.get("kind") or "").strip().lower() == "self":
+            return str(self.config.self_email or "").strip()
+        contact = self._reminder_contact_record(recipient)
+        if not contact:
+            return ""
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        direct = str(metadata.get("email") or "").strip()
+        return direct or self._contact_endpoint_value(contact, ("email", "gmail", "mail"))
+
+    def _resolve_reminder_phone_target(self, recipient: dict[str, object], destination: dict[str, object]) -> str:
+        explicit = str(destination.get("address") or "").strip()
+        if explicit:
+            return explicit
+        if str(recipient.get("kind") or "").strip().lower() == "self":
+            return str(self.config.self_phone_number or "").strip()
+        contact = self._reminder_contact_record(recipient)
+        if not contact:
+            return ""
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        direct = str(metadata.get("phone") or "").strip()
+        return direct or self._contact_endpoint_value(contact, ("phone", "sms", "text", "mobile", "call"))
+
+    def _require_connected_app(self, app_slug: str, destination: dict[str, object]) -> tuple[str, dict[str, object]]:
+        clean_slug = str(app_slug or "").strip().lower()
+        if not clean_slug:
+            raise ValueError("reminder_connected_app_slug_required")
+        if not self.composio.configured:
+            raise ValueError(f"reminder_destination_not_configured:{clean_slug}")
+        apps = self._connected_apps_snapshot(force=True)
+        match = next((item for item in apps if str(item.get("app_slug") or "").strip().lower() == clean_slug), None)
+        if not isinstance(match, dict):
+            raise ValueError(f"reminder_destination_not_connected:{clean_slug}")
+        requested_account_id = str(destination.get("connected_account_id") or "").strip()
+        account_ids = [str(item).strip() for item in list(match.get("connected_account_ids") or []) if str(item).strip()]
+        if requested_account_id:
+            if requested_account_id not in account_ids:
+                raise ValueError(f"reminder_destination_forbidden_account:{clean_slug}")
+            return requested_account_id, match
+        if len(account_ids) != 1:
+            raise ValueError(f"reminder_destination_ambiguous_account:{clean_slug}")
+        return account_ids[0], match
+
     def _reminder_target_device_id(self, reminder: dict[str, object]) -> tuple[str, str]:
         metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
         preferred = str(metadata.get("notification_device_id") or "").strip()
@@ -1159,7 +1346,11 @@ class PuckyVoiceService:
             time.sleep(max(0.05, interval_ms / 1000.0))
         return broker.get_command(clean_command_id)
 
-    def _default_reminder_notification_payload(self, reminder: dict[str, object]) -> dict[str, object]:
+    def _default_reminder_notification_payload(
+        self,
+        reminder: dict[str, object],
+        destination: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         reminder_id = str(reminder.get("id") or reminder.get("record_id") or "").strip()
         title = str(reminder.get("title") or "Reminder").strip() or "Reminder"
         summary = str(reminder.get("summary") or "").strip()
@@ -1178,10 +1369,18 @@ class PuckyVoiceService:
             "only_alert_once": True,
         }
 
-    def _reminder_notification_payload(self, reminder: dict[str, object]) -> dict[str, object]:
+    def _reminder_notification_payload(
+        self,
+        reminder: dict[str, object],
+        destination: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
-        custom = _coerce_json_object(metadata.get("notification_payload"))
-        payload = custom if custom else self._default_reminder_notification_payload(reminder)
+        custom = (
+            _coerce_json_object(destination.get("notification_payload"))
+            if isinstance(destination, dict)
+            else {}
+        ) or _coerce_json_object(metadata.get("notification_payload"))
+        payload = custom if custom else self._default_reminder_notification_payload(reminder, destination)
         payload.setdefault("id", f"reminder_{str(reminder.get('id') or reminder.get('record_id') or uuid.uuid4().hex[:12]).strip()}")
         payload.setdefault("title", str(reminder.get("title") or "Reminder").strip() or "Reminder")
         summary = str(reminder.get("summary") or "").strip()
@@ -1209,6 +1408,7 @@ class PuckyVoiceService:
         *,
         delivery_state: str,
         now_ms: int,
+        delivery_results: list[dict[str, object]] | None = None,
         device_id: str = "",
         error: str = "",
         command_id: str = "",
@@ -1221,16 +1421,22 @@ class PuckyVoiceService:
         metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
         due_at_ms = int(reminder.get("due_at_ms") or 0)
         normalized_error = str(error or "").strip()
+        result_rows = [row for row in list(delivery_results or []) if isinstance(row, dict)]
+        primary_phone_result = next(
+            (row for row in result_rows if str(row.get("channel") or "").strip().lower() == "phone_notification"),
+            {},
+        )
         payload = {
             "metadata": {
                 "delivery_state": delivery_state,
                 "last_delivery_error": normalized_error,
-                "notification_device_id": device_id or str(metadata.get("notification_device_id") or "").strip(),
-                "last_notification_command_id": command_id or str(metadata.get("last_notification_command_id") or "").strip(),
-                "last_delivery_mode_requested": requested_mode or str(metadata.get("last_delivery_mode_requested") or "").strip(),
-                "last_delivery_mode_effective": effective_mode or str(metadata.get("last_delivery_mode_effective") or "").strip(),
-                "last_delivery_degraded_to": degraded_to or str(metadata.get("last_delivery_degraded_to") or "").strip(),
-                "last_delivery_warnings": list(warnings or []),
+                "notification_device_id": device_id or str(primary_phone_result.get("device_id") or metadata.get("notification_device_id") or "").strip(),
+                "last_notification_command_id": command_id or str(primary_phone_result.get("command_id") or metadata.get("last_notification_command_id") or "").strip(),
+                "last_delivery_mode_requested": requested_mode or str(primary_phone_result.get("requested_mode") or metadata.get("last_delivery_mode_requested") or "").strip(),
+                "last_delivery_mode_effective": effective_mode or str(primary_phone_result.get("effective_mode") or metadata.get("last_delivery_mode_effective") or "").strip(),
+                "last_delivery_degraded_to": degraded_to or str(primary_phone_result.get("degraded_to") or metadata.get("last_delivery_degraded_to") or "").strip(),
+                "last_delivery_warnings": list(warnings or primary_phone_result.get("warnings") or []),
+                "last_delivery_results": result_rows,
                 "snoozed_until_ms": 0,
             }
         }
@@ -1238,6 +1444,353 @@ class PuckyVoiceService:
             payload["metadata"]["last_fired_at_ms"] = now_ms
             payload["metadata"]["last_fired_due_at_ms"] = due_at_ms
         return self.workspace.patch_record("reminders", str(reminder.get("id") or reminder.get("record_id") or ""), payload)
+
+    def _reminder_recipient_display_name(self, recipient: dict[str, object]) -> str:
+        label = str(recipient.get("label") or "").strip()
+        if label:
+            return label
+        if str(recipient.get("kind") or "").strip().lower() == "self":
+            return "Me"
+        contact = self._reminder_contact_record(recipient)
+        if isinstance(contact, dict):
+            return str(contact.get("title") or contact.get("display_name") or recipient.get("id") or "Contact").strip()
+        return str(recipient.get("id") or "Contact").strip() or "Contact"
+
+    def _reminder_human_due_label(self, reminder: dict[str, object]) -> str:
+        due_at_ms = int(reminder.get("due_at_ms") or 0)
+        if due_at_ms <= 0:
+            return "Any time"
+        now_ms = self.workspace.now_ms()
+        if due_at_ms <= now_ms:
+            return "Now"
+        struct = time.localtime(due_at_ms / 1000)
+        if due_at_ms - now_ms < 24 * 60 * 60 * 1000:
+            return time.strftime("%-I:%M %p", struct)
+        return time.strftime("%a %-I:%M %p", struct)
+
+    def _render_reminder_template(self, value: object, context: dict[str, object]) -> object:
+        if isinstance(value, str):
+            rendered = value
+            for key, raw in context.items():
+                rendered = rendered.replace(f"{{{{{key}}}}}", str(raw or ""))
+            return rendered
+        if isinstance(value, list):
+            return [self._render_reminder_template(item, context) for item in value]
+        if isinstance(value, dict):
+            return {
+                str(key): self._render_reminder_template(item, context)
+                for key, item in value.items()
+            }
+        return value
+
+    def _reminder_template_context(
+        self,
+        reminder: dict[str, object],
+        target: dict[str, object],
+    ) -> dict[str, object]:
+        recipient = target.get("recipient") if isinstance(target.get("recipient"), dict) else {}
+        return {
+            "id": str(reminder.get("id") or "").strip(),
+            "title": str(reminder.get("title") or "Reminder").strip() or "Reminder",
+            "summary": str(reminder.get("summary") or "").strip(),
+            "due_label": self._reminder_human_due_label(reminder),
+            "recipient_id": str(recipient.get("id") or "").strip(),
+            "recipient_name": self._reminder_recipient_display_name(recipient),
+            "recipient_value": str(target.get("target") or "").strip(),
+            "channel": str(target.get("channel") or "").strip(),
+        }
+
+    def _reminder_plain_text_body(self, reminder: dict[str, object], target: dict[str, object]) -> str:
+        context = self._reminder_template_context(reminder, target)
+        summary = str(context.get("summary") or "").strip()
+        due_label = str(context.get("due_label") or "").strip()
+        lines = [str(context.get("title") or "Reminder")]
+        if summary:
+            lines.append(summary)
+        if due_label:
+            lines.append(f"Due: {due_label}")
+        return "\n".join(lines)
+
+    def _reminder_delivery_targets(self, reminder: dict[str, object]) -> list[dict[str, object]]:
+        metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+        destinations = self._reminder_destinations_from_metadata(metadata)
+        targets: list[dict[str, object]] = []
+        for destination in destinations:
+            refs = self._reminder_destination_recipient_refs(metadata, destination)
+            for recipient in refs:
+                channel = str(destination.get("channel") or "").strip().lower()
+                target: dict[str, object] = {
+                    "channel": channel,
+                    "recipient": recipient,
+                    "recipient_id": str(recipient.get("id") or "").strip(),
+                    "recipient_label": self._reminder_recipient_display_name(recipient),
+                    "destination": destination,
+                    "target": "",
+                    "device_id": "",
+                    "connected_account_id": "",
+                    "app_slug": str(destination.get("app_slug") or "").strip().lower(),
+                }
+                if channel == "phone_notification":
+                    device_id, device_error = self._reminder_target_device_id(reminder)
+                    if device_error:
+                        raise RuntimeError(device_error)
+                    target["device_id"] = device_id
+                elif channel == "email":
+                    address = self._resolve_reminder_email_target(recipient, destination)
+                    if not address:
+                        raise RuntimeError(f"missing_email_target:{target['recipient_id']}")
+                    connected_account_id, _ = self._require_connected_app("gmail", destination)
+                    target["target"] = address
+                    target["connected_account_id"] = connected_account_id
+                    target["app_slug"] = "gmail"
+                elif channel in {"sms", "call"}:
+                    number = self._resolve_reminder_phone_target(recipient, destination)
+                    if not number:
+                        raise RuntimeError(f"missing_phone_target:{target['recipient_id']}")
+                    device_id, device_error = self._reminder_target_device_id(reminder)
+                    if device_error:
+                        raise RuntimeError(device_error)
+                    target["target"] = number
+                    target["device_id"] = device_id
+                elif channel == "connected_app":
+                    connected_account_id, _ = self._require_connected_app(str(destination.get("app_slug") or "").strip(), destination)
+                    target["connected_account_id"] = connected_account_id
+                    target["target"] = str(destination.get("endpoint") or "").strip()
+                else:
+                    raise RuntimeError(f"unsupported_reminder_destination:{channel}")
+                targets.append(target)
+        return targets
+
+    def _send_reminder_phone_notification(self, reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        device_id = str(target.get("device_id") or "").strip()
+        destination = target.get("destination") if isinstance(target.get("destination"), dict) else {}
+        payload = self._reminder_notification_payload(reminder, destination)
+        requested_mode = str(
+            (_coerce_json_object(payload.get("surface")).get("mode"))
+            or payload.get("surface_mode")
+            or "shade"
+        ).strip() or "shade"
+        command = self._queue_device_command(device_id, "notify.show", payload)
+        final_command = self._await_device_command_result(str(command.get("id") or "")) or command
+        command_status = str(final_command.get("status") or command.get("status") or "").strip().lower()
+        command_result = final_command.get("result") if isinstance(final_command.get("result"), dict) else {}
+        result_body = command_result.get("result") if isinstance(command_result.get("result"), dict) else command_result
+        effective_mode = str(result_body.get("effective_surface_mode") or result_body.get("requested_surface_mode") or "").strip()
+        degraded_to = str(result_body.get("degraded_to") or "").strip()
+        warnings = [str(item).strip() for item in list(result_body.get("warnings") or []) if str(item).strip()]
+        if command_status in {"failed", "rejected", "device_offline", "send_failed"}:
+            error = str((((final_command.get("error") or {}) if isinstance(final_command.get("error"), dict) else {}).get("message")) or command_status or "failed").strip()
+            return {
+                "channel": "phone_notification",
+                "recipient_id": str(target.get("recipient_id") or "").strip(),
+                "recipient_label": str(target.get("recipient_label") or "").strip(),
+                "device_id": device_id,
+                "ok": False,
+                "status": command_status,
+                "detail": error,
+                "command_id": str(command.get("id") or "").strip(),
+                "requested_mode": requested_mode,
+                "effective_mode": effective_mode,
+                "degraded_to": degraded_to,
+                "warnings": warnings,
+                "fired_at_ms": self.workspace.now_ms(),
+            }
+        return {
+            "channel": "phone_notification",
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "device_id": device_id,
+            "ok": True,
+            "status": "sent",
+            "detail": "",
+            "command_id": str(command.get("id") or "").strip(),
+            "requested_mode": requested_mode,
+            "effective_mode": effective_mode,
+            "degraded_to": degraded_to,
+            "warnings": warnings,
+            "fired_at_ms": self.workspace.now_ms(),
+        }
+
+    def _send_reminder_email(self, reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        address = str(target.get("target") or "").strip()
+        connected_account_id = str(target.get("connected_account_id") or "").strip()
+        context = self._reminder_template_context(reminder, target)
+        message = EmailMessage()
+        if str(self.config.self_email or "").strip():
+            message["From"] = str(self.config.self_email or "").strip()
+        message["To"] = address
+        message["Subject"] = str(context.get("title") or "Reminder")
+        message.set_content(self._reminder_plain_text_body(reminder, target))
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
+        try:
+            result = self.composio.execute_proxy(
+                connected_account_id=connected_account_id,
+                endpoint="/gmail/v1/users/me/messages/send",
+                method="POST",
+                body={"raw": raw},
+            )
+        except Exception as exc:
+            return {
+                "channel": "email",
+                "recipient_id": str(target.get("recipient_id") or "").strip(),
+                "recipient_label": str(target.get("recipient_label") or "").strip(),
+                "target": address,
+                "connected_account_id": connected_account_id,
+                "app_slug": "gmail",
+                "ok": False,
+                "status": "failed",
+                "detail": str(exc),
+                "fired_at_ms": self.workspace.now_ms(),
+            }
+        return {
+            "channel": "email",
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "target": address,
+            "connected_account_id": connected_account_id,
+            "app_slug": "gmail",
+            "ok": True,
+            "status": "sent",
+            "detail": "",
+            "result": result,
+            "fired_at_ms": self.workspace.now_ms(),
+        }
+
+    def _send_reminder_sms(self, reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        device_id = str(target.get("device_id") or "").strip()
+        number = str(target.get("target") or "").strip()
+        body = self._reminder_plain_text_body(reminder, target)
+        command = self._queue_device_command(device_id, "phone.sms.send", {"to": number, "body": body})
+        final_command = self._await_device_command_result(str(command.get("id") or "")) or command
+        command_status = str(final_command.get("status") or command.get("status") or "").strip().lower()
+        if command_status in {"failed", "rejected", "device_offline", "send_failed"}:
+            error = str((((final_command.get("error") or {}) if isinstance(final_command.get("error"), dict) else {}).get("message")) or command_status or "failed").strip()
+            return {
+                "channel": "sms",
+                "recipient_id": str(target.get("recipient_id") or "").strip(),
+                "recipient_label": str(target.get("recipient_label") or "").strip(),
+                "target": number,
+                "device_id": device_id,
+                "ok": False,
+                "status": command_status,
+                "detail": error,
+                "command_id": str(command.get("id") or "").strip(),
+                "fired_at_ms": self.workspace.now_ms(),
+            }
+        return {
+            "channel": "sms",
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "target": number,
+            "device_id": device_id,
+            "ok": True,
+            "status": "sent",
+            "detail": "",
+            "command_id": str(command.get("id") or "").strip(),
+            "fired_at_ms": self.workspace.now_ms(),
+        }
+
+    def _send_reminder_call(self, _reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        device_id = str(target.get("device_id") or "").strip()
+        number = str(target.get("target") or "").strip()
+        command = self._queue_device_command(device_id, "phone.calls.place", {"number": number})
+        final_command = self._await_device_command_result(str(command.get("id") or "")) or command
+        command_status = str(final_command.get("status") or command.get("status") or "").strip().lower()
+        if command_status in {"failed", "rejected", "device_offline", "send_failed"}:
+            error = str((((final_command.get("error") or {}) if isinstance(final_command.get("error"), dict) else {}).get("message")) or command_status or "failed").strip()
+            return {
+                "channel": "call",
+                "recipient_id": str(target.get("recipient_id") or "").strip(),
+                "recipient_label": str(target.get("recipient_label") or "").strip(),
+                "target": number,
+                "device_id": device_id,
+                "ok": False,
+                "status": command_status,
+                "detail": error,
+                "command_id": str(command.get("id") or "").strip(),
+                "fired_at_ms": self.workspace.now_ms(),
+            }
+        return {
+            "channel": "call",
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "target": number,
+            "device_id": device_id,
+            "ok": True,
+            "status": "sent",
+            "detail": "",
+            "command_id": str(command.get("id") or "").strip(),
+            "fired_at_ms": self.workspace.now_ms(),
+        }
+
+    def _send_reminder_connected_app(self, reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        destination = target.get("destination") if isinstance(target.get("destination"), dict) else {}
+        endpoint = str(destination.get("endpoint") or "").strip()
+        method = str(destination.get("method") or "POST").strip().upper() or "POST"
+        raw_query = list(destination.get("query") or []) if isinstance(destination.get("query"), list) else []
+        parameters = dict(destination.get("parameters") or {}) if isinstance(destination.get("parameters"), dict) else {}
+        context = self._reminder_template_context(reminder, target)
+        rendered_query = self._render_reminder_template(raw_query, context)
+        rendered_body = self._render_reminder_template(parameters, context)
+        if not rendered_body:
+            rendered_body = {"text": self._reminder_plain_text_body(reminder, target)}
+        try:
+            result = self.composio.execute_proxy(
+                connected_account_id=str(target.get("connected_account_id") or "").strip(),
+                endpoint=endpoint,
+                method=method,
+                parameters=rendered_query if isinstance(rendered_query, list) else None,
+                body=rendered_body if isinstance(rendered_body, dict) else None,
+            )
+        except Exception as exc:
+            return {
+                "channel": "connected_app",
+                "recipient_id": str(target.get("recipient_id") or "").strip(),
+                "recipient_label": str(target.get("recipient_label") or "").strip(),
+                "target": endpoint,
+                "connected_account_id": str(target.get("connected_account_id") or "").strip(),
+                "app_slug": str(target.get("app_slug") or "").strip(),
+                "ok": False,
+                "status": "failed",
+                "detail": str(exc),
+                "fired_at_ms": self.workspace.now_ms(),
+            }
+        return {
+            "channel": "connected_app",
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "target": endpoint,
+            "connected_account_id": str(target.get("connected_account_id") or "").strip(),
+            "app_slug": str(target.get("app_slug") or "").strip(),
+            "ok": True,
+            "status": "sent",
+            "detail": "",
+            "result": result,
+            "fired_at_ms": self.workspace.now_ms(),
+        }
+
+    def _send_reminder_target(self, reminder: dict[str, object], target: dict[str, object]) -> dict[str, object]:
+        channel = str(target.get("channel") or "").strip().lower()
+        if channel == "phone_notification":
+            return self._send_reminder_phone_notification(reminder, target)
+        if channel == "email":
+            return self._send_reminder_email(reminder, target)
+        if channel == "sms":
+            return self._send_reminder_sms(reminder, target)
+        if channel == "call":
+            return self._send_reminder_call(reminder, target)
+        if channel == "connected_app":
+            return self._send_reminder_connected_app(reminder, target)
+        return {
+            "channel": channel,
+            "recipient_id": str(target.get("recipient_id") or "").strip(),
+            "recipient_label": str(target.get("recipient_label") or "").strip(),
+            "target": str(target.get("target") or "").strip(),
+            "ok": False,
+            "status": "failed",
+            "detail": f"unsupported_reminder_destination:{channel}",
+            "fired_at_ms": self.workspace.now_ms(),
+        }
 
     def process_due_reminders(self) -> dict[str, object]:
         if not self._reminder_poll_lock.acquire(blocking=False):
@@ -1250,82 +1803,62 @@ class PuckyVoiceService:
                 if not self._reminder_is_due_for_delivery(reminder, now_ms):
                     continue
                 reminder_id = str(reminder.get("id") or "")
-                device_id, device_error = self._reminder_target_device_id(reminder)
-                if device_error:
-                    existing_meta = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
-                    if str(existing_meta.get("delivery_state") or "") != "failed" or str(existing_meta.get("last_delivery_error") or "") != device_error:
-                        self._reminder_delivery_patch(reminder, delivery_state="failed", now_ms=now_ms, error=device_error)
-                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or "reminder", status=device_error)
-                    processed.append({"id": reminder_id, "ok": False, "error": device_error})
-                    continue
-                payload = self._reminder_notification_payload(reminder)
-                requested_mode = str(
-                    (_coerce_json_object(payload.get("surface")).get("mode"))
-                    or payload.get("surface_mode")
-                    or "shade"
-                ).strip() or "shade"
                 try:
-                    command = self._queue_device_command(device_id, "notify.show", payload)
-                    final_command = self._await_device_command_result(str(command.get("id") or ""))
-                    command_result = final_command.get("result") if isinstance(final_command, dict) and isinstance(final_command.get("result"), dict) else {}
-                    result_body = command_result.get("result") if isinstance(command_result.get("result"), dict) else {}
-                    effective_mode = str(result_body.get("effective_surface_mode") or result_body.get("requested_surface_mode") or "").strip()
-                    degraded_to = str(result_body.get("degraded_to") or "").strip()
-                    raw_warnings = result_body.get("warnings")
-                    warning_list = [str(item).strip() for item in raw_warnings] if isinstance(raw_warnings, list) else []
-                    command_status = str((final_command or {}).get("status") or command.get("status") or "").strip().lower()
-                    if command_status == "failed":
-                        error = str((((final_command or {}).get("error") or {}) if isinstance((final_command or {}).get("error"), dict) else {}).get("message") or "failed").strip()
-                        self._reminder_delivery_patch(
-                            reminder,
-                            delivery_state="failed",
-                            now_ms=now_ms,
-                            device_id=device_id,
-                            error=error,
-                            command_id=str(command.get("id") or ""),
-                            requested_mode=requested_mode,
-                            effective_mode=effective_mode,
-                            degraded_to=degraded_to,
-                            warnings=warning_list,
-                        )
-                        self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status=f"failed:{error[:80]}")
-                        processed.append({"id": reminder_id, "ok": False, "device_id": device_id, "error": error, "command_id": str(command.get("id") or "")})
-                        continue
-                    self._reminder_delivery_patch(
-                        reminder,
-                        delivery_state="sent",
-                        now_ms=now_ms,
-                        device_id=device_id,
-                        command_id=str(command.get("id") or ""),
-                        requested_mode=requested_mode,
-                        effective_mode=effective_mode,
-                        degraded_to=degraded_to,
-                        warnings=warning_list,
-                        mark_fired=True,
-                    )
-                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status="sent")
-                    processed.append({
-                        "id": reminder_id,
-                        "ok": True,
-                        "device_id": device_id,
-                        "command_id": str(command.get("id") or ""),
-                        "requested_mode": requested_mode,
-                        "effective_mode": effective_mode,
-                        "degraded_to": degraded_to,
-                        "warnings": warning_list,
-                    })
+                    targets = self._reminder_delivery_targets(reminder)
                 except Exception as exc:
-                    error = str(exc) or "send_failed"
-                    self._reminder_delivery_patch(
-                        reminder,
-                        delivery_state="failed",
-                        now_ms=now_ms,
-                        device_id=device_id,
-                        error=error,
-                        requested_mode=requested_mode,
+                    error = str(exc).strip() or "reminder_target_resolution_failed"
+                    existing_meta = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
+                    if str(existing_meta.get("delivery_state") or "") != "failed" or str(existing_meta.get("last_delivery_error") or "") != error:
+                        self._reminder_delivery_patch(reminder, delivery_state="failed", now_ms=now_ms, error=error)
+                    self.record_action(surface="reminders", action="deliver", tool="reminder.delivery", target=reminder_id or "reminder", status=f"failed:{error[:80]}")
+                    processed.append({"id": reminder_id, "ok": False, "error": error})
+                    continue
+                delivery_results: list[dict[str, object]] = []
+                for target in targets:
+                    try:
+                        result = self._send_reminder_target(reminder, target)
+                    except Exception as exc:
+                        result = {
+                            "channel": str(target.get("channel") or "").strip(),
+                            "recipient_id": str(target.get("recipient_id") or "").strip(),
+                            "recipient_label": str(target.get("recipient_label") or "").strip(),
+                            "target": str(target.get("target") or target.get("device_id") or "").strip(),
+                            "ok": False,
+                            "status": "failed",
+                            "detail": str(exc),
+                            "app_slug": str(target.get("app_slug") or "").strip(),
+                            "connected_account_id": str(target.get("connected_account_id") or "").strip(),
+                            "fired_at_ms": self.workspace.now_ms(),
+                        }
+                    delivery_results.append(result)
+                    status = "sent" if bool(result.get("ok")) else f"failed:{str(result.get('detail') or result.get('status') or 'failed')[:80]}"
+                    self.record_action(
+                        surface="reminders",
+                        action="deliver",
+                        tool=f"reminder.{str(result.get('channel') or 'delivery')}",
+                        target=f"{reminder_id}:{str(result.get('recipient_id') or 'recipient')}",
+                        status=status,
                     )
-                    self.record_action(surface="reminders", action="notify.show", tool="notify.show", target=reminder_id or device_id, status=f"failed:{error[:80]}")
-                    processed.append({"id": reminder_id, "ok": False, "device_id": device_id, "error": error})
+                any_success = any(bool(row.get("ok")) for row in delivery_results)
+                first_phone_result = next(
+                    (row for row in delivery_results if str(row.get("channel") or "").strip().lower() == "phone_notification"),
+                    {},
+                )
+                self._reminder_delivery_patch(
+                    reminder,
+                    delivery_state="sent" if any_success else "failed",
+                    now_ms=now_ms,
+                    delivery_results=delivery_results,
+                    device_id=str(first_phone_result.get("device_id") or ""),
+                    error="" if any_success else str(next((row.get("detail") for row in delivery_results if not bool(row.get("ok")) and str(row.get("detail") or "").strip()), "delivery_failed")),
+                    command_id=str(first_phone_result.get("command_id") or ""),
+                    requested_mode=str(first_phone_result.get("requested_mode") or ""),
+                    effective_mode=str(first_phone_result.get("effective_mode") or ""),
+                    degraded_to=str(first_phone_result.get("degraded_to") or ""),
+                    warnings=list(first_phone_result.get("warnings") or []) if isinstance(first_phone_result.get("warnings"), list) else [],
+                    mark_fired=any_success,
+                )
+                processed.append({"id": reminder_id, "ok": any_success, "targets": delivery_results})
             return {
                 "schema": "pucky.reminder_delivery_poll.v1",
                 "ok": True,
@@ -6583,11 +7116,11 @@ def make_handler(service: PuckyVoiceService):
                     self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_collection_not_found"})
                     return
                 if method == "POST" and len(parts) == 1:
-                    result = service.workspace.upsert_record(parts[0], payload)
+                    result = service.workspace_upsert_record(parts[0], payload)
                     self._json(HTTPStatus.OK, result)
                     return
                 if method == "PATCH" and len(parts) == 2:
-                    result = service.workspace.patch_record(parts[0], parts[1], payload)
+                    result = service.workspace_patch_record(parts[0], parts[1], payload)
                     if result is None:
                         self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_record_not_found"})
                         return

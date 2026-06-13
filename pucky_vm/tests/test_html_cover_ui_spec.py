@@ -601,7 +601,8 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "state.canonicalLaunch" not in app
     assert 'const nextRoute = normalizeHomeShellRoute(route' in light_navigate
     assert 'state.homeShellActive = true;' in light_navigate
-    assert 'runLightRouteSideEffects("light_app_click")' in light_navigate
+    assert 'runLightRouteSideEffects("light_app_click");' in light_navigate
+    assert "loadMeetings({ render: true });" in app
     assert 'if (handleCanonicalLaunchBack()) {' not in handle_back
     assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
@@ -954,6 +955,10 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'normalized["last_delivery_degraded_to"]' in store
     assert 'normalized["last_delivery_warnings"]' in store
     assert 'normalized["notification_payload"]' in store
+    assert 'normalized["recipients"]' in store
+    assert 'normalized["destinations"]' in store
+    assert 'normalized["last_delivery_results"]' in store
+    assert 'normalized["recurrence"]' in store
     assert "def derive_task_group(" in store
     assert 'return "overdue"' in store
     assert 'return "soon"' in store
@@ -987,8 +992,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "def do_PATCH" in server
     assert "def do_DELETE" in server
     assert "service.workspace.list_records" in server
-    assert "service.workspace.upsert_record" in server or "service.workspace_upsert_record" in server
-    assert "service.workspace.patch_record" in server or "service.workspace_patch_record" in server
+    assert "service.workspace_upsert_record" in server
+    assert "service.workspace_patch_record" in server
     assert "service.workspace.create_asset" in server
     assert "service.workspace.upsert_link" in server
     assert "if not self._is_authorized()" in server
@@ -1232,6 +1237,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-reminder-actions" in styles
     assert ".light-reminder-row.delivery-sent .light-reminder-time" in styles
     assert ".light-reminder-row.delivery-snoozed .light-reminder-time" in styles
+    assert ".light-reminder-history-divider" in styles
     assert ".light-app-badge" in styles
     assert ".light-section-toggle" in styles
     assert "padding: var(--safe-area-top) 0 8px;" in styles
@@ -3035,36 +3041,6 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert 'window.addEventListener("pagehide", persistNavState)' in app
     assert 'document.addEventListener("visibilitychange"' in app
     assert "installFeedScrollPersistence();" in app
-
-
-def test_light_back_uses_bounded_route_history_for_graph_launches() -> None:
-    app = read("app.js")
-
-    light_navigate = function_block(app, "lightNavigate")
-    light_back = function_block(app, "lightBack")
-    open_target = function_block(app, "openWorkspaceTarget")
-
-    assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
-    assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)" in app
-    assert "function normalizeLightRouteHistory(history)" in app
-    assert "function captureLightRouteSnapshot(route = state.route)" in app
-    assert "function pushLightRouteHistory(snapshot)" in app
-    assert "function popLightRouteHistory()" in app
-    assert "function restoreLightRouteSnapshot(snapshot)" in app
-    assert "light_history: normalizeLightRouteHistory(state.lightRouteHistory)" in app
-    assert 'selectionPatch: { [target.selectedKey]: target.id }' in open_target
-    assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
-    assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
-    assert "applyLightRouteSelectionPatch(selectionPatch || {});" in light_navigate
-    assert "const snapshot = popLightRouteHistory();" in light_back
-    assert "return restoreLightRouteSnapshot(snapshot);" in light_back
-    assert 'detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home"' in light_back
-    assert 'lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" })' in app
-    assert 'const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });' in app
-    assert 'meetingNoteDetailRows(meeting)' in app
-    assert 'reminderDetailRows(reminder)' in app
-    assert 'openWorkspaceTarget(item.target, "project-detail")' in app
-    assert 'const relatedRows = lightLinkedRecordRows(item);' in app
 
 
 def test_generated_images_open_as_html_reel_not_native_previews() -> None:

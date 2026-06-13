@@ -148,6 +148,23 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
     assert reminder["metadata"]["last_delivery_degraded_to"] == ""
     assert reminder["metadata"]["last_delivery_warnings"] == []
     assert reminder["metadata"]["notification_payload"] == {}
+    assert reminder["metadata"]["recipients"] == [{"id": "self", "kind": "self", "contact_id": "", "label": "Me"}]
+    assert reminder["metadata"]["destinations"] == [{
+        "id": "phone_notification-default",
+        "channel": "phone_notification",
+        "recipient_ids": ["self"],
+        "app_slug": "",
+        "connected_account_id": "",
+        "endpoint": "",
+        "address": "",
+        "label": "",
+        "method": "POST",
+        "query": [],
+        "parameters": {},
+        "notification_payload": {},
+    }]
+    assert reminder["metadata"]["last_delivery_results"] == []
+    assert reminder["metadata"]["recurrence"] == {}
     assert reminder["metadata"]["snoozed_until_ms"] == 0
 
     patched = store.patch_record(
@@ -164,6 +181,10 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
                 "last_delivery_mode_effective": "heads_up",
                 "last_delivery_degraded_to": "heads_up",
                 "last_delivery_warnings": ["full_screen_permission_missing"],
+                "recipients": [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}],
+                "destinations": [{"channel": "sms", "recipient_ids": ["sam-rivera"], "address": "+14155550168"}],
+                "last_delivery_results": [{"channel": "sms", "recipient_id": "sam-rivera", "ok": False, "status": "failed", "detail": "offline"}],
+                "recurrence": {"reserved": True},
             }
         },
     )
@@ -177,6 +198,12 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
     assert patched["metadata"]["last_delivery_mode_effective"] == "heads_up"
     assert patched["metadata"]["last_delivery_degraded_to"] == "heads_up"
     assert patched["metadata"]["last_delivery_warnings"] == ["full_screen_permission_missing"]
+    assert patched["metadata"]["recipients"] == [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}]
+    assert patched["metadata"]["destinations"][0]["channel"] == "sms"
+    assert patched["metadata"]["destinations"][0]["recipient_ids"] == ["sam-rivera"]
+    assert patched["metadata"]["last_delivery_results"][0]["channel"] == "sms"
+    assert patched["metadata"]["last_delivery_results"][0]["detail"] == "offline"
+    assert patched["metadata"]["recurrence"] == {"reserved": True}
 
     done = store.patch_record("reminders", "proof-reminder", {"status": "done", "metadata": {"snoozed_until_ms": 99}})
     assert done is not None

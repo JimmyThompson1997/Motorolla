@@ -378,7 +378,6 @@
       done: false
     },
     taskFilter: "all",
-    reminderHistoryExpanded: false,
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
       tasks: { items: [], loaded: false, loading: false, error: "" },

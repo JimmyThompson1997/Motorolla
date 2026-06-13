@@ -7,6 +7,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from pucky_vm.server import Config, PuckyVoiceService, make_handler
 
 
@@ -354,6 +356,10 @@ def test_workspace_api_reminder_delivery_metadata_and_snooze_done_paths(tmp_path
         assert created["metadata"]["last_delivery_degraded_to"] == ""
         assert created["metadata"]["last_delivery_warnings"] == []
         assert created["metadata"]["notification_payload"] == {}
+        assert created["metadata"]["recipients"] == [{"id": "self", "kind": "self", "contact_id": "", "label": "Me"}]
+        assert created["metadata"]["destinations"][0]["channel"] == "phone_notification"
+        assert created["metadata"]["last_delivery_results"] == []
+        assert created["metadata"]["recurrence"] == {}
 
         snoozed = request_json(
             base_url,
@@ -408,5 +414,50 @@ def test_workspace_api_reminder_delivery_metadata_and_snooze_done_paths(tmp_path
         assert done["status"] == "done"
         assert done["metadata"]["delivery_state"] == "failed"
         assert done["metadata"]["snoozed_until_ms"] == 0
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_rejects_unconfigured_reminder_destinations(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        with pytest.raises(urllib.error.HTTPError) as email_error:
+            request_json(
+                base_url,
+                "/api/workspace/reminders",
+                method="POST",
+                token="test-token",
+                body={
+                    "id": "api-reminder-email",
+                    "title": "Email reminder",
+                    "status": "open",
+                    "due_at_ms": 60_000,
+                    "metadata": {
+                        "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                        "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
+                    },
+                },
+            )
+        assert email_error.value.code == 400
+        assert "reminder_destination_not_configured:gmail" in email_error.value.read().decode("utf-8")
+
+        with pytest.raises(urllib.error.HTTPError) as connected_error:
+            request_json(
+                base_url,
+                "/api/workspace/reminders",
+                method="POST",
+                token="test-token",
+                body={
+                    "id": "api-reminder-connected",
+                    "title": "Connected reminder",
+                    "status": "open",
+                    "due_at_ms": 60_000,
+                    "metadata": {
+                        "destinations": [{"channel": "connected_app", "app_slug": "slack", "endpoint": "/chat.postMessage"}],
+                    },
+                },
+            )
+        assert connected_error.value.code == 400
+        assert "reminder_destination_not_configured:slack" in connected_error.value.read().decode("utf-8")
     finally:
         server.shutdown()

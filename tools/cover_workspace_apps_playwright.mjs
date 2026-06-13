@@ -415,8 +415,14 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         source_kind: "task",
         source_id: `${runId}-future-task`,
         snooze_state: "ready",
-        recipients: [{ id: "self", kind: "self", label: "Me" }],
-        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
+        recipients: [
+          { id: "self", kind: "self", label: "Me" },
+          { id: `${runId}-contact-one`, kind: "contact", contact_id: `${runId}-contact-one`, label: "Proof Contact One" }
+        ],
+        destinations: [
+          { channel: "phone_notification", recipient_ids: ["self"] },
+          { channel: "sms", recipient_ids: [`${runId}-contact-one`] }
+        ]
       }
     });
 
@@ -1393,6 +1399,14 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     return Boolean(document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`));
   }, dueReminderId, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector('[data-reminder-history-toggle="sent"]'), { timeout: config.timeoutMs });
+  await page.waitForFunction((targetId) => {
+    const row = document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`);
+    return Boolean(row && row.classList.contains("delivery-sent"));
+  }, dueReminderId, { timeout: config.timeoutMs });
+  await page.waitForFunction(() => {
+    const text = document.body.innerText || "";
+    return !text.includes("\nSent\n");
+  }, { timeout: config.timeoutMs });
   screenshots[`${theme}_reminders_list_sent_expanded`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-sent-expanded`);
 
   await backHome(page, theme, config.timeoutMs);
@@ -1510,7 +1524,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Recipients", "Channels", "Linked records"]) {
+  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "Recipients", "Channels", "Linked records"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);

@@ -70,6 +70,8 @@ def build_config(root: Path, host: str, port: int, token: str) -> Config:
         feed_db_path=str(root / "feed.sqlite3"),
         workspace_db_path=str(root / "workspace.sqlite3"),
         action_ledger_path=str(root / "actions.sqlite3"),
+        self_email="proof@example.com",
+        self_phone_number="+14155550123",
     )
 
 

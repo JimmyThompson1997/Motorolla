@@ -60,6 +60,164 @@ def _int_or_zero(value: object) -> int:
         return 0
 
 
+def _normalize_reminder_recipient_id(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return "self" if raw.lower() == "self" else raw
+
+
+def _normalize_reminder_recipients(value: object) -> list[dict[str, Any]]:
+    entries = list(value) if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, str):
+            recipient_id = _normalize_reminder_recipient_id(entry)
+            if not recipient_id or recipient_id in seen:
+                continue
+            kind = "self" if recipient_id == "self" else "contact"
+            out.append(
+                {
+                    "id": recipient_id,
+                    "kind": kind,
+                    "contact_id": "" if kind == "self" else recipient_id,
+                    "label": "Me" if kind == "self" else "",
+                }
+            )
+            seen.add(recipient_id)
+            continue
+        if not isinstance(entry, dict):
+            continue
+        recipient_id = _normalize_reminder_recipient_id(
+            entry.get("id") or entry.get("recipient_id") or entry.get("contact_id")
+        )
+        if not recipient_id or recipient_id in seen:
+            continue
+        kind = str(entry.get("kind") or "").strip().lower()
+        if kind not in {"self", "contact"}:
+            kind = "self" if recipient_id == "self" else "contact"
+        out.append(
+            {
+                "id": recipient_id,
+                "kind": kind,
+                "contact_id": "" if kind == "self" else str(entry.get("contact_id") or recipient_id).strip(),
+                "label": str(entry.get("label") or entry.get("title") or entry.get("name") or ("Me" if kind == "self" else "")).strip(),
+            }
+        )
+        seen.add(recipient_id)
+    if out:
+        return out
+    return [{"id": "self", "kind": "self", "contact_id": "", "label": "Me"}]
+
+
+def _normalize_reminder_destinations(value: object) -> list[dict[str, Any]]:
+    entries = list(value) if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            channel = str(entry or "").strip().lower()
+            if channel:
+                out.append(
+                    {
+                        "id": f"{channel}-default",
+                        "channel": channel,
+                        "recipient_ids": ["self"],
+                        "app_slug": "",
+                        "connected_account_id": "",
+                        "endpoint": "",
+                        "address": "",
+                        "label": "",
+                        "method": "POST",
+                        "query": [],
+                        "parameters": {},
+                        "notification_payload": {},
+                    }
+                )
+            continue
+        if not isinstance(entry, dict):
+            continue
+        channel = str(entry.get("channel") or entry.get("kind") or entry.get("type") or "").strip().lower()
+        if not channel:
+            continue
+        raw_recipient_ids = entry.get("recipient_ids")
+        recipient_ids: list[str] = []
+        if isinstance(raw_recipient_ids, list):
+            recipient_ids = [
+                recipient_id
+                for recipient_id in (_normalize_reminder_recipient_id(item) for item in raw_recipient_ids)
+                if recipient_id
+            ]
+        else:
+            single = _normalize_reminder_recipient_id(
+                entry.get("recipient_id") or entry.get("contact_id") or "self"
+            )
+            if single:
+                recipient_ids = [single]
+        out.append(
+            {
+                "id": str(entry.get("id") or f"{channel}-{len(out) + 1}").strip() or f"{channel}-{len(out) + 1}",
+                "channel": channel,
+                "recipient_ids": recipient_ids or ["self"],
+                "app_slug": str(entry.get("app_slug") or "").strip().lower(),
+                "connected_account_id": str(entry.get("connected_account_id") or "").strip(),
+                "endpoint": str(entry.get("endpoint") or "").strip(),
+                "address": str(entry.get("address") or entry.get("value") or entry.get("number") or "").strip(),
+                "label": str(entry.get("label") or "").strip(),
+                "method": str(entry.get("method") or "POST").strip().upper() or "POST",
+                "query": list(entry.get("query") or []) if isinstance(entry.get("query"), list) else [],
+                "parameters": dict(entry.get("parameters") or {}) if isinstance(entry.get("parameters"), dict) else {},
+                "notification_payload": dict(entry.get("notification_payload") or {}) if isinstance(entry.get("notification_payload"), dict) else {},
+            }
+        )
+    if out:
+        return out
+    return [
+        {
+            "id": "phone_notification-default",
+            "channel": "phone_notification",
+            "recipient_ids": ["self"],
+            "app_slug": "",
+            "connected_account_id": "",
+            "endpoint": "",
+            "address": "",
+            "label": "",
+            "method": "POST",
+            "query": [],
+            "parameters": {},
+            "notification_payload": {},
+        }
+    ]
+
+
+def _normalize_reminder_delivery_results(value: object) -> list[dict[str, Any]]:
+    entries = list(value) if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        out.append(
+            {
+                "channel": str(entry.get("channel") or "").strip().lower(),
+                "recipient_id": _normalize_reminder_recipient_id(entry.get("recipient_id")),
+                "recipient_label": str(entry.get("recipient_label") or "").strip(),
+                "target": str(entry.get("target") or "").strip(),
+                "ok": bool(entry.get("ok")),
+                "status": str(entry.get("status") or "").strip(),
+                "detail": str(entry.get("detail") or entry.get("error") or "").strip(),
+                "command_id": str(entry.get("command_id") or "").strip(),
+                "connected_account_id": str(entry.get("connected_account_id") or "").strip(),
+                "app_slug": str(entry.get("app_slug") or "").strip().lower(),
+                "requested_mode": str(entry.get("requested_mode") or "").strip(),
+                "effective_mode": str(entry.get("effective_mode") or "").strip(),
+                "degraded_to": str(entry.get("degraded_to") or "").strip(),
+                "warnings": list(entry.get("warnings") or []) if isinstance(entry.get("warnings"), list) else [],
+                "fired_at_ms": _int_or_zero(entry.get("fired_at_ms")),
+            }
+        )
+    return out
+
+
 def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> dict[str, Any]:
     normalized = dict(metadata or {})
     delivery_state = str(normalized.get("delivery_state") or "").strip().lower()
@@ -79,6 +237,10 @@ def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> di
     normalized["last_delivery_warnings"] = list(warnings) if isinstance(warnings, list) else []
     notification_payload = normalized.get("notification_payload")
     normalized["notification_payload"] = dict(notification_payload) if isinstance(notification_payload, dict) else {}
+    normalized["recipients"] = _normalize_reminder_recipients(normalized.get("recipients"))
+    normalized["destinations"] = _normalize_reminder_destinations(normalized.get("destinations"))
+    normalized["last_delivery_results"] = _normalize_reminder_delivery_results(normalized.get("last_delivery_results"))
+    normalized["recurrence"] = dict(normalized.get("recurrence") or {}) if isinstance(normalized.get("recurrence"), dict) else {}
     if str(status or "").strip().lower() == "done":
         normalized["snoozed_until_ms"] = 0
     return normalized
@@ -1352,7 +1514,13 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Reminder attached to the paint task and meeting note.",
                     ["Bring swatches upstairs", "Photograph each option", "Have them ready before Maya arrives"],
                 ),
-                "metadata": {"source_kind": "task", "source_id": "demo-task-do-paint-samples", "snooze_state": "ready"},
+                "metadata": {
+                    "source_kind": "task",
+                    "source_id": "demo-task-do-paint-samples",
+                    "snooze_state": "ready",
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [{"channel": "phone_notification", "recipient_ids": ["self"]}],
+                },
             },
             {
                 "id": "demo-reminder-health-call",
@@ -1365,7 +1533,32 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "A simple health reminder that links directly to the appointment block and prep note.",
                     ["Ask about appointment slot", "Write down prep instructions", "Add calendar block if confirmed"],
                 ),
-                "metadata": {"source_kind": "calendar_event", "source_id": "clinic-checkin", "snooze_state": "ready"},
+                "metadata": {
+                    "source_kind": "calendar_event",
+                    "source_id": "clinic-checkin",
+                    "snooze_state": "ready",
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [{"channel": "phone_notification", "recipient_ids": ["self"]}],
+                },
+            },
+            {
+                "id": "demo-reminder-book-note",
+                "title": "Review clinic prep note tonight",
+                "summary": "Skim the prep note and keep the front-desk number handy before tomorrow.",
+                "status": "open",
+                "due_at_ms": clinic_start_ms - 15 * 60 * 60 * 1000,
+                "html": _personal_html(
+                    "Review clinic prep note tonight",
+                    "One quiet reminder tied to the clinic prep note so the next morning starts cleanly.",
+                    ["Open the prep note", "Check the front-desk number", "Leave one quick question at the top"],
+                ),
+                "metadata": {
+                    "source_kind": "note",
+                    "source_id": "clinic-prep-note",
+                    "snooze_state": "ready",
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [{"channel": "phone_notification", "recipient_ids": ["self"]}],
+                },
             },
             {
                 "id": "demo-reminder-freelance-followup",
@@ -1378,7 +1571,13 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Small reminder that keeps the freelance task and meeting note in sync.",
                     ["Export the latest HTML", "Attach the invoice note", "Send it before the review starts"],
                 ),
-                "metadata": {"source_kind": "task", "source_id": "demo-task-send-freelance-mockup", "snooze_state": "ready"},
+                "metadata": {
+                    "source_kind": "task",
+                    "source_id": "demo-task-send-freelance-mockup",
+                    "snooze_state": "ready",
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [{"channel": "phone_notification", "recipient_ids": ["self"]}],
+                },
             },
         ],
     }
@@ -1403,6 +1602,10 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-reminder-health-contact", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
         {"id": "graph-reminder-health-calendar", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "calendar_event", "target_id": "clinic-checkin", "label": "Clinic check-in"},
         {"id": "graph-reminder-health-note", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
+        {"id": "graph-note-clinic-reminder", "source_kind": "note", "source_id": "clinic-prep-note", "target_kind": "reminder", "target_id": "demo-reminder-book-note", "label": "Review clinic prep note tonight"},
+        {"id": "graph-reminder-note-note", "source_kind": "reminder", "source_id": "demo-reminder-book-note", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
+        {"id": "graph-reminder-note-feed", "source_kind": "reminder", "source_id": "demo-reminder-book-note", "target_kind": "feed_item", "target_id": "calendar-change", "label": "Roadmap sync moved"},
+        {"id": "graph-feed-note-reminder", "source_kind": "feed_item", "source_id": "calendar-change", "target_kind": "reminder", "target_id": "demo-reminder-book-note", "label": "Review clinic prep note tonight"},
         {"id": "graph-calendar-home-contact", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
         {"id": "graph-calendar-home-note", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "note", "target_id": "house-paint-notes", "label": "House paint notes"},
         {"id": "graph-calendar-home-task", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},

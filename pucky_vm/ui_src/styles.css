@@ -3865,7 +3865,7 @@ button {
   gap: 4px;
 }
 
-.light-reminder-row .light-text-stack span {
+.light-reminder-row .light-text-stack > span:not(.light-graph-chip-row) {
   white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -3888,6 +3888,17 @@ button {
 
 .light-reminder-row.delivery-snoozed .light-reminder-time {
   color: #a36411;
+}
+
+.light-reminder-history-divider {
+  width: 100%;
+  height: 1px;
+  margin: 10px 0 6px;
+  background: color-mix(in srgb, var(--home-shell-text-muted) 18%, transparent);
+}
+
+.light-reminder-history-list {
+  margin-top: 0;
 }
 
 .light-section-toggle {
@@ -3926,6 +3937,10 @@ button {
   gap: 10px;
   flex-wrap: wrap;
   margin: -2px 0 10px;
+}
+
+.light-reminder-row .light-graph-chip-row {
+  margin-top: 2px;
 }
 
 .light-reminder-dismiss,
