@@ -1219,6 +1219,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-reminder-row.delivery-snoozed .light-reminder-time" in styles
     assert ".light-app-badge" in styles
     assert ".light-section-toggle" in styles
+    assert "padding: var(--safe-area-top) 0 8px;" in styles
     assert ".light-calendar-day-strip" in styles
     assert ".light-calendar-day-chip" in styles
     assert ".light-calendar-agenda-heading" in styles
