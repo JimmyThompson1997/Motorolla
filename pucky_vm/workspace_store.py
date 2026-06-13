@@ -337,6 +337,7 @@ class WorkspaceStore:
             seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_v1'").fetchone()
             graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v1'").fetchone()
             graph_v2_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v2'").fetchone()
+            proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
             defaults = default_workspace_records(now)
@@ -368,6 +369,8 @@ class WorkspaceStore:
                 self._conn.commit()
         if not graph_v2_seeded:
             self._reseed_graph_v2(now)
+        if not proof_cleanup_seeded:
+            self._cleanup_proof_artifacts(now)
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
@@ -430,6 +433,38 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("seeded_graph_v2", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _cleanup_proof_artifacts(self, now_ms: int) -> None:
+        proof_like = "proof-%"
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM workspace_links
+                WHERE link_id LIKE ?
+                   OR source_id LIKE ?
+                   OR target_id LIKE ?
+                """,
+                (proof_like, proof_like, proof_like),
+            )
+            self._conn.execute(
+                """
+                DELETE FROM workspace_records
+                WHERE record_id LIKE ?
+                """,
+                (proof_like,),
+            )
+            self._conn.execute(
+                """
+                DELETE FROM workspace_assets
+                WHERE asset_id LIKE ?
+                """,
+                (proof_like,),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("proof_cleanup_v1", "1", now_ms),
             )
             self._conn.commit()
 

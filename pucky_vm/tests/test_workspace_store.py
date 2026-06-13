@@ -287,6 +287,78 @@ def test_workspace_store_cleans_legacy_message_records_when_graph_v2_runs(tmp_pa
     assert "demo-meeting-freelance-followup" in meetings
 
 
+def test_workspace_store_cleans_persisted_proof_records_assets_and_links(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.upsert_record(
+        "projects",
+        {
+            "id": "proof-demo-project",
+            "title": "Proof Alpha Project",
+            "summary": "Should be removed",
+        },
+    )
+    store.upsert_record(
+        "contacts",
+        {
+            "id": "proof-demo-contact",
+            "title": "Proof Contact One",
+            "summary": "Should be removed",
+        },
+    )
+    store.upsert_record(
+        "notes",
+        {
+            "id": "proof-demo-note",
+            "title": "Proof Pinned Note",
+            "summary": "Should be removed",
+            "pinned": True,
+            "html_asset_id": "proof-demo-note-html",
+        },
+    )
+    store.upsert_record(
+        "feed-items",
+        {
+            "id": "proof-demo-feed",
+            "title": "Proof Project Decision",
+            "summary": "Should be removed",
+            "event_at_ms": clock.value,
+        },
+    )
+    store.create_asset(
+        {
+            "id": "proof-demo-note-html",
+            "title": "Proof asset",
+            "mime_type": "text/html; charset=utf-8",
+            "html": "<!doctype html><h1>Proof</h1>",
+        }
+    )
+    store.upsert_link(
+        {
+            "id": "proof-demo-link",
+            "source_kind": "project",
+            "source_id": "proof-demo-project",
+            "target_kind": "contact",
+            "target_id": "proof-demo-contact",
+            "label": "Proof link",
+        }
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'proof_cleanup_v1'")
+    store._conn.commit()
+    store._conn.close()
+
+    cleaned = WorkspaceStore(str(db_path), clock_ms=clock)
+    assert cleaned.get_record("projects", "proof-demo-project", include_deleted=True) is None
+    assert cleaned.get_record("contacts", "proof-demo-contact", include_deleted=True) is None
+    assert cleaned.get_record("notes", "proof-demo-note", include_deleted=True) is None
+    assert cleaned.get_record("feed-items", "proof-demo-feed", include_deleted=True) is None
+    assert cleaned.get_asset("proof-demo-note-html") is None
+    assert cleaned._conn.execute("SELECT COUNT(*) FROM workspace_links WHERE link_id = 'proof-demo-link'").fetchone()[0] == 0
+    assert cleaned.get_record("projects", "home-refresh") is not None
+    assert cleaned.get_record("contacts", "maya") is not None
+
+
 def test_calendar_multi_day_and_feed_archive_visibility(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
     store.upsert_record("calendar-events", {"id": "d1", "title": "Day one", "date": "2026-06-10", "start_at_ms": 1000})
