@@ -3790,6 +3790,7 @@
 
   function openCalendarSettingsSheet() {
     const sheet = el("section", "trace-sheet settings-sheet calendar-settings-sheet");
+    sheet.classList.add("is-open");
     const header = el("div", "calendar-settings-sheet-header");
     header.append(
       el("div", "calendar-settings-sheet-copy",

@@ -1090,6 +1090,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'function calendarMonthHeading(dayKey = selectedCalendarDateKey())' in app
     assert 'function calendarDayMarkers(dayKey)' in app
     assert 'function openCalendarSettingsSheet()' in app
+    assert 'sheet.classList.add("is-open");' in app
     assert 'openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);' in app
     assert 'calendarEventDateKey(event)' in app
     assert 'calendarFormatTime(untilMs)' in app
