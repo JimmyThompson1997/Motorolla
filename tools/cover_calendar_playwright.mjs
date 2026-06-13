@@ -354,6 +354,13 @@ async function pageHeaderText(page) {
   return String(await page.locator(".light-page-header").textContent() || "").replace(/\s+/g, " ").trim();
 }
 
+async function waitForHeaderText(page, text) {
+  await page.waitForFunction(target => {
+    const header = document.querySelector(".light-page-header");
+    return Boolean(header && String(header.textContent || "").includes(String(target || "")));
+  }, text);
+}
+
 async function stickyMetrics(page) {
   return page.evaluate(() => {
     const feed = document.querySelector(".feed");
@@ -418,13 +425,15 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
 
     await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-main').click();
+    await waitForHeaderText(page, "Proof freelance review call");
     assert((await pageHeaderText(page)).includes("Proof freelance review call"), "Expected the event detail header to use the real event title.");
     await saveShot(page, reportDir, "calendar-desktop-event-detail.png", summary);
     await page.locator('.light-attendee-chip.is-link', { hasText: "Jimmy T." }).click();
+    await waitForHeaderText(page, "Jimmy Torres");
     assert((await pageHeaderText(page)).includes("Jimmy Torres"), "Expected attendee chip navigation to open the linked contact detail.");
     await saveShot(page, reportDir, "calendar-desktop-attendee-chip.png", summary);
     await page.getByRole("button", { name: "Back" }).click();
-    await page.locator(".light-page-header").getByText("Proof freelance review call").waitFor({ state: "visible" });
+    await waitForHeaderText(page, "Proof freelance review call");
     for (const label of [
       "Proof freelance follow-up",
       "Send proof review notes",
@@ -432,9 +441,10 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       "Send proof HTML before call"
     ]) {
       await page.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }).first().click();
+      await waitForHeaderText(page, label);
       assert((await pageHeaderText(page)).includes(label), `Expected linked record row to open ${label}.`);
       await page.getByRole("button", { name: "Back" }).click();
-      await page.locator(".light-page-header").getByText("Proof freelance review call").waitFor({ state: "visible" });
+      await waitForHeaderText(page, "Proof freelance review call");
     }
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
