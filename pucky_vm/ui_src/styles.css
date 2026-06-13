@@ -126,6 +126,7 @@ button {
 }
 
 .app-shell {
+  --app-shell-side-pad: 14px;
   position: fixed;
   inset: 0;
   min-height: var(--viewport-h);
@@ -133,7 +134,7 @@ button {
   flex-direction: column;
   background: var(--surface-app);
   color: var(--text-primary);
-  padding: 0 14px var(--safe-area-bottom-pad);
+  padding: 0 var(--app-shell-side-pad) var(--safe-area-bottom-pad);
 }
 
 .sr-only {
@@ -3678,7 +3679,9 @@ button {
   position: sticky;
   top: 0;
   z-index: 12;
-  width: 100%;
+  width: calc(100% + (var(--app-shell-side-pad) * 2));
+  margin-left: calc(-1 * var(--app-shell-side-pad));
+  margin-right: calc(-1 * var(--app-shell-side-pad));
   padding: var(--safe-area-top-pad) 0 8px;
   background: color-mix(in srgb, var(--surface-sheet) 98%, white 2%);
   box-shadow: 0 10px 28px rgba(201, 212, 232, 0.18);

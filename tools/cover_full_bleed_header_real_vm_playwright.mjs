@@ -141,19 +141,33 @@ async function backUntilRoute(page, targetRoute, timeoutMs) {
 }
 
 async function resetScroll(page) {
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => {
+    const feed = document.getElementById("feed");
+    if (feed && typeof feed.scrollTo === "function") {
+      feed.scrollTo({ top: 0, behavior: "instant" });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
   await page.waitForTimeout(150);
 }
 
 async function scrollForProof(page) {
   await page.evaluate(() => {
-    const maxScroll = Math.max(
+    const feed = document.getElementById("feed");
+    if (feed && feed.scrollHeight > feed.clientHeight && typeof feed.scrollTo === "function") {
+      const maxFeedScroll = Math.max(0, feed.scrollHeight - feed.clientHeight);
+      const feedTarget = Math.min(maxFeedScroll, Math.max(220, Math.round(feed.clientHeight * 0.55)));
+      feed.scrollTo({ top: feedTarget, behavior: "instant" });
+      return;
+    }
+    const maxWindowScroll = Math.max(
       0,
       document.documentElement.scrollHeight - window.innerHeight,
       document.body.scrollHeight - window.innerHeight
     );
-    const target = Math.min(maxScroll, Math.max(220, Math.round(window.innerHeight * 0.55)));
-    window.scrollTo({ top: target, behavior: "instant" });
+    const windowTarget = Math.min(maxWindowScroll, Math.max(220, Math.round(window.innerHeight * 0.55)));
+    window.scrollTo({ top: windowTarget, behavior: "instant" });
   });
   await page.waitForTimeout(250);
 }
@@ -178,6 +192,7 @@ async function collectHeaderMetrics(page, screenId, options = {}) {
     }
 
     const shell = document.querySelector(".light-shell");
+    const feed = document.getElementById("feed");
     const pageNode = shell?.querySelector(".light-page");
     const headerOuter = pageNode?.querySelector(":scope > .light-page-header-shell") || shell?.querySelector(".light-page-header-shell");
     const headerInner = headerOuter?.querySelector(".light-page-header");
@@ -204,7 +219,8 @@ async function collectHeaderMetrics(page, screenId, options = {}) {
       viewport: {
         width: viewportWidth,
         height: viewportHeight,
-        scroll_y: Number(window.scrollY.toFixed(2))
+        scroll_y: Number(window.scrollY.toFixed(2)),
+        feed_scroll_top: feed ? Number(feed.scrollTop.toFixed(2)) : null
       },
       header_outer: outerRect,
       header_inner: innerRect,

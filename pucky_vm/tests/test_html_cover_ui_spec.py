@@ -734,6 +734,9 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "position: sticky;" in light_page_header_shell_block
     assert "top: 0;" in light_page_header_shell_block
     assert "z-index:" in light_page_header_shell_block
+    assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" in light_page_header_shell_block
+    assert "margin-left: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
+    assert "margin-right: calc(-1 * var(--app-shell-side-pad));" in light_page_header_shell_block
     assert "background:" in light_page_header_shell_block
     assert "transparent 100%" not in light_page_header_shell_block
     assert "box-shadow:" in light_page_header_shell_block
@@ -1788,7 +1791,8 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert 'Pucky.request({ command: "ui.reply_cards.set"' not in app
     assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
     assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
-    assert "padding: 0 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
+    assert "--app-shell-side-pad: 14px;" in css_block(styles, ".app-shell")
+    assert "padding: 0 var(--app-shell-side-pad) var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
     assert "padding: max(18px, env(safe-area-inset-top)) var(--light-shell-column-padding) 24px;" in css_block(styles, ".light-home")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
     assert "height: var(--viewport-h);" in css_block(styles, ".detail-shell")
