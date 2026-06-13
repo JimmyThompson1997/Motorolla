@@ -160,6 +160,13 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     html: "<!doctype html><h1>Proof freelance follow-up</h1><p>Project shell for the review call, task, and reminder.</p>",
     metadata: { threads: ["Homepage pass"], chips: ["Freelance", "Proof"] }
   });
+  await rememberRecord("notes", {
+    id: `${runId}-note`,
+    title: "Proof review outline",
+    summary: "Bullet list for the call and the post-call note.",
+    html: "<!doctype html><h1>Proof review outline</h1><p>Note linked from the proof calendar event.</p>",
+    metadata: { tags: ["Calendar", "Proof"] }
+  });
   await rememberRecord("tasks", {
     id: `${runId}-task`,
     title: "Send proof review notes",
@@ -287,6 +294,14 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     label: "Send proof review notes"
   });
   await rememberLink({
+    id: `${runId}-link-note`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-freelance-review`,
+    target_kind: "note",
+    target_id: `${runId}-note`,
+    label: "Proof review outline"
+  });
+  await rememberLink({
     id: `${runId}-link-meeting-note`,
     source_kind: "calendar_event",
     source_id: `${runId}-freelance-review`,
@@ -359,6 +374,10 @@ async function waitForHeaderText(page, text) {
     const header = document.querySelector(".light-page-header");
     return Boolean(header && String(header.textContent || "").includes(String(target || "")));
   }, text);
+}
+
+async function currentLightRoute(page) {
+  return String(await page.locator(".light-shell").getAttribute("data-light-route") || "");
 }
 
 async function waitForSelectorText(page, selector, text) {
@@ -441,7 +460,6 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
     assert(await calendarLaneWidth(page) >= 820, `Expected a widened desktop calendar lane, got ${await calendarLaneWidth(page)}px.`);
     await page.waitForFunction(() => document.querySelectorAll('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip.is-link').length >= 2);
-    assert(await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-place-pill').textContent() === "Kitchen table", "Expected the place pill to show Kitchen table.");
     const attendeeChipTexts = await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip').allTextContents();
     assert(attendeeChipTexts.includes("Jimmy T."), `Expected compact attendee chip label Jimmy T. on the agenda card, got ${attendeeChipTexts.join(", ")}.`);
     assert(attendeeChipTexts.includes("Jeff B."), `Expected compact attendee chip label Jeff B. on the agenda card, got ${attendeeChipTexts.join(", ")}.`);
@@ -449,6 +467,18 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
     summary.assertions.push(`desktop ${theme} calendar opened to today with compact day strip`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
+
+    await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-attendee-chip.is-link', { hasText: "Jimmy T." }).click();
+    await waitForHeaderText(page, "Contact");
+    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    assert(await currentLightRoute(page) === "contact-detail", `Expected contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-agenda-chip-contact.png`, summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from agenda chip to restore calendar, got ${await currentLightRoute(page)}.`);
+    assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected calendar agenda Back to preserve the selected day.");
+    assert((await visibleCalendarTitles(page)).includes("Proof freelance review call"), "Expected the source event to remain visible after returning to the agenda.");
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-agenda-after-back.png`, summary);
 
     await page.locator('.light-event-block[data-event-id$="-freelance-review"] .light-event-main').click();
     await waitForHeaderText(page, "Proof freelance review call");
@@ -463,6 +493,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await waitForHeaderText(page, "Proof freelance review call");
     for (const label of [
       "Proof freelance follow-up",
+      "Proof review outline",
       "Send proof review notes",
       "Proof freelance prep",
       "Send proof HTML before call"
@@ -471,11 +502,14 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       await waitForHeaderText(page, label);
       assert((await pageHeaderText(page)).includes(label), `Expected linked record row to open ${label}.`);
       await page.getByRole("button", { name: "Back" }).click();
+      assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${label} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
       await waitForHeaderText(page, "Proof freelance review call");
     }
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
-    summary.assertions.push(`desktop ${theme} detail showed title header, attendee chips, and linked graph navigation`);
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected event-detail Back to preserve the selected day.");
+    summary.assertions.push(`desktop ${theme} top Back restored calendar agenda and event-detail graph launches`);
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });

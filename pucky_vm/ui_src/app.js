@@ -324,6 +324,17 @@
   const DEFAULT_TURN_REASONING_EFFORT = "low";
   const LINKS_BROWSER_HANDOFF_LOCK_MS = 2200;
   const LINKS_ROW_HEIGHT = 62;
+  const LIGHT_ROUTE_HISTORY_LIMIT = 12;
+  const LIGHT_HISTORY_SELECTED_KEYS = [
+    "selectedContactId",
+    "selectedMeetingId",
+    "selectedMeetingNoteId",
+    "selectedReminderId",
+    "selectedNoteId",
+    "selectedTaskId",
+    "selectedProjectId",
+    "selectedFeedId"
+  ];
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -349,6 +360,7 @@
     openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme),
     lightReturnRoute: "",
     previousLightRoute: "home",
+    lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history),
     selectedContactId: "sarah",
     selectedMeetingId: "vendor",
     selectedMeetingNoteId: "demo-meeting-home-refresh",
@@ -4243,42 +4255,14 @@
       page.append(list);
     }
     if (sent.length) {
-      page.append(lightReminderHistoryHeader(sent.length));
-      if (reminderHistoryExpanded()) {
-      const list = el("div", "light-list light-graph-list");
-        sent.forEach(reminder => list.append(lightReminderRow(reminder)));
-        page.append(list);
+      if (active.length) {
+        page.append(el("div", "light-reminder-history-divider"));
       }
+      const list = el("div", "light-list light-graph-list light-reminder-history-list");
+      sent.forEach(reminder => list.append(lightReminderRow(reminder)));
+      page.append(list);
     }
     return page;
-  }
-
-  function lightReminderHistoryHeader(count) {
-    const button = el(
-      "button",
-      reminderHistoryExpanded()
-        ? "light-section-toggle is-expanded"
-        : "light-section-toggle",
-    );
-    button.type = "button";
-    button.dataset.reminderHistoryToggle = "sent";
-    button.setAttribute("aria-expanded", reminderHistoryExpanded() ? "true" : "false");
-    button.addEventListener("click", toggleReminderHistory);
-    button.append(
-      el("span", "light-section-toggle-label", "Sent"),
-      el("span", "light-section-toggle-meta", `${count}`),
-      el("span", "light-section-toggle-chevron", reminderHistoryExpanded() ? "v" : ">")
-    );
-    return button;
-  }
-
-  function reminderHistoryExpanded() {
-    return Boolean(state.reminderHistoryExpanded);
-  }
-
-  function toggleReminderHistory() {
-    state.reminderHistoryExpanded = !state.reminderHistoryExpanded;
-    render();
   }
 
   function lightReminderDetailPage() {
@@ -4297,12 +4281,19 @@
     );
     page.append(article);
     page.append(lightReminderActionRow(reminder));
-    page.append(lightInfoSection("Context", reminderDetailRows(reminder)));
+    page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));
+    const recipientRows = reminderRecipientRows(reminder);
+    if (recipientRows.length) {
+      page.append(lightInfoSection("Recipients", recipientRows));
+    }
+    const destinationRows = reminderDestinationRows(reminder);
+    if (destinationRows.length) {
+      page.append(lightInfoSection("Channels", destinationRows));
+    }
     const linkedRows = lightLinkedRecordRows(reminder);
     if (linkedRows.length) {
       page.append(lightInfoSection("Linked records", linkedRows));
     }
-    page.append(lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -4338,13 +4329,15 @@
   }
 
   function lightReminderRow(reminder) {
+    ensureLinkedCollections(reminder);
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
     const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass}`.trim());
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
-    if (String(reminder.summary || "").trim()) {
-      copy.append(el("span", "", reminder.summary));
+    const chips = reminderLinkedChips(reminder);
+    if (chips) {
+      copy.append(chips);
     }
     row.type = "button";
     row.dataset.recordId = reminder.id;
@@ -4488,19 +4481,95 @@
   }
 
   function reminderDetailRows(reminder) {
-    const meta = reminder?.metadata || {};
-    const sourceKind = String(meta.source_kind || "").trim();
-    const sourceId = String(meta.source_id || "").trim();
     return [
       { icon: "clock", label: "When", value: reminderScheduleLabel(reminder) },
-      { icon: "bell", label: "Delivery", value: reminderDeliveryDetail(reminder) },
-      {
-        icon: graphKindIcon(sourceKind),
-        label: "Source",
-        value: sourceId ? workspaceTargetLabel(sourceKind, sourceId) : "Standalone",
-        target: workspaceTargetForKind(sourceKind, sourceId)
-      }
+      { icon: "bell", label: "Delivery", value: reminderDeliveryDetail(reminder) }
     ];
+  }
+
+  function reminderRecipientRows(reminder) {
+    return reminderRecipients(reminder).map(recipient => ({
+      icon: recipient.kind === "self" ? "apps" : "contacts",
+      label: recipient.kind === "self" ? "Self" : "Contact",
+      value: reminderRecipientDisplayName(recipient),
+      target: recipient.kind === "contact" ? workspaceTargetForKind("contact", recipient.contactId || recipient.id) : null
+    }));
+  }
+
+  function reminderDestinationRows(reminder) {
+    return reminderDestinations(reminder).map(destination => ({
+      icon: reminderChannelIcon(destination.channel),
+      label: reminderChannelName(destination.channel),
+      value: reminderDestinationDetail(reminder, destination)
+    }));
+  }
+
+  function reminderRecipients(reminder) {
+    const values = Array.isArray(reminder?.metadata?.recipients) ? reminder.metadata.recipients : [];
+    if (!values.length) {
+      return [{ id: "self", kind: "self", contactId: "", label: "Me" }];
+    }
+    return values.map(item => ({
+      id: String(item?.id || item?.recipient_id || item?.contact_id || "").trim(),
+      kind: String(item?.kind || (String(item?.id || "").trim() === "self" ? "self" : "contact")).trim().toLowerCase() || "contact",
+      contactId: String(item?.contact_id || "").trim(),
+      label: String(item?.label || item?.title || item?.name || "").trim()
+    })).filter(item => item.id);
+  }
+
+  function reminderDestinations(reminder) {
+    const values = Array.isArray(reminder?.metadata?.destinations) ? reminder.metadata.destinations : [];
+    if (!values.length) {
+      return [{ channel: "phone_notification", recipientIds: ["self"], appSlug: "", endpoint: "", address: "", label: "" }];
+    }
+    return values.map(item => ({
+      id: String(item?.id || "").trim(),
+      channel: String(item?.channel || item?.kind || item?.type || "").trim().toLowerCase(),
+      recipientIds: Array.isArray(item?.recipient_ids) ? item.recipient_ids.map(value => String(value || "").trim()).filter(Boolean) : [],
+      appSlug: String(item?.app_slug || "").trim().toLowerCase(),
+      endpoint: String(item?.endpoint || "").trim(),
+      address: String(item?.address || item?.value || item?.number || "").trim(),
+      label: String(item?.label || "").trim()
+    })).filter(item => item.channel);
+  }
+
+  function reminderLinkedChips(reminder) {
+    const labels = [];
+    const seen = new Set();
+    const links = Array.isArray(reminder?.links) ? reminder.links : [];
+    links.forEach(link => {
+      const sourceKind = String(link?.source_kind || "").trim();
+      const sourceId = String(link?.source_id || "").trim();
+      const targetKind = String(link?.target_kind || "").trim();
+      const targetId = String(link?.target_id || "").trim();
+      let relatedKind = "";
+      let relatedId = "";
+      if (sourceKind === "reminder" && sourceId === reminder?.id) {
+        relatedKind = targetKind;
+        relatedId = targetId;
+      } else if (targetKind === "reminder" && targetId === reminder?.id) {
+        relatedKind = sourceKind;
+        relatedId = sourceId;
+      }
+      if (!relatedKind || !relatedId) {
+        return;
+      }
+      const label = workspaceTargetLabel(relatedKind, relatedId);
+      if (!label || seen.has(label)) {
+        return;
+      }
+      seen.add(label);
+      labels.push(label);
+    });
+    if (!labels.length) {
+      return null;
+    }
+    const row = el("span", "light-graph-chip-row");
+    labels.slice(0, 2).forEach(label => row.append(el("span", "light-graph-chip", label)));
+    if (labels.length > 2) {
+      row.append(el("span", "light-graph-chip", `+${labels.length - 2}`));
+    }
+    return row;
   }
 
   function graphObjectChips(record) {
@@ -4601,7 +4670,7 @@
   function reminderDeliveryLabel(reminder) {
     const deliveryState = reminderMetadata(reminder).deliveryState;
     if (deliveryState === "sent" && reminderIsSentHistory(reminder)) {
-      return "Sent to phone";
+      return "Sent";
     }
     if (reminderIsSnoozed(reminder)) {
       return "Snoozed";
@@ -4611,7 +4680,7 @@
 
   function reminderDeliveryClass(reminder) {
     const label = reminderDeliveryLabel(reminder);
-    if (label === "Sent to phone") {
+    if (label === "Sent") {
       return "delivery-sent";
     }
     if (label === "Snoozed") {
@@ -4620,31 +4689,76 @@
     return "delivery-pending";
   }
 
-  function reminderDeliveryModeLabel(reminder) {
-    const meta = reminder?.metadata || {};
-    const effective = String(meta.last_delivery_mode_effective || "").trim();
-    const requested = String(meta.last_delivery_mode_requested || "").trim();
-    const degraded = String(meta.last_delivery_degraded_to || "").trim();
-    if (!requested && !effective && !degraded) {
-      return "";
-    }
-    const format = value => String(value || "").trim().replace(/_/g, " ");
-    if (degraded) {
-      return `${format(requested || effective)} -> ${format(degraded)}`;
-    }
-    if (requested && effective && requested !== effective) {
-      return `${format(requested)} -> ${format(effective)}`;
-    }
-    return format(effective || requested);
-  }
-
   function reminderDeliveryDetail(reminder) {
     const label = reminderDeliveryLabel(reminder);
-    const mode = reminderDeliveryModeLabel(reminder);
-    if (mode) {
-      return `${label}${DOT}${mode}`;
+    const channels = reminderChannelSummary(reminder);
+    if (channels) {
+      return `${label}${DOT}${channels}`;
     }
     return label;
+  }
+
+  function reminderChannelSummary(reminder) {
+    const names = [];
+    const seen = new Set();
+    reminderDestinations(reminder).forEach(destination => {
+      const name = reminderChannelName(destination.channel);
+      if (!name || seen.has(name)) {
+        return;
+      }
+      seen.add(name);
+      names.push(name);
+    });
+    return names.join(", ");
+  }
+
+  function reminderChannelName(channel) {
+    return ({
+      phone_notification: "Phone notification",
+      email: "Email",
+      sms: "SMS",
+      call: "Call",
+      connected_app: "Connected app"
+    })[String(channel || "").trim().toLowerCase()] || "Reminder";
+  }
+
+  function reminderChannelIcon(channel) {
+    return ({
+      phone_notification: "bell",
+      email: "text",
+      sms: "text",
+      call: "phone",
+      connected_app: "apps"
+    })[String(channel || "").trim().toLowerCase()] || "bell";
+  }
+
+  function reminderDestinationDetail(reminder, destination) {
+    const recipientNames = reminderDestinationRecipientNames(reminder, destination);
+    if (destination.channel === "connected_app" && destination.appSlug) {
+      return recipientNames ? `${destination.appSlug}${DOT}${recipientNames}` : destination.appSlug;
+    }
+    if (destination.address) {
+      return recipientNames ? `${recipientNames}${DOT}${destination.address}` : destination.address;
+    }
+    return recipientNames || reminderChannelName(destination.channel);
+  }
+
+  function reminderDestinationRecipientNames(reminder, destination) {
+    const recipientsById = new Map(reminderRecipients(reminder).map(item => [item.id, item]));
+    const names = destination.recipientIds.map(id => reminderRecipientDisplayName(recipientsById.get(id))).filter(Boolean);
+    return names.join(", ");
+  }
+
+  function reminderRecipientDisplayName(recipient) {
+    if (!recipient) {
+      return "";
+    }
+    if (String(recipient.kind || "").trim().toLowerCase() === "self") {
+      return String(recipient.label || "Me").trim() || "Me";
+    }
+    const contactId = String(recipient.contactId || recipient.id || "").trim();
+    const contact = contactId ? workspaceRecord("contacts", contactId) : null;
+    return String(recipient.label || contact?.title || contactId || "Contact").trim() || "Contact";
   }
 
   function reminderSnoozePayload(reminder, reopen = false) {
@@ -5019,8 +5133,10 @@
     if (!target || !target.route || !target.selectedKey || !target.id) {
       return false;
     }
-    state[target.selectedKey] = target.id;
-    lightNavigate(target.route, { from: fromRoute || state.route || "" });
+    lightNavigate(target.route, {
+      from: fromRoute || state.route || "",
+      selectionPatch: { [target.selectedKey]: target.id }
+    });
     return true;
   }
 
@@ -5528,39 +5644,165 @@
     return shell;
   }
 
-  function lightNavigate(route, options = {}) {
-    if (linksHandoffLocked()) {
+  function normalizeLightHistoryRoute(route) {
+    const value = String(route || "").trim();
+    if (!value) {
+      return "";
+    }
+    if (value === "home" || isLightDetailRoute(value)) {
+      return value;
+    }
+    return normalizeHomeShellRoute(value, { preview: false }) || "";
+  }
+
+  function lightRouteDetailKey(route) {
+    return ({
+      "meeting-detail": "selectedMeetingId",
+      "meeting-note-detail": "selectedMeetingNoteId",
+      "reminder-detail": "selectedReminderId",
+      "note-detail": "selectedNoteId",
+      "task-detail": "selectedTaskId",
+      "feed-preview-detail": "selectedFeedId",
+      "project-detail": "selectedProjectId",
+      "contact-detail": "selectedContactId"
+    })[String(route || "")] || "";
+  }
+
+  function captureLightRouteScrollTop(route = state.route) {
+    const normalizedRoute = normalizeLightHistoryRoute(route);
+    if (!normalizedRoute) {
+      return 0;
+    }
+    const feed = document.getElementById("feed");
+    return scrollNumber(feed ? feed.scrollTop : 0);
+  }
+
+  function normalizeLightRouteSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") {
+      return null;
+    }
+    const route = normalizeLightHistoryRoute(snapshot.route);
+    if (!route) {
+      return null;
+    }
+    const normalized = {
+      route,
+      selectedCalendarDate: String(snapshot.selectedCalendarDate || ""),
+      scroll_top: scrollNumber(snapshot.scroll_top ?? snapshot.scrollTop)
+    };
+    LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
+      normalized[key] = String(snapshot[key] || "");
+    });
+    return normalized;
+  }
+
+  function normalizeLightRouteHistory(history) {
+    if (!Array.isArray(history)) {
+      return [];
+    }
+    return history
+      .map(normalizeLightRouteSnapshot)
+      .filter(Boolean)
+      .slice(-LIGHT_ROUTE_HISTORY_LIMIT);
+  }
+
+  function lightRouteSnapshotIdentity(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
+      return "";
+    }
+    const detailKey = lightRouteDetailKey(normalized.route);
+    const detailId = detailKey ? String(normalized[detailKey] || "") : "";
+    const calendarKey = normalized.route === "calendar" || normalized.route === "meeting-detail"
+      ? String(normalized.selectedCalendarDate || "")
+      : "";
+    return [normalized.route, detailKey, detailId, calendarKey].join("::");
+  }
+
+  function captureLightRouteSnapshot(route = state.route) {
+    const normalizedRoute = normalizeLightHistoryRoute(route);
+    if (!normalizedRoute) {
+      return null;
+    }
+    const snapshot = {
+      route: normalizedRoute,
+      selectedCalendarDate: String(state.selectedCalendarDate || ""),
+      scroll_top: captureLightRouteScrollTop(normalizedRoute)
+    };
+    LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
+      snapshot[key] = String(state[key] || "");
+    });
+    return normalizeLightRouteSnapshot(snapshot);
+  }
+
+  function pushLightRouteHistory(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
       return;
     }
-    const nextRoute = normalizeHomeShellRoute(route, { preview: isWalkthroughPreview() });
-    if (!nextRoute) {
+    const history = normalizeLightRouteHistory(state.lightRouteHistory);
+    const nextIdentity = lightRouteSnapshotIdentity(normalized);
+    const currentIdentity = history.length ? lightRouteSnapshotIdentity(history[history.length - 1]) : "";
+    if (nextIdentity && nextIdentity === currentIdentity) {
+      state.lightRouteHistory = history;
       return;
     }
-    rememberFeedScroll();
-    dismissTransientUiForRouteChange();
-    if (options.from) {
-      state.previousLightRoute = options.from;
-    } else if (state.route && state.route !== nextRoute && state.route !== "home") {
-      state.previousLightRoute = state.route;
-    } else {
-      state.previousLightRoute = "home";
+    history.push(normalized);
+    state.lightRouteHistory = history.slice(-LIGHT_ROUTE_HISTORY_LIMIT);
+  }
+
+  function popLightRouteHistory() {
+    const history = normalizeLightRouteHistory(state.lightRouteHistory);
+    const currentIdentity = lightRouteSnapshotIdentity(captureLightRouteSnapshot());
+    while (history.length) {
+      const snapshot = history.pop();
+      if (!snapshot) {
+        continue;
+      }
+      if (lightRouteSnapshotIdentity(snapshot) === currentIdentity) {
+        continue;
+      }
+      state.lightRouteHistory = history;
+      return snapshot;
     }
-    state.route = nextRoute;
-    state.homeShellActive = true;
-    state.openTrayRoute = null;
-    state.lightReturnRoute = state.route === "home" ? "" : "home";
-    persistNavState();
-    render();
-    void syncVoiceThreadScope({ reason: "light_app_click", render: true });
+    state.lightRouteHistory = [];
+    return null;
+  }
+
+  function applyLightRouteSelectionPatch(selectionPatch = {}) {
+    LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(selectionPatch, key)) {
+        state[key] = String(selectionPatch[key] || "");
+      }
+    });
+  }
+
+  function restoreLightRouteScroll(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
+      return;
+    }
+    const scrollTop = scrollNumber(normalized.scroll_top);
+    const restore = () => restoreScrollPosition(document.getElementById("feed"), scrollTop);
+    state.feedScrollTop = scrollTop;
+    restore();
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(restore);
+    }
+    window.setTimeout(restore, 0);
+  }
+
+  function runLightRouteSideEffects(reason = "light_app_click") {
+    void syncVoiceThreadScope({ reason, render: true });
     void loadWorkspaceForRoute(state.route, { render: true, force: true });
     if (state.route === "links") {
-      linksDebugStartSession("route", { reason: "light_app_open" });
-      linksDebugRecord("links_route_enter", { reason: "light_app_open" }, "route");
+      linksDebugStartSession("route", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" });
+      linksDebugRecord("links_route_enter", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" }, "route");
       loadLinksPortal({ render: true });
     }
     if (state.route === "feed") {
       restoreFeedScroll();
-      syncFeedCards({ reason: "home_shell_feed_open", silent: true, render: true });
+      syncFeedCards({ reason: reason === "light_back" ? "home_shell_feed_back" : "home_shell_feed_open", silent: true, render: true });
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
@@ -5571,6 +5813,70 @@
     }
   }
 
+  function restoreLightRouteSnapshot(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
+      return false;
+    }
+    LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
+      state[key] = String(normalized[key] || "");
+    });
+    if (normalized.selectedCalendarDate) {
+      state.selectedCalendarDate = normalized.selectedCalendarDate;
+    }
+    state.route = normalized.route;
+    state.homeShellActive = true;
+    state.openTrayRoute = null;
+    state.lightReturnRoute = state.route === "home" ? "" : "home";
+    state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
+    persistNavState();
+    render();
+    restoreLightRouteScroll(normalized);
+    runLightRouteSideEffects("light_back");
+    return true;
+  }
+
+  function lightNavigate(route, options = {}) {
+    if (linksHandoffLocked()) {
+      return;
+    }
+    const nextRoute = normalizeHomeShellRoute(route, { preview: isWalkthroughPreview() });
+    if (!nextRoute) {
+      return;
+    }
+    rememberFeedScroll();
+    const currentSnapshot = captureLightRouteSnapshot();
+    const selectionPatch = options.selectionPatch && typeof options.selectionPatch === "object"
+      ? options.selectionPatch
+      : null;
+    const targetSnapshot = currentSnapshot
+      ? normalizeLightRouteSnapshot({
+          ...currentSnapshot,
+          route: nextRoute,
+          ...(selectionPatch || {})
+        })
+      : null;
+    dismissTransientUiForRouteChange();
+    if (currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
+      pushLightRouteHistory(currentSnapshot);
+    }
+    if (options.from) {
+      state.previousLightRoute = options.from;
+    } else if (state.route && state.route !== nextRoute && state.route !== "home") {
+      state.previousLightRoute = state.route;
+    } else {
+      state.previousLightRoute = "home";
+    }
+    applyLightRouteSelectionPatch(selectionPatch || {});
+    state.route = nextRoute;
+    state.homeShellActive = true;
+    state.openTrayRoute = null;
+    state.lightReturnRoute = state.route === "home" ? "" : "home";
+    persistNavState();
+    render();
+    runLightRouteSideEffects("light_app_click");
+  }
+
   function lightBack() {
     if (linksHandoffLocked()) {
       releaseLinksHandoff({ render: false, reason: "light_back" });
@@ -5578,6 +5884,10 @@
     }
     if (!isHomeShellRoute() || state.route === "home") {
       return false;
+    }
+    const snapshot = popLightRouteHistory();
+    if (snapshot) {
+      return restoreLightRouteSnapshot(snapshot);
     }
     const detailParent = isLightDetailRoute(state.previousLightRoute) ? state.previousLightRoute : "";
     const parent = isHomeShellCanonicalRoute()
@@ -5590,7 +5900,7 @@
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     persistNavState();
     render();
-    void syncVoiceThreadScope({ reason: "light_back", render: true });
+    runLightRouteSideEffects("light_back");
     return true;
   }
 
@@ -12849,6 +13159,7 @@
         route: state.route,
         home_shell_active: Boolean(state.homeShellActive),
         open_tray_route: state.openTrayRoute || null,
+        light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),
         updated_at: Date.now()

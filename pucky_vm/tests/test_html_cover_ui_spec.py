@@ -601,8 +601,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert "state.canonicalLaunch" not in app
     assert 'const nextRoute = normalizeHomeShellRoute(route' in light_navigate
     assert 'state.homeShellActive = true;' in light_navigate
-    assert 'if (state.route === "meetings") {' in light_navigate
-    assert "loadMeetings({ render: true });" in light_navigate
+    assert 'runLightRouteSideEffects("light_app_click")' in light_navigate
     assert 'if (handleCanonicalLaunchBack()) {' not in handle_back
     assert 'if (state.route === "inbox") {' not in filtered_feed_cards
     assert 'if (!usesHomeFeedRoute()) {' in desired_thread_scope
@@ -988,8 +987,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "def do_PATCH" in server
     assert "def do_DELETE" in server
     assert "service.workspace.list_records" in server
-    assert "service.workspace.upsert_record" in server
-    assert "service.workspace.patch_record" in server
+    assert "service.workspace.upsert_record" in server or "service.workspace_upsert_record" in server
+    assert "service.workspace.patch_record" in server or "service.workspace_patch_record" in server
     assert "service.workspace.create_asset" in server
     assert "service.workspace.upsert_link" in server
     assert "if not self._is_authorized()" in server
@@ -1172,7 +1171,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'chronologicalReminders()' in light_reminders
     assert 'active.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
     assert 'sent.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
-    assert 'lightReminderHistoryHeader(sent.length)' in light_reminders
+    assert 'lightReminderHistoryHeader(sent.length)' not in light_reminders
+    assert 'light-reminder-history-divider' in light_reminders
     assert 'lightSectionTitle("Done")' not in light_reminders
     assert '"Due soon"' not in light_reminders
     assert '"Later"' not in light_reminders
@@ -1184,23 +1184,28 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'graphObjectChips(reminder)' not in reminder_row
     assert 'lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`)' not in reminder_row
     assert 'el("span", "light-reminder-time", reminderRowLabel(reminder))' in reminder_row
-    assert 'copy.append(el("span", "", reminder.summary));' in reminder_row
+    assert 'copy.append(el("span", "", reminder.summary));' not in reminder_row
+    assert 'reminderLinkedChips(reminder)' in reminder_row
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
     assert 'const page = lightPage(reminder.title || "Reminder", { detail: true });' in reminder_detail
     assert 'reminderDetailRows(reminder)' in reminder_detail
     assert 'lightReminderActionRow(reminder)' in reminder_detail
-    assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' in reminder_detail
+    assert 'reminderRecipientRows(reminder)' in reminder_detail
+    assert 'reminderDestinationRows(reminder)' in reminder_detail
+    assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' not in reminder_detail
     assert 'lightGraphDetailPage(reminder' not in reminder_detail
     assert 'patchWorkspaceRecord("reminders", reminder.id' in app
-    assert 'function reminderDeliveryModeLabel(reminder)' in app
+    assert 'function reminderDeliveryModeLabel(reminder)' not in app
     assert 'function reminderDeliveryDetail(reminder)' in app
+    assert 'function reminderChannelSummary(reminder)' in app
     assert 'value: reminderDeliveryDetail(reminder)' in app
     assert '"Snooze 10 min"' in app
     assert '"Dismiss"' in reminder_dismiss
     assert '"Mark done"' not in reminder_actions
     assert '"Reopen"' not in reminder_actions
-    assert '"Sent to phone"' in app
+    assert '"Sent to phone"' not in app
+    assert '"Sent"' in app
     assert '"Couldn\'t reach phone"' not in app
     assert '"Failed"' not in reminder_detail
     assert 'last_notification_command_id: ""' in app
@@ -1208,6 +1213,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'last_delivery_mode_effective: ""' in app
     assert 'last_delivery_degraded_to: ""' in app
     assert 'last_delivery_warnings: []' in app
+    assert 'function reminderRecipients(reminder)' in app
+    assert 'function reminderDestinations(reminder)' in app
     assert "Notification.requestPermission" not in app
     assert "new Notification(" not in app
     assert "showNotification(" not in app
@@ -3028,6 +3035,36 @@ def test_navigation_state_persists_routes_details_and_scroll_restore() -> None:
     assert 'window.addEventListener("pagehide", persistNavState)' in app
     assert 'document.addEventListener("visibilitychange"' in app
     assert "installFeedScrollPersistence();" in app
+
+
+def test_light_back_uses_bounded_route_history_for_graph_launches() -> None:
+    app = read("app.js")
+
+    light_navigate = function_block(app, "lightNavigate")
+    light_back = function_block(app, "lightBack")
+    open_target = function_block(app, "openWorkspaceTarget")
+
+    assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
+    assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)" in app
+    assert "function normalizeLightRouteHistory(history)" in app
+    assert "function captureLightRouteSnapshot(route = state.route)" in app
+    assert "function pushLightRouteHistory(snapshot)" in app
+    assert "function popLightRouteHistory()" in app
+    assert "function restoreLightRouteSnapshot(snapshot)" in app
+    assert "light_history: normalizeLightRouteHistory(state.lightRouteHistory)" in app
+    assert 'selectionPatch: { [target.selectedKey]: target.id }' in open_target
+    assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
+    assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
+    assert "applyLightRouteSelectionPatch(selectionPatch || {});" in light_navigate
+    assert "const snapshot = popLightRouteHistory();" in light_back
+    assert "return restoreLightRouteSnapshot(snapshot);" in light_back
+    assert 'detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home"' in light_back
+    assert 'lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" })' in app
+    assert 'const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });' in app
+    assert 'meetingNoteDetailRows(meeting)' in app
+    assert 'reminderDetailRows(reminder)' in app
+    assert 'openWorkspaceTarget(item.target, "project-detail")' in app
+    assert 'const relatedRows = lightLinkedRecordRows(item);' in app
 
 
 def test_generated_images_open_as_html_reel_not_native_previews() -> None:
