@@ -274,9 +274,13 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     summary.assertions.push("desktop calendar opened to today");
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
 
-    await setCalendarDate(page, seed.dayAfter);
-    const emptyCopy = await page.getByText("No events on", { exact: false }).textContent();
-    assert(String(emptyCopy || "").includes("No events on"), "Expected date-aware empty-state copy on an empty day.");
+    await setCalendarDate(page, seed.tomorrow);
+    await page.locator(".light-empty-state").waitFor({ state: "visible" });
+    const emptyCopy = await page.locator(".light-empty-state").textContent();
+    assert(
+      String(emptyCopy || "").includes("No events tomorrow") || String(emptyCopy || "").includes("No events on"),
+      "Expected date-aware empty-state copy on an empty day."
+    );
     await saveShot(page, reportDir, "calendar-desktop-empty-day.png", summary);
 
     await goHome(page);
