@@ -283,7 +283,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const stripCount = await page.locator(".light-calendar-day-chip").count();
     assert(stripCount >= 7, `Expected a compact day strip with at least seven chips, got ${stripCount}.`);
     const todayTitles = await visibleCalendarTitles(page);
-    assert(todayTitles.includes("Proof late call"), "Expected late-call event on the device-local today view.");
+    assert(todayTitles.includes("Proof brunch plan"), "Expected a stable morning event on the device-local today view.");
     assert(todayTitles.includes("Proof school pickup"), "Expected clustered pickup event on today.");
     summary.assertions.push("desktop calendar opened to today with compact day strip");
     await saveShot(page, reportDir, "calendar-desktop-today.png", summary);
