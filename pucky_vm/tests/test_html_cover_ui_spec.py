@@ -499,7 +499,7 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     action_unread_block = css_block(styles, ".action.is-unread")
     action_block = css_block(styles, ".action")
     action_playing_block = css_block(styles, ".action-audio.is-playing")
-    detail_header_block = css_block(styles, ".detail-header")
+    light_page_header_shell_block = top_level_css_block(styles, ".light-page-header-shell")
     meeting_row_block = css_block(styles, ".meeting-row")
     task_card_active_block = css_block(styles, ".light-task-card:active")
     task_row_press_block = css_block(styles, ".light-task-row.is-pressed")
@@ -619,7 +619,11 @@ def test_native_light_mode_reuses_canonical_surfaces_and_limits_walkthrough_to_p
     assert 'el("span", "light-task-count due", `${counts.due} today`),' in light_task_count_line
     assert 'el("span", "light-task-count due-soon", `${counts.dueSoon} upcoming`),' in light_task_count_line
     assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
+    assert 'const shell = el("div", "light-page-header-shell");' in light_header
     assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
+    assert 'const titleClass = options.detail' in light_header
+    assert "shell.append(header);" in light_header
+    assert "return shell;" in light_header
     assert 'const page = lightPage("Tasks");' in light_tasks
     assert 'page.classList.add("light-tasks-page");' in light_tasks
     assert 'el("h1", "light-tasks-title", "Tasks")' not in light_tasks
@@ -662,7 +666,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     action_unread_block = css_block(styles, ".action.is-unread")
     action_block = css_block(styles, ".action")
     action_playing_block = css_block(styles, ".action-audio.is-playing")
-    detail_header_block = css_block(styles, ".detail-header")
+    light_page_header_shell_block = top_level_css_block(styles, ".light-page-header-shell")
     meeting_row_block = css_block(styles, ".meeting-row")
     task_card_active_block = css_block(styles, ".light-task-card:active")
     task_row_press_block = css_block(styles, ".light-task-row.is-pressed")
@@ -681,7 +685,11 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
 
     assert 'return isHomeShellRoute() ? "home-shell" : "legacy-shell";' in chrome_mode
     assert 'const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();' in light_header
+    assert 'const shell = el("div", "light-page-header-shell");' in light_header
     assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in light_header
+    assert 'const titleClass = options.detail' in light_header
+    assert "shell.append(header);" in light_header
+    assert "return shell;" in light_header
     assert 'const page = lightPage("Connect");' in light_apps
     assert "{ large: true }" not in light_apps
     assert 'const page = lightPage("Calendar", {' in light_calendar
@@ -723,14 +731,14 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "border-radius:" not in light_date_picker_block
     assert "{ large: true }" not in graph_list
     assert "display: none;" in voice_status_home_shell
-    assert "position: sticky;" in light_page_header
-    assert "top: 0;" in light_page_header
-    assert "z-index:" in light_page_header
-    assert "background:" in light_page_header
-    assert "transparent 100%" not in light_page_header
-    assert "box-shadow:" in light_page_header
-    assert "-webkit-backdrop-filter:" in light_page_header
-    assert "backdrop-filter:" in light_page_header
+    assert "position: sticky;" in light_page_header_shell_block
+    assert "top: 0;" in light_page_header_shell_block
+    assert "z-index:" in light_page_header_shell_block
+    assert "background:" in light_page_header_shell_block
+    assert "transparent 100%" not in light_page_header_shell_block
+    assert "box-shadow:" in light_page_header_shell_block
+    assert "-webkit-backdrop-filter:" in light_page_header_shell_block
+    assert "backdrop-filter:" in light_page_header_shell_block
     assert 'const expanded = taskSectionExpanded(group);' in light_task_sections
     assert 'const toggle = el("button", expanded ? "light-task-section-toggle is-expanded" : "light-task-section-toggle");' in light_task_sections
     assert 'toggle.dataset.taskSection = group;' in light_task_sections
@@ -768,7 +776,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "color: var(--icon-card-action-unread);" in action_unread_block
     assert "color: var(--icon-card-neutral);" in action_block
     assert "color: var(--accent, #72c2ff);" in action_playing_block
-    assert "background: var(--surface-header);" in detail_header_block
+    assert "background: color-mix(in srgb, var(--surface-sheet) 98%, white 2%);" in light_page_header_shell_block
     assert "background: var(--surface-control);" in meeting_row_block
     assert ".light-task-row:active" in styles
     assert ".light-task-card:active" in styles
@@ -862,7 +870,7 @@ def test_home_shell_uses_shared_sticky_headers_and_hides_legacy_voice_status() -
     assert "color: var(--icon-card-action-unread);" in action_unread_block
     assert "color: var(--icon-card-neutral);" in action_block
     assert "color: var(--accent, #72c2ff);" in action_playing_block
-    assert "background: var(--surface-header);" in detail_header_block
+    assert "background: color-mix(in srgb, var(--surface-sheet) 98%, white 2%);" in light_page_header_shell_block
     assert "background: var(--surface-control);" in meeting_row_block
     assert ".light-task-row:active" in styles
     assert ".light-task-card:active" in styles
@@ -1136,7 +1144,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightHtmlDocument(meeting, "No generated event page yet.", { untitledFallback: true, className: "light-detail-html-body light-event-detail-html-body" })' in event_detail
     assert 'ensureLinkedCollections(meeting);' in event_detail
     assert 'const attendees = calendarEventPeople(meeting);' in event_detail
-    assert 'const page = lightPage(meeting.title || "Event");' in event_detail
+    assert 'const page = lightPage(meeting.title || "Event", { detail: true });' in event_detail
     assert 'page.append(lightAttendeesSection(attendees, { fromRoute: "meeting-detail" }));' in event_detail
     assert 'const linkedRows = lightLinkedRecordRows(meeting);' in event_detail
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' in event_detail
@@ -1632,7 +1640,7 @@ def test_voice_status_dot_is_single_turn_indicator() -> None:
     assert "indicator.active = indicator.active || indicator.visual_state !== \"idle\"" in app
     assert "function noteHearingSample(indicator)" not in app
     assert 'document.querySelectorAll("[data-voice-status]")' in app
-    assert "shell.append(header, content)" in app
+    assert "shell.append(header, body)" in app
     assert "function nextVoiceState(current)" not in app
     assert "function initialVoiceState()" not in app
     assert "function normalizeVoiceState(input)" not in app
@@ -1781,9 +1789,9 @@ def test_home_cards_use_safe_area_padding_and_left_reveal_archive() -> None:
     assert "--safe-area-top-pad: max(12px, var(--safe-area-top));" in styles
     assert "--safe-area-bottom-pad: max(14px, var(--safe-area-bottom));" in styles
     assert "padding: 0 14px var(--safe-area-bottom-pad);" in css_block(styles, ".app-shell")
-    assert 'padding-top: var(--safe-area-top-pad);' in css_block(styles, '.light-shell[data-light-route="home"]')
+    assert "padding: max(18px, env(safe-area-inset-top)) var(--light-shell-column-padding) 24px;" in css_block(styles, ".light-home")
     assert "height: var(--viewport-safe-h);" in css_block(styles, ".panel-scroll")
-    assert "height: var(--viewport-safe-h);" in css_block(styles, ".detail-shell")
+    assert "height: var(--viewport-h);" in css_block(styles, ".detail-shell")
     assert "--archive-reveal-offset: 0px;" in css_block(styles, ".card-wrap")
 
 
@@ -2551,21 +2559,24 @@ def test_transcript_and_pages_use_right_slide_detail_navigation() -> None:
     assert "pucky-detail-swipe" not in app
     assert "requestAnimationFrame(applyFrame)" in app
     assert ".rich-swipe-edge" in styles
-    assert 'iconSvg("chevron_left"' in app
+    assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in app
+    assert 'const header = lightHeader(title, { onBack: onDismiss, detail: true });' in app
+    assert 'const body = el("div", "detail-content");' in app
+    assert 'const bodyInner = el("div", "detail-content-inner");' in app
+    assert "bodyInner.append(content);" in app
     assert "function installHorizontalDismiss(" in app
     assert "translateX(100%)" in styles
     assert "translateY(100%)" in styles
     assert ".detail-panel.is-open" in styles
-    assert ".detail-header" in styles
-    assert "flex: 0 0 45px" in styles
-    assert "grid-template-columns: 45px minmax(0, 1fr) 45px" in styles
-    assert "width: 45px" in styles
-    assert "height: 45px" in styles
+    assert ".light-page-header-shell" in styles
+    assert "grid-template-columns: 46px minmax(0, 1fr) 46px" in styles
+    assert "width: 42px" in styles
+    assert "height: 42px" in styles
     assert "position: sticky" in styles
-    assert ".detail-back" in styles
+    assert ".light-back-button" in app
     assert "width: 24px" in styles
     assert "height: 24px" in styles
-    assert ".detail-title" in styles
+    assert ".light-page-title-detail" in styles
     assert ".rich-detail" in styles
 
 
@@ -3041,7 +3052,7 @@ def test_generated_images_open_as_html_reel_not_native_previews() -> None:
     assert "frame.append(shell);" in app
     assert "function detailDismissHandler(options = {}, fallback = dismissDetail)" in app
     assert "const dismissAttachment = detailDismissHandler(options);" in app
-    assert 'back.setAttribute("aria-label", "Back")' in app
+    assert 'lightCircleButton("chevron_left", "Back", onBack, "light-back-button")' in app
     assert 'back.setAttribute("aria-label", "Back to feed")' not in app
     assert "function showDocumentAttachment(card, item, options = {})" in app
     assert "async function documentViewer(card, item, options = {})" in app
@@ -3227,7 +3238,7 @@ def test_android_system_back_closes_html_detail_first() -> None:
     assert "function handleAndroidBack()" in app
     assert "window.PuckyHandleAndroidBack = handleAndroidBack" in app
     assert 'detail.classList.contains("is-open")' in app
-    assert 'detail.querySelector(".detail-back")' in app
+    assert 'detail.querySelector(".light-back-button, .detail-back")' in app
     assert "back.click()" in app
     assert "dismissDetail()" in app
     assert 'traceSheet.classList.contains("is-open")' in app

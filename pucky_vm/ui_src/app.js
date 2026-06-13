@@ -3909,10 +3909,10 @@
   function lightContactDetailPage() {
     const contact = selectedContact();
     if (!contact) {
-      return lightPage("Contact", { subtitle: "Contact not found." });
+      return lightPage("Contact", { subtitle: "Contact not found.", detail: true });
     }
     ensureLinkedCollections(contact);
-    const page = lightPage("Contact");
+    const page = lightPage("Contact", { detail: true });
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
@@ -4153,7 +4153,7 @@
   function lightMeetingDetailPage() {
     const meeting = selectedMeeting();
     if (!meeting) {
-      return lightPage("Event", { subtitle: "Event not found." });
+      return lightPage("Event", { subtitle: "Event not found.", detail: true });
     }
     ensureLinkedCollections(meeting);
     const meta = meeting.metadata || {};
@@ -4163,7 +4163,7 @@
     if (calendarEventNeedsContacts(meeting) && !contactBucket.loaded && !contactBucket.loading) {
       void loadWorkspaceCollection("contacts", { render: true });
     }
-    const page = lightPage(meeting.title || "Event");
+    const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -4279,10 +4279,10 @@
   function lightReminderDetailPage() {
     const reminder = selectedReminder();
     if (!reminder) {
-      return lightPage("Reminder", { subtitle: "Reminder not found." });
+      return lightPage("Reminder", { subtitle: "Reminder not found.", detail: true });
     }
     ensureLinkedCollections(reminder);
-    const page = lightPage("Reminder");
+    const page = lightPage("Reminder", { detail: true });
     page.classList.add("light-document-page", "light-reminder-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -4394,10 +4394,10 @@
 
   function lightGraphDetailPage(record, options = {}) {
     if (!record) {
-      return lightPage(options.title || "Workspace", { subtitle: "Record not found." });
+      return lightPage(options.title || "Workspace", { subtitle: "Record not found.", detail: true });
     }
     ensureLinkedCollections(record);
-    const page = lightPage(options.title || graphKindLabel(record.kind));
+    const page = lightPage(options.title || graphKindLabel(record.kind), { detail: true });
     page.classList.add("light-document-page", "light-graph-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -5046,9 +5046,9 @@
   function lightNoteDetailPage() {
     const note = selectedNote();
     if (!note) {
-      return lightPage("Note", { subtitle: "Note not found." });
+      return lightPage("Note", { subtitle: "Note not found.", detail: true });
     }
-    const page = lightPage("Note");
+    const page = lightPage("Note", { detail: true });
     page.classList.add("light-document-page", "light-note-document");
     const article = el("article", "light-doc-article light-note-detail");
     article.append(
@@ -5230,9 +5230,9 @@
   function lightTaskDetailPage() {
     const task = selectedTask();
     if (!task) {
-      return lightPage("Task", { subtitle: "Task not found." });
+      return lightPage("Task", { subtitle: "Task not found.", detail: true });
     }
-    const page = lightPage("Task");
+    const page = lightPage("Task", { detail: true });
     page.classList.add("light-task-detail-page");
     page.append(lightTaskDetailCard(task));
     page.append(lightHtmlDocument(task, "No task page yet.", { untitledFallback: true, className: "light-detail-html-body light-task-detail-body" }));
@@ -5283,10 +5283,10 @@
   function lightFeedDetailPage() {
     const item = selectedFeedItem();
     if (!item) {
-      return lightPage("Feed Item", { subtitle: "Feed item not found." });
+      return lightPage("Feed Item", { subtitle: "Feed item not found.", detail: true });
     }
     ensureLinkedCollections(item);
-    const page = lightPage("Feed Item");
+    const page = lightPage("Feed Item", { detail: true });
     page.classList.add("light-document-page", "light-feed-document");
     const article = el("article", "light-doc-article");
     article.append(
@@ -5331,10 +5331,10 @@
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
-      return lightPage("Project", { subtitle: "Project not found." });
+      return lightPage("Project", { subtitle: "Project not found.", detail: true });
     }
     ensureLinkedCollections(project);
-    const page = lightPage(project.title);
+    const page = lightPage(project.title, { detail: true });
     page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`, "folder"));
     page.append(lightChipCloud(projectChips(project)));
     const grid = el("div", "light-project-section-grid");
@@ -5462,15 +5462,22 @@
   }
 
   function lightHeader(title, options = {}) {
+    const shell = el("div", "light-page-header-shell");
     const header = el("header", "light-page-header");
     const onBack = typeof options.onBack === "function" ? options.onBack : () => lightBack();
     const left = options.back === false
       ? el("div", "light-nav-slot")
       : lightCircleButton("chevron_left", "Back", onBack, "light-back-button");
-    const heading = el(options.large ? "h1" : "h2", options.large ? "light-page-title large" : "light-page-title", title);
+    const titleClass = options.detail
+      ? "light-page-title light-page-title-detail"
+      : options.large
+        ? "light-page-title large"
+        : "light-page-title";
+    const heading = el(options.detail || options.large ? "h1" : "h2", titleClass, title);
     const right = options.action || el("div", "light-nav-slot");
     header.append(left, heading, right);
-    return header;
+    shell.append(header);
+    return shell;
   }
 
   function lightNavigate(route, options = {}) {
@@ -9834,14 +9841,12 @@
 
   function openSideDetail(panel, title, content, onDismiss) {
     const shell = el("div", "detail-shell");
-    const header = el("header", "detail-header");
-    const back = el("button", "detail-back");
-    back.type = "button";
-    back.innerHTML = iconSvg("chevron_left", { filled: false });
-    back.setAttribute("aria-label", "Back");
-    back.addEventListener("click", onDismiss);
-    header.append(back, el("h1", "detail-title", title));
-    shell.append(header, content);
+    const header = lightHeader(title, { onBack: onDismiss, detail: true });
+    const body = el("div", "detail-content");
+    const bodyInner = el("div", "detail-content-inner");
+    bodyInner.append(content);
+    body.append(bodyInner);
+    shell.append(header, body);
     panel.replaceChildren(shell);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
@@ -9877,7 +9882,7 @@
     }
     const detail = document.getElementById("detail");
     if (detail && detail.classList.contains("is-open")) {
-      const back = detail.querySelector(".detail-back");
+      const back = detail.querySelector(".light-back-button, .detail-back");
       if (back) {
         back.click();
       } else {
