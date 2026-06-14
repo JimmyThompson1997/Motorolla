@@ -73,6 +73,7 @@ function parseArgs(argv) {
     runId: `live-task-proof-${Date.now()}`,
     restoreSeedState: true,
     cleanupFirst: true,
+    filterOnly: false,
     reportDir: path.resolve("artifacts", "task-workspace-live-proof", new Date().toISOString().replace(/[:.]/g, "-")),
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -91,6 +92,8 @@ function parseArgs(argv) {
       config.restoreSeedState = false;
     } else if (arg === "--no-cleanup-first") {
       config.cleanupFirst = false;
+    } else if (arg === "--filter-only") {
+      config.filterOnly = true;
     }
   }
   return config;

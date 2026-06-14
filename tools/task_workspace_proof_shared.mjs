@@ -999,13 +999,29 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     screenshots[`${mode}_task_filter_pill_light`] = await saveLocatorScreenshot(page, ".light-task-filter-button", config.reportDir, `${mode}-01-task-filter-pill`);
 
     await verifyListFilters(page, seed, mode, config, checks);
+    await verifyDarkThemeFilter(page, mode, config, screenshots, checks);
+    if (config.filterOnly) {
+      const pageErrors = tracking.pageErrors.slice();
+      const badConsole = seriousConsoleErrors(tracking.consoleErrors);
+      assert(pageErrors.length === 0, `${mode}: unexpected page errors: ${JSON.stringify(pageErrors)}`);
+      assert(badConsole.length === 0, `${mode}: unexpected console errors: ${JSON.stringify(badConsole)}`);
+      return {
+        mode,
+        page_url: pageUrl,
+        checks,
+        screenshots,
+        console_log: consoleLogPath,
+        page_errors: pageErrors,
+        console_errors: tracking.consoleErrors,
+      };
+    }
+
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
     await verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks);
     await verifyStatusMutations(page, seed, mode, config, checks);
     await verifyChecklistPersistence(page, seed, mode, config, checks);
     await verifyNavigationLoop(page, seed, mode, config, screenshots, checks);
     await verifyReloadStability(page, seed, mode, config, checks);
-    await verifyDarkThemeFilter(page, mode, config, screenshots, checks);
 
     const pageErrors = tracking.pageErrors.slice();
     const badConsole = seriousConsoleErrors(tracking.consoleErrors);

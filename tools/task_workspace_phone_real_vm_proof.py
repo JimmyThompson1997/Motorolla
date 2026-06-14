@@ -64,6 +64,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--browser-timeout-seconds", type=int, default=60)
     parser.add_argument("--command-timeout-seconds", type=int, default=120)
     parser.add_argument("--devtools-port", type=int, default=9222)
+    parser.add_argument("--filter-only", action="store_true")
     args = parser.parse_args(argv)
     args.browser_summary = args.browser_summary.resolve()
     args.repo_root = args.repo_root.resolve()
@@ -446,6 +447,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             ],
         )
         verify_filter_visual(op_state(reset_light_phase, "task_state"), theme="light")
+
+        if args.filter_only:
+            summary = {
+                "schema": RESULT_SCHEMA,
+                "created_at": phone_shared.utc_stamp(),
+                "ok": True,
+                "base_url": args.vm_base_url,
+                "browser_summary_path": str(args.browser_summary),
+                "seed_manifest_path": str(Path(str(browser_summary["seed_manifest_path"])).resolve()),
+                "target": {
+                    "type": "phone",
+                    "serial": serial,
+                    "device_id": args.device_id,
+                    "cdp_url": cdp["cdp_url"],
+                },
+                "local_git": local_git,
+                "remote_manifest": remote_manifest,
+                "identity_checks": identity_checks,
+                "bundle": bundle,
+                "surface_before": surface_before,
+                "filter_checks": filter_checks,
+                "navigation_checks": navigation_checks,
+                "status_checks": status_checks,
+                "checklist_checks": checklist_checks,
+            }
+            summary_path = scenario_dir / "summary.json"
+            phone_shared.save_json(summary_path, summary)
+            return summary
 
         primary_phase = run_phase(
             args,
