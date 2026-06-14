@@ -64,7 +64,8 @@ const viewports = [
   { label: "iphone-se", width: 320, height: 568 },
   { label: "iphone-13-mini", width: 375, height: 812 },
   { label: "iphone-14-plus", width: 428, height: 926 },
-  { label: "ipad-mini", width: 768, height: 1024 }
+  { label: "ipad-mini", width: 768, height: 1024 },
+  { label: "desktop", width: 1440, height: 900 }
 ];
 
 function cloneNotes(notes) {
@@ -154,30 +155,33 @@ async function createStaticServer() {
 async function readNotesView(page) {
   return page.evaluate(() => {
     const groups = {};
-    let current = "";
-    [...document.querySelectorAll(".light-page > .light-section-title, .light-page > .light-list")].forEach(node => {
-      if (node.classList.contains("light-section-title")) {
-        current = node.textContent?.trim().toLowerCase() || "";
-        groups[current] = [];
-        return;
-      }
-      if (node.classList.contains("light-list") && current) {
-        groups[current] = [...node.querySelectorAll(".light-note-row .light-text-stack strong")].map(el => el.textContent?.trim() || "");
-      }
+    [...document.querySelectorAll(".light-notes-section")].forEach(section => {
+      const current = section.querySelector(".light-section-title")?.textContent?.trim().toLowerCase() || "";
+      groups[current] = [...section.querySelectorAll(".light-note-row .light-note-feed-copy strong")].map(el => el.textContent?.trim() || "");
     });
+    const notesFeed = document.querySelector(".light-notes-feed");
     return {
       route: document.querySelector("[data-light-route]")?.getAttribute("data-light-route") || document.body?.dataset?.route || null,
+      hasNotesFeed: Boolean(notesFeed),
       rowPinButtons: document.querySelectorAll(".light-note-row .light-note-pin-button").length,
       leftIcons: document.querySelectorAll(".light-note-row .light-small-icon").length,
+      cardRows: document.querySelectorAll(".light-note-row.light-card").length,
       groups,
       rows: [...document.querySelectorAll(".light-note-row")].map(row => {
         const rect = row.getBoundingClientRect();
+        const copy = row.querySelector(".light-note-feed-copy");
+        const pin = row.querySelector(".light-note-pin-button");
+        const copyRect = copy?.getBoundingClientRect();
+        const pinRect = pin?.getBoundingClientRect();
         return {
           id: row.getAttribute("data-note-id") || "",
-          title: row.querySelector(".light-text-stack strong")?.textContent?.trim() || "",
-          pinned: row.querySelector(".light-note-pin-button")?.getAttribute("data-note-pinned") || "",
+          title: row.querySelector(".light-note-feed-copy strong")?.textContent?.trim() || "",
+          pinned: pin?.getAttribute("data-note-pinned") || "",
           width: Math.round(rect.width),
-          height: Math.round(rect.height)
+          height: Math.round(rect.height),
+          hasSummary: Boolean(row.querySelector(".light-note-summary")),
+          copyRight: copyRect ? Math.round(copyRect.right) : 0,
+          pinLeft: pinRect ? Math.round(pinRect.left) : 0
         };
       })
     };
@@ -194,6 +198,55 @@ async function openNotes(page) {
   await waitForNotesList(page);
 }
 
+async function readHorizontalMetrics(page) {
+  return page.evaluate(() => {
+    function rectData(node) {
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return {
+        left: Number(rect.left.toFixed(2)),
+        right: Number(rect.right.toFixed(2)),
+        width: Number(rect.width.toFixed(2)),
+        centerX: Number((rect.left + rect.width / 2).toFixed(2))
+      };
+    }
+    const shell = document.querySelector(".light-shell");
+    const feed = document.getElementById("feed");
+    const content = shell ? [...shell.children].find(node => node.getBoundingClientRect().height > 0) : null;
+    return {
+      route: shell?.getAttribute("data-light-route") || "",
+      innerWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      documentScrollLeft: Number((window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0).toFixed(2)),
+      feedScrollLeft: Number((feed?.scrollLeft || 0).toFixed(2)),
+      feedScrollWidth: Number(feed?.scrollWidth || 0),
+      feedClientWidth: Number(feed?.clientWidth || 0),
+      shell: rectData(shell),
+      content: rectData(content)
+    };
+  });
+}
+
+async function attemptHorizontalShift(page, label) {
+  const before = await readHorizontalMetrics(page);
+  await page.evaluate(() => {
+    window.scrollTo({ left: 120, top: window.scrollY, behavior: "instant" });
+    const feed = document.getElementById("feed");
+    if (feed && typeof feed.scrollTo === "function") {
+      feed.scrollTo({ left: 120, top: feed.scrollTop, behavior: "instant" });
+    }
+  });
+  await page.waitForTimeout(120);
+  const after = await readHorizontalMetrics(page);
+  assert(after.documentScrollWidth <= after.innerWidth + 1, `${label}: document scroll width overflowed (${after.documentScrollWidth} > ${after.innerWidth})`);
+  assert(after.documentScrollLeft <= 1, `${label}: document scrolled horizontally (${after.documentScrollLeft})`);
+  assert(after.feedScrollLeft <= 1, `${label}: feed scrolled horizontally (${after.feedScrollLeft})`);
+  if (before.content && after.content) {
+    assert(Math.abs(after.content.centerX - before.content.centerX) <= 1, `${label}: content center drifted (${before.content.centerX} -> ${after.content.centerX})`);
+  }
+  return { before, after };
+}
+
 async function runViewportScenario(browser, pageUrl, viewport) {
   const viewportSlug = slug(viewport.label);
   const state = {
@@ -202,7 +255,11 @@ async function runViewportScenario(browser, pageUrl, viewport) {
   };
   const networkLog = [];
   const consoleWarnings = [];
-  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } });
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    isMobile: viewport.width <= 768,
+    hasTouch: viewport.width <= 768
+  });
   try {
     await context.route("**/api/workspace/notes**", async route => {
       const request = route.request();
@@ -250,16 +307,24 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     });
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
+    const homeCentering = await attemptHorizontalShift(page, `${viewport.label}:home`);
+    const homeShot = path.join(proofDir, `${viewportSlug}-00-home-centered.png`);
+    await page.screenshot({ path: homeShot, fullPage: true });
     await openNotes(page);
 
     const baseline = await readNotesView(page);
     assert.equal(baseline.route, "notes", `${viewport.label}: Notes route did not open`);
+    assert.equal(baseline.hasNotesFeed, true, `${viewport.label}: expected notes feed wrapper`);
     assert.equal(baseline.rowPinButtons, 3, `${viewport.label}: expected 3 row pin buttons`);
     assert.equal(baseline.leftIcons, 0, `${viewport.label}: expected no left icons`);
+    assert.equal(baseline.cardRows, 0, `${viewport.label}: expected notes rows without tile cards`);
     assert.deepEqual(baseline.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: pinned baseline mismatch`);
     assert.deepEqual(baseline.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: recent baseline mismatch`);
     assert.equal(new Set(baseline.rows.map(row => row.width)).size, 1, `${viewport.label}: pinned/recent widths diverged`);
     assert.equal(new Set(baseline.rows.map(row => row.height)).size, 1, `${viewport.label}: pinned/recent heights diverged`);
+    assert(baseline.rows.every(row => row.hasSummary), `${viewport.label}: expected summary previews in notes feed`);
+    assert(baseline.rows.every(row => row.copyRight < row.pinLeft), `${viewport.label}: note copy overlaps pin button`);
+    const notesCentering = await attemptHorizontalShift(page, `${viewport.label}:notes`);
     const baselineShot = path.join(proofDir, `${viewportSlug}-01-baseline.png`);
     await page.screenshot({ path: baselineShot, fullPage: true });
 
@@ -285,7 +350,7 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     const afterUnpinShot = path.join(proofDir, `${viewportSlug}-03-after-unpin.png`);
     await page.screenshot({ path: afterUnpinShot, fullPage: true });
 
-    await page.locator('.light-note-row[data-note-id="march"] .light-text-stack').click();
+    await page.locator('.light-note-row[data-note-id="march"] .light-note-feed-copy').click();
     await page.locator(".light-doc-article h1").waitFor({ state: "visible", timeout: 10000 });
     assert.equal((await page.locator(".light-doc-article h1").textContent())?.trim(), "March eval notes", `${viewport.label}: note detail did not open`);
     await page.locator('button[aria-label="Back"]').click();
@@ -307,7 +372,12 @@ async function runViewportScenario(browser, pageUrl, viewport) {
 
     return {
       viewport,
+      centering: {
+        home: homeCentering,
+        notes: notesCentering
+      },
       screenshots: {
+        home: homeShot,
         baseline: baselineShot,
         after_pin: afterPinShot,
         after_unpin: afterUnpinShot

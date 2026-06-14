@@ -5218,6 +5218,7 @@
 
   function lightNotesPage() {
     const page = lightPage("Notes");
+    page.classList.add("light-notes-page");
     const status = lightWorkspaceStatus("notes", "note", "No notes yet");
     if (status) {
       page.append(status);
@@ -5225,19 +5226,24 @@
     }
     const notes = workspaceItems("notes");
     const pinned = notes.filter(note => note.pinned);
+    const feedWrap = el("div", "light-notes-feed");
     if (pinned.length) {
-      const pinnedList = el("div", "light-list");
-      pinnedList.append(...pinned.map(lightNoteRow));
-      page.append(lightSectionTitle("Pinned"), pinnedList);
+      feedWrap.append(lightNotesSection("Pinned", pinned));
     }
-    const recent = el("div", "light-list");
-    recent.append(...notes.filter(note => !note.pinned).map(lightNoteRow));
-    page.append(lightSectionTitle("Recent"), recent);
+    feedWrap.append(lightNotesSection("Recent", notes.filter(note => !note.pinned)));
+    page.append(feedWrap);
     return page;
   }
 
+  function lightNotesSection(title, notes) {
+    const section = el("section", "light-notes-section");
+    section.append(lightSectionTitle(title));
+    notes.forEach(note => section.append(lightNoteRow(note)));
+    return section;
+  }
+
   function lightNoteRow(note) {
-    const row = el("div", "light-card light-note-row");
+    const row = el("div", "light-note-row");
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     row.setAttribute("aria-label", note.title || "Open note");
@@ -5255,6 +5261,13 @@
       }
     });
     const meta = noteMetaLine(note);
+    const preview = String(note.summary || "").trim();
+    const copy = el("span", "light-note-feed-copy");
+    copy.append(el("strong", "", note.title));
+    if (preview) {
+      copy.append(el("span", "light-note-summary", preview));
+    }
+    copy.append(el("span", "light-note-row-meta", meta));
     const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
       if (event) {
         event.preventDefault();
@@ -5271,7 +5284,7 @@
     pin.dataset.notePinned = String(Boolean(note.pinned));
     pin.setAttribute("aria-pressed", String(Boolean(note.pinned)));
     pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });
-    row.append(lightTextStack(note.title, meta), pin);
+    row.append(copy, pin);
     return row;
   }
 

@@ -223,28 +223,38 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     styles = read("styles.css")
 
     light_notes = function_block(app, "lightNotesPage")
+    light_notes_section = function_block(app, "lightNotesSection")
     note_timestamp = function_block(app, "noteContentUpdatedAtMs")
     note_row = function_block(app, "lightNoteRow")
     toggle_note_pin = function_block(app, "toggleNotePin")
+    feed_block = css_block(styles, ".feed")
+    header_block = css_block(styles, ".light-page-header-shell")
+    notes_feed_block = css_block(styles, ".light-notes-feed")
     note_row_block = css_block(styles, ".light-note-row")
+    note_row_divider_block = css_block(styles, ".light-note-row + .light-note-row")
     note_pin_button_block = css_block(styles, ".light-note-pin-button")
 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
-    assert 'const pinnedList = el("div", "light-list");' in light_notes
-    assert "pinnedList.append(...pinned.map(lightNoteRow));" in light_notes
-    assert 'page.append(lightSectionTitle("Pinned"), pinnedList);' in light_notes
-    assert 'const recent = el("div", "light-list");' in light_notes
-    assert 'recent.append(...notes.filter(note => !note.pinned).map(lightNoteRow));' in light_notes
+    assert 'page.classList.add("light-notes-page");' in light_notes
+    assert 'const feedWrap = el("div", "light-notes-feed");' in light_notes
+    assert 'feedWrap.append(lightNotesSection("Pinned", pinned));' in light_notes
+    assert 'feedWrap.append(lightNotesSection("Recent", notes.filter(note => !note.pinned)));' in light_notes
+    assert 'page.append(feedWrap);' in light_notes
+    assert 'const section = el("section", "light-notes-section");' in light_notes_section
+    assert 'notes.forEach(note => section.append(lightNoteRow(note)));' in light_notes_section
 
-    assert 'const row = el("div", "light-card light-note-row");' in note_row
+    assert 'const row = el("div", "light-note-row");' in note_row
     assert 'row.setAttribute("role", "button");' in note_row
     assert "row.tabIndex = 0;" in note_row
     assert 'row.dataset.notePinned = String(Boolean(note.pinned));' in note_row
     assert "row.append(lightSmallIcon(" not in note_row
     assert 'const meta = noteMetaLine(note);' in note_row
     assert 'note.pinned ? `Pinned${DOT}` : ""' not in note_row
+    assert 'const copy = el("span", "light-note-feed-copy");' in note_row
+    assert 'copy.append(el("strong", "", note.title));' in note_row
+    assert 'copy.append(el("span", "light-note-row-meta", meta));' in note_row
     assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
     assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
     assert "void toggleNotePin(note.id);" in note_row
@@ -253,10 +263,18 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "bucket.items = nextPinned" in toggle_note_pin
     assert "bucket.items = previousItems;" in toggle_note_pin
     assert "bucket.error = previousError;" in toggle_note_pin
+    assert "overflow-x: hidden;" in feed_block
+    assert "overscroll-behavior-x: none;" in feed_block
+    assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" not in header_block
+    assert "margin-left: calc(-1 * var(--app-shell-side-pad));" not in header_block
+    assert "margin-right: calc(-1 * var(--app-shell-side-pad));" not in header_block
 
     assert "min-height: 88px;" in note_row_block
-    assert "padding: 14px 16px;" in note_row_block
+    assert "padding: 14px 0;" in note_row_block
     assert "grid-template-columns: minmax(0, 1fr) auto;" in note_row_block
+    assert "display: flex;" in notes_feed_block
+    assert "flex-direction: column;" in notes_feed_block
+    assert "border-top:" in note_row_divider_block
     assert "color: #0a84ff;" in note_pin_button_block
     assert '.light-note-pin-button[data-note-pinned="true"]' in styles
 
