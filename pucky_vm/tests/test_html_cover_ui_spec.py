@@ -1120,6 +1120,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "function lightTaskDetailSurface(task)" in app
     assert "function lightTaskAttachmentsSection(task)" in app
     assert "function lightTaskChecklistSection(task)" in app
+    assert "function taskCreatedByTarget(task)" in app
+    assert "function ensureTaskCreatedByContact(task)" in app
     assert 'await patchWorkspaceRecord("tasks", task.id, { checklist: items }, { render: true });' in app
     assert "function openTaskFromList(task)" in app
     assert "function taskStatusFilterChoices()" in app
@@ -1138,6 +1140,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightInfoSection("Related"' not in task_detail
     assert 'const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
     assert 'card.append(el("span", taskCheckCircleClass(task)), copy, lightTaskStatusControl(task));' in task_detail_card
+    task_detail_rows = function_block(app, "taskDetailRows")
+    assert "target: taskCreatedByTarget(task)" in task_detail_rows
     assert 'selectedCalendarDateKey()' in light_date_picker
     assert 'input.type = "date";' in light_date_picker
     assert 'input.setAttribute("aria-label", "Calendar date")' in light_date_picker
@@ -1178,6 +1182,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "function calendarEventPeople(event)" in app
     assert "function calendarEventChipTargets(event)" in app
     assert "function lightRecordChip(entry, options = {})" in app
+    assert "function lightChipIcon(icon)" in app
     assert "function calendarEventDetailRows(event, attendees = calendarEventPeople(event))" in app
     assert "function lightCalendarEventChips(event, options = {})" in app
     assert 'return `${first} ${last.charAt(0).toUpperCase()}.`;' in app
@@ -1277,6 +1282,9 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert ".light-event-main" in styles
     assert ".light-event-chip-row" in styles
     assert ".light-attendee-chip" in styles
+    assert ".light-record-chip" in styles
+    assert ".light-record-chip-icon" in styles
+    assert ".light-record-chip-label" in styles
     assert ".light-attendee-chip-card" in styles
     assert ".light-event-connected-card" in styles
     assert ".light-event-block.purple" in styles
@@ -1341,6 +1349,7 @@ def test_tasks_use_structured_detail_split_layout_and_origin_aware_graph_navigat
     light_record_chip = function_block(app, "lightRecordChip")
     open_workspace_target = function_block(app, "openWorkspaceTarget")
     light_back = function_block(app, "lightBack")
+    task_detail_rows = function_block(app, "taskDetailRows")
 
     assert "const TASK_SPLIT_MIN_WIDTH_PX = 900;" in app
     assert "taskNavOrigin: null," in app
@@ -1351,12 +1360,16 @@ def test_tasks_use_structured_detail_split_layout_and_origin_aware_graph_navigat
     assert "function rememberTaskNavOrigin(taskId, route = taskDetailReturnRoute())" in app
     assert 'surface.dataset.taskDetailId = String(task?.id || "");' in light_task_surface
     assert 'surface.dataset.taskStatus = normalizedTaskStatus(task);' in light_task_surface
+    assert "ensureTaskCreatedByContact(task);" in light_task_surface
     assert 'surface.append(lightInfoSection("Details", taskDetailRows(task)));' in light_task_surface
     assert 'surface.append(lightCopySection("Description", description));' in light_task_surface
     assert 'const checklist = lightTaskChecklistSection(task);' in light_task_surface
     assert 'const attachments = lightTaskAttachmentsSection(task);' in light_task_surface
     assert 'const origin = { taskId: task.id, route: taskDetailReturnRoute() };' in light_task_attachments
     assert "taskOrigin: origin" in light_task_attachments
+    assert "target: taskCreatedByTarget(task)" in task_detail_rows
+    assert "lightChipIcon(graphKindIcon(entry?.kind))" in light_record_chip
+    assert 'el("span", "light-record-chip-label", label)' in light_record_chip
     assert 'chip.dataset.workspaceTargetRoute = target.route;' in light_record_chip
     assert 'chip.dataset.workspaceTargetId = target.id;' in light_record_chip
     assert 'chip.dataset.workspaceTargetKind = target.kind || "";' in light_record_chip

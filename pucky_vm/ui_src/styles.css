@@ -4162,6 +4162,9 @@ button {
   -webkit-appearance: none;
   cursor: pointer;
   touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .light-info-row.is-clickable:focus-visible {
@@ -4835,6 +4838,9 @@ button {
   -webkit-appearance: none;
   touch-action: manipulation;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .light-task-row + .light-task-row {
@@ -5010,6 +5016,9 @@ button {
   appearance: none;
   border: 0;
   background: #f3f6fb;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .light-attendee-chip.is-link {
@@ -5319,6 +5328,9 @@ button {
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .light-task-checklist-row + .light-task-checklist-row {
@@ -5352,6 +5364,34 @@ button {
 .light-task-chip-cloud .light-attendee-chip {
   min-height: 30px;
   font-size: 12px;
+}
+
+.light-record-chip {
+  gap: 7px;
+  padding: 0 11px 0 8px;
+}
+
+.light-record-chip-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  color: color-mix(in srgb, var(--accent-primary) 78%, var(--home-shell-text));
+}
+
+.light-record-chip-icon .material-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.light-record-chip-label {
+  min-width: 0;
 }
 
 .light-task-workspace {

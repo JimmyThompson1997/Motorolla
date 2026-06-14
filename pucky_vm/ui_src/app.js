@@ -5534,11 +5534,35 @@
     });
   }
 
+  function taskCreatedByTarget(task) {
+    const createdBy = taskCreatedBy(task);
+    if (!createdBy) {
+      return null;
+    }
+    return workspaceContactTargetByName(createdBy);
+  }
+
+  function ensureTaskCreatedByContact(task) {
+    if (!taskCreatedBy(task)) {
+      return;
+    }
+    const bucket = workspaceBucket("contacts");
+    if (!bucket.loaded && !bucket.loading) {
+      void loadWorkspaceCollection("contacts", { render: true });
+    }
+  }
+
   function taskDetailRows(task) {
+    const createdBy = taskCreatedBy(task);
     return [
       { icon: "clock", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
       { icon: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
-      { icon: "contacts", label: "Created by", value: taskCreatedBy(task) || "Unknown" },
+      {
+        icon: "contacts",
+        label: "Created by",
+        value: createdBy || "Unknown",
+        target: taskCreatedByTarget(task)
+      },
     ];
   }
 
@@ -5651,6 +5675,12 @@
     return section;
   }
 
+  function lightChipIcon(icon) {
+    const wrap = el("span", "light-record-chip-icon");
+    wrap.innerHTML = iconSvg(icon, { filled: false });
+    return wrap;
+  }
+
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
     const copy = el("div", "light-task-detail-copy");
@@ -5671,6 +5701,7 @@
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
+    ensureTaskCreatedByContact(task);
     surface.append(lightInfoSection("Details", taskDetailRows(task)));
     const description = taskDescription(task);
     if (description) {
@@ -6478,7 +6509,14 @@
   function lightRecordChip(entry, options = {}) {
     const label = String(entry?.label || graphKindLabel(entry?.kind)).trim() || "Linked";
     const target = entry?.target || null;
-    const chip = el(target ? "button" : "span", target ? "light-attendee-chip light-calendar-link-chip is-link" : "light-attendee-chip light-calendar-link-chip", label);
+    const chip = el(
+      target ? "button" : "span",
+      target ? "light-attendee-chip light-calendar-link-chip light-record-chip is-link" : "light-attendee-chip light-calendar-link-chip light-record-chip"
+    );
+    chip.append(
+      lightChipIcon(graphKindIcon(entry?.kind)),
+      el("span", "light-record-chip-label", label)
+    );
     if (target) {
       chip.type = "button";
       chip.dataset.workspaceTargetRoute = target.route;

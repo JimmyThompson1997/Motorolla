@@ -83,7 +83,7 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     projectTitle: `Task Proof Project ${runLabel}`,
     calendarEventTitle: `Task Proof Event ${runLabel}`,
     primaryDescription: "Structured task detail should show this description without falling back to a generated HTML page.",
-    createdBy: "Pucky Task Proof",
+    createdBy: `Task Proof Contact ${runLabel}`,
     createdAtMs: nowMs - 2 * 60 * 60 * 1000,
     primaryDueAtMs: nowMs + 2 * 60 * 60 * 1000,
     overdueDueAtMs: nowMs - 90 * 60 * 1000,
@@ -402,6 +402,8 @@ async function recordViewState(page) {
       hasDescriptionSection: sectionTitles.includes("description"),
       hasChecklistSection: sectionTitles.includes("checklist"),
       hasAttachedSection: sectionTitles.includes("attached"),
+      createdByInteractive: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
+      attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
       statusButtonCount: detail?.querySelectorAll(".light-task-status-control .light-pill").length || 0,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
     };
@@ -596,6 +598,8 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.hasDescriptionSection, `${mode}: primary task is missing Description`);
   assert(state.hasChecklistSection, `${mode}: primary task is missing Checklist`);
   assert(state.hasAttachedSection, `${mode}: primary task is missing Attached`);
+  assert(state.createdByInteractive, `${mode}: primary task Created by row should open the linked contact`);
+  assert(state.attachedChipIconCount >= 4, `${mode}: primary task chips should render icons for linked records`);
   assert(state.statusButtonCount >= 4, `${mode}: primary task is missing status controls`);
   await pageTextIncludes(page, seed.primaryTaskTitle, config.timeoutMs);
   screenshots[`${mode}_task_detail_primary`] = await saveScreenshot(page, config.reportDir, `${mode}-02-task-detail-primary`);
@@ -622,6 +626,42 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   });
 
   await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
+}
+
+async function verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks) {
+  const row = page.locator('.light-task-detail-surface .light-info-row[data-workspace-target-kind="contact"]').first();
+  await row.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const payload = await row.evaluate(node => ({
+    label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
+    route: String(node.dataset.workspaceTargetRoute || "").trim(),
+    id: String(node.dataset.workspaceTargetId || "").trim(),
+    kind: String(node.dataset.workspaceTargetKind || "").trim(),
+  }));
+  await row.click();
+  await waitForRoute(page, "contact-detail", config.timeoutMs);
+  await pageTextIncludes(page, seed.contactTitle, config.timeoutMs);
+  const openedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-created-by-opened`);
+  await page.locator("button.light-back-button").click();
+  await waitForRoute(page, mode === "mobile" ? "task-detail" : "tasks", config.timeoutMs);
+  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  const returnedState = await recordViewState(page);
+  const returnedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-created-by-returned`);
+  assert(returnedState.taskDetailId === seed.primaryTaskId, `${mode}: Created by back path lost the originating task`);
+  checks.push({
+    type: "created_by_navigation",
+    mode,
+    linked_target_kind: payload.kind,
+    linked_target_id: payload.id,
+    linked_label: payload.label,
+    opened_route: "contact-detail",
+    returned_route: returnedState.route,
+    returned_task_id: returnedState.taskDetailId,
+    returned_to_same_task: returnedState.taskDetailId === seed.primaryTaskId,
+    screenshots: {
+      opened: openedScreenshot,
+      returned: returnedScreenshot,
+    },
+  });
 }
 
 async function verifyStatusMutations(page, seed, mode, config, checks) {
@@ -850,6 +890,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
 
     await verifyListFilters(page, seed, mode, config, checks);
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
+    await verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks);
     await verifyStatusMutations(page, seed, mode, config, checks);
     await verifyChecklistPersistence(page, seed, mode, config, checks);
     await verifyNavigationLoop(page, seed, mode, config, screenshots, checks);
