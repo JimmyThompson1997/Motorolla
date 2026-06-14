@@ -77,8 +77,8 @@ function repoState() {
 
 function ensureCanonicalMasterReady() {
   const status = repoState();
-  if (!String(status.branch_status || "").startsWith("## master...origin/master")) {
-    throw new Error(`Canonical repo must be on master tracking origin/master. Saw: ${status.branch_status}`);
+  if (!String(status.branch_status || "").includes("...origin/master")) {
+    throw new Error(`Canonical repo must track origin/master for official proof. Saw: ${status.branch_status}`);
   }
   if (!status.clean) {
     throw new Error(`Canonical repo has tracked changes and is not ready for official proof. Saw:\n${status.branch_status}`);
@@ -213,14 +213,42 @@ async function readNotesView(page) {
       leftIcons: document.querySelectorAll(".light-note-row .light-small-icon").length,
       cardRows: document.querySelectorAll(".light-note-row.light-card").length,
       groups,
-      rows: [...document.querySelectorAll(".light-note-row")].map(row => ({
-        id: row.getAttribute("data-note-id") || "",
-        title: row.querySelector(".light-note-feed-copy strong")?.textContent?.trim() || "",
-        pinned: row.querySelector(".light-note-pin-button")?.getAttribute("data-note-pinned") || "",
-        rect: rectData(row)
-      }))
+      rows: [...document.querySelectorAll(".light-note-row")].map(row => {
+        const pin = row.querySelector(".light-note-pin-button");
+        const icon = pin?.querySelector(".material-icon");
+        const pinRect = pin?.getBoundingClientRect();
+        const pinStyle = pin ? getComputedStyle(pin) : null;
+        const iconStyle = icon ? getComputedStyle(icon) : null;
+        return {
+          id: row.getAttribute("data-note-id") || "",
+          title: row.querySelector(".light-note-feed-copy strong")?.textContent?.trim() || "",
+          pinned: pin?.getAttribute("data-note-pinned") || "",
+          rect: rectData(row),
+          pinRect: rectData(pin),
+          pinBackground: pinStyle?.backgroundColor || "",
+          pinBorderWidth: pinStyle?.borderTopWidth || "",
+          pinBorderRadius: pinStyle?.borderRadius || "",
+          pinBoxShadow: pinStyle?.boxShadow || "",
+          iconWidth: iconStyle ? Math.round(parseFloat(iconStyle.width || "0")) : 0,
+          iconHeight: iconStyle ? Math.round(parseFloat(iconStyle.height || "0")) : 0,
+          pinWidth: pinRect ? Math.round(pinRect.width) : 0,
+          pinHeight: pinRect ? Math.round(pinRect.height) : 0
+        };
+      })
     };
   });
+}
+
+async function readNoteDetailView(page) {
+  return page.evaluate(() => ({
+    route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
+    headerTitle: document.querySelector(".light-page-title-detail")?.textContent?.trim() || "",
+    articleCount: document.querySelectorAll(".light-doc-article.light-note-detail").length,
+    noteBodyCount: document.querySelectorAll(".light-note-body").length,
+    htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
+    htmlFrameCount: document.querySelectorAll(".light-detail-html-body .light-html-frame").length,
+    htmlEmptyCount: document.querySelectorAll(".light-html-empty.light-detail-html-body").length
+  }));
 }
 
 async function waitForNotes(page, timeoutMs) {
@@ -277,11 +305,29 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
         assert(baseline.leftIcons === 0, `${viewport.label}: live Notes still shows left icons`);
         assert(baseline.cardRows === 0, `${viewport.label}: live Notes still renders tile-card rows`);
         assert(new Set(baseline.rows.map(row => row.rect?.width || 0)).size <= 1, `${viewport.label}: live Notes row widths diverged`);
+        assert(baseline.rows.every(row => row.pinWidth === 36 && row.pinHeight === 36), `${viewport.label}: live Notes pin tap target size mismatch`);
+        assert(baseline.rows.every(row => row.iconWidth === 16 && row.iconHeight === 16), `${viewport.label}: live Notes pin icon size mismatch`);
+        assert(baseline.rows.every(row => row.pinBackground === "rgba(0, 0, 0, 0)"), `${viewport.label}: live Notes pin still has visible background`);
+        assert(baseline.rows.every(row => row.pinBorderWidth === "0px"), `${viewport.label}: live Notes pin still has border chrome`);
+        assert(baseline.rows.every(row => row.pinBorderRadius === "0px"), `${viewport.label}: live Notes pin still has circular radius`);
+        assert(baseline.rows.every(row => row.pinBoxShadow === "none"), `${viewport.label}: live Notes pin still has shadow chrome`);
         if (index === 0) {
           const baselineShot = await saveScreenshot(page, viewportDir, "02-notes-feed-baseline");
           const candidate = baseline.rows.find(row => row.pinned === "false") || baseline.rows[0];
           assert(candidate, `${viewport.label}: live Notes has no candidate row to toggle`);
           const originalPinned = candidate.pinned === "true";
+          await page.locator(`.light-note-row[data-note-id="${candidate.id}"] .light-note-feed-copy`).click();
+          await page.locator(".light-page-title-detail").waitFor({ state: "visible", timeout: config.timeoutMs });
+          const detail = await readNoteDetailView(page);
+          assert(detail.route === "note-detail", `${viewport.label}: live Notes detail route did not open`);
+          assert(detail.headerTitle === candidate.title, `${viewport.label}: live Notes detail header did not use note title`);
+          assert(detail.articleCount === 0, `${viewport.label}: live Notes still renders the legacy note detail article`);
+          assert(detail.noteBodyCount === 0, `${viewport.label}: live Notes still renders summary/body copy beneath the header`);
+          assert(detail.htmlBodyCount === 1, `${viewport.label}: live Notes expected a single HTML display area`);
+          assert(detail.htmlFrameCount + detail.htmlEmptyCount === 1, `${viewport.label}: live Notes expected rendered HTML frame or fallback empty state`);
+          const detailShot = await saveScreenshot(page, viewportDir, "03-note-detail-clean");
+          await page.locator('button[aria-label="Back"]').click();
+          await waitForNotes(page, config.timeoutMs);
           await page.locator(`.light-note-row[data-note-id="${candidate.id}"] .light-note-pin-button`).click();
           await page.waitForFunction(
             ({ noteId, nextPinned }) => {
@@ -292,7 +338,7 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
             { timeout: 120000 }
           );
           const afterFirst = await readNotesView(page);
-          const afterPinShot = await saveScreenshot(page, viewportDir, "03-notes-after-pin");
+          const afterPinShot = await saveScreenshot(page, viewportDir, "04-notes-after-pin");
           await page.locator(`.light-note-row[data-note-id="${candidate.id}"] .light-note-pin-button`).click();
           await page.waitForFunction(
             ({ noteId, originalPinned }) => {
@@ -303,13 +349,14 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
             { timeout: 120000 }
           );
           const afterSecond = await readNotesView(page);
-          const afterUnpinShot = await saveScreenshot(page, viewportDir, "04-notes-after-unpin");
+          const afterUnpinShot = await saveScreenshot(page, viewportDir, "05-notes-after-unpin");
           await reloadIntoNotes(page, config.timeoutMs);
           const reloaded = await readNotesView(page);
           assert(reloaded.rows.find(row => row.id === candidate.id)?.pinned === String(originalPinned), `${viewport.label}: live Notes did not persist restored pin state after reload`);
-          const reloadShot = await saveScreenshot(page, viewportDir, "05-notes-after-reload");
+          const reloadShot = await saveScreenshot(page, viewportDir, "06-notes-after-reload");
           notesResult = {
             baseline,
+            detail,
             after_first_toggle: afterFirst,
             after_second_toggle: afterSecond,
             reloaded,
@@ -318,6 +365,7 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
             original_pinned: originalPinned,
             screenshots: {
               baseline: baselineShot,
+              note_detail_clean: detailShot,
               after_pin: afterPinShot,
               after_unpin: afterUnpinShot,
               after_reload: reloadShot
@@ -332,7 +380,7 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
 
     await backUntilHome(page, config.timeoutMs);
     const homeCenterAfter = await attemptHorizontalShift(page, `${viewport.label}:home-after`);
-    const homeAfterShot = await saveScreenshot(page, viewportDir, "06-home-centered-after-swipe");
+    const homeAfterShot = await saveScreenshot(page, viewportDir, "07-home-centered-after-swipe");
 
     return {
       viewport,

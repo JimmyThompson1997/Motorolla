@@ -171,8 +171,11 @@ async function readNotesView(page) {
         const rect = row.getBoundingClientRect();
         const copy = row.querySelector(".light-note-feed-copy");
         const pin = row.querySelector(".light-note-pin-button");
+        const icon = pin?.querySelector(".material-icon");
         const copyRect = copy?.getBoundingClientRect();
         const pinRect = pin?.getBoundingClientRect();
+        const pinStyle = pin ? getComputedStyle(pin) : null;
+        const iconStyle = icon ? getComputedStyle(icon) : null;
         return {
           id: row.getAttribute("data-note-id") || "",
           title: row.querySelector(".light-note-feed-copy strong")?.textContent?.trim() || "",
@@ -181,11 +184,31 @@ async function readNotesView(page) {
           height: Math.round(rect.height),
           hasSummary: Boolean(row.querySelector(".light-note-summary")),
           copyRight: copyRect ? Math.round(copyRect.right) : 0,
-          pinLeft: pinRect ? Math.round(pinRect.left) : 0
+          pinLeft: pinRect ? Math.round(pinRect.left) : 0,
+          pinWidth: pinRect ? Math.round(pinRect.width) : 0,
+          pinHeight: pinRect ? Math.round(pinRect.height) : 0,
+          pinBackground: pinStyle?.backgroundColor || "",
+          pinBorderWidth: pinStyle?.borderTopWidth || "",
+          pinBorderRadius: pinStyle?.borderRadius || "",
+          pinBoxShadow: pinStyle?.boxShadow || "",
+          iconWidth: iconStyle ? Math.round(parseFloat(iconStyle.width || "0")) : 0,
+          iconHeight: iconStyle ? Math.round(parseFloat(iconStyle.height || "0")) : 0
         };
       })
     };
   });
+}
+
+async function readNoteDetailView(page) {
+  return page.evaluate(() => ({
+    route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || document.body?.dataset?.route || null,
+    headerTitle: document.querySelector(".light-page-title-detail")?.textContent?.trim() || "",
+    articleCount: document.querySelectorAll(".light-doc-article.light-note-detail").length,
+    noteBodyCount: document.querySelectorAll(".light-note-body").length,
+    htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
+    htmlFrameCount: document.querySelectorAll(".light-detail-html-body .light-html-frame").length,
+    htmlEmptyCount: document.querySelectorAll(".light-html-empty.light-detail-html-body").length
+  }));
 }
 
 async function waitForNotesList(page) {
@@ -324,6 +347,12 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     assert.equal(new Set(baseline.rows.map(row => row.height)).size, 1, `${viewport.label}: pinned/recent heights diverged`);
     assert(baseline.rows.every(row => row.hasSummary), `${viewport.label}: expected summary previews in notes feed`);
     assert(baseline.rows.every(row => row.copyRight < row.pinLeft), `${viewport.label}: note copy overlaps pin button`);
+    assert(baseline.rows.every(row => row.pinWidth === 36 && row.pinHeight === 36), `${viewport.label}: expected 36px pin tap targets`);
+    assert(baseline.rows.every(row => row.iconWidth === 16 && row.iconHeight === 16), `${viewport.label}: expected smaller 16px pin icons`);
+    assert(baseline.rows.every(row => row.pinBackground === "rgba(0, 0, 0, 0)"), `${viewport.label}: pin button still has visible background`);
+    assert(baseline.rows.every(row => row.pinBorderWidth === "0px"), `${viewport.label}: pin button still has border chrome`);
+    assert(baseline.rows.every(row => row.pinBorderRadius === "0px"), `${viewport.label}: pin button still has circular radius`);
+    assert(baseline.rows.every(row => row.pinBoxShadow === "none"), `${viewport.label}: pin button still has shadow chrome`);
     const notesCentering = await attemptHorizontalShift(page, `${viewport.label}:notes`);
     const baselineShot = path.join(proofDir, `${viewportSlug}-01-baseline.png`);
     await page.screenshot({ path: baselineShot, fullPage: true });
@@ -351,8 +380,16 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     await page.screenshot({ path: afterUnpinShot, fullPage: true });
 
     await page.locator('.light-note-row[data-note-id="march"] .light-note-feed-copy').click();
-    await page.locator(".light-doc-article h1").waitFor({ state: "visible", timeout: 10000 });
-    assert.equal((await page.locator(".light-doc-article h1").textContent())?.trim(), "March eval notes", `${viewport.label}: note detail did not open`);
+    await page.locator(".light-page-title-detail").waitFor({ state: "visible", timeout: 10000 });
+    const detail = await readNoteDetailView(page);
+    assert.equal(detail.route, "note-detail", `${viewport.label}: note detail route did not open`);
+    assert.equal(detail.headerTitle, "March eval notes", `${viewport.label}: note detail header did not use note title`);
+    assert.equal(detail.articleCount, 0, `${viewport.label}: legacy note detail article still rendered`);
+    assert.equal(detail.noteBodyCount, 0, `${viewport.label}: legacy note body copy still rendered`);
+    assert.equal(detail.htmlBodyCount, 1, `${viewport.label}: expected a single note HTML body surface`);
+    assert.equal(detail.htmlFrameCount + detail.htmlEmptyCount, 1, `${viewport.label}: expected rendered HTML frame or fallback empty state`);
+    const detailShot = path.join(proofDir, `${viewportSlug}-04-note-detail-clean.png`);
+    await page.screenshot({ path: detailShot, fullPage: true });
     await page.locator('button[aria-label="Back"]').click();
     await waitForNotesList(page);
 
@@ -367,7 +404,7 @@ async function runViewportScenario(browser, pageUrl, viewport) {
       assert.deepEqual(afterFailure.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: rollback pinned mismatch`);
       assert.deepEqual(afterFailure.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: rollback recent mismatch`);
       assert(consoleWarnings.some(message => message.includes("Notes pin write failed")), `${viewport.label}: expected Notes pin write failed warning`);
-      await page.screenshot({ path: path.join(proofDir, `${viewportSlug}-04-failure-rollback.png`), fullPage: true });
+      await page.screenshot({ path: path.join(proofDir, `${viewportSlug}-05-failure-rollback.png`), fullPage: true });
     }
 
     return {
@@ -380,7 +417,8 @@ async function runViewportScenario(browser, pageUrl, viewport) {
         home: homeShot,
         baseline: baselineShot,
         after_pin: afterPinShot,
-        after_unpin: afterUnpinShot
+        after_unpin: afterUnpinShot,
+        note_detail_clean: detailShot
       },
       console_warnings: consoleWarnings,
       network_log: networkLog

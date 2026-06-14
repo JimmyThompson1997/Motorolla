@@ -257,6 +257,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     light_notes_section = function_block(app, "lightNotesSection")
     note_timestamp = function_block(app, "noteContentUpdatedAtMs")
     note_row = function_block(app, "lightNoteRow")
+    note_detail = function_block(app, "lightNoteDetailPage")
     toggle_note_pin = function_block(app, "toggleNotePin")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
@@ -264,6 +265,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     note_row_block = css_block(styles, ".light-note-row")
     note_row_divider_block = css_block(styles, ".light-note-row + .light-note-row")
     note_pin_button_block = css_block(styles, ".light-note-pin-button")
+    note_pin_icon_block = css_block(styles, ".light-note-pin-button .material-icon")
+    note_detail_html_block = css_block(styles, ".light-note-detail-page .light-detail-html-body.light-card")
 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
@@ -286,9 +289,16 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'const copy = el("span", "light-note-feed-copy");' in note_row
     assert 'copy.append(el("strong", "", note.title));' in note_row
     assert 'copy.append(el("span", "light-note-row-meta", meta));' in note_row
-    assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
-    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
+    assert 'const pin = lightIconButton("note_pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
+    assert 'pin.innerHTML = iconSvg("note_pin", { filled: Boolean(note.pinned) });' in note_row
     assert "void toggleNotePin(note.id);" in note_row
+    assert 'return lightPage("Note", { subtitle: "Note not found.", detail: true });' in note_detail
+    assert 'const page = lightPage(note.title || "Untitled note", { detail: true });' in note_detail
+    assert 'page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");' in note_detail
+    assert "lightDocumentEyebrow(" not in note_detail
+    assert 'el("h1", "", note.title)' not in note_detail
+    assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
+    assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));' in note_detail
 
     assert 'const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });' in app
     assert "bucket.items = nextPinned" in toggle_note_pin
@@ -306,8 +316,18 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "display: flex;" in notes_feed_block
     assert "flex-direction: column;" in notes_feed_block
     assert "border-top:" in note_row_divider_block
-    assert "color: #0a84ff;" in note_pin_button_block
+    assert "width: 36px;" in note_pin_button_block
+    assert "height: 36px;" in note_pin_button_block
+    assert "background: transparent;" in note_pin_button_block
+    assert "border: 0;" in note_pin_button_block
+    assert "border-radius: 0;" in note_pin_button_block
+    assert "box-shadow: none;" in note_pin_button_block
+    assert "width: 16px;" in note_pin_icon_block
+    assert "height: 16px;" in note_pin_icon_block
     assert '.light-note-pin-button[data-note-pinned="true"]' in styles
+    assert "background: transparent;" in note_detail_html_block
+    assert "border: 0;" in note_detail_html_block
+    assert "box-shadow: none;" in note_detail_html_block
 
 
 def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
