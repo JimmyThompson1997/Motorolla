@@ -218,6 +218,19 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
 
 
+def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:
+    app = read("app.js")
+    focus_card = function_block(app, "uiDebugFocusCard")
+
+    assert 'if (normalizeNavDetail(state.navDetail)) {' in focus_card
+    assert 'uiDebugGotoHome();' in focus_card
+    assert 'if (state.route !== "inbox") {' in focus_card
+    assert 'lightNavigate("inbox");' in focus_card
+    assert 'state.openCardMenuSessionId = nextSessionId;' in focus_card
+    assert 'state.openCardMenuThreadId = cardThreadId(card);' in focus_card
+    assert 'void syncVoiceThreadScope({ reason: "debug_focus_card", render: true });' in focus_card
+
+
 def test_detail_shell_inherits_shared_light_header_column_gutter_contract() -> None:
     styles = read("styles.css")
 

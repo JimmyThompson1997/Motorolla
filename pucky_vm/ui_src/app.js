@@ -2935,8 +2935,11 @@
         surface: describeUiSurface()
       };
     }
-    if (state.route !== "inbox" || normalizeNavDetail(state.navDetail)) {
+    if (normalizeNavDetail(state.navDetail)) {
       uiDebugGotoHome();
+    }
+    if (state.route !== "inbox") {
+      lightNavigate("inbox");
     }
     if (state.showArchivedFeed) {
       state.showArchivedFeed = false;
