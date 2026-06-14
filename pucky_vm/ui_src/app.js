@@ -210,14 +210,6 @@
     }
   };
 
-  const PAGE_TABS = [
-    { route: "feed", icon: "mail", label: "Home", accent: "inbox" },
-    { route: "links", icon: "link", label: "Connect", accent: "connect" },
-    { route: "meetings", icon: "mic", label: "Meetings", accent: "meetings" },
-    { route: "morning", icon: "coffee", label: "Morning" },
-    { route: "calls", icon: "phone", label: "Calls" },
-    { route: "settings", icon: "settings", label: "Settings", accent: "settings" }
-  ];
   const SEMANTIC_ICON_ACCENT_PALETTE = {
     inbox: { dark: "#8b63ff", light: "#8b63ff" },
     connect: { dark: "#4f61d8", light: "#4f61d8" },
@@ -229,13 +221,12 @@
     notes: { dark: "#f2a000", light: "#f2a000" },
     tasks: { dark: "#22c55e", light: "#22c55e" },
     calendar: { dark: "#ff443a", light: "#ff443a" },
-    feed_preview: { dark: "#226fe8", light: "#226fe8" },
     projects: { dark: "#0f9fb8", light: "#0f9fb8" },
     contacts: { dark: "#f43f68", light: "#f43f68" }
   };
   const LIGHT_APPS = [
-    { route: "feed", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" },
-    { route: "links", label: "Connect", icon: "link", accent: "connect", kind: "real" },
+    { route: "inbox", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" },
+    { route: "connect", label: "Connect", icon: "link", accent: "connect", kind: "real" },
     { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
     { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
     { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "mock" },
@@ -243,7 +234,6 @@
     { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" },
     { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" },
     { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" },
-    { route: "feed-preview", label: "Feed", icon: "text", accent: "feed_preview", kind: "mock" },
     { route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "mock" },
     { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "mock" }
   ];
@@ -259,8 +249,6 @@
     "meeting-note-detail",
     "reminders",
     "reminder-detail",
-    "feed-preview",
-    "feed-preview-detail",
     "projects",
     "project-detail",
     "project-new",
@@ -268,18 +256,26 @@
     "contact-detail",
     "contact-new"
   ]);
-  const HOME_SHELL_CANONICAL_ROUTES = new Set(["feed", "links", "meetings", "settings"]);
+  const HOME_SHELL_CANONICAL_ROUTES = new Set(["inbox", "connect", "meetings", "settings"]);
   const LIGHT_ROUTE_PARENTS = {
     "note-detail": "notes",
     "task-detail": "tasks",
     "meeting-detail": "calendar",
     "meeting-note-detail": "meeting-notes",
     "reminder-detail": "reminders",
-    "feed-preview-detail": "feed-preview",
     "project-detail": "projects",
     "project-new": "projects",
     "contact-detail": "contacts",
     "contact-new": "contacts"
+  };
+  const ROUTE_ALIASES = {
+    apps: "connect",
+    links: "connect",
+    feed: "inbox",
+    "feed-preview": "inbox",
+    "feed-preview-detail": "inbox",
+    morning: "home",
+    calls: "home"
   };
   const WORKSPACE_ROUTE_COLLECTIONS = {
     notes: "notes",
@@ -349,7 +345,6 @@
   const persistedNavState = loadNavState();
   const initialCalendarTimeZonePreference = resolveCalendarTimezonePreference();
   const initialRouteValue = initialRoute(persistedNavState.route, initialTheme);
-  const initialHomeShellActiveValue = initialHomeShellActive(persistedNavState.route, initialTheme);
   const initialTaskSectionsExpandedValue = initialTaskSectionsExpanded(persistedNavState.task_sections_expanded);
   const state = {
     cards: [],
@@ -358,8 +353,6 @@
     cardIconRegistryRequestedAt: 0,
     theme: initialTheme,
     route: initialRouteValue,
-    homeShellActive: initialHomeShellActiveValue,
-    openTrayRoute: initialOpenTrayRoute(persistedNavState.open_tray_route, persistedNavState.route, initialHomeShellActiveValue, initialTheme),
     lightReturnRoute: "",
     previousLightRoute: "home",
     lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history),
@@ -1891,7 +1884,7 @@
   }
 
   function optionsShouldRenderLinksPage() {
-    return state.route === "links";
+    return state.route === "connect";
   }
 
   let linksPageNode = null;
@@ -2110,7 +2103,7 @@
   }
 
   function linksHandoffLocked() {
-    return Boolean(state.route === "links" && state.links.handoffLocked);
+    return Boolean(state.route === "connect" && state.links.handoffLocked);
   }
 
   function releaseLinksHandoff(options = {}) {
@@ -2331,14 +2324,6 @@
     if (state.route !== "settings") {
       return false;
     }
-    if (state.homeShellActive) {
-      try {
-        sessionStorage.removeItem(SETTINGS_SURFACE_RELOAD_KEY);
-      } catch (_) {
-        // Session storage is a best-effort guardrail.
-      }
-      return false;
-    }
     const sourceKind = String(state.uiSurface.source_kind || "");
     const entrypointUrl = String(state.uiSurface.entrypoint_url || "");
     if (sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
@@ -2363,26 +2348,10 @@
 
 
   function render() {
-    renderTabs();
     renderVoiceStatus();
     renderThreadScopeBadge();
-    renderRouteTray();
     renderFeed();
     renderAudioDetail();
-  }
-
-  function renderTabs() {
-    const tabs = document.getElementById("pageTabs");
-    if (!tabs) {
-      return;
-    }
-    if (isHomeShellRoute()) {
-      tabs.hidden = true;
-      tabs.replaceChildren();
-      return;
-    }
-    tabs.hidden = false;
-    tabs.replaceChildren(...PAGE_TABS.map(tabView));
   }
 
   function renderVoiceStatus() {
@@ -2403,9 +2372,8 @@
       : wakeProofState !== "idle"
         ? "wake matched"
         : turnStateLabel(visualState);
-    const suppressed = shouldSuppressGlobalVoiceStatus(visualState, state.turn);
-    const renderedVisualState = suppressed ? "idle" : visualState;
-    const renderedLabel = suppressed ? "idle" : label;
+    const renderedVisualState = visualState;
+    const renderedLabel = label;
     const turnId = turnStatusTurnId(state.turn);
     if (state.lastRenderedTurnVisualState !== renderedVisualState || state.lastRenderedTurnId !== turnId) {
       state.lastRenderedTurnVisualState = renderedVisualState;
@@ -2417,8 +2385,8 @@
       });
     }
     indicators.forEach(indicator => {
-      indicator.hidden = suppressed;
-      indicator.setAttribute("aria-hidden", suppressed ? "true" : "false");
+      indicator.hidden = false;
+      indicator.setAttribute("aria-hidden", "false");
       indicator.className = `voice-status voice-status-${renderedVisualState}`;
       indicator.setAttribute("aria-label", `Turn state: ${renderedLabel}`);
       indicator.title = `Turn: ${renderedLabel}`;
@@ -2684,6 +2652,9 @@
   function describeUiSurface() {
     const shell = document.querySelector(".app-shell");
     const threadScope = document.getElementById("threadScopeStatus");
+    const voiceStatus = document.getElementById("voiceStatus");
+    const voiceStatusStyle = voiceStatus ? window.getComputedStyle(voiceStatus) : null;
+    const voiceStatusRect = voiceStatus ? voiceStatus.getBoundingClientRect() : null;
     const detail = document.getElementById("detail");
     const feed = document.getElementById("feed");
     const feedStyle = feed ? window.getComputedStyle(feed) : null;
@@ -2723,6 +2694,26 @@
         thread_id: threadScope?.getAttribute("data-thread-id") || "",
         source_surface: threadScope?.getAttribute("data-source-surface") || "",
         label: (threadScope?.textContent || "").trim()
+      },
+      voice_status: {
+        exists: Boolean(voiceStatus),
+        class_name: voiceStatus?.className || "",
+        aria_hidden: voiceStatus?.getAttribute("aria-hidden") || "",
+        hidden: Boolean(voiceStatus?.hidden),
+        title: voiceStatus?.title || "",
+        label: voiceStatus?.getAttribute("aria-label") || "",
+        rect: voiceStatusRect ? {
+          top: Math.round(Number(voiceStatusRect.top || 0)),
+          right: Math.round(Number(voiceStatusRect.right || 0)),
+          bottom: Math.round(Number(voiceStatusRect.bottom || 0)),
+          left: Math.round(Number(voiceStatusRect.left || 0)),
+          width: Math.round(Number(voiceStatusRect.width || 0)),
+          height: Math.round(Number(voiceStatusRect.height || 0))
+        } : null,
+        computed_display: voiceStatusStyle?.display || "",
+        computed_visibility: voiceStatusStyle?.visibility || "",
+        computed_opacity: voiceStatusStyle?.opacity || "",
+        voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()
       },
       turn_timing: currentTurnUiTiming(),
       visible_cards: cards,
@@ -2803,9 +2794,12 @@
         break;
       }
     }
-    const tab = document.querySelector('[data-route="feed"]');
-    if (tab && state.route !== "feed") {
-      tab.click();
+    if (state.route !== "home") {
+      state.route = "home";
+      state.lightReturnRoute = "";
+      state.previousLightRoute = "home";
+      persistNavState();
+      render();
       handled = true;
     }
     void syncVoiceThreadScope({ reason: "debug_goto_home", render: true, force: true });
@@ -2845,7 +2839,7 @@
     return {
       schema: "pucky.links_debug_metrics.v1",
       route: state.route,
-      links_route_active: state.route === "links",
+      links_route_active: state.route === "connect",
       active_scroller: scrollport ? "links-scrollport" : "feed",
       catalog_source: String(state.links.catalogSource || ""),
       catalog_version: String(state.links.catalogVersion || ""),
@@ -2933,7 +2927,7 @@
         surface: describeUiSurface()
       };
     }
-    if (state.route !== "feed" || normalizeNavDetail(state.navDetail)) {
+    if (state.route !== "inbox" || normalizeNavDetail(state.navDetail)) {
       uiDebugGotoHome();
     }
     if (state.showArchivedFeed) {
@@ -3392,16 +3386,6 @@
     return "sending";
   }
 
-  function shouldSuppressGlobalVoiceStatus(visualState, status = state.turn, route = effectiveRoute()) {
-    if (!usesHomeFeedRoute(route)) {
-      return false;
-    }
-    if (turnFailed(status)) {
-      return true;
-    }
-    return visualState === "uploading" || visualState === "thinking";
-  }
-
   function truthy(value) {
     return value === true || value === 1 || value === "1" || value === "true";
   }
@@ -3409,73 +3393,6 @@
   function safeNumber(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : 0;
-  }
-
-  function tabView(tab) {
-    const route = effectiveRoute();
-    const button = el("button", tab.route === route ? "tab is-active" : "tab");
-    button.type = "button";
-    button.disabled = linksHandoffLocked();
-    button.dataset.route = tab.route;
-    applySemanticIconAccent(button, tab.accent, { propertyName: "--tab-accent", allowEmpty: true });
-    button.setAttribute("aria-label", tab.label);
-    button.setAttribute("aria-current", tab.route === route ? "page" : "false");
-    button.innerHTML = iconSvg(tab.icon, { filled: false });
-    return button;
-  }
-
-  function handlePageTabRoute(routeValue) {
-    const route = effectiveRoute();
-    const nextTabRoute = String(routeValue || "").trim();
-    if (!nextTabRoute || linksHandoffLocked()) {
-      return;
-    }
-    rememberFeedScroll();
-    if (route === nextTabRoute) {
-      state.openTrayRoute = state.openTrayRoute === nextTabRoute ? null : nextTabRoute;
-    } else {
-      dismissTransientUiForRouteChange();
-      state.route = nextTabRoute;
-      state.homeShellActive = false;
-      state.openTrayRoute = null;
-      state.lightReturnRoute = "";
-      state.previousLightRoute = "home";
-    }
-    persistNavState();
-    render();
-    void syncVoiceThreadScope({ reason: "tab_click", render: true });
-    const nextRoute = state.route;
-    if (nextRoute === "feed") {
-      restoreFeedScroll();
-      syncFeedCards({ reason: "route_feed", silent: true, render: true });
-    } else if (nextRoute === "links") {
-      linksDebugStartSession("route", { reason: "route_open" });
-      linksDebugRecord("links_route_enter", { reason: "route_open" }, "route");
-      loadLinksPortal({ render: true });
-    } else if (nextRoute === "meetings") {
-      refreshMeetingRecordingStatus({ render: true });
-      loadMeetings({ render: true });
-    } else if (nextRoute === "settings") {
-      loadSettingsState({ render: true });
-    }
-  }
-
-  function installPageTabNavigation() {
-    const tabs = document.getElementById("pageTabs");
-    if (!tabs || tabs.dataset.routeBound === "true") {
-      return;
-    }
-    tabs.dataset.routeBound = "true";
-    tabs.addEventListener("click", event => {
-      const target = event.target;
-      const button = target && typeof target.closest === "function"
-        ? target.closest(".tab[data-route]")
-        : null;
-      if (!button || !tabs.contains(button)) {
-        return;
-      }
-      handlePageTabRoute(button.getAttribute("data-route") || "");
-    });
   }
 
   function dismissTransientUiForRouteChange() {
@@ -3488,48 +3405,6 @@
     closeSpeedPicker();
     dismissDetail();
     state.audioCard = null;
-  }
-
-  function renderRouteTray() {
-    const tray = document.getElementById("routeTray");
-    if (!tray) {
-      return;
-    }
-    const route = effectiveRoute();
-    if (isHomeShellRoute()) {
-      tray.hidden = true;
-      tray.replaceChildren();
-      return;
-    }
-    if (route !== "feed" || state.openTrayRoute !== "feed") {
-      tray.hidden = true;
-      tray.replaceChildren();
-      return;
-    }
-    tray.hidden = false;
-    tray.replaceChildren(homeIconFilterTrayView());
-  }
-
-  function homeIconFilterTrayView() {
-    const shell = el("div", "route-tray-shell");
-    const archiveIcon = el("button", state.showArchivedFeed ? "route-tray-archive-icon is-selected" : "route-tray-archive-icon");
-    archiveIcon.type = "button";
-    archiveIcon.setAttribute("aria-label", "Archive");
-    archiveIcon.setAttribute("title", "Archive");
-    archiveIcon.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
-    archiveIcon.innerHTML = iconSvg("archive_folder", { filled: state.showArchivedFeed });
-    archiveIcon.addEventListener("click", () => {
-      state.showArchivedFeed = true;
-      render();
-      persistNavState();
-    });
-    const divider = el("span", "route-tray-divider");
-    divider.setAttribute("aria-hidden", "true");
-    const icons = el("div", "route-tray-icons");
-    const filters = uniqueFeedIconFilters();
-    icons.append(...filters.map(filter => filterIconButton(filter)));
-    shell.append(archiveIcon, divider, icons);
-    return shell;
   }
 
   function filterIconButton(filter) {
@@ -3562,29 +3437,24 @@
     const route = effectiveRoute();
     const theme = effectiveTheme();
     const shell = document.querySelector(".app-shell");
-    shell?.setAttribute("data-view", state.route || "feed");
+    shell?.setAttribute("data-view", state.route || "home");
     shell?.setAttribute("data-theme", theme);
-    shell?.setAttribute("data-canonical-route", route || "feed");
+    shell?.setAttribute("data-canonical-route", route || "home");
     shell?.setAttribute("data-embedded-app", embeddedLightApp());
     shell?.setAttribute("data-chrome-mode", chromeMode());
-    feed.classList.toggle("is-links-route", route === "links");
+    feed.classList.toggle("is-links-route", route === "connect");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
+    syncRouteQueryParam(route);
     if (isHomeShellMockRoute()) {
       feed.replaceChildren(lightView());
       return;
     }
     if (route === "settings") {
-      if (isHomeShellCanonicalRoute(route)) {
-        feed.replaceChildren(homeShellCanonicalView(route, lightSettingsSurface()));
-      } else {
-        feed.replaceChildren(settingsPageView());
-      }
+      feed.replaceChildren(homeShellCanonicalView(route, lightSettingsSurface()));
       return;
     }
-    if (route === "links") {
-      const page = isHomeShellCanonicalRoute(route)
-        ? homeShellCanonicalView(route, lightAppsPage())
-        : linksPageView();
+    if (route === "connect") {
+      const page = homeShellCanonicalView(route, lightAppsPage());
       if (feed.firstElementChild !== page || feed.childElementCount !== 1) {
         feed.replaceChildren(page);
       }
@@ -3592,23 +3462,16 @@
       return;
     }
     if (route === "meetings") {
-      if (isHomeShellCanonicalRoute(route)) {
-        feed.replaceChildren(homeShellCanonicalView(route, lightMeetingsPage()));
-      } else {
-        feed.replaceChildren(meetingsPageView());
-      }
+      feed.replaceChildren(homeShellCanonicalView(route, lightMeetingsPage()));
       return;
     }
-    if (route !== "feed") {
-      const current = PAGE_TABS.find(tab => tab.route === route);
-      feed.replaceChildren(el("div", "placeholder-page", `${current?.label || "Page"} will live here.`));
-      return;
-    }
-    if (isHomeShellCanonicalRoute(route)) {
+    if (route === "inbox") {
       feed.replaceChildren(homeShellCanonicalView(route, lightInboxPage()));
       return;
     }
-    renderHomeFeedInto(feed);
+    state.route = "home";
+    syncRouteQueryParam("home");
+    feed.replaceChildren(lightView());
   }
 
   function renderHomeFeedInto(container) {
@@ -3697,12 +3560,6 @@
         break;
       case "project-new":
         view.append(lightProjectCreatePage());
-        break;
-      case "feed-preview":
-        view.append(lightFeedPage());
-        break;
-      case "feed-preview-detail":
-        view.append(lightFeedDetailPage());
         break;
       case "home":
       default:
@@ -5484,9 +5341,7 @@
     state.selectedTaskId = task.id;
     if (taskUsesSplitLayout()) {
       state.route = "tasks";
-      state.homeShellActive = true;
       state.previousLightRoute = "tasks";
-      state.openTrayRoute = null;
       persistNavState();
       render();
       return;
@@ -6164,14 +6019,14 @@
   function runLightRouteSideEffects(reason = "light_app_click") {
     void syncVoiceThreadScope({ reason, render: true });
     void loadWorkspaceForRoute(state.route, { render: true, force: true });
-    if (state.route === "links") {
+    if (state.route === "connect") {
       linksDebugStartSession("route", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" }, "route");
       loadLinksPortal({ render: true });
     }
-    if (state.route === "feed") {
+    if (state.route === "inbox") {
       restoreFeedScroll();
-      syncFeedCards({ reason: reason === "light_back" ? "home_shell_feed_back" : "home_shell_feed_open", silent: true, render: true });
+      syncFeedCards({ reason: reason === "light_back" ? "home_shell_inbox_back" : "home_shell_inbox_open", silent: true, render: true });
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
@@ -6194,8 +6049,6 @@
       state.selectedCalendarDate = normalized.selectedCalendarDate;
     }
     state.route = normalized.route;
-    state.homeShellActive = true;
-    state.openTrayRoute = null;
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
     persistNavState();
@@ -6241,8 +6094,6 @@
     }
     applyLightRouteSelectionPatch(selectionPatch || {});
     state.route = nextRoute;
-    state.homeShellActive = true;
-    state.openTrayRoute = null;
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     persistNavState();
     render();
@@ -6265,9 +6116,7 @@
     if (state.taskNavOrigin && state.route !== state.taskNavOrigin.route) {
       state.selectedTaskId = state.taskNavOrigin.taskId;
       state.route = state.taskNavOrigin.route;
-      state.homeShellActive = true;
       state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
-      state.openTrayRoute = null;
       state.lightReturnRoute = state.route === "home" ? "" : "home";
       state.taskNavOrigin = null;
       persistNavState();
@@ -6281,9 +6130,7 @@
       ? "home"
       : detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
     state.route = parent === state.route ? "home" : parent;
-    state.homeShellActive = true;
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
-    state.openTrayRoute = null;
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     persistNavState();
     render();
@@ -8094,6 +7941,7 @@
     }));
     const currentMode = normalizeReplyMode(state.turnSettings.reply_mode);
     return settingsSelectorCard({
+      settingId: "reply-playback",
       accent: "#ffb000",
       icon: "mic",
       title: "Reply playback",
@@ -8316,11 +8164,8 @@
     if (nextRoute !== state.route) {
       dismissTransientUiForRouteChange();
       state.route = nextRoute;
-      state.openTrayRoute = null;
       state.lightReturnRoute = "";
       state.previousLightRoute = "home";
-    } else if (!PAGE_TABS.some(tab => tab.route === state.route)) {
-      state.openTrayRoute = null;
     }
     if (previousTheme !== nextTheme && nextRoute === "settings") {
       loadSettingsState({ render: false });
@@ -12217,7 +12062,7 @@
   }
 
   function syncOpenThreadDetailAfterCards() {
-    if (state.route !== "feed") {
+    if (state.route !== "inbox") {
       return null;
     }
     const detail = normalizeNavDetail(state.navDetail);
@@ -13122,7 +12967,7 @@
 
   function usesHomeFeedRoute(route = state.route) {
     const value = String(route || "").trim();
-    return value === "feed";
+    return value === "inbox";
   }
 
   function embeddedLightApp() {
@@ -13130,13 +12975,13 @@
     if (!isHomeShellCanonicalRoute(value)) {
       return "";
     }
-    if (value === "feed") return "inbox";
-    if (value === "links") return "connect";
+    if (value === "inbox") return "inbox";
+    if (value === "connect") return "connect";
     return value;
   }
 
   function chromeMode() {
-    return isHomeShellRoute() ? "home-shell" : "legacy-shell";
+    return "home-shell";
   }
 
   function isLightTheme() {
@@ -13157,14 +13002,9 @@
     if (!value) {
       return "home";
     }
-    if (value === "apps") {
-      return "links";
-    }
-    if (value === "inbox") {
-      return "feed";
-    }
-    if (value === "home" || LIGHT_ROUTES.has(value) || HOME_SHELL_CANONICAL_ROUTES.has(value)) {
-      return value;
+    const normalized = ROUTE_ALIASES[value] || value;
+    if (normalized === "home" || LIGHT_ROUTES.has(normalized) || HOME_SHELL_CANONICAL_ROUTES.has(normalized)) {
+      return normalized;
     }
     return "";
   }
@@ -13176,14 +13016,14 @@
 
   function isHomeShellCanonicalRoute(route = effectiveRoute()) {
     const value = String(route || "").trim();
-    return Boolean(state.homeShellActive && HOME_SHELL_CANONICAL_ROUTES.has(value));
+    return HOME_SHELL_CANONICAL_ROUTES.has(value);
   }
 
   function isHomeShellRoute(route = state.route) {
     const value = String(route || "").trim();
     return value === "home"
       || LIGHT_ROUTES.has(value)
-      || Boolean(state.homeShellActive && HOME_SHELL_CANONICAL_ROUTES.has(value));
+      || HOME_SHELL_CANONICAL_ROUTES.has(value);
   }
 
   function isLightShellRoute() {
@@ -13216,36 +13056,17 @@
     return resolveInitialRouteState(route, theme).route;
   }
 
-  function initialHomeShellActive(route, theme = "dark") {
-    return resolveInitialRouteState(route, theme).homeShellActive;
-  }
-
   function resolveInitialRouteState(route, theme = "dark") {
     void theme;
     const queryRoute = routeQueryParam();
     if (queryRoute) {
-      return resolveRequestedRouteState(queryRoute);
+      return { route: normalizeHomeShellRoute(queryRoute) || "home" };
     }
     const persistedRoute = String(route || "").trim();
     if (persistedRoute) {
-      return resolveRequestedRouteState(persistedRoute);
+      return { route: normalizeHomeShellRoute(persistedRoute) || "home" };
     }
-    return { route: "home", homeShellActive: true };
-  }
-
-  function resolveRequestedRouteState(routeValue) {
-    const value = String(routeValue || "").trim();
-    if (!value) {
-      return { route: "home", homeShellActive: true };
-    }
-    if (PAGE_TABS.some(tab => tab.route === value)) {
-      return { route: value, homeShellActive: false };
-    }
-    const homeShellRoute = normalizeHomeShellRoute(value);
-    if (homeShellRoute) {
-      return { route: homeShellRoute, homeShellActive: true };
-    }
-    return { route: "home", homeShellActive: true };
+    return { route: "home" };
   }
 
   function resolveRouteForTheme(route, theme = state.theme) {
@@ -13253,9 +13074,6 @@
     const value = String(route || "").trim();
     if (!value) {
       return "home";
-    }
-    if (PAGE_TABS.some(tab => tab.route === value)) {
-      return value;
     }
     return normalizeHomeShellRoute(value) || "home";
   }
@@ -13268,13 +13086,14 @@
     }
   }
 
-  function initialOpenTrayRoute(openTrayRoute, route, homeShellActive = false, theme = "dark") {
-    const value = String(openTrayRoute || "");
-    const normalizedRoute = initialRoute(route, theme);
-    if (homeShellActive || normalizedRoute !== "feed") {
-      return null;
+  function syncRouteQueryParam(route) {
+    try {
+      const url = new URL(window.location.href || "");
+      url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");
+      window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch (_) {
+      // Query param sync should help direct-entry parity without blocking the page.
     }
-    return value && value === normalizedRoute ? value : null;
   }
 
   function scrollNumber(value) {
@@ -13556,8 +13375,6 @@
       captureCurrentDetailScroll();
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
         route: state.route,
-        home_shell_active: Boolean(state.homeShellActive),
-        open_tray_route: state.openTrayRoute || null,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
         task_filter: state.taskFilter || "all",
@@ -13606,7 +13423,7 @@
       return;
     }
     feedSyncIntervalId = window.setInterval(() => {
-      if (document.visibilityState !== "visible" || state.route !== "feed") {
+      if (document.visibilityState !== "visible" || state.route !== "inbox") {
         return;
       }
       syncFeedCards({ reason: "feed_visible_poll", silent: true, render: true });
@@ -14204,7 +14021,7 @@
   }
 
   setInterval(async () => {
-    if (state.route === "feed" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
+    if (state.route === "inbox" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
       let changed = false;
       try {
         if (state.activePath) {
@@ -14216,11 +14033,11 @@
           }
           changed = changed || shouldRenderForPlayerState(previousPlayer, state.player);
         }
-        if (state.route === "feed" || isTurnActive(state.turn)) {
+        if (state.route === "inbox" || isTurnActive(state.turn)) {
           const wasTurnActive = isTurnActive(state.turn);
           await loadTurnStatus({ render: false });
           const turnActive = isTurnActive(state.turn);
-          if (state.route === "feed" && (turnActive || wasTurnActive)) {
+          if (state.route === "inbox" && (turnActive || wasTurnActive)) {
             await refreshCardsFromVmSnapshot({ render: false });
           }
           changed = changed || turnActive || wasTurnActive;
@@ -14287,11 +14104,11 @@
       persistNavState();
       return;
     }
-    if (state.route === "feed") {
+    if (state.route === "inbox") {
       syncFeedCards({ reason: "visibility_visible", silent: true, render: true });
       return;
     }
-    if (state.route === "links") {
+    if (state.route === "connect") {
       refreshLinksConnectedSoon({ render: true, force: true });
       return;
     }
@@ -14320,7 +14137,9 @@
     dispatch: uiDebugDispatch,
     linksMetrics: linksDebugMetrics
   };
-  installPageTabNavigation();
+  syncThemeQueryParam(state.theme);
+  syncRouteQueryParam(state.route);
+  render();
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
@@ -14332,7 +14151,7 @@
   loadCardIconRegistry({ render: false });
   loadCards();
   void loadWorkspaceForRoute(state.route, { render: true, force: true });
-  if (state.route === "links") {
+  if (state.route === "connect") {
     linksDebugStartSession("route", { reason: "boot_route" });
     linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
     loadLinksPortal({ render: true });

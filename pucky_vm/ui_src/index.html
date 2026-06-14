@@ -7,14 +7,18 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main class="app-shell" data-view="feed">
-      <header class="header">
-        <div id="threadScopeStatus" class="thread-scope-status" aria-live="polite" aria-hidden="true" hidden></div>
-        <nav id="pageTabs" class="page-tabs" aria-label="Pucky pages"></nav>
-      </header>
-      <button id="voiceStatus" class="voice-status voice-status-idle" type="button" data-voice-status aria-label="Turn state: idle"></button>
-
-      <section id="routeTray" class="route-tray" aria-label="Home filters" hidden></section>
+    <main class="app-shell" data-view="home">
+      <div id="threadScopeStatus" class="thread-scope-status" aria-live="polite" aria-hidden="true" hidden></div>
+      <button
+        id="voiceStatus"
+        class="voice-status voice-status-idle"
+        type="button"
+        data-voice-status
+        aria-label="Turn state: idle"
+        aria-hidden="false"
+        title="Turn: idle"
+        tabindex="-1"
+      ></button>
       <section id="feed" class="feed" aria-label="Pucky reply feed"></section>
       <section id="detail" class="detail-panel" aria-hidden="true"></section>
       <section id="traceSheet" class="trace-sheet" aria-hidden="true"></section>
