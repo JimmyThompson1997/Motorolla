@@ -2348,7 +2348,6 @@
 
 
   function render() {
-    renderVoiceStatus();
     renderThreadScopeBadge();
     renderFeed();
     renderAudioDetail();

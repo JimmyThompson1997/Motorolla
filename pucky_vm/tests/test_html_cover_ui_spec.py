@@ -41,9 +41,9 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
 
     assert 'data-view="home"' in html
     assert 'id="threadScopeStatus"' in html
-    assert 'id="voiceStatus"' in html
-    assert 'data-voice-status' in html
-    assert 'aria-label="Turn state: idle"' in html
+    assert 'id="voiceStatus"' not in html
+    assert 'data-voice-status' not in html
+    assert 'aria-label="Turn state: idle"' not in html
     assert 'id="feed"' in html
     assert 'id="detail"' in html
     assert 'id="pageTabs"' not in html
@@ -119,7 +119,7 @@ def test_boot_and_navigation_no_longer_depend_on_legacy_shell_state() -> None:
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
 
-    assert "renderVoiceStatus();" in render
+    assert "renderVoiceStatus();" not in render
     assert "renderFeed();" in render
     assert "renderTabs();" not in render
     assert "renderRouteTray();" not in render
@@ -138,24 +138,10 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     styles = read("styles.css")
 
     assert ".page-tabs" not in styles
-    assert ".voice-status" in styles
-    assert ".app-shell[data-chrome-mode=\"home-shell\"] .voice-status" not in styles
-    assert "--safe-area-right: env(safe-area-inset-right, 0px);" in styles
-    assert "top: calc(var(--safe-area-top) + 2px);" in styles
-    assert "right: calc(var(--safe-area-right) + 8px);" in styles
-    assert "--voice-status-size: 38px" in styles
-    assert ".voice-status-idle" in styles
-    assert ".voice-status-armed" in styles
-    assert ".voice-status-recording" in styles
-    assert ".voice-status-uploading" in styles
-    assert ".voice-status-thinking" in styles
-    assert ".voice-status-speaking" in styles
-    assert ".voice-status-meeting_recording" in styles
-    assert "--voice-color: #586574" in styles
-    assert "--voice-color: #3a84ff" in styles
-    assert "--voice-color: #ff3b30" in styles
-    assert "--voice-color: #ffb000" in styles
-    assert "--voice-color: #a855f7" in styles
+    assert ".voice-status" not in styles
+    assert "--voice-status-size" not in styles
+    assert "@keyframes voicePulse" not in styles
+    assert "@keyframes voiceRing" not in styles
     assert ".route-tray" not in styles
     assert 'data-light-route="links"' not in styles
     assert 'data-light-route="feed"' not in styles
@@ -165,34 +151,20 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-canonical-port-surface" in styles
 
 
-def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
+def test_voice_status_dot_is_not_mounted_in_the_modern_shell() -> None:
+    html = read("index.html")
     app = read("app.js")
+    render = function_block(app, "render")
     render_voice_status = function_block(app, "renderVoiceStatus")
     describe_ui_surface = function_block(app, "describeUiSurface")
 
+    assert 'id="voiceStatus"' not in html
+    assert 'data-voice-status' not in html
+    assert "renderVoiceStatus();" not in render
     assert "document.querySelectorAll(\"[data-voice-status]\")" in render_voice_status
-    assert "const renderedVisualState = visualState;" in render_voice_status
-    assert "const renderedLabel = label;" in render_voice_status
-    assert "indicator.hidden = false;" in render_voice_status
-    assert 'indicator.setAttribute("aria-hidden", "false");' in render_voice_status
-    assert "shouldSuppressGlobalVoiceStatus" not in app
-    assert 'indicator.className = `voice-status voice-status-${renderedVisualState}`;' in render_voice_status
-    assert 'indicator.setAttribute("aria-label", `Turn state: ${renderedLabel}`);' in render_voice_status
-    assert 'indicator.title = `Turn: ${renderedLabel}`;' in render_voice_status
-
     assert 'const voiceStatus = document.getElementById("voiceStatus");' in describe_ui_surface
     assert "voice_status: {" in describe_ui_surface
     assert "exists: Boolean(voiceStatus)" in describe_ui_surface
-    assert 'class_name: voiceStatus?.className || ""' in describe_ui_surface
-    assert 'aria_hidden: voiceStatus?.getAttribute("aria-hidden") || ""' in describe_ui_surface
-    assert "hidden: Boolean(voiceStatus?.hidden)" in describe_ui_surface
-    assert 'title: voiceStatus?.title || ""' in describe_ui_surface
-    assert 'label: voiceStatus?.getAttribute("aria-label") || ""' in describe_ui_surface
-    assert "rect: voiceStatusRect ? {" in describe_ui_surface
-    assert 'computed_display: voiceStatusStyle?.display || ""' in describe_ui_surface
-    assert 'computed_visibility: voiceStatusStyle?.visibility || ""' in describe_ui_surface
-    assert 'computed_opacity: voiceStatusStyle?.opacity || ""' in describe_ui_surface
-    assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
 
 
 def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> None:
