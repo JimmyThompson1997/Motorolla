@@ -329,10 +329,13 @@ export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
   });
 }
 
-export function proofPageUrl(baseUrl, apiToken) {
+export function proofPageUrl(baseUrl, apiToken, options = {}) {
   const url = new URL(`${String(baseUrl || "").replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", "light");
   url.searchParams.set("route", "tasks");
+  if (String(options.refreshKey || "").trim()) {
+    url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
+  }
   if (String(apiToken || "").trim()) {
     url.searchParams.set("api_token", String(apiToken || "").trim());
   }
@@ -877,7 +880,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);
   const tracking = buildTracking(page, consoleLogPath);
-  const pageUrl = proofPageUrl(config.baseUrl, config.apiToken);
+  const pageUrl = proofPageUrl(config.baseUrl, config.apiToken, { refreshKey: config.refreshKey });
   const screenshots = {};
   const checks = [];
   try {

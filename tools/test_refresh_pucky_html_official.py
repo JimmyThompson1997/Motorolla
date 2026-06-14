@@ -179,6 +179,58 @@ def test_validate_emulator_evidence_rejects_mismatch(tmp_path: Path) -> None:
         official.validate_emulator_evidence(official.load_emulator_evidence(path), remote, local)
 
 
+def test_validate_browser_evidence_rejects_mismatch(tmp_path: Path) -> None:
+    local = {"head": "abcdef", "head_short": "abcdef0"}
+    remote = {
+        "schema": "pucky.ui_bundle.v1",
+        "ui_version": "git-abcdef0",
+        "source_commit_full": "abcdef",
+        "source_commit_short": "abcdef0",
+        "source_branch": "master",
+        "source_dirty": False,
+    }
+    evidence = {
+        "schema": "pucky.task_workspace_live_vm_proof.v1",
+        "ok": True,
+        "source_commit_full": "other",
+        "ui_version": "git-abcdef0",
+        "remote_manifest": remote,
+        "refresh_key": "abcdef0",
+    }
+    path = tmp_path / "browser.json"
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    with pytest.raises(official.OfficialRefreshError, match="commit does not match"):
+        official.validate_browser_evidence(official.load_browser_evidence(path), remote, local)
+
+
+def test_validate_browser_evidence_accepts_matching_commit_and_ui_version(tmp_path: Path) -> None:
+    local = {"head": "abcdef", "head_short": "abcdef0"}
+    remote = {
+        "schema": "pucky.ui_bundle.v1",
+        "ui_version": "git-abcdef0",
+        "source_commit_full": "abcdef",
+        "source_commit_short": "abcdef0",
+        "source_branch": "master",
+        "source_dirty": False,
+    }
+    evidence = {
+        "schema": "pucky.task_workspace_live_vm_proof.v1",
+        "ok": True,
+        "source_commit_full": "abcdef",
+        "source_commit_short": "abcdef0",
+        "ui_version": "git-abcdef0",
+        "remote_manifest": remote,
+        "refresh_key": "abcdef0",
+    }
+    path = tmp_path / "browser.json"
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    validated = official.validate_browser_evidence(official.load_browser_evidence(path), remote, local)
+
+    assert validated["source_commit_full"] == "abcdef"
+
+
 def test_wait_for_broker_command_channel_retries_transient_ping_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = argparse.Namespace(command_timeout_seconds=30)
     attempts = {"count": 0}
@@ -358,7 +410,7 @@ def test_run_cache_busts_manifest_and_bundle_urls(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         official,
         "build_evidence",
-        lambda args, local_git, remote_manifest, refresh_result, emulator_evidence=None: {
+        lambda args, local_git, remote_manifest, refresh_result, emulator_evidence=None, browser_evidence=None: {
             "manifest_url": args.manifest_url,
             "bundle_url": args.bundle_url,
         },
@@ -387,6 +439,131 @@ def test_run_cache_busts_manifest_and_bundle_urls(monkeypatch: pytest.MonkeyPatc
     assert result["ok"] is True
     assert observed["manifest_url"] == "https://pucky.fly.dev/ui/pucky/latest/manifest.json?_pucky_refresh=abcdef0"
     assert observed["bundle_url"] == "https://pucky.fly.dev/ui/pucky/latest/bundle.zip?_pucky_refresh=abcdef0"
+
+
+def test_run_allows_phone_refresh_with_browser_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    local_git = {
+        "repo_root": str(tmp_path),
+        "branch": "master",
+        "head": "abcdef0123456789",
+        "head_short": "abcdef0",
+        "upstream": "abcdef0123456789",
+        "dirty": False,
+    }
+    remote_manifest = {
+        "schema": "pucky.ui_bundle.v1",
+        "ui_version": "git-abcdef0",
+        "source_commit_full": local_git["head"],
+        "source_commit_short": local_git["head_short"],
+        "source_branch": "master",
+        "source_dirty": False,
+    }
+    browser_evidence_path = tmp_path / "browser-summary.json"
+    browser_evidence_path.write_text(json.dumps({
+        "schema": "pucky.task_workspace_live_vm_proof.v1",
+        "ok": True,
+        "source_commit_full": local_git["head"],
+        "source_commit_short": local_git["head_short"],
+        "ui_version": remote_manifest["ui_version"],
+        "remote_manifest": remote_manifest,
+        "refresh_key": local_git["head_short"],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(official, "require_official_local_repo", lambda root, canonical_root: local_git)
+    monkeypatch.setattr(official, "fetch_json", lambda url: remote_manifest)
+    monkeypatch.setattr(official, "validate_remote_manifest", lambda manifest, local: manifest)
+    monkeypatch.setattr(official, "refresh_target", lambda args, remote_manifest, local: {
+        "broker_channel": {"ok": True},
+        "bundle_install": {},
+        "shell_mode": {},
+        "bundle_status": {
+            "installed": True,
+            "ui_version": remote_manifest["ui_version"],
+            "source_commit_full": local["head"],
+            "source_commit_short": remote_manifest["source_commit_short"],
+            "source_branch": "master",
+            "source_dirty": False,
+        },
+        "live_shell": {"surface": {"route": "feed"}},
+    })
+    monkeypatch.setattr(official, "write_evidence", lambda args, evidence: tmp_path / "phone-evidence.json")
+
+    args = argparse.Namespace(
+        target="phone",
+        device_id="ZY22JZ26LK",
+        adb_serial="ZY22JZ26LK",
+        broker="https://pucky.fly.dev",
+        token="dev-token",
+        vm_base_url="https://pucky.fly.dev",
+        bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
+        manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",
+        emulator_evidence=None,
+        browser_evidence=browser_evidence_path,
+        max_bundle_bytes=10 * 1024 * 1024,
+        command_timeout_seconds=120,
+        evidence_dir=tmp_path,
+        repo_root=tmp_path,
+        canonical_root=tmp_path,
+        puckyctl=tmp_path / "puckyctl.py",
+        adb=tmp_path / "adb.exe",
+        package_name="com.pucky.device.debug",
+        activity_name="com.pucky.device.MainActivity",
+        surface_timeout_seconds=60,
+        relaunch_settle_seconds=2.0,
+    )
+
+    result = official.run(args)
+
+    assert result["ok"] is True
+
+
+def test_phone_refresh_requires_browser_or_emulator_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    local_git = {
+        "repo_root": str(tmp_path),
+        "branch": "master",
+        "head": "abcdef0123456789",
+        "head_short": "abcdef0",
+        "upstream": "abcdef0123456789",
+        "dirty": False,
+    }
+    remote_manifest = {
+        "schema": "pucky.ui_bundle.v1",
+        "ui_version": "git-abcdef0",
+        "source_commit_full": local_git["head"],
+        "source_commit_short": local_git["head_short"],
+        "source_branch": "master",
+        "source_dirty": False,
+    }
+    monkeypatch.setattr(official, "require_official_local_repo", lambda root, canonical_root: local_git)
+    monkeypatch.setattr(official, "fetch_json", lambda url: remote_manifest)
+    monkeypatch.setattr(official, "validate_remote_manifest", lambda manifest, local: manifest)
+
+    args = argparse.Namespace(
+        target="phone",
+        device_id="ZY22JZ26LK",
+        adb_serial="ZY22JZ26LK",
+        broker="https://pucky.fly.dev",
+        token="dev-token",
+        vm_base_url="https://pucky.fly.dev",
+        bundle_url="https://pucky.fly.dev/ui/pucky/latest/bundle.zip",
+        manifest_url="https://pucky.fly.dev/ui/pucky/latest/manifest.json",
+        emulator_evidence=None,
+        browser_evidence=None,
+        max_bundle_bytes=10 * 1024 * 1024,
+        command_timeout_seconds=120,
+        evidence_dir=tmp_path,
+        repo_root=tmp_path,
+        canonical_root=tmp_path,
+        puckyctl=tmp_path / "puckyctl.py",
+        adb=tmp_path / "adb.exe",
+        package_name="com.pucky.device.debug",
+        activity_name="com.pucky.device.MainActivity",
+        surface_timeout_seconds=60,
+        relaunch_settle_seconds=2.0,
+    )
+
+    with pytest.raises(official.OfficialRefreshError, match="requires --emulator-evidence or --browser-evidence"):
+        official.run(args)
 
 
 def test_puckyctl_args_forward_explicit_wait_timeout() -> None:
@@ -448,3 +625,14 @@ def test_official_tools_share_the_same_canonical_repo_root() -> None:
 
     assert match is not None
     assert Path(match.group(1)) == official.CANONICAL_REPO_ROOT
+
+
+def test_task_live_browser_proof_source_records_manifest_identity_and_refresh_key() -> None:
+    source = Path(official.__file__).with_name("task_workspace_live_vm_proof.mjs").read_text(encoding="utf-8")
+
+    assert "remote_manifest" in source
+    assert "source_commit_full" in source
+    assert "source_commit_short" in source
+    assert "ui_version" in source
+    assert "refresh_key" in source
+    assert "_pucky_refresh" in source

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -17,6 +18,52 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_BASE_URL = process.env.PUCKY_TASK_PROOF_BASE_URL || "https://pucky.fly.dev";
+
+function runGit(args) {
+  return execFileSync("git", args, {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function localGitState() {
+  try {
+    return {
+      head: runGit(["rev-parse", "HEAD"]),
+      headShort: runGit(["rev-parse", "--short", "HEAD"]),
+    };
+  } catch (_error) {
+    return {
+      head: "",
+      headShort: "",
+    };
+  }
+}
+
+async function fetchRemoteManifest(baseUrl, refreshKey) {
+  const url = new URL("/ui/pucky/latest/manifest.json", `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  if (String(refreshKey || "").trim()) {
+    url.searchParams.set("_pucky_refresh", String(refreshKey || "").trim());
+  }
+  const response = await fetch(url, {
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Could not load remote manifest (${response.status}) from ${url.toString()}`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!payload || typeof payload !== "object") {
+    throw new Error(`Remote manifest from ${url.toString()} was not valid JSON`);
+  }
+  return {
+    manifest: payload,
+    manifestUrl: url.toString(),
+  };
+}
 
 function parseArgs(argv) {
   const config = {
@@ -88,11 +135,14 @@ async function main() {
   if (!String(config.apiToken || "").trim()) {
     throw new Error("Live task workspace proof requires --api-token or PUCKY_API_TOKEN/PUCKY_OPERATOR_TOKEN");
   }
+  const gitState = localGitState();
+  config.refreshKey = gitState.headShort || `manual-${Date.now()}`;
   logStep(config, `starting live task workspace proof against ${config.baseUrl}`);
   let browser = null;
   try {
     const chromium = await loadChromium();
     browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
+    const remoteManifestResult = await fetchRemoteManifest(config.baseUrl, config.refreshKey);
     const seed = await seedTaskProofWorkspace(config.baseUrl, config.apiToken, config.runId, {
       cleanupFirst: config.cleanupFirst,
       reportDir: config.reportDir,
@@ -110,6 +160,12 @@ async function main() {
       ok: true,
       report_dir: config.reportDir,
       base_url: config.baseUrl,
+      manifest_url: remoteManifestResult.manifestUrl,
+      remote_manifest: remoteManifestResult.manifest,
+      source_commit_full: String(remoteManifestResult.manifest?.source_commit_full || gitState.head || ""),
+      source_commit_short: String(remoteManifestResult.manifest?.source_commit_short || gitState.headShort || ""),
+      ui_version: String(remoteManifestResult.manifest?.ui_version || ""),
+      refresh_key: config.refreshKey,
       seed_manifest_path: seed.seed_manifest_path || "",
       seed_left_in_place: true,
       seed_restored_to_initial_state: Boolean(config.restoreSeedState),

@@ -316,6 +316,13 @@ def load_emulator_evidence(path: Path) -> dict[str, Any]:
     return evidence
 
 
+def load_browser_evidence(path: Path) -> dict[str, Any]:
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    if evidence.get("ok") is not True:
+        raise OfficialRefreshError("Browser evidence must be green before phone refresh")
+    return evidence
+
+
 def validate_emulator_evidence(
     evidence: dict[str, Any],
     remote_manifest: dict[str, Any],
@@ -331,6 +338,27 @@ def validate_emulator_evidence(
         raise OfficialRefreshError("Emulator evidence ui_version does not match current remote manifest")
     bundle_status = evidence.get("bundle_status") or {}
     verify_bundle_status(bundle_status, remote_manifest, local_git)
+    return evidence
+
+
+def validate_browser_evidence(
+    evidence: dict[str, Any],
+    remote_manifest: dict[str, Any],
+    local_git: dict[str, object],
+) -> dict[str, Any]:
+    browser_commit = str(evidence.get("source_commit_full") or "")
+    browser_ui_version = str(evidence.get("ui_version") or "")
+    browser_manifest = evidence.get("remote_manifest") or {}
+    browser_manifest_commit = str(browser_manifest.get("source_commit_full") or browser_commit)
+    browser_manifest_ui_version = str(browser_manifest.get("ui_version") or browser_ui_version)
+    if browser_commit != str(local_git["head"]):
+        raise OfficialRefreshError("Browser evidence commit does not match local master HEAD")
+    if browser_manifest_commit != str(local_git["head"]):
+        raise OfficialRefreshError("Browser evidence remote manifest commit does not match local master HEAD")
+    if browser_ui_version != str(remote_manifest["ui_version"]):
+        raise OfficialRefreshError("Browser evidence ui_version does not match current remote manifest")
+    if browser_manifest_ui_version != str(remote_manifest["ui_version"]):
+        raise OfficialRefreshError("Browser evidence remote manifest ui_version does not match current remote manifest")
     return evidence
 
 
@@ -370,6 +398,7 @@ def build_evidence(
     remote_manifest: dict[str, Any],
     refresh_result: dict[str, Any],
     emulator_evidence: dict[str, Any] | None = None,
+    browser_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence: dict[str, Any] = {
         "schema": RESULT_SCHEMA,
@@ -395,6 +424,13 @@ def build_evidence(
             "ui_version": (emulator_evidence.get("remote_manifest") or {}).get("ui_version", ""),
             "source_commit_full": (emulator_evidence.get("remote_manifest") or {}).get("source_commit_full", ""),
         }
+    if browser_evidence is not None:
+        evidence["browser_evidence"] = {
+            "schema": browser_evidence.get("schema", ""),
+            "ui_version": browser_evidence.get("ui_version", ""),
+            "source_commit_full": browser_evidence.get("source_commit_full", ""),
+            "refresh_key": browser_evidence.get("refresh_key", ""),
+        }
     return evidence
 
 
@@ -412,16 +448,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     args.bundle_url = cache_busted_url(args.bundle_url, refresh_key)
     remote_manifest = validate_remote_manifest(fetch_json(args.manifest_url), local_git)
     emulator_evidence = None
+    browser_evidence = None
     if args.target == "phone":
-        if args.emulator_evidence is None:
-            raise OfficialRefreshError("Phone refresh requires --emulator-evidence for the same commit and ui_version")
-        emulator_evidence = validate_emulator_evidence(
-            load_emulator_evidence(args.emulator_evidence),
-            remote_manifest,
-            local_git,
-        )
+        if args.emulator_evidence is None and args.browser_evidence is None:
+            raise OfficialRefreshError("Phone refresh requires --emulator-evidence or --browser-evidence for the same commit and ui_version")
+        if args.emulator_evidence is not None:
+            emulator_evidence = validate_emulator_evidence(
+                load_emulator_evidence(args.emulator_evidence),
+                remote_manifest,
+                local_git,
+            )
+        if args.browser_evidence is not None:
+            browser_evidence = validate_browser_evidence(
+                load_browser_evidence(args.browser_evidence),
+                remote_manifest,
+                local_git,
+            )
     refresh_result = refresh_target(args, remote_manifest, local_git)
-    evidence = build_evidence(args, local_git, remote_manifest, refresh_result, emulator_evidence)
+    evidence = build_evidence(args, local_git, remote_manifest, refresh_result, emulator_evidence, browser_evidence)
     evidence_path = write_evidence(args, evidence)
     return {
         "ok": True,
@@ -443,6 +487,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bundle-url", default="")
     parser.add_argument("--manifest-url", default="")
     parser.add_argument("--emulator-evidence", type=Path)
+    parser.add_argument("--browser-evidence", type=Path)
     parser.add_argument("--max-bundle-bytes", type=int, default=10 * 1024 * 1024)
     parser.add_argument("--command-timeout-seconds", type=int, default=120)
     parser.add_argument("--surface-timeout-seconds", type=int, default=60)
