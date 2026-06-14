@@ -39,7 +39,7 @@ from .providers import DeepgramSTT, KokoroTTS
 from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
-from .workspace_store import WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
+from .workspace_store import SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
@@ -881,6 +881,7 @@ class PuckyVoiceService:
             config.composio_base_url,
             action_logger=self._record_composio_action,
         )
+        self._hydrate_self_contact_from_config()
         self._turn_lock = threading.Lock()
         self._turn_status_lock = threading.Lock()
         self._turn_statuses: dict[str, dict[str, object]] = {}
@@ -1102,13 +1103,65 @@ class PuckyVoiceService:
                     return value
         return ""
 
+    def _self_contact_record(self) -> dict[str, object]:
+        return self.workspace.ensure_self_contact()
+
+    def _fill_self_contact_delivery_fields(self, *, email: str = "", phone: str = "") -> None:
+        next_email = str(email or "").strip()
+        next_phone = str(phone or "").strip()
+        if not next_email and not next_phone:
+            return
+        contact = self._self_contact_record()
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        current_email = str(metadata.get("email") or "").strip()
+        current_phone = str(metadata.get("phone") or "").strip()
+        endpoints = [item for item in list(metadata.get("endpoints") or []) if isinstance(item, dict)]
+        preserved: list[dict[str, object]] = []
+        stripped_email_or_phone = False
+        for endpoint in endpoints:
+            label = str(endpoint.get("label") or endpoint.get("type") or "").strip().lower()
+            if label in {"email", "gmail", "mail", "phone", "sms", "text", "mobile", "call"}:
+                stripped_email_or_phone = True
+                continue
+            preserved.append(dict(endpoint))
+        if next_email:
+            preserved.append({"label": "Email", "value": next_email})
+        if next_phone:
+            preserved.append({"label": "Phone", "value": next_phone})
+        next_metadata = dict(metadata)
+        changed = False
+        if next_email and next_email != current_email:
+            next_metadata["email"] = next_email
+            changed = True
+        if next_phone and next_phone != current_phone:
+            next_metadata["phone"] = next_phone
+            changed = True
+        if stripped_email_or_phone or changed:
+            next_metadata["endpoints"] = preserved
+            changed = True
+        if changed:
+            self.workspace.patch_record("contacts", SELF_CONTACT_ID, {"metadata": next_metadata})
+
+    def _hydrate_self_contact_from_config(self) -> None:
+        self._fill_self_contact_delivery_fields(
+            email=str(self.config.self_email or "").strip(),
+            phone=str(self.config.self_phone_number or "").strip(),
+        )
+
     def _resolve_reminder_email_target(self, recipient: dict[str, object], destination: dict[str, object]) -> str:
         explicit = str(destination.get("address") or "").strip()
         if explicit:
             return explicit
         if str(recipient.get("kind") or "").strip().lower() == "self":
-            direct = str(self.config.self_email or "").strip()
-            return direct or self._resolve_connected_gmail_self_email(destination)
+            me = self._self_contact_record()
+            metadata = me.get("metadata") if isinstance(me.get("metadata"), dict) else {}
+            direct = str(metadata.get("email") or "").strip() or self._contact_endpoint_value(me, ("email", "gmail", "mail"))
+            if direct:
+                return direct
+            fallback = str(self.config.self_email or "").strip() or self._resolve_connected_gmail_self_email(destination)
+            if fallback:
+                self._fill_self_contact_delivery_fields(email=fallback)
+            return fallback
         contact = self._reminder_contact_record(recipient)
         if not contact:
             return ""
@@ -1121,7 +1174,15 @@ class PuckyVoiceService:
         if explicit:
             return explicit
         if str(recipient.get("kind") or "").strip().lower() == "self":
-            return str(self.config.self_phone_number or "").strip()
+            me = self._self_contact_record()
+            metadata = me.get("metadata") if isinstance(me.get("metadata"), dict) else {}
+            direct = str(metadata.get("phone") or "").strip() or self._contact_endpoint_value(me, ("phone", "sms", "text", "mobile", "call"))
+            if direct:
+                return direct
+            fallback = str(self.config.self_phone_number or "").strip()
+            if fallback:
+                self._fill_self_contact_delivery_fields(phone=fallback)
+            return fallback
         contact = self._reminder_contact_record(recipient)
         if not contact:
             return ""
@@ -1134,7 +1195,10 @@ class PuckyVoiceService:
             connected_account_id, _ = self._require_connected_app("gmail", destination)
         except Exception:
             return ""
-        return self._gmail_account_primary_email(connected_account_id)
+        email = self._gmail_account_primary_email(connected_account_id)
+        if email:
+            self._fill_self_contact_delivery_fields(email=email)
+        return email
 
     def _gmail_account_primary_email(self, connected_account_id: str) -> str:
         clean_account_id = str(connected_account_id or "").strip()
@@ -1204,6 +1268,10 @@ class PuckyVoiceService:
     def _reminder_target_device_id(self, reminder: dict[str, object]) -> tuple[str, str]:
         metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
         preferred = str(metadata.get("notification_device_id") or "").strip()
+        if not preferred:
+            me = self._self_contact_record()
+            me_metadata = me.get("metadata") if isinstance(me.get("metadata"), dict) else {}
+            preferred = str(me_metadata.get("notification_device_id") or me_metadata.get("preferred_reminder_device_id") or "").strip()
         broker = ensure_broker_initialized()
         devices = [item for item in broker.list_devices() if bool(item.get("online"))]
         if preferred:

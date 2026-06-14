@@ -4857,11 +4857,11 @@
       return "";
     }
     if (String(recipient.kind || "").trim().toLowerCase() === "self") {
-      const me = workspaceRecord("contacts", SELF_CONTACT_ID);
+      const me = workspaceRecordByKind("contact", SELF_CONTACT_ID);
       return String(me?.title || recipient.label || "Me").trim() || "Me";
     }
     const contactId = String(recipient.contactId || recipient.id || "").trim();
-    const contact = contactId ? workspaceRecord("contacts", contactId) : null;
+    const contact = contactId ? workspaceRecordByKind("contact", contactId) : null;
     return String(recipient.label || contact?.title || contactId || "Contact").trim() || "Contact";
   }
 

@@ -28,6 +28,9 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
 }
 
 KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
+SELF_CONTACT_ID = "contact-me"
+SELF_CONTACT_TITLE = "Me"
+SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
 
 
 def _now_ms() -> int:
@@ -58,6 +61,30 @@ def _int_or_zero(value: object) -> int:
         return int(value or 0)
     except Exception:
         return 0
+
+
+def _self_contact_record() -> dict[str, object]:
+    return {
+        "id": SELF_CONTACT_ID,
+        "title": SELF_CONTACT_TITLE,
+        "summary": SELF_CONTACT_SUMMARY,
+        "pinned": True,
+        "html": _personal_html(
+            SELF_CONTACT_TITLE,
+            "Keep your own reminder delivery endpoints current so phone, Gmail, and SMS can route cleanly.",
+            ["Primary email", "Primary phone", "Preferred reminder device"],
+        ),
+        "metadata": {
+            "is_self": True,
+            "avatar": "ME",
+            "email": "",
+            "phone": "",
+            "notification_device_id": "",
+            "preferred_reminder_device_id": "",
+            "endpoints": [],
+            "activity": ["Reminder delivery profile"],
+        },
+    }
 
 
 def _normalize_reminder_recipient_id(value: object) -> str:
@@ -379,7 +406,7 @@ class WorkspaceStore:
         elif kind == "project":
             order = "ORDER BY updated_at_ms DESC, title ASC"
         elif kind == "contact":
-            order = "ORDER BY title COLLATE NOCASE ASC"
+            order = f"ORDER BY record_id = '{SELF_CONTACT_ID}' DESC, title COLLATE NOCASE ASC"
         elif kind == "message":
             order = "ORDER BY event_at_ms DESC, updated_at_ms DESC"
         elif kind == "meeting_note":
@@ -419,6 +446,10 @@ class WorkspaceStore:
         kind = self.kind_for_collection(collection)
         now = self.now_ms()
         record_id = _clean_id(payload.get("id") or payload.get("record_id"), kind)
+        if kind == "contact":
+            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+            if record_id == SELF_CONTACT_ID or bool(metadata.get("is_self")):
+                record_id = SELF_CONTACT_ID
         existing_record = self.get_record(collection, record_id, include_deleted=True)
         normalized = self._normalize_record(kind, record_id, payload, now_ms=now)
         if kind == "note":
@@ -440,6 +471,18 @@ class WorkspaceStore:
             else:
                 merged[key] = value
         merged["metadata"] = metadata
+        if self.kind_for_collection(collection) == "contact" and str(record_id or "").strip() == SELF_CONTACT_ID:
+            merged["id"] = SELF_CONTACT_ID
+            merged["record_id"] = SELF_CONTACT_ID
+            merged["title"] = SELF_CONTACT_TITLE
+            merged["summary"] = str(merged.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY
+            merged["pinned"] = True
+            merged["archived"] = False
+            merged["deleted"] = False
+            merged["metadata"] = {
+                **metadata,
+                "is_self": True,
+            }
         return self.upsert_record(collection, merged)
 
     @staticmethod
@@ -500,6 +543,8 @@ class WorkspaceStore:
         existing = self.get_record(collection, record_id, include_deleted=True)
         if existing is None:
             return None
+        if self.kind_for_collection(collection) == "contact" and str(record_id or "").strip() == SELF_CONTACT_ID:
+            return self.patch_record(collection, record_id, {})
         return self.patch_record(collection, record_id, {"deleted": True, "archived": True})
 
     def create_asset(self, payload: dict[str, object]) -> dict[str, object]:
@@ -662,6 +707,35 @@ class WorkspaceStore:
             self._reseed_graph_v3(now)
         if not proof_cleanup_seeded:
             self._cleanup_proof_artifacts(now)
+        self.ensure_self_contact()
+
+    def ensure_self_contact(self) -> dict[str, object]:
+        current = self.get_record("contacts", SELF_CONTACT_ID, include_deleted=True)
+        if current is None:
+            return self.upsert_record("contacts", _self_contact_record())
+        metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+        payload = {
+            "id": SELF_CONTACT_ID,
+            "title": SELF_CONTACT_TITLE,
+            "summary": str(current.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY,
+            "pinned": True,
+            "archived": False,
+            "deleted": False,
+            "html": str(current.get("html") or "") or _self_contact_record()["html"],
+            "html_asset_id": str(current.get("html_asset_id") or ""),
+            "metadata": {
+                **metadata,
+                "is_self": True,
+                "avatar": str(metadata.get("avatar") or "ME").strip() or "ME",
+                "email": str(metadata.get("email") or "").strip(),
+                "phone": str(metadata.get("phone") or "").strip(),
+                "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
+                "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
+                "endpoints": list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else [],
+                "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
+            },
+        }
+        return self.upsert_record("contacts", payload)
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
@@ -825,6 +899,25 @@ class WorkspaceStore:
         if kind == "reminder":
             status = status or "open"
             metadata = _normalize_reminder_metadata(metadata, status=status)
+        if kind == "contact":
+            is_self = record_id == SELF_CONTACT_ID or bool(metadata.get("is_self"))
+            if is_self:
+                metadata = {
+                    **metadata,
+                    "is_self": True,
+                    "avatar": str(metadata.get("avatar") or "ME").strip() or "ME",
+                    "email": str(metadata.get("email") or "").strip(),
+                    "phone": str(metadata.get("phone") or "").strip(),
+                    "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
+                    "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
+                    "endpoints": list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else [],
+                    "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
+                }
+                title = SELF_CONTACT_TITLE
+                summary = summary or SELF_CONTACT_SUMMARY
+                pinned = True
+                archived = False
+                deleted = False
         if kind == "calendar_event" and not date_key and start_at_ms:
             date_key = time.strftime("%Y-%m-%d", time.localtime(start_at_ms / 1000))
         if kind == "feed_item":

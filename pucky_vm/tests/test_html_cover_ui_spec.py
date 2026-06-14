@@ -373,3 +373,43 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert ".light-task-filter-button-chevron" in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active' in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
+
+
+def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
+    app = read("app.js")
+    reminders_page = function_block(app, "lightRemindersPage")
+    reminder_row = function_block(app, "lightReminderRow")
+    reminder_detail = function_block(app, "lightReminderDetailPage")
+    recipient_name = function_block(app, "reminderRecipientDisplayName")
+    recipient_rows = function_block(app, "reminderRecipientRows")
+
+    assert 'const SELF_CONTACT_ID = "contact-me";' in app
+    assert "const active = reminders.filter(reminder => reminderIsActive(reminder));" in reminders_page
+    assert "light-reminder-history" not in reminders_page
+    assert "lightSmallIcon(\"bell\", \"reminders\")" in reminder_row
+    assert "light-graph-chip-row" not in reminder_row
+    assert 'page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));' in reminder_detail
+    assert 'page.append(lightInfoSection("Recipients", recipientRows));' in reminder_detail
+    assert 'page.append(lightInfoSection("Channels", destinationRows));' in reminder_detail
+    assert 'page.append(lightInfoSection("Linked records", linkedRows));' in reminder_detail
+    assert "lightHtmlDocument(reminder" not in reminder_detail
+    assert 'const me = workspaceRecordByKind("contact", SELF_CONTACT_ID);' in recipient_name
+    assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
+
+
+def test_contacts_expose_preserved_me_contact_and_edit_route() -> None:
+    app = read("app.js")
+    contacts_page = function_block(app, "lightContactsPage")
+    contact_detail = function_block(app, "lightContactDetailPage")
+    contact_edit = function_block(app, "lightContactEditPage")
+
+    assert 'const SELF_CONTACT_ID = "contact-me";' in app
+    assert "function contactIsSelf(contact)" in app
+    assert "function contactsListItems()" in app
+    assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" in app
+    assert '"contact-edit"' in app
+    assert "list.append(...contactsListItems().map(contact => {" in contacts_page
+    assert 'lightNavigate("contact-edit", { from: "contact-detail" });' in contact_detail
+    assert 'lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });' in contact_edit
+    assert 'const save = lightPillButton(selfContact ? "Save profile" : "Save contact"' in contact_edit
+    assert "notification_device_id: selfContact ? device.value.trim()" in contact_edit

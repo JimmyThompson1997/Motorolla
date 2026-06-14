@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pucky_vm.workspace_store import WorkspaceStore, derive_task_group
+from pucky_vm.workspace_store import SELF_CONTACT_ID, WorkspaceStore, derive_task_group
 
 
 class Clock:
@@ -528,6 +528,44 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert ("contact", "clinic-front-desk") in clinic_links
     assert ("note", "clinic-prep-note") in clinic_links
     assert ("reminder", "demo-reminder-health-call") in clinic_links
+
+
+def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    contacts = store.list_records("contacts")
+    assert contacts["items"]
+    assert contacts["items"][0]["id"] == SELF_CONTACT_ID
+    assert contacts["items"][0]["title"] == "Me"
+    assert contacts["items"][0]["metadata"]["is_self"] is True
+
+    updated = store.patch_record(
+        "contacts",
+        SELF_CONTACT_ID,
+        {
+            "metadata": {
+                "email": "me@example.com",
+                "phone": "+14155550123",
+                "notification_device_id": "phone-1",
+            }
+        },
+    )
+    assert updated is not None
+    assert updated["metadata"]["email"] == "me@example.com"
+    assert updated["metadata"]["phone"] == "+14155550123"
+    assert updated["metadata"]["notification_device_id"] == "phone-1"
+
+    deleted = store.delete_record("contacts", SELF_CONTACT_ID)
+    assert deleted is not None
+    assert deleted["id"] == SELF_CONTACT_ID
+    assert deleted["archived"] is False
+    assert deleted["deleted"] is False
+
+    preserved = store.patch_record("contacts", SELF_CONTACT_ID, {"archived": True, "deleted": True})
+    assert preserved is not None
+    assert preserved["id"] == SELF_CONTACT_ID
+    assert preserved["archived"] is False
+    assert preserved["deleted"] is False
 
 
 def test_derive_task_group_boundaries() -> None:

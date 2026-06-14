@@ -20,7 +20,9 @@ function parseArgs(argv) {
     baseUrl: DEFAULT_BASE_URL,
     apiToken: process.env.PUCKY_WORKSPACE_PROOF_TOKEN || process.env.PUCKY_API_TOKEN || "",
     reportDir: path.resolve("artifacts", "workspace-apps", new Date().toISOString().replace(/[:.]/g, "-")),
-    timeoutMs: 30000
+    timeoutMs: 30000,
+    reminderDeliveryMode: process.env.PUCKY_REMINDER_DELIVERY_MODE || "auto",
+    sections: []
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -32,6 +34,13 @@ function parseArgs(argv) {
       config.reportDir = path.resolve(String(argv[++index] || config.reportDir));
     } else if (arg === "--timeout-ms" && argv[index + 1]) {
       config.timeoutMs = Math.max(1000, Number(argv[++index] || config.timeoutMs) || config.timeoutMs);
+    } else if (arg === "--reminder-delivery" && argv[index + 1]) {
+      config.reminderDeliveryMode = String(argv[++index] || config.reminderDeliveryMode).trim().toLowerCase() || "auto";
+    } else if (arg === "--sections" && argv[index + 1]) {
+      config.sections = String(argv[++index] || "")
+        .split(",")
+        .map(value => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
     }
   }
   return config;
@@ -88,6 +97,25 @@ function isUnauthorizedError(error) {
   return /\(401\)/.test(String(error?.message || error));
 }
 
+function shouldRunReminderDelivery(config) {
+  const mode = String(config.reminderDeliveryMode || "auto").trim().toLowerCase();
+  if (mode === "always") {
+    return true;
+  }
+  if (mode === "never") {
+    return false;
+  }
+  return /pucky\.fly\.dev/i.test(String(config.baseUrl || ""));
+}
+
+function shouldRunSection(config, sectionName) {
+  const requested = Array.isArray(config.sections) ? config.sections : [];
+  if (!requested.length) {
+    return true;
+  }
+  return requested.includes(String(sectionName || "").trim().toLowerCase());
+}
+
 async function readCollection(config, collection, now = null) {
   try {
     const payload = await apiRequest(config, "GET", `/api/workspace/${collection}${now ? `?now_ms=${now}` : ""}`);
@@ -95,6 +123,62 @@ async function readCollection(config, collection, now = null) {
   } catch (error) {
     return [];
   }
+}
+
+function reminderMetaForScript(reminder) {
+  const metadata = reminder && typeof reminder === "object" && reminder.metadata && typeof reminder.metadata === "object"
+    ? reminder.metadata
+    : {};
+  return {
+    deliveryState: String(metadata.delivery_state || "").trim().toLowerCase(),
+    snoozedUntilMs: Number(metadata.snoozed_until_ms || 0),
+    lastFiredDueAtMs: Number(metadata.last_fired_due_at_ms || 0)
+  };
+}
+
+function reminderIsDismissedForScript(reminder) {
+  return String(reminder?.status || "").trim().toLowerCase() === "done";
+}
+
+function reminderIsSentHistoryForScript(reminder) {
+  if (reminderIsDismissedForScript(reminder)) {
+    return false;
+  }
+  const meta = reminderMetaForScript(reminder);
+  const dueAtMs = Number(reminder?.due_at_ms || 0);
+  return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
+}
+
+function reminderIsActiveForScript(reminder) {
+  return !reminderIsDismissedForScript(reminder) && !reminderIsSentHistoryForScript(reminder);
+}
+
+async function readActiveReminderCount(config) {
+  const items = await readCollection(config, "reminders");
+  return items.filter(reminder => reminderIsActiveForScript(reminder)).length;
+}
+
+async function waitForReminderHomeBadgeCount(page, count, timeoutMs) {
+  await page.waitForFunction((expectedCount) => {
+    const badge = document.querySelector('.light-app-tile[data-app-label="Reminders"] .light-app-badge');
+    if (expectedCount <= 0) {
+      return !badge;
+    }
+    return Boolean(badge) && String(badge.textContent || "").trim() === String(expectedCount);
+  }, count, { timeout: timeoutMs });
+}
+
+async function waitForReminderRecord(config, reminderId, predicate, description, timeoutMs) {
+  const startedAt = Date.now();
+  let lastRecord = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${reminderId}`);
+    if (predicate(lastRecord)) {
+      return lastRecord;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Timed out waiting for reminder ${reminderId}: ${description}; last record ${JSON.stringify(lastRecord)}`);
 }
 
 function buildSeedManifest(runId = PROOF_RUN_ID) {
@@ -1289,6 +1373,22 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
+  const firstContact = page.locator("button[data-contact-id]").first();
+  await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
+  assert(firstContactId === "contact-me", `Expected Me contact to be pinned first, saw ${firstContactId}`);
+  await page.locator('button[data-contact-id="contact-me"]').click();
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, "Me", config.timeoutMs);
+  screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
+  await page.getByRole("button", { name: "Edit Me" }).click({ timeout: config.timeoutMs });
+  await waitForLightRoute(page, "contact-edit", config.timeoutMs);
+  await page.getByPlaceholder("Email").waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.getByPlaceholder("Phone").waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.getByPlaceholder("Preferred reminder device id").waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_contacts_me_edit`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-edit`);
+  await topBackToRoute(page, "contact-detail", "Me", config.timeoutMs);
+  await topBackToRoute(page, "contacts", "", config.timeoutMs);
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
   } else if (contacts.length) {
@@ -1329,6 +1429,8 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     screenshots[`${theme}_contact_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-after-back`);
   }
   await backHome(page, theme, config.timeoutMs);
+  summary.contactProfiles = summary.contactProfiles || [];
+  summary.contactProfiles.push({ theme, selfContactId: firstContactId });
 }
 
 async function proveReminders(page, config, seed, theme, screenshots, summary) {
@@ -1336,25 +1438,53 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     summary.assertions.push("reminder delivery proof skipped because API token was unavailable");
     return;
   }
-  const dueReminderId = `${seed.runId}-due-reminder`;
+  const deliveryEnabled = shouldRunReminderDelivery(config);
+  const baselineActiveCount = await readActiveReminderCount(config);
   const manageReminderId = `${seed.runId}-manage-reminder`;
-  const dueAtMs = Date.now() + 5_000;
   const manageDueAtMs = Date.now() + 30 * 60 * 1000;
-  await deleteWorkspaceRecord(config, "reminders", dueReminderId);
-  await deleteWorkspaceRecord(config, "reminders", manageReminderId);
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: dueReminderId,
-    title: "Proof Due Reminder",
-    summary: "Reminder should fire through VM delivery polling.",
-    status: "open",
-    due_at_ms: dueAtMs,
-    metadata: {
-      source_kind: "task",
-      source_id: `${seed.runId}-future-task`,
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
-    }
-  });
+  const deliveryLanes = deliveryEnabled
+    ? [
+        {
+          key: "phone",
+          id: `${seed.runId}-due-reminder-phone`,
+          title: "Proof Due Reminder Phone",
+          channel: "phone_notification",
+          detail: "Phone notification lane should fire through VM reminder polling."
+        },
+        {
+          key: "gmail",
+          id: `${seed.runId}-due-reminder-gmail`,
+          title: "Proof Due Reminder Gmail",
+          channel: "email",
+          detail: "Gmail lane should fire through VM reminder polling."
+        },
+        {
+          key: "sms",
+          id: `${seed.runId}-due-reminder-sms`,
+          title: "Proof Due Reminder SMS",
+          channel: "sms",
+          detail: "SMS lane should fire through VM reminder polling."
+        }
+      ]
+    : [];
+  for (const reminderId of [manageReminderId, ...deliveryLanes.map(item => item.id)]) {
+    await deleteWorkspaceRecord(config, "reminders", reminderId);
+  }
+  for (const [index, lane] of deliveryLanes.entries()) {
+    await apiRequest(config, "POST", "/api/workspace/reminders", {
+      id: lane.id,
+      title: lane.title,
+      summary: lane.detail,
+      status: "open",
+      due_at_ms: Date.now() + 5_000 + (index * 1_500),
+      metadata: {
+        source_kind: "task",
+        source_id: `${seed.runId}-future-task`,
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: lane.channel, recipient_ids: ["self"] }]
+      }
+    });
+  }
   await apiRequest(config, "POST", "/api/workspace/reminders", {
     id: manageReminderId,
     title: "Proof Manage Reminder",
@@ -1363,24 +1493,23 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     due_at_ms: manageDueAtMs,
     metadata: {
       source_kind: "project",
-      source_id: `${seed.runId}-project-alpha`,
+      source_id: `${seed.runId}-alpha-project`,
       recipients: [{ id: "self", kind: "self", label: "Me" }],
       destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
     }
   });
+  let activeCount = baselineActiveCount + deliveryLanes.length + 1;
   await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
-  await page.waitForFunction(() => {
-    const badge = document.querySelector('.light-app-tile[data-app-label="Reminders"] .light-app-badge');
-    return badge && String(badge.textContent || "").trim() === "2";
-  }, { timeout: config.timeoutMs });
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
   screenshots[`${theme}_reminders_home_badge_active`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-active`);
 
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
-  const dueRow = page.locator(`[data-reminder-id="${dueReminderId}"]`);
   const manageRow = page.locator(`[data-reminder-id="${manageReminderId}"]`);
-  await dueRow.waitFor({ state: "visible", timeout: config.timeoutMs });
   await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+  for (const lane of deliveryLanes) {
+    await page.locator(`[data-reminder-id="${lane.id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  }
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
     return !text.includes("Overdue") && !text.includes("Done") && !text.includes("Failed");
@@ -1390,12 +1519,15 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
       && !document.querySelector(".light-reminder-history-list")
       && !document.querySelector('[data-reminder-history-toggle="sent"]');
   }, { timeout: config.timeoutMs });
-  const dueChipCount = await dueRow.locator(".light-graph-chip-row").count();
+  const rowChipCounts = [];
+  for (const lane of deliveryLanes) {
+    rowChipCounts.push(await page.locator(`[data-reminder-id="${lane.id}"]`).locator(".light-graph-chip-row").count());
+  }
   const manageChipCount = await manageRow.locator(".light-graph-chip-row").count();
-  assert(dueChipCount === 0, `Expected no linked chips on reminder rows, saw ${dueChipCount}`);
+  assert(rowChipCounts.every(count => count === 0), `Expected no linked chips on delivery reminder rows, saw ${rowChipCounts.join(",")}`);
   assert(manageChipCount === 0, `Expected no linked chips on reminder rows, saw ${manageChipCount}`);
   screenshots[`${theme}_reminders_list_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-pending`);
-  await manageRow.click();
+  await manageRow.click({ force: true });
   await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
   await waitForGraphText(page, "Proof Manage Reminder", config.timeoutMs);
   await page.waitForFunction(() => {
@@ -1415,26 +1547,47 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
 
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await waitForLightRoute(page, "reminders", config.timeoutMs);
-  await page.waitForTimeout(22_000);
-  const firedRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${dueReminderId}`);
-  const firedState = String(firedRecord?.metadata?.delivery_state || "");
-  assert(firedState === "sent", `Expected due reminder delivery_state to be sent, got ${firedState}`);
-  await page.waitForFunction((ids) => {
-    return !document.querySelector(`.light-reminder-row[data-reminder-id="${ids.goneId}"]`)
-      && Boolean(document.querySelector(`.light-reminder-row[data-reminder-id="${ids.remainingId}"]`));
-  }, { goneId: dueReminderId, remainingId: manageReminderId }, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminders_list_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-after-fire`);
+  summary.reminders = summary.reminders || [];
+  const reminderSummary = {
+    theme,
+    baselineActiveCount,
+    deliveryEnabled,
+    manageReminderId,
+    lanes: []
+  };
+  if (deliveryEnabled) {
+    for (const lane of deliveryLanes) {
+      const firedRecord = await waitForReminderRecord(
+        config,
+        lane.id,
+        record => String(record?.metadata?.delivery_state || "").trim().toLowerCase() === "sent",
+        `${lane.channel} reminder delivery_state should become sent`,
+        45_000
+      );
+      const firedState = String(firedRecord?.metadata?.delivery_state || "").trim().toLowerCase();
+      assert(firedState === "sent", `Expected ${lane.channel} reminder delivery_state to be sent, got ${firedState}`);
+      activeCount -= 1;
+      await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), lane.id, { timeout: config.timeoutMs });
+      screenshots[`${theme}_reminders_${lane.key}_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-${lane.key}-after-fire`);
+      await backHome(page, theme, config.timeoutMs);
+      await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
+      screenshots[`${theme}_reminders_home_badge_${lane.key}_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-${lane.key}-after-fire`);
+      await openTile(page, "Reminders", "reminders", config.timeoutMs);
+      await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+      reminderSummary.lanes.push({
+        key: lane.key,
+        channel: lane.channel,
+        reminderId: lane.id,
+        deliveryState: firedState,
+        deliveryResults: firedRecord?.metadata?.last_delivery_results || []
+      });
+    }
+  } else {
+    summary.assertions.push(`${theme} reminder live-delivery lanes skipped because ${config.baseUrl} is not the live VM target`);
+  }
 
-  await backHome(page, theme, config.timeoutMs);
-  await page.waitForFunction(() => {
-    const badge = document.querySelector('.light-app-tile[data-app-label="Reminders"] .light-app-badge');
-    return badge && String(badge.textContent || "").trim() === "1";
-  }, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminders_home_badge_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-after-fire`);
-
-  await openTile(page, "Reminders", "reminders", config.timeoutMs);
   await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await manageRow.click();
+  await manageRow.click({ force: true });
   await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
   await page.getByRole("button", { name: "Snooze 10 min" }).click({ timeout: config.timeoutMs });
   await page.waitForTimeout(800);
@@ -1445,15 +1598,12 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_reminder_detail_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed`);
 
   await backHome(page, theme, config.timeoutMs);
-  await page.waitForFunction(() => {
-    const badge = document.querySelector('.light-app-tile[data-app-label="Reminders"] .light-app-badge');
-    return badge && String(badge.textContent || "").trim() === "1";
-  }, { timeout: config.timeoutMs });
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
   screenshots[`${theme}_reminders_home_badge_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-snoozed`);
 
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
   await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await manageRow.click();
+  await manageRow.click({ force: true });
   await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
   await page.getByRole("button", { name: "Dismiss" }).click({ timeout: config.timeoutMs });
   await page.waitForTimeout(800);
@@ -1463,20 +1613,14 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
   screenshots[`${theme}_reminder_detail_dismissed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-dismissed`);
   await backHome(page, theme, config.timeoutMs);
-  await page.waitForFunction(() => {
-    return !document.querySelector('.light-app-tile[data-app-label="Reminders"] .light-app-badge');
-  }, { timeout: config.timeoutMs });
+  activeCount -= 1;
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
 
-  summary.reminders = summary.reminders || [];
-  summary.reminders.push({
-    theme,
-    dueReminderId,
-    manageReminderId,
-    firedState,
-    snoozedDueAtMs: Number(snoozedRecord?.due_at_ms || 0),
-    finalStatus: String(doneRecord?.status || "")
-  });
-  summary.assertions.push(`${theme} reminders stay active-only, drop row chips, support snooze and dismiss, and clear the home badge after successful delivery`);
+  reminderSummary.snoozedDueAtMs = Number(snoozedRecord?.due_at_ms || 0);
+  reminderSummary.finalStatus = String(doneRecord?.status || "");
+  reminderSummary.finalActiveCount = activeCount;
+  summary.reminders.push(reminderSummary);
+  summary.assertions.push(`${theme} reminders stay active-only, drop row chips, support snooze/dismiss, and derive the home badge from active reminders only`);
 }
 
 async function readGraphDetailState(page) {
@@ -1586,14 +1730,30 @@ async function runTheme(page, config, seed, theme, summary, networkLog) {
   await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
-  await proveNotes(page, config, seed, theme, screenshots, summary);
-  await proveTasks(page, config, seed, theme, screenshots, summary, networkLog);
-  await proveCalendar(page, config, seed, theme, screenshots, summary);
-  await proveFeed(page, config, seed, theme, screenshots, summary);
-  await proveProjects(page, config, seed, theme, screenshots, summary);
-  await proveContacts(page, config, seed, theme, screenshots, summary);
-  await proveReminders(page, config, seed, theme, screenshots, summary);
-  await proveGraphObjects(page, config, seed, theme, screenshots, summary);
+  if (shouldRunSection(config, "notes")) {
+    await proveNotes(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "tasks")) {
+    await proveTasks(page, config, seed, theme, screenshots, summary, networkLog);
+  }
+  if (shouldRunSection(config, "calendar")) {
+    await proveCalendar(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "feed")) {
+    await proveFeed(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "projects")) {
+    await proveProjects(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "contacts")) {
+    await proveContacts(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "reminders")) {
+    await proveReminders(page, config, seed, theme, screenshots, summary);
+  }
+  if (shouldRunSection(config, "graph")) {
+    await proveGraphObjects(page, config, seed, theme, screenshots, summary);
+  }
   return screenshots;
 }
 

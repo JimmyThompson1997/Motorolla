@@ -3198,6 +3198,11 @@ class ServerTests(unittest.TestCase):
 
     def test_reminder_email_validation_requires_self_email_target(self) -> None:
         self.service.config = replace(self.service.config, self_email="")
+        self.service.workspace.patch_record(
+            "contacts",
+            "contact-me",
+            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+        )
         metadata = {
             "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
             "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
@@ -3207,6 +3212,11 @@ class ServerTests(unittest.TestCase):
 
     def test_reminder_sms_validation_requires_self_phone_target(self) -> None:
         self.service.config = replace(self.service.config, self_phone_number="")
+        self.service.workspace.patch_record(
+            "contacts",
+            "contact-me",
+            {"metadata": {"phone": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+        )
         metadata = {
             "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
             "destinations": [{"channel": "sms", "recipient_ids": ["self"]}],
@@ -3216,6 +3226,11 @@ class ServerTests(unittest.TestCase):
 
     def test_reminder_email_validation_can_resolve_self_from_connected_gmail_profile(self) -> None:
         self.service.config = replace(self.service.config, self_email="")
+        self.service.workspace.patch_record(
+            "contacts",
+            "contact-me",
+            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+        )
         self.composio.tool_results["GMAIL_GET_PROFILE"] = {
             "data": {"emailAddress": "jimmy@gmail.example"}
         }
@@ -3225,9 +3240,17 @@ class ServerTests(unittest.TestCase):
         }
 
         self.service._validate_reminder_metadata(metadata)
+        me = self.service.workspace.get_record("contacts", "contact-me")
+        self.assertIsNotNone(me)
+        self.assertEqual((me.get("metadata") or {}).get("email"), "jimmy@gmail.example")
 
     def test_reminder_email_validation_falls_back_to_gmail_send_as_profile(self) -> None:
         self.service.config = replace(self.service.config, self_email="")
+        self.service.workspace.patch_record(
+            "contacts",
+            "contact-me",
+            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+        )
         self.composio.tool_results["GMAIL_GET_PROFILE"] = {"data": {}}
         self.composio.tool_results["GMAIL_LIST_SEND_AS"] = {
             "data": {"sendAs": [{"sendAsEmail": "jimmy.alias@gmail.example"}]}
@@ -3238,6 +3261,44 @@ class ServerTests(unittest.TestCase):
         }
 
         self.service._validate_reminder_metadata(metadata)
+        me = self.service.workspace.get_record("contacts", "contact-me")
+        self.assertIsNotNone(me)
+        self.assertEqual((me.get("metadata") or {}).get("email"), "jimmy.alias@gmail.example")
+
+    def test_self_contact_delivery_profile_resolves_self_targets_and_device(self) -> None:
+        self.service.config = replace(self.service.config, self_email="", self_phone_number="")
+        self.service.workspace.patch_record(
+            "contacts",
+            "contact-me",
+            {
+                "metadata": {
+                    "email": "me@example.com",
+                    "phone": "+14155550123",
+                    "notification_device_id": "phone-1",
+                }
+            },
+        )
+        recipient = {"id": "self", "kind": "self", "label": "Me"}
+        self.assertEqual(
+            self.service._resolve_reminder_email_target(recipient, {"channel": "email", "recipient_ids": ["self"]}),
+            "me@example.com",
+        )
+        self.assertEqual(
+            self.service._resolve_reminder_phone_target(recipient, {"channel": "sms", "recipient_ids": ["self"]}),
+            "+14155550123",
+        )
+        self.broker.set_device("phone-1", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-1"] = {"socket": object()}
+        reminder = self.service.workspace_upsert_record(
+            "reminders",
+            {"id": "self-device-reminder", "title": "Self device", "status": "open", "due_at_ms": self.service.workspace.now_ms() + 60_000},
+        )
+        self.assertIsNotNone(reminder)
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker):
+            device_id, error = self.service._reminder_target_device_id(reminder)
+        self.assertEqual(device_id, "phone-1")
+        self.assertEqual(error, "")
 
     def test_reminder_email_validation_requires_contact_email_target(self) -> None:
         contact = self.service.workspace.get_record("contacts", "sam-rivera")

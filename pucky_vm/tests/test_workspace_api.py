@@ -461,3 +461,41 @@ def test_workspace_api_rejects_unconfigured_reminder_destinations(tmp_path: Path
         assert "reminder_destination_not_configured:slack" in connected_error.value.read().decode("utf-8")
     finally:
         server.shutdown()
+
+
+def test_workspace_api_preserves_me_contact_and_allows_updates(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        me = request_json(base_url, "/api/workspace/contacts/contact-me")
+        assert me["id"] == "contact-me"
+        assert me["title"] == "Me"
+        assert me["metadata"]["is_self"] is True
+
+        updated = request_json(
+            base_url,
+            "/api/workspace/contacts/contact-me",
+            method="PATCH",
+            token="test-token",
+            body={
+                "metadata": {
+                    "email": "me@example.com",
+                    "phone": "+14155550123",
+                    "notification_device_id": "phone-1",
+                }
+            },
+        )
+        assert updated["metadata"]["email"] == "me@example.com"
+        assert updated["metadata"]["phone"] == "+14155550123"
+        assert updated["metadata"]["notification_device_id"] == "phone-1"
+
+        preserved = request_json(
+            base_url,
+            "/api/workspace/contacts/contact-me",
+            method="DELETE",
+            token="test-token",
+        )
+        assert preserved["id"] == "contact-me"
+        assert preserved["archived"] is False
+        assert preserved["deleted"] is False
+    finally:
+        server.shutdown()
