@@ -5346,7 +5346,7 @@
       page.append(status);
       return page;
     }
-    page.append(lightTaskCountLine(), lightTaskFilters());
+    page.append(lightTaskFilters());
     renderTaskGroups(page);
     return page;
   }

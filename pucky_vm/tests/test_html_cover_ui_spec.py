@@ -267,10 +267,13 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
 
     task_filters = function_block(app, "lightTaskFilters")
     workspace_page = function_block(app, "lightTaskWorkspacePage")
+    tasks_page = function_block(app, "lightTasksPage")
 
     assert "function lightTaskCountLine" not in app
     assert "lightTaskCountLine()," not in workspace_page
+    assert "lightTaskCountLine()" not in tasks_page
     assert "listPane.append(lightTaskFilters());" in workspace_page
+    assert "page.append(lightTaskFilters());" in tasks_page
     assert 'title: "Filter tasks"' in task_filters
     assert 'openSettingsSelector({' in task_filters
     assert 'taskStatusFilterChoices().map(([value, label]) => ({ value, label }))' in task_filters
