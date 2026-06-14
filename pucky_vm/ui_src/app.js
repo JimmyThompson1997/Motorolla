@@ -8,6 +8,7 @@
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
   const BROWSER_DEVICE_ID_STATE_KEY = "pucky.cover.browser_device_id.v1";
+  const SELF_CONTACT_ID = "contact-me";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
@@ -156,6 +157,10 @@
       filled: '<path d="M6 3h8.6L20 8.4V21H6c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2Zm8 1.8V9h4.2L14 4.8ZM7.5 12h9v1.8h-9V12Zm0 4h6.8v1.8H7.5V16Z"/>',
       outline: '<path d="M5 4h9l5 5v11H5V4Z"/><path d="M14 4v5h5"/><path d="M8 13h8M8 17h6"/>'
     },
+    edit: {
+      filled: '<path d="M3 17.3V21h3.7L17.8 9.9l-3.7-3.7L3 17.3Zm17.7-10.2a1 1 0 0 0 0-1.4L18.3 3.3a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7 1.9-1.7Z"/>',
+      outline: '<path d="M4 20h3.2L18.5 8.7 15.3 5.5 4 16.8V20Z"/><path d="m14.6 6.2 3.2 3.2"/><path d="M3.5 20.5h17"/>'
+    },
     folder: {
       filled: '<path d="M4 5h6l2 2h8c1.1 0 2 .9 2 2v8.5c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2Z"/>',
       outline: '<path d="M3 6h6.2l2 2H21v10.5c0 .8-.7 1.5-1.5 1.5h-16C2.7 20 2 19.3 2 18.5v-11C2 6.7 2.7 6 3 6Z"/>'
@@ -254,6 +259,7 @@
     "project-new",
     "contacts",
     "contact-detail",
+    "contact-edit",
     "contact-new"
   ]);
   const HOME_SHELL_CANONICAL_ROUTES = new Set(["inbox", "connect", "meetings", "settings"]);
@@ -266,6 +272,7 @@
     "project-detail": "projects",
     "project-new": "projects",
     "contact-detail": "contacts",
+    "contact-edit": "contacts",
     "contact-new": "contacts"
   };
   const ROUTE_ALIASES = {
@@ -296,6 +303,7 @@
     "project-new": "projects",
     contacts: "contacts",
     "contact-detail": "contacts",
+    "contact-edit": "contacts",
     "contact-new": "contacts"
   };
   const WORKSPACE_KIND_COLLECTIONS = {
@@ -2348,6 +2356,7 @@
 
 
   function render() {
+    renderVoiceStatus();
     renderThreadScopeBadge();
     renderFeed();
     renderAudioDetail();
@@ -3518,6 +3527,9 @@
       case "contact-detail":
         view.append(lightContactDetailPage());
         break;
+      case "contact-edit":
+        view.append(lightContactEditPage());
+        break;
       case "contact-new":
         view.append(lightContactCreatePage());
         break;
@@ -3701,6 +3713,26 @@
     return null;
   }
 
+  function contactIsSelf(contact) {
+    const metadata = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return String(contact?.id || contact?.record_id || "").trim() === SELF_CONTACT_ID || Boolean(metadata.is_self);
+  }
+
+  function contactsListItems() {
+    return workspaceItems("contacts")
+      .slice()
+      .sort((left, right) => {
+        const leftSelf = contactIsSelf(left);
+        const rightSelf = contactIsSelf(right);
+        if (leftSelf !== rightSelf) {
+          return leftSelf ? -1 : 1;
+        }
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      });
+  }
+
   function lightContactsPage() {
     const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
     page.classList.add("light-contacts-page");
@@ -3710,7 +3742,7 @@
       page.append(status);
       return page;
     }
-    list.append(...workspaceItems("contacts").map(contact => {
+    list.append(...contactsListItems().map(contact => {
       const row = el("button", "light-card light-contact-row");
       row.type = "button";
       row.dataset.contactId = contact.id;
@@ -3772,27 +3804,135 @@
     return page;
   }
 
+  function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue) {
+    const endpoints = Array.isArray(existingEndpoints) ? existingEndpoints.filter(item => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      const label = String(item.label || item.type || "").trim().toLowerCase();
+      return !["email", "gmail", "mail", "phone", "sms", "text", "mobile", "call"].includes(label);
+    }).map(item => ({ ...item })) : [];
+    const email = String(emailValue || "").trim();
+    const phone = String(phoneValue || "").trim();
+    if (email) {
+      endpoints.push({ label: "Email", value: email });
+    }
+    if (phone) {
+      endpoints.push({ label: "Phone", value: phone });
+    }
+    return endpoints;
+  }
+
+  function lightContactEditPage() {
+    const contact = selectedContact();
+    if (!contact) {
+      return lightPage("Edit Contact", { subtitle: "Contact not found.", detail: true });
+    }
+    const selfContact = contactIsSelf(contact);
+    const meta = contact.metadata || {};
+    const page = lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });
+    const card = el("section", "light-card light-create-card");
+    const name = el("input", "light-project-input");
+    name.type = "text";
+    name.placeholder = "Display name";
+    name.value = String(contact.title || "");
+    const email = el("input", "light-project-input");
+    email.type = "email";
+    email.placeholder = "Email";
+    email.value = String(meta.email || "");
+    const phone = el("input", "light-project-input");
+    phone.type = "tel";
+    phone.placeholder = "Phone";
+    phone.value = String(meta.phone || "");
+    const device = el("input", "light-project-input");
+    device.type = "text";
+    device.placeholder = "Preferred reminder device id";
+    device.value = String(meta.notification_device_id || meta.preferred_reminder_device_id || "");
+    const save = lightPillButton(selfContact ? "Save profile" : "Save contact", async () => {
+      const title = selfContact ? "Me" : (name.value.trim() || "Contact");
+      const nextEmail = email.value.trim();
+      const nextPhone = phone.value.trim();
+      const metadata = {
+        ...(meta || {}),
+        ...(selfContact ? { is_self: true } : {}),
+        avatar: selfContact
+          ? String(meta.avatar || "ME").trim() || "ME"
+          : String(meta.avatar || title.split(/\s+/).map(part => part[0] || "").join("").slice(0, 2).toUpperCase()).trim(),
+        email: nextEmail,
+        phone: nextPhone,
+        endpoints: buildEditableContactEndpoints(meta.endpoints, nextEmail, nextPhone),
+        notification_device_id: selfContact ? device.value.trim() : String(meta.notification_device_id || ""),
+        preferred_reminder_device_id: selfContact ? device.value.trim() : String(meta.preferred_reminder_device_id || "")
+      };
+      const record = await patchWorkspaceRecord("contacts", String(contact.id || contact.record_id || ""), {
+        title,
+        summary: selfContact
+          ? "Personal reminder delivery profile"
+          : String(contact.summary || "Workspace contact"),
+        metadata
+      }, { render: false });
+      if (record) {
+        state.selectedContactId = String(record.id || record.record_id || contact.id || "");
+        lightNavigate("contact-detail", { from: "contacts" });
+      }
+    });
+    card.append(
+      lightSmallIcon("contacts", "contacts"),
+      lightTextStack(
+        selfContact ? "Edit Me" : "Edit contact",
+        selfContact
+          ? "Keep your delivery endpoints current so reminders can route through phone, Gmail, and SMS."
+          : "Update the contact profile and endpoints."
+      )
+    );
+    if (!selfContact) {
+      card.append(name);
+    }
+    card.append(email, phone);
+    if (selfContact) {
+      card.append(device);
+    }
+    card.append(save);
+    page.append(card);
+    return page;
+  }
+
   function lightContactDetailPage() {
     const contact = selectedContact();
     if (!contact) {
       return lightPage("Contact", { subtitle: "Contact not found.", detail: true });
     }
     ensureLinkedCollections(contact);
-    const page = lightPage("Contact", { detail: true });
+    const selfContact = contactIsSelf(contact);
+    const page = lightPage("Contact", {
+      detail: true,
+      action: lightCircleButton("edit", selfContact ? "Edit Me" : "Edit contact", () => {
+        lightNavigate("contact-edit", { from: "contact-detail" });
+      })
+    });
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
     const meta = contact.metadata || {};
     page.append(lightInfoSection("Contact", [
-      { icon: "mail", label: "Email", value: meta.email || "" },
-      { icon: "phone", label: "Phone", value: meta.phone || "" }
+      { icon: "mail", accentKey: "connect", label: "Email", value: meta.email || "" },
+      { icon: "phone", accentKey: "contacts", label: "Phone", value: meta.phone || "" },
+      ...(selfContact && String(meta.notification_device_id || meta.preferred_reminder_device_id || "").trim()
+        ? [{
+            icon: "bell",
+            accentKey: "reminders",
+            label: "Reminder device",
+            value: String(meta.notification_device_id || meta.preferred_reminder_device_id || "").trim()
+          }]
+        : [])
     ]));
     if (Array.isArray(meta.endpoints) && meta.endpoints.length) {
-      page.append(lightInfoSection("Endpoints", meta.endpoints.map(row => ({ icon: "apps", label: row.label, value: row.value }))));
+      page.append(lightInfoSection("Endpoints", meta.endpoints.map(row => ({ icon: "apps", accentKey: "connect", label: row.label, value: row.value }))));
     }
     if (Array.isArray(meta.activity) && meta.activity.length) {
       page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
       icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
+      accentKey: index === 0 ? "notes" : index === 1 ? "meetings" : "calendar",
       label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
       value: item
       }))));
@@ -4326,11 +4466,11 @@
 
   function reminderRecipientRows(reminder) {
     return reminderRecipients(reminder).map(recipient => ({
-      icon: recipient.kind === "self" ? "bell" : "contacts",
-      accentKey: recipient.kind === "self" ? "reminders" : "contacts",
-      label: recipient.kind === "self" ? "Recipient" : "Contact",
-      value: reminderRecipientDisplayName(recipient),
-      target: recipient.kind === "contact" ? workspaceTargetForKind("contact", recipient.contactId || recipient.id) : null
+      icon: "contacts",
+      accentKey: "contacts",
+      label: reminderRecipientDisplayName(recipient),
+      value: recipient.kind === "self" ? "Personal delivery profile" : "Contact",
+      target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID : (recipient.contactId || recipient.id))
     }));
   }
 
@@ -4603,7 +4743,8 @@
       return "";
     }
     if (String(recipient.kind || "").trim().toLowerCase() === "self") {
-      return String(recipient.label || "Me").trim() || "Me";
+      const me = workspaceRecord("contacts", SELF_CONTACT_ID);
+      return String(me?.title || recipient.label || "Me").trim() || "Me";
     }
     const contactId = String(recipient.contactId || recipient.id || "").trim();
     const contact = contactId ? workspaceRecord("contacts", contactId) : null;
@@ -5277,21 +5418,6 @@
     }, { due: 0, dueSoon: 0, overdue: 0, done: 0 });
   }
 
-  function lightTaskCountLine() {
-    const counts = lightTaskCounts();
-    const line = el("p", "light-task-counts");
-    line.append(
-      el("span", "light-task-count overdue", `${counts.overdue} overdue`),
-      DOT,
-      el("span", "light-task-count due", `${counts.due} today`),
-      DOT,
-      el("span", "light-task-count due-soon", `${counts.dueSoon} upcoming`),
-      DOT,
-      el("span", "light-task-count done", `${counts.done} done`)
-    );
-    return line;
-  }
-
   function taskStatusLabel(status) {
     const value = String(status || "").trim();
     return ({
@@ -5318,6 +5444,10 @@
       ["waiting", "Waiting"],
       ["done", "Done"],
     ];
+  }
+
+  function currentTaskFilterChoice() {
+    return taskStatusFilterChoices().find(([key]) => key === state.taskFilter) || taskStatusFilterChoices()[0];
   }
 
   function lightTaskGroup(tasks, group) {
@@ -5355,14 +5485,31 @@
 
   function lightTaskFilters() {
     const wrap = el("div", "light-task-filter-strip");
-    taskStatusFilterChoices().forEach(([key, label]) => {
-      const button = lightPillButton(label, () => {
-        state.taskFilter = key;
-        render();
-      }, state.taskFilter === key);
-      button.dataset.taskFilter = key;
-      wrap.append(button);
+    const [currentKey, currentLabel] = currentTaskFilterChoice();
+    const button = el("button", "light-pill is-active light-task-filter-button");
+    button.type = "button";
+    button.dataset.taskFilter = currentKey;
+    button.dataset.taskFilterCurrent = currentKey;
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-label", `Filter tasks: ${currentLabel}`);
+    const copy = el("span", "light-task-filter-button-copy");
+    copy.append(el("span", "light-task-filter-button-label", currentLabel));
+    const chevron = el("span", "light-task-filter-button-chevron");
+    chevron.innerHTML = iconSvg("chevron-down", { filled: false });
+    button.append(copy, chevron);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      openSettingsSelector({
+        title: "Filter tasks",
+        currentValue: currentKey,
+        options: taskStatusFilterChoices().map(([value, label]) => ({ value, label })),
+        onSelect: value => {
+          state.taskFilter = String(value || "all");
+          render();
+        },
+      });
     });
+    wrap.append(button);
     return wrap;
   }
 
@@ -5686,7 +5833,7 @@
     }
     const shell = el("div", "light-task-workspace");
     const listPane = el("section", "light-task-list-pane");
-    listPane.append(lightTaskCountLine(), lightTaskFilters());
+    listPane.append(lightTaskFilters());
     renderTaskGroups(listPane);
     const detailPane = el("section", "light-task-detail-pane");
     const task = selectedTask();
@@ -5977,7 +6124,8 @@
       "task-detail": "selectedTaskId",
       "feed-preview-detail": "selectedFeedId",
       "project-detail": "selectedProjectId",
-      "contact-detail": "selectedContactId"
+      "contact-detail": "selectedContactId",
+      "contact-edit": "selectedContactId"
     })[String(route || "")] || "";
   }
 
@@ -6785,7 +6933,8 @@
       "task-detail",
       "feed-preview-detail",
       "project-detail",
-      "contact-detail"
+      "contact-detail",
+      "contact-edit"
     ].includes(String(route || ""));
   }
 

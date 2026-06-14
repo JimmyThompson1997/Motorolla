@@ -195,11 +195,12 @@ async function readTaskState(page) {
         rowIds,
       };
     });
-    const filters = Array.from(document.querySelectorAll(".light-task-filter-strip .light-pill")).map(button => ({
-      key: String(button.dataset.taskFilter || ""),
-      label: String(button.textContent || "").trim(),
-      active: button.classList.contains("is-active"),
-    }));
+    const filterButton = document.querySelector(".light-task-filter-button");
+    const filters = filterButton ? [{
+      key: String(filterButton.dataset.taskFilterCurrent || filterButton.dataset.taskFilter || ""),
+      label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
+      active: true,
+    }] : [];
     const checklist = detail
       ? Array.from(detail.querySelectorAll(".light-task-checklist-row")).map(row => ({
           id: String(row.getAttribute("data-checklist-item-id") || ""),

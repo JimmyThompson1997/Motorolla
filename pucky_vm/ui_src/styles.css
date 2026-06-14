@@ -261,6 +261,162 @@ button {
   display: none;
 }
 
+.voice-status {
+  --voice-color: #3a84ff;
+  --voice-status-size: 38px;
+  position: fixed;
+  top: calc(var(--safe-area-top) + 2px);
+  right: calc(var(--safe-area-right) + 8px);
+  z-index: 100;
+  width: var(--voice-status-size);
+  height: var(--voice-status-size);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  appearance: none;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+}
+
+.voice-status::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--voice-color);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--voice-color) 10%, transparent),
+    0 0 16px color-mix(in srgb, var(--voice-color) 42%, transparent);
+}
+
+.voice-status::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--voice-color) 52%, transparent);
+  transform: translate(-50%, -50%) scale(0.94);
+  opacity: 0.72;
+}
+
+.voice-status-idle {
+  --voice-color: #586574;
+  opacity: 0.58;
+}
+
+.voice-status-idle::before {
+  box-shadow: 0 0 0 4px rgba(245, 249, 255, 0.025);
+}
+
+.voice-status-idle::after,
+.voice-status-armed::after,
+.voice-status-uploading::after {
+  display: none;
+}
+
+.voice-status-armed {
+  --voice-color: #3a84ff;
+}
+
+.voice-status-armed::before {
+  box-shadow: none;
+}
+
+.voice-status-uploading {
+  --voice-color: #ffb000;
+}
+
+.voice-status-uploading::before {
+  box-shadow:
+    0 0 0 4px rgba(245, 249, 255, 0.025),
+    0 0 14px color-mix(in srgb, var(--voice-color) 48%, transparent);
+}
+
+.voice-status-recording {
+  --voice-color: #ff3b30;
+}
+
+.voice-status-recording::before {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-recording::after {
+  animation: voiceRing 1.15s ease-in-out infinite;
+}
+
+.voice-status-meeting_recording {
+  --voice-color: #a855f7;
+}
+
+.voice-status-meeting_recording::before {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-meeting_recording::after {
+  animation: voiceRing 1.15s ease-in-out infinite;
+}
+
+.voice-status-thinking {
+  --voice-color: #ffb000;
+}
+
+.voice-status-thinking::before {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-thinking::after {
+  animation: voiceRing 1.15s ease-in-out infinite;
+}
+
+.voice-status-speaking {
+  --voice-color: #3a84ff;
+}
+
+.voice-status-speaking::before {
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-status-speaking::after {
+  animation: voiceRing 1.15s ease-in-out infinite;
+}
+
+@keyframes voicePulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--voice-color) 10%, transparent),
+      0 0 16px color-mix(in srgb, var(--voice-color) 36%, transparent);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow:
+      0 0 0 8px color-mix(in srgb, var(--voice-color) 12%, transparent),
+      0 0 20px color-mix(in srgb, var(--voice-color) 52%, transparent);
+  }
+}
+
+@keyframes voiceRing {
+  0% {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.65;
+  }
+  70% {
+    transform: translate(-50%, -50%) scale(1.16);
+    opacity: 0.12;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.22);
+    opacity: 0;
+  }
+}
+
 .empty {
   min-height: 210px;
   display: grid;
@@ -3764,7 +3920,6 @@ button {
 }
 
 .light-page-subtitle,
-.light-task-counts,
 .light-note-meta {
   margin: -8px 0 0;
   color: var(--home-shell-text-muted);
@@ -4459,32 +4614,44 @@ button {
   padding-bottom: 128px;
 }
 
-.light-task-counts {
-  margin: -2px 0 2px;
-  color: var(--home-shell-text-subtle);
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-.light-task-count.due { color: #226fe8; }
-.light-task-count.overdue { color: #ff3b30; }
-.light-task-count.done { color: var(--home-shell-text-muted); }
-.light-task-count.due-soon { color: var(--home-shell-text-muted); }
-
 .light-task-filter-strip {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-start;
 }
 
-.light-task-filter-strip .light-pill {
+.light-task-filter-button {
   min-height: 34px;
   padding: 0 14px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 760;
   box-shadow: none;
+  gap: 10px;
+}
+
+.light-task-filter-button-copy {
+  display: inline-flex;
+  align-items: center;
+}
+
+.light-task-filter-button-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.light-task-filter-button-chevron {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--home-shell-text-subtle);
+}
+
+.light-task-filter-button-chevron svg {
+  width: 14px;
+  height: 14px;
 }
 
 .light-task-workspace-page {

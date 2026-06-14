@@ -433,17 +433,26 @@ async function readTaskListSurface(page) {
         rowIds,
       };
     });
-    const filters = Array.from(document.querySelectorAll(".light-task-filter-strip .light-pill")).map(button => ({
-      key: String(button.dataset.taskFilter || ""),
-      label: String(button.textContent || "").trim(),
-      active: button.classList.contains("is-active"),
-    }));
+    const filterButton = document.querySelector(".light-task-filter-button");
+    const filters = filterButton ? [{
+      key: String(filterButton.dataset.taskFilterCurrent || filterButton.dataset.taskFilter || ""),
+      label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
+      active: true,
+    }] : [];
     return {
       route: shell?.getAttribute("data-light-route") || "",
       sections,
       filters,
     };
   });
+}
+
+async function readTaskFilterSelectorOptions(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll(".settings-selector-option")).map(button => ({
+    key: String(button.getAttribute("data-selector-value") || ""),
+    label: String(button.querySelector(".settings-selector-option-label")?.textContent || button.textContent || "").trim(),
+    active: button.classList.contains("is-active"),
+  })));
 }
 
 async function ensureSectionExpanded(page, group) {
@@ -518,10 +527,28 @@ async function openTask(page, taskId, mode, timeoutMs) {
   }
 }
 
-async function clickTaskFilter(page, filterKey, timeoutMs) {
-  const button = page.locator(`.light-task-filter-strip .light-pill[data-task-filter="${filterKey}"]`).first();
+async function openTaskFilterSelector(page, timeoutMs) {
+  const button = page.locator(".light-task-filter-button").first();
   await button.waitFor({ state: "visible", timeout: timeoutMs });
   await button.click();
+  await page.waitForTimeout(150);
+}
+
+function taskFilterLabel(filterKey) {
+  return ({
+    all: "All",
+    todo: "To do",
+    in_progress: "In progress",
+    waiting: "Waiting",
+    done: "Done",
+  })[String(filterKey || "")] || "All";
+}
+
+async function selectTaskFilter(page, filterKey, timeoutMs) {
+  await openTaskFilterSelector(page, timeoutMs);
+  const option = page.locator(`.settings-selector-option[data-selector-value="${filterKey}"]`).first();
+  await option.waitFor({ state: "visible", timeout: timeoutMs });
+  await option.click();
   await page.waitForTimeout(150);
 }
 
@@ -534,16 +561,27 @@ async function verifyListFilters(page, seed, mode, config, checks) {
   assert(labels.includes("Upcoming"), `${mode}: missing Upcoming task group`);
   assert(labels.includes("Overdue"), `${mode}: missing Overdue task group`);
   assert(labels.includes("Done"), `${mode}: missing Done task group`);
-  const filterLabels = listState.filters.map(item => item.label);
-  for (const label of ["All", "To do", "In progress", "Waiting", "Done"]) {
-    assert(filterLabels.includes(label), `${mode}: missing ${label} task filter`);
-  }
+  assert(listState.filters.length === 1, `${mode}: expected a single visible task filter trigger`);
+  assert(listState.filters[0]?.label === "All", `${mode}: expected All to be the default task filter`);
   checks.push({
     type: "list_surface",
     mode,
     sections: listState.sections,
     filters: listState.filters,
   });
+  await openTaskFilterSelector(page, config.timeoutMs);
+  const selectorOptions = await readTaskFilterSelectorOptions(page);
+  const selectorLabels = selectorOptions.map(item => item.label);
+  for (const label of ["All", "To do", "In progress", "Waiting", "Done"]) {
+    assert(selectorLabels.includes(label), `${mode}: missing ${label} task filter selector option`);
+  }
+  checks.push({
+    type: "task_filter_selector",
+    mode,
+    options: selectorOptions,
+  });
+  await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
+  await page.waitForTimeout(150);
   const filterExpectations = [
     {
       key: "all",
@@ -572,8 +610,10 @@ async function verifyListFilters(page, seed, mode, config, checks) {
     },
   ];
   for (const expectation of filterExpectations) {
-    await clickTaskFilter(page, expectation.key, config.timeoutMs);
+    await selectTaskFilter(page, expectation.key, config.timeoutMs);
     await ensureSectionExpanded(page, "done");
+    const filteredState = await readTaskListSurface(page);
+    assert(filteredState.filters[0]?.label === taskFilterLabel(expectation.key), `${mode}: expected visible filter label ${taskFilterLabel(expectation.key)}`);
     for (const taskId of expectation.present) {
       await revealTaskRow(page, taskId);
       assert(await taskRowVisible(page, taskId), `${mode}: expected task ${taskId} to be visible under ${expectation.key}`);
@@ -589,7 +629,7 @@ async function verifyListFilters(page, seed, mode, config, checks) {
       absent: expectation.absent,
     });
   }
-  await clickTaskFilter(page, "all", config.timeoutMs);
+  await selectTaskFilter(page, "all", config.timeoutMs);
   await ensureSectionExpanded(page, "done");
 }
 

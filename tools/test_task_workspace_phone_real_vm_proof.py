@@ -114,8 +114,7 @@ def test_group_for_task_and_visible_task_ids_use_rendered_sections() -> None:
 def test_verify_filter_state_checks_active_filter_and_hidden_rows() -> None:
     state = {
         "filters": [
-            {"key": "all", "active": False},
-            {"key": "todo", "active": True},
+            {"key": "todo", "label": "To do", "active": True},
         ],
         "sections": [
             {"group": "overdue", "rowIds": ["task-a"]},
@@ -127,6 +126,12 @@ def test_verify_filter_state_checks_active_filter_and_hidden_rows() -> None:
 
     with pytest.raises(phone_proof.TaskPhoneProofError, match="Expected active task filter done"):
         phone_proof.verify_filter_state(state, filter_key="done", present=[], absent=[])
+
+
+def test_task_filter_label_maps_visible_selector_copy() -> None:
+    assert phone_proof.task_filter_label("all") == "All"
+    assert phone_proof.task_filter_label("in_progress") == "In progress"
+    assert phone_proof.task_filter_label("waiting") == "Waiting"
 
 
 def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) -> None:

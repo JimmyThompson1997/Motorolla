@@ -165,6 +165,16 @@ def active_filter_key(state: dict[str, Any]) -> str:
     return ""
 
 
+def task_filter_label(filter_key: str) -> str:
+    return {
+        "all": "All",
+        "todo": "To do",
+        "in_progress": "In progress",
+        "waiting": "Waiting",
+        "done": "Done",
+    }.get(str(filter_key or ""), "All")
+
+
 def expected_link_specs(seed: dict[str, Any]) -> list[dict[str, str]]:
     return [
         {
@@ -363,8 +373,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for expected_label in ["Today", "Upcoming", "Overdue", "Done"]:
             assert_or_fail(expected_label in labels, "phone_task_detail_render_failed", f"Missing task bucket {expected_label}")
         filter_labels = [str(item.get("label") or "") for item in list_state.get("filters") or [] if isinstance(item, dict)]
-        for expected_label in ["All", "To do", "In progress", "Waiting", "Done"]:
-            assert_or_fail(expected_label in filter_labels, "phone_task_detail_render_failed", f"Missing task filter {expected_label}")
+        assert_or_fail(filter_labels == ["All"], "phone_task_detail_render_failed", "Expected a single visible All task filter trigger")
 
         filter_expectations = [
             {"key": "all", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"], seed["emptyTaskId"]], "absent": []},
@@ -382,13 +391,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 name=f"{index:02d}-filter-{expectation['key']}",
                 operations=[
                     {"kind": "goto_tasks"},
-                    {"kind": "click_selector", "selector": f'.light-task-filter-strip .light-pill[data-task-filter="{expectation["key"]}"]'},
+                    {"kind": "click_selector", "selector": ".light-task-filter-button"},
+                    {"kind": "click_selector", "selector": f'.settings-selector-option[data-selector-value="{expectation["key"]}"]'},
                     {"kind": "task_state"},
                     screenshot_operation(scenario_dir / f"{index:02d}-filter-{expectation['key']}-browser.png"),
                 ],
             )
             state = op_state(phase, "task_state")
             verify_filter_state(state, filter_key=str(expectation["key"]), present=[str(item) for item in expectation["present"]], absent=[str(item) for item in expectation["absent"]])
+            current_labels = [str(item.get("label") or "") for item in list(state.get("filters") or []) if isinstance(item, dict)]
+            assert_or_fail(current_labels == [task_filter_label(str(expectation["key"]))], "phone_task_detail_render_failed", f"Visible task filter label did not switch to {task_filter_label(str(expectation['key']))}")
             filter_checks.append({"filter": expectation["key"], "visible": sorted(visible_task_ids(state))})
 
         primary_phase = run_phase(
