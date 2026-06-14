@@ -151,7 +151,16 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "const snapshot = popLightRouteHistory();" in light_back
     assert "return restoreLightRouteSnapshot(snapshot);" in light_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
-    assert 'lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" })' in light_event_block
+    assert 'lightCalendarEventChips(event, { fromRoute: "calendar" })' in light_event_block
+    assert 'limit: 2' not in light_event_block
+    light_gap = function_block(app, "lightCalendarGap")
+    assert 'Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}' in light_gap
+    assert "Long break" not in light_gap
+    light_meeting_detail = function_block(app, "lightMeetingDetailPage")
+    assert 'lightDocumentEyebrow("Calendar event"' not in light_meeting_detail
+    assert 'el("h1", "", meeting.title || "Untitled event")' not in light_meeting_detail
+    assert 'light-event-detail-label' in light_meeting_detail
+    assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     assert 'openWorkspaceTarget(row.target, state.route)' in light_info_section
     assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip

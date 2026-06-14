@@ -4523,22 +4523,27 @@ button {
 .light-calendar-day-dot.slate { background: #8a95a8; }
 
 .light-calendar-gap {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 10px;
+  width: 100%;
+  display: flex;
   align-items: center;
+  gap: 12px;
 }
 
 .light-calendar-gap-line {
+  flex: 1;
   height: 1px;
   background: color-mix(in srgb, var(--home-shell-text) 16%, transparent);
 }
 
 .light-calendar-gap-label {
+  flex: 0 0 auto;
   color: var(--home-shell-text-muted);
   font-size: 12px;
   line-height: 1.2;
-  font-weight: 700;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .light-calendar-cluster {
@@ -4670,6 +4675,15 @@ button {
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
 }
 
+.app-shell[data-theme="dark"] .light-calendar-gap-label {
+  color: color-mix(in srgb, var(--home-shell-text) 72%, transparent);
+}
+
+.app-shell[data-theme="dark"] .light-event-connected-card {
+  background: color-mix(in srgb, var(--event-tone) 14%, var(--home-shell-card-strong));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+}
+
 .light-event-attendees {
   display: flex;
   align-items: center;
@@ -4709,15 +4723,45 @@ button {
   gap: 12px;
 }
 
+.light-event-detail-time {
+  margin: 0;
+  color: var(--home-shell-text-muted);
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 760;
+}
+
+.light-event-detail-label {
+  margin: 0 0 -4px;
+  color: var(--home-shell-text-subtle);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .light-event-summary-copy {
+  margin: 0;
   color: var(--home-shell-text-muted);
   font-size: 15px;
   line-height: 1.52;
 }
 
 .light-event-connected-card {
-  padding: 14px;
+  --event-tone: #556070;
+  --event-chip-surface: color-mix(in srgb, var(--event-tone) 12%, var(--home-shell-card));
+  --event-chip-text: color-mix(in srgb, var(--event-tone) 42%, var(--home-shell-text));
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--event-tone) 8%, var(--home-shell-card-strong));
 }
+
+.light-event-connected-card.red { --event-tone: #ff5b52; }
+.light-event-connected-card.blue { --event-tone: #2c7af6; }
+.light-event-connected-card.green { --event-tone: #24b96b; }
+.light-event-connected-card.purple { --event-tone: #9b6cff; }
+.light-event-connected-card.amber { --event-tone: #c88445; }
+.light-event-connected-card.slate { --event-tone: #64748b; }
 
 .light-event-connected-card .light-event-chip-row {
   gap: 8px;
@@ -5162,6 +5206,18 @@ button {
   background: color-mix(in srgb, var(--accent-primary) 9%, white);
   color: var(--home-shell-text);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 18%, var(--home-shell-border));
+}
+
+.light-event-chip-row .light-attendee-chip.is-link,
+.light-event-connected-card .light-attendee-chip.is-link {
+  background: var(--event-chip-surface);
+  color: var(--event-chip-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--event-tone) 18%, var(--home-shell-border));
+}
+
+.light-event-chip-row .light-record-chip-icon,
+.light-event-connected-card .light-record-chip-icon {
+  color: color-mix(in srgb, var(--event-tone) 78%, var(--home-shell-text));
 }
 
 .light-attendee-chip-card {

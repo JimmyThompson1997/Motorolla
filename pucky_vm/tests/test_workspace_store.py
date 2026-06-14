@@ -495,6 +495,8 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
         ).fetchall()
     }
     assert ("contact", "maya") in house_links
+    assert ("task", "demo-task-do-paint-samples") in house_links
+    assert ("note", "house-paint-notes") in house_links
     assert ("project", "home-refresh") in house_links
     assert ("meeting_note", "demo-meeting-home-refresh") in house_links
     assert ("reminder", "demo-reminder-paint-samples") in house_links

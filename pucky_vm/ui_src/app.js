@@ -4212,7 +4212,8 @@
     const gap = el("section", "light-calendar-gap");
     gap.append(
       el("span", "light-calendar-gap-line"),
-      el("span", "light-calendar-gap-label", `Free until ${calendarFormatTime(untilMs)}${gapMs >= 4 * 60 * 60 * 1000 ? DOT + "Long break" : ""}`)
+      el("span", "light-calendar-gap-label", `Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}`),
+      el("span", "light-calendar-gap-line")
     );
     return gap;
   }
@@ -4246,7 +4247,7 @@
       open.append(el("span", "light-event-summary", event.summary));
     }
     block.append(open);
-    const chips = lightCalendarEventChips(event, { limit: 2, fromRoute: "calendar" });
+    const chips = lightCalendarEventChips(event, { fromRoute: "calendar" });
     if (chips) {
       block.append(chips);
     }
@@ -4283,36 +4284,32 @@
     const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
     const article = el("article", "light-doc-article");
-    article.append(
-      lightDocumentEyebrow("Calendar event", `${calendarEventDayLabel(meeting)}${DOT}${calendarEventTimeRange(meeting)}`),
-      el("h1", "", meeting.title || "Untitled event")
-    );
+    article.append(el("p", "light-event-detail-time", `${calendarEventDayLabel(meeting)}${DOT}${calendarEventTimeRange(meeting)}`));
     if (String(meeting.summary || "").trim()) {
-      article.append(el("p", "light-note-body light-event-summary-copy", meeting.summary));
+      article.append(
+        el("p", "light-event-detail-label", "Description"),
+        el("p", "light-note-body light-event-summary-copy", meeting.summary)
+      );
     }
     page.append(article);
     const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });
-    if (chips) {
-      const section = el("section", "light-info-section");
-      section.append(lightSectionTitle("Connected"));
-      const card = el("div", "light-card light-attendee-chip-card light-event-connected-card");
-      card.append(chips);
-      section.append(card);
-      page.append(section);
-    }
     const detailRows = calendarEventDetailRows(meeting, attendees);
     if (detailRows.length) {
       page.append(lightInfoSection("Details", detailRows));
+    }
+    if (chips) {
+      const section = el("section", "light-info-section");
+      section.append(lightSectionTitle("Connected"));
+      const card = el("div", `light-card light-attendee-chip-card light-event-connected-card ${calendarEventTone(meeting)}`.trim());
+      card.append(chips);
+      section.append(card);
+      page.append(section);
     }
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
     }
     if (docs.length) {
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
-    }
-    const linkedRows = lightLinkedRecordRows(meeting);
-    if (linkedRows.length) {
-      page.append(lightInfoSection("Linked records", linkedRows));
     }
     return page;
   }
