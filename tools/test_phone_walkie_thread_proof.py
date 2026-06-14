@@ -521,6 +521,85 @@ def test_thread_scope_status_falls_back_to_surface_when_command_not_allowed(
     }
 
 
+def test_snapshot_cards_falls_back_to_ui_surface_when_reply_cards_not_allowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = make_args(tmp_path)
+
+    def fake_run_pucky_command(_args: argparse.Namespace, command_type: str, payload: dict[str, object], **_: object) -> dict[str, object]:
+        if command_type == "ui.reply_cards.get":
+            raise proof.PhoneProofError("puckyctl command send ui.reply_cards.get failed: COMMAND_NOT_ALLOWED")
+        if command_type == "ui.surface.get":
+            return {
+                "visible_cards": [
+                    {
+                        "kind": "pending_outbound",
+                        "card_id": "card-1",
+                        "session_id": "session-1",
+                        "thread_id": "thread-1",
+                        "pending_outbound": True,
+                        "preview": "Draft update",
+                    },
+                    {
+                        "kind": "reply_card",
+                        "card_id": "card-2",
+                        "session_id": "session-2",
+                        "thread_id": "thread-2",
+                        "pending_outbound": False,
+                        "preview": "Assistant reply",
+                    },
+                ]
+            }
+        raise AssertionError(f"unexpected command {command_type}")
+
+    monkeypatch.setattr(proof, "run_pucky_command", fake_run_pucky_command)
+
+    result = proof.snapshot_cards(args)
+
+    assert result["source"] == "ui_surface_fallback"
+    assert result["count"] == 2
+    assert result["cards"] == [
+        {
+            "card_id": "card-1",
+            "session_id": "session-1",
+            "local_session_id": "session-1",
+            "title": "Draft update",
+            "preview": "Draft update",
+            "summary": "Draft update",
+            "kind": "pending_outbound",
+            "pending_outbound": True,
+            "origin": {"thread_id": "thread-1"},
+            "surface_source": "ui_surface",
+        },
+        {
+            "card_id": "card-2",
+            "session_id": "session-2",
+            "local_session_id": "session-2",
+            "title": "Assistant reply",
+            "preview": "Assistant reply",
+            "summary": "Assistant reply",
+            "kind": "reply_card",
+            "pending_outbound": False,
+            "origin": {"thread_id": "thread-2"},
+            "surface_source": "ui_surface",
+        },
+    ]
+
+
+def test_snapshot_cards_re_raises_unrelated_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+
+    def fake_run_pucky_command(_args: argparse.Namespace, command_type: str, payload: dict[str, object], **_: object) -> dict[str, object]:
+        if command_type == "ui.reply_cards.get":
+            raise proof.PhoneProofError("broker command failed: timeout")
+        raise AssertionError(f"unexpected command {command_type}")
+
+    monkeypatch.setattr(proof, "run_pucky_command", fake_run_pucky_command)
+
+    with pytest.raises(proof.PhoneProofError, match="timeout"):
+        proof.snapshot_cards(args)
+
+
 def test_phone_proof_parser_includes_feed_focus_transcript_live_history_and_all_final_boss(tmp_path: Path) -> None:
     args = proof.parse_args([
         "--repo-root",

@@ -468,11 +468,54 @@ def capture_browser_phase(
 
 
 def snapshot_cards(args: argparse.Namespace) -> dict[str, Any]:
-    return run_pucky_command(args, "ui.reply_cards.get", {})
+    try:
+        return run_pucky_command(args, "ui.reply_cards.get", {})
+    except PhoneProofError as exc:
+        message = str(exc)
+        if not command_not_allowed(message):
+            raise
+        surface = snapshot_surface(args)
+        return snapshot_cards_from_surface(surface)
 
 
 def snapshot_surface(args: argparse.Namespace) -> dict[str, Any]:
     return run_pucky_command(args, "ui.surface.get", {})
+
+
+def command_not_allowed(message: str) -> bool:
+    detail = str(message or "")
+    lowered = detail.lower()
+    return "COMMAND_NOT_ALLOWED" in detail or "not allowed" in lowered or "not allowlisted" in lowered
+
+
+def snapshot_cards_from_surface(surface_result: dict[str, Any]) -> dict[str, Any]:
+    cards: list[dict[str, Any]] = []
+    for index, card in enumerate(visible_cards(surface_result)):
+        session_id = str(card.get("session_id") or card.get("card_id") or f"surface-{index + 1}").strip()
+        card_id = str(card.get("card_id") or session_id).strip() or f"surface-{index + 1}"
+        thread_id = str(card.get("thread_id") or "").strip()
+        preview = str(card.get("preview") or "").strip()
+        kind = str(card.get("kind") or "").strip()
+        cards.append(
+            {
+                "card_id": card_id,
+                "session_id": session_id,
+                "local_session_id": session_id,
+                "title": preview or card_id,
+                "preview": preview,
+                "summary": preview,
+                "kind": kind,
+                "pending_outbound": bool(card.get("pending_outbound")),
+                "origin": {"thread_id": thread_id} if thread_id else {},
+                "surface_source": "ui_surface",
+            }
+        )
+    return {
+        "schema": "pucky.reply_cards.v1",
+        "source": "ui_surface_fallback",
+        "count": len(cards),
+        "cards": cards,
+    }
 
 
 def thread_scope_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -480,7 +523,7 @@ def thread_scope_status(args: argparse.Namespace) -> dict[str, Any]:
         return run_pucky_command(args, "voice.thread_scope.get", {})
     except PhoneProofError as exc:
         message = str(exc)
-        if "COMMAND_NOT_ALLOWED" not in message and "not allowed" not in message.lower():
+        if not command_not_allowed(message):
             raise
         surface = snapshot_surface(args)
         thread_scope = surface.get("thread_scope")
