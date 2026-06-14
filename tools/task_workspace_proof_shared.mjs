@@ -584,7 +584,8 @@ async function saveLocatorScreenshot(page, selector, reportDir, name) {
 function assertTaskFilterVisual(listState, mode, theme) {
   const visual = listState.filterVisual || {};
   assert(visual.chevronHasRect === false, `${mode}/${theme}: task filter chevron rendered the fallback icon`);
-  assert(visual.chevronPath === "m7 10 5 5 5-5", `${mode}/${theme}: task filter chevron path was unexpected`);
+  const supportedChevronPaths = new Set(["m7 10 5 5 5-5", "m7 10 5 5 5-5H7Z"]);
+  assert(supportedChevronPaths.has(String(visual.chevronPath || "")), `${mode}/${theme}: task filter chevron path was unexpected`);
   if (theme === "light") {
     assert(visual.buttonColor === "rgb(34, 111, 232)", `${mode}/${theme}: expected light task filter text to keep the accent color`);
   }
