@@ -277,6 +277,8 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert 'button.dataset.taskFilterCurrent = currentKey;' in task_filters
     assert 'light-task-filter-button' in task_filters
     assert 'light-task-filter-button-chevron' in task_filters
+    assert 'taskFilter: "all",' in app
+    assert 'task_filter: state.taskFilter || "all"' not in app
     assert ".light-task-counts" not in styles
     assert ".light-task-filter-button" in styles
     assert ".light-task-filter-button-chevron" in styles

@@ -375,7 +375,7 @@
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
-    taskFilter: initialTaskFilter(persistedNavState.task_filter),
+    taskFilter: "all",
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
     workspace: {
@@ -13615,7 +13615,6 @@
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
-        task_filter: state.taskFilter || "all",
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),
