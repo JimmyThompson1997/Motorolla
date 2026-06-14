@@ -218,6 +218,24 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
 
 
+def test_detail_shell_inherits_shared_light_header_column_gutter_contract() -> None:
+    styles = read("styles.css")
+
+    detail_shell = css_block(styles, ".detail-shell")
+    detail_body = css_block(styles, ".detail-content-inner")
+
+    assert "--light-shell-column-max: 520px;" in detail_shell
+    assert "--light-shell-column-padding: 20px;" in detail_shell
+    assert "padding-bottom: var(--safe-area-bottom-pad);" in detail_shell
+    assert "max-width: var(--light-shell-column-max);" in detail_body
+    assert "padding: 16px var(--light-shell-column-padding) 0;" in detail_body
+
+    compact_media = re.search(r"@media \(max-width: 380px\)\s*\{(?P<body>.*?)\n\}", styles, re.S)
+    assert compact_media, "Missing compact light-shell media query"
+    assert ".detail-shell {" in compact_media.group("body")
+    assert "--light-shell-column-padding: 16px;" in compact_media.group("body")
+
+
 def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> None:
     app = read("app.js")
     styles = read("styles.css")
