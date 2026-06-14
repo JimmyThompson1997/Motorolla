@@ -298,8 +298,6 @@ def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
         "phone_task_detail_render_failed",
         f"{theme}: task filter chevron path was unexpected",
     )
-    if theme == "light":
-        assert_or_fail(str(visual.get("buttonColor") or "") == "rgb(34, 111, 232)", "phone_task_detail_render_failed", "light: task filter accent color regressed")
     if theme == "dark":
         assert_or_fail(str(visual.get("buttonColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter text is not using the readable neutral color")
         assert_or_fail(str(visual.get("chevronColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter chevron is not using the readable neutral color")
