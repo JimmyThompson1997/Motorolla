@@ -5066,7 +5066,9 @@
     const notes = workspaceItems("notes");
     const pinned = notes.filter(note => note.pinned);
     if (pinned.length) {
-      page.append(lightSectionTitle("Pinned"), ...pinned.map(lightNoteRow));
+      const pinnedList = el("div", "light-list");
+      pinnedList.append(...pinned.map(lightNoteRow));
+      page.append(lightSectionTitle("Pinned"), pinnedList);
     }
     const recent = el("div", "light-list");
     recent.append(...notes.filter(note => !note.pinned).map(lightNoteRow));
@@ -5075,15 +5077,41 @@
   }
 
   function lightNoteRow(note) {
-    const row = el("button", "light-card light-note-row");
-    row.type = "button";
+    const row = el("div", "light-card light-note-row");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", note.title || "Open note");
     row.dataset.noteId = note.id;
-    row.addEventListener("click", () => {
+    row.dataset.notePinned = String(Boolean(note.pinned));
+    const openNote = () => {
       state.selectedNoteId = note.id;
       lightNavigate("note-detail", { from: "notes" });
+    };
+    row.addEventListener("click", openNote);
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openNote();
+      }
     });
     const meta = `${note.pinned ? `Pinned${DOT}` : ""}${workspaceTimestamp(note.updated_at_ms, "Updated")}${DOT}${note.metadata?.context || "Notes"}`;
-    row.append(lightSmallIcon(note.metadata?.icon || (note.pinned ? "pin" : "note")), lightTextStack(note.title, meta));
+    const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      void toggleNotePin(note.id);
+    }, "light-note-pin-button");
+    pin.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+      }
+    });
+    pin.dataset.noteId = note.id;
+    pin.dataset.notePinned = String(Boolean(note.pinned));
+    pin.setAttribute("aria-pressed", String(Boolean(note.pinned)));
+    pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });
+    row.append(lightTextStack(note.title, meta), pin);
     return row;
   }
 
@@ -5103,6 +5131,48 @@
     page.append(article);
     page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
+  }
+
+  async function toggleNotePin(noteId) {
+    const bucket = workspaceBucket("notes");
+    const recordId = String(noteId || "").trim();
+    const items = workspaceItems("notes");
+    if (!recordId || !items.length) {
+      return;
+    }
+    const note = items.find(item => String(item.id || "") === recordId);
+    if (!note) {
+      return;
+    }
+    const previousItems = bucket.items.slice();
+    const previousError = bucket.error;
+    const nextPinned = !Boolean(note.pinned);
+    const toggled = { ...note, pinned: nextPinned };
+    const pinned = [];
+    const recent = [];
+    previousItems.forEach(item => {
+      if (String(item.id || "") === recordId) {
+        return;
+      }
+      if (item.pinned) {
+        pinned.push(item);
+        return;
+      }
+      recent.push(item);
+    });
+    bucket.items = nextPinned
+      ? [toggled, ...pinned, ...recent]
+      : [...pinned, toggled, ...recent];
+    bucket.error = "";
+    render();
+    const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });
+    if (!updated) {
+      bucket.items = previousItems;
+      bucket.error = previousError;
+      render();
+      return;
+    }
+    render();
   }
 
   function lightTasksPage() {

@@ -3691,6 +3691,47 @@ button {
   grid-template-columns: 48px minmax(0, 1fr) auto 18px;
 }
 
+.light-note-row {
+  min-height: 88px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.light-note-row .light-text-stack {
+  min-width: 0;
+}
+
+.light-note-pin-button {
+  flex-shrink: 0;
+  color: #0a84ff;
+  background: rgba(10, 132, 255, 0.08);
+}
+
+.light-note-pin-button:active {
+  background: rgba(10, 132, 255, 0.14);
+}
+
+.light-note-pin-button .material-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.light-note-pin-button[data-note-pinned="true"] {
+  color: #f59e0b;
+  background: #fff7df;
+}
+
+.light-note-pin-button[data-note-pinned="true"] .material-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
 .light-graph-row .light-text-stack span {
   white-space: normal;
   display: -webkit-box;

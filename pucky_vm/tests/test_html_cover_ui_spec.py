@@ -12,6 +12,12 @@ def read(name: str) -> str:
     return (UI / name).read_text(encoding="utf-8")
 
 
+def css_block(styles: str, selector: str) -> str:
+    match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>.*?)\n\}}", styles, re.S)
+    assert match, f"Missing CSS selector {selector}"
+    return match.group("body")
+
+
 def function_block(source: str, name: str) -> str:
     match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
     assert match, f"Missing function {name}"
@@ -187,3 +193,40 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'computed_visibility: voiceStatusStyle?.visibility || ""' in describe_ui_surface
     assert 'computed_opacity: voiceStatusStyle?.opacity || ""' in describe_ui_surface
     assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
+
+
+def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    light_notes = function_block(app, "lightNotesPage")
+    note_row = function_block(app, "lightNoteRow")
+    toggle_note_pin = function_block(app, "toggleNotePin")
+    note_row_block = css_block(styles, ".light-note-row")
+    note_pin_button_block = css_block(styles, ".light-note-pin-button")
+
+    assert 'const pinnedList = el("div", "light-list");' in light_notes
+    assert "pinnedList.append(...pinned.map(lightNoteRow));" in light_notes
+    assert 'page.append(lightSectionTitle("Pinned"), pinnedList);' in light_notes
+    assert 'const recent = el("div", "light-list");' in light_notes
+    assert 'recent.append(...notes.filter(note => !note.pinned).map(lightNoteRow));' in light_notes
+
+    assert 'const row = el("div", "light-card light-note-row");' in note_row
+    assert 'row.setAttribute("role", "button");' in note_row
+    assert "row.tabIndex = 0;" in note_row
+    assert 'row.dataset.notePinned = String(Boolean(note.pinned));' in note_row
+    assert "row.append(lightSmallIcon(" not in note_row
+    assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
+    assert "void toggleNotePin(note.id);" in note_row
+
+    assert 'const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });' in app
+    assert "bucket.items = nextPinned" in toggle_note_pin
+    assert "bucket.items = previousItems;" in toggle_note_pin
+    assert "bucket.error = previousError;" in toggle_note_pin
+
+    assert "min-height: 88px;" in note_row_block
+    assert "padding: 14px 16px;" in note_row_block
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in note_row_block
+    assert "color: #0a84ff;" in note_pin_button_block
+    assert '.light-note-pin-button[data-note-pinned="true"]' in styles
