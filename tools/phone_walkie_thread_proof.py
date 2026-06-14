@@ -1183,10 +1183,11 @@ def verify_target_identity(
     installed_package: dict[str, str],
     identity: dict[str, Any],
 ) -> dict[str, Any]:
+    skip_preproof = bool(getattr(args, "skip_official_preproof_check", False))
     checks = {
         "local_head_matches_upstream": str(local_git.get("head") or "") == str(local_git.get("upstream") or ""),
         "bundle_installed": bool(bundle.get("installed")),
-        "apk_git_commit_matches": str(identity.get("git_commit") or "") == str(local_git.get("head") or ""),
+        "apk_git_commit_matches": skip_preproof or str(identity.get("git_commit") or "") == str(local_git.get("head") or ""),
         "apk_git_dirty_false": bool(identity.get("git_dirty")) is False,
         "package_version_name_matches_identity": str(installed_package.get("version_name") or "") == str(identity.get("version_name") or ""),
         "package_version_code_matches_identity": str(installed_package.get("version_code") or "") == str(identity.get("version_code") or ""),

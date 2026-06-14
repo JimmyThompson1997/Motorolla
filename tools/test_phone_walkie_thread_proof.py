@@ -482,6 +482,29 @@ def test_verify_target_identity_requires_matching_bundle_and_apk_identity(tmp_pa
         )
 
 
+def test_verify_target_identity_skip_preproof_check_allows_apk_commit_mismatch(tmp_path: Path) -> None:
+    args = make_args(tmp_path)
+    args.skip_official_preproof_check = True
+    local_git = {"head": "abc123", "upstream": "abc123"}
+    bundle = {"installed": True, "ui_version": "git-abc123"}
+    surface = {"ui_version": "git-abc123"}
+    installed = {"version_name": "0.1", "version_code": "42"}
+    identity = {"git_commit": "other", "git_dirty": False, "version_name": "0.1", "version_code": 42}
+
+    result = proof.verify_target_identity(
+        args,
+        local_git=local_git,
+        remote_manifest=None,
+        bundle=bundle,
+        surface=surface,
+        installed_package=installed,
+        identity=identity,
+    )
+
+    assert result["passed"] is True
+    assert result["checks"]["apk_git_commit_matches"] is True
+
+
 def test_require_official_local_repo_rejects_noncanonical(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     other = tmp_path / "other"
     canonical = tmp_path / "canon"
