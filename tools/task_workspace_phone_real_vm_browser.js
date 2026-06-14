@@ -129,7 +129,7 @@ async function back(page, timeoutMs) {
   await page.waitForTimeout(200);
 }
 
-async function gotoTasks(page, timeoutMs) {
+async function gotoTasks(page, timeoutMs, theme = "") {
   const debugResult = await page.evaluate(() => {
     if (window.PuckyUiDebug && typeof window.PuckyUiDebug.dispatch === "function") {
       return window.PuckyUiDebug.dispatch("goto_route", { route: "tasks" });
@@ -157,11 +157,14 @@ async function gotoTasks(page, timeoutMs) {
       }
       continue;
     }
-    await page.evaluate(() => {
+    await page.evaluate((requestedTheme) => {
       const url = new URL(window.location.href);
       url.searchParams.set("route", "tasks");
+      if (requestedTheme) {
+        url.searchParams.set("theme", requestedTheme);
+      }
       window.location.assign(url.toString());
-    });
+    }, theme);
     await waitForShell(page, timeoutMs);
   }
   await waitForRoute(page, "tasks", timeoutMs);
@@ -175,6 +178,7 @@ async function reloadPage(page, timeoutMs) {
 async function readTaskState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
+    const appShell = document.querySelector(".app-shell");
     const detail = document.querySelector(".light-task-detail-surface");
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
@@ -201,6 +205,21 @@ async function readTaskState(page) {
       label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
       active: true,
     }] : [];
+    const filterVisual = filterButton ? (() => {
+      const style = getComputedStyle(filterButton);
+      const chevron = filterButton.querySelector(".light-task-filter-button-chevron");
+      const chevronStyle = chevron ? getComputedStyle(chevron) : null;
+      const svg = chevron?.querySelector("svg");
+      const path = svg?.querySelector("path");
+      return {
+        theme: String(appShell?.getAttribute("data-theme") || ""),
+        buttonColor: String(style.color || ""),
+        buttonBackground: String(style.backgroundColor || ""),
+        chevronColor: String(chevronStyle?.color || ""),
+        chevronPath: String(path?.getAttribute("d") || ""),
+        chevronHasRect: Boolean(svg?.querySelector("rect")),
+      };
+    })() : null;
     const checklist = detail
       ? Array.from(detail.querySelectorAll(".light-task-checklist-row")).map(row => ({
           id: String(row.getAttribute("data-checklist-item-id") || ""),
@@ -244,6 +263,7 @@ async function readTaskState(page) {
         : null,
       sections,
       filters,
+      filterVisual,
       checklist,
       attached,
     };
@@ -253,7 +273,7 @@ async function readTaskState(page) {
 async function runOperation(page, request, op) {
   const timeoutMs = Number(op.timeout_ms || request.timeout_ms || 15000);
   if (op.kind === "goto_tasks") {
-    await gotoTasks(page, timeoutMs);
+    await gotoTasks(page, timeoutMs, String(op.theme || "").trim().toLowerCase());
     return { kind: op.kind, state: await readTaskState(page) };
   }
   if (op.kind === "back") {

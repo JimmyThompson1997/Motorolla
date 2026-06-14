@@ -128,6 +128,34 @@ def test_verify_filter_state_checks_active_filter_and_hidden_rows() -> None:
         phone_proof.verify_filter_state(state, filter_key="done", present=[], absent=[])
 
 
+def test_verify_filter_visual_checks_icon_and_dark_contrast() -> None:
+    light_state = {
+        "filterVisual": {
+            "chevronHasRect": False,
+            "chevronPath": "m7 10 5 5 5-5",
+            "buttonColor": "rgb(34, 111, 232)",
+            "chevronColor": "rgb(107, 114, 128)",
+        }
+    }
+    dark_state = {
+        "filterVisual": {
+            "chevronHasRect": False,
+            "chevronPath": "m7 10 5 5 5-5",
+            "buttonColor": "rgb(245, 249, 255)",
+            "chevronColor": "rgb(245, 249, 255)",
+        }
+    }
+
+    phone_proof.verify_filter_visual(light_state, theme="light")
+    phone_proof.verify_filter_visual(dark_state, theme="dark")
+
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="fallback icon"):
+        phone_proof.verify_filter_visual({"filterVisual": {**light_state["filterVisual"], "chevronHasRect": True}}, theme="light")
+
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="readable neutral color"):
+        phone_proof.verify_filter_visual({"filterVisual": {**dark_state["filterVisual"], "buttonColor": "rgb(58, 132, 255)"}}, theme="dark")
+
+
 def test_task_filter_label_maps_visible_selector_copy() -> None:
     assert phone_proof.task_filter_label("all") == "All"
     assert phone_proof.task_filter_label("in_progress") == "In progress"

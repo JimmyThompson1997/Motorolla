@@ -331,7 +331,7 @@ export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
 
 export function proofPageUrl(baseUrl, apiToken, options = {}) {
   const url = new URL(`${String(baseUrl || "").replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
-  url.searchParams.set("theme", "light");
+  url.searchParams.set("theme", String(options.theme || "light"));
   url.searchParams.set("route", "tasks");
   if (String(options.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
@@ -416,6 +416,7 @@ async function recordViewState(page) {
 async function readTaskListSurface(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
+    const appShell = document.querySelector(".app-shell");
     const sections = Array.from(document.querySelectorAll(".light-task-section-toggle")).map(toggle => {
       const group = String(toggle.dataset.taskSection || "");
       const label = String(toggle.querySelector(".light-task-section-title")?.textContent || "").trim();
@@ -439,10 +440,26 @@ async function readTaskListSurface(page) {
       label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
       active: true,
     }] : [];
+    const filterVisual = filterButton ? (() => {
+      const style = getComputedStyle(filterButton);
+      const chevron = filterButton.querySelector(".light-task-filter-button-chevron");
+      const chevronStyle = chevron ? getComputedStyle(chevron) : null;
+      const svg = chevron?.querySelector("svg");
+      const path = svg?.querySelector("path");
+      return {
+        theme: String(appShell?.getAttribute("data-theme") || ""),
+        buttonColor: String(style.color || ""),
+        buttonBackground: String(style.backgroundColor || ""),
+        chevronColor: String(chevronStyle?.color || ""),
+        chevronPath: String(path?.getAttribute("d") || ""),
+        chevronHasRect: Boolean(svg?.querySelector("rect")),
+      };
+    })() : null;
     return {
       route: shell?.getAttribute("data-light-route") || "",
       sections,
       filters,
+      filterVisual,
     };
   });
 }
@@ -552,6 +569,31 @@ async function selectTaskFilter(page, filterKey, timeoutMs) {
   await page.waitForTimeout(150);
 }
 
+async function saveLocatorScreenshot(page, selector, reportDir, name) {
+  const target = path.join(reportDir, `${name}.png`);
+  const locator = page.locator(selector).first();
+  await locator.waitFor({ state: "visible", timeout: 15000 });
+  await locator.screenshot({
+    path: target,
+    animations: "disabled",
+    timeout: 120000,
+  });
+  return target;
+}
+
+function assertTaskFilterVisual(listState, mode, theme) {
+  const visual = listState.filterVisual || {};
+  assert(visual.chevronHasRect === false, `${mode}/${theme}: task filter chevron rendered the fallback icon`);
+  assert(visual.chevronPath === "m7 10 5 5 5-5", `${mode}/${theme}: task filter chevron path was unexpected`);
+  if (theme === "light") {
+    assert(visual.buttonColor === "rgb(34, 111, 232)", `${mode}/${theme}: expected light task filter text to keep the accent color`);
+  }
+  if (theme === "dark") {
+    assert(visual.buttonColor === "rgb(245, 249, 255)", `${mode}/${theme}: expected dark task filter text to use a readable neutral color`);
+    assert(visual.chevronColor === "rgb(245, 249, 255)", `${mode}/${theme}: expected dark task filter chevron to match the readable neutral color`);
+  }
+}
+
 async function verifyListFilters(page, seed, mode, config, checks) {
   await goToTasksList(page, mode, config.timeoutMs);
   await ensureSectionExpanded(page, "done");
@@ -563,11 +605,13 @@ async function verifyListFilters(page, seed, mode, config, checks) {
   assert(labels.includes("Done"), `${mode}: missing Done task group`);
   assert(listState.filters.length === 1, `${mode}: expected a single visible task filter trigger`);
   assert(listState.filters[0]?.label === "All", `${mode}: expected All to be the default task filter`);
+  assertTaskFilterVisual(listState, mode, "light");
   checks.push({
     type: "list_surface",
     mode,
     sections: listState.sections,
     filters: listState.filters,
+    filter_visual: listState.filterVisual,
   });
   await openTaskFilterSelector(page, config.timeoutMs);
   const selectorOptions = await readTaskFilterSelectorOptions(page);
@@ -631,6 +675,30 @@ async function verifyListFilters(page, seed, mode, config, checks) {
   }
   await selectTaskFilter(page, "all", config.timeoutMs);
   await ensureSectionExpanded(page, "done");
+}
+
+async function verifyDarkThemeFilter(page, mode, config, screenshots, checks) {
+  const darkUrl = proofPageUrl(config.baseUrl, config.apiToken, {
+    refreshKey: config.refreshKey,
+    theme: "dark",
+  });
+  logStep(config, `${mode}: opening dark-theme tasks proof ${darkUrl}`);
+  await page.goto(darkUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await ensureSectionExpanded(page, "done");
+  const listState = await readTaskListSurface(page);
+  assertTaskFilterVisual(listState, mode, "dark");
+  screenshots[`${mode}_task_list_dark`] = await saveScreenshot(page, config.reportDir, `${mode}-dark-task-list`);
+  screenshots[`${mode}_task_filter_pill_dark`] = await saveLocatorScreenshot(page, ".light-task-filter-button", config.reportDir, `${mode}-dark-task-filter-pill`);
+  checks.push({
+    type: "dark_task_filter_visual",
+    mode,
+    filter_visual: listState.filterVisual,
+    screenshots: {
+      full: screenshots[`${mode}_task_list_dark`],
+      pill: screenshots[`${mode}_task_filter_pill_dark`],
+    },
+  });
 }
 
 async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks) {
@@ -920,7 +988,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);
   const tracking = buildTracking(page, consoleLogPath);
-  const pageUrl = proofPageUrl(config.baseUrl, config.apiToken, { refreshKey: config.refreshKey });
+  const pageUrl = proofPageUrl(config.baseUrl, config.apiToken, { refreshKey: config.refreshKey, theme: "light" });
   const screenshots = {};
   const checks = [];
   try {
@@ -930,6 +998,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     await stabilizeUrlForReloads(page);
     await ensureSectionExpanded(page, "done");
     screenshots[`${mode}_task_list`] = await saveScreenshot(page, config.reportDir, `${mode}-01-task-list`);
+    screenshots[`${mode}_task_filter_pill_light`] = await saveLocatorScreenshot(page, ".light-task-filter-button", config.reportDir, `${mode}-01-task-filter-pill`);
 
     await verifyListFilters(page, seed, mode, config, checks);
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
@@ -938,6 +1007,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     await verifyChecklistPersistence(page, seed, mode, config, checks);
     await verifyNavigationLoop(page, seed, mode, config, screenshots, checks);
     await verifyReloadStability(page, seed, mode, config, checks);
+    await verifyDarkThemeFilter(page, mode, config, screenshots, checks);
 
     const pageErrors = tracking.pageErrors.slice();
     const badConsole = seriousConsoleErrors(tracking.consoleErrors);

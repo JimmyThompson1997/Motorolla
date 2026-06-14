@@ -289,6 +289,17 @@ def verify_filter_state(
         assert_or_fail(task_id not in visible, "phone_task_detail_render_failed", f"Expected task {task_id} to be hidden under {filter_key}")
 
 
+def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
+    visual = state.get("filterVisual") or {}
+    assert_or_fail(not bool(visual.get("chevronHasRect")), "phone_task_detail_render_failed", f"{theme}: task filter rendered the fallback icon")
+    assert_or_fail(str(visual.get("chevronPath") or "") == "m7 10 5 5 5-5", "phone_task_detail_render_failed", f"{theme}: task filter chevron path was unexpected")
+    if theme == "light":
+        assert_or_fail(str(visual.get("buttonColor") or "") == "rgb(34, 111, 232)", "phone_task_detail_render_failed", "light: task filter accent color regressed")
+    if theme == "dark":
+        assert_or_fail(str(visual.get("buttonColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter text is not using the readable neutral color")
+        assert_or_fail(str(visual.get("chevronColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter chevron is not using the readable neutral color")
+
+
 def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> None:
     assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_detail_render_failed", "Primary task detail did not open")
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Primary task still renders legacy task HTML")
@@ -374,6 +385,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             assert_or_fail(expected_label in labels, "phone_task_detail_render_failed", f"Missing task bucket {expected_label}")
         filter_labels = [str(item.get("label") or "") for item in list_state.get("filters") or [] if isinstance(item, dict)]
         assert_or_fail(filter_labels == ["All"], "phone_task_detail_render_failed", "Expected a single visible All task filter trigger")
+        verify_filter_visual(list_state, theme="light")
 
         filter_expectations = [
             {"key": "all", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"], seed["emptyTaskId"]], "absent": []},
@@ -402,6 +414,35 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             current_labels = [str(item.get("label") or "") for item in list(state.get("filters") or []) if isinstance(item, dict)]
             assert_or_fail(current_labels == [task_filter_label(str(expectation["key"]))], "phone_task_detail_render_failed", f"Visible task filter label did not switch to {task_filter_label(str(expectation['key']))}")
             filter_checks.append({"filter": expectation["key"], "visible": sorted(visible_task_ids(state))})
+
+        dark_filter_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="06-dark-filter-visual",
+            operations=[
+                {"kind": "goto_tasks", "theme": "dark"},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "06-dark-filter-browser.png"),
+            ],
+        )
+        dark_filter_state = op_state(dark_filter_phase, "task_state")
+        verify_filter_visual(dark_filter_state, theme="dark")
+        filter_checks.append({"filter": "dark_visual", "theme": dark_filter_state.get("filterVisual", {}).get("theme"), "visible": sorted(visible_task_ids(dark_filter_state))})
+
+        reset_light_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="06b-light-reset",
+            operations=[
+                {"kind": "goto_tasks", "theme": "light"},
+                {"kind": "task_state"},
+            ],
+        )
+        verify_filter_visual(op_state(reset_light_phase, "task_state"), theme="light")
 
         primary_phase = run_phase(
             args,

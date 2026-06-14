@@ -5511,7 +5511,7 @@
     const copy = el("span", "light-task-filter-button-copy");
     copy.append(el("span", "light-task-filter-button-label", currentLabel));
     const chevron = el("span", "light-task-filter-button-chevron");
-    chevron.innerHTML = iconSvg("chevron-down", { filled: false });
+    chevron.innerHTML = iconSvg("expand_more", { filled: true });
     button.append(copy, chevron);
     button.addEventListener("click", event => {
       event.preventDefault();

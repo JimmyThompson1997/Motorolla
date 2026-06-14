@@ -4734,6 +4734,14 @@ button {
   height: 14px;
 }
 
+.app-shell[data-theme="dark"] .light-task-filter-button.is-active {
+  color: var(--home-shell-text);
+}
+
+.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron {
+  color: currentColor;
+}
+
 .light-task-workspace-page {
   gap: 16px;
 }
