@@ -200,11 +200,15 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     styles = read("styles.css")
 
     light_notes = function_block(app, "lightNotesPage")
+    note_timestamp = function_block(app, "noteContentUpdatedAtMs")
     note_row = function_block(app, "lightNoteRow")
     toggle_note_pin = function_block(app, "toggleNotePin")
     note_row_block = css_block(styles, ".light-note-row")
     note_pin_button_block = css_block(styles, ".light-note-pin-button")
 
+    assert "note?.content_updated_at_ms" in note_timestamp
+    assert "note?.created_at_ms" in note_timestamp
+    assert "note?.updated_at_ms" in note_timestamp
     assert 'const pinnedList = el("div", "light-list");' in light_notes
     assert "pinnedList.append(...pinned.map(lightNoteRow));" in light_notes
     assert 'page.append(lightSectionTitle("Pinned"), pinnedList);' in light_notes
@@ -216,6 +220,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "row.tabIndex = 0;" in note_row
     assert 'row.dataset.notePinned = String(Boolean(note.pinned));' in note_row
     assert "row.append(lightSmallIcon(" not in note_row
+    assert 'const meta = noteMetaLine(note);' in note_row
+    assert 'note.pinned ? `Pinned${DOT}` : ""' not in note_row
     assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
     assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
     assert "void toggleNotePin(note.id);" in note_row

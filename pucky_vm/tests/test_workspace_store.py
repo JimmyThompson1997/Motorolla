@@ -47,6 +47,37 @@ def test_workspace_store_seeds_and_round_trips_html_assets(tmp_path: Path) -> No
     assert note["metadata"]["context"] == "Tests"
 
 
+def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+
+    note = store.upsert_record(
+        "notes",
+        {
+            "id": "proof-note",
+            "title": "Proof Note",
+            "summary": "Created by test",
+            "metadata": {"context": "Tests"},
+        },
+    )
+    assert note["content_updated_at_ms"] == 1_800_000_000_000
+    assert note["metadata"]["content_updated_at_ms"] == 1_800_000_000_000
+
+    clock.value = 1_800_000_001_000
+    pinned = store.patch_record("notes", "proof-note", {"pinned": True})
+    assert pinned is not None
+    assert pinned["updated_at_ms"] == 1_800_000_001_000
+    assert pinned["content_updated_at_ms"] == 1_800_000_000_000
+    assert pinned["metadata"]["content_updated_at_ms"] == 1_800_000_000_000
+
+    clock.value = 1_800_000_002_000
+    edited = store.patch_record("notes", "proof-note", {"summary": "Actually edited"})
+    assert edited is not None
+    assert edited["updated_at_ms"] == 1_800_000_002_000
+    assert edited["content_updated_at_ms"] == 1_800_000_002_000
+    assert edited["metadata"]["content_updated_at_ms"] == 1_800_000_002_000
+
+
 def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> None:
     clock = Clock(10_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)

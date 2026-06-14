@@ -419,13 +419,12 @@ class WorkspaceStore:
         kind = self.kind_for_collection(collection)
         now = self.now_ms()
         record_id = _clean_id(payload.get("id") or payload.get("record_id"), kind)
+        existing_record = self.get_record(collection, record_id, include_deleted=True)
         normalized = self._normalize_record(kind, record_id, payload, now_ms=now)
+        if kind == "note":
+            self._apply_note_content_timestamp(normalized, existing_record, now_ms=now)
+        created_at_ms = int(existing_record["created_at_ms"]) if existing_record else now
         with self._lock:
-            existing = self._conn.execute(
-                "SELECT created_at_ms FROM workspace_records WHERE kind = ? AND record_id = ?",
-                (kind, record_id),
-            ).fetchone()
-            created_at_ms = int(existing["created_at_ms"]) if existing else now
             self._write_record(kind, record_id, normalized, created_at_ms=created_at_ms, updated_at_ms=now)
         return self.get_record(collection, record_id, include_deleted=True) or {}
 
@@ -442,6 +441,60 @@ class WorkspaceStore:
                 merged[key] = value
         merged["metadata"] = metadata
         return self.upsert_record(collection, merged)
+
+    @staticmethod
+    def _note_content_updated_at_ms(record: dict[str, object] | None) -> int:
+        if not isinstance(record, dict):
+            return 0
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        value = _int_or_zero(metadata.get("content_updated_at_ms")) if isinstance(metadata, dict) else 0
+        if value > 0:
+            return value
+        return _int_or_zero(record.get("content_updated_at_ms"))
+
+    @classmethod
+    def _note_content_changed(cls, current: dict[str, object] | None, record: dict[str, object]) -> bool:
+        if current is None:
+            return True
+        current_metadata = dict(current.get("metadata") or {})
+        next_metadata = dict(record.get("metadata") or {})
+        current_metadata.pop("content_updated_at_ms", None)
+        next_metadata.pop("content_updated_at_ms", None)
+        return (
+            str(current.get("title") or "") != str(record.get("title") or "")
+            or str(current.get("summary") or "") != str(record.get("summary") or "")
+            or str(current.get("html") or "") != str(record.get("html") or "")
+            or str(current.get("html_asset_id") or "") != str(record.get("html_asset_id") or "")
+            or current_metadata != next_metadata
+        )
+
+    @classmethod
+    def _apply_note_content_timestamp(
+        cls,
+        record: dict[str, object],
+        current: dict[str, object] | None,
+        *,
+        now_ms: int,
+    ) -> None:
+        metadata = dict(record.get("metadata") or {})
+        previous = cls._note_content_updated_at_ms(current)
+        explicit = _int_or_zero(record.get("content_updated_at_ms") or metadata.get("content_updated_at_ms"))
+        if explicit > 0 and explicit != previous:
+            resolved = explicit
+        elif current is None:
+            resolved = _int_or_zero(record.get("updated_at_ms") or record.get("created_at_ms")) or now_ms
+        elif cls._note_content_changed(current, record):
+            resolved = now_ms
+        else:
+            resolved = previous or _int_or_zero(current.get("created_at_ms")) or now_ms
+        if resolved <= 0:
+            if current is None:
+                resolved = now_ms
+            else:
+                resolved = previous or now_ms
+        metadata["content_updated_at_ms"] = resolved
+        record["metadata"] = metadata
+        record["content_updated_at_ms"] = resolved
 
     def delete_record(self, collection: str, record_id: str) -> dict[str, object] | None:
         existing = self.get_record(collection, record_id, include_deleted=True)
@@ -883,6 +936,8 @@ class WorkspaceStore:
             record["description"] = str(metadata.get("description") or record["summary"] or "").strip()
             record["checklist"] = _normalize_task_checklist(metadata.get("checklist"))
             record["derived_group"] = derive_task_group(record, self.now_ms())
+        if row["kind"] == "note":
+            record["content_updated_at_ms"] = self._note_content_updated_at_ms(record) or int(row["created_at_ms"] or 0) or int(row["updated_at_ms"] or 0)
         record["links"] = self.linked_records(str(row["kind"]), str(row["record_id"]))
         return record
 

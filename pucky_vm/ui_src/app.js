@@ -5056,6 +5056,26 @@
     });
   }
 
+  function noteContentUpdatedAtMs(note) {
+    const candidates = [
+      note?.content_updated_at_ms,
+      note?.metadata?.content_updated_at_ms,
+      note?.created_at_ms,
+      note?.updated_at_ms,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  function noteMetaLine(note) {
+    return `${workspaceTimestamp(noteContentUpdatedAtMs(note), "Updated")}${DOT}${note.metadata?.context || "Notes"}`;
+  }
+
   function lightNotesPage() {
     const page = lightPage("Notes");
     const status = lightWorkspaceStatus("notes", "note", "No notes yet");
@@ -5094,7 +5114,7 @@
         openNote();
       }
     });
-    const meta = `${note.pinned ? `Pinned${DOT}` : ""}${workspaceTimestamp(note.updated_at_ms, "Updated")}${DOT}${note.metadata?.context || "Notes"}`;
+    const meta = noteMetaLine(note);
     const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
       if (event) {
         event.preventDefault();
@@ -5124,7 +5144,7 @@
     page.classList.add("light-document-page", "light-note-document");
     const article = el("article", "light-doc-article light-note-detail");
     article.append(
-      lightDocumentEyebrow(note.pinned ? "Pinned note" : "Note", `${workspaceTimestamp(note.updated_at_ms, "Updated")}${DOT}${note.metadata?.context || "Notes"}`),
+      lightDocumentEyebrow(note.pinned ? "Pinned note" : "Note", noteMetaLine(note)),
       el("h1", "", note.title),
       el("p", "light-note-body", note.summary || "")
     );
