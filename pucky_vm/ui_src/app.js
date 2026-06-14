@@ -42,6 +42,11 @@
   const MIN_PLAYBACK_SPEED = 0.5;
   const MAX_PLAYBACK_SPEED = 3;
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+  const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];
+  const AUDIO_PROBE_EVENT_LIMIT = 48;
+  const AUDIO_START_CONFIRMATION_TIMEOUT_MS = 1800;
+  const AUDIO_EARLY_END_WINDOW_MS = 2000;
+  const AUDIO_TERMINAL_RESET_MS = 1600;
   const DOT = " \u00b7 ";
   let calendarTimeZoneOptionsCache = null;
   const MATERIAL_SYMBOLS = {
@@ -408,6 +413,8 @@
     phoneRole: initialPhoneRoleStatus(),
     activePath: "",
     player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
+    audioProbe: initialAudioProbeStatus(),
+    lastToast: { message: "", shown_at: "" },
     defaultAudioSpeed: 1,
     defaultAudioSpeedAvailable: false,
     savedPositions: numberMapFromObject(persistedAudioState.positions),
@@ -444,6 +451,7 @@
   const pending = new Map();
   let seq = 0;
   let feedSyncIntervalId = 0;
+  let audioProbeResetTimerId = 0;
   let activeArchiveReveal = null;
   let archiveRevealGestureSeq = 0;
   const archiveRevealDebugTrace = [];
@@ -670,7 +678,8 @@
         state.player = payload || state.player;
         syncActivePathFromPlayer(state.player);
         rememberPlayerProgress(state.player);
-        if (shouldRenderForPlayerState(previousPlayer, state.player)) {
+        const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
+        if (shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged) {
           render();
         }
       }
@@ -910,6 +919,9 @@
     }
     if (command === "ui.surface.get") {
       return describeUiSurface();
+    }
+    if (command === "ui.debug.audio_probe.get") {
+      return describeAudioProbe();
     }
     if (command === "ui.debug.goto_home") {
       return uiDebugDispatch("goto_home", args);
@@ -2585,6 +2597,14 @@
     return short ? `git-${short}` : "browser_preview";
   }
 
+  function hasNativeAudioBridge() {
+    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+  }
+
+  function audioRuntimeMode() {
+    return hasNativeAudioBridge() ? "native_bridge" : "browser_stub";
+  }
+
   function initialSurfaceKind() {
     const url = String(window.location && window.location.href || "");
     return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest\/index\.html/i.test(url)
@@ -2605,7 +2625,35 @@
       source_commit_short: String(config.source_commit_short || ""),
       source_dirty: Boolean(config.source_dirty),
       source_kind: initialSurfaceKind(),
-      bridge_connected: Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")
+      bridge_connected: hasNativeAudioBridge(),
+      audio_runtime_mode: audioRuntimeMode()
+    };
+  }
+
+  function initialAudioProbeStatus() {
+    return {
+      schema: "pucky.audio_probe.v1",
+      target_key: "",
+      target_card: {
+        card_id: "",
+        session_id: "",
+        thread_id: "",
+        title: ""
+      },
+      runtime_mode: audioRuntimeMode(),
+      active_path: "",
+      current_tile_audio_phase: "idle",
+      resolved_source_type: "",
+      cache_prep: "",
+      recent_events: [],
+      last_terminal_outcome: "",
+      last_error_toast: "",
+      started_at: "",
+      started_at_ms: 0,
+      confirmed_at: "",
+      confirmed_at_ms: 0,
+      ended_at: "",
+      ended_at_ms: 0
     };
   }
 
@@ -2679,10 +2727,16 @@
       thread_id: node.getAttribute("data-card-thread-id") || "",
       pending_outbound: node.getAttribute("data-card-kind") === "pending_outbound",
       pending_state: node.getAttribute("data-card-pending-state") || "",
-      preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim()
+      preview: (node.querySelector(".preview, .card-outbound-preview, .title")?.textContent || "").trim(),
+      audio_phase: node.getAttribute("data-audio-phase") || "",
+      audio_runtime_mode: node.getAttribute("data-audio-runtime-mode") || "",
+      audio_strip_kind: node.getAttribute("data-audio-strip-kind") || "",
+      audio_busy: node.getAttribute("data-audio-busy") || "",
+      audio_label: (node.querySelector(".tile-audio-status-label")?.textContent || "").trim()
     }));
     return {
       ...state.uiSurface,
+      audio_runtime_mode: audioRuntimeMode(),
       route: shell?.getAttribute("data-view") || "",
       detail: {
         open: Boolean(detail?.classList.contains("is-open")),
@@ -2727,6 +2781,10 @@
         computed_opacity: voiceStatusStyle?.opacity || "",
         voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()
       },
+      toast: {
+        message: String(state.lastToast.message || ""),
+        shown_at: String(state.lastToast.shown_at || "")
+      },
       turn_timing: currentTurnUiTiming(),
       visible_cards: cards,
       home_feed: {
@@ -2749,6 +2807,19 @@
         }
       },
       ui_debug_available: true
+    };
+  }
+
+  function describeAudioProbe() {
+    return {
+      ...state.audioProbe,
+      runtime_mode: audioRuntimeMode(),
+      active_path: state.activePath || "",
+      current_tile_audio_phase: state.audioProbe.current_tile_audio_phase || "idle",
+      recent_events: Array.isArray(state.audioProbe.recent_events)
+        ? state.audioProbe.recent_events.slice(-AUDIO_PROBE_EVENT_LIMIT)
+        : [],
+      last_error_toast: String(state.audioProbe.last_error_toast || state.lastToast.message || "")
     };
   }
 
@@ -3193,7 +3264,8 @@
       source_commit_short: String(raw.source_commit_short || bundleConfig().source_commit_short || ""),
       source_dirty: Boolean(raw.source_dirty ?? bundleConfig().source_dirty),
       source_kind: String(raw.source_kind || "legacy_placeholder"),
-      bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid)
+      bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid),
+      audio_runtime_mode: String(raw.audio_runtime_mode || audioRuntimeMode())
     };
   }
 
@@ -3262,6 +3334,17 @@
       samples_over_threshold: safeNumber(rawIndicator.samples_over_threshold ?? raw.samples_over_threshold),
       gate_latency_ms: safeNumber(rawIndicator.gate_latency_ms ?? raw.gate_latency_ms)
     };
+    if (shouldTreatReplyRecoveryAsSettled(raw, indicator)) {
+      indicator.state = "idle";
+      indicator.visual_state = "idle";
+      indicator.uploading = false;
+      indicator.stt_running = false;
+      indicator.codex_running = false;
+      indicator.tts_running = false;
+      indicator.speaking = false;
+      indicator.failed = false;
+      indicator.active = false;
+    }
     indicator.active = indicator.active || indicator.visual_state !== "idle";
     return {
       ...raw,
@@ -3269,6 +3352,30 @@
       configured: truthy(raw.configured),
       indicator
     };
+  }
+
+  function shouldTreatReplyRecoveryAsSettled(raw, indicator) {
+    const last = raw && typeof raw.last_status === "object" ? raw.last_status : {};
+    const serverTurnStatus = last && typeof last.server_turn_status === "object" ? last.server_turn_status : {};
+    const player = raw && typeof raw.player_state === "object" ? raw.player_state : {};
+    const replyRecoveryPending = truthy(raw.reply_recovery_pending ?? last.reply_recovery_pending);
+    const responseTransportError = String(raw.response_transport_error || last.response_transport_error || "").trim();
+    const remoteStage = String(indicator.remote_stage || raw.remote_stage || last.remote_stage || "").trim().toLowerCase();
+    const serverStage = String(serverTurnStatus.stage || "").trim().toLowerCase();
+    const feedPersisted = truthy(serverTurnStatus.feed_persisted);
+    const playerState = String(player.state || "").trim().toLowerCase();
+    const playerCompleted = !truthy(player.is_playing)
+      && (!String(player.source || "").trim() || playerState === "completed" || playerState === "idle" || playerState === "stopped");
+    if (!replyRecoveryPending || !responseTransportError) {
+      return false;
+    }
+    if (indicator.mic_on || indicator.hearing || indicator.speaking) {
+      return false;
+    }
+    if (remoteStage !== "completed" && serverStage !== "completed") {
+      return false;
+    }
+    return feedPersisted || playerCompleted;
   }
 
   function turnIndicatorFromStatus(status) {
@@ -8718,6 +8825,10 @@
         : "card card-unread");
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");
+    setDataAttribute(cardEl, "data-audio-phase", currentTileAudioPhase(card));
+    setDataAttribute(cardEl, "data-audio-runtime-mode", audioRuntimeMode());
+    setDataAttribute(cardEl, "data-audio-strip-kind", currentTileAudioStripKind(card));
+    setDataAttribute(cardEl, "data-audio-busy", isCardAudioBusy(card) ? "true" : "false");
     const cardStamp = cardTimestamp(card);
 
     let identity = null;
@@ -8760,8 +8871,8 @@
     const title = el("h2", "title", card.title || "Pucky");
     body.append(title);
     if (!isMeetingList) {
-      if (isPlayingCard(card)) {
-        body.append(waveform(card, "wave-row", 46));
+      if (currentTileAudioPhase(card) !== "idle") {
+        body.append(audioTileStatus(card));
       } else {
         body.append(el("p", "preview", card.summary || card.transcript || ""));
       }
@@ -8769,15 +8880,26 @@
 
     const actions = el("div", "card-actions");
     if (hasAudio(card)) {
-      const audio = el("button", isPlayingCard(card)
+      const audioPhase = currentTileAudioPhase(card);
+      const audio = el("button", audioPhase === "playing_confirmed"
         ? "action action-audio is-playing"
-        : "action action-audio");
+        : ["starting", "pause_pending"].includes(audioPhase)
+          ? "action action-audio is-busy"
+          : ["start_failed", "ended_immediately"].includes(audioPhase)
+            ? "action action-audio is-failed"
+            : "action action-audio");
       audio.type = "button";
       applyCardActionData(audio, "audio", card, isMeetingList ? "meeting" : "reply");
       audio.innerHTML = iconSvg("mic", { filled: true });
       audio.setAttribute("aria-label", isMeetingList
         ? `Open audio for ${card.title}`
-        : `${isPlayingCard(card) ? "Pause" : "Play"} ${card.title}`);
+        : audioPhase === "playing_confirmed"
+          ? `Pause ${card.title}`
+          : audioPhase === "starting"
+            ? `Starting ${card.title}`
+            : audioPhase === "pause_pending"
+              ? `Pausing ${card.title}`
+              : `Play ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
         if (isMeetingList) {
@@ -12803,10 +12925,6 @@
     return row;
   }
 
-  function isPlayingCard(card) {
-    return Boolean(state.player.is_playing && activePlayerMatchesCard(card));
-  }
-
   function hasAudio(card) {
     return Boolean(card.audio_path || card.audio_playlist_path || card.audio_url);
   }
@@ -12821,6 +12939,288 @@
 
   function playerStateKey(player) {
     return normalizePath((player && (player.source || player.path)) || state.activePath || "");
+  }
+
+  function isAudioTilePhase(phase) {
+    return AUDIO_TILE_PHASES.includes(String(phase || ""));
+  }
+
+  function audioProbeTarget(card) {
+    return {
+      card_id: String(card?.card_id || ""),
+      session_id: String(cardSessionId(card) || ""),
+      thread_id: String(cardThreadId(card) || ""),
+      title: String(card?.title || "")
+    };
+  }
+
+  function clearAudioProbeResetTimer() {
+    if (!audioProbeResetTimerId) {
+      return;
+    }
+    window.clearTimeout(audioProbeResetTimerId);
+    audioProbeResetTimerId = 0;
+  }
+
+  function recordAudioProbeEvent(type, extra = {}) {
+    const event = {
+      at: new Date().toISOString(),
+      type: String(type || "event"),
+      ...extra
+    };
+    const events = Array.isArray(state.audioProbe.recent_events) ? state.audioProbe.recent_events.slice() : [];
+    events.push(event);
+    state.audioProbe.recent_events = events.slice(-AUDIO_PROBE_EVENT_LIMIT);
+    return event;
+  }
+
+  function applyAudioProbeState(patch = {}) {
+    state.audioProbe = {
+      ...state.audioProbe,
+      ...patch,
+      runtime_mode: audioRuntimeMode(),
+      active_path: state.activePath || ""
+    };
+  }
+
+  function scheduleAudioProbeReset(delayMs = AUDIO_TERMINAL_RESET_MS) {
+    clearAudioProbeResetTimer();
+    audioProbeResetTimerId = window.setTimeout(() => {
+      audioProbeResetTimerId = 0;
+      applyAudioProbeState({
+        target_key: "",
+        target_card: {
+          card_id: "",
+          session_id: "",
+          thread_id: "",
+          title: ""
+        },
+        current_tile_audio_phase: "idle",
+        resolved_source_type: "",
+        cache_prep: "",
+        started_at: "",
+        started_at_ms: 0,
+        confirmed_at: "",
+        confirmed_at_ms: 0,
+        ended_at: "",
+        ended_at_ms: 0
+      });
+      render();
+    }, Math.max(0, Number(delayMs || AUDIO_TERMINAL_RESET_MS)));
+  }
+
+  function setAudioProbePhase(card, phase, extra = {}) {
+    clearAudioProbeResetTimer();
+    const nextPhase = isAudioTilePhase(phase) ? String(phase) : "idle";
+    const now = Date.now();
+    const patch = {
+      target_key: audioStateKey(card),
+      target_card: audioProbeTarget(card),
+      current_tile_audio_phase: nextPhase,
+      resolved_source_type: extra.resolved_source_type ?? state.audioProbe.resolved_source_type,
+      cache_prep: extra.cache_prep ?? state.audioProbe.cache_prep,
+      last_terminal_outcome: "",
+      last_error_toast: extra.clear_error ? "" : state.audioProbe.last_error_toast,
+      ended_at: "",
+      ended_at_ms: 0
+    };
+    if (nextPhase === "starting") {
+      patch.started_at = new Date(now).toISOString();
+      patch.started_at_ms = now;
+      patch.confirmed_at = "";
+      patch.confirmed_at_ms = 0;
+    }
+    if (nextPhase === "playing_confirmed") {
+      patch.confirmed_at = new Date(now).toISOString();
+      patch.confirmed_at_ms = now;
+    }
+    applyAudioProbeState(patch);
+    recordAudioProbeEvent("phase", {
+      phase: nextPhase,
+      reason: String(extra.reason || ""),
+      target_key: state.audioProbe.target_key
+    });
+    return true;
+  }
+
+  function setAudioProbePhaseByKey(targetKey, phase, extra = {}) {
+    if (!samePath(state.audioProbe.target_key, targetKey)) {
+      return false;
+    }
+    const nextPhase = isAudioTilePhase(phase) ? String(phase) : "idle";
+    const now = Date.now();
+    const patch = {
+      current_tile_audio_phase: nextPhase,
+      resolved_source_type: extra.resolved_source_type ?? state.audioProbe.resolved_source_type,
+      cache_prep: extra.cache_prep ?? state.audioProbe.cache_prep,
+      last_terminal_outcome: ""
+    };
+    if (nextPhase === "playing_confirmed") {
+      patch.confirmed_at = new Date(now).toISOString();
+      patch.confirmed_at_ms = now;
+    }
+    applyAudioProbeState(patch);
+    recordAudioProbeEvent("phase", {
+      phase: nextPhase,
+      reason: String(extra.reason || ""),
+      target_key: state.audioProbe.target_key
+    });
+    return true;
+  }
+
+  function setAudioProbeTerminal(card, outcome, extra = {}) {
+    const targetKey = audioStateKey(card);
+    return setAudioProbeTerminalByKey(targetKey, outcome, {
+      ...extra,
+      target_card: audioProbeTarget(card)
+    });
+  }
+
+  function setAudioProbeTerminalByKey(targetKey, outcome, extra = {}) {
+    if (!samePath(state.audioProbe.target_key, targetKey)) {
+      return false;
+    }
+    clearAudioProbeResetTimer();
+    const now = Date.now();
+    const value = String(outcome || "").trim() || "idle";
+    const phase = ["start_failed", "ended_immediately"].includes(value) ? value : "idle";
+    applyAudioProbeState({
+      target_key: extra.immediate_reset ? "" : state.audioProbe.target_key,
+      target_card: extra.immediate_reset
+        ? {
+            card_id: "",
+            session_id: "",
+            thread_id: "",
+            title: ""
+          }
+        : (extra.target_card || state.audioProbe.target_card),
+      current_tile_audio_phase: phase,
+      last_terminal_outcome: value,
+      last_error_toast: String(extra.error_message || state.audioProbe.last_error_toast || state.lastToast.message || ""),
+      ended_at: new Date(now).toISOString(),
+      ended_at_ms: now
+    });
+    recordAudioProbeEvent("terminal", {
+      outcome: value,
+      phase,
+      reason: String(extra.reason || ""),
+      target_key: state.audioProbe.target_key
+    });
+    if (extra.schedule_reset) {
+      scheduleAudioProbeReset(extra.reset_delay_ms || AUDIO_TERMINAL_RESET_MS);
+    }
+    return true;
+  }
+
+  function describeAudioSourceForCard(card) {
+    if (card?.audio_playlist_path) {
+      return { resolved_source_type: "playlist_path", cache_prep: "skipped" };
+    }
+    if (card?.audio_path && (!card?.is_meeting_recording || isAndroidPlayableAudioPath(card.audio_path))) {
+      return { resolved_source_type: "local_path", cache_prep: "skipped" };
+    }
+    if (card?.audio_url) {
+      return {
+        resolved_source_type: hasNativeAudioBridge() ? "remote_url" : "browser_url",
+        cache_prep: hasNativeAudioBridge() ? "attempted" : "skipped"
+      };
+    }
+    return { resolved_source_type: "unknown", cache_prep: "skipped" };
+  }
+
+  function currentTileAudioPhase(card) {
+    if (samePath(state.audioProbe.target_key, audioStateKey(card)) && isAudioTilePhase(state.audioProbe.current_tile_audio_phase)) {
+      return state.audioProbe.current_tile_audio_phase;
+    }
+    if (state.player.is_playing && activePlayerMatchesCard(card)) {
+      return "playing_confirmed";
+    }
+    return "idle";
+  }
+
+  function currentTileAudioStripKind(card) {
+    const phase = currentTileAudioPhase(card);
+    if (phase !== "playing_confirmed") {
+      return "status";
+    }
+    if (audioRuntimeMode() === "native_bridge" && Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {
+      return "progress";
+    }
+    return "status";
+  }
+
+  function isCardAudioBusy(card) {
+    return samePath(state.audioToggleBusyKey, audioStateKey(card));
+  }
+
+  function tileAudioLabel(card) {
+    const phase = currentTileAudioPhase(card);
+    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
+      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
+      : audioRuntimeMode();
+    if (phase === "starting") {
+      return runtime === "browser_stub" ? "Starting preview playback" : "Starting audio...";
+    }
+    if (phase === "pause_pending") {
+      return "Pausing audio...";
+    }
+    if (phase === "playing_confirmed") {
+      return runtime === "browser_stub" ? "Preview playback active" : "Audio playing";
+    }
+    if (phase === "start_failed") {
+      return "Playback failed";
+    }
+    if (phase === "ended_immediately") {
+      return "Playback ended early";
+    }
+    return "Audio ready";
+  }
+
+  function tileAudioMeta(card) {
+    const phase = currentTileAudioPhase(card);
+    if (["start_failed", "ended_immediately"].includes(phase)) {
+      return String(state.audioProbe.last_error_toast || "Tap again to retry playback.");
+    }
+    if (phase === "playing_confirmed" && currentTileAudioStripKind(card) === "progress") {
+      const duration = Number(state.player.duration_ms || 0);
+      const position = Math.max(0, Number(state.player.position_ms || 0));
+      if (duration > 0) {
+        return `${formatTime(position)} of ${formatTime(duration)}`;
+      }
+    }
+    return "";
+  }
+
+  function audioTileStatus(card) {
+    const phase = currentTileAudioPhase(card);
+    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
+      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
+      : audioRuntimeMode();
+    const status = el("div", "tile-audio-status");
+    const label = el("div", "tile-audio-status-label", tileAudioLabel(card));
+    const strip = el("div", `tile-audio-strip is-${phase} is-${runtime}`);
+    const stripKind = currentTileAudioStripKind(card);
+    setDataAttribute(status, "data-audio-phase", phase);
+    setDataAttribute(status, "data-audio-runtime-mode", runtime);
+    setDataAttribute(status, "data-audio-strip-kind", stripKind);
+    if (stripKind === "progress") {
+      const progress = el("span", "tile-audio-progress");
+      const duration = Math.max(0, Number(state.player.duration_ms || 0));
+      const position = Math.max(0, Number(state.player.position_ms || 0));
+      progress.style.setProperty("--progress", String(duration > 0 ? Math.min(1, position / duration) : 0));
+      strip.append(progress);
+    }
+    status.append(label);
+    status.append(strip);
+    const meta = tileAudioMeta(card);
+    if (meta) {
+      status.append(el("div", "tile-audio-status-meta", meta));
+    }
+    return status;
+  }
+
+  function isPlayingCard(card) {
+    return currentTileAudioPhase(card) === "playing_confirmed";
   }
 
   function isSameAudioCard(player, card) {
@@ -12857,6 +13257,56 @@
     }
     return isAudioDetailOpen()
       && Number(previous.position_ms || 0) !== Number(next.position_ms || 0);
+  }
+
+  function syncAudioProbeFromPlayerState(previousPlayer, nextPlayer) {
+    const targetKey = String(state.audioProbe.target_key || "");
+    if (!targetKey) {
+      return false;
+    }
+    const phase = currentTileAudioPhase({ audio_path: targetKey, audio_url: targetKey, title: state.audioProbe.target_card?.title || "" });
+    const nextKey = playerStateKey(nextPlayer);
+    const matchesTarget = samePath(nextKey, targetKey);
+    const isPlaying = Boolean(nextPlayer?.is_playing && matchesTarget);
+    const now = Date.now();
+    if (phase === "starting") {
+      if (isPlaying) {
+        return setAudioProbePhaseByKey(targetKey, "playing_confirmed", {
+          reason: "player_confirmed"
+        });
+      }
+      const startedAtMs = Number(state.audioProbe.started_at_ms || 0);
+      if (startedAtMs && now - startedAtMs >= AUDIO_START_CONFIRMATION_TIMEOUT_MS) {
+        return setAudioProbeTerminalByKey(targetKey, "start_failed", {
+          reason: matchesTarget ? "player_not_playing" : "player_not_matched",
+          schedule_reset: true
+        });
+      }
+      return false;
+    }
+    if (phase === "pause_pending") {
+      if (!isPlaying) {
+        return setAudioProbeTerminalByKey(targetKey, "paused", {
+          reason: "pause_confirmed",
+          immediate_reset: true
+        });
+      }
+      return false;
+    }
+    if (phase === "playing_confirmed" && !isPlaying) {
+      const confirmedAtMs = Number(state.audioProbe.confirmed_at_ms || 0);
+      if (confirmedAtMs && now - confirmedAtMs <= AUDIO_EARLY_END_WINDOW_MS) {
+        return setAudioProbeTerminalByKey(targetKey, "ended_immediately", {
+          reason: "playback_stopped_early",
+          schedule_reset: true
+        });
+      }
+      return setAudioProbeTerminalByKey(targetKey, "paused", {
+        reason: "playback_idle",
+        immediate_reset: true
+      });
+    }
+    return false;
   }
 
   function syncActivePathFromPlayer(player) {

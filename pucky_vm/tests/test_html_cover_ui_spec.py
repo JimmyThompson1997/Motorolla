@@ -192,6 +192,8 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     app = read("app.js")
     render_voice_status = function_block(app, "renderVoiceStatus")
     describe_ui_surface = function_block(app, "describeUiSurface")
+    normalize_turn_status = function_block(app, "normalizeTurnStatus")
+    stale_recovery_guard = function_block(app, "shouldTreatReplyRecoveryAsSettled")
 
     assert "document.querySelectorAll(\"[data-voice-status]\")" in render_voice_status
     assert "const renderedVisualState = visualState;" in render_voice_status
@@ -202,6 +204,19 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'indicator.className = `voice-status voice-status-${renderedVisualState}`;' in render_voice_status
     assert 'indicator.setAttribute("aria-label", `Turn state: ${renderedLabel}`);' in render_voice_status
     assert 'indicator.title = `Turn: ${renderedLabel}`;' in render_voice_status
+    assert "if (shouldTreatReplyRecoveryAsSettled(raw, indicator)) {" in normalize_turn_status
+    assert 'indicator.state = "idle";' in normalize_turn_status
+    assert 'indicator.visual_state = "idle";' in normalize_turn_status
+    assert 'indicator.uploading = false;' in normalize_turn_status
+    assert 'indicator.tts_running = false;' in normalize_turn_status
+    assert 'indicator.active = false;' in normalize_turn_status
+    assert "const serverTurnStatus = last && typeof last.server_turn_status === \"object\" ? last.server_turn_status : {};" in stale_recovery_guard
+    assert "const replyRecoveryPending = truthy(raw.reply_recovery_pending ?? last.reply_recovery_pending);" in stale_recovery_guard
+    assert "const responseTransportError = String(raw.response_transport_error || last.response_transport_error || \"\").trim();" in stale_recovery_guard
+    assert "const feedPersisted = truthy(serverTurnStatus.feed_persisted);" in stale_recovery_guard
+    assert "const playerCompleted = !truthy(player.is_playing)" in stale_recovery_guard
+    assert 'if (remoteStage !== "completed" && serverStage !== "completed") {' in stale_recovery_guard
+    assert "return feedPersisted || playerCompleted;" in stale_recovery_guard
 
     assert 'const voiceStatus = document.getElementById("voiceStatus");' in describe_ui_surface
     assert "voice_status: {" in describe_ui_surface
