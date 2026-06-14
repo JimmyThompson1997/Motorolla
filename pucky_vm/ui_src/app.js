@@ -4242,24 +4242,13 @@
     }
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
-    const sent = reminders.filter(reminder => reminderIsSentHistory(reminder));
-    if (!active.length && !sent.length) {
+    if (!active.length) {
       page.append(lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."));
       return page;
     }
-    if (active.length) {
-      const list = el("div", "light-list light-graph-list");
-      active.forEach(reminder => list.append(lightReminderRow(reminder)));
-      page.append(list);
-    }
-    if (sent.length) {
-      if (active.length) {
-        page.append(el("div", "light-reminder-history-divider"));
-      }
-      const list = el("div", "light-list light-graph-list light-reminder-history-list");
-      sent.forEach(reminder => list.append(lightReminderRow(reminder)));
-      page.append(list);
-    }
+    const list = el("div", "light-list light-graph-list");
+    active.forEach(reminder => list.append(lightReminderRow(reminder)));
+    page.append(list);
     return page;
   }
 
@@ -4327,16 +4316,11 @@
   }
 
   function lightReminderRow(reminder) {
-    ensureLinkedCollections(reminder);
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
     const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass}`.trim());
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
-    const chips = reminderLinkedChips(reminder);
-    if (chips) {
-      copy.append(chips);
-    }
     row.type = "button";
     row.dataset.recordId = reminder.id;
     row.dataset.reminderId = reminder.id;
@@ -4345,7 +4329,7 @@
       lightNavigate("reminder-detail", { from: "reminders" });
     });
     row.append(
-      lightSmallIcon("bell"),
+      lightSmallIcon("bell", "reminders"),
       copy,
       el("span", "light-reminder-time", reminderRowLabel(reminder))
     );
@@ -4480,15 +4464,15 @@
 
   function reminderDetailRows(reminder) {
     return [
-      { icon: "clock", label: "When", value: reminderScheduleLabel(reminder) },
-      { icon: "bell", label: "Delivery", value: reminderDeliveryDetail(reminder) }
+      { icon: "clock", accentKey: "reminders", label: "When", value: reminderScheduleLabel(reminder) }
     ];
   }
 
   function reminderRecipientRows(reminder) {
     return reminderRecipients(reminder).map(recipient => ({
-      icon: recipient.kind === "self" ? "apps" : "contacts",
-      label: recipient.kind === "self" ? "Self" : "Contact",
+      icon: recipient.kind === "self" ? "bell" : "contacts",
+      accentKey: recipient.kind === "self" ? "reminders" : "contacts",
+      label: recipient.kind === "self" ? "Recipient" : "Contact",
       value: reminderRecipientDisplayName(recipient),
       target: recipient.kind === "contact" ? workspaceTargetForKind("contact", recipient.contactId || recipient.id) : null
     }));
@@ -4497,6 +4481,7 @@
   function reminderDestinationRows(reminder) {
     return reminderDestinations(reminder).map(destination => ({
       icon: reminderChannelIcon(destination.channel),
+      accentKey: reminderChannelAccentKey(destination.channel),
       label: reminderChannelName(destination.channel),
       value: reminderDestinationDetail(reminder, destination)
     }));
@@ -4730,6 +4715,16 @@
     })[String(channel || "").trim().toLowerCase()] || "bell";
   }
 
+  function reminderChannelAccentKey(channel) {
+    return ({
+      phone_notification: "reminders",
+      email: "inbox",
+      sms: "inbox",
+      call: "contacts",
+      connected_app: "connect"
+    })[String(channel || "").trim().toLowerCase()] || "reminders";
+  }
+
   function reminderDestinationDetail(reminder, destination) {
     const recipientNames = reminderDestinationRecipientNames(reminder, destination);
     if (destination.channel === "connected_app" && destination.appSlug) {
@@ -4852,9 +4847,6 @@
   }
 
   function reminderDetailEyebrow(reminder) {
-    if (reminderIsSentHistory(reminder)) {
-      return reminderDueLabel(reminder);
-    }
     if (reminderIsSnoozed(reminder)) {
       return reminderDueLabel(reminder);
     }
@@ -4917,6 +4909,10 @@
       reminder: "Reminder",
       asset: "Asset"
     })[String(kind || "")] || "Record";
+  }
+
+  function graphKindAccentKey(kind) {
+    return canonicalIconAccentKey(graphKindIcon(kind));
   }
 
   function graphKindIcon(kind) {
@@ -5195,6 +5191,7 @@
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       return {
         icon: graphKindIcon(relatedKind),
+        accentKey: graphKindAccentKey(relatedKind),
         label,
         value: relation,
         target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
@@ -5675,8 +5672,9 @@
     return section;
   }
 
-  function lightChipIcon(icon) {
+  function lightChipIcon(icon, accentKey = "") {
     const wrap = el("span", "light-record-chip-icon");
+    applySemanticIconAccent(wrap, accentKey, { propertyName: "color", allowEmpty: true });
     wrap.innerHTML = iconSvg(icon, { filled: false });
     return wrap;
   }
@@ -6322,8 +6320,9 @@
     return button;
   }
 
-  function lightSmallIcon(icon) {
+  function lightSmallIcon(icon, accentKey = "") {
     const wrap = el("span", "light-small-icon");
+    applySemanticIconAccent(wrap, accentKey, { propertyName: "--home-shell-accent", allowEmpty: true });
     wrap.innerHTML = iconSvg(icon, { filled: false });
     return wrap;
   }
@@ -6407,7 +6406,7 @@
         item.dataset.workspaceTargetKind = row.target.kind || "";
         item.addEventListener("click", () => openWorkspaceTarget(row.target, state.route));
       }
-      item.append(lightSmallIcon(row.icon), lightTextStack(row.label, row.value), isInteractive ? el("span", "light-chevron", ">") : el("span", ""));
+      item.append(lightSmallIcon(row.icon, row.accentKey || row.accent || ""), lightTextStack(row.label, row.value), isInteractive ? el("span", "light-chevron", ">") : el("span", ""));
       card.append(item);
     });
     section.append(card);
@@ -6514,7 +6513,7 @@
       target ? "light-attendee-chip light-calendar-link-chip light-record-chip is-link" : "light-attendee-chip light-calendar-link-chip light-record-chip"
     );
     chip.append(
-      lightChipIcon(graphKindIcon(entry?.kind)),
+      lightChipIcon(graphKindIcon(entry?.kind), graphKindAccentKey(entry?.kind)),
       el("span", "light-record-chip-label", label)
     );
     if (target) {

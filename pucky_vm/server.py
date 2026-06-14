@@ -1107,7 +1107,8 @@ class PuckyVoiceService:
         if explicit:
             return explicit
         if str(recipient.get("kind") or "").strip().lower() == "self":
-            return str(self.config.self_email or "").strip()
+            direct = str(self.config.self_email or "").strip()
+            return direct or self._resolve_connected_gmail_self_email(destination)
         contact = self._reminder_contact_record(recipient)
         if not contact:
             return ""
@@ -1127,6 +1128,58 @@ class PuckyVoiceService:
         metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
         direct = str(metadata.get("phone") or "").strip()
         return direct or self._contact_endpoint_value(contact, ("phone", "sms", "text", "mobile", "call"))
+
+    def _resolve_connected_gmail_self_email(self, destination: dict[str, object]) -> str:
+        try:
+            connected_account_id, _ = self._require_connected_app("gmail", destination)
+        except Exception:
+            return ""
+        return self._gmail_account_primary_email(connected_account_id)
+
+    def _gmail_account_primary_email(self, connected_account_id: str) -> str:
+        clean_account_id = str(connected_account_id or "").strip()
+        if not clean_account_id:
+            return ""
+        for tool_slug in ("GMAIL_GET_PROFILE", "GMAIL_LIST_SEND_AS"):
+            try:
+                payload = self.composio.execute_tool(
+                    tool_slug=tool_slug,
+                    connected_account_id=clean_account_id,
+                    user_id=self.composio_user_id(),
+                    arguments={},
+                )
+            except Exception:
+                continue
+            email = self._first_email_like_value(payload)
+            if email:
+                return email
+        return ""
+
+    def _first_email_like_value(self, payload: object) -> str:
+        queue: list[object] = [payload]
+        seen: set[int] = set()
+        while queue:
+            item = queue.pop(0)
+            if item is None:
+                continue
+            marker = id(item)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            if isinstance(item, dict):
+                for key in ("email", "emailAddress", "email_address", "sendAsEmail", "send_as_email", "address"):
+                    value = str(item.get(key) or "").strip()
+                    if "@" in value:
+                        return value
+                queue.extend(item.values())
+                continue
+            if isinstance(item, list):
+                queue.extend(item)
+                continue
+            value = str(item).strip()
+            if "@" in value and " " not in value:
+                return value
+        return ""
 
     def _require_connected_app(self, app_slug: str, destination: dict[str, object]) -> tuple[str, dict[str, object]]:
         clean_slug = str(app_slug or "").strip().lower()
@@ -1615,12 +1668,14 @@ class PuckyVoiceService:
         address = str(target.get("target") or "").strip()
         connected_account_id = str(target.get("connected_account_id") or "").strip()
         context = self._reminder_template_context(reminder, target)
+        subject = str(context.get("title") or "Reminder")
+        plain_body = self._reminder_plain_text_body(reminder, target)
         message = EmailMessage()
         if str(self.config.self_email or "").strip():
             message["From"] = str(self.config.self_email or "").strip()
         message["To"] = address
-        message["Subject"] = str(context.get("title") or "Reminder")
-        message.set_content(self._reminder_plain_text_body(reminder, target))
+        message["Subject"] = subject
+        message.set_content(plain_body)
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
         try:
             result = self.composio.execute_proxy(
@@ -1629,19 +1684,34 @@ class PuckyVoiceService:
                 method="POST",
                 body={"raw": raw},
             )
+            adapter = "proxy"
         except Exception as exc:
-            return {
-                "channel": "email",
-                "recipient_id": str(target.get("recipient_id") or "").strip(),
-                "recipient_label": str(target.get("recipient_label") or "").strip(),
-                "target": address,
-                "connected_account_id": connected_account_id,
-                "app_slug": "gmail",
-                "ok": False,
-                "status": "failed",
-                "detail": str(exc),
-                "fired_at_ms": self.workspace.now_ms(),
-            }
+            try:
+                result = self.composio.execute_tool(
+                    tool_slug="GMAIL_SEND_EMAIL",
+                    connected_account_id=connected_account_id,
+                    user_id=self.composio_user_id(),
+                    arguments={
+                        "recipient_email": address,
+                        "subject": subject,
+                        "body": plain_body,
+                    },
+                )
+                adapter = "tool"
+            except Exception as tool_exc:
+                detail = f"{exc}; fallback:{tool_exc}" if str(tool_exc) else str(exc)
+                return {
+                    "channel": "email",
+                    "recipient_id": str(target.get("recipient_id") or "").strip(),
+                    "recipient_label": str(target.get("recipient_label") or "").strip(),
+                    "target": address,
+                    "connected_account_id": connected_account_id,
+                    "app_slug": "gmail",
+                    "ok": False,
+                    "status": "failed",
+                    "detail": detail,
+                    "fired_at_ms": self.workspace.now_ms(),
+                }
         return {
             "channel": "email",
             "recipient_id": str(target.get("recipient_id") or "").strip(),
@@ -1652,6 +1722,7 @@ class PuckyVoiceService:
             "ok": True,
             "status": "sent",
             "detail": "",
+            "adapter": adapter,
             "result": result,
             "fired_at_ms": self.workspace.now_ms(),
         }

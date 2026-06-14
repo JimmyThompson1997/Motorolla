@@ -1182,7 +1182,7 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert "function calendarEventPeople(event)" in app
     assert "function calendarEventChipTargets(event)" in app
     assert "function lightRecordChip(entry, options = {})" in app
-    assert "function lightChipIcon(icon)" in app
+    assert "function lightChipIcon(icon, accentKey = \"\")" in app
     assert "function calendarEventDetailRows(event, attendees = calendarEventPeople(event))" in app
     assert "function lightCalendarEventChips(event, options = {})" in app
     assert 'return `${first} ${last.charAt(0).toUpperCase()}.`;' in app
@@ -1209,9 +1209,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightWorkspaceStatus("reminders"' in light_reminders
     assert 'chronologicalReminders()' in light_reminders
     assert 'active.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
-    assert 'sent.forEach(reminder => list.append(lightReminderRow(reminder)))' in light_reminders
-    assert 'lightReminderHistoryHeader(sent.length)' not in light_reminders
-    assert 'light-reminder-history-divider' in light_reminders
+    assert 'sent.forEach(reminder => list.append(lightReminderRow(reminder)))' not in light_reminders
+    assert 'light-reminder-history-divider' not in light_reminders
     assert 'lightSectionTitle("Done")' not in light_reminders
     assert '"Due soon"' not in light_reminders
     assert '"Later"' not in light_reminders
@@ -1224,7 +1223,8 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightTextStack(reminder.title, `${reminderDueLabel(reminder)}${DOT}${reminder.summary || "Reminder"}`)' not in reminder_row
     assert 'el("span", "light-reminder-time", reminderRowLabel(reminder))' in reminder_row
     assert 'copy.append(el("span", "", reminder.summary));' not in reminder_row
-    assert 'reminderLinkedChips(reminder)' in reminder_row
+    assert 'reminderLinkedChips(reminder)' not in reminder_row
+    assert 'lightSmallIcon("bell", "reminders")' in reminder_row
     assert 'function chronologicalReminders()' in app
     assert 'selectedReminder()' in reminder_detail
     assert 'const page = lightPage(reminder.title || "Reminder", { detail: true });' in reminder_detail
@@ -1232,13 +1232,15 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'lightReminderActionRow(reminder)' in reminder_detail
     assert 'reminderRecipientRows(reminder)' in reminder_detail
     assert 'reminderDestinationRows(reminder)' in reminder_detail
+    assert '"Self"' not in reminder_detail
+    assert '"Me"' in app
     assert 'lightHtmlDocument(reminder, "No generated reminder page yet.", { untitledFallback: true, className: "light-detail-html-body" })' not in reminder_detail
     assert 'lightGraphDetailPage(reminder' not in reminder_detail
     assert 'patchWorkspaceRecord("reminders", reminder.id' in app
     assert 'function reminderDeliveryModeLabel(reminder)' not in app
     assert 'function reminderDeliveryDetail(reminder)' in app
     assert 'function reminderChannelSummary(reminder)' in app
-    assert 'value: reminderDeliveryDetail(reminder)' in app
+    assert 'value: reminderDeliveryDetail(reminder)' not in reminder_detail
     assert '"Snooze 10 min"' in app
     assert '"Dismiss"' in reminder_dismiss
     assert '"Mark done"' not in reminder_actions
@@ -1254,6 +1256,11 @@ def test_workspace_home_apps_use_vm_backed_records_and_generated_html() -> None:
     assert 'last_delivery_warnings: []' in app
     assert 'function reminderRecipients(reminder)' in app
     assert 'function reminderDestinations(reminder)' in app
+    assert 'function reminderChannelAccentKey(channel)' in app
+    assert 'function graphKindAccentKey(kind)' in app
+    assert 'accentKey: reminderChannelAccentKey(destination.channel)' in app
+    assert 'accentKey: graphKindAccentKey(relatedKind)' in app
+    assert 'lightSmallIcon(row.icon, row.accentKey || row.accent || "")' in app
     assert "Notification.requestPermission" not in app
     assert "new Notification(" not in app
     assert "showNotification(" not in app
@@ -1368,7 +1375,8 @@ def test_tasks_use_structured_detail_split_layout_and_origin_aware_graph_navigat
     assert 'const origin = { taskId: task.id, route: taskDetailReturnRoute() };' in light_task_attachments
     assert "taskOrigin: origin" in light_task_attachments
     assert "target: taskCreatedByTarget(task)" in task_detail_rows
-    assert "lightChipIcon(graphKindIcon(entry?.kind))" in light_record_chip
+    assert 'function lightChipIcon(icon, accentKey = "")' in app
+    assert "lightChipIcon(graphKindIcon(entry?.kind), graphKindAccentKey(entry?.kind))" in light_record_chip
     assert 'el("span", "light-record-chip-label", label)' in light_record_chip
     assert 'chip.dataset.workspaceTargetRoute = target.route;' in light_record_chip
     assert 'chip.dataset.workspaceTargetId = target.id;' in light_record_chip

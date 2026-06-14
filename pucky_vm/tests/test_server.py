@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 import hashlib
 import html
 import json
@@ -508,6 +509,9 @@ class FakeComposio:
         self.deleted: list[tuple[str, str]] = []
         self.invalidated: list[str] = []
         self.proxy_calls: list[dict[str, object]] = []
+        self.tool_calls: list[dict[str, object]] = []
+        self.tool_results: dict[str, object] = {}
+        self.tool_errors: dict[str, BaseException] = {}
         self.list_apps_calls = 0
         self.list_connected_calls = 0
         self.apps = [
@@ -639,6 +643,29 @@ class FakeComposio:
         if "fail" in endpoint:
             raise RuntimeError("proxy_failed")
         return {"ok": True, "endpoint": endpoint, "connected_account_id": connected_account_id}
+
+    def execute_tool(
+        self,
+        *,
+        tool_slug: str,
+        connected_account_id: str,
+        user_id: str = "",
+        arguments: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        call = {
+            "tool_slug": tool_slug,
+            "connected_account_id": connected_account_id,
+            "user_id": user_id,
+            "arguments": dict(arguments or {}),
+        }
+        self.tool_calls.append(call)
+        error = self.tool_errors.get(tool_slug)
+        if error is not None:
+            raise error
+        result = self.tool_results.get(tool_slug)
+        if isinstance(result, dict):
+            return dict(result)
+        return {"ok": True, "tool_slug": tool_slug, "connected_account_id": connected_account_id}
 
 
 class BlockingSTT(FakeSTT):
@@ -3169,6 +3196,79 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(updated["metadata"]["last_delivery_degraded_to"], "")
         self.assertEqual(updated["metadata"]["last_delivery_warnings"], [])
 
+    def test_reminder_email_validation_requires_self_email_target(self) -> None:
+        self.service.config = replace(self.service.config, self_email="")
+        metadata = {
+            "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+            "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_email_target_missing:self"):
+            self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_sms_validation_requires_self_phone_target(self) -> None:
+        self.service.config = replace(self.service.config, self_phone_number="")
+        metadata = {
+            "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+            "destinations": [{"channel": "sms", "recipient_ids": ["self"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_phone_target_missing:self"):
+            self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_email_validation_can_resolve_self_from_connected_gmail_profile(self) -> None:
+        self.service.config = replace(self.service.config, self_email="")
+        self.composio.tool_results["GMAIL_GET_PROFILE"] = {
+            "data": {"emailAddress": "jimmy@gmail.example"}
+        }
+        metadata = {
+            "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+            "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
+        }
+
+        self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_email_validation_falls_back_to_gmail_send_as_profile(self) -> None:
+        self.service.config = replace(self.service.config, self_email="")
+        self.composio.tool_results["GMAIL_GET_PROFILE"] = {"data": {}}
+        self.composio.tool_results["GMAIL_LIST_SEND_AS"] = {
+            "data": {"sendAs": [{"sendAsEmail": "jimmy.alias@gmail.example"}]}
+        }
+        metadata = {
+            "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+            "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
+        }
+
+        self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_email_validation_requires_contact_email_target(self) -> None:
+        contact = self.service.workspace.get_record("contacts", "sam-rivera")
+        self.assertIsNotNone(contact)
+        self.service.workspace.patch_record(
+            "contacts",
+            "sam-rivera",
+            {"metadata": {**(contact.get("metadata") or {}), "email": "", "endpoints": []}},
+        )
+        metadata = {
+            "recipients": [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}],
+            "destinations": [{"channel": "email", "recipient_ids": ["sam-rivera"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_email_target_missing:sam-rivera"):
+            self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_sms_validation_requires_contact_phone_target(self) -> None:
+        contact = self.service.workspace.get_record("contacts", "sam-rivera")
+        self.assertIsNotNone(contact)
+        self.service.workspace.patch_record(
+            "contacts",
+            "sam-rivera",
+            {"metadata": {**(contact.get("metadata") or {}), "phone": "", "endpoints": []}},
+        )
+        metadata = {
+            "recipients": [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}],
+            "destinations": [{"channel": "sms", "recipient_ids": ["sam-rivera"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_phone_target_missing:sam-rivera"):
+            self.service._validate_reminder_metadata(metadata)
+
     def test_due_reminder_custom_payload_records_effective_mode_and_downgrade(self) -> None:
         self.clear_active_reminders()
         self.service.workspace.upsert_record(
@@ -3372,6 +3472,39 @@ class ServerTests(unittest.TestCase):
         email_call = self.composio.proxy_calls[0]
         self.assertEqual(email_call["endpoint"], "/gmail/v1/users/me/messages/send")
         self.assertIn("raw", email_call["body"])
+
+    def test_due_reminder_email_falls_back_to_gmail_tool_execute(self) -> None:
+        self.clear_active_reminders()
+        self.service.workspace_upsert_record(
+            "reminders",
+            {
+                "id": "email-fallback-reminder",
+                "title": "Fallback email reminder",
+                "summary": "Use Gmail tool fallback",
+                "status": "open",
+                "due_at_ms": self.service.workspace.now_ms() - 1_000,
+                "metadata": {
+                    "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
+                    "destinations": [{"channel": "email", "recipient_ids": ["self"]}],
+                },
+            },
+        )
+        self.composio.tool_results["GMAIL_SEND_EMAIL"] = {"data": {"id": "gmail-message-1"}}
+
+        with mock.patch.object(self.composio, "execute_proxy", side_effect=RuntimeError("proxy execute disabled")):
+            result = self.service.process_due_reminders()
+
+        self.assertEqual(result["count"], 1)
+        updated = self.service.workspace.get_record("reminders", "email-fallback-reminder")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["metadata"]["delivery_state"], "sent")
+        email_result = next(
+            row for row in list(updated["metadata"]["last_delivery_results"] or [])
+            if row["channel"] == "email"
+        )
+        self.assertTrue(email_result["ok"])
+        self.assertEqual(len(self.composio.tool_calls), 1)
+        self.assertEqual(self.composio.tool_calls[0]["tool_slug"], "GMAIL_SEND_EMAIL")
 
     def test_due_reminder_call_delivery_places_phone_call(self) -> None:
         self.clear_active_reminders()
