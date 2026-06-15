@@ -3366,10 +3366,18 @@
     const playerState = String(player.state || "").trim().toLowerCase();
     const playerCompleted = !truthy(player.is_playing)
       && (!String(player.source || "").trim() || playerState === "completed" || playerState === "idle" || playerState === "stopped");
+    const transportActive = indicator.uploading
+      || indicator.stt_running
+      || indicator.codex_running
+      || indicator.tts_running;
+    const visuallyActive = indicator.visual_state === "uploading" || indicator.visual_state === "thinking";
     if (!replyRecoveryPending || !responseTransportError) {
       return false;
     }
     if (indicator.mic_on || indicator.hearing || indicator.speaking) {
+      return false;
+    }
+    if (transportActive || visuallyActive) {
       return false;
     }
     if (remoteStage !== "completed" && serverStage !== "completed") {

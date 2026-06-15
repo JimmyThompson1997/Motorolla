@@ -250,6 +250,12 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert "const responseTransportError = String(raw.response_transport_error || last.response_transport_error || \"\").trim();" in stale_recovery_guard
     assert "const feedPersisted = truthy(serverTurnStatus.feed_persisted);" in stale_recovery_guard
     assert "const playerCompleted = !truthy(player.is_playing)" in stale_recovery_guard
+    assert "const transportActive = indicator.uploading" in stale_recovery_guard
+    assert "|| indicator.stt_running" in stale_recovery_guard
+    assert "|| indicator.codex_running" in stale_recovery_guard
+    assert "|| indicator.tts_running;" in stale_recovery_guard
+    assert 'const visuallyActive = indicator.visual_state === "uploading" || indicator.visual_state === "thinking";' in stale_recovery_guard
+    assert "if (transportActive || visuallyActive) {" in stale_recovery_guard
     assert 'if (remoteStage !== "completed" && serverStage !== "completed") {' in stale_recovery_guard
     assert "return feedPersisted || playerCompleted;" in stale_recovery_guard
 
@@ -637,6 +643,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     app = read("app.js")
     tasks_page = function_block(app, "lightTasksPage")
     task_workspace_page = function_block(app, "lightTaskWorkspacePage")
+    render_task_groups = function_block(app, "renderTaskGroups")
     styles = read("styles.css")
 
     task_group = function_block(app, "lightTaskGroup")
@@ -656,7 +663,8 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
-    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in task_workspace_page
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in render_task_groups
     assert "items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))" in task_people_loader
     assert 'void loadWorkspaceCollection("contacts", { render: true });' in task_people_loader
     assert 'label: "Created by"' not in task_detail_rows

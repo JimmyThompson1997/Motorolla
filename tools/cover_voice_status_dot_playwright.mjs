@@ -525,6 +525,48 @@ function buildTurnStatus(visualState) {
   };
 }
 
+function buildReplyRecoveryPendingStatus() {
+  return {
+    schema: "pucky.turn_status.v1",
+    configured: true,
+    reply_recovery_pending: true,
+    response_transport_error: "SocketTimeoutException: timeout",
+    player_state: {
+      state: "idle",
+      source: "",
+      is_playing: false,
+    },
+    last_status: {
+      turn_id: "turn-recovery-pending-proof",
+      state: "tts_running",
+      visual_state: "uploading",
+      remote_stage: "completed",
+      reply_recovery_pending: true,
+      response_transport_error: "SocketTimeoutException: timeout",
+      server_turn_status: {
+        stage: "completed",
+        feed_persisted: true,
+      },
+    },
+    indicator: {
+      schema: "pucky.turn_indicator.v1",
+      state: "tts_running",
+      visual_state: "uploading",
+      mic_on: false,
+      hearing: false,
+      speech_detected: false,
+      uploading: true,
+      speaking: false,
+      failed: false,
+      active: true,
+      remote_stage: "completed",
+      stt_running: false,
+      codex_running: false,
+      tts_running: true,
+    },
+  };
+}
+
 async function waitForHome(page, timeoutMs) {
   await page.waitForFunction(() => {
     const shell = document.querySelector(".app-shell");
@@ -587,6 +629,16 @@ async function setViewport(page, viewport) {
 
 async function driveTurnStatus(page, bridgeState, visualState, options = {}) {
   bridgeState.turnStatus = buildTurnStatus(visualState);
+  if (options.emitEvent === false) {
+    return;
+  }
+  await page.evaluate((payload) => {
+    window.Pucky.__event("pucky.turn.status", payload);
+  }, bridgeState.turnStatus);
+}
+
+async function driveTurnStatusPayload(page, bridgeState, payload, options = {}) {
+  bridgeState.turnStatus = payload;
   if (options.emitEvent === false) {
     return;
   }
@@ -768,6 +820,7 @@ async function main() {
     card_only_lifecycle: {},
     poll_only_detection: {},
     failed_terminal_visible: {},
+    reply_recovery_active_visible: {},
     bridge_commands: [],
   };
 
@@ -939,6 +992,18 @@ async function main() {
       class_name: failedSnapshot.surface?.voice_status?.class_name || "",
       voice_color: failedSnapshot.surface?.voice_status?.voice_color || "",
     };
+
+    await navigateTo(page, buildPageUrl(basePageUrl, { theme: "light", resetNav: true }), () => waitForHome(page, config.timeoutMs));
+    await driveTurnStatusPayload(page, bridgeState, buildReplyRecoveryPendingStatus());
+    const recoverySnapshot = await readVoiceSnapshot(page);
+    assertVoiceSnapshot("reply_recovery_active_visible", recoverySnapshot, { visualState: "uploading" });
+    summary.reply_recovery_active_visible = {
+      exercised: true,
+      class_name: recoverySnapshot.surface?.voice_status?.class_name || "",
+      voice_color: recoverySnapshot.surface?.voice_status?.voice_color || "",
+      remote_stage: recoverySnapshot.surface?.turn_timing?.events?.slice(-1)?.[0]?.remote_stage || "",
+    };
+    await captureCheckpoint(page, config.reportDir, summary, "13-light-home-recovery-uploading-visible", { visualState: "uploading" });
 
     summary.settings = {
       reply_mode: bridgeState.turnSettings.reply_mode,
