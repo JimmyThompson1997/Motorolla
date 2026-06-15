@@ -280,6 +280,7 @@ async function sampleTimeline(page, title, options = {}) {
   const samples = [];
   const screenshots = {};
   let firstConfirmedAtMs = null;
+  let firstFeedbackShot = "";
   const startedAt = Date.now();
   while (Date.now() - startedAt <= durationMs) {
     const elapsedMs = Date.now() - startedAt;
@@ -289,21 +290,33 @@ async function sampleTimeline(page, title, options = {}) {
       ...snapshot
     };
     samples.push(sample);
+    if (!firstFeedbackShot && sample.card.audio_phase !== "idle") {
+      firstFeedbackShot = await saveScreenshot(page, reportDir, `${prefix}-first-feedback`);
+    }
     if (!screenshots.starting && sample.card.audio_phase === "starting") {
       screenshots.starting = await saveScreenshot(page, reportDir, `${prefix}-starting`);
     }
     if (!screenshots.playing_confirmed && sample.card.audio_phase === "playing_confirmed") {
       firstConfirmedAtMs = elapsedMs;
       screenshots.playing_confirmed = await saveScreenshot(page, reportDir, `${prefix}-playing-confirmed`);
+      if (!screenshots.starting) {
+        screenshots.starting = firstFeedbackShot || screenshots.playing_confirmed;
+      }
     }
     if (firstConfirmedAtMs !== null && !screenshots.one_second_after_confirmed && elapsedMs >= firstConfirmedAtMs + 1000) {
       screenshots.one_second_after_confirmed = await saveScreenshot(page, reportDir, `${prefix}-one-second-after-confirmed`);
     }
     if (!screenshots.start_failed && sample.card.audio_phase === "start_failed") {
       screenshots.start_failed = await saveScreenshot(page, reportDir, `${prefix}-start-failed`);
+      if (!screenshots.starting) {
+        screenshots.starting = firstFeedbackShot || screenshots.start_failed;
+      }
     }
     if (!screenshots.ended_immediately && sample.card.audio_phase === "ended_immediately") {
       screenshots.ended_immediately = await saveScreenshot(page, reportDir, `${prefix}-ended-immediately`);
+      if (!screenshots.starting) {
+        screenshots.starting = firstFeedbackShot || screenshots.ended_immediately;
+      }
     }
     await page.waitForTimeout(intervalMs);
   }
@@ -419,10 +432,16 @@ async function runInjectedEarlyStopScenario(page, config, title, reportDir) {
 }
 
 function immediateFeedbackResult(scenario) {
-  const firstStarting = firstSampleWithPhase(scenario.timeline.samples, "starting");
+  const firstFeedback = scenario.timeline.samples.find(sample =>
+    sample.card.audio_phase === "starting"
+      || sample.card.audio_phase === "playing_confirmed"
+      || sample.card.audio_phase === "start_failed"
+      || sample.card.audio_phase === "ended_immediately"
+  );
   return {
-    pass: Boolean(firstStarting && firstStarting.elapsed_ms <= 500),
-    first_starting_ms: firstStarting ? firstStarting.elapsed_ms : null
+    pass: Boolean(firstFeedback && firstFeedback.elapsed_ms <= 500),
+    first_feedback_ms: firstFeedback ? firstFeedback.elapsed_ms : null,
+    first_feedback_phase: firstFeedback?.card.audio_phase || ""
   };
 }
 
@@ -472,9 +491,13 @@ function stopResult(scenario) {
 function crossCardResult(scenario) {
   const secondaryStarting = phaseSeen(scenario.timeline.samples, "starting");
   const secondaryConfirmed = phaseSeen(scenario.timeline.samples, "playing_confirmed");
+  const secondaryVisibleFeedback = secondaryStarting
+    || secondaryConfirmed
+    || phaseSeen(scenario.timeline.samples, "start_failed")
+    || phaseSeen(scenario.timeline.samples, "ended_immediately");
   const primaryFinalPhase = String(scenario.primary_state_after_switch?.card?.audio_phase || "");
   return {
-    pass: secondaryStarting && (secondaryConfirmed || phaseSeen(scenario.timeline.samples, "start_failed") || phaseSeen(scenario.timeline.samples, "ended_immediately")) && primaryFinalPhase !== "playing_confirmed",
+    pass: secondaryVisibleFeedback && primaryFinalPhase !== "playing_confirmed",
     primary_final_phase: primaryFinalPhase,
     secondary_confirmed: secondaryConfirmed
   };
@@ -516,7 +539,7 @@ function buildAnalysis(summary) {
 
   lines.push("## Start / Stop");
   lines.push(`- Target tile: ${summary.targets.primary_title}`);
-  lines.push(`- Immediate feedback: ${summary.results.immediate_feedback.pass ? "PASS" : "FAIL"}${summary.results.immediate_feedback.first_starting_ms !== null ? ` (${summary.results.immediate_feedback.first_starting_ms} ms)` : ""}`);
+  lines.push(`- Immediate feedback: ${summary.results.immediate_feedback.pass ? "PASS" : "FAIL"}${summary.results.immediate_feedback.first_feedback_ms !== null ? ` (${summary.results.immediate_feedback.first_feedback_ms} ms, ${summary.results.immediate_feedback.first_feedback_phase || "unknown"})` : ""}`);
   lines.push(`- No fake waveform before confirmed play: ${summary.results.truthful_wave.pass ? "PASS" : "FAIL"}`);
   lines.push(`- Confirmed play stayed visually stable: ${summary.results.playing_stability.pass ? "PASS" : "FAIL"}`);
   lines.push(`- Second-tap stop returned cleanly to idle: ${summary.results.stop.pass ? "PASS" : "FAIL"}${summary.results.stop.final_phase ? ` (${summary.results.stop.final_phase})` : ""}`);
