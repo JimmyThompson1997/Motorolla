@@ -560,7 +560,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / "09-created-by-task-browser.png") + [
                 {"kind": "click_selector", "selector": person_chip_selector("created_by")},
                 {"kind": "wait_for_route", "route": "contact-detail"},
-                {"kind": "wait_for_text", "selector": ".light-record-detail-title, .light-contact-hero h1, .light-detail-header h1", "text": str(seed["contactTitle"])},
+                {"kind": "wait_for_text", "selector": ".light-profile-card h1, .light-record-detail-title, .light-detail-header h1, .light-page-header h1", "text": str(seed["contactTitle"])},
                 screenshot_operation(scenario_dir / "09-created-by-open-browser.png"),
                 {"kind": "back"},
                 {"kind": "wait_for_route", "route": "task-detail"},
@@ -614,7 +614,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / f"{index:02d}-linked-{spec['kind']}-task-browser.png") + [
                     {"kind": "click_selector", "selector": attachment_selector(spec["kind"])},
                     {"kind": "wait_for_route", "route": spec["route"]},
-                    {"kind": "wait_for_text", "selector": ".light-record-detail-title, .light-detail-header h1, .light-page-header h1", "text": spec["title"]},
+                    {"kind": "wait_for_text", "selector": ".light-profile-card h1, .light-record-detail-title, .light-detail-header h1, .light-page-header h1", "text": spec["title"]},
                     screenshot_operation(scenario_dir / f"{index:02d}-linked-{spec['kind']}-open-browser.png"),
                     {"kind": "back"},
                     {"kind": "wait_for_route", "route": "task-detail"},
