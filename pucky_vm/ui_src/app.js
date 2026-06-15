@@ -4210,11 +4210,7 @@
 
   function lightCalendarGap(untilMs, gapMs) {
     const gap = el("section", "light-calendar-gap");
-    gap.append(
-      el("span", "light-calendar-gap-line"),
-      el("span", "light-calendar-gap-label", `Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}`),
-      el("span", "light-calendar-gap-line")
-    );
+    gap.append(el("span", "light-calendar-gap-label", `Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}`));
     return gap;
   }
 

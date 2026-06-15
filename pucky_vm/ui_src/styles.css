@@ -4524,26 +4524,22 @@ button {
 
 .light-calendar-gap {
   width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.light-calendar-gap-line {
-  flex: 1;
-  height: 1px;
-  background: color-mix(in srgb, var(--home-shell-text) 16%, transparent);
+  display: block;
 }
 
 .light-calendar-gap-label {
-  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: 999px;
   color: var(--home-shell-text-muted);
   font-size: 12px;
   line-height: 1.2;
   font-weight: 760;
   letter-spacing: 0.02em;
   text-align: center;
-  white-space: nowrap;
+  background: color-mix(in srgb, var(--home-shell-card) 90%, white 10%);
+  border: 1px dashed color-mix(in srgb, var(--home-shell-text) 14%, var(--home-shell-border));
 }
 
 .light-calendar-cluster {
