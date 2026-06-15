@@ -380,6 +380,7 @@
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
+    notesSectionsExpanded: { pinned: true, recent: true },
     taskFilter: "all",
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
@@ -408,7 +409,7 @@
     uiSurface: initialUiSurfaceStatus(),
     phoneRole: initialPhoneRoleStatus(),
     activePath: "",
-    player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1 },
+    player: { loaded: false, is_playing: false, position_ms: 0, duration_ms: 0, speed: 1, observed_at_ms: 0 },
     audioProbe: initialAudioProbeStatus(),
     lastToast: { message: "", shown_at: "" },
     defaultAudioSpeed: 1,
@@ -671,7 +672,7 @@
     __event(name, payload) {
       if (name === "player.state") {
         const previousPlayer = state.player;
-        state.player = payload || state.player;
+        state.player = stampPlayerState(payload || state.player);
         syncActivePathFromPlayer(state.player);
         rememberPlayerProgress(state.player);
         const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
@@ -978,7 +979,7 @@
         ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === state.activePath) || {})
         ?? state.player.speed
         ?? 1;
-      state.player = {
+      state.player = stampPlayerState({
         schema: "pucky.player_state.v1",
         loaded: true,
         state: "playing",
@@ -992,14 +993,14 @@
         speed,
         can_seek: true,
         audio_session_id: 1
-      };
+      });
       return state.player;
     }
     if (command === "player.queue.set") {
       const playlist = args.playlist_path || "";
       const first = playlist ? `${playlist}#track1` : String((args.items && args.items[0] && args.items[0].path) || "");
       state.activePath = playlist || first || state.activePath;
-      state.player = {
+      state.player = stampPlayerState({
         schema: "pucky.player_state.v1",
         loaded: true,
         state: "loaded",
@@ -1013,21 +1014,21 @@
         speed: finiteSpeed(args.speed ?? args.rate) || state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
         can_seek: true,
         audio_session_id: 1
-      };
+      });
       return state.player;
     }
     if (command === "player.pause") {
-      state.player = { ...state.player, state: "paused", is_playing: false };
+      state.player = stampPlayerState({ ...state.player, state: "paused", is_playing: false });
       return state.player;
     }
     if (command === "player.seek") {
-      state.player = { ...state.player, position_ms: Math.max(0, Number(args.position_ms || 0)) };
+      state.player = stampPlayerState({ ...state.player, position_ms: Math.max(0, Number(args.position_ms || 0)) });
       rememberPlayerProgress(state.player);
       return state.player;
     }
     if (command === "player.speed") {
       const speed = Math.max(0.5, Math.min(3, Number(args.speed || 1)));
-      state.player = { ...state.player, speed };
+      state.player = stampPlayerState({ ...state.player, speed });
       if (state.activePath) {
         state.speedByPath.set(normalizePath(state.activePath), speed);
         persistAudioState();
@@ -2372,6 +2373,7 @@
     renderThreadScopeBadge();
     renderFeed();
     renderAudioDetail();
+    renderDetailAudioContinuity();
   }
 
   function renderVoiceStatus() {
@@ -4080,6 +4082,7 @@
     const picker = el("section", "light-date-picker");
     const top = el("div", "light-calendar-strip-top");
     const controls = el("div", "light-date-picker-controls");
+    const nav = el("div", "light-calendar-strip-nav");
     const field = el("div", "light-date-input-wrap");
     const input = el("input", "light-date-input");
     input.type = "date";
@@ -4090,7 +4093,11 @@
       render();
     });
     field.append(input);
-    controls.append(field);
+    nav.append(
+      lightCalendarStripNavButton(-1),
+      lightCalendarStripNavButton(1)
+    );
+    controls.append(nav, field);
     if (selectedCalendarDateKey() !== calendarTodayDateKey()) {
       const today = el("button", "light-calendar-today-button", "Today");
       today.type = "button";
@@ -4102,9 +4109,55 @@
     }
     top.append(el("h2", "light-date-picker-title", calendarMonthHeading()), controls);
     const strip = el("div", "light-calendar-day-strip");
+    strip.setAttribute("aria-label", "Calendar days");
     calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));
     picker.append(top, strip);
+    queueCalendarDayStripCenter(strip, selectedCalendarDateKey());
     return picker;
+  }
+
+  function lightCalendarStripNavButton(direction = 1) {
+    const button = el(
+      "button",
+      direction < 0 ? "light-calendar-strip-nav-button is-prev" : "light-calendar-strip-nav-button is-next",
+      direction < 0 ? "‹" : "›"
+    );
+    button.type = "button";
+    button.setAttribute("aria-label", direction < 0 ? "Earlier days" : "Later days");
+    button.addEventListener("click", event => {
+      const strip = event.currentTarget?.closest(".light-date-picker")?.querySelector(".light-calendar-day-strip");
+      scrollCalendarDayStrip(strip, direction);
+    });
+    return button;
+  }
+
+  function scrollCalendarDayStrip(strip, direction = 1) {
+    if (!(strip instanceof HTMLElement)) {
+      return;
+    }
+    const chip = strip.querySelector(".light-calendar-day-chip");
+    const chipWidth = Math.max(58, Math.round(chip?.getBoundingClientRect().width || 58));
+    strip.scrollBy({ left: (chipWidth + 8) * (direction < 0 ? -5 : 5), behavior: "smooth" });
+  }
+
+  function queueCalendarDayStripCenter(strip, dayKey = selectedCalendarDateKey()) {
+    if (typeof requestAnimationFrame !== "function") {
+      centerCalendarDayStrip(strip, dayKey);
+      return;
+    }
+    requestAnimationFrame(() => centerCalendarDayStrip(strip, dayKey));
+  }
+
+  function centerCalendarDayStrip(strip, dayKey = selectedCalendarDateKey()) {
+    if (!(strip instanceof HTMLElement)) {
+      return;
+    }
+    const chip = strip.querySelector(`.light-calendar-day-chip[data-day="${dayKey}"]`);
+    if (!(chip instanceof HTMLElement)) {
+      return;
+    }
+    const left = chip.offsetLeft - Math.max(0, (strip.clientWidth - chip.offsetWidth) / 2);
+    strip.scrollTo({ left: Math.max(0, left), behavior: "auto" });
   }
 
   function lightCalendarAgendaHeading() {
@@ -4114,9 +4167,8 @@
   }
 
   function openCalendarSettingsSheet() {
-    const sheet = el("section", "trace-sheet settings-sheet calendar-settings-sheet");
-    sheet.classList.add("is-open");
-    const header = el("div", "calendar-settings-sheet-header");
+    const sheet = el("section", "settings-selector-sheet calendar-settings-panel");
+    const header = el("div", "calendar-settings-panel-header");
     const copy = el("div", "calendar-settings-sheet-copy");
     copy.append(
       el("h2", "calendar-settings-sheet-title", "Calendar settings"),
@@ -4131,14 +4183,16 @@
         return button;
       })()
     );
-    const body = el("div", "calendar-settings-sheet-body");
-    body.append(calendarTimeZoneSettingsCard());
+    const body = el("div", "calendar-settings-panel-body");
+    body.append(calendarTimeZoneSettingsCard(), calendarEventTypeFiltersCard());
     sheet.append(header, body);
-    openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);
+    const overlay = openOverlay("settingsSelectorOverlay", sheet, closeCalendarSettingsSheet);
+    overlay?.classList.add("calendar-settings-overlay");
   }
 
   function closeCalendarSettingsSheet() {
-    closeOverlay("settingsSelectorOverlay");
+    const overlay = closeOverlay("settingsSelectorOverlay");
+    overlay?.classList.remove("calendar-settings-overlay");
   }
 
   function lightCalendarDayChip(dayKey) {
@@ -4214,13 +4268,7 @@
   }
 
   function lightCalendarCluster(cluster, clusterIndex = 0) {
-    const section = el(
-      "section",
-      cluster.events.length > 1 ? "light-calendar-cluster is-busy" : "light-calendar-cluster"
-    );
-    if (cluster.events.length > 1) {
-      section.append(el("p", "light-calendar-cluster-label", "Busy window"));
-    }
+    const section = el("section", "light-calendar-cluster");
     cluster.events.forEach((event, eventIndex) => section.append(lightCalendarEventBlock(event, clusterIndex + eventIndex)));
     return section;
   }
@@ -4238,11 +4286,8 @@
       el("span", "light-event-time", calendarEventTimeRange(event)),
       el("strong", "light-event-title", event.title || "Untitled event"),
     );
-    if (String(event.summary || "").trim()) {
-      open.append(el("span", "light-event-summary", event.summary));
-    }
     block.append(open);
-    const chips = lightCalendarEventChips(event, { fromRoute: "calendar" });
+    const chips = lightCalendarEventChips(event, { fromRoute: "calendar", contactsOnly: true });
     if (chips) {
       block.append(chips);
     }
@@ -4253,6 +4298,7 @@
     const selected = selectedCalendarDateKey();
     return workspaceItems("calendar-events")
       .filter(event => calendarEventDateKey(event) === selected)
+      .filter(event => calendarToneEnabled(calendarEventTone(event)))
       .slice()
       .sort((left, right) => {
         const byStart = calendarEventStartMs(left) - calendarEventStartMs(right);
@@ -4278,20 +4324,11 @@
     }
     const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
-    const article = el("article", "light-doc-article");
-    article.append(el("p", "light-event-detail-time", `${calendarEventDayLabel(meeting)}${DOT}${calendarEventTimeRange(meeting)}`));
+    page.append(lightCalendarEventDetailsSection(meeting, attendees));
     if (String(meeting.summary || "").trim()) {
-      article.append(
-        el("p", "light-event-detail-label", "Description"),
-        el("p", "light-note-body light-event-summary-copy", meeting.summary)
-      );
+      page.append(lightCopySection("Description", meeting.summary));
     }
-    page.append(article);
-    const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail" });
-    const detailRows = calendarEventDetailRows(meeting, attendees);
-    if (detailRows.length) {
-      page.append(lightInfoSection("Details", detailRows));
-    }
+    const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true });
     if (chips) {
       const section = el("section", "light-info-section");
       section.append(lightSectionTitle("Connected"));
@@ -4307,6 +4344,55 @@
       page.append(lightInfoSection("Related docs", docs.map(doc => ({ icon: "note", label: doc, value: "Open" }))));
     }
     return page;
+  }
+
+  function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {
+    const section = el("section", "light-calendar-detail-section");
+    section.append(lightSectionTitle("Details"));
+    const card = el("div", "light-calendar-detail-card");
+    card.append(
+      lightCalendarDetailRow("when", "When", `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`)
+    );
+    const recognized = calendarEventChipTargets(event, { contactsOnly: true });
+    const guests = attendees
+      .filter(person => !person.recognized)
+      .map(person => String(person?.fullLabel || person?.label || "").trim())
+      .filter(Boolean);
+    if (recognized.length || guests.length) {
+      const who = el("div", "light-calendar-detail-row");
+      who.dataset.detailRow = "who";
+      const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
+      if (recognized.length) {
+        const cloud = el("div", "light-attendee-chip-cloud");
+        recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
+        value.append(cloud);
+      }
+      if (guests.length) {
+        value.append(el("p", "light-calendar-detail-guest-list", guests.join(", ")));
+      }
+      who.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
+      card.append(who);
+    }
+    const place = String(event?.metadata?.place || "").trim();
+    if (place) {
+      card.append(lightCalendarDetailRow("place", "Place", place));
+    }
+    const eventTimeZone = String(event?.metadata?.time_zone || "").trim();
+    if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
+      card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone));
+    }
+    section.append(card);
+    return section;
+  }
+
+  function lightCalendarDetailRow(rowKey, label, value) {
+    const row = el("div", "light-calendar-detail-row");
+    row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
+    row.append(
+      el("strong", "light-calendar-detail-row-label", label),
+      el("div", "light-calendar-detail-row-value", value)
+    );
+    return row;
   }
 
   function lightMeetingNotesPage() {
@@ -4341,14 +4427,30 @@
     }
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
-    if (!active.length) {
+    const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));
+    if (!active.length && !snoozed.length) {
       page.append(lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."));
       return page;
     }
-    const list = el("div", "light-list light-graph-list");
-    active.forEach(reminder => list.append(lightReminderRow(reminder)));
-    page.append(list);
+    if (active.length) {
+      page.append(lightReminderListSection("", active, "active"));
+    }
+    if (snoozed.length) {
+      page.append(lightReminderListSection("Snoozed", snoozed, "snoozed"));
+    }
     return page;
+  }
+
+  function lightReminderListSection(title, reminders, sectionKey = "") {
+    const section = el("section", "light-reminder-list-section");
+    section.dataset.reminderSection = String(sectionKey || "").trim().toLowerCase();
+    if (title) {
+      section.append(lightSectionTitle(title));
+    }
+    const list = el("div", "light-list light-graph-list");
+    reminders.forEach(reminder => list.append(lightReminderRow(reminder)));
+    section.append(list);
+    return section;
   }
 
   function lightReminderDetailPage() {
@@ -4357,16 +4459,9 @@
       return lightPage("Reminder", { subtitle: "Reminder not found.", detail: true });
     }
     ensureLinkedCollections(reminder);
-    const page = lightPage(reminder.title || "Reminder", { detail: true });
+    const page = lightPage("Reminder", { detail: true });
     page.classList.add("light-document-page", "light-reminder-document");
-    const article = el("article", "light-doc-article");
-    article.append(
-      lightDocumentEyebrow("Reminder", reminderDetailEyebrow(reminder)),
-      el("h1", "", reminder.title),
-      el("p", "light-note-body", reminder.summary || "")
-    );
-    page.append(article);
-    page.append(lightReminderActionRow(reminder));
+    page.append(lightReminderDetailCard(reminder));
     page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));
     const recipientRows = reminderRecipientRows(reminder);
     if (recipientRows.length) {
@@ -4374,7 +4469,9 @@
     }
     const destinationRows = reminderDestinationRows(reminder);
     if (destinationRows.length) {
-      page.append(lightInfoSection("Channels", destinationRows));
+      const channels = lightInfoSection("Channels", destinationRows);
+      channels.classList.add("light-reminder-channels-section");
+      page.append(channels);
     }
     const linkedRows = lightLinkedRecordRows(reminder);
     if (linkedRows.length) {
@@ -4903,6 +5000,23 @@
     return row;
   }
 
+  function lightReminderDetailCard(reminder) {
+    const card = el("section", `light-card light-reminder-detail-card ${reminderDeliveryClass(reminder)}`.trim());
+    const identity = el("div", "light-reminder-detail-identity");
+    const copy = el("div", "light-reminder-detail-copy");
+    copy.append(
+      el("span", "light-reminder-detail-eyebrow", reminderDetailEyebrow(reminder)),
+      el("strong", "light-reminder-detail-title", reminder.title || "Untitled reminder")
+    );
+    const summary = String(reminder?.summary || "").trim();
+    if (summary) {
+      copy.append(el("p", "light-reminder-detail-summary", summary));
+    }
+    identity.append(lightSmallIcon("bell", "reminders"), copy);
+    card.append(identity, lightReminderActionRow(reminder));
+    return card;
+  }
+
   function reminderGroup(reminder) {
     if (reminderIsSentHistory(reminder)) {
       return "sent";
@@ -4989,7 +5103,7 @@
   }
 
   function reminderIsActive(reminder) {
-    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder);
+    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder) && !reminderIsSnoozed(reminder);
   }
 
   function activeReminderCount() {
@@ -5315,8 +5429,40 @@
     return 0;
   }
 
+  function noteTimestampLabel(note) {
+    return workspaceTimestamp(noteContentUpdatedAtMs(note));
+  }
+
+  function noteSourceLabel(note) {
+    const raw = String(note?.metadata?.context || "").trim();
+    const normalized = raw.toLowerCase();
+    if (!raw || normalized === "notes" || normalized === "all notes") {
+      return "";
+    }
+    return raw;
+  }
+
   function noteMetaLine(note) {
-    return `${workspaceTimestamp(noteContentUpdatedAtMs(note), "Updated")}${DOT}${note.metadata?.context || "Notes"}`;
+    return {
+      source: noteSourceLabel(note),
+      timestamp: noteTimestampLabel(note),
+    };
+  }
+
+  function noteSectionExpanded(sectionKey) {
+    return state.notesSectionsExpanded?.[sectionKey] !== false;
+  }
+
+  function setNotesSectionExpanded(sectionKey, expanded) {
+    state.notesSectionsExpanded = {
+      ...state.notesSectionsExpanded,
+      [sectionKey]: Boolean(expanded),
+    };
+  }
+
+  function toggleNotesSection(sectionKey) {
+    setNotesSectionExpanded(sectionKey, !noteSectionExpanded(sectionKey));
+    render();
   }
 
   function lightNotesPage() {
@@ -5331,17 +5477,48 @@
     const pinned = notes.filter(note => note.pinned);
     const feedWrap = el("div", "light-notes-feed");
     if (pinned.length) {
-      feedWrap.append(lightNotesSection("Pinned", pinned));
+      feedWrap.append(lightNotesSection("Pinned", "pinned", pinned));
     }
-    feedWrap.append(lightNotesSection("Recent", notes.filter(note => !note.pinned)));
+    feedWrap.append(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));
     page.append(feedWrap);
     return page;
   }
 
-  function lightNotesSection(title, notes) {
+  function lightNotesSectionHeader(title, sectionKey, count, expanded, controlsId) {
+    const button = el("button", "light-notes-section-header");
+    button.type = "button";
+    button.dataset.notesSection = sectionKey;
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-controls", controlsId);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleNotesSection(sectionKey);
+    });
+    const copy = el("span", "light-notes-section-copy");
+    copy.append(
+      el("span", "light-notes-section-label", String(title).toUpperCase()),
+      el("span", "light-notes-section-count", String(count))
+    );
+    const chevron = el("span", "light-notes-section-chevron");
+    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "chevron_right");
+    button.append(copy, chevron);
+    return button;
+  }
+
+  function lightNotesSection(title, sectionKey, notes) {
     const section = el("section", "light-notes-section");
-    section.append(lightSectionTitle(title));
-    notes.forEach(note => section.append(lightNoteRow(note)));
+    section.dataset.notesSection = sectionKey;
+    const expanded = noteSectionExpanded(sectionKey);
+    const bodyId = `light-notes-section-${sectionKey}`;
+    section.append(lightNotesSectionHeader(title, sectionKey, notes.length, expanded, bodyId));
+    const body = el("div", "light-notes-section-body");
+    body.id = bodyId;
+    body.hidden = !expanded;
+    if (expanded) {
+      notes.forEach(note => body.append(lightNoteRow(note)));
+    }
+    section.append(body);
     return section;
   }
 
@@ -5364,13 +5541,17 @@
       }
     });
     const meta = noteMetaLine(note);
-    const preview = String(note.summary || "").trim();
     const copy = el("span", "light-note-feed-copy");
-    copy.append(el("strong", "", note.title));
-    if (preview) {
-      copy.append(el("span", "light-note-summary", preview));
+    copy.append(el("strong", "", note.title || "Untitled note"));
+    const metaRow = el("span", "light-note-row-meta");
+    if (meta.source) {
+      metaRow.append(el("span", "light-note-row-context", meta.source));
+    } else {
+      metaRow.classList.add("is-time-only");
     }
-    copy.append(el("span", "light-note-row-meta", meta));
+    metaRow.append(el("span", "light-note-row-time", meta.timestamp));
+    copy.append(metaRow);
+    row.dataset.noteHasSource = String(Boolean(meta.source));
     const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
       if (event) {
         event.preventDefault();
@@ -5415,6 +5596,7 @@
     }
     const previousItems = bucket.items.slice();
     const previousError = bucket.error;
+    const previousNotesSectionsExpanded = { ...state.notesSectionsExpanded };
     const nextPinned = !Boolean(note.pinned);
     const toggled = { ...note, pinned: nextPinned };
     const pinned = [];
@@ -5432,12 +5614,14 @@
     bucket.items = nextPinned
       ? [toggled, ...pinned, ...recent]
       : [...pinned, toggled, ...recent];
+    setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);
     bucket.error = "";
     render();
     const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });
     if (!updated) {
       bucket.items = previousItems;
       bucket.error = previousError;
+      state.notesSectionsExpanded = previousNotesSectionsExpanded;
       render();
       return;
     }
@@ -5559,18 +5743,44 @@
     return taskStatusFilterChoices().find(([key]) => key === state.taskFilter) || taskStatusFilterChoices()[0];
   }
 
+  function taskStatusCounts() {
+    return workspaceItems("tasks").reduce((counts, task) => {
+      const status = normalizedTaskStatus(task);
+      counts.all += 1;
+      counts[status] += 1;
+      return counts;
+    }, {
+      all: 0,
+      todo: 0,
+      in_progress: 0,
+      waiting: 0,
+      done: 0,
+    });
+  }
+
   function lightTaskGroup(tasks, group) {
     const card = el("div", "light-card light-task-card light-task-group");
     tasks.forEach(task => {
-      const row = el("button", `light-task-row ${taskRowTone(task)}`);
-      row.type = "button";
+      const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      row.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
-      row.addEventListener("pointerup", () => row.classList.remove("is-pressed"));
-      row.addEventListener("pointercancel", () => row.classList.remove("is-pressed"));
-      row.addEventListener("blur", () => row.classList.remove("is-pressed"));
-      row.addEventListener("click", () => openTaskFromList(task));
+      const statusTrigger = el("button", "light-task-row-status-trigger");
+      statusTrigger.type = "button";
+      statusTrigger.dataset.taskStatusTrigger = "true";
+      statusTrigger.setAttribute("aria-label", `Change status for ${task.title || "task"}`);
+      statusTrigger.append(el("span", taskCheckCircleClass(task)));
+      statusTrigger.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openTaskStatusSelector(task);
+      });
+      const main = el("button", "light-task-row-main");
+      main.type = "button";
+      main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
+      main.addEventListener("pointerup", () => row.classList.remove("is-pressed"));
+      main.addEventListener("pointercancel", () => row.classList.remove("is-pressed"));
+      main.addEventListener("blur", () => row.classList.remove("is-pressed"));
+      main.addEventListener("click", () => openTaskFromList(task));
       const copy = el("span", "light-task-row-copy");
       copy.append(el("strong", "light-task-row-title", task.title || "Untitled task"));
       const trailing = el("span", "light-task-row-trailing");
@@ -5579,11 +5789,8 @@
         trailing.append(badge);
       }
       trailing.append(el("span", "light-due", taskDueLabel(task)));
-      row.append(
-        el("span", taskCheckCircleClass(task)),
-        copy,
-        trailing
-      );
+      main.append(copy, trailing);
+      row.append(statusTrigger, main);
       card.append(row);
     });
     return card;
@@ -5592,23 +5799,30 @@
   function lightTaskFilters() {
     const wrap = el("div", "light-task-filter-strip");
     const [currentKey, currentLabel] = currentTaskFilterChoice();
+    const counts = taskStatusCounts();
     const button = el("button", "light-pill is-active light-task-filter-button");
     button.type = "button";
     button.dataset.taskFilter = currentKey;
     button.dataset.taskFilterCurrent = currentKey;
     button.setAttribute("aria-haspopup", "dialog");
     button.setAttribute("aria-label", `Filter tasks: ${currentLabel}`);
+    const icon = el("span", "light-task-filter-button-icon");
+    icon.innerHTML = iconSvg("tune", { filled: true });
     const copy = el("span", "light-task-filter-button-copy");
     copy.append(el("span", "light-task-filter-button-label", currentLabel));
     const chevron = el("span", "light-task-filter-button-chevron");
     chevron.innerHTML = iconSvg("expand_more", { filled: true });
-    button.append(copy, chevron);
+    button.append(icon, copy, chevron);
     button.addEventListener("click", event => {
       event.preventDefault();
       openSettingsSelector({
         title: "Filter tasks",
         currentValue: currentKey,
-        options: taskStatusFilterChoices().map(([value, label]) => ({ value, label })),
+        options: taskStatusFilterChoices().map(([value, label]) => ({
+          value,
+          label,
+          meta: String(counts[value] || 0),
+        })),
         onSelect: value => {
           state.taskFilter = String(value || "all");
           render();
@@ -5628,6 +5842,15 @@
     return classes.join(" ");
   }
 
+  function taskStatusCircleClass(status) {
+    const classes = ["light-check-circle"];
+    const normalized = String(status || "").trim();
+    if (normalized && normalized !== "todo") {
+      classes.push(normalized);
+    }
+    return classes.join(" ");
+  }
+
   function taskRowTone(task) {
     const status = normalizedTaskStatus(task);
     if (status === "done") {
@@ -5640,7 +5863,7 @@
   }
 
   function taskCreatedBy(task) {
-    return String(task?.created_by || task?.metadata?.owner || task?.metadata?.created_by || "").trim();
+    return String(task?.created_by || task?.metadata?.created_by || "").trim();
   }
 
   function taskDescription(task) {
@@ -5666,6 +5889,11 @@
       : (Array.isArray(task?.metadata?.owners) ? task.metadata.owners : []);
     explicitOwners.forEach(append);
     return owners;
+  }
+
+  function taskPrimaryOwner(task) {
+    const createdBy = taskCreatedBy(task);
+    return taskOwners(task).find(name => name !== createdBy) || "";
   }
 
   function lightTaskStatusBadge(status, options = {}) {
@@ -5736,8 +5964,8 @@
     return workspaceContactTargetByName(createdBy);
   }
 
-  function ensureTaskCreatedByContact(task) {
-    if (!taskCreatedBy(task)) {
+  function ensureTaskPeopleContacts(task) {
+    if (!taskCreatedBy(task) && !taskPrimaryOwner(task)) {
       return;
     }
     const bucket = workspaceBucket("contacts");
@@ -5747,29 +5975,53 @@
   }
 
   function taskDetailRows(task) {
-    const createdBy = taskCreatedBy(task);
-    const owners = taskOwners(task).filter(name => name !== createdBy);
-    const rows = [
+    return [
       { icon: "clock", accentKey: "meetings", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
       { icon: "calendar", accentKey: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
-      {
-        icon: "contacts",
-        accentKey: "contacts",
-        label: "Created by",
-        value: createdBy || "Unknown",
-        target: taskCreatedByTarget(task)
-      },
     ];
-    if (owners.length) {
-      rows.push({
-        icon: "contacts",
-        accentKey: "contacts",
-        label: owners.length === 1 ? "Owner" : "Owners",
-        value: owners.join(", "),
-        target: owners.length === 1 ? workspaceContactTargetByName(owners[0]) : null
+  }
+
+  function lightTaskPeopleSection(task) {
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
+    const entries = [];
+    const createdBy = taskCreatedBy(task);
+    if (createdBy) {
+      entries.push({
+        role: "Created by",
+        datasetRole: "created_by",
+        contactName: createdBy,
       });
     }
-    return rows;
+    const owner = taskPrimaryOwner(task);
+    if (owner) {
+      entries.push({
+        role: "Owner",
+        datasetRole: "owner",
+        contactName: owner,
+      });
+    }
+    if (!entries.length) {
+      return null;
+    }
+    const section = el("section", "light-info-section");
+    section.append(lightSectionTitle("People"));
+    const card = el("div", "light-card light-task-people-card");
+    entries.forEach(entry => {
+      const row = el("div", "light-task-person-row");
+      row.dataset.taskPersonRole = entry.datasetRole;
+      row.append(el("span", "light-task-person-label", entry.role));
+      row.append(lightRecordChip({
+        label: entry.contactName,
+        kind: "contact",
+        target: workspaceContactTargetByName(entry.contactName),
+      }, {
+        fromRoute: origin.route,
+        taskOrigin: origin,
+      }));
+      card.append(row);
+    });
+    section.append(card);
+    return section;
   }
 
   function taskAttachmentTargets(task) {
@@ -5815,22 +6067,55 @@
     await patchWorkspaceRecord("tasks", task.id, { checklist: items }, { render: true });
   }
 
-  function lightTaskStatusControl(task) {
-    const control = el("div", "light-task-status-control");
-    const current = normalizedTaskStatus(task);
-    [
+  function taskStatusSelectorOptions() {
+    return [
       ["todo", "To do"],
       ["in_progress", "In progress"],
       ["waiting", "Waiting"],
       ["done", "Done"],
-    ].forEach(([value, label]) => {
-      const button = lightPillButton(label, async () => {
-        button.disabled = true;
-        await updateTaskStatus(task, value);
-      }, current === value);
-      button.dataset.taskStatus = value;
-      control.append(button);
+    ].map(([value, label]) => {
+      const leading = el("span", "settings-selector-status-icon");
+      leading.append(el("span", taskStatusCircleClass(value)));
+      return { value, label, leadingNode: leading };
     });
+  }
+
+  function openTaskStatusSelector(task) {
+    const current = normalizedTaskStatus(task);
+    openSettingsSelector({
+      title: "Task status",
+      currentValue: current,
+      options: taskStatusSelectorOptions(),
+      onSelect: async value => {
+        const next = String(value || current);
+        if (next === current) {
+          return;
+        }
+        await updateTaskStatus(task, next);
+      },
+    });
+  }
+
+  function lightTaskStatusControl(task) {
+    const control = el("div", "light-task-status-control");
+    const current = normalizedTaskStatus(task);
+    const button = el("button", "light-pill is-active light-task-status-trigger");
+    button.type = "button";
+    button.dataset.taskStatus = current;
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-label", `Change status: ${taskStatusLabel(current)}`);
+    const icon = el("span", "light-task-status-trigger-icon");
+    icon.append(el("span", taskStatusCircleClass(current)));
+    const copy = el("span", "light-task-status-trigger-copy");
+    copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
+    const chevron = el("span", "light-task-status-trigger-chevron");
+    chevron.innerHTML = iconSvg("expand_more", { filled: true });
+    button.append(icon, copy, chevron);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      openTaskStatusSelector(task);
+    });
+    control.append(button);
     return control;
   }
 
@@ -5889,27 +6174,49 @@
   }
 
   function resetLightRouteScroll() {
-    const restore = () => restoreScrollPosition(document.getElementById("feed"), 0);
+    const restore = () => {
+      const feed = document.getElementById("feed");
+      restoreScrollPosition(feed, 0);
+      if (feed) {
+        feed.scrollTop = 0;
+      }
+      if (typeof window !== "undefined") {
+        window.scrollTo(0, 0);
+      }
+      if (document?.documentElement) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document?.body) {
+        document.body.scrollTop = 0;
+      }
+    };
     state.feedScrollTop = 0;
     restore();
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
       window.requestAnimationFrame(restore);
     }
     window.setTimeout(restore, 0);
+    window.setTimeout(restore, 48);
   }
 
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
+    const statusTrigger = el("button", "light-task-status-circle-trigger");
+    statusTrigger.type = "button";
+    statusTrigger.dataset.taskStatusTrigger = "true";
+    statusTrigger.setAttribute("aria-label", `Change status for ${task.title || "task"}`);
+    statusTrigger.append(el("span", taskCheckCircleClass(task)));
+    statusTrigger.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTaskStatusSelector(task);
+    });
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    const badge = lightTaskStatusBadge(normalizedTaskStatus(task));
-    if (badge) {
-      copy.append(badge);
-    }
-    card.append(el("span", taskCheckCircleClass(task)), copy, lightTaskStatusControl(task));
+    card.append(statusTrigger, copy, lightTaskStatusControl(task));
     return card;
   }
 
@@ -5918,12 +6225,16 @@
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
-    ensureTaskCreatedByContact(task);
+    ensureTaskPeopleContacts(task);
     const description = taskDescription(task);
     if (description) {
       surface.append(lightCopySection("Description", description));
     }
     surface.append(lightInfoSection("Details", taskDetailRows(task)));
+    const people = lightTaskPeopleSection(task);
+    if (people) {
+      surface.append(people);
+    }
     const checklist = lightTaskChecklistSection(task);
     if (checklist) {
       surface.append(checklist);
@@ -6658,7 +6969,7 @@
 
   function lightCalendarEventChips(event, options = {}) {
     const row = el("div", "light-event-chip-row");
-    const chipTargets = calendarEventChipTargets(event);
+    const chipTargets = calendarEventChipTargets(event, options);
     const limit = Math.max(0, Number(options.limit || 0) || 0);
     const visible = limit > 0 ? chipTargets.slice(0, limit) : chipTargets;
     if (visible.length) {
@@ -6670,7 +6981,7 @@
     return row.childElementCount ? row : null;
   }
 
-  function calendarEventChipTargets(event) {
+  function calendarEventChipTargets(event, options = {}) {
     const chips = [];
     const seen = new Set();
     const remember = entry => {
@@ -6692,13 +7003,18 @@
         kind
       });
     };
-    calendarEventPeople(event)
-      .filter(person => person.recognized && person.target)
-      .forEach(person => remember({
-        label: person.label,
-        target: person.target,
-        kind: "contact"
-      }));
+    if (options.excludeContacts !== true) {
+      calendarEventPeople(event)
+        .filter(person => person.recognized && person.target)
+        .forEach(person => remember({
+          label: person.label,
+          target: person.target,
+          kind: "contact"
+        }));
+    }
+    if (options.contactsOnly === true) {
+      return chips;
+    }
     const currentKind = String(event?.kind || "calendar_event");
     const currentId = String(event?.id || event?.record_id || "");
     const links = Array.isArray(event?.links) ? event.links : [];
@@ -6841,6 +7157,57 @@
     return calendarEventTone(event);
   }
 
+  function defaultCalendarTypeFilters() {
+    return {
+      amber: true,
+      blue: true,
+      green: true,
+      purple: true,
+      red: true,
+      slate: true
+    };
+  }
+
+  function normalizeCalendarTypeFilters(value) {
+    const next = defaultCalendarTypeFilters();
+    if (!value || typeof value !== "object") {
+      return next;
+    }
+    Object.keys(next).forEach(tone => {
+      if (value[tone] === false) {
+        next[tone] = false;
+      }
+    });
+    return next;
+  }
+
+  function loadCalendarTypeFilters() {
+    try {
+      return normalizeCalendarTypeFilters(JSON.parse(localStorage.getItem("pucky.cover.calendar_type_filters.v1") || "null"));
+    } catch (_error) {
+      return defaultCalendarTypeFilters();
+    }
+  }
+
+  function ensureCalendarTypeFilters() {
+    if (!state.calendarTypeFilters || typeof state.calendarTypeFilters !== "object") {
+      state.calendarTypeFilters = loadCalendarTypeFilters();
+    }
+    return state.calendarTypeFilters;
+  }
+
+  function persistCalendarTypeFilters() {
+    try {
+      localStorage.setItem("pucky.cover.calendar_type_filters.v1", JSON.stringify(ensureCalendarTypeFilters()));
+    } catch (_error) {
+      // Ignore persistence failures.
+    }
+  }
+
+  function calendarToneEnabled(tone) {
+    return ensureCalendarTypeFilters()[String(tone || "slate")] !== false;
+  }
+
   function calendarEventTone(event) {
     const type = String(event?.metadata?.type || event?.status || "").trim().toLowerCase();
     const title = String(event?.title || "").trim().toLowerCase();
@@ -6882,6 +7249,17 @@
     }[tone] || "Calendar";
   }
 
+  function calendarTypeFilterOptions() {
+    return [
+      { tone: "amber", label: "Personal / Home" },
+      { tone: "blue", label: "Freelance / Work" },
+      { tone: "green", label: "Family" },
+      { tone: "purple", label: "Call / Meeting" },
+      { tone: "red", label: "Health" },
+      { tone: "slate", label: "Other" }
+    ];
+  }
+
   function calendarDayTitle() {
     return "Calendar";
   }
@@ -6914,7 +7292,7 @@
   }
 
   function calendarStripWindowSize() {
-    return typeof window !== "undefined" && window.innerWidth >= 768 ? 7 : 5;
+    return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;
   }
 
   function calendarStripDays(dayKey = selectedCalendarDateKey()) {
@@ -6930,6 +7308,7 @@
   function calendarDayMarkers(dayKey) {
     return workspaceItems("calendar-events")
       .filter(event => calendarEventDateKey(event) === dayKey)
+      .filter(event => calendarToneEnabled(calendarEventTone(event)))
       .sort((a, b) => calendarEventStartMs(a) - calendarEventStartMs(b))
       .slice(0, 4)
       .map(event => calendarEventTone(event));
@@ -7762,6 +8141,41 @@
       meta
     );
     row.append(iconEl, copy, control);
+    return row;
+  }
+
+  function calendarEventTypeFiltersCard() {
+    const section = el("section", "calendar-settings-card calendar-type-filter-card");
+    section.append(
+      el("h2", "calendar-settings-card-title", "Event types"),
+      el("p", "calendar-settings-card-detail", "Show or hide event categories and their day-strip dots.")
+    );
+    const list = el("div", "calendar-type-filter-list");
+    calendarTypeFilterOptions().forEach(option => list.append(calendarEventTypeFilterRow(option)));
+    section.append(list);
+    return section;
+  }
+
+  function calendarEventTypeFilterRow(option) {
+    const row = el("label", "calendar-type-filter-row");
+    row.dataset.tone = option.tone;
+    const copy = el("span", "calendar-type-filter-copy");
+    copy.append(
+      el("span", `calendar-type-filter-dot ${option.tone}`),
+      el("span", "calendar-type-filter-label", option.label)
+    );
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.className = "calendar-type-filter-toggle";
+    toggle.checked = calendarToneEnabled(option.tone);
+    toggle.setAttribute("aria-label", option.label);
+    toggle.addEventListener("change", () => {
+      const filters = ensureCalendarTypeFilters();
+      filters[option.tone] = Boolean(toggle.checked);
+      persistCalendarTypeFilters();
+      render();
+    });
+    row.append(copy, toggle);
     return row;
   }
 
@@ -8701,8 +9115,20 @@
       button.type = "button";
       button.setAttribute("aria-pressed", active ? "true" : "false");
       button.setAttribute("data-selector-value", String(option.value || ""));
+      const copy = el("span", "settings-selector-option-copy");
+      copy.append(el("span", "settings-selector-option-label", option.label));
+      if (String(option.meta || "").trim()) {
+        copy.append(el("span", "settings-selector-option-meta", String(option.meta || "").trim()));
+      }
+      const leading = el("span", "settings-selector-option-leading");
+      if (option.leadingNode instanceof Node) {
+        leading.append(option.leadingNode);
+      } else if (String(option.icon || "").trim()) {
+        leading.innerHTML = iconSvg(String(option.icon || "").trim(), { filled: false });
+      }
       button.append(
-        el("span", "settings-selector-option-label", option.label),
+        leading,
+        copy,
         (() => {
           const check = el("span", "settings-selector-option-check");
           check.innerHTML = iconSvg("check");
@@ -9242,7 +9668,7 @@
         });
         render();
         recordAudioProbeEvent("pause_request_start", { target_key: busyKey });
-        state.player = await pauseWithRewind(card);
+        state.player = stampPlayerState(await pauseWithRewind(card));
         recordAudioProbeEvent("pause_request_end", {
           target_key: busyKey,
           state: String(state.player?.state || ""),
@@ -9268,10 +9694,10 @@
           speed: startSpeed
         });
         render();
-        state.player = await Pucky.request({
+        state.player = stampPlayerState(await Pucky.request({
           command: "player.play",
           args: { start_at_ms: savedPositionFor(current.source || current.path), speed: startSpeed }
-        });
+        }));
         recordAudioProbeEvent("play_request_end", {
           target_key: busyKey,
           state: String(state.player?.state || ""),
@@ -9309,10 +9735,10 @@
           start_at_ms: start,
           speed: startSpeed
         });
-        state.player = await Pucky.request({
+        state.player = stampPlayerState(await Pucky.request({
           command: "player.play",
           args: { start_at_ms: start, speed: startSpeed }
-        });
+        }));
         recordAudioProbeEvent("play_request_end", {
           target_key: busyKey,
           state: String(state.player?.state || ""),
@@ -9344,10 +9770,10 @@
           start_at_ms: start,
           speed: startSpeed
         });
-        state.player = await Pucky.request({
+        state.player = stampPlayerState(await Pucky.request({
           command: "player.play",
           args: { path: audioPath, title: card.title, start_at_ms: start, speed: startSpeed }
-        });
+        }));
         recordAudioProbeEvent("play_request_end", {
           target_key: busyKey,
           state: String(state.player?.state || ""),
@@ -9442,7 +9868,7 @@
     });
     content.append(stack);
     applyDetailDataAttributes(panel, "transcript", card);
-    openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
+    openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
@@ -9588,7 +10014,7 @@
       }
     }
     applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });
-    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup);
+    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
     void syncVoiceThreadScope({ reason: "show_page", render: true });
@@ -10078,7 +10504,7 @@
       });
     }
     applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });
-    openSideDetail(panel, card.title || "Images", content, dismissGallery);
+    openSideDetail(panel, card.title || "Images", content, dismissGallery, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
     void syncVoiceThreadScope({ reason: "show_images", render: true });
@@ -10223,7 +10649,7 @@
     frame.append(shell);
     content.append(frame);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "video_player" });
-    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_video_attachment", render: true });
@@ -10258,7 +10684,7 @@
     wrap.append(audio);
     content.append(wrap);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "audio_player" });
-    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
     try {
@@ -10277,7 +10703,7 @@
     const viewer = await documentViewer(card, item, options);
     content.append(viewer);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });
-    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });
@@ -11000,14 +11426,19 @@
     state.metaCard = null;
   }
 
-  function openSideDetail(panel, title, content, onDismiss) {
+  function openSideDetail(panel, title, content, onDismiss, options = {}) {
     const shell = el("div", "detail-shell");
+    const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;
     const header = lightHeader(title, { onBack: onDismiss, detail: true });
     const body = el("div", "detail-content");
     const bodyInner = el("div", "detail-content-inner");
     bodyInner.append(content);
     body.append(bodyInner);
-    shell.append(header, body);
+    shell.append(header);
+    if (audioCard) {
+      shell.append(detailAudioContinuity(audioCard));
+    }
+    shell.append(body);
     panel.replaceChildren(shell);
     panel.setAttribute("aria-hidden", "false");
     panel.classList.add("is-open");
@@ -11127,6 +11558,60 @@
     if (nextList) {
       nextList.scrollTop = chapterScroll;
     }
+  }
+
+  function currentDetailAudioCard() {
+    const detail = normalizeNavDetail(state.navDetail);
+    if (!detail || detail.type === "audio") {
+      return null;
+    }
+    const card = resolveNavDetailCard(detail);
+    return card && hasAudio(card) ? card : null;
+  }
+
+  function detailAudioContinuity(card) {
+    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
+      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
+      : audioRuntimeMode();
+    const section = el("section", "detail-audio-continuity");
+    const inner = el("div", "detail-audio-continuity-inner");
+    section.style.setProperty("--accent", card.accent || "#72c2ff");
+    section.dataset.audioKey = audioStateKey(card);
+    const copy = el("div", "detail-audio-continuity-copy");
+    copy.append(el("div", "detail-audio-continuity-kicker", runtime === "browser_stub" ? "Browser preview" : "Tile audio"));
+    copy.append(el("div", "detail-audio-continuity-title", card.title || "Audio"));
+    copy.append(audioTileStatus(card));
+    const actions = el("div", "detail-audio-continuity-actions");
+    const toggle = el("button", "detail-audio-action detail-audio-action-primary", isPlayingCard(card) ? (runtime === "browser_stub" ? "Stop preview" : "Pause") : "Play");
+    toggle.type = "button";
+    toggle.disabled = isCardAudioBusy(card) || ["starting", "pause_pending"].includes(currentTileAudioPhase(card));
+    toggle.addEventListener("click", () => {
+      void toggleAudio(card);
+    });
+    const open = el("button", "detail-audio-action", "Open audio controls");
+    open.type = "button";
+    open.addEventListener("click", () => showAudioDetail(card));
+    actions.append(toggle, open);
+    inner.append(copy, actions);
+    section.append(inner);
+    return section;
+  }
+
+  function renderDetailAudioContinuity() {
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      return;
+    }
+    const existing = panel.querySelector(".detail-audio-continuity");
+    if (!existing) {
+      return;
+    }
+    const card = currentDetailAudioCard();
+    if (!card) {
+      existing.remove();
+      return;
+    }
+    existing.replaceWith(detailAudioContinuity(card));
   }
 
   function meetingFailedDetailContent(meeting) {
@@ -11432,7 +11917,7 @@
     startAudioScrub(card, positionMs);
     state.activePath = audioControlKey(card);
     if (isActiveCard(card)) {
-      state.player = { ...state.player, position_ms: positionMs };
+      state.player = stampPlayerState({ ...state.player, position_ms: positionMs });
     }
     updateAudioScrubPreview(card, scrub, positionMs);
   }
@@ -11461,7 +11946,7 @@
           args: { path: audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
-      state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
+      state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
       rememberPlayerProgress(state.player);
       stopAudioScrub(card);
       render();
@@ -11676,12 +12161,12 @@
           args: { path: audioPath, title: card.title, start_at_ms: positionMs }
         });
       }
-      state.player = await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } });
+      state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
       if (!state.player.is_playing) {
-        state.player = await Pucky.request({
+        state.player = stampPlayerState(await Pucky.request({
           command: "player.play",
           args: { start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
-        });
+        }));
       }
       rememberPlayerProgress(state.player);
       render();
@@ -11746,7 +12231,7 @@
           state.defaultAudioSpeedAvailable = true;
         } else {
           rememberSpeed(card, speed);
-          state.player = await Pucky.request({ command: "player.speed", args: { speed } });
+          state.player = stampPlayerState(await Pucky.request({ command: "player.speed", args: { speed } }));
         }
         closeSpeedPicker();
         render();
@@ -11762,7 +12247,7 @@
 
   async function seekRelative(delta) {
     const next = Math.max(0, Math.min(state.player.duration_ms || 0, (state.player.position_ms || 0) + delta));
-    state.player = await Pucky.request({ command: "player.seek", args: { position_ms: next } });
+    state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: next } }));
     rememberPlayerProgress(state.player);
     render();
   }
@@ -13318,13 +13803,13 @@
       ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
       : audioRuntimeMode();
     if (phase === "starting") {
-      return runtime === "browser_stub" ? "Starting preview playback" : "Starting audio...";
+      return runtime === "browser_stub" ? "Starting browser preview..." : "Starting audio...";
     }
     if (phase === "pause_pending") {
       return "Pausing audio...";
     }
     if (phase === "playing_confirmed") {
-      return runtime === "browser_stub" ? "Preview playback active" : "Audio playing";
+      return runtime === "browser_stub" ? "Browser preview active" : "Audio playing";
     }
     if (phase === "start_failed") {
       return "Playback failed";
@@ -13337,12 +13822,18 @@
 
   function tileAudioMeta(card) {
     const phase = currentTileAudioPhase(card);
+    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
+      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
+      : audioRuntimeMode();
     if (["start_failed", "ended_immediately"].includes(phase)) {
       return String(state.audioProbe.last_error_toast || "Tap again to retry playback.");
     }
+    if (phase === "playing_confirmed" && runtime === "browser_stub" && currentTileAudioStripKind(card) === "status") {
+      return "Browser preview only.";
+    }
     if (phase === "playing_confirmed" && currentTileAudioStripKind(card) === "progress") {
       const duration = Number(state.player.duration_ms || 0);
-      const position = Math.max(0, Number(state.player.position_ms || 0));
+      const position = currentPlayerPositionMs(state.player);
       if (duration > 0) {
         return `${formatTime(position)} of ${formatTime(duration)}`;
       }
@@ -13359,19 +13850,22 @@
     const label = el("div", "tile-audio-status-label", tileAudioLabel(card));
     const strip = el("div", `tile-audio-strip is-${phase} is-${runtime}`);
     const stripKind = currentTileAudioStripKind(card);
+    const shouldRenderStrip = !(runtime === "browser_stub" && phase === "playing_confirmed" && stripKind === "status");
     setDataAttribute(status, "data-audio-phase", phase);
     setDataAttribute(status, "data-audio-runtime-mode", runtime);
     setDataAttribute(status, "data-audio-strip-kind", stripKind);
     setDataAttribute(strip, "data-strip-kind", stripKind);
-    if (stripKind === "progress") {
-      const progress = el("span", "tile-audio-progress");
-      const duration = Math.max(0, Number(state.player.duration_ms || 0));
-      const position = Math.max(0, Number(state.player.position_ms || 0));
-      progress.style.setProperty("--progress", String(duration > 0 ? Math.min(1, position / duration) : 0));
-      strip.append(progress);
-    }
     status.append(label);
-    status.append(strip);
+    if (shouldRenderStrip) {
+      if (stripKind === "progress") {
+        const progress = el("span", "tile-audio-progress");
+        const duration = Math.max(0, Number(state.player.duration_ms || 0));
+        const position = currentPlayerPositionMs(state.player);
+        progress.style.setProperty("--progress", String(duration > 0 ? Math.min(1, position / duration) : 0));
+        strip.append(progress);
+      }
+      status.append(strip);
+    }
     const meta = tileAudioMeta(card);
     if (meta) {
       status.append(el("div", "tile-audio-status-meta", meta));
@@ -13397,9 +13891,48 @@
     return Boolean(player && (player.path || player.source));
   }
 
+  function stampPlayerState(player, observedAtMs = Date.now()) {
+    return {
+      ...(player && typeof player === "object" ? player : state.player),
+      observed_at_ms: Math.max(0, Number(observedAtMs || Date.now()))
+    };
+  }
+
+  function currentPlayerPositionMs(player) {
+    const base = Math.max(0, Number(player?.position_ms || 0));
+    const duration = Math.max(0, Number(player?.duration_ms || 0));
+    if (!player?.is_playing || audioRuntimeMode() !== "native_bridge" || duration <= 0) {
+      return duration > 0 ? Math.min(duration, base) : base;
+    }
+    const observedAtMs = Math.max(0, Number(player?.observed_at_ms || 0));
+    if (!observedAtMs) {
+      return duration > 0 ? Math.min(duration, base) : base;
+    }
+    const speed = finiteSpeed(player?.speed) ?? 1;
+    const live = base + Math.max(0, Date.now() - observedAtMs) * speed;
+    return duration > 0 ? Math.min(duration, live) : live;
+  }
+
   function isAudioDetailOpen() {
     const panel = document.getElementById("detail");
     return Boolean(panel?.classList.contains("is-open") && panel.getAttribute("data-detail-type") === "audio");
+  }
+
+  function shouldAnimateActiveTileAudio() {
+    if (!state.activePath || !state.player.is_playing) {
+      return false;
+    }
+    if (audioRuntimeMode() !== "native_bridge" || Number(state.player.duration_ms || 0) <= 0) {
+      return false;
+    }
+    if (isAudioDetailOpen()) {
+      return true;
+    }
+    const detailCard = currentDetailAudioCard();
+    if (detailCard && activePlayerMatchesCard(detailCard)) {
+      return true;
+    }
+    return state.route === "inbox" && feedDisplayCards().some(card => activePlayerMatchesCard(card));
   }
 
   function shouldRenderForPlayerState(previousPlayer, nextPlayer) {
@@ -13540,7 +14073,7 @@
       return preview;
     }
     if (activePlayerMatchesCard(card)) {
-      return Number(state.player.position_ms || 0);
+      return currentPlayerPositionMs(state.player);
     }
     return savedPositionFor(audioControlKey(card));
   }
@@ -14898,7 +15431,7 @@
       try {
         if (state.activePath) {
           const previousPlayer = state.player;
-          state.player = await Pucky.request({ command: "player.state", args: {} });
+          state.player = stampPlayerState(await Pucky.request({ command: "player.state", args: {} }));
           syncActivePathFromPlayer(state.player);
           if (state.player.path) {
             rememberPlayerProgress(state.player);
@@ -14929,7 +15462,7 @@
   }, 250);
 
   setInterval(() => {
-    if (state.activePath && state.player.is_playing && isAudioDetailOpen()) {
+    if (shouldAnimateActiveTileAudio()) {
       render();
     }
   }, 90);

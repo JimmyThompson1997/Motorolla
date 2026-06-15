@@ -154,15 +154,26 @@ async function createStaticServer() {
 
 async function readNotesView(page) {
   return page.evaluate(() => {
-    const groups = {};
-    [...document.querySelectorAll(".light-notes-section")].forEach(section => {
-      const current = section.querySelector(".light-section-title")?.textContent?.trim().toLowerCase() || "";
-      groups[current] = [...section.querySelectorAll(".light-note-row .light-note-feed-copy strong")].map(el => el.textContent?.trim() || "");
+    const sections = [...document.querySelectorAll(".light-notes-section")].map(section => {
+      const key = section.getAttribute("data-notes-section") || "";
+      const header = section.querySelector(".light-notes-section-header");
+      const body = section.querySelector(".light-notes-section-body");
+      return {
+        key,
+        title: section.querySelector(".light-notes-section-label")?.textContent?.trim() || "",
+        count: section.querySelector(".light-notes-section-count")?.textContent?.trim() || "",
+        expanded: header?.getAttribute("aria-expanded") === "true",
+        hidden: Boolean(body?.hidden),
+        rows: [...section.querySelectorAll(".light-note-row .light-note-feed-copy strong")].map(el => el.textContent?.trim() || "")
+      };
     });
+    const groups = Object.fromEntries(sections.map(section => [section.key, section.rows]));
     const notesFeed = document.querySelector(".light-notes-feed");
     return {
       route: document.querySelector("[data-light-route]")?.getAttribute("data-light-route") || document.body?.dataset?.route || null,
       hasNotesFeed: Boolean(notesFeed),
+      sectionHeaders: document.querySelectorAll(".light-notes-section-header").length,
+      sections,
       rowPinButtons: document.querySelectorAll(".light-note-row .light-note-pin-button").length,
       leftIcons: document.querySelectorAll(".light-note-row .light-small-icon").length,
       cardRows: document.querySelectorAll(".light-note-row.light-card").length,
@@ -172,6 +183,9 @@ async function readNotesView(page) {
         const copy = row.querySelector(".light-note-feed-copy");
         const pin = row.querySelector(".light-note-pin-button");
         const icon = pin?.querySelector(".material-icon");
+        const meta = row.querySelector(".light-note-row-meta");
+        const context = row.querySelector(".light-note-row-context");
+        const time = row.querySelector(".light-note-row-time");
         const copyRect = copy?.getBoundingClientRect();
         const pinRect = pin?.getBoundingClientRect();
         const pinStyle = pin ? getComputedStyle(pin) : null;
@@ -183,6 +197,10 @@ async function readNotesView(page) {
           width: Math.round(rect.width),
           height: Math.round(rect.height),
           hasSummary: Boolean(row.querySelector(".light-note-summary")),
+          hasSource: row.getAttribute("data-note-has-source") === "true",
+          contextLabel: context?.textContent?.trim() || "",
+          timeLabel: time?.textContent?.trim() || "",
+          timeOnly: meta?.classList.contains("is-time-only") || false,
           copyRight: copyRect ? Math.round(copyRect.right) : 0,
           pinLeft: pinRect ? Math.round(pinRect.left) : 0,
           pinWidth: pinRect ? Math.round(pinRect.width) : 0,
@@ -200,15 +218,25 @@ async function readNotesView(page) {
 }
 
 async function readNoteDetailView(page) {
-  return page.evaluate(() => ({
-    route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || document.body?.dataset?.route || null,
-    headerTitle: document.querySelector(".light-page-title-detail")?.textContent?.trim() || "",
-    articleCount: document.querySelectorAll(".light-doc-article.light-note-detail").length,
-    noteBodyCount: document.querySelectorAll(".light-note-body").length,
-    htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
-    htmlFrameCount: document.querySelectorAll(".light-detail-html-body .light-html-frame").length,
-    htmlEmptyCount: document.querySelectorAll(".light-html-empty.light-detail-html-body").length
-  }));
+  return page.evaluate(() => {
+    const htmlBody = document.querySelector(".light-detail-html-body");
+    const htmlFrame = document.querySelector(".light-detail-html-body .light-html-frame");
+    const htmlBodyRect = htmlBody?.getBoundingClientRect();
+    const htmlFrameRect = htmlFrame?.getBoundingClientRect();
+    return {
+      route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || document.body?.dataset?.route || null,
+      headerTitle: document.querySelector(".light-page-title-detail")?.textContent?.trim() || "",
+      articleCount: document.querySelectorAll(".light-doc-article.light-note-detail").length,
+      noteBodyCount: document.querySelectorAll(".light-note-body").length,
+      htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
+      htmlFrameCount: document.querySelectorAll(".light-detail-html-body .light-html-frame").length,
+      htmlEmptyCount: document.querySelectorAll(".light-html-empty.light-detail-html-body").length,
+      innerWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      htmlBodyLeft: Number((htmlBodyRect?.left || 0).toFixed(2)),
+      htmlFrameLeft: Number((htmlFrameRect?.left || 0).toFixed(2))
+    };
+  });
 }
 
 async function waitForNotesList(page) {
@@ -338,14 +366,22 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     const baseline = await readNotesView(page);
     assert.equal(baseline.route, "notes", `${viewport.label}: Notes route did not open`);
     assert.equal(baseline.hasNotesFeed, true, `${viewport.label}: expected notes feed wrapper`);
+    assert.equal(baseline.sectionHeaders, 2, `${viewport.label}: expected 2 section headers`);
     assert.equal(baseline.rowPinButtons, 3, `${viewport.label}: expected 3 row pin buttons`);
     assert.equal(baseline.leftIcons, 0, `${viewport.label}: expected no left icons`);
     assert.equal(baseline.cardRows, 0, `${viewport.label}: expected notes rows without tile cards`);
     assert.deepEqual(baseline.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: pinned baseline mismatch`);
     assert.deepEqual(baseline.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: recent baseline mismatch`);
+    assert.equal(baseline.sections.find(section => section.key === "pinned")?.expanded, true, `${viewport.label}: pinned should default expanded`);
+    assert.equal(baseline.sections.find(section => section.key === "recent")?.expanded, true, `${viewport.label}: recent should default expanded`);
     assert.equal(new Set(baseline.rows.map(row => row.width)).size, 1, `${viewport.label}: pinned/recent widths diverged`);
     assert.equal(new Set(baseline.rows.map(row => row.height)).size, 1, `${viewport.label}: pinned/recent heights diverged`);
-    assert(baseline.rows.every(row => row.hasSummary), `${viewport.label}: expected summary previews in notes feed`);
+    assert(baseline.rows.every(row => !row.hasSummary), `${viewport.label}: preview summaries should be removed`);
+    assert.equal(baseline.rows.find(row => row.id === "q4")?.contextLabel || "", "", `${viewport.label}: generic All notes label should be suppressed`);
+    assert.equal(baseline.rows.find(row => row.id === "q4")?.timeOnly, true, `${viewport.label}: generic source row should collapse to time-only meta`);
+    assert.equal(baseline.rows.find(row => row.id === "march")?.contextLabel, "Vendor review", `${viewport.label}: expected source label for March note`);
+    assert.equal(baseline.rows.find(row => row.id === "onboarding")?.contextLabel, "Project Aurora", `${viewport.label}: expected source label for onboarding note`);
+    assert(baseline.rows.every(row => row.timeLabel.length > 0), `${viewport.label}: expected right-side timestamps`);
     assert(baseline.rows.every(row => row.copyRight < row.pinLeft), `${viewport.label}: note copy overlaps pin button`);
     assert(baseline.rows.every(row => row.pinWidth === 36 && row.pinHeight === 36), `${viewport.label}: expected 36px pin tap targets`);
     assert(baseline.rows.every(row => row.iconWidth === 16 && row.iconHeight === 16), `${viewport.label}: expected smaller 16px pin icons`);
@@ -357,9 +393,33 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     const baselineShot = path.join(proofDir, `${viewportSlug}-01-baseline.png`);
     await page.screenshot({ path: baselineShot, fullPage: true });
 
+    await page.locator('.light-notes-section-header[data-notes-section="pinned"]').click();
+    const pinnedCollapsed = await readNotesView(page);
+    assert.equal(pinnedCollapsed.route, "notes", `${viewport.label}: pinned header click should not navigate`);
+    assert.equal(pinnedCollapsed.sections.find(section => section.key === "pinned")?.expanded, false, `${viewport.label}: pinned section did not collapse`);
+    assert.deepEqual(pinnedCollapsed.groups.pinned, [], `${viewport.label}: collapsed pinned section should hide rows`);
+    assert.deepEqual(pinnedCollapsed.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: collapsing pinned should keep recent visible`);
+    await page.locator('.light-notes-section-header[data-notes-section="pinned"]').click();
+    const pinnedExpandedAgain = await readNotesView(page);
+    assert.equal(pinnedExpandedAgain.sections.find(section => section.key === "pinned")?.expanded, true, `${viewport.label}: pinned section did not re-expand`);
+    assert.deepEqual(pinnedExpandedAgain.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: pinned rows did not return after re-expand`);
+
+    await page.locator('.light-notes-section-header[data-notes-section="recent"]').click();
+    const recentCollapsed = await readNotesView(page);
+    assert.equal(recentCollapsed.route, "notes", `${viewport.label}: recent header click should not navigate`);
+    assert.equal(recentCollapsed.sections.find(section => section.key === "recent")?.expanded, false, `${viewport.label}: recent section did not collapse`);
+    assert.deepEqual(recentCollapsed.groups.recent, [], `${viewport.label}: collapsed recent section should hide rows`);
+    assert.deepEqual(recentCollapsed.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: collapsing recent should keep pinned visible`);
+    await page.locator('.light-notes-section-header[data-notes-section="recent"]').click();
+    const recentExpandedAgain = await readNotesView(page);
+    assert.equal(recentExpandedAgain.sections.find(section => section.key === "recent")?.expanded, true, `${viewport.label}: recent section did not re-expand`);
+    assert.deepEqual(recentExpandedAgain.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: recent rows did not return after re-expand`);
+
+    await page.locator('.light-notes-section-header[data-notes-section="pinned"]').click();
     await page.locator('.light-note-row[data-note-id="march"] .light-note-pin-button').click();
     await page.waitForTimeout(50);
     const optimisticPin = await readNotesView(page);
+    assert.equal(optimisticPin.sections.find(section => section.key === "pinned")?.expanded, true, `${viewport.label}: pinning into collapsed pinned should auto-expand`);
     assert.deepEqual(optimisticPin.groups.pinned, ["March eval notes", "Q4 hiring plan"], `${viewport.label}: optimistic pin ordering mismatch`);
     assert.equal(optimisticPin.rows.find(row => row.id === "march")?.pinned, "true", `${viewport.label}: optimistic pin state mismatch`);
     await page.waitForTimeout(220);
@@ -368,9 +428,11 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     const afterPinShot = path.join(proofDir, `${viewportSlug}-02-after-pin.png`);
     await page.screenshot({ path: afterPinShot, fullPage: true });
 
+    await page.locator('.light-notes-section-header[data-notes-section="recent"]').click();
     await page.locator('.light-note-row[data-note-id="march"] .light-note-pin-button').click();
     await page.waitForTimeout(50);
     const optimisticUnpin = await readNotesView(page);
+    assert.equal(optimisticUnpin.sections.find(section => section.key === "recent")?.expanded, true, `${viewport.label}: unpinning into collapsed recent should auto-expand`);
     assert.deepEqual(optimisticUnpin.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: optimistic unpin ordering mismatch`);
     assert.equal(optimisticUnpin.rows.find(row => row.id === "march")?.pinned, "false", `${viewport.label}: optimistic unpin state mismatch`);
     await page.waitForTimeout(220);
@@ -388,20 +450,28 @@ async function runViewportScenario(browser, pageUrl, viewport) {
     assert.equal(detail.noteBodyCount, 0, `${viewport.label}: legacy note body copy still rendered`);
     assert.equal(detail.htmlBodyCount, 1, `${viewport.label}: expected a single note HTML body surface`);
     assert.equal(detail.htmlFrameCount + detail.htmlEmptyCount, 1, `${viewport.label}: expected rendered HTML frame or fallback empty state`);
+    assert(detail.htmlBodyLeft >= 0, `${viewport.label}: note detail surface is clipped on the left (${detail.htmlBodyLeft})`);
+    assert(detail.htmlFrameLeft >= 0, `${viewport.label}: note detail frame is clipped on the left (${detail.htmlFrameLeft})`);
+    assert(detail.documentScrollWidth <= detail.innerWidth + 1, `${viewport.label}: note detail introduced horizontal overflow (${detail.documentScrollWidth} > ${detail.innerWidth})`);
     const detailShot = path.join(proofDir, `${viewportSlug}-04-note-detail-clean.png`);
     await page.screenshot({ path: detailShot, fullPage: true });
     await page.locator('button[aria-label="Back"]').click();
     await waitForNotesList(page);
 
     if (viewport.label === "iphone-13-mini") {
+      await page.locator('.light-notes-section-header[data-notes-section="pinned"]').click();
+      const beforeFailure = await readNotesView(page);
+      assert.equal(beforeFailure.sections.find(section => section.key === "pinned")?.expanded, false, `${viewport.label}: failure setup should collapse pinned`);
       state.failNextPatch = true;
       await page.locator('.light-note-row[data-note-id="onboarding"] .light-note-pin-button').click();
       await page.waitForTimeout(50);
       const optimisticFailure = await readNotesView(page);
+      assert.equal(optimisticFailure.sections.find(section => section.key === "pinned")?.expanded, true, `${viewport.label}: failure-path optimistic pin should auto-expand pinned`);
       assert.deepEqual(optimisticFailure.groups.pinned, ["Onboarding spec v3", "Q4 hiring plan"], `${viewport.label}: optimistic failure state mismatch`);
       await page.waitForTimeout(220);
       const afterFailure = await readNotesView(page);
-      assert.deepEqual(afterFailure.groups.pinned, ["Q4 hiring plan"], `${viewport.label}: rollback pinned mismatch`);
+      assert.equal(afterFailure.sections.find(section => section.key === "pinned")?.expanded, false, `${viewport.label}: rollback should restore pinned collapsed state`);
+      assert.deepEqual(afterFailure.groups.pinned, [], `${viewport.label}: collapsed pinned section should remain hidden after rollback`);
       assert.deepEqual(afterFailure.groups.recent, ["March eval notes", "Onboarding spec v3"], `${viewport.label}: rollback recent mismatch`);
       assert(consoleWarnings.some(message => message.includes("Notes pin write failed")), `${viewport.label}: expected Notes pin write failed warning`);
       await page.screenshot({ path: path.join(proofDir, `${viewportSlug}-05-failure-rollback.png`), fullPage: true });

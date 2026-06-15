@@ -1697,6 +1697,74 @@ button {
   box-sizing: border-box;
 }
 
+.detail-audio-continuity {
+  width: 100%;
+  padding: 10px 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent, #72c2ff) 12%, var(--card-border));
+  background: color-mix(in srgb, var(--accent, #72c2ff) 3%, var(--surface-app));
+}
+
+.detail-audio-continuity-inner {
+  width: 100%;
+  max-width: var(--light-shell-column-max);
+  margin: 0 auto;
+  padding: 0 var(--light-shell-column-padding);
+  box-sizing: border-box;
+  display: grid;
+  gap: 10px;
+}
+
+.detail-audio-continuity-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.detail-audio-continuity-kicker {
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-audio-continuity-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.detail-audio-continuity .tile-audio-status {
+  margin-top: 2px;
+}
+
+.detail-audio-continuity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-audio-action {
+  border: 1px solid color-mix(in srgb, var(--accent, #72c2ff) 14%, var(--card-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #72c2ff) 8%, var(--surface-card));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1;
+  padding: 10px 14px;
+}
+
+.detail-audio-action:disabled {
+  opacity: 0.52;
+}
+
+.detail-audio-action-primary {
+  background: color-mix(in srgb, var(--accent, #72c2ff) 18%, var(--surface-card));
+  color: color-mix(in srgb, var(--accent, #72c2ff) 70%, var(--text-primary));
+}
+
 .chat-detail {
   padding: 18px;
 }
@@ -3276,7 +3344,7 @@ button {
 .settings-selector-option {
   min-height: 42px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 0 12px;
@@ -3292,11 +3360,39 @@ button {
     0 0 16px color-mix(in srgb, var(--accent-primary) 12%, transparent);
 }
 
+.settings-selector-option-leading {
+  width: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.settings-selector-option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
 .settings-selector-option-label {
   min-width: 0;
   font-size: 13px;
   line-height: 1.15;
   font-weight: 760;
+}
+
+.settings-selector-option-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 720;
+}
+
+.settings-selector-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .settings-selector-option-check {
@@ -3808,10 +3904,10 @@ button {
 }
 
 .light-note-row {
-  min-height: 88px;
+  min-height: 74px;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  padding: 14px 0;
+  gap: 10px;
+  padding: 12px 0;
   cursor: pointer;
   touch-action: manipulation;
   border-radius: 0;
@@ -3834,13 +3930,72 @@ button {
 }
 
 .light-notes-section + .light-notes-section {
-  margin-top: 6px;
-  padding-top: 10px;
+  margin-top: 4px;
+  padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
 }
 
-.light-notes-section .light-section-title {
-  margin: 0 0 4px;
+.light-notes-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--home-shell-text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.light-notes-section-header:active {
+  opacity: 0.72;
+}
+
+.light-notes-section-header:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.light-notes-section-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.light-notes-section-label {
+  color: var(--home-shell-text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.light-notes-section-count {
+  color: color-mix(in srgb, var(--home-shell-text-muted) 76%, transparent);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.light-notes-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--home-shell-text-muted) 84%, transparent);
+}
+
+.light-notes-section-chevron .material-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.light-notes-section-body[hidden] {
+  display: none !important;
 }
 
 .light-note-row + .light-note-row {
@@ -3860,7 +4015,7 @@ button {
 .light-note-feed-copy {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .light-note-feed-copy strong {
@@ -3874,24 +4029,31 @@ button {
   white-space: nowrap;
 }
 
-.light-note-summary,
 .light-note-row-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--home-shell-text-muted);
+  font-size: 13px;
+  line-height: 1.18;
+}
+
+.light-note-row-meta.is-time-only {
+  justify-content: flex-end;
+}
+
+.light-note-row-context {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.light-note-summary {
-  color: color-mix(in srgb, var(--home-shell-text) 84%, transparent);
-  font-size: 14px;
-  line-height: 1.24;
-}
-
-.light-note-row-meta {
-  color: var(--home-shell-text-muted);
-  font-size: 13px;
-  line-height: 1.18;
+.light-note-row-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .light-note-pin-button {
@@ -4012,6 +4174,75 @@ button {
 
 .light-reminder-row.delivery-snoozed .light-reminder-time {
   color: #a36411;
+}
+
+.light-reminder-list-section {
+  display: grid;
+  gap: 12px;
+}
+
+.light-reminder-detail-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.light-reminder-detail-identity {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.light-reminder-detail-identity .light-graph-icon {
+  width: 48px;
+  height: 48px;
+}
+
+.light-reminder-detail-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.light-reminder-detail-eyebrow {
+  color: var(--home-shell-text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 760;
+}
+
+.light-reminder-detail-title {
+  min-width: 0;
+  color: var(--home-shell-text);
+  font-size: 22px;
+  line-height: 1.08;
+  font-weight: 840;
+}
+
+.light-reminder-detail-summary {
+  margin: 0;
+  color: var(--home-shell-text-muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.light-reminder-detail-card .light-reminder-actions {
+  margin-top: 0;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.light-reminder-detail-card .light-reminder-dismiss,
+.light-reminder-detail-card .light-reminder-snooze {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.light-reminder-channels-section .light-info-row .light-text-stack > span:last-child {
+  color: color-mix(in srgb, var(--home-shell-text-muted) 82%, transparent);
 }
 
 .light-reminder-history-divider {
@@ -4396,6 +4627,26 @@ button {
   flex-wrap: nowrap;
 }
 
+.light-calendar-strip-nav {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.light-calendar-strip-nav-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--surface-control) 92%, white 8%);
+  color: var(--home-shell-text);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 820;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-text) 10%, var(--home-shell-border));
+}
+
 .light-date-input-wrap {
   display: flex;
   align-items: center;
@@ -4428,10 +4679,15 @@ button {
 .light-calendar-day-strip {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(54px, 1fr);
+  grid-auto-columns: 58px;
   gap: 8px;
   overflow-x: auto;
-  padding: 2px 0 4px;
+  padding: 2px max(0px, calc((100% - 58px) / 2)) 4px;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: calc(50% - 29px);
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
   scrollbar-width: none;
 }
 
@@ -4440,12 +4696,13 @@ button {
 }
 
 .light-calendar-day-chip {
-  min-width: 0;
+  min-width: 58px;
   padding: 8px 4px 8px;
   border-radius: 18px;
   display: grid;
   justify-items: center;
   gap: 6px;
+  scroll-snap-align: center;
   text-align: center;
   color: var(--home-shell-text);
   background: color-mix(in srgb, var(--home-shell-card) 88%, white 12%);
@@ -4556,27 +4813,32 @@ button {
   gap: 8px;
 }
 
-.light-calendar-cluster-label {
-  margin: 0;
-  color: var(--home-shell-text-subtle);
-  font-size: 11px;
-  line-height: 1.2;
-  font-weight: 780;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.settings-selector-overlay.calendar-settings-overlay {
+  place-items: end stretch;
+  padding: 0;
 }
 
-.calendar-settings-sheet {
+.calendar-settings-panel {
+  width: 100%;
+  min-height: var(--viewport-safe-h);
+  max-height: var(--viewport-safe-h);
   display: grid;
-  gap: 16px;
-  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  grid-template-rows: auto minmax(0, 1fr);
+  border-radius: 28px 28px 0 0;
+  background: var(--surface-sheet);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
 }
 
-.calendar-settings-sheet-header {
+.calendar-settings-panel-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding: calc(18px + env(safe-area-inset-top)) 18px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-sheet) 96%, white 4%);
 }
 
 .calendar-settings-sheet-copy {
@@ -4610,9 +4872,136 @@ button {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 24%, var(--home-shell-border));
 }
 
-.calendar-settings-sheet-body {
+.calendar-settings-panel-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 16px 18px calc(22px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.calendar-settings-panel-body::-webkit-scrollbar {
+  display: none;
+}
+
+.calendar-settings-panel .settings-native-select-card {
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.calendar-settings-panel .settings-native-select-control {
+  width: 100%;
+  grid-column: 1 / -1;
+  justify-self: stretch;
+}
+
+.calendar-settings-panel .settings-native-select-meta {
+  text-align: left;
+}
+
+.calendar-settings-card {
   display: grid;
   gap: 12px;
+  padding: 16px 18px 18px;
+  border-radius: 22px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.calendar-settings-card-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 18px;
+  line-height: 1.08;
+  font-weight: 820;
+}
+
+.calendar-settings-card-detail {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.calendar-type-filter-list {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-type-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.calendar-type-filter-copy {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.calendar-type-filter-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.calendar-type-filter-dot.red { background: #ff6b5f; }
+.calendar-type-filter-dot.blue { background: #28a6f7; }
+.calendar-type-filter-dot.green { background: #65dd38; }
+.calendar-type-filter-dot.amber { background: #c28d70; }
+.calendar-type-filter-dot.purple { background: #c06be6; }
+.calendar-type-filter-dot.slate { background: #8a95a8; }
+
+.calendar-type-filter-label {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.calendar-type-filter-toggle {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-primary);
+}
+
+@media (min-width: 768px) {
+  .light-calendar-strip-nav {
+    display: inline-flex;
+  }
+
+  .settings-selector-overlay.calendar-settings-overlay {
+    place-items: center;
+    padding: 24px;
+  }
+
+  .calendar-settings-panel {
+    min-height: auto;
+    max-height: min(78vh, 720px);
+    max-width: 760px;
+    border-radius: 28px;
+  }
+
+  .calendar-settings-panel .settings-native-select-card {
+    grid-template-columns: 48px minmax(0, 1fr) minmax(180px, 220px);
+  }
+
+  .calendar-settings-panel .settings-native-select-control {
+    width: min(44vw, 188px);
+    grid-column: auto;
+    justify-self: end;
+  }
+
+  .calendar-settings-panel .settings-native-select-meta {
+    text-align: right;
+  }
 }
 
 .light-event-topline {
@@ -4689,6 +5078,19 @@ button {
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
 }
 
+.app-shell[data-theme="dark"] .calendar-settings-panel {
+  background: #0e1520;
+}
+
+.app-shell[data-theme="dark"] .calendar-settings-panel-header {
+  background: color-mix(in srgb, #0e1520 94%, white 6%);
+}
+
+.app-shell[data-theme="dark"] .calendar-settings-card {
+  background: #161f2a;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .light-event-attendees {
   display: flex;
   align-items: center;
@@ -4699,6 +5101,76 @@ button {
 .light-document-page {
   gap: 14px;
   padding-bottom: 96px;
+}
+
+.light-calendar-detail-section {
+  display: grid;
+  gap: 10px;
+}
+
+.light-calendar-detail-card {
+  display: grid;
+  gap: 0;
+  border-radius: 22px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.app-shell[data-theme="dark"] .light-calendar-detail-card {
+  background: #161f2a;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.light-calendar-detail-row {
+  display: grid;
+  gap: 8px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.light-calendar-detail-row:first-child {
+  border-top: 0;
+}
+
+.light-calendar-detail-row-label {
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+
+.light-calendar-detail-row-value {
+  color: var(--text-muted-strong);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.light-calendar-detail-people {
+  display: grid;
+  gap: 10px;
+}
+
+.light-calendar-detail-people .light-attendee-chip-cloud {
+  justify-content: flex-start;
+}
+
+.light-calendar-detail-guest-list {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.app-shell[data-theme="dark"] .light-calendar-detail-row-label,
+.app-shell[data-theme="dark"] .calendar-type-filter-label {
+  color: #f5f8ff;
+}
+
+.app-shell[data-theme="dark"] .light-calendar-detail-row-value,
+.app-shell[data-theme="dark"] .light-calendar-detail-guest-list {
+  color: #b6c2d3;
 }
 
 .light-doc-article {
@@ -4882,13 +5354,27 @@ button {
 }
 
 .light-task-filter-button {
-  min-height: 34px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 12px 0 10px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 760;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 92%, transparent);
   gap: 10px;
+}
+
+.light-task-filter-button-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--accent-primary) 82%, var(--home-shell-text));
+}
+
+.light-task-filter-button-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .light-task-filter-button-copy {
@@ -5011,31 +5497,18 @@ button {
   min-height: 64px;
   width: 100%;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
   gap: 11px;
   padding: 12px 14px;
-  text-align: left;
   color: inherit;
-  font: inherit;
-  border: 0;
   background: transparent;
-  appearance: none;
-  -webkit-appearance: none;
-  touch-action: manipulation;
-  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
 }
 
 .light-task-row + .light-task-row {
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
-}
-
-.light-task-row:active {
-  transform: scale(0.995);
-  background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
 }
 
 .light-task-row.is-pressed {
@@ -5043,9 +5516,44 @@ button {
   background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
 }
 
-.light-task-row:focus-visible {
+.light-task-row:focus-within {
   outline: 2px solid var(--accent-primary);
   outline-offset: -1px;
+}
+
+.light-task-row-status-trigger,
+.light-task-row-main {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.light-task-row-status-trigger {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.light-task-row-main {
+  min-height: 40px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
 .light-task-row-copy {
@@ -5368,6 +5876,23 @@ button {
   margin-top: 1px;
 }
 
+.light-task-status-circle-trigger {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  align-self: start;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .light-task-detail-copy {
   min-width: 0;
   display: grid;
@@ -5455,49 +5980,109 @@ button {
 
 .light-detail-html-body.light-html-card,
 .light-detail-html-body.light-html-empty {
+  width: 100%;
+  max-width: 100%;
   margin-top: -4px;
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .light-detail-html-body.light-html-card {
-  width: calc(100% + 40px);
-  margin-left: -20px;
-  margin-right: -20px;
   border-radius: 0;
 }
 
 .light-detail-html-body.light-html-card .light-html-frame {
+  width: 100%;
   min-height: min(68vh, 720px);
 }
 
 .light-detail-html-body.light-html-empty {
-  width: calc(100% + 40px);
-  margin-left: -20px;
-  margin-right: -20px;
   padding-top: 0;
-  padding-left: 20px;
-  padding-right: 20px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .light-task-status-control {
   grid-column: 1 / -1;
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
   margin-top: 2px;
 }
 
-.light-task-status-control .light-pill {
-  min-height: 34px;
-  padding: 0 14px;
+.light-task-status-trigger {
+  min-height: 38px;
+  padding: 0 12px 0 10px;
   border-radius: 999px;
   box-shadow: none;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
 }
 
+.light-task-status-trigger-icon,
+.light-task-status-trigger-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.light-task-status-trigger-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.light-task-status-trigger-icon .light-check-circle {
+  width: 20px;
+  height: 20px;
+}
+
+.light-task-status-trigger-copy {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.light-task-status-trigger-label {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.light-task-status-trigger-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--home-shell-text-subtle);
+}
+
+.light-task-status-trigger-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.light-task-people-card,
 .light-task-checklist-card,
 .light-task-attachment-card {
   display: grid;
   gap: 8px;
   padding: 10px 12px;
+}
+
+.light-task-person-row {
+  display: grid;
+  gap: 8px;
+}
+
+.light-task-person-row + .light-task-person-row {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 78%, transparent);
+  padding-top: 8px;
+}
+
+.light-task-person-label {
+  color: var(--home-shell-text-subtle);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 780;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .light-task-checklist-row {
@@ -5549,13 +6134,39 @@ button {
 }
 
 .light-task-chip-cloud .light-attendee-chip {
-  min-height: 30px;
+  min-height: 32px;
   font-size: 12px;
 }
 
 .light-record-chip {
   gap: 7px;
   padding: 0 11px 0 8px;
+}
+
+.light-task-chip-cloud .light-record-chip,
+.light-task-people-card .light-record-chip {
+  min-height: 34px;
+  color: var(--home-shell-text);
+  background: color-mix(in srgb, var(--home-shell-card-strong) 94%, white 6%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 88%, transparent);
+}
+
+.app-shell[data-theme="dark"] .light-task-chip-cloud .light-record-chip,
+.app-shell[data-theme="dark"] .light-task-people-card .light-record-chip {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 90%, #111827 10%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"] { --task-chip-accent: #ff5b52; }
+.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="contact"],
+.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"] { --task-chip-accent: #f43f68; }
+.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"] { --task-chip-accent: #0f9fb8; }
+.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"] { --task-chip-accent: #f2a000; }
+
+.light-task-chip-cloud .light-record-chip .light-record-chip-icon,
+.light-task-people-card .light-record-chip .light-record-chip-icon {
+  color: var(--task-chip-accent, color-mix(in srgb, var(--accent-primary) 78%, var(--home-shell-text)));
+  background: color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .light-record-chip-icon {

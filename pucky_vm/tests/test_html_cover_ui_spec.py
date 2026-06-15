@@ -151,16 +151,31 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "const snapshot = popLightRouteHistory();" in light_back
     assert "return restoreLightRouteSnapshot(snapshot);" in light_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
-    assert 'lightCalendarEventChips(event, { fromRoute: "calendar" })' in light_event_block
+    assert 'lightCalendarEventChips(event, { fromRoute: "calendar", contactsOnly: true })' in light_event_block
     assert 'limit: 2' not in light_event_block
+    assert "light-event-summary" not in light_event_block
     light_gap = function_block(app, "lightCalendarGap")
     assert 'Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}' in light_gap
     assert "Long break" not in light_gap
+    light_cluster = function_block(app, "lightCalendarCluster")
+    assert "Busy window" not in light_cluster
     light_meeting_detail = function_block(app, "lightMeetingDetailPage")
     assert 'lightDocumentEyebrow("Calendar event"' not in light_meeting_detail
     assert 'el("h1", "", meeting.title || "Untitled event")' not in light_meeting_detail
-    assert 'light-event-detail-label' in light_meeting_detail
+    assert "lightCalendarEventDetailsSection(meeting, attendees)" in light_meeting_detail
+    assert 'page.append(lightCopySection("Description", meeting.summary));' in light_meeting_detail
+    assert light_meeting_detail.index("lightCalendarEventDetailsSection(meeting, attendees)") < light_meeting_detail.index('lightCopySection("Description", meeting.summary)')
+    assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
+    assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
+    assert 'who.dataset.detailRow = "who";' in app
+    assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
+    assert 'light-attendee-chip-cloud' in app
+    assert "calendarEventTypeFiltersCard()" in app
+    assert 'const sheet = el("section", "settings-selector-sheet calendar-settings-panel");' in app
+    assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
+    assert 'return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;' in app
+    assert 'localStorage.setItem("pucky.cover.calendar_type_filters.v1"' in app
     assert 'openWorkspaceTarget(row.target, state.route)' in light_info_section
     assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
@@ -199,6 +214,13 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert "overflow-y: visible;" in styles
     assert ".light-page-header-shell {\n  position: sticky;" in styles
     assert ".light-date-picker {\n  position: sticky;" in styles
+    assert ".light-calendar-strip-nav-button" in styles
+    assert "grid-auto-columns: 58px;" in styles
+    assert "scroll-snap-type: x proximity;" in styles
+    assert ".settings-selector-overlay.calendar-settings-overlay" in styles
+    assert ".calendar-settings-panel" in styles
+    assert ".calendar-type-filter-row" in styles
+    assert ".light-calendar-detail-card" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
@@ -270,9 +292,15 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     toggle_audio = function_block(app, "toggleAudio")
     audio_control_key = function_block(app, "audioControlKey")
     current_strip_kind = function_block(app, "currentTileAudioStripKind")
+    is_audio_detail_open = function_block(app, "isAudioDetailOpen")
     sync_probe = function_block(app, "syncAudioProbeFromPlayerState")
     audio_tile_status = function_block(app, "audioTileStatus")
     confirm_playback = function_block(app, "confirmAudioProbePlaybackStart")
+    tile_audio_label = function_block(app, "tileAudioLabel")
+    tile_audio_meta = function_block(app, "tileAudioMeta")
+    current_player_position = function_block(app, "currentPlayerPositionMs")
+    playback_position = function_block(app, "playbackPositionForCard")
+    should_animate = function_block(app, "shouldAnimateActiveTileAudio")
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
@@ -299,6 +327,20 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'const strip = el("div", `tile-audio-strip is-${phase} is-${runtime}`);' in audio_tile_status
     assert 'setDataAttribute(strip, "data-strip-kind", stripKind);' in audio_tile_status
     assert 'const progress = el("span", "tile-audio-progress");' in audio_tile_status
+    assert "Browser preview active" in tile_audio_label
+    assert "Audio playing" in tile_audio_label
+    assert 'return "Browser preview only.";' in tile_audio_meta
+    assert 'const shouldRenderStrip = !(runtime === "browser_stub" && phase === "playing_confirmed" && stripKind === "status");' in audio_tile_status
+    assert "if (shouldRenderStrip) {" in audio_tile_status
+    assert 'return currentPlayerPositionMs(state.player);' in playback_position
+    assert 'const base = Math.max(0, Number(player?.position_ms || 0));' in current_player_position
+    assert 'const observedAtMs = Math.max(0, Number(player?.observed_at_ms || 0));' in current_player_position
+    assert 'return duration > 0 ? Math.min(duration, live) : live;' in current_player_position
+    assert 'const panel = document.getElementById("detail");' in is_audio_detail_open
+    assert 'return Boolean(panel?.classList.contains("is-open") && panel.getAttribute("data-detail-type") === "audio");' in is_audio_detail_open
+    assert 'if (!state.activePath || !state.player.is_playing) {' in should_animate
+    assert 'if (audioRuntimeMode() !== "native_bridge" || Number(state.player.duration_ms || 0) <= 0) {' in should_animate
+    assert 'const detailCard = currentDetailAudioCard();' in should_animate
 
 
 def test_tile_audio_styles_use_truthful_status_strip_instead_of_waveform_default() -> None:
@@ -329,6 +371,46 @@ def test_tile_audio_styles_use_truthful_status_strip_instead_of_waveform_default
     assert "@keyframes tile-audio-strip-sweep" in styles
 
 
+def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> None:
+    app = read("app.js")
+    render_fn = function_block(app, "render")
+    show_transcript = function_block(app, "showTranscript")
+    show_rich_page = function_block(app, "showRichPage")
+    show_image_reel = function_block(app, "showImageReel")
+    show_video_attachment = function_block(app, "showVideoAttachment")
+    show_audio_attachment = function_block(app, "showAudioAttachment")
+    show_document_attachment = function_block(app, "showDocumentAttachment")
+    open_side_detail = function_block(app, "openSideDetail")
+    current_detail_audio_card = function_block(app, "currentDetailAudioCard")
+    detail_audio_continuity = function_block(app, "detailAudioContinuity")
+    render_detail_audio_continuity = function_block(app, "renderDetailAudioContinuity")
+
+    assert "renderDetailAudioContinuity();" in render_fn
+    assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });' in show_transcript
+    assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null });' in show_rich_page
+    assert 'openSideDetail(panel, card.title || "Images", content, dismissGallery, { audioCard: hasAudio(card) ? card : null });' in show_image_reel
+    assert 'openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_video_attachment
+    assert 'openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_audio_attachment
+    assert 'openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_document_attachment
+    assert "function openSideDetail(panel, title, content, onDismiss, options = {}) {" in app
+    assert 'const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;' in open_side_detail
+    assert "if (audioCard) {" in open_side_detail
+    assert "shell.append(detailAudioContinuity(audioCard));" in open_side_detail
+    assert "const detail = normalizeNavDetail(state.navDetail);" in current_detail_audio_card
+    assert "const card = resolveNavDetailCard(detail);" in current_detail_audio_card
+    assert "return card && hasAudio(card) ? card : null;" in current_detail_audio_card
+    assert 'const section = el("section", "detail-audio-continuity");' in detail_audio_continuity
+    assert 'copy.append(el("div", "detail-audio-continuity-kicker", runtime === "browser_stub" ? "Browser preview" : "Tile audio"));' in detail_audio_continuity
+    assert 'copy.append(el("div", "detail-audio-continuity-title", card.title || "Audio"));' in detail_audio_continuity
+    assert "copy.append(audioTileStatus(card));" in detail_audio_continuity
+    assert 'const toggle = el("button", "detail-audio-action detail-audio-action-primary",' in detail_audio_continuity
+    assert "void toggleAudio(card);" in detail_audio_continuity
+    assert 'const open = el("button", "detail-audio-action", "Open audio controls");' in detail_audio_continuity
+    assert "open.addEventListener(\"click\", () => showAudioDetail(card));" in detail_audio_continuity
+    assert 'const existing = panel.querySelector(".detail-audio-continuity");' in render_detail_audio_continuity
+    assert "existing.replaceWith(detailAudioContinuity(card));" in render_detail_audio_continuity
+
+
 def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:
     app = read("app.js")
     focus_card = function_block(app, "uiDebugFocusCard")
@@ -346,11 +428,15 @@ def test_detail_shell_inherits_shared_light_header_column_gutter_contract() -> N
     styles = read("styles.css")
 
     detail_shell = css_block(styles, ".detail-shell")
+    detail_content = css_block(styles, ".detail-content")
     detail_body = css_block(styles, ".detail-content-inner")
 
     assert "--light-shell-column-max: 520px;" in detail_shell
     assert "--light-shell-column-padding: 20px;" in detail_shell
     assert "padding-bottom: var(--safe-area-bottom-pad);" in detail_shell
+    assert "overflow-x: hidden;" in detail_shell
+    assert "overflow-y: auto;" in detail_content
+    assert "touch-action: pan-y;" in detail_content
     assert "max-width: var(--light-shell-column-max);" in detail_body
     assert "padding: 16px var(--light-shell-column-padding) 0;" in detail_body
 
@@ -366,40 +452,79 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
 
     light_notes = function_block(app, "lightNotesPage")
     light_notes_section = function_block(app, "lightNotesSection")
+    light_notes_section_header = function_block(app, "lightNotesSectionHeader")
     note_timestamp = function_block(app, "noteContentUpdatedAtMs")
+    note_timestamp_label = function_block(app, "noteTimestampLabel")
+    note_source = function_block(app, "noteSourceLabel")
+    note_meta = function_block(app, "noteMetaLine")
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
     toggle_note_pin = function_block(app, "toggleNotePin")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
     notes_feed_block = css_block(styles, ".light-notes-feed")
+    notes_section_header_block = css_block(styles, ".light-notes-section-header")
     note_row_block = css_block(styles, ".light-note-row")
     note_row_divider_block = css_block(styles, ".light-note-row + .light-note-row")
+    note_row_meta_block = css_block(styles, ".light-note-row-meta")
+    note_row_context_block = css_block(styles, ".light-note-row-context")
+    note_row_time_block = css_block(styles, ".light-note-row-time")
     note_pin_button_block = css_block(styles, ".light-note-pin-button")
     note_pin_icon_block = css_block(styles, ".light-note-pin-button .material-icon")
-    note_detail_html_block = css_block(styles, ".light-note-detail-page .light-detail-html-body.light-card")
+    detail_html_shared_match = re.search(r"\.light-detail-html-body\.light-html-card,\s*\.light-detail-html-body\.light-html-empty\s*\{(?P<body>.*?)\n\}", styles, re.S)
+    assert detail_html_shared_match, "Missing shared detail HTML body block"
+    detail_html_shared_block = detail_html_shared_match.group("body")
+    detail_html_card_block = css_block(styles, ".light-detail-html-body.light-html-card")
+    detail_html_empty_block = css_block(styles, ".light-detail-html-body.light-html-empty")
 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
+    assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
     assert 'page.classList.add("light-notes-page");' in light_notes
     assert 'const feedWrap = el("div", "light-notes-feed");' in light_notes
-    assert 'feedWrap.append(lightNotesSection("Pinned", pinned));' in light_notes
-    assert 'feedWrap.append(lightNotesSection("Recent", notes.filter(note => !note.pinned)));' in light_notes
+    assert 'feedWrap.append(lightNotesSection("Pinned", "pinned", pinned));' in light_notes
+    assert 'feedWrap.append(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));' in light_notes
     assert 'page.append(feedWrap);' in light_notes
     assert 'const section = el("section", "light-notes-section");' in light_notes_section
-    assert 'notes.forEach(note => section.append(lightNoteRow(note)));' in light_notes_section
+    assert "section.dataset.notesSection = sectionKey;" in light_notes_section
+    assert "const expanded = noteSectionExpanded(sectionKey);" in light_notes_section
+    assert 'const body = el("div", "light-notes-section-body");' in light_notes_section
+    assert "body.hidden = !expanded;" in light_notes_section
+    assert "section.append(lightNotesSectionHeader(title, sectionKey, notes.length, expanded, bodyId));" in light_notes_section
+    assert "if (expanded) {" in light_notes_section
+    assert "notes.forEach(note => body.append(lightNoteRow(note)));" in light_notes_section
+    assert 'const button = el("button", "light-notes-section-header");' in light_notes_section_header
+    assert "button.type = \"button\";" in light_notes_section_header
+    assert "button.dataset.notesSection = sectionKey;" in light_notes_section_header
+    assert 'button.setAttribute("aria-expanded", String(expanded));' in light_notes_section_header
+    assert 'button.setAttribute("aria-controls", controlsId);' in light_notes_section_header
+    assert 'iconSvg(expanded ? "expand_more" : "chevron_right")' in light_notes_section_header
+    assert "event.stopPropagation();" in light_notes_section_header
 
+    assert "return workspaceTimestamp(noteContentUpdatedAtMs(note));" in note_timestamp_label
+    assert 'const raw = String(note?.metadata?.context || "").trim();' in note_source
+    assert 'normalized === "notes"' in note_source
+    assert 'normalized === "all notes"' in note_source
+    assert 'return {' in note_meta
+    assert "source: noteSourceLabel(note)" in note_meta
+    assert "timestamp: noteTimestampLabel(note)" in note_meta
     assert 'const row = el("div", "light-note-row");' in note_row
     assert 'row.setAttribute("role", "button");' in note_row
     assert "row.tabIndex = 0;" in note_row
     assert 'row.dataset.notePinned = String(Boolean(note.pinned));' in note_row
+    assert 'row.dataset.noteHasSource = String(Boolean(meta.source));' in note_row
     assert "row.append(lightSmallIcon(" not in note_row
     assert 'const meta = noteMetaLine(note);' in note_row
     assert 'note.pinned ? `Pinned${DOT}` : ""' not in note_row
     assert 'const copy = el("span", "light-note-feed-copy");' in note_row
-    assert 'copy.append(el("strong", "", note.title));' in note_row
-    assert 'copy.append(el("span", "light-note-row-meta", meta));' in note_row
+    assert 'copy.append(el("strong", "", note.title || "Untitled note"));' in note_row
+    assert "light-note-summary" not in note_row
+    assert 'const metaRow = el("span", "light-note-row-meta");' in note_row
+    assert "if (meta.source) {" in note_row
+    assert 'metaRow.append(el("span", "light-note-row-context", meta.source));' in note_row
+    assert 'metaRow.classList.add("is-time-only");' in note_row
+    assert 'metaRow.append(el("span", "light-note-row-time", meta.timestamp));' in note_row
     assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
     assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
     assert "void toggleNotePin(note.id);" in note_row
@@ -412,22 +537,47 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));' in note_detail
 
     assert 'const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });' in app
+    assert 'const previousNotesSectionsExpanded = { ...state.notesSectionsExpanded };' in toggle_note_pin
+    assert 'setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);' in toggle_note_pin
     assert "bucket.items = nextPinned" in toggle_note_pin
     assert "bucket.items = previousItems;" in toggle_note_pin
     assert "bucket.error = previousError;" in toggle_note_pin
+    assert "state.notesSectionsExpanded = previousNotesSectionsExpanded;" in toggle_note_pin
     assert "overflow-x: hidden;" in feed_block
     assert "overscroll-behavior-x: none;" in feed_block
     assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" not in header_block
     assert "margin-left: calc(-1 * var(--app-shell-side-pad));" not in header_block
     assert "margin-right: calc(-1 * var(--app-shell-side-pad));" not in header_block
 
-    assert "min-height: 88px;" in note_row_block
-    assert "padding: 14px 0;" in note_row_block
+    assert "min-height: 74px;" in note_row_block
+    assert "padding: 12px 0;" in note_row_block
     assert "grid-template-columns: minmax(0, 1fr) auto;" in note_row_block
     assert "display: flex;" in notes_feed_block
     assert "flex-direction: column;" in notes_feed_block
+    assert "width: 100%;" in notes_section_header_block
+    assert "background: transparent;" in notes_section_header_block
+    assert "justify-content: space-between;" in notes_section_header_block
     assert "border-top:" in note_row_divider_block
+    assert "display: flex;" in note_row_meta_block
+    assert "gap: 10px;" in note_row_meta_block
+    assert "overflow: hidden;" in note_row_context_block
+    assert "text-overflow: ellipsis;" in note_row_context_block
+    assert "margin-left: auto;" in note_row_time_block
+    assert "white-space: nowrap;" in note_row_time_block
     assert "width: 36px;" in note_pin_button_block
+    assert "height: 36px;" in note_pin_button_block
+    assert "background: transparent;" in note_pin_button_block
+    assert "border: 0;" in note_pin_button_block
+    assert "width: 16px;" in note_pin_icon_block
+    assert "height: 16px;" in note_pin_icon_block
+    assert "width: 100%;" in detail_html_shared_block
+    assert "margin-left: 0;" in detail_html_shared_block
+    assert "margin-right: 0;" in detail_html_shared_block
+    assert "calc(100% + 40px)" not in detail_html_shared_block
+    assert "margin-left: -20px;" not in detail_html_shared_block
+    assert "width: 100%;" in detail_html_empty_block
+    assert "padding-left: 0;" in styles
+    assert "padding-right: 0;" in styles
     assert "height: 36px;" in note_pin_button_block
     assert "background: transparent;" in note_pin_button_block
     assert "border: 0;" in note_pin_button_block
@@ -436,9 +586,6 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "width: 16px;" in note_pin_icon_block
     assert "height: 16px;" in note_pin_icon_block
     assert '.light-note-pin-button[data-note-pinned="true"]' in styles
-    assert "background: transparent;" in note_detail_html_block
-    assert "border: 0;" in note_detail_html_block
-    assert "box-shadow: none;" in note_detail_html_block
 
 
 def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
@@ -456,7 +603,8 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert "page.append(lightTaskFilters());" in tasks_page
     assert 'title: "Filter tasks"' in task_filters
     assert 'openSettingsSelector({' in task_filters
-    assert 'taskStatusFilterChoices().map(([value, label]) => ({ value, label }))' in task_filters
+    assert 'options: taskStatusFilterChoices().map(([value, label]) => ({' in task_filters
+    assert 'meta: String(counts[value] || 0),' in task_filters
     assert 'button.dataset.taskFilterCurrent = currentKey;' in task_filters
     assert 'light-task-filter-button' in task_filters
     assert 'light-task-filter-button-chevron' in task_filters
@@ -476,44 +624,59 @@ def test_tasks_use_title_only_rows_owner_ready_details_and_reset_scroll_on_open(
     styles = read("styles.css")
 
     task_group = function_block(app, "lightTaskGroup")
-    task_detail_rows = function_block(app, "taskDetailRows")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
+    task_people_section = function_block(app, "lightTaskPeopleSection")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
 
     assert 'el("span", "light-task-row-summary"' not in task_group
     assert "function taskRowSummary" not in app
     assert "function taskOwners(task)" in app
-    assert 'const owners = taskOwners(task).filter(name => name !== createdBy);' in task_detail_rows
-    assert 'label: owners.length === 1 ? "Owner" : "Owners"' in task_detail_rows
-    assert 'accentKey: "contacts"' in task_detail_rows
+    assert 'const owner = taskPrimaryOwner(task);' in task_people_section
+    assert 'datasetRole: "owner"' in task_people_section
+    assert 'role: "Owner"' in task_people_section
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert "resetLightRouteScroll();" in light_navigate
-    assert 'restoreScrollPosition(document.getElementById("feed"), 0)' in reset_scroll
+    assert "restoreScrollPosition(feed, 0);" in reset_scroll
     assert ".light-record-chip-icon" in styles
     assert "background: color-mix(in srgb, currentColor 14%, transparent);" in styles
 
 
 def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     app = read("app.js")
+    styles = read("styles.css")
     reminders_page = function_block(app, "lightRemindersPage")
+    reminder_active = function_block(app, "reminderIsActive")
     reminder_row = function_block(app, "lightReminderRow")
     reminder_detail = function_block(app, "lightReminderDetailPage")
+    reminder_detail_card = function_block(app, "lightReminderDetailCard")
     recipient_name = function_block(app, "reminderRecipientDisplayName")
     recipient_rows = function_block(app, "reminderRecipientRows")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "const active = reminders.filter(reminder => reminderIsActive(reminder));" in reminders_page
+    assert "const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));" in reminders_page
+    assert 'page.append(lightReminderListSection("", active, "active"));' in reminders_page
+    assert 'page.append(lightReminderListSection("Snoozed", snoozed, "snoozed"));' in reminders_page
     assert "light-reminder-history" not in reminders_page
+    assert "&& !reminderIsSnoozed(reminder)" in reminder_active
     assert "lightSmallIcon(\"bell\", \"reminders\")" in reminder_row
     assert "light-graph-chip-row" not in reminder_row
+    assert 'const page = lightPage("Reminder", { detail: true });' in reminder_detail
+    assert "page.append(lightReminderDetailCard(reminder));" in reminder_detail
+    assert 'page.append(lightReminderActionRow(reminder));' not in reminder_detail
+    assert 'el("h1", "", reminder.title)' not in reminder_detail
+    assert 'lightReminderActionRow(reminder)' in reminder_detail_card
+    assert 'el("p", "light-reminder-detail-summary", summary)' in reminder_detail_card
     assert 'page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));' in reminder_detail
     assert 'page.append(lightInfoSection("Recipients", recipientRows));' in reminder_detail
-    assert 'page.append(lightInfoSection("Channels", destinationRows));' in reminder_detail
+    assert 'channels.classList.add("light-reminder-channels-section");' in reminder_detail
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' in reminder_detail
     assert "lightHtmlDocument(reminder" not in reminder_detail
     assert 'const me = workspaceRecordByKind("contact", SELF_CONTACT_ID);' in recipient_name
     assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
+    assert ".light-reminder-detail-card" in styles
+    assert ".light-reminder-channels-section" in styles
 
 
 def test_contacts_expose_preserved_me_contact_without_detail_edit_action() -> None:
