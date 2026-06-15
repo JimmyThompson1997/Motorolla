@@ -148,6 +148,16 @@ def test_cache_busted_url_appends_or_replaces_refresh_key() -> None:
     )
 
 
+def test_parse_args_defaults_broker_to_official_vm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PUCKY_BROKER_URL", raising=False)
+    monkeypatch.delenv("PUCKY_OPERATOR_TOKEN", raising=False)
+    monkeypatch.delenv("PUCKY_API_TOKEN", raising=False)
+
+    args = official.parse_args(["--target", "phone", "--device-id", "proof-phone"])
+
+    assert args.broker == official.DEFAULT_VM_BASE_URL
+
+
 def test_validate_emulator_evidence_rejects_mismatch(tmp_path: Path) -> None:
     local = {"head": "abcdef", "head_short": "abcdef0"}
     remote = {

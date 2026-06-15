@@ -53,7 +53,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     parser.add_argument("--canonical-root", type=Path, default=CANONICAL_REPO_ROOT, help=argparse.SUPPRESS)
     parser.add_argument("--adb", type=Path, default=Path(r"C:\Users\jimmy\Desktop\Android\tools\android-sdk\platform-tools\adb.exe"), help=argparse.SUPPRESS)
-    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL") or "https://pucky-bridge-dev-jt323.fly.dev", help=argparse.SUPPRESS)
+    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL") or official_html.DEFAULT_VM_BASE_URL, help=argparse.SUPPRESS)
     parser.add_argument("--puckyctl", type=Path, default=ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py", help=argparse.SUPPRESS)
     parser.add_argument("--node", type=Path, default=proof.bundled_node_executable(), help=argparse.SUPPRESS)
     parser.add_argument("--node-modules", type=Path, default=proof.bundled_node_modules(), help=argparse.SUPPRESS)

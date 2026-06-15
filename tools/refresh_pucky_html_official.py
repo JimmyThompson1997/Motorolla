@@ -481,7 +481,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target", choices=("emulator", "phone"), required=True)
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", ""))
     parser.add_argument("--adb-serial", default=os.environ.get("PUCKY_ADB_SERIAL", ""))
-    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", "https://pucky-bridge-dev-jt323.fly.dev"))
+    parser.add_argument("--broker", default=os.environ.get("PUCKY_BROKER_URL", DEFAULT_VM_BASE_URL))
     parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--vm-base-url", default=DEFAULT_VM_BASE_URL)
     parser.add_argument("--bundle-url", default="")

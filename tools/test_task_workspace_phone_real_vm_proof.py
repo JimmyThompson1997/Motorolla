@@ -58,6 +58,16 @@ def test_load_browser_summary_requires_green_task_proof(tmp_path: Path) -> None:
         phone_proof.load_browser_summary(make_browser_summary(tmp_path, ok=False))
 
 
+def test_parse_args_defaults_broker_to_official_vm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("PUCKY_BROKER_URL", raising=False)
+    monkeypatch.delenv("PUCKY_OPERATOR_TOKEN", raising=False)
+    monkeypatch.delenv("PUCKY_API_TOKEN", raising=False)
+
+    args = phone_proof.parse_args(["--browser-summary", str(make_browser_summary(tmp_path))])
+
+    assert args.broker == phone_proof.official_html.DEFAULT_VM_BASE_URL
+
+
 def test_load_seed_manifest_reads_path_from_browser_summary(tmp_path: Path) -> None:
     seed = load_seed(tmp_path)
 
