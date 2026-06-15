@@ -1482,6 +1482,116 @@ button {
   color: var(--accent, #72c2ff);
 }
 
+.action-audio.is-busy {
+  color: color-mix(in srgb, var(--accent, #72c2ff) 76%, var(--text-muted-strong));
+}
+
+.action-audio.is-failed {
+  color: #ff8f7c;
+}
+
+.tile-audio-status {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tile-audio-status-label {
+  color: color-mix(in srgb, var(--text-primary) 84%, var(--text-muted-strong));
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.tile-audio-status-meta {
+  color: var(--text-subtle);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tile-audio-strip {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent, #72c2ff) 14%, var(--surface-control));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #72c2ff) 20%, transparent);
+}
+
+.tile-audio-strip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+}
+
+.tile-audio-strip.is-starting::after,
+.tile-audio-strip.is-pause_pending::after {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--accent, #72c2ff) 56%, transparent) 24%,
+    color-mix(in srgb, var(--accent, #72c2ff) 82%, transparent) 50%,
+    color-mix(in srgb, var(--accent, #72c2ff) 56%, transparent) 76%,
+    transparent 100%
+  );
+  background-size: 180% 100%;
+  animation: tile-audio-strip-sweep 1.15s linear infinite;
+}
+
+.tile-audio-strip.is-playing_confirmed::after {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent, #72c2ff) 52%, transparent),
+    color-mix(in srgb, var(--accent, #72c2ff) 82%, transparent)
+  );
+}
+
+.tile-audio-strip.is-playing_confirmed[data-strip-kind="progress"]::after {
+  opacity: 0;
+}
+
+.tile-audio-strip.is-start_failed,
+.tile-audio-strip.is-ended_immediately {
+  background: color-mix(in srgb, #ff8f7c 14%, var(--surface-control));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff8f7c 28%, transparent);
+}
+
+.tile-audio-strip.is-start_failed::after,
+.tile-audio-strip.is-ended_immediately::after {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, #ff8f7c 48%, transparent),
+    color-mix(in srgb, #ff8f7c 78%, transparent)
+  );
+}
+
+.tile-audio-progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--progress, 0) * 100%);
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent, #72c2ff) 60%, transparent),
+    color-mix(in srgb, var(--accent, #72c2ff) 92%, transparent)
+  );
+}
+
+@keyframes tile-audio-strip-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -20% 0;
+  }
+}
+
 .wave-row {
   width: 100%;
   height: 32px;

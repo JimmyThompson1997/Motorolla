@@ -233,6 +233,81 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
 
 
+def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
+    app = read("app.js")
+    describe_ui_surface = function_block(app, "describeUiSurface")
+    describe_audio_probe = function_block(app, "describeAudioProbe")
+
+    assert 'if (command === "ui.surface.get") {' in app
+    assert 'if (command === "ui.debug.audio_probe.get") {' in app
+    assert 'bridge_connected: hasNativeAudioBridge()' in app
+    assert "...state.uiSurface," in describe_ui_surface
+    assert 'audio_runtime_mode: audioRuntimeMode()' in describe_ui_surface
+    assert "bridge_connected: hasNativeAudioBridge()," in describe_audio_probe
+    assert 'runtime_mode: audioRuntimeMode()' in describe_audio_probe
+    assert 'active_path: state.activePath || ""' in describe_audio_probe
+    assert 'current_tile_audio_phase: state.audioProbe.current_tile_audio_phase || "idle"' in describe_audio_probe
+    assert "recent_events: Array.isArray(state.audioProbe.recent_events)" in describe_audio_probe
+    assert 'last_error_toast: String(state.audioProbe.last_error_toast || state.lastToast.message || "")' in describe_audio_probe
+
+
+def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default() -> None:
+    app = read("app.js")
+    card_view = function_block(app, "cardView")
+    toggle_audio = function_block(app, "toggleAudio")
+    current_strip_kind = function_block(app, "currentTileAudioStripKind")
+    sync_probe = function_block(app, "syncAudioProbeFromPlayerState")
+    audio_tile_status = function_block(app, "audioTileStatus")
+
+    assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
+    assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
+    assert "body.append(audioTileStatus(card));" in card_view
+    assert 'body.append(el("p", "preview", card.summary || card.transcript || ""));' in card_view
+    assert "waveRow(" not in card_view
+    assert 'recordAudioProbeEvent("click_received"' in toggle_audio
+    assert 'setAudioProbePhase(card, "starting"' in toggle_audio
+    assert 'setAudioProbePhase(card, "pause_pending"' in toggle_audio
+    assert 'setAudioProbeTerminal(card, "start_failed"' in toggle_audio
+    assert 'recordAudioProbeEvent("play_request_start"' in toggle_audio
+    assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
+    assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert 'if (phase !== "playing_confirmed") {' in current_strip_kind
+    assert 'if (audioRuntimeMode() === "native_bridge" && Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {' in current_strip_kind
+    assert 'setAudioProbePhaseByKey(targetKey, "playing_confirmed"' in sync_probe
+    assert 'setAudioProbeTerminalByKey(targetKey, "ended_immediately"' in sync_probe
+    assert 'const strip = el("div", `tile-audio-strip is-${phase} is-${runtime}`);' in audio_tile_status
+    assert 'setDataAttribute(strip, "data-strip-kind", stripKind);' in audio_tile_status
+    assert 'const progress = el("span", "tile-audio-progress");' in audio_tile_status
+
+
+def test_tile_audio_styles_use_truthful_status_strip_instead_of_waveform_default() -> None:
+    styles = read("styles.css")
+    busy_audio = css_block(styles, ".action-audio.is-busy")
+    failed_audio = css_block(styles, ".action-audio.is-failed")
+    tile_status = css_block(styles, ".tile-audio-status")
+    tile_label = css_block(styles, ".tile-audio-status-label")
+    tile_strip = css_block(styles, ".tile-audio-strip")
+    tile_meta = css_block(styles, ".tile-audio-status-meta")
+    tile_progress = css_block(styles, ".tile-audio-progress")
+
+    assert "color-mix(in srgb, var(--accent, #72c2ff) 76%, var(--text-muted-strong))" in busy_audio
+    assert "color: #ff8f7c;" in failed_audio
+    assert "display: grid;" in tile_status
+    assert "margin-top: 6px;" in tile_status
+    assert "font-size: 12px;" in tile_label
+    assert "font-weight: 760;" in tile_label
+    assert "height: 8px;" in tile_strip
+    assert "overflow: hidden;" in tile_strip
+    assert "background: color-mix(in srgb, var(--accent, #72c2ff) 14%, var(--surface-control));" in tile_strip
+    assert "font-size: 11px;" in tile_meta
+    assert "width: calc(var(--progress, 0) * 100%);" in tile_progress
+    assert ".tile-audio-strip.is-starting::after," in styles
+    assert ".tile-audio-strip.is-playing_confirmed::after" in styles
+    assert ".tile-audio-strip.is-playing_confirmed[data-strip-kind=\"progress\"]::after" in styles
+    assert ".tile-audio-strip.is-start_failed," in styles
+    assert "@keyframes tile-audio-strip-sweep" in styles
+
+
 def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:
     app = read("app.js")
     focus_card = function_block(app, "uiDebugFocusCard")

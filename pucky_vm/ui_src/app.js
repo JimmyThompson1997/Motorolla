@@ -2809,6 +2809,7 @@
   function describeAudioProbe() {
     return {
       ...state.audioProbe,
+      bridge_connected: hasNativeAudioBridge(),
       runtime_mode: audioRuntimeMode(),
       active_path: state.activePath || "",
       current_tile_audio_phase: state.audioProbe.current_tile_audio_phase || "idle",
@@ -9190,55 +9191,179 @@
 
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
-    if (state.audioToggleBusyKey === busyKey) {
+    const phaseBefore = currentTileAudioPhase(card);
+    if (state.audioToggleBusyKey === busyKey || ["starting", "pause_pending"].includes(phaseBefore)) {
       return;
     }
+    recordAudioProbeEvent("click_received", {
+      target_key: busyKey,
+      runtime_mode: audioRuntimeMode(),
+      bridge_connected: hasNativeAudioBridge(),
+      phase_before: phaseBefore
+    });
     state.audioToggleBusyKey = busyKey;
+    recordAudioProbeEvent("busy_start", { target_key: busyKey });
+    render();
     try {
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
+      recordAudioProbeEvent("player_state_before_action", {
+        target_key: busyKey,
+        state: String(current?.state || ""),
+        is_playing: Boolean(current?.is_playing),
+        path: String(current?.path || ""),
+        source: String(current?.source || ""),
+        position_ms: Number(current?.position_ms || 0)
+      });
       const same = isSameAudioCard(current, card);
       const sameCompleted = same && isCompletePlayback(current);
+      const sourceInfo = describeAudioSourceForCard(card);
+      const startSpeed = resolvedStartSpeedForCard(card);
       if (same && current.is_playing) {
+        setAudioProbePhase(card, "pause_pending", {
+          reason: "pause_requested",
+          clear_error: true,
+          ...sourceInfo
+        });
+        render();
+        recordAudioProbeEvent("pause_request_start", { target_key: busyKey });
         state.player = await pauseWithRewind(card);
+        recordAudioProbeEvent("pause_request_end", {
+          target_key: busyKey,
+          state: String(state.player?.state || ""),
+          is_playing: Boolean(state.player?.is_playing),
+          position_ms: Number(state.player?.position_ms || 0)
+        });
+        syncAudioProbeFromPlayerState(current, state.player);
       } else if (same && !sameCompleted) {
+        setAudioProbePhase(card, "starting", {
+          reason: "resume_requested",
+          clear_error: true,
+          ...sourceInfo
+        });
         state.activePath = audioControlKey(card);
+        recordAudioProbeEvent("source_resolved", {
+          target_key: busyKey,
+          ...sourceInfo
+        });
+        recordAudioProbeEvent("play_request_start", {
+          target_key: busyKey,
+          mode: "resume_existing",
+          start_at_ms: savedPositionFor(current.source || current.path),
+          speed: startSpeed
+        });
+        render();
         state.player = await Pucky.request({
           command: "player.play",
-          args: { start_at_ms: savedPositionFor(current.source || current.path), speed: resolvedStartSpeedForCard(card) }
+          args: { start_at_ms: savedPositionFor(current.source || current.path), speed: startSpeed }
+        });
+        recordAudioProbeEvent("play_request_end", {
+          target_key: busyKey,
+          state: String(state.player?.state || ""),
+          is_playing: Boolean(state.player?.is_playing),
+          path: String(state.player?.path || ""),
+          source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
       } else if (card.audio_playlist_path) {
+        setAudioProbePhase(card, "starting", {
+          reason: "queue_requested",
+          clear_error: true,
+          ...sourceInfo
+        });
         state.activePath = audioControlKey(card);
+        recordAudioProbeEvent("source_resolved", {
+          target_key: busyKey,
+          ...sourceInfo
+        });
+        render();
         const queued = await Pucky.request({
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
         });
         const start = savedPositionFor(audioControlKey(card));
+        recordAudioProbeEvent("queue_loaded", {
+          target_key: busyKey,
+          path: String(queued?.path || ""),
+          source: String(queued?.source || ""),
+          queue_count: Number(queued?.queue_count || 0)
+        });
+        recordAudioProbeEvent("play_request_start", {
+          target_key: busyKey,
+          mode: "queue_playlist",
+          start_at_ms: start,
+          speed: startSpeed
+        });
         state.player = await Pucky.request({
           command: "player.play",
-          args: { start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
+          args: { start_at_ms: start, speed: startSpeed }
+        });
+        recordAudioProbeEvent("play_request_end", {
+          target_key: busyKey,
+          state: String(state.player?.state || ""),
+          is_playing: Boolean(state.player?.is_playing),
+          path: String(state.player?.path || ""),
+          source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
       } else {
+        setAudioProbePhase(card, "starting", {
+          reason: "play_requested",
+          clear_error: true,
+          ...sourceInfo
+        });
+        state.activePath = audioControlKey(card);
+        recordAudioProbeEvent("source_resolved", {
+          target_key: busyKey,
+          ...sourceInfo
+        });
+        render();
         const audioPath = await prepareAudioForPlayback(card);
         const start = savedPositionFor(audioPath);
-        state.activePath = audioControlKey(card);
         forgetCompleted(audioPath);
+        recordAudioProbeEvent("play_request_start", {
+          target_key: busyKey,
+          mode: "direct_path",
+          requested_path: String(audioPath || ""),
+          start_at_ms: start,
+          speed: startSpeed
+        });
         state.player = await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: start, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, title: card.title, start_at_ms: start, speed: startSpeed }
+        });
+        recordAudioProbeEvent("play_request_end", {
+          target_key: busyKey,
+          state: String(state.player?.state || ""),
+          is_playing: Boolean(state.player?.is_playing),
+          path: String(state.player?.path || ""),
+          source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
       }
       markCardRead(card);
       render();
     } catch (error) {
-      showToast(error.message);
+      const message = String(error && error.message || error || "Audio playback failed.");
+      recordAudioProbeEvent("action_error", {
+        target_key: busyKey,
+        phase: currentTileAudioPhase(card),
+        message
+      });
+      setAudioProbeTerminal(card, "start_failed", {
+        reason: phaseBefore === "playing_confirmed" ? "pause_request_error" : "play_request_error",
+        error_message: message,
+        schedule_reset: true
+      });
+      syncActivePathFromPlayer(state.player);
+      showToast(message);
+      render();
     } finally {
       if (state.audioToggleBusyKey === busyKey) {
         state.audioToggleBusyKey = "";
+        recordAudioProbeEvent("busy_end", { target_key: busyKey });
       }
+      render();
     }
   }
 
@@ -13199,6 +13324,7 @@
     setDataAttribute(status, "data-audio-phase", phase);
     setDataAttribute(status, "data-audio-runtime-mode", runtime);
     setDataAttribute(status, "data-audio-strip-kind", stripKind);
+    setDataAttribute(strip, "data-strip-kind", stripKind);
     if (stripKind === "progress") {
       const progress = el("span", "tile-audio-progress");
       const duration = Math.max(0, Number(state.player.duration_ms || 0));
@@ -14713,7 +14839,19 @@
   }
 
   function showToast(message) {
-    console.warn(message);
+    const text = String(message || "").trim();
+    if (!text) {
+      return;
+    }
+    state.lastToast = {
+      message: text,
+      shown_at: new Date().toISOString()
+    };
+    recordAudioProbeEvent("toast", {
+      message: text,
+      target_key: state.audioProbe.target_key
+    });
+    console.warn(text);
   }
 
   setInterval(async () => {
@@ -14727,7 +14865,8 @@
           if (state.player.path) {
             rememberPlayerProgress(state.player);
           }
-          changed = changed || shouldRenderForPlayerState(previousPlayer, state.player);
+          const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
+          changed = changed || shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged;
         }
         if (state.route === "inbox" || isTurnActive(state.turn)) {
           const wasTurnActive = isTurnActive(state.turn);
