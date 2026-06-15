@@ -93,7 +93,14 @@ async function waitForRoute(page, route, timeoutMs) {
 
 async function waitForTaskDetail(page, taskId, timeoutMs) {
   await page.waitForFunction(
-    expectedTaskId => document.querySelector(".light-task-detail-surface")?.getAttribute("data-task-detail-id") === expectedTaskId,
+    expectedTaskId => {
+      const detail = Array.from(document.querySelectorAll(".light-task-detail-surface")).find(node => {
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      }) || document.querySelector(".light-task-detail-surface");
+      return detail?.getAttribute("data-task-detail-id") === expectedTaskId;
+    },
     taskId,
     { timeout: timeoutMs }
   );
@@ -102,7 +109,14 @@ async function waitForTaskDetail(page, taskId, timeoutMs) {
 
 async function waitForTaskStatus(page, status, timeoutMs) {
   await page.waitForFunction(
-    expectedStatus => document.querySelector(".light-task-detail-surface")?.getAttribute("data-task-status") === expectedStatus,
+    expectedStatus => {
+      const detail = Array.from(document.querySelectorAll(".light-task-detail-surface")).find(node => {
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      }) || document.querySelector(".light-task-detail-surface");
+      return detail?.getAttribute("data-task-status") === expectedStatus;
+    },
     status,
     { timeout: timeoutMs }
   );
@@ -179,8 +193,12 @@ async function readTaskState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
     const appShell = document.querySelector(".app-shell");
-    const detail = document.querySelector(".light-task-detail-surface");
-    const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
+    const detail = Array.from(document.querySelectorAll(".light-task-detail-surface")).find(node => {
+      const style = window.getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    }) || document.querySelector(".light-task-detail-surface");
+    const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
       .map(node => String(node.textContent || "").trim().toLowerCase());
     const sections = Array.from(document.querySelectorAll(".light-task-section-toggle")).map(toggle => {
       const group = String(toggle.dataset.taskSection || "");
@@ -253,7 +271,7 @@ async function readTaskState(page) {
       route: shell?.getAttribute("data-light-route") || "",
       taskDetailId: detail?.getAttribute("data-task-detail-id") || "",
       taskStatus: detail?.getAttribute("data-task-status") || "",
-      title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
+      title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       hasTaskHtmlFrame: Boolean(detail?.querySelector(".light-html-frame")),
       hasDescriptionSection: sectionTitles.includes("description"),
       hasPeopleSection: sectionTitles.includes("people"),
