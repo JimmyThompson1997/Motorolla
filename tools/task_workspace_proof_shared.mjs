@@ -350,6 +350,42 @@ async function waitForTaskChecklistState(baseUrl, apiToken, taskId, expected, ti
   return fetchTaskRecord(baseUrl, apiToken, taskId);
 }
 
+async function waitForChecklistItemState(page, baseUrl, apiToken, taskId, itemId, expectedDone, timeoutMs) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0) || 0);
+  while (Date.now() <= deadline) {
+    const row = page.locator(`.light-task-checklist-row[data-checklist-item-id="${itemId}"]`).first();
+    const className = await row.getAttribute("class").catch(() => "");
+    const domMatches = String(className || "").includes("is-done") === Boolean(expectedDone);
+    const task = await fetchTaskRecord(baseUrl, apiToken, taskId);
+    const checklist = Array.isArray(task?.checklist) ? task.checklist : [];
+    const entry = checklist.find(item => String(item?.id || "") === String(itemId || ""));
+    const apiMatches = Boolean(entry?.done) === Boolean(expectedDone);
+    if (domMatches && apiMatches) {
+      return task;
+    }
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return fetchTaskRecord(baseUrl, apiToken, taskId);
+}
+
+async function toggleChecklistItemWithRetry(page, baseUrl, apiToken, taskId, itemId, expectedDone, timeoutMs) {
+  const attempts = 3;
+  const perAttemptTimeout = Math.min(Math.max(1500, Math.floor(timeoutMs / attempts)), 5000);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const row = page.locator(`.light-task-checklist-row[data-checklist-item-id="${itemId}"]`).first();
+    await row.waitFor({ state: "visible", timeout: timeoutMs });
+    await row.click();
+    const task = await waitForChecklistItemState(page, baseUrl, apiToken, taskId, itemId, expectedDone, perAttemptTimeout);
+    const checklist = Array.isArray(task?.checklist) ? task.checklist : [];
+    const entry = checklist.find(item => String(item?.id || "") === String(itemId || ""));
+    if (Boolean(entry?.done) === Boolean(expectedDone)) {
+      return task;
+    }
+    await page.waitForTimeout(200);
+  }
+  return fetchTaskRecord(baseUrl, apiToken, taskId);
+}
+
 export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
   await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/tasks/${encodeURIComponent(seed.primaryTaskId)}`, {
     status: "todo",
@@ -609,6 +645,21 @@ function taskFilterLabel(filterKey) {
   })[String(filterKey || "")] || "All";
 }
 
+async function waitForTaskFilterVisualReady(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    const supportedChevronPaths = new Set([
+      "m7 10 5 5 5-5",
+      "m7 10 5 5 5-5H7Z",
+      "m9 5 7 7-7 7",
+      "M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z",
+    ]);
+    const chevron = document.querySelector(".light-task-filter-button-chevron");
+    const svg = chevron?.querySelector("svg");
+    const path = svg?.querySelector("path")?.getAttribute("d") || "";
+    return Boolean(svg) && !svg.querySelector("rect") && supportedChevronPaths.has(path);
+  }, { timeout: timeoutMs });
+}
+
 async function selectTaskFilter(page, filterKey, timeoutMs) {
   await openTaskFilterSelector(page, timeoutMs);
   const option = page.locator(`.settings-selector-option[data-selector-value="${filterKey}"]`).first();
@@ -663,6 +714,7 @@ function assertTaskFilterVisual(listState, mode, theme) {
 async function verifyListFilters(page, seed, mode, config, checks) {
   await goToTasksList(page, mode, config.timeoutMs);
   await ensureSectionExpanded(page, "done");
+  await waitForTaskFilterVisualReady(page, config.timeoutMs);
   const listState = await readTaskListSurface(page);
   const labels = listState.sections.map(section => section.label);
   assert(labels.includes("Today"), `${mode}: missing Today task group`);
@@ -753,6 +805,7 @@ async function verifyDarkThemeFilter(page, mode, config, screenshots, checks) {
   await page.goto(darkUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   await waitForRoute(page, "tasks", config.timeoutMs);
   await ensureSectionExpanded(page, "done");
+  await waitForTaskFilterVisualReady(page, config.timeoutMs);
   const listState = await readTaskListSurface(page);
   assertTaskFilterVisual(listState, mode, "dark");
   screenshots[`${mode}_task_list_dark`] = await saveScreenshot(page, config.reportDir, `${mode}-dark-task-list`);
@@ -948,9 +1001,19 @@ async function verifyChecklistPersistence(page, seed, mode, config, checks) {
   for (const item of items) {
     const row = page.locator(`.light-task-checklist-row[data-checklist-item-id="${item.id}"]`).first();
     await row.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await row.click();
     expected.set(item.id, !Boolean(expected.get(item.id)));
-    await waitForTaskChecklistState(config.baseUrl, config.apiToken, seed.primaryTaskId, expected, config.timeoutMs);
+    const task = await toggleChecklistItemWithRetry(
+      page,
+      config.baseUrl,
+      config.apiToken,
+      seed.primaryTaskId,
+      item.id,
+      expected.get(item.id),
+      config.timeoutMs
+    );
+    const checklist = Array.isArray(task?.checklist) ? task.checklist : [];
+    const entry = checklist.find(candidate => String(candidate?.id || "") === item.id);
+    assert(Boolean(entry?.done) === Boolean(expected.get(item.id)), `${mode}: checklist toggle did not persist for ${item.id}`);
   }
   const apiTask = await waitForTaskChecklistState(config.baseUrl, config.apiToken, seed.primaryTaskId, expected, config.timeoutMs);
   const apiChecklist = Array.isArray(apiTask.checklist) ? apiTask.checklist : [];
