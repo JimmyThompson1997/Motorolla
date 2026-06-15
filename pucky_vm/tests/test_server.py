@@ -985,6 +985,22 @@ class ServerTests(unittest.TestCase):
         self.assertIsNotNone(verified)
         self.assertEqual(verified["user_id"], "jimmythompson323")
 
+    def test_links_portal_url_ignores_forged_forwarded_host_when_public_base_url_is_configured(self) -> None:
+        self.service.config = replace(self.service.config, public_base_url="https://pucky.fly.dev/")
+
+        payload = self.get_json(
+            "/api/links/composio/portal-url",
+            headers={
+                "Authorization": "Bearer secret",
+                "Host": "evil.example",
+                "X-Forwarded-Host": "evil.example",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+        self.assertTrue(payload["portal_url"].startswith("https://pucky.fly.dev/links/connect/apps?token="))
+        self.assertNotIn("evil.example", payload["portal_url"])
+
     def test_links_portal_url_endpoint_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.get_json("/api/links/composio/portal-url")
@@ -1088,6 +1104,28 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["auth_url"], "https://connect.example.invalid/linkedin")
         self.assertIn("just_connected=linkedin", self.composio.starts[-1]["redirect_url"])
         self.assertEqual(self.composio.starts[-1]["app_slug"], "linkedin")
+
+    def test_links_oauth_start_ignores_forged_forwarded_host_when_public_base_url_is_configured(self) -> None:
+        self.service.config = replace(self.service.config, public_base_url="https://pucky.fly.dev/")
+        token = self.issue_portal_token()
+
+        payload = self.get_json(
+            f"/api/links/composio/oauth/start?token={token}&app=linkedin&auth_mode=webview",
+            headers={
+                "Host": "evil.example",
+                "X-Forwarded-Host": "evil.example",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["auth_url"], "https://connect.example.invalid/linkedin")
+        self.assertEqual(
+            self.composio.starts[-1]["redirect_url"],
+            "https://pucky.fly.dev/links/connect/apps?token="
+            + token
+            + "&auth_mode=webview&tab=my&just_connected=linkedin",
+        )
 
     def test_links_disconnect_requires_owned_connection(self) -> None:
         token = self.issue_portal_token()
@@ -4001,4 +4039,3 @@ class ServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

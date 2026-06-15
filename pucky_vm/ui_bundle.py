@@ -174,7 +174,8 @@ def write_bundle_config(
     source: dict[str, object] | None = None,
 ) -> None:
     text = bundle_config_script(ui_version=ui_version, created_at=created_at, source=source)
-    (root / "pucky-config.js").write_text(text, encoding="utf-8", newline="\n")
+    with (root / "pucky-config.js").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
 
 
 def read_links_catalog(root: Path) -> dict[str, object]:
@@ -196,7 +197,8 @@ def links_catalog_script(payload: dict[str, object]) -> str:
 
 def write_links_catalog_script(root: Path) -> None:
     payload = read_links_catalog(root)
-    (root / "pucky-links-catalog.js").write_text(links_catalog_script(payload), encoding="utf-8", newline="\n")
+    with (root / "pucky-links-catalog.js").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(links_catalog_script(payload))
 
 
 def manifest_for(

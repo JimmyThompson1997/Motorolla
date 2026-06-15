@@ -2,15 +2,34 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 
-def request_base_url(headers: Any, server_address: tuple[str, int]) -> str:
-    proto = str(headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-    host = str(headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",", 1)[0].strip()
-    if not host:
-        host = f"{server_address[0]}:{server_address[1]}"
-    return f"{proto}://{host}"
+def _normalized_public_base_url(value: object) -> str:
+    clean = str(value or "").strip()
+    if not clean:
+        return ""
+    parsed = urlsplit(clean)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.strip()
+    if scheme not in {"http", "https"} or not netloc:
+        return ""
+    return urlunsplit((scheme, netloc, "", "", ""))
+
+
+def request_base_url(
+    headers: Any,
+    server_address: tuple[str, int],
+    *,
+    public_base_url: str | None = None,
+) -> str:
+    normalized = _normalized_public_base_url(public_base_url)
+    if normalized:
+        return normalized
+    host = str(server_address[0] or "").strip() or "127.0.0.1"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"http://{host}:{int(server_address[1])}"
 
 
 def parse_content_length(length_text: str | None, limit: int) -> int | None:

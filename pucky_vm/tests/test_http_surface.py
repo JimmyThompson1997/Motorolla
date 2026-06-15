@@ -5,14 +5,31 @@ import pytest
 from pucky_vm import http_surface
 
 
-def test_request_base_url_prefers_forwarded_headers() -> None:
+def test_request_base_url_prefers_configured_public_base_url() -> None:
     headers = {
         "X-Forwarded-Proto": "https",
-        "X-Forwarded-Host": "pucky.fly.dev",
+        "X-Forwarded-Host": "evil.example",
         "Host": "127.0.0.1:8080",
     }
 
-    assert http_surface.request_base_url(headers, ("127.0.0.1", 8080)) == "https://pucky.fly.dev"
+    assert (
+        http_surface.request_base_url(
+            headers,
+            ("127.0.0.1", 8080),
+            public_base_url="https://pucky.fly.dev/",
+        )
+        == "https://pucky.fly.dev"
+    )
+
+
+def test_request_base_url_ignores_forwarded_headers_without_public_base_url() -> None:
+    headers = {
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "evil.example",
+        "Host": "also-evil.example",
+    }
+
+    assert http_surface.request_base_url(headers, ("127.0.0.1", 8080)) == "http://127.0.0.1:8080"
 
 
 def test_parse_content_length_validates_bounds() -> None:

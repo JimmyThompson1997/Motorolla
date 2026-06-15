@@ -558,6 +558,7 @@ class Config:
     meeting_developer_instructions: str | None = None
     self_email: str = ""
     self_phone_number: str = ""
+    public_base_url: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -628,6 +629,7 @@ class Config:
             ),
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
+            public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
         )
 
 
@@ -6634,7 +6636,7 @@ def make_handler(service: PuckyVoiceService):
                     return
                 query = parse_qs(parsed.query)
                 payload = service.links_portal_url(
-                    request_base_url(self.headers, self.server.server_address),
+                    self._request_base_url(),
                     auth_mode=query.get("auth_mode", [""])[0],
                 )
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
@@ -6669,7 +6671,7 @@ def make_handler(service: PuckyVoiceService):
                 auth_mode = query.get("auth_mode", [""])[0]
                 just_connected = query.get("just_connected", [""])[0]
                 redirect_url = query.get("redirect_url", [""])[0]
-                base_url = request_base_url(self.headers, self.server.server_address)
+                base_url = self._request_base_url()
                 if app:
                     try:
                         payload = service.links_start_oauth(
@@ -6769,7 +6771,7 @@ def make_handler(service: PuckyVoiceService):
                     payload = service.links_start_oauth(
                         query.get("token", [""])[0],
                         app_slug=query.get("app", [""])[0],
-                        base_url=request_base_url(self.headers, self.server.server_address),
+                        base_url=self._request_base_url(),
                         auth_mode=query.get("auth_mode", [""])[0],
                         redirect_url=query.get("redirect_url", [""])[0] or None,
                     )
@@ -6799,7 +6801,7 @@ def make_handler(service: PuckyVoiceService):
                     service.media_manifest(
                         scopes=scopes,
                         limit=limit,
-                        base_url=request_base_url(self.headers, self.server.server_address),
+                        base_url=self._request_base_url(),
                     ),
                 )
                 return
@@ -6919,7 +6921,7 @@ def make_handler(service: PuckyVoiceService):
                         int(limit),
                         include_archived=include_archived,
                         compact=compact,
-                        base_url=request_base_url(self.headers, self.server.server_address),
+                        base_url=self._request_base_url(),
                     )
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_sync_failed", "detail": str(exc)})
@@ -7034,7 +7036,7 @@ def make_handler(service: PuckyVoiceService):
                     payload = json.loads(self._read_body(service.config.max_audio_bytes * 2 + 512 * 1024).decode("utf-8"))
                     if not isinstance(payload, dict):
                         raise ValueError("meeting_payload_must_be_object")
-                    result = service.meeting_ingest(payload, base_url=request_base_url(self.headers, self.server.server_address))
+                    result = service.meeting_ingest(payload, base_url=self._request_base_url())
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -7307,6 +7309,13 @@ def make_handler(service: PuckyVoiceService):
         def _is_authorized(self) -> bool:
             return is_bearer_authorized(service.config.pucky_api_token, self.headers.get("Authorization", ""))
 
+        def _request_base_url(self) -> str:
+            return request_base_url(
+                self.headers,
+                self.server.server_address,
+                public_base_url=service.config.public_base_url,
+            )
+
         def _json(self, status: HTTPStatus, payload: dict[str, object], *, headers: dict[str, str] | None = None) -> None:
             body = json_body(payload)
             service.record_action(
@@ -7425,4 +7434,3 @@ def _strip_json_fence(text: str) -> str:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return text
-
