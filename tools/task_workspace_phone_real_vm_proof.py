@@ -455,19 +455,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             {"key": "done", "present": [seed["doneTaskId"]], "absent": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["emptyTaskId"]]},
         ]
         for index, expectation in enumerate(filter_expectations, start=2):
+            filter_ops: list[dict[str, Any]] = [
+                {"kind": "goto_tasks"},
+                {"kind": "click_selector", "selector": ".light-task-filter-button"},
+                {"kind": "click_selector", "selector": f'.settings-selector-option[data-selector-value="{expectation["key"]}"]'},
+            ]
+            if expectation["key"] in {"all", "done"}:
+                filter_ops.append({"kind": "ensure_task_section_expanded", "group": "done"})
+            filter_ops.extend([
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / f"{index:02d}-filter-{expectation['key']}-browser.png"),
+            ])
             phase = run_phase(
                 args,
                 serial=serial,
                 cdp_url=cdp["cdp_url"],
                 scenario_dir=scenario_dir,
                 name=f"{index:02d}-filter-{expectation['key']}",
-                operations=[
-                    {"kind": "goto_tasks"},
-                    {"kind": "click_selector", "selector": ".light-task-filter-button"},
-                    {"kind": "click_selector", "selector": f'.settings-selector-option[data-selector-value="{expectation["key"]}"]'},
-                    {"kind": "task_state"},
-                    screenshot_operation(scenario_dir / f"{index:02d}-filter-{expectation['key']}-browser.png"),
-                ],
+                operations=filter_ops,
             )
             state = op_state(phase, "task_state")
             verify_filter_state(state, filter_key=str(expectation["key"]), present=[str(item) for item in expectation["present"]], absent=[str(item) for item in expectation["absent"]])

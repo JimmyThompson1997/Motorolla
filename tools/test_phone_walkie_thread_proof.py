@@ -240,6 +240,7 @@ def test_task_phone_browser_helper_wait_for_text_checks_all_matching_nodes() -> 
 
     assert "document.querySelectorAll(innerSelector)" in source
     assert ".some(node =>" in source
+    assert 'if (op.kind === "ensure_task_section_expanded")' in source
     assert 'if (op.kind === "wait_for_text")' in source
 
 

@@ -65,6 +65,17 @@ async function clickSelector(page, selector, timeoutMs) {
   await clickLocator(page, page.locator(selector).first(), timeoutMs);
 }
 
+async function ensureTaskSectionExpanded(page, group, timeoutMs) {
+  const toggle = page.locator(`button.light-task-section-toggle[data-task-section="${group}"]`).first();
+  if (!(await toggle.count())) {
+    return;
+  }
+  await toggle.waitFor({ state: "visible", timeout: timeoutMs });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await clickLocator(page, toggle, timeoutMs);
+  }
+}
+
 async function waitForSelector(page, selector, timeoutMs) {
   await page.waitForSelector(selector, { timeout: timeoutMs });
   await page.waitForTimeout(120);
@@ -317,6 +328,14 @@ async function runOperation(page, request, op) {
     }
     await clickSelector(page, selector, timeoutMs);
     return { kind: op.kind, selector, state: await readTaskState(page) };
+  }
+  if (op.kind === "ensure_task_section_expanded") {
+    const group = String(op.group || "").trim();
+    if (!group) {
+      throw new Error("ensure_task_section_expanded requires group");
+    }
+    await ensureTaskSectionExpanded(page, group, timeoutMs);
+    return { kind: op.kind, group, state: await readTaskState(page) };
   }
   if (op.kind === "wait_for_selector") {
     const selector = String(op.selector || "").trim();
