@@ -82,6 +82,14 @@ async function currentRoute(page) {
   return page.evaluate(() => document.querySelector(".light-shell")?.getAttribute("data-light-route") || "");
 }
 
+async function currentTheme(page) {
+  return page.evaluate(() =>
+    document.querySelector(".app-shell")?.getAttribute("data-theme")
+    || new URL(window.location.href).searchParams.get("theme")
+    || ""
+  );
+}
+
 async function waitForRoute(page, route, timeoutMs) {
   await page.waitForFunction(
     expectedRoute => document.querySelector(".light-shell")?.getAttribute("data-light-route") === expectedRoute,
@@ -156,7 +164,8 @@ async function gotoTasks(page, timeoutMs, theme = "") {
   }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const route = await currentRoute(page);
-    if (route === "tasks") {
+    const activeTheme = await currentTheme(page);
+    if (route === "tasks" && (!theme || activeTheme === theme)) {
       return;
     }
     if (route === "task-detail") {
@@ -166,10 +175,9 @@ async function gotoTasks(page, timeoutMs, theme = "") {
     const nav = page.locator('[data-route="tasks"], button[data-route="tasks"], a[data-route="tasks"]').first();
     if (await nav.count()) {
       await clickLocator(page, nav, timeoutMs);
-      if ((await currentRoute(page)) === "tasks") {
+      if ((await currentRoute(page)) === "tasks" && (!theme || (await currentTheme(page)) === theme)) {
         return;
       }
-      continue;
     }
     await page.evaluate((requestedTheme) => {
       const url = new URL(window.location.href);

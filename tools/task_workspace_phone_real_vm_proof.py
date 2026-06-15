@@ -308,7 +308,9 @@ def screenshot_operation(path: Path) -> dict[str, Any]:
 
 def open_task_ops(task_id: str, screenshot_path: Path) -> list[dict[str, Any]]:
     return [
-        {"kind": "goto_tasks"},
+        {"kind": "goto_tasks", "theme": "light"},
+        {"kind": "click_selector", "selector": ".light-task-filter-button"},
+        {"kind": "click_selector", "selector": status_selector("all")},
         {"kind": "click_selector", "selector": task_row_selector(task_id)},
         {"kind": "wait_for_task_detail", "task_id": task_id},
         {"kind": "task_state"},
