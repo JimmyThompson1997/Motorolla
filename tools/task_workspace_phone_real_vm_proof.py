@@ -159,6 +159,8 @@ def api_json(base_url: str, token: str, path_name: str, *, method: str = "GET", 
 def fetch_task_record(base_url: str, token: str, task_id: str) -> dict[str, Any]:
     payload = api_json(base_url, token, f"/api/workspace/tasks/{urllib.parse.quote(task_id)}")
     task = payload.get("task")
+    if not isinstance(task, dict) and payload.get("schema") == "pucky.workspace.record.v1":
+        task = payload
     if not isinstance(task, dict):
         fail("browser_preproof_failed", f"Workspace API did not return a task record for {task_id}")
     return task
@@ -167,6 +169,8 @@ def fetch_task_record(base_url: str, token: str, task_id: str) -> dict[str, Any]
 def patch_task_record(base_url: str, token: str, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
     payload = api_json(base_url, token, f"/api/workspace/tasks/{urllib.parse.quote(task_id)}", method="PATCH", body=body)
     task = payload.get("task")
+    if not isinstance(task, dict) and payload.get("schema") == "pucky.workspace.record.v1":
+        task = payload
     if not isinstance(task, dict):
         fail("browser_preproof_failed", f"Workspace API did not return a patched task record for {task_id}")
     return task

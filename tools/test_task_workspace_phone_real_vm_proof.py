@@ -164,6 +164,28 @@ def test_task_filter_label_maps_visible_selector_copy() -> None:
     assert phone_proof.task_filter_label("waiting") == "Waiting"
 
 
+def test_fetch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    wrapped_payload = {"task": {"id": "task-1", "title": "Wrapped task"}}
+    direct_payload = {"schema": "pucky.workspace.record.v1", "id": "task-2", "title": "Direct task"}
+
+    monkeypatch.setattr(phone_proof, "api_json", lambda *_args, **_kwargs: wrapped_payload)
+    assert phone_proof.fetch_task_record("https://example.invalid", "token", "task-1") == wrapped_payload["task"]
+
+    monkeypatch.setattr(phone_proof, "api_json", lambda *_args, **_kwargs: direct_payload)
+    assert phone_proof.fetch_task_record("https://example.invalid", "token", "task-2") == direct_payload
+
+
+def test_patch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    wrapped_payload = {"task": {"id": "task-1", "title": "Wrapped task"}}
+    direct_payload = {"schema": "pucky.workspace.record.v1", "id": "task-2", "title": "Direct task"}
+
+    monkeypatch.setattr(phone_proof, "api_json", lambda *_args, **_kwargs: wrapped_payload)
+    assert phone_proof.patch_task_record("https://example.invalid", "token", "task-1", {"status": "done"}) == wrapped_payload["task"]
+
+    monkeypatch.setattr(phone_proof, "api_json", lambda *_args, **_kwargs: direct_payload)
+    assert phone_proof.patch_task_record("https://example.invalid", "token", "task-2", {"status": "done"}) == direct_payload
+
+
 def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) -> None:
     seed = load_seed(tmp_path)
     state = {
