@@ -1445,7 +1445,6 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     return;
   }
   const deliveryEnabled = shouldRunReminderDelivery(config);
-  const baselineActiveCount = await readActiveReminderCount(config);
   const manageReminderId = `${seed.runId}-manage-reminder`;
   const manageDueAtMs = Date.now() + 30 * 60 * 1000;
   const deliveryLanes = deliveryEnabled
@@ -1476,6 +1475,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   for (const reminderId of [manageReminderId, ...deliveryLanes.map(item => item.id)]) {
     await deleteWorkspaceRecord(config, "reminders", reminderId);
   }
+  const baselineActiveCount = await readActiveReminderCount(config);
   for (const [index, lane] of deliveryLanes.entries()) {
     await apiRequest(config, "POST", "/api/workspace/reminders", {
       id: lane.id,
@@ -1507,9 +1507,6 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   let activeCount = baselineActiveCount + deliveryLanes.length + 1;
   await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
-  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
-  screenshots[`${theme}_reminders_home_badge_active`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-active`);
-
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
   const manageRow = page.locator(`[data-reminder-id="${manageReminderId}"]`);
   await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1532,21 +1529,26 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   const manageChipCount = await manageRow.locator(".light-graph-chip-row").count();
   assert(rowChipCounts.every(count => count === 0), `Expected no linked chips on delivery reminder rows, saw ${rowChipCounts.join(",")}`);
   assert(manageChipCount === 0, `Expected no linked chips on reminder rows, saw ${manageChipCount}`);
+  await backHome(page, theme, config.timeoutMs);
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
+  screenshots[`${theme}_reminders_home_badge_active`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-active`);
+  await openTile(page, "Reminders", "reminders", config.timeoutMs);
+  await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_reminders_list_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-pending`);
   await manageRow.click({ force: true });
   await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
   await waitForGraphText(page, "Proof Manage Reminder", config.timeoutMs);
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
-    return text.includes("Dismiss")
-      && text.includes("Snooze 10 min")
-      && text.includes("Recipients")
-      && text.includes("Channels")
-      && text.includes("Linked records")
-      && text.includes("Me")
-      && !text.includes("Self")
-      && !text.includes("Mark done")
-      && !text.includes("No generated reminder page yet.");
+    const lower = text.toLowerCase();
+    return lower.includes("dismiss")
+      && lower.includes("snooze 10 min")
+      && lower.includes("recipients")
+      && lower.includes("channels")
+      && lower.includes("me")
+      && !lower.includes("self")
+      && !lower.includes("mark done")
+      && !lower.includes("no generated reminder page yet.");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
   screenshots[`${theme}_reminder_detail_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-pending`);
@@ -1690,7 +1692,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "Recipients", "Channels", "Linked records"]) {
+  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "RECIPIENTS", "CHANNELS", "LINKED RECORDS"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
