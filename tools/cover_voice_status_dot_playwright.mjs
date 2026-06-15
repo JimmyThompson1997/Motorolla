@@ -585,11 +585,24 @@ async function setViewport(page, viewport) {
   await page.waitForTimeout(150);
 }
 
-async function driveTurnStatus(page, bridgeState, visualState) {
+async function driveTurnStatus(page, bridgeState, visualState, options = {}) {
   bridgeState.turnStatus = buildTurnStatus(visualState);
+  if (options.emitEvent === false) {
+    return;
+  }
   await page.evaluate((payload) => {
     window.Pucky.__event("pucky.turn.status", payload);
   }, bridgeState.turnStatus);
+}
+
+async function waitForVoiceVisualState(page, visualState, timeoutMs) {
+  await page.waitForFunction((expectedVisualState) => {
+    const surface = window.PuckyUiDebug && typeof window.PuckyUiDebug.describe === "function"
+      ? window.PuckyUiDebug.describe()
+      : null;
+    const className = String(surface?.voice_status?.class_name || "");
+    return className.includes(`voice-status-${expectedVisualState}`);
+  }, visualState, { timeout: timeoutMs });
 }
 
 async function readVoiceSnapshot(page) {
@@ -753,6 +766,7 @@ async function main() {
     checkpoints: {},
     settings: {},
     card_only_lifecycle: {},
+    poll_only_detection: {},
     failed_terminal_visible: {},
     bridge_commands: [],
   };
@@ -787,8 +801,18 @@ async function main() {
     await driveTurnStatus(page, bridgeState, "idle");
     await captureCheckpoint(page, config.reportDir, summary, "01-light-home-idle", { visualState: "idle" });
 
-    await driveTurnStatus(page, bridgeState, "armed");
+    const turnStatusPollsBefore = bridgeState.commandLog.filter((entry) => entry.command === "pucky.turn.status").length;
+    await driveTurnStatus(page, bridgeState, "armed", { emitEvent: false });
+    await waitForVoiceVisualState(page, "armed", config.timeoutMs);
+    const turnStatusPollsAfter = bridgeState.commandLog.filter((entry) => entry.command === "pucky.turn.status").length;
+    assert(turnStatusPollsAfter > turnStatusPollsBefore, "Poll-only listening checkpoint never re-queried pucky.turn.status");
     await captureCheckpoint(page, config.reportDir, summary, "02-light-home-listening-blue", { visualState: "armed" });
+    summary.poll_only_detection = {
+      detected_without_event: true,
+      visual_state: "armed",
+      turn_status_polls_before: turnStatusPollsBefore,
+      turn_status_polls_after: turnStatusPollsAfter,
+    };
 
     await driveTurnStatus(page, bridgeState, "recording");
     await captureCheckpoint(page, config.reportDir, summary, "03-light-home-hearing-red", { visualState: "recording" });

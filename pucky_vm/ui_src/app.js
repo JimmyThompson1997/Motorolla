@@ -14,6 +14,7 @@
   const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
+  const TURN_STATUS_POLL_MS = 250;
   const ARCHIVE_REVEAL_WIDTH_PX = 88;
   const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44;
   const ARCHIVE_REVEAL_SLOP_PX = 12;
@@ -5632,6 +5633,7 @@
     if (taskUsesSplitLayout()) {
       return lightTaskWorkspacePage();
     }
+    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
     const page = lightPage("Tasks");
     page.classList.add("light-tasks-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
@@ -5965,7 +5967,12 @@
   }
 
   function ensureTaskPeopleContacts(task) {
-    if (!taskCreatedBy(task) && !taskPrimaryOwner(task)) {
+    ensureTaskPeopleContactsLoaded([task]);
+  }
+
+  function ensureTaskPeopleContactsLoaded(tasks) {
+    const items = Array.isArray(tasks) ? tasks : [];
+    if (!items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))) {
       return;
     }
     const bucket = workspaceBucket("contacts");
@@ -6260,6 +6267,7 @@
         container.append(lightTaskGroup(tasks, group));
       }
     });
+    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
   }
 
   function lightTaskWorkspacePage() {
@@ -15426,40 +15434,39 @@
   }
 
   setInterval(async () => {
-    if (state.route === "inbox" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
-      let changed = false;
-      try {
-        if (state.activePath) {
-          const previousPlayer = state.player;
-          state.player = stampPlayerState(await Pucky.request({ command: "player.state", args: {} }));
-          syncActivePathFromPlayer(state.player);
-          if (state.player.path) {
-            rememberPlayerProgress(state.player);
-          }
-          const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
-          changed = changed || shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged;
-        }
-        if (state.route === "inbox" || isTurnActive(state.turn)) {
-          const wasTurnActive = isTurnActive(state.turn);
-          await loadTurnStatus({ render: false });
-          const turnActive = isTurnActive(state.turn);
-          if (state.route === "inbox" && (turnActive || wasTurnActive)) {
-            await refreshCardsFromVmSnapshot({ render: false });
-          }
-          changed = changed || turnActive || wasTurnActive;
-        }
-        if (wakeProofVisualState(state.wakeStatus) !== "idle") {
-          await loadWakeStatus({ render: false });
-          changed = true;
-        }
-        if (changed) {
-          render();
-        }
-      } catch (_) {
-        // Keep cached state visible if the bridge temporarily fails.
-      }
+    if (document.visibilityState !== "visible") {
+      return;
     }
-  }, 250);
+    let changed = false;
+    try {
+      const wasTurnActive = isTurnActive(state.turn);
+      await loadTurnStatus({ render: false });
+      const turnActive = isTurnActive(state.turn);
+      if (state.route === "inbox" && (turnActive || wasTurnActive)) {
+        await refreshCardsFromVmSnapshot({ render: false });
+      }
+      changed = changed || turnActive || wasTurnActive;
+      if (state.activePath) {
+        const previousPlayer = state.player;
+        state.player = stampPlayerState(await Pucky.request({ command: "player.state", args: {} }));
+        syncActivePathFromPlayer(state.player);
+        if (state.player.path) {
+          rememberPlayerProgress(state.player);
+        }
+        const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
+        changed = changed || shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged;
+      }
+      if (wakeProofVisualState(state.wakeStatus) !== "idle") {
+        await loadWakeStatus({ render: false });
+        changed = true;
+      }
+      if (changed) {
+        render();
+      }
+    } catch (_) {
+      // Keep cached state visible if the bridge temporarily fails.
+    }
+  }, TURN_STATUS_POLL_MS);
 
   setInterval(() => {
     if (shouldAnimateActiveTileAudio()) {

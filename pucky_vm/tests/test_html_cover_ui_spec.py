@@ -268,6 +268,19 @@ def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
     assert 'voice_color: String(voiceStatusStyle?.getPropertyValue("--voice-color") || "").trim()' in describe_ui_surface
 
 
+def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes() -> None:
+    app = read("app.js")
+
+    assert 'const TURN_STATUS_POLL_MS = 250;' in app
+    assert 'if (document.visibilityState !== "visible") {' in app
+    assert 'const wasTurnActive = isTurnActive(state.turn);' in app
+    assert 'await loadTurnStatus({ render: false });' in app
+    assert 'const turnActive = isTurnActive(state.turn);' in app
+    assert 'if (state.route === "inbox" && (turnActive || wasTurnActive)) {' in app
+    assert 'if (state.route === "inbox" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {' not in app
+    assert '}, TURN_STATUS_POLL_MS);' in app
+
+
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
     app = read("app.js")
     describe_ui_surface = function_block(app, "describeUiSurface")
@@ -622,12 +635,15 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
 
 def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open() -> None:
     app = read("app.js")
+    tasks_page = function_block(app, "lightTasksPage")
+    task_workspace_page = function_block(app, "lightTaskWorkspacePage")
     styles = read("styles.css")
 
     task_group = function_block(app, "lightTaskGroup")
     task_detail_rows = function_block(app, "taskDetailRows")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_people_section = function_block(app, "lightTaskPeopleSection")
+    task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
     task_status_control = function_block(app, "lightTaskStatusControl")
     task_filters = function_block(app, "lightTaskFilters")
     light_navigate = function_block(app, "lightNavigate")
@@ -639,6 +655,10 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "function taskPrimaryOwner(task)" in app
     assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in task_workspace_page
+    assert "items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))" in task_people_loader
+    assert 'void loadWorkspaceCollection("contacts", { render: true });' in task_people_loader
     assert 'label: "Created by"' not in task_detail_rows
     assert 'label: "Owner"' not in task_detail_rows
     assert 'const owner = taskPrimaryOwner(task);' in task_people_section
