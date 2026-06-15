@@ -109,6 +109,32 @@ def validate_browser_summary_matches_local(
     browser_manifest = browser_summary.get("remote_manifest") or {}
     if str(browser_manifest.get("source_commit_full") or "") != str(local_git["head"]):
         fail("browser_evidence_mismatch", "Browser proof remote manifest commit does not match local master HEAD")
+    if str(browser_manifest.get("ui_version") or "") != str(remote_manifest.get("ui_version") or ""):
+        fail("browser_evidence_mismatch", "Browser proof remote manifest ui_version does not match the live VM manifest")
+
+
+def verify_html_target_identity(
+    *,
+    local_git: dict[str, object],
+    remote_manifest: dict[str, Any],
+    bundle: dict[str, Any],
+    surface: dict[str, Any],
+    installed_package: dict[str, str],
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "local_head_matches_upstream": str(local_git.get("head") or "") == str(local_git.get("upstream") or ""),
+        "bundle_installed": bool(bundle.get("installed")),
+        "apk_git_dirty_false": bool(identity.get("git_dirty")) is False,
+        "package_version_name_matches_identity": str(installed_package.get("version_name") or "") == str(identity.get("version_name") or ""),
+        "package_version_code_matches_identity": str(installed_package.get("version_code") or "") == str(identity.get("version_code") or ""),
+        "bundle_ui_version_matches_manifest": str(bundle.get("ui_version") or "") == str(remote_manifest.get("ui_version") or ""),
+        "surface_ui_version_matches_manifest": str(surface.get("ui_version") or "") == str(remote_manifest.get("ui_version") or ""),
+    }
+    result = proof.scenario_checks(checks)
+    if not result["passed"]:
+        fail("phone_task_proof_failed", f"target identity mismatch: {json.dumps(result['checks'], sort_keys=True)}")
+    return result
 
 
 def api_json(base_url: str, token: str, path_name: str, *, method: str = "GET", body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -377,8 +403,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     surface_before = proof.snapshot_surface(args)
     installed_package = proof.installed_package_info(args, serial)
     identity = proof.apk_identity(args)
-    identity_checks = proof.verify_target_identity(
-        args,
+    identity_checks = verify_html_target_identity(
         local_git=local_git,
         remote_manifest=remote_manifest,
         bundle=bundle,
