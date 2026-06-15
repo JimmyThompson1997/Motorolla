@@ -602,20 +602,40 @@ async function selectTaskFilter(page, filterKey, timeoutMs) {
 
 async function saveLocatorScreenshot(page, selector, reportDir, name) {
   const target = path.join(reportDir, `${name}.png`);
-  const locator = page.locator(selector).first();
-  await locator.waitFor({ state: "visible", timeout: 15000 });
-  await locator.screenshot({
-    path: target,
-    animations: "disabled",
-    timeout: 120000,
-  });
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const locator = page.locator(selector).first();
+    await locator.waitFor({ state: "visible", timeout: 15000 });
+    try {
+      await locator.screenshot({
+        path: target,
+        animations: "disabled",
+        timeout: 120000,
+      });
+      return target;
+    } catch (error) {
+      lastError = error;
+      if (!String(error?.message || "").includes("not attached to the DOM")) {
+        throw error;
+      }
+      await page.waitForTimeout(200);
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
   return target;
 }
 
 function assertTaskFilterVisual(listState, mode, theme) {
   const visual = listState.filterVisual || {};
   assert(visual.chevronHasRect === false, `${mode}/${theme}: task filter chevron rendered the fallback icon`);
-  const supportedChevronPaths = new Set(["m7 10 5 5 5-5", "m7 10 5 5 5-5H7Z", "m9 5 7 7-7 7"]);
+  const supportedChevronPaths = new Set([
+    "m7 10 5 5 5-5",
+    "m7 10 5 5 5-5H7Z",
+    "m9 5 7 7-7 7",
+    "M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z",
+  ]);
   assert(supportedChevronPaths.has(String(visual.chevronPath || "")), `${mode}/${theme}: task filter chevron path was unexpected`);
   if (theme === "dark") {
     assert(visual.buttonColor === "rgb(245, 249, 255)", `${mode}/${theme}: expected dark task filter text to use a readable neutral color`);

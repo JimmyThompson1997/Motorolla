@@ -320,15 +320,21 @@ def _normalize_task_checklist(items: object) -> list[dict[str, object]]:
 
 def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object], *, summary: str) -> dict[str, Any]:
     normalized = dict(metadata or {})
+    owner = str(
+        payload.get("owner")
+        or normalized.get("owner")
+        or ""
+    ).strip()
     created_by = str(
         payload.get("created_by")
         or normalized.get("created_by")
-        or normalized.get("owner")
+        or owner
         or ""
     ).strip()
     if created_by:
         normalized["created_by"] = created_by
-        normalized["owner"] = str(normalized.get("owner") or created_by).strip() or created_by
+    if owner:
+        normalized["owner"] = owner
     description = str(payload.get("description") or normalized.get("description") or summary or "").strip()
     if description:
         normalized["description"] = description
@@ -1026,6 +1032,7 @@ class WorkspaceStore:
         if row["kind"] == "task":
             record["status"] = normalize_task_status(record["status"])
             record["created_by"] = str(metadata.get("created_by") or metadata.get("owner") or "").strip()
+            record["owner"] = str(metadata.get("owner") or "").strip()
             record["description"] = str(metadata.get("description") or record["summary"] or "").strip()
             record["checklist"] = _normalize_task_checklist(metadata.get("checklist"))
             record["derived_group"] = derive_task_group(record, self.now_ms())

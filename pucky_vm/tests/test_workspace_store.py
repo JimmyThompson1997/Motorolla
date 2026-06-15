@@ -262,6 +262,7 @@ def test_task_records_expose_structured_metadata_and_graph_attached_items(tmp_pa
     assert task is not None
     assert task["status"] == "todo"
     assert task["created_by"] == "Maya Chen"
+    assert task["owner"] == "Maya Chen"
     assert task["description"] == "Set the samples near the window before Maya arrives."
     assert [item["id"] for item in task["checklist"]] == ["paint-stairs", "paint-trim", "paint-photo"]
     assert task["checklist"][0]["done"] is True
@@ -272,6 +273,26 @@ def test_task_records_expose_structured_metadata_and_graph_attached_items(tmp_pa
     assert ("contact", "maya") in linked_targets
     assert ("project", "home-refresh") in linked_targets
     assert ("note", "house-paint-notes") in linked_targets
+
+
+def test_task_owner_can_differ_from_created_by(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    record = store.upsert_record(
+        "tasks",
+        {
+            "id": "task-owner-proof",
+            "title": "Owner proof",
+            "status": "todo",
+            "created_by": "Maya Chen",
+            "owner": "Sam Rivera",
+        },
+    )
+
+    assert record["created_by"] == "Maya Chen"
+    assert record["owner"] == "Sam Rivera"
+    assert record["metadata"]["created_by"] == "Maya Chen"
+    assert record["metadata"]["owner"] == "Sam Rivera"
 
 
 def test_multiple_projects_threads_and_cross_links(tmp_path: Path) -> None:

@@ -158,17 +158,28 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
             "/api/workspace/tasks",
             method="POST",
             token="test-token",
-            body={"id": "api-task", "title": "API Task", "status": "open", "due_at_ms": 1},
+            body={
+                "id": "api-task",
+                "title": "API Task",
+                "status": "open",
+                "due_at_ms": 1,
+                "created_by": "Maya Chen",
+                "owner": "Sam Rivera",
+            },
         )
         assert task["derived_group"] == "overdue"
+        assert task["created_by"] == "Maya Chen"
+        assert task["owner"] == "Sam Rivera"
         done = request_json(
             base_url,
             "/api/workspace/tasks/api-task",
             method="PATCH",
             token="test-token",
-            body={"status": "done"},
+            body={"status": "done", "owner": "Jordan Lee"},
         )
         assert done["derived_group"] == "done"
+        assert done["created_by"] == "Maya Chen"
+        assert done["owner"] == "Jordan Lee"
         task_asset = request_json(
             base_url,
             "/api/workspace/tasks",
