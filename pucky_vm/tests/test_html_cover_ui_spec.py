@@ -619,27 +619,51 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
 
-def test_tasks_use_title_only_rows_owner_ready_details_and_reset_scroll_on_open() -> None:
+def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
     task_group = function_block(app, "lightTaskGroup")
+    task_detail_rows = function_block(app, "taskDetailRows")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_people_section = function_block(app, "lightTaskPeopleSection")
+    task_status_control = function_block(app, "lightTaskStatusControl")
+    task_filters = function_block(app, "lightTaskFilters")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
 
     assert 'el("span", "light-task-row-summary"' not in task_group
     assert "function taskRowSummary" not in app
     assert "function taskOwners(task)" in app
+    assert "function taskPrimaryOwner(task)" in app
+    assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
+    assert 'const main = el("button", "light-task-row-main");' in task_group
+    assert 'label: "Created by"' not in task_detail_rows
+    assert 'label: "Owner"' not in task_detail_rows
     assert 'const owner = taskPrimaryOwner(task);' in task_people_section
+    assert 'datasetRole: "created_by"' in task_people_section
     assert 'datasetRole: "owner"' in task_people_section
+    assert 'role: "Created by"' in task_people_section
     assert 'role: "Owner"' in task_people_section
+    assert 'kind: "contact"' in task_people_section
+    assert 'const button = el("button", "light-pill is-active light-task-status-trigger");' in task_status_control
+    assert 'button.append(icon, copy, chevron);' in task_status_control
+    assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
+    assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
     assert "resetLightRouteScroll();" in light_navigate
     assert "restoreScrollPosition(feed, 0);" in reset_scroll
+    assert "window.scrollTo(0, 0);" in reset_scroll
     assert ".light-record-chip-icon" in styles
-    assert "background: color-mix(in srgb, currentColor 14%, transparent);" in styles
+    assert ".light-task-row-status-trigger" in styles
+    assert ".light-task-status-circle-trigger" in styles
+    assert ".light-task-status-trigger" in styles
+    assert ".light-task-person-row" in styles
+    assert ".light-task-filter-button-icon" in styles
+    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
+    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
+    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles
+    assert '.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"]' in styles
 
 
 def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:

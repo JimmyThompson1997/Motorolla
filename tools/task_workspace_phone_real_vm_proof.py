@@ -24,7 +24,6 @@ RESULT_SCHEMA = "pucky.task_workspace_phone_real_vm_proof.v1"
 TASK_BROWSER_SUMMARY_SCHEMA = "pucky.task_workspace_live_vm_proof.v1"
 TASK_SEED_SCHEMA = "pucky.task_workspace_seed_manifest.v1"
 DEFAULT_ACTIVITY_NAME = "com.pucky.device.CoverHomeActivity"
-CREATED_BY_SELECTOR = '.light-task-detail-surface .light-info-row[data-workspace-target-kind="contact"]'
 
 
 class TaskPhoneProofError(RuntimeError):
@@ -246,11 +245,27 @@ def run_phase(
 
 
 def task_row_selector(task_id: str) -> str:
-    return f'.light-task-row[data-task-id="{task_id}"]'
+    return f'.light-task-row[data-task-id="{task_id}"] .light-task-row-main'
 
 
 def status_selector(status: str) -> str:
-    return f'.light-task-status-control .light-pill[data-task-status="{status}"]'
+    return f'.settings-selector-option[data-selector-value="{status}"]'
+
+
+def task_row_status_trigger_selector(task_id: str) -> str:
+    return f'.light-task-row[data-task-id="{task_id}"] .light-task-row-status-trigger'
+
+
+def detail_status_trigger_selector() -> str:
+    return ".light-task-status-trigger"
+
+
+def detail_status_circle_selector() -> str:
+    return ".light-task-status-circle-trigger"
+
+
+def person_chip_selector(role: str) -> str:
+    return f'.light-task-person-row[data-task-person-role="{role}"] [data-workspace-target-kind="contact"]'
 
 
 def checklist_selector(item_id: str) -> str:
@@ -308,13 +323,21 @@ def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> 
     assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_detail_render_failed", "Primary task detail did not open")
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Primary task still renders legacy task HTML")
     assert_or_fail(bool(state.get("hasDescriptionSection")), "phone_task_detail_render_failed", "Primary task is missing Description")
+    assert_or_fail(bool(state.get("hasPeopleSection")), "phone_task_detail_render_failed", "Primary task is missing People")
     assert_or_fail(bool(state.get("hasChecklistSection")), "phone_task_detail_render_failed", "Primary task is missing Checklist")
     assert_or_fail(bool(state.get("hasAttachedSection")), "phone_task_detail_render_failed", "Primary task is missing Attached")
     assert_or_fail(int(state.get("attachedChipIconCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task chips are missing icons")
+    assert_or_fail(not bool(state.get("hasLegacyCreatedByRow")), "phone_task_detail_render_failed", "Primary task still renders the legacy Created by info row")
+    assert_or_fail(bool(state.get("statusTriggerPresent")), "phone_task_detail_render_failed", "Primary task is missing the status pill trigger")
+    assert_or_fail(bool(state.get("statusCircleTriggerPresent")), "phone_task_detail_render_failed", "Primary task is missing the status circle trigger")
     assert_or_fail(str(state.get("title") or "") == str(seed["primaryTaskTitle"]), "phone_task_detail_render_failed", "Primary task title did not render correctly")
-    created_by = state.get("createdBy") or {}
-    assert_or_fail(str(created_by.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Created by row is not linked to contact detail")
-    assert_or_fail(str(created_by.get("id") or "") == str(seed["contactId"]), "phone_task_detail_render_failed", "Created by row did not point at the expected contact")
+    people = [item for item in list(state.get("people") or []) if isinstance(item, dict)]
+    created_by = next((item for item in people if str(item.get("role") or "") == "created_by"), {})
+    owner = next((item for item in people if str(item.get("role") or "") == "owner"), {})
+    assert_or_fail(str(created_by.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Created by chip is not linked to contact detail")
+    assert_or_fail(str(created_by.get("id") or "") == str(seed["contactId"]), "phone_task_detail_render_failed", "Created by chip did not point at the expected contact")
+    assert_or_fail(str(owner.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Owner chip is not linked to contact detail")
+    assert_or_fail(str(owner.get("id") or "") == str(seed["ownerContactId"]), "phone_task_detail_render_failed", "Owner chip did not point at the expected owner contact")
 
 
 def verify_empty_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> None:
@@ -371,6 +394,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "status": "todo",
         "description": str(seed["primaryDescription"]),
         "created_by": str(seed["createdBy"]),
+        "owner": str(seed["ownerContactTitle"]),
         "checklist": seed["primaryChecklist"],
     }
 
@@ -504,7 +528,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             scenario_dir=scenario_dir,
             name="09-created-by",
             operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / "09-created-by-task-browser.png") + [
-                {"kind": "click_selector", "selector": CREATED_BY_SELECTOR},
+                {"kind": "click_selector", "selector": person_chip_selector("created_by")},
                 {"kind": "wait_for_route", "route": "contact-detail"},
                 {"kind": "wait_for_text", "selector": ".light-record-detail-title, .light-contact-hero h1, .light-detail-header h1", "text": str(seed["contactTitle"])},
                 screenshot_operation(scenario_dir / "09-created-by-open-browser.png"),
@@ -518,6 +542,37 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         created_by_return = op_state(created_by_phase, "task_state")
         assert_or_fail(created_by_return.get("taskDetailId") == seed["primaryTaskId"], "phone_task_origin_backstack_failed", "Created by navigation did not return to the same task")
         navigation_checks.append({"kind": "created_by", "returned_route": created_by_return.get("route"), "returned_task_id": created_by_return.get("taskDetailId")})
+
+        status_trigger_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="09b-status-triggers",
+            operations=[
+                {"kind": "goto_tasks"},
+                {"kind": "click_selector", "selector": task_row_status_trigger_selector(str(seed["primaryTaskId"]))},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "09b-status-selector-list-browser.png"),
+                {"kind": "click_selector", "selector": status_selector("todo")},
+                {"kind": "click_selector", "selector": task_row_selector(str(seed["primaryTaskId"]))},
+                {"kind": "wait_for_task_detail", "task_id": str(seed["primaryTaskId"])},
+                {"kind": "click_selector", "selector": detail_status_trigger_selector()},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "09b-status-selector-pill-browser.png"),
+                {"kind": "click_selector", "selector": status_selector("todo")},
+                {"kind": "click_selector", "selector": detail_status_circle_selector()},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "09b-status-selector-circle-browser.png"),
+                {"kind": "click_selector", "selector": status_selector("todo")},
+            ],
+        )
+        trigger_states = [item.get("state") for item in list(status_trigger_phase.get("operations") or []) if isinstance(item, dict) and item.get("kind") == "task_state" and isinstance(item.get("state"), dict)]
+        assert_or_fail(len(trigger_states) >= 3, "phone_task_detail_render_failed", "Status trigger proof did not capture enough state snapshots")
+        assert_or_fail(str(trigger_states[0].get("route") or "") == "tasks", "phone_task_detail_render_failed", "List-row status trigger should keep the phone proof on tasks")
+        assert_or_fail(str(trigger_states[1].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Detail status pill should keep the phone proof on task detail")
+        assert_or_fail(str(trigger_states[2].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Detail status circle should keep the phone proof on task detail")
+        status_checks.append({"type": "status_trigger_routes", "routes": [str(state.get("route") or "") for state in trigger_states[:3]]})
 
         for index, spec in enumerate(expected_link_specs(seed), start=10):
             phase = run_phase(
@@ -548,7 +603,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_origin_backstack_failed", f"{spec['kind']} back path lost the originating task")
             navigation_checks.append({"kind": spec["kind"], "returned_route": state.get("route"), "returned_task_id": state.get("taskDetailId")})
 
-        checklist_ids = [str(item["id"]) for item in list(seed["primaryChecklist"]) if isinstance(item, dict)]
+        checklist_ids = [str(item["id"]) for item in list(seed["primaryChecklist"]) if isinstance(item, dict) and not bool(item.get("done"))]
         checklist_ops = open_task_ops(str(seed["primaryTaskId"]), scenario_dir / "14-checklist-task-browser.png")
         for item_id in checklist_ids:
             checklist_ops.append({"kind": "click_selector", "selector": checklist_selector(item_id)})
@@ -578,12 +633,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         checklist_checks.append({"toggled_all_done": True, "status_after_toggle": task_after_checklist.get("status")})
 
         transitions = [
-            {"status": "in_progress", "group": "do"},
-            {"status": "waiting", "group": "do"},
-            {"status": "done", "group": "done"},
+            {"status": "in_progress", "group": "do", "trigger": "pill"},
+            {"status": "waiting", "group": "do", "trigger": "circle"},
+            {"status": "done", "group": "done", "trigger": "pill"},
         ]
         current_primary_status = "todo"
         for index, transition in enumerate(transitions, start=15):
+            trigger_selector = detail_status_circle_selector() if transition["trigger"] == "circle" else detail_status_trigger_selector()
             phase = run_phase(
                 args,
                 serial=serial,
@@ -591,6 +647,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 scenario_dir=scenario_dir,
                 name=f"{index:02d}-status-{transition['status']}",
                 operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / f"{index:02d}-status-{transition['status']}-task-browser.png") + [
+                    {"kind": "click_selector", "selector": trigger_selector},
                     {"kind": "click_selector", "selector": status_selector(str(transition["status"]))},
                     {"kind": "wait_for_task_status", "status": str(transition["status"])},
                     {"kind": "task_state"},

@@ -236,7 +236,19 @@ async function readTaskState(page) {
           hasIcon: Boolean(node.querySelector(".light-record-chip-icon")),
         }))
       : [];
-    const createdByNode = detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]');
+    const people = detail
+      ? Array.from(detail.querySelectorAll(".light-task-person-row")).map(row => {
+          const chip = row.querySelector('[data-workspace-target-kind="contact"]');
+          return {
+            role: String(row.getAttribute("data-task-person-role") || ""),
+            label: String(row.querySelector(".light-task-person-label")?.textContent || "").trim(),
+            kind: String(chip?.getAttribute("data-workspace-target-kind") || ""),
+            id: String(chip?.getAttribute("data-workspace-target-id") || ""),
+            route: String(chip?.getAttribute("data-workspace-target-route") || ""),
+            text: String(chip?.textContent || "").replace(/\s+/g, " ").trim(),
+          };
+        })
+      : [];
     return {
       route: shell?.getAttribute("data-light-route") || "",
       taskDetailId: detail?.getAttribute("data-task-detail-id") || "",
@@ -244,23 +256,14 @@ async function readTaskState(page) {
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       hasTaskHtmlFrame: Boolean(detail?.querySelector(".light-html-frame")),
       hasDescriptionSection: sectionTitles.includes("description"),
+      hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
       hasAttachedSection: sectionTitles.includes("attached"),
       attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
-      statusButtons: detail
-        ? Array.from(detail.querySelectorAll(".light-task-status-control .light-pill")).map(button => ({
-            status: String(button.getAttribute("data-task-status") || ""),
-            active: button.classList.contains("is-active"),
-          }))
-        : [],
-      createdBy: createdByNode
-        ? {
-            kind: String(createdByNode.getAttribute("data-workspace-target-kind") || ""),
-            id: String(createdByNode.getAttribute("data-workspace-target-id") || ""),
-            route: String(createdByNode.getAttribute("data-workspace-target-route") || ""),
-            label: String(createdByNode.textContent || "").replace(/\s+/g, " ").trim(),
-          }
-        : null,
+      hasLegacyCreatedByRow: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
+      statusTriggerPresent: Boolean(detail?.querySelector(".light-task-status-trigger")),
+      statusCircleTriggerPresent: Boolean(detail?.querySelector(".light-task-status-circle-trigger")),
+      people,
       sections,
       filters,
       filterVisual,

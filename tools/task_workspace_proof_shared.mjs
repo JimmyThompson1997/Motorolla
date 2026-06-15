@@ -64,6 +64,7 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     emptyTaskId: `${prefix}-empty`,
     noteId: `${prefix}-note`,
     contactId: `${prefix}-contact`,
+    ownerContactId: `${prefix}-owner-contact`,
     projectId: `${prefix}-project`,
     calendarEventId: `${prefix}-event`,
     linkIds: [
@@ -80,6 +81,7 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     emptyTaskTitle: `Task Proof Empty ${runLabel}`,
     noteTitle: `Task Proof Note ${runLabel}`,
     contactTitle: `Task Proof Contact ${runLabel}`,
+    ownerContactTitle: `Task Proof Owner ${runLabel}`,
     projectTitle: `Task Proof Project ${runLabel}`,
     calendarEventTitle: `Task Proof Event ${runLabel}`,
     primaryDescription: "Structured task detail should show this description without falling back to a generated HTML page.",
@@ -108,7 +110,7 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     seed.emptyTaskId,
   ];
   seed.record_ids.notes = [seed.noteId];
-  seed.record_ids.contacts = [seed.contactId];
+  seed.record_ids.contacts = [seed.contactId, seed.ownerContactId];
   seed.record_ids.projects = [seed.projectId];
   seed.record_ids["calendar-events"] = [seed.calendarEventId];
   return seed;
@@ -178,6 +180,16 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
       email: `${seed.prefix}@example.com`,
     },
   });
+  await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/contacts", {
+    id: seed.ownerContactId,
+    title: seed.ownerContactTitle,
+    summary: "Proof owner contact for the primary task.",
+    metadata: {
+      first_name: "Owner",
+      last_name: runDisplayToken(seed),
+      email: `${seed.prefix}-owner@example.com`,
+    },
+  });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/projects", {
     id: seed.projectId,
     title: seed.projectTitle,
@@ -211,6 +223,7 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
     due_at_ms: seed.primaryDueAtMs,
     description: seed.primaryDescription,
     checklist: seed.primaryChecklist,
+    owner: seed.ownerContactTitle,
     ...commonTask,
   });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/tasks", {
@@ -325,6 +338,7 @@ export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
     status: "todo",
     description: seed.primaryDescription,
     created_by: seed.createdBy,
+    owner: seed.ownerContactTitle,
     checklist: seed.primaryChecklist,
   });
 }
@@ -397,17 +411,33 @@ async function recordViewState(page) {
     const detail = document.querySelector(".light-task-detail-surface");
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
+    const people = detail
+      ? Array.from(detail.querySelectorAll(".light-task-person-row")).map(row => {
+          const chip = row.querySelector('[data-workspace-target-kind="contact"]');
+          return {
+            role: String(row.getAttribute("data-task-person-role") || ""),
+            label: String(row.querySelector(".light-task-person-label")?.textContent || "").trim(),
+            id: String(chip?.getAttribute("data-workspace-target-id") || ""),
+            route: String(chip?.getAttribute("data-workspace-target-route") || ""),
+            kind: String(chip?.getAttribute("data-workspace-target-kind") || ""),
+            text: String(chip?.textContent || "").replace(/\s+/g, " ").trim(),
+          };
+        })
+      : [];
     return {
       route: shell?.getAttribute("data-light-route") || "",
       taskDetailId: detail?.getAttribute("data-task-detail-id") || "",
       taskStatus: detail?.getAttribute("data-task-status") || "",
       hasTaskHtmlFrame: Boolean(detail?.querySelector(".light-html-frame")),
       hasDescriptionSection: sectionTitles.includes("description"),
+      hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
       hasAttachedSection: sectionTitles.includes("attached"),
-      createdByInteractive: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
+      hasLegacyCreatedByRow: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
       attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
-      statusButtonCount: detail?.querySelectorAll(".light-task-status-control .light-pill").length || 0,
+      statusTriggerPresent: Boolean(detail?.querySelector(".light-task-status-trigger")),
+      statusCircleTriggerPresent: Boolean(detail?.querySelector(".light-task-status-circle-trigger")),
+      people,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
     };
   });
@@ -468,6 +498,7 @@ async function readTaskFilterSelectorOptions(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll(".settings-selector-option")).map(button => ({
     key: String(button.getAttribute("data-selector-value") || ""),
     label: String(button.querySelector(".settings-selector-option-label")?.textContent || button.textContent || "").trim(),
+    meta: String(button.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
     active: button.classList.contains("is-active"),
   })));
 }
@@ -535,7 +566,7 @@ async function openTask(page, taskId, mode, timeoutMs) {
     await waitForRoute(page, "tasks", timeoutMs);
   }
   await revealTaskRow(page, taskId);
-  const row = page.locator(`.light-task-row[data-task-id="${taskId}"]`).first();
+  const row = page.locator(`.light-task-row[data-task-id="${taskId}"] .light-task-row-main`).first();
   await row.waitFor({ state: "visible", timeout: timeoutMs });
   await row.click();
   await waitForTaskDetail(page, taskId, timeoutMs);
@@ -617,6 +648,7 @@ async function verifyListFilters(page, seed, mode, config, checks) {
   for (const label of ["All", "To do", "In progress", "Waiting", "Done"]) {
     assert(selectorLabels.includes(label), `${mode}: missing ${label} task filter selector option`);
   }
+  assert(selectorOptions.every(item => item.meta !== ""), `${mode}: expected task filter selector options to include live counts`);
   checks.push({
     type: "task_filter_selector",
     mode,
@@ -705,18 +737,30 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.taskDetailId === seed.primaryTaskId, `${mode}: wrong primary task detail opened`);
   assert(state.hasTaskHtmlFrame === false, `${mode}: task detail still renders an HTML frame`);
   assert(state.hasDescriptionSection, `${mode}: primary task is missing Description`);
+  assert(state.hasPeopleSection, `${mode}: primary task is missing People`);
   assert(state.hasChecklistSection, `${mode}: primary task is missing Checklist`);
   assert(state.hasAttachedSection, `${mode}: primary task is missing Attached`);
-  assert(state.createdByInteractive, `${mode}: primary task Created by row should open the linked contact`);
+  assert(state.hasLegacyCreatedByRow === false, `${mode}: primary task should not render a legacy Created by row`);
   assert(state.attachedChipIconCount >= 4, `${mode}: primary task chips should render icons for linked records`);
-  assert(state.statusButtonCount >= 4, `${mode}: primary task is missing status controls`);
+  assert(state.statusTriggerPresent, `${mode}: primary task is missing the status trigger pill`);
+  assert(state.statusCircleTriggerPresent, `${mode}: primary task is missing the circle status trigger`);
+  const createdByChip = state.people.find(person => person.role === "created_by");
+  assert(createdByChip?.route === "contact-detail", `${mode}: Created by chip should open the linked contact`);
+  assert(createdByChip?.id === seed.contactId, `${mode}: Created by chip did not point at the expected contact`);
+  const ownerChip = state.people.find(person => person.role === "owner");
+  assert(ownerChip?.route === "contact-detail", `${mode}: Owner chip should open the linked owner contact`);
+  assert(ownerChip?.id === seed.ownerContactId, `${mode}: Owner chip did not point at the expected owner contact`);
   await pageTextIncludes(page, seed.primaryTaskTitle, config.timeoutMs);
   screenshots[`${mode}_task_detail_primary`] = await saveScreenshot(page, config.reportDir, `${mode}-02-task-detail-primary`);
+  screenshots[`${mode}_task_detail_attached`] = await saveLocatorScreenshot(page, ".light-task-chip-cloud", config.reportDir, `${mode}-02b-task-attached`);
   checks.push({
     type: "structured_primary_detail",
     mode,
     state,
-    screenshot: screenshots[`${mode}_task_detail_primary`],
+    screenshots: {
+      detail: screenshots[`${mode}_task_detail_primary`],
+      attached: screenshots[`${mode}_task_detail_attached`],
+    },
   });
 
   await openTask(page, seed.emptyTaskId, mode, config.timeoutMs);
@@ -738,15 +782,15 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
 }
 
 async function verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks) {
-  const row = page.locator('.light-task-detail-surface .light-info-row[data-workspace-target-kind="contact"]').first();
-  await row.waitFor({ state: "visible", timeout: config.timeoutMs });
-  const payload = await row.evaluate(node => ({
+  const chip = page.locator('.light-task-person-row[data-task-person-role="created_by"] [data-workspace-target-kind="contact"]').first();
+  await chip.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const payload = await chip.evaluate(node => ({
     label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
     route: String(node.dataset.workspaceTargetRoute || "").trim(),
     id: String(node.dataset.workspaceTargetId || "").trim(),
     kind: String(node.dataset.workspaceTargetKind || "").trim(),
   }));
-  await row.click();
+  await chip.click();
   await waitForRoute(page, "contact-detail", config.timeoutMs);
   await pageTextIncludes(page, seed.contactTitle, config.timeoutMs);
   const openedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-created-by-opened`);
@@ -773,16 +817,60 @@ async function verifyCreatedByNavigation(page, seed, mode, config, screenshots, 
   });
 }
 
+async function verifyStatusSelectorTriggers(page, seed, mode, config, screenshots, checks) {
+  const listCircle = page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger`).first();
+  await goToTasksList(page, mode, config.timeoutMs);
+  await revealTaskRow(page, seed.primaryTaskId);
+  await listCircle.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await listCircle.click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert((await currentRoute(page)) === "tasks", `${mode}: list-row status circle should not navigate away from tasks`);
+  screenshots[`${mode}_status_selector_list_circle`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-list-circle`);
+  await page.locator('.settings-selector-option[data-selector-value="todo"]').first().click();
+  await page.waitForTimeout(150);
+
+  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
+  const pill = page.locator(".light-task-status-trigger").first();
+  await pill.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await pill.click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${mode}_status_selector_pill`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-pill`);
+  await page.locator('.settings-selector-option[data-selector-value="todo"]').first().click();
+  await page.waitForTimeout(150);
+
+  const detailCircle = page.locator(".light-task-status-circle-trigger").first();
+  await detailCircle.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await detailCircle.click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${mode}_status_selector_circle`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-circle`);
+  await page.locator('.settings-selector-option[data-selector-value="todo"]').first().click();
+  await page.waitForTimeout(150);
+  checks.push({
+    type: "status_selector_triggers",
+    mode,
+    screenshots: {
+      list_circle: screenshots[`${mode}_status_selector_list_circle`],
+      pill: screenshots[`${mode}_status_selector_pill`],
+      detail_circle: screenshots[`${mode}_status_selector_circle`],
+    },
+  });
+}
+
 async function verifyStatusMutations(page, seed, mode, config, checks) {
   const transitions = [
-    { nextStatus: "in_progress", expectedGroup: "do" },
-    { nextStatus: "waiting", expectedGroup: "do" },
-    { nextStatus: "done", expectedGroup: "done" },
+    { nextStatus: "in_progress", expectedGroup: "do", trigger: "pill" },
+    { nextStatus: "waiting", expectedGroup: "do", trigger: "circle" },
+    { nextStatus: "done", expectedGroup: "done", trigger: "pill" },
   ];
   for (const transition of transitions) {
-    const button = page.locator(`.light-task-status-control .light-pill[data-task-status="${transition.nextStatus}"]`).first();
-    await button.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await button.click();
+    const trigger = transition.trigger === "circle"
+      ? page.locator(".light-task-status-circle-trigger").first()
+      : page.locator(".light-task-status-trigger").first();
+    await trigger.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await trigger.click();
+    const option = page.locator(`.settings-selector-option[data-selector-value="${transition.nextStatus}"]`).first();
+    await option.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await option.click();
     await waitForTaskStatus(page, transition.nextStatus, config.timeoutMs);
     const task = await fetchTaskRecord(config.baseUrl, config.apiToken, seed.primaryTaskId);
     assert(String(task.status || "") === transition.nextStatus, `${mode}: API status did not persist ${transition.nextStatus}`);
@@ -1018,6 +1106,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
 
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
     await verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks);
+    await verifyStatusSelectorTriggers(page, seed, mode, config, screenshots, checks);
     await verifyStatusMutations(page, seed, mode, config, checks);
     await verifyChecklistPersistence(page, seed, mode, config, checks);
     await verifyNavigationLoop(page, seed, mode, config, screenshots, checks);
