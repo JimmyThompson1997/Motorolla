@@ -235,6 +235,14 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert "scrollIntoViewIfNeeded" in source
 
 
+def test_task_phone_browser_helper_wait_for_text_checks_all_matching_nodes() -> None:
+    source = (Path(proof.__file__).with_name("task_workspace_phone_real_vm_browser.js")).read_text(encoding="utf-8")
+
+    assert "document.querySelectorAll(innerSelector)" in source
+    assert ".some(node =>" in source
+    assert 'if (op.kind === "wait_for_text")' in source
+
+
 def test_preferred_cover_display_id_prefers_secondary_display() -> None:
     text = (
         'Display 4627039422300187648 (HWC display 0): port=0 pnpId=MTK displayName="MTKDEV"\n'

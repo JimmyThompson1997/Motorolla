@@ -72,8 +72,9 @@ async function waitForSelector(page, selector, timeoutMs) {
 
 async function waitForText(page, selector, expected, timeoutMs) {
   await page.waitForFunction(({ selector: innerSelector, expected: innerExpected }) => {
-    const node = document.querySelector(innerSelector);
-    return Boolean(node && String(node.textContent || "").includes(innerExpected));
+    return Array.from(document.querySelectorAll(innerSelector)).some(node =>
+      String(node.textContent || "").includes(innerExpected)
+    );
   }, { selector, expected }, { timeout: timeoutMs });
   await page.waitForTimeout(120);
 }

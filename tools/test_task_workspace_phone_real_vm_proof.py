@@ -20,10 +20,12 @@ def make_browser_summary(tmp_path: Path, *, ok: bool = True) -> Path:
         "doneTaskId": "task-6",
         "calendarEventId": "event-1",
         "contactId": "contact-1",
+        "ownerContactId": "contact-owner-1",
         "projectId": "project-1",
         "noteId": "note-1",
         "calendarEventTitle": "Task Proof Event",
         "contactTitle": "Task Proof Contact",
+        "ownerContactTitle": "Task Proof Owner",
         "projectTitle": "Task Proof Project",
         "noteTitle": "Task Proof Note",
         "primaryTaskTitle": "Task Proof Primary",
@@ -168,14 +170,18 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
         "taskDetailId": "task-1",
         "hasTaskHtmlFrame": False,
         "hasDescriptionSection": True,
+        "hasPeopleSection": True,
         "hasChecklistSection": True,
         "hasAttachedSection": True,
         "attachedChipIconCount": 4,
+        "hasLegacyCreatedByRow": False,
+        "statusTriggerPresent": True,
+        "statusCircleTriggerPresent": True,
         "title": "Task Proof Primary",
-        "createdBy": {
-            "route": "contact-detail",
-            "id": "contact-1",
-        },
+        "people": [
+            {"role": "created_by", "route": "contact-detail", "id": "contact-1"},
+            {"role": "owner", "route": "contact-detail", "id": "contact-owner-1"},
+        ],
     }
 
     phone_proof.verify_primary_detail_state(state, seed)
