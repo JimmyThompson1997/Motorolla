@@ -7981,17 +7981,7 @@
 
   function settingsPageView() {
     const page = el("section", "settings-page");
-    const hero = el("article", "settings-hero");
-    const heroIcon = el("div", "settings-hero-icon");
-    heroIcon.innerHTML = iconSvg("settings", { filled: true });
-    const heroCopy = el("div", "settings-hero-copy");
-    heroCopy.append(
-      el("h1", "settings-title", "Settings"),
-      el("p", "settings-subtitle", "Wake, walkie, feedback")
-    );
-    hero.append(heroIcon, heroCopy);
     page.append(
-      hero,
       appearanceSettingsCard(),
       defaultAudioSpeedSettingCard(),
       replyModeSettingsCard(),
@@ -15585,4 +15575,3 @@
     loadMeetings({ render: true });
   }
 })();
-
