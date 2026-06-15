@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 
 import okhttp3.Call;
@@ -54,6 +55,7 @@ public final class PuckyTurnController {
     private static final int HAPTIC_AMPLITUDE = 220;
     static final long STALE_CODEX_RUNNING_TIMEOUT_MS = 10L * 60L * 1000L;
     static final long STALE_REPLY_RECOVERY_TIMEOUT_MS = 5_000L;
+    static final long TURN_RESPONSE_READ_TIMEOUT_SECONDS = 45L;
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -61,7 +63,10 @@ public final class PuckyTurnController {
     private final SettingsStore settings;
     private final ReplyCardStore replyCards;
     private final SharedPreferences prefs;
-    private final OkHttpClient http = new OkHttpClient.Builder().dns(Ipv4FirstDns.INSTANCE).build();
+    private final OkHttpClient http = new OkHttpClient.Builder()
+            .dns(Ipv4FirstDns.INSTANCE)
+            .readTimeout(TURN_RESPONSE_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build();
     private final Object pollLock = new Object();
     private volatile String activePollTurnId = "";
     private volatile boolean pollActive = false;

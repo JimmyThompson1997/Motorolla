@@ -113,6 +113,8 @@ public final class PuckyTurnSourceTest {
         String turn = read("src/main/java/com/pucky/device/pucky/PuckyTurnController.java");
         String feed = read("src/main/java/com/pucky/device/pucky/PuckyFeedController.java");
 
+        assertTrue(turn.contains("TURN_RESPONSE_READ_TIMEOUT_SECONDS = 45L"));
+        assertTrue(turn.contains(".readTimeout(TURN_RESPONSE_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)"));
         assertTrue(turn.contains("Json.put(out, \"user_transcript\", last.optString(\"user_transcript\", \"\"))"));
         assertTrue(turn.contains("boolean transcriptChanged = remote.has(\"user_transcript\")"));
         assertTrue(turn.contains("Json.put(status, \"user_transcript\", remote.optString(\"user_transcript\", \"\"))"));
