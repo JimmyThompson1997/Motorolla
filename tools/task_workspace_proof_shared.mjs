@@ -36,7 +36,14 @@ function slug(value) {
 }
 
 function compactRunLabel(value) {
-  return slug(value).replace(/-/g, "").slice(0, 10) || "proof";
+  const normalized = slug(value).replace(/-/g, "");
+  if (!normalized) {
+    return "proof";
+  }
+  if (normalized.length <= 16) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 8)}${normalized.slice(-6)}`;
 }
 
 function initialChecklist() {
