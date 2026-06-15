@@ -5357,6 +5357,9 @@ button {
   min-height: 40px;
   padding: 0 14px 0 8px;
   border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
   font-size: 13px;
   font-weight: 760;
   gap: 8px;
