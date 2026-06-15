@@ -6661,7 +6661,10 @@
     const remember = entry => {
       const label = String(entry?.label || "").trim();
       const target = entry?.target || null;
-      const key = target?.kind && target?.id
+      const kind = String(entry?.kind || target?.kind || "").trim();
+      const key = kind === "contact"
+        ? `contact:${label.toLowerCase()}`
+        : target?.kind && target?.id
         ? `${target.kind}:${target.id}`
         : `${String(entry?.kind || "")}:${label.toLowerCase()}`;
       if (!label || !key || seen.has(key)) {
@@ -6671,7 +6674,7 @@
       chips.push({
         label,
         target,
-        kind: String(entry?.kind || target?.kind || "").trim()
+        kind
       });
     };
     calendarEventPeople(event)
