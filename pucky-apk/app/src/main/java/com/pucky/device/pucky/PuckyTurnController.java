@@ -53,6 +53,7 @@ public final class PuckyTurnController {
     private static final int ARRIVAL_CUE_HAPTIC_MS = 32;
     private static final int HAPTIC_AMPLITUDE = 220;
     static final long STALE_CODEX_RUNNING_TIMEOUT_MS = 10L * 60L * 1000L;
+    static final long STALE_REPLY_RECOVERY_TIMEOUT_MS = 5_000L;
     private static final MediaType AUDIO_WAV = MediaType.get("audio/wav");
     private static PuckyTurnController shared;
 
@@ -103,6 +104,7 @@ public final class PuckyTurnController {
             Json.put(last, "speech_detected", liveGate.optBoolean("speech_detected", false));
         }
         JSONObject player = PlayerController.shared(context).state();
+        last = maybeSettleStaleReplyRecovery(last, voice, player, "status_lookup");
         JSONObject indicator = indicatorJson(last, voice, player);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.turn_status.v1");
@@ -1556,6 +1558,37 @@ public final class PuckyTurnController {
         return lastStatus();
     }
 
+    private JSONObject maybeSettleStaleReplyRecovery(JSONObject status, JSONObject voice, JSONObject player, String recoverySource) {
+        long nowMs = System.currentTimeMillis();
+        if (!shouldSettleStaleReplyRecovery(status, voice, player, nowMs)) {
+            return status;
+        }
+        JSONObject settled = copyJsonObject(status);
+        String turnId = settled.optString("turn_id", "").trim();
+        if (!turnId.isEmpty()) {
+            stopTurnStatusPoll(turnId);
+            clearRemoteAccepted(turnId);
+        }
+        long ageMs = staleReplyRecoveryAgeMs(status, nowMs);
+        Json.put(settled, "phase", "reply_recovery_settled");
+        Json.put(settled, "recovery_source", recoverySource);
+        Json.put(settled, "reply_recovery_settled", true);
+        Json.put(settled, "reply_recovery_settled_age_ms", ageMs);
+        Json.put(settled, "uploading", false);
+        Json.put(settled, "stt_running", false);
+        Json.put(settled, "codex_running", false);
+        Json.put(settled, "tts_running", false);
+        Json.put(settled, "speaking", false);
+        Json.put(settled, "failed", false);
+        clearTransportRecoveryFields(settled);
+        settled.remove("remote_stage");
+        settled.remove("server_turn_status");
+        settled.remove("error");
+        Log.d(TAG, "Settled stale reply recovery after " + ageMs + "ms");
+        markStatus("completed", settled, null);
+        return lastStatus();
+    }
+
     private JSONObject maybeRecoverTurnFromCard(JSONObject currentStatus, JSONObject card, String recoverySource) {
         if (card == null) {
             return null;
@@ -1673,6 +1706,63 @@ public final class PuckyTurnController {
                 || "codex_running".equals(state)
                 || "tts_running".equals(state)
                 || "failed".equals(state);
+    }
+
+    static boolean shouldSettleStaleReplyRecovery(JSONObject status, JSONObject voice, JSONObject player, long nowMs) {
+        if (status == null) {
+            return false;
+        }
+        if (!status.optBoolean("reply_recovery_pending", false)) {
+            return false;
+        }
+        if (status.optString("response_transport_error", "").trim().isEmpty()) {
+            return false;
+        }
+        JSONObject serverTurnStatus = status.optJSONObject("server_turn_status");
+        boolean feedPersisted = serverTurnStatus != null && serverTurnStatus.optBoolean("feed_persisted", false);
+        if (!feedPersisted) {
+            return false;
+        }
+        String remoteStage = status.optString("remote_stage", "").trim();
+        String serverStage = serverTurnStatus == null ? "" : serverTurnStatus.optString("stage", "").trim();
+        if (!"completed".equals(remoteStage) && !"completed".equals(serverStage)) {
+            return false;
+        }
+        if (staleReplyRecoveryAgeMs(status, nowMs) < STALE_REPLY_RECOVERY_TIMEOUT_MS) {
+            return false;
+        }
+        if (player != null && player.optBoolean("is_playing", false)) {
+            return false;
+        }
+        if (voice != null) {
+            if (voice.optBoolean("mic_on", false)) {
+                return false;
+            }
+            JSONObject activeSession = voice.optJSONObject("active_session");
+            if (activeSession != null && activeSession.length() > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static long staleReplyRecoveryAgeMs(JSONObject status, long nowMs) {
+        long updatedMs = parseStatusTimestamp(
+                status == null ? "" : status.optString("response_transport_error_at", ""),
+                parseStatusTimestamp(status == null ? "" : status.optString("updated_at", ""), nowMs));
+        return Math.max(0L, nowMs - updatedMs);
+    }
+
+    private static long parseStatusTimestamp(String raw, long fallback) {
+        String clean = raw == null ? "" : raw.trim();
+        if (clean.isEmpty()) {
+            return fallback;
+        }
+        try {
+            return Instant.parse(clean).toEpochMilli();
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private static boolean isLocallyRecovered(JSONObject status) {

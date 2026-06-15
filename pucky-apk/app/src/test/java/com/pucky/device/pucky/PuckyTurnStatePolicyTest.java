@@ -116,4 +116,56 @@ public final class PuckyTurnStatePolicyTest {
 
         assertFalse(PuckyTurnController.shouldRetainPendingAfterLocalTransportFailure(status));
     }
+
+    @Test
+    public void staleReplyRecoverySettlesAfterPersistedCompletedTimeout() throws Exception {
+        long now = 10_000L;
+        JSONObject status = new JSONObject()
+                .put("state", "tts_running")
+                .put("remote_stage", "completed")
+                .put("reply_recovery_pending", true)
+                .put("response_transport_error", "SocketTimeoutException: timeout")
+                .put("response_transport_error_at", "1970-01-01T00:00:04Z")
+                .put("server_turn_status", new JSONObject()
+                        .put("stage", "completed")
+                        .put("feed_persisted", true));
+
+        assertTrue(PuckyTurnController.shouldSettleStaleReplyRecovery(status, new JSONObject(), new JSONObject(), now));
+        assertEquals(6_000L, PuckyTurnController.staleReplyRecoveryAgeMs(status, now));
+    }
+
+    @Test
+    public void freshReplyRecoveryDoesNotSettleBeforeGraceWindow() throws Exception {
+        long now = 8_500L;
+        JSONObject status = new JSONObject()
+                .put("state", "tts_running")
+                .put("remote_stage", "completed")
+                .put("reply_recovery_pending", true)
+                .put("response_transport_error", "SocketTimeoutException: timeout")
+                .put("response_transport_error_at", "1970-01-01T00:00:04Z")
+                .put("server_turn_status", new JSONObject()
+                        .put("stage", "completed")
+                        .put("feed_persisted", true));
+
+        assertFalse(PuckyTurnController.shouldSettleStaleReplyRecovery(status, new JSONObject(), new JSONObject(), now));
+    }
+
+    @Test
+    public void activePlaybackKeepsReplyRecoveryVisible() throws Exception {
+        long now = 10_000L;
+        JSONObject status = new JSONObject()
+                .put("state", "tts_running")
+                .put("remote_stage", "completed")
+                .put("reply_recovery_pending", true)
+                .put("response_transport_error", "SocketTimeoutException: timeout")
+                .put("response_transport_error_at", "1970-01-01T00:00:04Z")
+                .put("server_turn_status", new JSONObject()
+                        .put("stage", "completed")
+                        .put("feed_persisted", true));
+        JSONObject player = new JSONObject()
+                .put("is_playing", true)
+                .put("source", "pucky.turn");
+
+        assertFalse(PuckyTurnController.shouldSettleStaleReplyRecovery(status, new JSONObject(), player, now));
+    }
 }

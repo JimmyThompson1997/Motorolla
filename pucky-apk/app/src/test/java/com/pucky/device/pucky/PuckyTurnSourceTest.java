@@ -683,9 +683,16 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("private static boolean shouldAttemptReplyRecovery(JSONObject status)"));
         assertTrue(source.contains("private static boolean isLocallyRecovered(JSONObject status)"));
         assertTrue(source.contains("STALE_CODEX_RUNNING_TIMEOUT_MS = 10L * 60L * 1000L"));
+        assertTrue(source.contains("STALE_REPLY_RECOVERY_TIMEOUT_MS = 5_000L"));
         assertTrue(source.contains("private JSONObject maybeExpireStaleCodexRunning"));
+        assertTrue(source.contains("private JSONObject maybeSettleStaleReplyRecovery"));
         assertTrue(source.contains("static boolean shouldExpireStaleCodexRunning"));
         assertTrue(source.contains("static long staleCodexRunningAgeMs"));
+        assertTrue(source.contains("static boolean shouldSettleStaleReplyRecovery"));
+        assertTrue(source.contains("static long staleReplyRecoveryAgeMs"));
+        assertTrue(source.contains("Json.put(settled, \"reply_recovery_settled\", true)"));
+        assertTrue(source.contains("Json.put(settled, \"reply_recovery_settled_age_ms\", ageMs)"));
+        assertTrue(source.contains("markStatus(\"completed\", settled, null)"));
         assertTrue(source.contains("Json.put(out, \"stale_codex_running_expired\""));
         assertTrue(source.contains("Json.put(out, \"stale_codex_running_age_ms\""));
         assertTrue(source.contains("replyCards.snapshot().optJSONArray(\"cards\")"));
