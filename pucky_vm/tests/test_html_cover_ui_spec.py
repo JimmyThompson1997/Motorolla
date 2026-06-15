@@ -635,6 +635,7 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert ".light-task-filter-button" in styles
     assert ".light-task-filter-button-chevron" in styles
     assert "transform: rotate(90deg);" not in styles
+    assert ".light-task-filter-button-icon {" in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active' in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
@@ -660,6 +661,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "function taskRowSummary" not in app
     assert "function taskOwners(task)" in app
     assert "function taskPrimaryOwner(task)" in app
+    assert "explicitOwners" not in app
     assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
@@ -677,6 +679,8 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'kind: "contact"' in task_people_section
     assert 'const button = el("button", "light-pill is-active light-task-status-trigger");' in task_status_control
     assert 'button.append(icon, copy, chevron);' in task_status_control
+    assert 'iconSvg("expand_more", { filled: true })' in task_status_control
+    assert 'iconSvg("navigate_next")' not in task_status_control
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
@@ -689,6 +693,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-status-trigger" in styles
     assert ".light-task-person-row" in styles
     assert ".light-task-filter-button-icon" in styles
+    assert ".light-task-status-trigger-icon" in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles

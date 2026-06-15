@@ -333,6 +333,23 @@ export async function fetchTaskRecord(baseUrl, apiToken, taskId) {
   return apiRequest(baseUrl, apiToken, "GET", `/api/workspace/tasks/${encodeURIComponent(taskId)}`);
 }
 
+async function waitForTaskChecklistState(baseUrl, apiToken, taskId, expected, timeoutMs) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0) || 0);
+  while (Date.now() <= deadline) {
+    const task = await fetchTaskRecord(baseUrl, apiToken, taskId);
+    const checklist = Array.isArray(task?.checklist) ? task.checklist : [];
+    const matches = Array.from(expected.entries()).every(([itemId, done]) => {
+      const entry = checklist.find(item => String(item?.id || "") === String(itemId || ""));
+      return Boolean(entry?.done) === Boolean(done);
+    });
+    if (matches) {
+      return task;
+    }
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return fetchTaskRecord(baseUrl, apiToken, taskId);
+}
+
 export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
   await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/tasks/${encodeURIComponent(seed.primaryTaskId)}`, {
     status: "todo",
@@ -933,9 +950,9 @@ async function verifyChecklistPersistence(page, seed, mode, config, checks) {
     await row.waitFor({ state: "visible", timeout: config.timeoutMs });
     await row.click();
     expected.set(item.id, !Boolean(expected.get(item.id)));
-    await page.waitForTimeout(150);
+    await waitForTaskChecklistState(config.baseUrl, config.apiToken, seed.primaryTaskId, expected, config.timeoutMs);
   }
-  const apiTask = await fetchTaskRecord(config.baseUrl, config.apiToken, seed.primaryTaskId);
+  const apiTask = await waitForTaskChecklistState(config.baseUrl, config.apiToken, seed.primaryTaskId, expected, config.timeoutMs);
   const apiChecklist = Array.isArray(apiTask.checklist) ? apiTask.checklist : [];
   for (const item of items) {
     const apiItem = apiChecklist.find(entry => String(entry.id || "") === item.id);

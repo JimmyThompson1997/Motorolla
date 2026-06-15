@@ -5894,10 +5894,6 @@
     };
     append(task?.owner);
     append(task?.metadata?.owner);
-    const explicitOwners = Array.isArray(task?.owners)
-      ? task.owners
-      : (Array.isArray(task?.metadata?.owners) ? task.metadata.owners : []);
-    explicitOwners.forEach(append);
     return owners;
   }
 
@@ -6124,7 +6120,7 @@
     const copy = el("span", "light-task-status-trigger-copy");
     copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
     const chevron = el("span", "light-task-status-trigger-chevron");
-    chevron.innerHTML = iconSvg("navigate_next");
+    chevron.innerHTML = iconSvg("expand_more", { filled: true });
     button.append(icon, copy, chevron);
     button.addEventListener("click", event => {
       event.preventDefault();
