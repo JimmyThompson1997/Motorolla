@@ -251,6 +251,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue(surface.contains("\"route\""));
         assertTrue(surface.contains("\"detail\""));
         assertTrue(surface.contains("\"thread_scope\""));
+        assertTrue(surface.contains("\"voice_status\""));
         assertTrue(surface.contains("\"visible_cards\""));
         assertTrue(surface.contains("UiAutomationController.describe()"));
         assertTrue(automation.contains("evaluateJavascript"));
