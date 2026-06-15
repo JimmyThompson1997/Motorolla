@@ -186,10 +186,6 @@
       filled: '<path d="M15 2 22 9l-2 2-1.4-1.4-4.1 4.1.5 4.8-1.5 1.5-4.9-4.9L4 20l-1-1 4.9-4.6L3 9.5 4.5 8l4.8.5 4.1-4.1L12 3l3-1Z"/>',
       outline: '<path d="m15 3 6 6-2 2-1.5-1.5-4.2 4.2.5 4.8-1.2 1.2-8.3-8.3 1.2-1.2 4.8.5 4.2-4.2L13 5l2-2Z"/><path d="m8.7 15.3-4.2 4.2"/>'
     },
-    note_pin: {
-      filled: '<path d="M9.5 4.2h5A2.3 2.3 0 0 1 16.8 6v1.3c0 .6.2 1.1.7 1.5l1 .9v.7H12.8V20h-1.6v-9.4H5.5v-.7l1-.9c.4-.4.7-.9.7-1.5V6a2.3 2.3 0 0 1 2.3-2.3Z"/>',
-      outline: '<path d="M9.5 4.2h5A2.3 2.3 0 0 1 16.8 6v1.3c0 .6.2 1.1.7 1.5l1 .9v.7H5.5v-.7l1-.9c.4-.4.7-.9.7-1.5V6a2.3 2.3 0 0 1 2.3-2.3Z"/><path d="M12 10.4V20"/>'
-    },
     warning: {
       filled: '<path d="M12 2 22 20H2L12 2Zm-1 6v6h2V8h-2Zm0 8v2h2v-2h-2Z"/>',
       outline: '<path d="M12 3 21 20H3L12 3Z"/><path d="M12 8v6M12 17v.2"/>'
@@ -5382,7 +5378,7 @@
       copy.append(el("span", "light-note-summary", preview));
     }
     copy.append(el("span", "light-note-row-meta", meta));
-    const pin = lightIconButton("note_pin", note.pinned ? "Unpin note" : "Pin note", event => {
+    const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
       if (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -5397,7 +5393,7 @@
     pin.dataset.noteId = note.id;
     pin.dataset.notePinned = String(Boolean(note.pinned));
     pin.setAttribute("aria-pressed", String(Boolean(note.pinned)));
-    pin.innerHTML = iconSvg("note_pin", { filled: Boolean(note.pinned) });
+    pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });
     row.append(copy, pin);
     return row;
   }

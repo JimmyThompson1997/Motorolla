@@ -304,8 +304,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'const copy = el("span", "light-note-feed-copy");' in note_row
     assert 'copy.append(el("strong", "", note.title));' in note_row
     assert 'copy.append(el("span", "light-note-row-meta", meta));' in note_row
-    assert 'const pin = lightIconButton("note_pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
-    assert 'pin.innerHTML = iconSvg("note_pin", { filled: Boolean(note.pinned) });' in note_row
+    assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
     assert "void toggleNotePin(note.id);" in note_row
     assert 'return lightPage("Note", { subtitle: "Note not found.", detail: true });' in note_detail
     assert 'const page = lightPage(note.title || "Untitled note", { detail: true });' in note_detail
