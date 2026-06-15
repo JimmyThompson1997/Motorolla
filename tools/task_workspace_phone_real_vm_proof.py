@@ -308,7 +308,7 @@ def verify_filter_state(
 def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
     visual = state.get("filterVisual") or {}
     assert_or_fail(not bool(visual.get("chevronHasRect")), "phone_task_detail_render_failed", f"{theme}: task filter rendered the fallback icon")
-    supported_chevron_paths = {"m7 10 5 5 5-5", "m7 10 5 5 5-5H7Z"}
+    supported_chevron_paths = {"m7 10 5 5 5-5", "m7 10 5 5 5-5H7Z", "m9 5 7 7-7 7"}
     assert_or_fail(
         str(visual.get("chevronPath") or "") in supported_chevron_paths,
         "phone_task_detail_render_failed",

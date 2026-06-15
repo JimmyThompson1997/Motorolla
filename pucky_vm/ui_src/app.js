@@ -5811,7 +5811,7 @@
     const copy = el("span", "light-task-filter-button-copy");
     copy.append(el("span", "light-task-filter-button-label", currentLabel));
     const chevron = el("span", "light-task-filter-button-chevron");
-    chevron.innerHTML = iconSvg("expand_more", { filled: true });
+    chevron.innerHTML = iconSvg("navigate_next");
     button.append(icon, copy, chevron);
     button.addEventListener("click", event => {
       event.preventDefault();
@@ -6109,7 +6109,7 @@
     const copy = el("span", "light-task-status-trigger-copy");
     copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
     const chevron = el("span", "light-task-status-trigger-chevron");
-    chevron.innerHTML = iconSvg("expand_more", { filled: true });
+    chevron.innerHTML = iconSvg("navigate_next");
     button.append(icon, copy, chevron);
     button.addEventListener("click", event => {
       event.preventDefault();

@@ -608,13 +608,14 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert 'button.dataset.taskFilterCurrent = currentKey;' in task_filters
     assert 'light-task-filter-button' in task_filters
     assert 'light-task-filter-button-chevron' in task_filters
-    assert 'iconSvg("expand_more", { filled: true })' in task_filters
+    assert 'iconSvg("navigate_next")' in task_filters
     assert 'chevron-down' not in task_filters
     assert 'taskFilter: "all",' in app
     assert 'task_filter: state.taskFilter || "all"' not in app
     assert ".light-task-counts" not in styles
     assert ".light-task-filter-button" in styles
     assert ".light-task-filter-button-chevron" in styles
+    assert "transform: rotate(90deg);" in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active' in styles
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
