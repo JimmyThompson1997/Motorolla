@@ -195,6 +195,10 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface" in styles
     assert ".light-page-header-shell" in styles
     assert ".light-canonical-port-surface" in styles
+    assert "overflow-x: clip;" in styles
+    assert "overflow-y: visible;" in styles
+    assert ".light-page-header-shell {\n  position: sticky;" in styles
+    assert ".light-date-picker {\n  position: sticky;" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:

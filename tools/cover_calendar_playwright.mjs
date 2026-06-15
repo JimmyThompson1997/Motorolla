@@ -464,6 +464,8 @@ async function selectCalendarDetailTarget(page, label, route, expectedText) {
   await selectConnectedChip(page, label);
   if (route === "contact-detail") {
     await waitForSelectorText(page, ".light-profile-card h1", expectedText);
+  } else if (route === "task-detail") {
+    await waitForSelectorText(page, ".light-shell", expectedText);
   } else {
     await waitForHeaderText(page, expectedText);
   }
@@ -546,9 +548,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the calendar detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected calendar detail to avoid repeating the title in a large H1.");
     assert(await page.locator('.light-event-detail-label', { hasText: "Description" }).count() === 1, "Expected a Description label ahead of the summary.");
-    const detailText = String(await page.locator(".light-doc-article").textContent() || "").replace(/\s+/g, " ").trim();
-    assert(detailText.includes("Description"), "Expected event detail to render a Description section.");
-    assert(detailText.includes("Details"), "Expected event detail to render the Details section.");
+    const detailText = String(await page.locator(".light-document-page").textContent() || "").replace(/\s+/g, " ").trim();
+    assert(/description/i.test(detailText), "Expected event detail to render a Description section.");
+    assert(/details/i.test(detailText), "Expected event detail to render the Details section.");
     assert(!detailText.includes("Linked records"), "Expected event detail to collapse Linked records into Connected chips.");
     const detailChipTexts = normalizeTexts(await page.locator(".light-event-connected-card .light-attendee-chip").allTextContents());
     for (const label of ["Jimmy T.", "Jeff B.", "Proof freelance follow-up", "Send proof review notes", "Proof review outline", "Proof freelance prep", "Send proof HTML before call"]) {
@@ -667,7 +669,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectCalendarEvent(page, seed);
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the mobile detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected the mobile detail to avoid a duplicated large title.");
-    const mobileDetailText = String(await page.locator(".light-doc-article").textContent() || "").replace(/\s+/g, " ").trim();
+    const mobileDetailText = String(await page.locator(".light-document-page").textContent() || "").replace(/\s+/g, " ").trim();
     assert(!mobileDetailText.includes("Linked records"), "Expected mobile event detail to collapse Linked records into Connected chips.");
     await assertChipContrast(page, ".light-event-connected-card .light-attendee-chip.is-link");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
