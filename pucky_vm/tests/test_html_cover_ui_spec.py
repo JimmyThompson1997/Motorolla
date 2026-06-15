@@ -267,6 +267,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     current_strip_kind = function_block(app, "currentTileAudioStripKind")
     sync_probe = function_block(app, "syncAudioProbeFromPlayerState")
     audio_tile_status = function_block(app, "audioTileStatus")
+    confirm_playback = function_block(app, "confirmAudioProbePlaybackStart")
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
@@ -279,7 +280,11 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'setAudioProbeTerminal(card, "start_failed"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_start"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
+    assert "confirmAudioProbePlaybackStart(busyKey, state.player);" in toggle_audio
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert 'if (!Boolean(player?.is_playing) || !samePath(targetKey, playerStateKey(player))) {' in confirm_playback
+    assert 'return setAudioProbePhaseByKey(targetKey, "playing_confirmed", {' in confirm_playback
+    assert 'reason: String(reason || "play_request_acknowledged")' in confirm_playback
     assert 'if (phase !== "playing_confirmed") {' in current_strip_kind
     assert 'if (audioRuntimeMode() === "native_bridge" && Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {' in current_strip_kind
     assert 'setAudioProbePhaseByKey(targetKey, "playing_confirmed"' in sync_probe

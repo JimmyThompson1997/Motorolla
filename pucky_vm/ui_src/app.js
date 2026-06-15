@@ -9302,6 +9302,7 @@
           source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
+        confirmAudioProbePlaybackStart(busyKey, state.player);
       } else {
         setAudioProbePhase(card, "starting", {
           reason: "play_requested",
@@ -9336,6 +9337,7 @@
           source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
+        confirmAudioProbePlaybackStart(busyKey, state.player);
       }
       markCardRead(card);
       render();
@@ -13183,6 +13185,21 @@
       target_key: state.audioProbe.target_key
     });
     return true;
+  }
+
+  function confirmAudioProbePlaybackStart(targetKey, player, reason = "play_request_acknowledged") {
+    if (!samePath(state.audioProbe.target_key, targetKey)) {
+      return false;
+    }
+    if (!Boolean(player?.is_playing) || !samePath(targetKey, playerStateKey(player))) {
+      return false;
+    }
+    if (state.audioProbe.current_tile_audio_phase === "playing_confirmed") {
+      return false;
+    }
+    return setAudioProbePhaseByKey(targetKey, "playing_confirmed", {
+      reason: String(reason || "play_request_acknowledged")
+    });
   }
 
   function setAudioProbeTerminal(card, outcome, extra = {}) {
