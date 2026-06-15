@@ -5042,7 +5042,7 @@ button {
 .light-task-row-copy {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 0;
 }
 
 .light-check-circle {
@@ -5125,17 +5125,6 @@ button {
   color: #8a93a3;
   text-decoration: line-through;
   text-decoration-thickness: 1px;
-}
-
-.light-task-row-summary {
-  min-width: 0;
-  color: var(--home-shell-text-muted);
-  font-size: 13px;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .light-task-row-trailing {
@@ -5561,17 +5550,19 @@ button {
 }
 
 .light-record-chip-icon {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   display: grid;
   place-items: center;
   color: color-mix(in srgb, var(--accent-primary) 78%, var(--home-shell-text));
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .light-record-chip-icon .material-icon {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2.1;

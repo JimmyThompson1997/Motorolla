@@ -467,6 +467,29 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
 
+def test_tasks_use_title_only_rows_owner_ready_details_and_reset_scroll_on_open() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    task_group = function_block(app, "lightTaskGroup")
+    task_detail_rows = function_block(app, "taskDetailRows")
+    task_detail_surface = function_block(app, "lightTaskDetailSurface")
+    light_navigate = function_block(app, "lightNavigate")
+    reset_scroll = function_block(app, "resetLightRouteScroll")
+
+    assert 'el("span", "light-task-row-summary"' not in task_group
+    assert "function taskRowSummary" not in app
+    assert "function taskOwners(task)" in app
+    assert 'const owners = taskOwners(task).filter(name => name !== createdBy);' in task_detail_rows
+    assert 'label: owners.length === 1 ? "Owner" : "Owners"' in task_detail_rows
+    assert 'accentKey: "contacts"' in task_detail_rows
+    assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
+    assert "resetLightRouteScroll();" in light_navigate
+    assert 'restoreScrollPosition(document.getElementById("feed"), 0)' in reset_scroll
+    assert ".light-record-chip-icon" in styles
+    assert "background: color-mix(in srgb, currentColor 14%, transparent);" in styles
+
+
 def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     app = read("app.js")
     reminders_page = function_block(app, "lightRemindersPage")
@@ -489,7 +512,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
 
 
-def test_contacts_expose_preserved_me_contact_and_edit_route() -> None:
+def test_contacts_expose_preserved_me_contact_without_detail_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
@@ -501,7 +524,7 @@ def test_contacts_expose_preserved_me_contact_and_edit_route() -> None:
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" in app
     assert '"contact-edit"' in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
-    assert 'lightNavigate("contact-edit", { from: "contact-detail" });' in contact_detail
+    assert 'action: lightCircleButton("edit"' not in contact_detail
     assert 'lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });' in contact_edit
     assert 'const save = lightPillButton(selfContact ? "Save profile" : "Save contact"' in contact_edit
     assert "notification_device_id: selfContact ? device.value.trim()" in contact_edit

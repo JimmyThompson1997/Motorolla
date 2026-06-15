@@ -4015,12 +4015,7 @@
     }
     ensureLinkedCollections(contact);
     const selfContact = contactIsSelf(contact);
-    const page = lightPage("Contact", {
-      detail: true,
-      action: lightCircleButton("edit", selfContact ? "Edit Me" : "Edit contact", () => {
-        lightNavigate("contact-edit", { from: "contact-detail" });
-      })
-    });
+    const page = lightPage("Contact", { detail: true });
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
@@ -5573,10 +5568,7 @@
       row.addEventListener("blur", () => row.classList.remove("is-pressed"));
       row.addEventListener("click", () => openTaskFromList(task));
       const copy = el("span", "light-task-row-copy");
-      copy.append(
-        el("strong", "light-task-row-title", task.title || "Untitled task"),
-        el("span", "light-task-row-summary", taskRowSummary(task))
-      );
+      copy.append(el("strong", "light-task-row-title", task.title || "Untitled task"));
       const trailing = el("span", "light-task-row-trailing");
       const badge = lightTaskStatusBadge(normalizedTaskStatus(task), { compact: true });
       if (badge) {
@@ -5655,21 +5647,21 @@
     return Array.isArray(task?.checklist) ? task.checklist : [];
   }
 
-  function taskRowSummary(task) {
-    const summary = taskDescription(task);
-    if (summary) {
-      return summary;
-    }
-    const parts = [];
-    const createdBy = taskCreatedBy(task);
-    if (createdBy) {
-      parts.push(`Created by ${createdBy}`);
-    }
-    const status = normalizedTaskStatus(task);
-    if (status !== "todo" && status !== "done") {
-      parts.push(taskStatusLabel(status));
-    }
-    return parts.join(DOT) || "No extra notes";
+  function taskOwners(task) {
+    const owners = [];
+    const append = value => {
+      const name = String(value || "").trim();
+      if (name && !owners.includes(name)) {
+        owners.push(name);
+      }
+    };
+    append(task?.owner);
+    append(task?.metadata?.owner);
+    const explicitOwners = Array.isArray(task?.owners)
+      ? task.owners
+      : (Array.isArray(task?.metadata?.owners) ? task.metadata.owners : []);
+    explicitOwners.forEach(append);
+    return owners;
   }
 
   function lightTaskStatusBadge(status, options = {}) {
@@ -5752,16 +5744,28 @@
 
   function taskDetailRows(task) {
     const createdBy = taskCreatedBy(task);
-    return [
-      { icon: "clock", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
-      { icon: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
+    const owners = taskOwners(task).filter(name => name !== createdBy);
+    const rows = [
+      { icon: "clock", accentKey: "meetings", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
+      { icon: "calendar", accentKey: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
       {
         icon: "contacts",
+        accentKey: "contacts",
         label: "Created by",
         value: createdBy || "Unknown",
         target: taskCreatedByTarget(task)
       },
     ];
+    if (owners.length) {
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: owners.length === 1 ? "Owner" : "Owners",
+        value: owners.join(", "),
+        target: owners.length === 1 ? workspaceContactTargetByName(owners[0]) : null
+      });
+    }
+    return rows;
   }
 
   function taskAttachmentTargets(task) {
@@ -5880,6 +5884,16 @@
     return wrap;
   }
 
+  function resetLightRouteScroll() {
+    const restore = () => restoreScrollPosition(document.getElementById("feed"), 0);
+    state.feedScrollTop = 0;
+    restore();
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(restore);
+    }
+    window.setTimeout(restore, 0);
+  }
+
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
     const copy = el("div", "light-task-detail-copy");
@@ -5901,11 +5915,11 @@
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
     ensureTaskCreatedByContact(task);
-    surface.append(lightInfoSection("Details", taskDetailRows(task)));
     const description = taskDescription(task);
     if (description) {
       surface.append(lightCopySection("Description", description));
     }
+    surface.append(lightInfoSection("Details", taskDetailRows(task)));
     const checklist = lightTaskChecklistSection(task);
     if (checklist) {
       surface.append(checklist);
@@ -6444,6 +6458,7 @@
     state.lightReturnRoute = state.route === "home" ? "" : "home";
     persistNavState();
     render();
+    resetLightRouteScroll();
     runLightRouteSideEffects("light_app_click");
   }
 
