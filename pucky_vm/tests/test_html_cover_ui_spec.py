@@ -264,6 +264,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     app = read("app.js")
     card_view = function_block(app, "cardView")
     toggle_audio = function_block(app, "toggleAudio")
+    audio_control_key = function_block(app, "audioControlKey")
     current_strip_kind = function_block(app, "currentTileAudioStripKind")
     sync_probe = function_block(app, "syncAudioProbeFromPlayerState")
     audio_tile_status = function_block(app, "audioTileStatus")
@@ -282,6 +283,8 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
     assert "confirmAudioProbePlaybackStart(busyKey, state.player);" in toggle_audio
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert 'if (!hasNativeAudioBridge() && card.audio_url) {' in audio_control_key
+    assert "return card.audio_url;" in audio_control_key
     assert 'if (!Boolean(player?.is_playing) || !samePath(targetKey, playerStateKey(player))) {' in confirm_playback
     assert 'return setAudioProbePhaseByKey(targetKey, "playing_confirmed", {' in confirm_playback
     assert 'reason: String(reason || "play_request_acknowledged")' in confirm_playback

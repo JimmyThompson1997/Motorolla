@@ -13049,7 +13049,13 @@
   }
 
   function audioControlKey(card) {
-    return card.audio_playlist_path || card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
+    if (card.audio_playlist_path) {
+      return card.audio_playlist_path;
+    }
+    if (!hasNativeAudioBridge() && card.audio_url) {
+      return card.audio_url;
+    }
+    return card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
   }
 
   function audioStateKey(card) {
