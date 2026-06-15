@@ -4026,7 +4026,15 @@
     }
     ensureLinkedCollections(contact);
     const selfContact = contactIsSelf(contact);
-    const page = lightPage("Contact", { detail: true });
+    const page = lightPage("Contact", {
+      detail: true,
+      action: lightCircleButton(
+        "edit",
+        selfContact ? "Edit Me" : "Edit contact",
+        () => lightNavigate("contact-edit", { from: "contact-detail" }),
+        "light-contact-edit-button"
+      )
+    });
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);

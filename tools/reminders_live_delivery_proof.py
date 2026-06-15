@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run live phone/Gmail/SMS reminder delivery proof against the VM-served bundle.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--api-token", default="")
+    parser.add_argument("--me-email", default="")
+    parser.add_argument("--me-phone", default="")
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--adb-serial", default="")
     parser.add_argument("--broker", default="")
@@ -58,9 +60,16 @@ def reminder_meta(reminder: dict[str, Any]) -> dict[str, Any]:
     metadata = reminder.get("metadata") if isinstance(reminder.get("metadata"), dict) else {}
     return {
         "delivery_state": str(metadata.get("delivery_state") or "").strip().lower(),
+        "snoozed_until_ms": int(metadata.get("snoozed_until_ms") or 0),
         "last_fired_due_at_ms": int(metadata.get("last_fired_due_at_ms") or 0),
         "last_delivery_results": list(metadata.get("last_delivery_results") or []) if isinstance(metadata.get("last_delivery_results"), list) else [],
     }
+
+
+def reminder_is_snoozed(reminder: dict[str, Any]) -> bool:
+    meta = reminder_meta(reminder)
+    due_at_ms = int(reminder.get("due_at_ms") or 0)
+    return meta["snoozed_until_ms"] > int(time.time() * 1000) and meta["snoozed_until_ms"] == due_at_ms
 
 
 def reminder_is_active(reminder: dict[str, Any]) -> bool:
@@ -68,7 +77,22 @@ def reminder_is_active(reminder: dict[str, Any]) -> bool:
         return False
     meta = reminder_meta(reminder)
     due_at_ms = int(reminder.get("due_at_ms") or 0)
-    return not (meta["delivery_state"] == "sent" and meta["last_fired_due_at_ms"] > 0 and meta["last_fired_due_at_ms"] == due_at_ms)
+    if meta["delivery_state"] == "sent" and meta["last_fired_due_at_ms"] > 0 and meta["last_fired_due_at_ms"] == due_at_ms:
+        return False
+    return not reminder_is_snoozed(reminder)
+
+
+def patch_me_profile(base_url: str, token: str, *, email: str = "", phone: str = "") -> None:
+    metadata: dict[str, Any] = {}
+    clean_email = str(email or "").strip()
+    clean_phone = str(phone or "").strip()
+    if clean_email:
+        metadata["email"] = clean_email
+    if clean_phone:
+        metadata["phone"] = clean_phone
+    if not metadata:
+        return
+    api_request(base_url, "/api/workspace/contacts/contact-me", method="PATCH", token=token, body={"metadata": metadata})
 
 
 def wait_for_reminder_state(base_url: str, token: str, reminder_id: str, *, wait_seconds: int) -> dict[str, Any]:
@@ -209,6 +233,7 @@ def main() -> int:
     adb_serial = discover_adb_serial(args.adb_serial)
 
     service = PuckyVoiceService(Config.from_env())
+    patch_me_profile(base_url, token, email=args.me_email, phone=args.me_phone)
     me = api_request(base_url, "/api/workspace/contacts/contact-me", token=token)
     reminders_before = api_request(base_url, "/api/workspace/reminders", token=token)
     baseline_active = len([item for item in list(reminders_before.get("items") or []) if reminder_is_active(item)])

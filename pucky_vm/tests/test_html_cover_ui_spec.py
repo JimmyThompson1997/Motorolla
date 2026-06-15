@@ -737,7 +737,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert ".light-reminder-channels-section" in styles
 
 
-def test_contacts_expose_preserved_me_contact_without_detail_edit_action() -> None:
+def test_contacts_expose_preserved_me_contact_with_detail_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
@@ -749,7 +749,10 @@ def test_contacts_expose_preserved_me_contact_without_detail_edit_action() -> No
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" in app
     assert '"contact-edit"' in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
-    assert 'action: lightCircleButton("edit"' not in contact_detail
+    assert 'action: lightCircleButton(' in contact_detail
+    assert '"edit"' in contact_detail
+    assert 'selfContact ? "Edit Me" : "Edit contact"' in contact_detail
+    assert '() => lightNavigate("contact-edit", { from: "contact-detail" })' in contact_detail
     assert 'lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });' in contact_edit
     assert 'const save = lightPillButton(selfContact ? "Save profile" : "Save contact"' in contact_edit
     assert "notification_device_id: selfContact ? device.value.trim()" in contact_edit

@@ -149,8 +149,14 @@ function reminderIsSentHistoryForScript(reminder) {
   return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
 }
 
+function reminderIsSnoozedForScript(reminder) {
+  const meta = reminderMetaForScript(reminder);
+  const dueAtMs = Number(reminder?.due_at_ms || 0);
+  return meta.snoozedUntilMs > Date.now() && meta.snoozedUntilMs === dueAtMs;
+}
+
 function reminderIsActiveForScript(reminder) {
-  return !reminderIsDismissedForScript(reminder) && !reminderIsSentHistoryForScript(reminder);
+  return !reminderIsDismissedForScript(reminder) && !reminderIsSentHistoryForScript(reminder) && !reminderIsSnoozedForScript(reminder);
 }
 
 async function readActiveReminderCount(config) {
@@ -629,8 +635,8 @@ async function assertHomeShellChrome(page, route) {
     return {
       route: shell?.getAttribute("data-light-route") || "",
       back: Boolean(document.querySelector(".light-back-button, .light-appbar-back")),
-      tabsHidden: Boolean(tabs?.hidden),
-      trayHidden: Boolean(tray?.hidden),
+      tabsHidden: !tabs || Boolean(tabs.hidden),
+      trayHidden: !tray || Boolean(tray.hidden),
       statusVisible: Boolean(status && status.getBoundingClientRect().width > 0 && status.getBoundingClientRect().height > 0)
     };
   }, route);
@@ -1598,6 +1604,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_reminder_detail_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed`);
 
   await backHome(page, theme, config.timeoutMs);
+  activeCount -= 1;
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
   screenshots[`${theme}_reminders_home_badge_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-snoozed`);
 
@@ -1613,7 +1620,6 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
   screenshots[`${theme}_reminder_detail_dismissed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-dismissed`);
   await backHome(page, theme, config.timeoutMs);
-  activeCount -= 1;
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
 
   reminderSummary.snoozedDueAtMs = Number(snoozedRecord?.due_at_ms || 0);
