@@ -883,13 +883,14 @@ async function proveNotes(page, config, seed, theme, screenshots, summary) {
   const note = seed.writeEnabled
     ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
     : (seed.notes || []).find(item => Boolean(item.id)) ;
+  const rowSelector = `.light-note-row[data-note-id="${note?.id || ""}"]`;
   if (!note?.id || !note?.title) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  await page.locator(`[data-note-id="${note.id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
-  await page.locator(`[data-note-id="${note.id}"]`).click();
+  await page.locator(rowSelector).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);

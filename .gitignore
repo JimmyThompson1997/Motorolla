@@ -9,6 +9,7 @@ app/build/
 
 # Dependency folders
 node_modules/
+node_modules
 **/node_modules/
 
 # Local Android/IDE machine state
@@ -39,6 +40,7 @@ pucky-implementation-proof/
 *.jpeg
 *.webp
 *.mp4
+artifacts/
 !pucky_vm/ui_src/fixtures/links_logos/*.png
 !pucky_vm/ui_src/fixtures/links_logos/*.jpg
 !pucky_vm/ui_src/fixtures/links_logos/*.jpeg

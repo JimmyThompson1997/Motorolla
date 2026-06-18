@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export const MIN_PLAYBACK_SPEED = 0.5;
@@ -9,12 +10,42 @@ export function ensureDir(target) {
 }
 
 export function resolveChromePath() {
+  const envPath = String(process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
+  const cacheCandidates = [];
+  for (const root of [
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright")
+  ]) {
+    if (!fs.existsSync(root)) {
+      continue;
+    }
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const base = path.join(root, entry.name);
+      cacheCandidates.push(
+        path.join(base, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
+        path.join(base, "chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
+        path.join(base, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"),
+        path.join(base, "chrome-linux", "chrome"),
+        path.join(base, "chrome-win", "chrome.exe")
+      );
+    }
+  }
   const candidates = [
+    envPath,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    path.join(os.homedir(), "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    ...cacheCandidates
   ];
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (candidate && fs.existsSync(candidate)) {
       return candidate;
     }
   }
