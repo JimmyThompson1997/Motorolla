@@ -66,11 +66,11 @@ The response intentionally omits the transcript:
 }
 ```
 
-## Cached HTML UI bundle
+## Hosted User Surface and Optional Cache
 
-The VM can also ship the cover UI as a versioned HTML bundle. The APK installs
-only verified bundles into app-owned storage and loads the WebView from that
-cached copy, so the feed can still open offline.
+The VM hosts the canonical user surface at `/ui/pucky/latest/`. For startup
+resilience, the APK may also keep an app-owned copy of the latest UI bundle
+in local storage.
 
 Build a local bundle for low-level debugging only:
 

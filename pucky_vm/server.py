@@ -29,6 +29,7 @@ from .feed_store import FeedStore
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
+    is_any_bearer_authorized,
     is_bearer_authorized,
     json_body,
     parse_content_length,
@@ -559,6 +560,7 @@ class Config:
     self_email: str = ""
     self_phone_number: str = ""
     public_base_url: str | None = None
+    pucky_web_ui_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -566,6 +568,7 @@ class Config:
             host=os.environ.get("PUCKY_HOST", "0.0.0.0"),
             port=int(os.environ.get("PORT", os.environ.get("PUCKY_PORT", "8080"))),
             pucky_api_token=os.environ.get("PUCKY_API_TOKEN", ""),
+            pucky_web_ui_token=os.environ.get("PUCKY_WEB_UI_TOKEN", "").strip(),
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),
@@ -605,16 +608,9 @@ class Config:
             composio_api_key=os.environ.get("COMPOSIO_API_KEY", "").strip(),
             composio_base_url=os.environ.get("COMPOSIO_BASE_URL", DEFAULT_COMPOSIO_BASE_URL).strip() or DEFAULT_COMPOSIO_BASE_URL,
             composio_default_user_id=os.environ.get("PUCKY_COMPOSIO_USER_ID", "jimmythompson323").strip() or "jimmythompson323",
-            connect_portal_secret=(
-                os.environ.get("PUCKY_CONNECT_PORTAL_SECRET", "").strip()
-                or os.environ.get("PUCKY_API_TOKEN", "").strip()
-            ),
+            connect_portal_secret=os.environ.get("PUCKY_CONNECT_PORTAL_SECRET", "").strip(),
             connect_portal_ttl_seconds=max(300, int(os.environ.get("PUCKY_CONNECT_PORTAL_TTL_SECONDS", str(12 * 60 * 60)))),
-            meeting_artifact_link_secret=(
-                os.environ.get("PUCKY_MEETING_ARTIFACT_LINK_SECRET", "").strip()
-                or os.environ.get("PUCKY_CONNECT_PORTAL_SECRET", "").strip()
-                or os.environ.get("PUCKY_API_TOKEN", "").strip()
-            ),
+            meeting_artifact_link_secret=os.environ.get("PUCKY_MEETING_ARTIFACT_LINK_SECRET", "").strip(),
             meeting_artifact_link_ttl_seconds=max(
                 3600,
                 int(os.environ.get("PUCKY_MEETING_ARTIFACT_LINK_TTL_SECONDS", str(365 * 24 * 60 * 60))),
@@ -2476,10 +2472,10 @@ class PuckyVoiceService:
             "composio": composio_context,
             "reply_card": self._reply_card_runtime_context(),
             "user_facing_app_html": {
-                "kind": "editable HTML/JS/CSS served by the VM and cached by the APK",
-                "official_bundle_url": "/ui/pucky/latest/bundle.zip",
-                "refresh_command": "ui.bundle.refresh",
-                "shell_mode_command": "ui.shell.mode.set=web_cached",
+                "kind": "editable HTML/JS/CSS served directly by the VM at /ui/pucky/latest/",
+                "official_web_url": "/ui/pucky/latest/",
+                "source_of_truth": "pucky_vm/ui_src",
+                "verification_path": "Open /ui/pucky/latest/ in the hosted browser and verify live data routes there.",
             },
             "android_apk": {
                 "areas": [
@@ -2493,7 +2489,7 @@ class PuckyVoiceService:
                     "voice/wake/speech",
                     "files/artifacts",
                     "contacts/SMS/calls/calendar/settings",
-                    "UI/feed/bundle",
+                    "UI/feed/web shell",
                 ],
                 "list_devices": "GET /v1/devices",
                 "authorization": "Authorization: Bearer env:PUCKY_API_TOKEN",
@@ -2622,11 +2618,7 @@ class PuckyVoiceService:
         return str(self.config.connect_portal_secret or "").strip()
 
     def _meeting_artifact_link_secret(self) -> str:
-        return (
-            str(self.config.meeting_artifact_link_secret or "").strip()
-            or str(self.config.connect_portal_secret or "").strip()
-            or str(self.config.pucky_api_token or "").strip()
-        )
+        return str(self.config.meeting_artifact_link_secret or "").strip()
 
     def _mint_meeting_artifact_link_token(
         self,
@@ -6631,7 +6623,7 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, service.agent_runtime_catalog())
                 return
             if path == "/api/links/composio/portal-url":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 query = parse_qs(parsed.query)
@@ -6643,7 +6635,7 @@ def make_handler(service: PuckyVoiceService):
                 self._json(status, payload)
                 return
             if path == "/api/device/phone-role-status":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(
                         HTTPStatus.UNAUTHORIZED,
                         {
@@ -6809,7 +6801,7 @@ def make_handler(service: PuckyVoiceService):
                 query = parse_qs(parsed.query)
                 include_archived = _truthy_query(query.get("include_archived", ["0"])[0])
                 compact = _truthy_query(query.get("compact", ["0"])[0])
-                if not compact and not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
@@ -6839,7 +6831,7 @@ def make_handler(service: PuckyVoiceService):
                 )
                 return
             if path.startswith("/api/meetings/") and path.endswith("/audio"):
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 meeting_id = unquote(path.removeprefix("/api/meetings/").removesuffix("/audio")).strip()
@@ -6851,7 +6843,7 @@ def make_handler(service: PuckyVoiceService):
                 self._bytes(HTTPStatus.OK, body, mime_type, filename=filename)
                 return
             if path.startswith("/api/meetings/"):
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 meeting_id = unquote(path.removeprefix("/api/meetings/")).strip()
@@ -6889,7 +6881,7 @@ def make_handler(service: PuckyVoiceService):
                 )
                 return
             if path.startswith("/api/artifacts/"):
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 artifact_id = unquote(path.removeprefix("/api/artifacts/")).strip()
@@ -6910,6 +6902,9 @@ def make_handler(service: PuckyVoiceService):
                 )
                 return
             if path == "/api/feed":
+                if not self._is_user_data_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
                 query = parse_qs(parsed.query)
                 cursor = query.get("cursor", [""])[0]
                 limit = query.get("limit", ["20"])[0]
@@ -7046,7 +7041,7 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, result)
                 return
             if path == "/api/meetings/actions":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 try:
@@ -7068,6 +7063,9 @@ def make_handler(service: PuckyVoiceService):
                 self._json(HTTPStatus.OK, result)
                 return
             if path == "/api/feed/actions":
+                if not self._is_user_data_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
                 try:
                     payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
                     result = service.feed_action(
@@ -7183,6 +7181,9 @@ def make_handler(service: PuckyVoiceService):
             self.send_error(int(HTTPStatus.NOT_FOUND))
 
         def _handle_workspace_get(self, parsed) -> None:
+            if not self._is_user_data_authorized():
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             parts = self._workspace_parts(parsed.path)
             query = parse_qs(parsed.query)
             if not parts:
@@ -7232,7 +7233,7 @@ def make_handler(service: PuckyVoiceService):
             self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_route_not_found"})
 
         def _handle_workspace_write(self, parsed, method: str) -> None:
-            if not self._is_authorized():
+            if not self._is_user_data_authorized():
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             parts = self._workspace_parts(parsed.path)
@@ -7308,6 +7309,12 @@ def make_handler(service: PuckyVoiceService):
 
         def _is_authorized(self) -> bool:
             return is_bearer_authorized(service.config.pucky_api_token, self.headers.get("Authorization", ""))
+
+        def _is_user_data_authorized(self) -> bool:
+            return is_any_bearer_authorized(
+                [service.config.pucky_web_ui_token, service.config.pucky_api_token],
+                self.headers.get("Authorization", ""),
+            )
 
         def _request_base_url(self) -> str:
             return request_base_url(

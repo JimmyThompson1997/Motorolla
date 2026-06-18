@@ -18,8 +18,17 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const DEFAULT_API_BASE = "https://pucky.fly.dev";
-const DEFAULT_PAGE_URL = `${DEFAULT_API_BASE}/ui/pucky/latest/index.html?route=feed&reset_nav=1`;
-const DEFAULT_TOKEN = process.env.PUCKY_API_TOKEN || "pucky-local-dev-token";
+const DEFAULT_PAGE_URL = `${DEFAULT_API_BASE}/ui/pucky/latest/index.html?route=inbox&reset_nav=1`;
+
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim() || "pucky-local-dev-token";
+}
+
+const DEFAULT_TOKEN = resolveApiToken();
 const MEETINGS_CACHE_KEY = "pucky.cover.meetings_cache.v1";
 const VIEWPORT = { width: 430, height: 932 };
 

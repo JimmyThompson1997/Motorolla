@@ -46,7 +46,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--browser-summary", type=Path, required=True)
     parser.add_argument("--serial", default=os.environ.get("PUCKY_PHONE_SERIAL", ""))
     parser.add_argument("--device-id", default=os.environ.get("PUCKY_DEVICE_ID", "pucky-cover-task-phone"))
-    parser.add_argument("--token", default=os.environ.get("PUCKY_OPERATOR_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
+    parser.add_argument("--token", default=os.environ.get("PUCKY_WEB_UI_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--vm-base-url", default=official_html.DEFAULT_VM_BASE_URL)
     parser.add_argument("--manifest-url", default="")
     parser.add_argument("--evidence-dir", type=Path, default=ROOT / ".tmp" / "task-workspace-phone-proof")
@@ -77,6 +77,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.vm_base_url = str(args.vm_base_url).rstrip("/")
     args.manifest_url = str(args.manifest_url or official_html.urljoin(args.vm_base_url + "/", official_html.DEFAULT_MANIFEST_PATH.lstrip("/")))
     return args
+
+
+def resolve_user_data_api_token(explicit_token: str = "") -> str:
+    token = str(explicit_token or "").strip()
+    if token:
+        return token
+    web_ui_token = str(os.environ.get("PUCKY_WEB_UI_TOKEN", "")).strip()
+    if web_ui_token:
+        return web_ui_token
+    return str(os.environ.get("PUCKY_API_TOKEN", "")).strip()
 
 
 def load_browser_summary(path: Path) -> dict[str, Any]:
@@ -388,9 +398,9 @@ def verify_empty_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> No
 def run(args: argparse.Namespace) -> dict[str, Any]:
     browser_summary = load_browser_summary(args.browser_summary)
     seed = load_seed_manifest(browser_summary)
-    token = str(args.token or "").strip()
+    token = resolve_user_data_api_token(str(args.token or ""))
     if not token:
-        fail("browser_preproof_failed", "Real phone task proof requires --token or PUCKY_API_TOKEN")
+        fail("browser_preproof_failed", "Real phone task proof requires --token or PUCKY_WEB_UI_TOKEN or PUCKY_API_TOKEN")
 
     local_git = proof.require_official_local_repo(args.repo_root, args.canonical_root)
     remote_manifest = official_html.validate_remote_manifest(

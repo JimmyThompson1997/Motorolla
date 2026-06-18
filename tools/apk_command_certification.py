@@ -12,13 +12,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tools.dev_env_support import default_adb
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BROKER = "https://pucky.fly.dev"
 DEFAULT_DEVICE_ID = "razr-comms-live"
 DEFAULT_SERIAL = "ZY22JZ26LK"
 DEFAULT_PUCKYCTL = ROOT / "pucky-apk" / "puckyctl" / "puckyctl.py"
-DEFAULT_ADB = Path(r"C:\Users\jimmy\Desktop\Android\tools\android-sdk\platform-tools\adb.exe")
+DEFAULT_ADB = default_adb()
 CERT_SCHEMA = "pucky.apk_command_certification.v1"
 HIGH_LIMIT = 5000
 USER_NUMBER = "4074969882"
@@ -263,16 +265,17 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "battery.get", "network.get", "storage.get", "runtime.stats", "system.memory.get",
         "system.thermal.get", "service.status", "power.policy.get", "screen.lock.status",
         "sensor.list", "camera.info", "device.primitives.list", "notify.list_active",
-        "notify.channels.get", "audio.route.get", "media.state.get", "player.state",
+        "notify.channels.get", "notify.policy.status", "audio.route.get", "media.state.get", "player.state",
         "button.state", "button.config.get", "voice.capture.status", "voice.capture.last",
-        "pucky.turn.status", "pucky.turn.settings.get", "pucky.feed.sync", "wake.status",
+        "pucky.turn.status", "pucky.turn.settings.get", "wake.status",
         "wake.stop", "speech.native.status", "speech.native.last", "speech.echo.status",
         "speech.echo.last", "speech.echo.voices", "speech.echo.lab.status", "speech.echo.lab.last",
-        "cover.wave.status", "cover.display_gesture.status", "note.list_local", "ui.state.get",
-        "ui.reply_cards.get", "ui.bundle.status", "ui.surface.get", "ui.shell.mode.get",
+        "cover.wave.status", "cover.display_gesture.status", "meeting.hover.status", "meeting.recording.status",
+        "note.list_local", "ui.state.get", "ui.bundle.status", "ui.surface.get", "ui.shell.mode.get",
         "launcher.capability.get", "android.catalog", "android.permission.status",
         "android.calls.state", "android.notifications.listener.status", "phone.telephony.status",
-        "phone.calls.state", "notify.listener.status", "voice.thread_scope.get",
+        "phone.calls.state", "phone.role.status", "notify.listener.status", "voice.thread_scope.get",
+        "ui.a11y.status", "ui.a11y.lab.status",
     }
     list_limited = {
         "log.tail", "artifact.list", "pucky.clipboard.list", "button.events.list",
@@ -281,7 +284,7 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "android.media.images.list", "android.media.video.list", "android.media.audio.list",
         "android.downloads.list", "android.user_dictionary.list",
         "android.notifications.listener.messages", "phone.sms.list", "phone.calls.list",
-        "notify.listener.messages", "media.export.list", "player.bookmark.list",
+        "notify.listener.messages", "media.export.list", "player.bookmark.list", "phone.history.list",
     }
     recipes: dict[str, Recipe] = {name: Recipe("pass") for name in read_empty}
     recipes.update({name: Recipe("pass", {"limit": 5}) for name in list_limited})
@@ -324,12 +327,16 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "notify.show": Recipe("pass", {"title": "Pucky cert", "text": run_nonce, "tag": run_nonce}),
         "notify.ask": Recipe("pass_or_honest_failure", {"title": "Pucky cert", "text": run_nonce, "actions": [{"id": "ok", "label": "OK"}], "timeout_ms": 1000}),
         "notify.cancel": Recipe("pass_or_honest_failure", {"tag": run_nonce}),
+        "notify.policy.open_settings": Recipe("user_mediated_verified", {}),
         "audio.tone": Recipe("pass_or_honest_failure", {"duration_ms": 80, "volume": 5}),
         "audio.volume.set": Recipe("pass_or_honest_failure", {"stream": "music", "level": 1}),
+        "haptic.vibrate": Recipe("pass_or_honest_failure", {"duration_ms": 40, "amplitude": 180}),
         "media.key": Recipe("pass_or_honest_failure", {"action": "pause"}),
         "media.open_uri": Recipe("user_mediated_verified", {"uri": "https://example.com"}),
         "media.export.audio": Recipe("pass_or_honest_failure", {"source": "speech.native", "limit": 1}),
         "media.export.delete": Recipe("pass_or_honest_failure", {"id": f"missing-{run_nonce}"}),
+        "media.cache.status": Recipe("pass", {"media_id": f"missing-{run_nonce}"}),
+        "media.cache.ensure": Recipe("pass_honest_failure", {"media_id": f"missing-{run_nonce}", "url": "https://example.invalid/pucky-cert-media.mp3"}),
         "player.asset.prepare": Recipe("pass_honest_failure", {"url": "https://example.invalid/missing.mp3", "title": "Pucky cert"}),
         "player.load": Recipe("pass_honest_failure", {"path": "/data/local/tmp/missing-cert.mp3", "title": "Pucky cert"}),
         "player.play": Recipe("pass_or_honest_failure", {}),
@@ -348,6 +355,11 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "voice.capture.start": Recipe("pass_or_honest_failure", {"max_duration_ms": 1000, "source": "apk-cert"}),
         "voice.capture.stop": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
         "voice.capture.delete": Recipe("pass_or_honest_failure", {"session_id": f"missing-{run_nonce}"}),
+        "meeting.hover.config.set": Recipe("pass_or_honest_failure", {"enabled": True}),
+        "meeting.recording.start": Recipe("pass_or_honest_failure", {"max_duration_ms": 1000, "feedback": False}),
+        "meeting.recording.stop": Recipe("pass_or_honest_failure", {"reason": run_nonce, "feedback": False}),
+        "meeting.recording.trigger_hover": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
+        "meeting.recording.resolve_audio_link": Recipe("pass_honest_failure", {"meeting_id": f"missing-{run_nonce}"}),
         "pucky.turn.start": Recipe("pass_or_honest_failure", {"capture_source": "fixture", "fixture_name": "wake_weather.wav", "feedback": False, "max_duration_ms": 1000}),
         "pucky.turn.stop": Recipe("pass_or_honest_failure", {"reason": run_nonce, "feedback": False}),
         "pucky.turn.settings.set": Recipe("pass_or_honest_failure", {"reply_mode": "chime"}),
@@ -358,7 +370,6 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "pucky.turn.read": Recipe("pass_honest_failure", {"turn_id": f"missing-{run_nonce}"}),
         "pucky.turn.debug.inject_history": Recipe("pass_or_honest_failure", {"turn_id": run_nonce, "state": "failed", "error": "apk_cert"}),
         "pucky.turn.debug.response_fault": Recipe("pass_or_honest_failure", {"clear": True}),
-        "pucky.feed.action": Recipe("pass_honest_failure", {"action": "open", "card_id": f"missing-{run_nonce}"}),
         "wake.config.set": Recipe("pass_or_honest_failure", {"enabled": False}),
         "wake.start": Recipe("pass_or_honest_failure", {"mode": "cert"}),
         "wake.simulate": Recipe("pass_or_honest_failure", {"phrase": "hey pucky"}),
@@ -415,10 +426,13 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "android.downloads.get": Recipe("pass_or_honest_failure", {"download_id": -1}),
         "android.user_dictionary.add": Recipe("pass_or_honest_failure", {"word": f"puckycert{int(time.time())}", "frequency": 1}),
         "android.user_dictionary.delete": Recipe("pass_or_honest_failure", {"word": f"puckycert{int(time.time())}"}),
+        "phone.role.request_setup": Recipe("user_mediated_verified", {"show_notification": True, "open_setup_ui": True}),
+        "phone.role.open_default_apps_settings": Recipe("user_mediated_verified", {}),
         "phone.sms.get_thread": Recipe("pass_or_honest_failure", {"address": USER_NUMBER, "limit": 10}),
         "phone.sms.send": Recipe("pass", {"to": USER_NUMBER, "body": f"Pucky phone alias certification text {run_nonce}"}, timeout_seconds=180, live_comms=True),
         "phone.calls.place": Recipe("pass", {"number": USER_NUMBER}, timeout_seconds=180, live_comms=True),
         "phone.calls.answer": Recipe("pass_or_honest_failure", {}, timeout_seconds=90),
+        "phone.calls.decline": Recipe("pass_or_honest_failure", {}, timeout_seconds=90),
         "phone.calls.hangup": Recipe("pass_or_honest_failure", {}, timeout_seconds=90),
         "phone.contacts.search": Recipe("pass_or_honest_failure", {"query": "Pucky APK Cert", "limit": 5}, stateful=True),
         "phone.contacts.get": Recipe("pass_or_honest_failure", {"contact_id": -1}, stateful=True),
@@ -432,9 +446,6 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "note.create_local": Recipe("pass", {"title": f"Pucky cert {run_nonce}", "body": run_nonce}),
         "note.delete_local": Recipe("pass_or_honest_failure", {"id": f"missing-{run_nonce}"}),
         "ui.dashboard.show": Recipe("user_mediated_verified", {}),
-        "ui.reply_cards.set": Recipe("blocked_environment", notes="destructive reply-card replace; use merge/reset proof in a dedicated UI lane"),
-        "ui.reply_cards.merge": Recipe("pass", {"cards": []}),
-        "ui.reply_cards.clear": Recipe("blocked_environment", notes="destructive reply-card clear; account for endpoint without clearing user data"),
         "ui.bundle.install_downloaded": Recipe("pass_honest_failure", {"path": "/data/local/tmp/pucky-missing-bundle.zip"}),
         "ui.bundle.refresh": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
         "ui.debug.goto_home": Recipe("pass_or_honest_failure", {}),
@@ -443,6 +454,15 @@ def static_recipes(run_nonce: str) -> dict[str, Recipe]:
         "ui.debug.clear_focus": Recipe("pass_or_honest_failure", {}),
         "ui.debug.refresh_cards": Recipe("pass_or_honest_failure", {}),
         "ui.debug.open_card_action": Recipe("pass_honest_failure", {"card_id": f"missing-{run_nonce}", "action": "open"}),
+        "ui.a11y.snapshot": Recipe("pass_or_honest_failure", {}),
+        "ui.a11y.wait_for": Recipe("pass_or_honest_failure", {"timeout_ms": 250}),
+        "ui.a11y.action": Recipe("pass_or_honest_failure", {"action": "click"}),
+        "ui.a11y.type": Recipe("pass_or_honest_failure", {"text": "Pucky cert"}),
+        "ui.a11y.global_action": Recipe("pass_or_honest_failure", {"action": "back"}),
+        "ui.a11y.lab.snapshot": Recipe("pass_or_honest_failure", {}),
+        "ui.a11y.lab.action": Recipe("pass_or_honest_failure", {"action": "click"}),
+        "ui.a11y.lab.gesture": Recipe("pass_or_honest_failure", {"kind": "tap", "x": 1, "y": 1}),
+        "ui.a11y.lab.type": Recipe("pass_or_honest_failure", {"text": "Pucky cert"}),
         "voice.thread_scope.set": Recipe("pass", {"mode": "existing_thread", "thread_id": f"thread-{run_nonce}", "source_surface": "thread_transcript"}),
         "voice.thread_scope.clear": Recipe("pass_or_honest_failure", {"reason": run_nonce}),
         "ui.shell.mode.set": Recipe("pass_or_honest_failure", {"mode": "auto"}),

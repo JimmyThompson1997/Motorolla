@@ -60,7 +60,7 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(opts["default_timeout_ms"], 60000)
         self.assertEqual(rest, ["devices"])
 
-    def test_context_falls_back_to_pucky_api_token_for_personal_operator_auth(self):
+    def test_context_does_not_fallback_to_pucky_api_token_for_operator_auth(self):
         with mock.patch.dict(
             "os.environ",
             {"PUCKY_OPERATOR_TOKEN": "", "PUCKY_API_TOKEN": "personal-token"},
@@ -68,7 +68,7 @@ class ParseTests(unittest.TestCase):
         ):
             ctx = puckyctl.build_context({})
 
-        self.assertEqual(ctx["operator_token"], "personal-token")
+        self.assertEqual(ctx["operator_token"], "")
 
     def test_notify_show_payload_json_dispatches_raw_payload(self):
         parser = puckyctl.build_parser()
@@ -165,7 +165,7 @@ class BrokerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(401, caught.exception.status)
 
-    def test_operator_and_device_auth_accept_explicit_pucky_api_token_fallback(self):
+    def test_api_token_fallback_is_not_accepted_for_operator_or_device_auth(self):
         fallback = "personal-api-token"
         ctx = dict(self.ctx)
         ctx["operator_token"] = fallback
@@ -175,27 +175,30 @@ class BrokerIntegrationTests(unittest.TestCase):
             {"PUCKY_OPERATOR_TOKEN": "", "PUCKY_DEVICE_TOKEN": "", "PUCKY_API_TOKEN": fallback},
             clear=False,
         ):
-            self.assertEqual(puckyctl.api_devices(ctx), [])
-            response = self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token=fallback)
+            with self.assertRaises(puckyctl.CliError) as operator_error:
+                puckyctl.api_devices(ctx)
 
-        self.assertTrue(response["ok"])
+            with self.assertRaises(urllib.error.HTTPError) as device_error:
+                self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token=fallback)
 
-    def test_api_token_is_accepted_even_when_specific_tokens_exist(self):
-        fallback = "personal-api-token"
+        self.assertEqual(401, operator_error.exception.status)
+        self.assertEqual(401, device_error.exception.code)
+
+    def test_api_tokens_in_additional_env_vars_do_not_override_specific_tokens(self):
         ctx = dict(self.ctx)
-        ctx["operator_token"] = fallback
+        ctx["operator_token"] = "operator-token"
 
         with mock.patch.dict(
             "os.environ",
             {
-                "PUCKY_OPERATOR_TOKEN": "old-operator-token",
-                "PUCKY_DEVICE_TOKEN": "old-device-token",
-                "PUCKY_API_TOKEN": fallback,
+                "PUCKY_OPERATOR_TOKEN": "operator-token",
+                "PUCKY_DEVICE_TOKEN": "device-token",
+                "PUCKY_API_TOKEN": "personal-api-token",
             },
             clear=False,
         ):
             self.assertEqual(puckyctl.api_devices(ctx), [])
-            response = self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token=fallback)
+            response = self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token="device-token")
 
         self.assertTrue(response["ok"])
 
@@ -334,7 +337,7 @@ class BrokerIntegrationTests(unittest.TestCase):
         self.assertEqual(400, mismatch.exception.code)
 
     def test_device_token_fails_closed_when_not_configured(self):
-        with mock.patch.dict("os.environ", {"PUCKY_DEVICE_TOKEN": "", "PUCKY_API_TOKEN": ""}):
+        with mock.patch.dict("os.environ", {"PUCKY_DEVICE_TOKEN": "", "PUCKY_API_TOKEN": "device-api-token"}):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 self.post_device_event("pucky-test", {"type": "agent.recipe_triggered"}, token="dev-token")
 

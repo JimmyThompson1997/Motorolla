@@ -28,21 +28,25 @@ Slot 2 uses `emulator-5556`, broker `18082`, and UI server `18182`.
 
 ## Workflow
 
-```powershell
-cd C:\Users\jimmy\Desktop\Motorolla-master-ui
-python tools\pucky_emulator_suite.py doctor
-python tools\pucky_emulator_suite.py create --slot 1
-python tools\pucky_emulator_suite.py start --slot 1
-python tools\pucky_emulator_suite.py provision --slot 1
-python tools\pucky_emulator_suite.py seed-ui --slot 1
-python tools\pucky_emulator_suite.py smoke --slot 1
+Start with the repo bootstrap and doctor flow so the Android SDK, Java, Node,
+and emulator bits are all in place:
+
+```bash
+./tools/bootstrap_mac_dev.sh
+python3 tools/dev_env_doctor.py --include-emulator
+python3 tools/pucky_emulator_suite.py doctor
+python3 tools/pucky_emulator_suite.py create --slot 1
+python3 tools/pucky_emulator_suite.py start --slot 1
+python3 tools/pucky_emulator_suite.py provision --slot 1
+python3 tools/pucky_emulator_suite.py seed-ui --slot 1
+python3 tools/pucky_emulator_suite.py smoke --slot 1
 ```
 
 Audio wake experiments should use slot 2 and opt into an audio backend:
 
-```powershell
-python tools\pucky_emulator_suite.py start --slot 2 --audio-mode wav-in --audio-wav-in .tmp\wake-fixtures\hey-pucky-timeline.wav
-python tools\pucky_emulator_suite.py start --slot 2 --audio-mode host
+```bash
+python3 tools/pucky_emulator_suite.py start --slot 2 --audio-mode wav-in --audio-wav-in .tmp/wake-fixtures/hey-pucky-timeline.wav
+python3 tools/pucky_emulator_suite.py start --slot 2 --audio-mode host
 ```
 
 The default remains `--audio-mode none`, which preserves the historical
@@ -53,29 +57,29 @@ passthrough for scratch checks.
 To seed the richer committed cover fixtures, including the Morning Launch
 PDF/DOCX/MP4 attachment rail, pass the fixture file directly:
 
-```powershell
-python tools\pucky_emulator_suite.py seed-ui --slot 1 --cards-file pucky_vm\ui_src\fixtures\reply_cards_deploy.json
+```bash
+python3 tools/pucky_emulator_suite.py seed-ui --slot 1 --cards-file pucky_vm/ui_src/fixtures/reply_cards_deploy.json
 ```
 
 Use dry-run mode to inspect plans without starting processes or installing anything:
 
-```powershell
-python tools\pucky_emulator_suite.py create --slot 1 --dry-run
-python tools\pucky_emulator_suite.py provision --slot 1 --dry-run
-python tools\pucky_emulator_suite.py seed-ui --slot 1 --dry-run
-python tools\pucky_emulator_suite.py smoke --slot 1 --dry-run
+```bash
+python3 tools/pucky_emulator_suite.py create --slot 1 --dry-run
+python3 tools/pucky_emulator_suite.py provision --slot 1 --dry-run
+python3 tools/pucky_emulator_suite.py seed-ui --slot 1 --dry-run
+python3 tools/pucky_emulator_suite.py smoke --slot 1 --dry-run
 ```
 
 Stop a slot:
 
-```powershell
-python tools\pucky_emulator_suite.py stop --slot 1
+```bash
+python3 tools/pucky_emulator_suite.py stop --slot 1
 ```
 
 Clean slot-owned generated files:
 
-```powershell
-python tools\pucky_emulator_suite.py clean --slot 1
+```bash
+python3 tools/pucky_emulator_suite.py clean --slot 1
 ```
 
 ## What Provision Does

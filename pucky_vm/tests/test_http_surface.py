@@ -46,6 +46,8 @@ def test_parse_content_length_validates_bounds() -> None:
 def test_authorization_and_cors_helpers_are_stable() -> None:
     assert http_surface.is_bearer_authorized("token-123", "Bearer token-123") is True
     assert http_surface.is_bearer_authorized("token-123", "Bearer wrong") is False
+    assert http_surface.is_any_bearer_authorized(["token-123", "browser-456"], "Bearer browser-456") is True
+    assert http_surface.is_any_bearer_authorized(["token-123", "browser-456"], "Bearer wrong") is False
     assert dict(http_surface.cors_header_items())["Access-Control-Allow-Origin"] == "*"
 
 

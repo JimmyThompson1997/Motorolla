@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
+import shutil
 import struct
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def test_long_form_real_vm_runner_covers_four_scenarios_and_meetings_route() -> None:
@@ -27,6 +30,9 @@ def test_long_form_real_vm_runner_covers_four_scenarios_and_meetings_route() -> 
 
 
 def test_wav_duration_parser_handles_non_data_chunks(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+
     source = (Path(__file__).with_name("meeting_mode_agent_real_vm_playwright.mjs")).read_text(encoding="utf-8")
     match = re.search(r"function wavDurationMs\(audioPath\) \{.*?\n\}", source, re.S)
     assert match, "wavDurationMs function not found"

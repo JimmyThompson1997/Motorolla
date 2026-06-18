@@ -79,7 +79,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scenario", action="append", dest="scenarios", default=[])
     parser.add_argument("--serial", default="")
     parser.add_argument("--device-id", default="pucky-cover-meeting-mode-phone")
-    parser.add_argument("--token", default="")
+    parser.add_argument("--token", default=os.environ.get("PUCKY_WEB_UI_TOKEN") or os.environ.get("PUCKY_API_TOKEN", ""))
     parser.add_argument("--vm-base-url", default=official_html.DEFAULT_VM_BASE_URL)
     parser.add_argument("--manifest-url", default="")
     parser.add_argument("--browser-summary", type=Path)
@@ -113,6 +113,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.browser_summary = args.browser_summary.resolve() if args.browser_summary else None
     args.fixture_dir = args.fixture_dir.resolve() if args.fixture_dir else None
     return args
+
+
+def resolve_user_data_api_token(explicit_token: str = "") -> str:
+    token = str(explicit_token or "").strip()
+    if token:
+        return token
+    web_ui_token = str(os.environ.get("PUCKY_WEB_UI_TOKEN", "")).strip()
+    if web_ui_token:
+        return web_ui_token
+    return str(os.environ.get("PUCKY_API_TOKEN", "")).strip()
 
 
 def load_browser_summary(path: Path | None) -> dict[str, Any] | None:
@@ -589,11 +599,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     fixture_dir = resolve_fixture_dir(args, browser_summary)
     scenarios = choose_scenarios(fixture_dir, list(args.scenarios or []))
 
-    token = str(args.token or "").strip()
+    token = resolve_user_data_api_token(str(args.token or ""))
     if not token:
-        token = str(os.environ.get("PUCKY_API_TOKEN", "") or os.environ.get("PUCKY_OPERATOR_TOKEN", "")).strip()
-    if not token:
-        raise MeetingModePhoneProofError("Android meeting proof requires --token or PUCKY_API_TOKEN")
+        raise MeetingModePhoneProofError("Android meeting proof requires --token or PUCKY_WEB_UI_TOKEN/PUCKY_API_TOKEN")
 
     if args.skip_official_preproof_check:
         local_git = proof.local_git_state(args.repo_root)

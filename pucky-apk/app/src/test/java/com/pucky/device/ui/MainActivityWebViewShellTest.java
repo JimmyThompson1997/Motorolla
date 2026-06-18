@@ -311,7 +311,7 @@ public final class MainActivityWebViewShellTest {
         assertTrue("HTML shell should expose an Android back handler",
                 app.contains("function handleAndroidBack()")
                         && app.contains("window.PuckyHandleAndroidBack = handleAndroidBack")
-                        && app.contains("detail.querySelector(\".detail-back\")")
+                        && app.contains("detail.querySelector(\".light-back-button, .detail-back\")")
                         && app.contains("back.click()"));
     }
 

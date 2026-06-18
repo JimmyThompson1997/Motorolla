@@ -230,6 +230,30 @@ with `artifact.read_base64`, and transcribes it with ElevenLabs STT. This is the
 
 ## Local build
 
+macOS quickstart from the repo root:
+
+```bash
+./tools/bootstrap_mac_dev.sh
+python3 tools/dev_env_doctor.py
+cd pucky-apk
+./gradlew test assembleDebug
+```
+
+If you cannot use Homebrew or `sudo`, the repo also supports a user-local path:
+
+```bash
+./tools/bootstrap_local_dev_env.sh
+source .tmp/pucky-local-dev-env.sh
+cd pucky-apk
+./gradlew test assembleDebug
+```
+
+The repo now carries its own Gradle wrapper, so local APK builds no longer need
+an external hard-coded Gradle install path as long as Java 17 and the Android
+SDK are available.
+
+Legacy Windows-style manual environment setup:
+
 ```powershell
 $env:JAVA_HOME='C:\Users\jimmy\Desktop\Android\tools\jdk-17'
 $env:ANDROID_HOME='C:\Users\jimmy\Desktop\Android\tools\android-sdk'

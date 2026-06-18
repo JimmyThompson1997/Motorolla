@@ -40,11 +40,19 @@ const GESTURES = [
   { name: "fast-fling", distance: 9000, durationMs: 1000, steps: 18, captureBurst: true }
 ];
 
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
+}
+
 function parseArgs(argv) {
   const config = {
     apiBase: process.env.PUCKY_LINKS_API_BASE || DEFAULT_API_BASE,
-    apiToken: process.env.PUCKY_API_TOKEN || "",
-    pageUrl: `${fileUrl(uiPath)}?route=links`,
+    apiToken: resolveApiToken(),
+    pageUrl: `${fileUrl(uiPath)}?route=connect`,
     reportDir: "",
     sampleMs: DEFAULT_SAMPLE_MS,
     burstMs: DEFAULT_BURST_MS,

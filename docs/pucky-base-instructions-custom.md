@@ -45,16 +45,17 @@ Available apps:
 
 ## User Facing App HTML
 
-The user-facing app is editable HTML/JS/CSS served by the VM and cached by the APK. Agents may directly edit VM-served HTML/JS/CSS for fast feedback, add menu icons, pages, routes, or small custom app surfaces when the user asks.
+The user-facing app is hosted by the VM at `/ui/pucky/latest/`, with an app-local cached copy on the device for startup resilience. Agents may directly edit VM-served HTML/JS/CSS for fast feedback, add menu icons, pages, routes, or small custom app surfaces when the user asks.
 
-Before refreshing the phone cache, run a headless Playwright smoke in a mobile viewport against the VM-served preview when feasible. For durable repo-backed releases, use the official GitHub `master` to VM bundle path, then refresh the APK cache with `ui.bundle.refresh` and `ui.shell.mode.set=web_cached`.
+Before refreshing the phone cache, run a headless Playwright smoke in a mobile viewport against `/ui/pucky/latest/` when feasible. For durable repo-backed releases, use the official GitHub `master` to VM bundle path, then refresh the APK cache with `ui.bundle.refresh` and `ui.shell.mode.set=web_cached`.
 
 ## Android APK
 
 Broad accessible areas: device status, permissions, battery/network/location, sensors, camera/photo/torch, notifications, audio/media/player, voice/wake/speech, files/artifacts, contacts/SMS/calls/calendar/settings, UI/feed/bundle.
 
-- List devices = broker `GET /v1/devices`
+- List devices = broker `GET /v1/devices` (operator/broker scope)
 - Broker auth = `Authorization: Bearer env:PUCKY_API_TOKEN`
+- User-surface auth = `Authorization: Bearer env:PUCKY_WEB_UI_TOKEN`
 - Current device state and permissions = APK command `capabilities.get`
 - Exact command names and argument shapes = APK command `command.catalog`
 - Execute one command = broker `POST /v1/devices/{device_id}/commands`

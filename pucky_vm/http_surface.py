@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -48,7 +49,18 @@ def parse_content_length(length_text: str | None, limit: int) -> int | None:
 
 
 def is_bearer_authorized(expected_token: str, authorization_header: str) -> bool:
-    return bool(str(expected_token or "").strip()) and str(authorization_header or "") == f"Bearer {expected_token}"
+    clean_expected = str(expected_token or "").strip()
+    if not clean_expected:
+        return False
+    actual = str(authorization_header or "")
+    prefix = "Bearer "
+    if not actual.startswith(prefix):
+        return False
+    return hmac.compare_digest(actual[len(prefix):], clean_expected)
+
+
+def is_any_bearer_authorized(expected_tokens: list[str] | tuple[str, ...], authorization_header: str) -> bool:
+    return any(is_bearer_authorized(token, authorization_header) for token in expected_tokens)
 
 
 def cors_header_items() -> tuple[tuple[str, str], ...]:

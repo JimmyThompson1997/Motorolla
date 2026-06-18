@@ -247,8 +247,8 @@ def normalized_catalog(items: list[dict[str, object]]) -> dict[str, object]:
 def write_catalog_files(payload: dict[str, object], *, json_path: Path, js_path: Path) -> None:
     json_path.parent.mkdir(parents=True, exist_ok=True)
     js_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8", newline="\n")
-    js_path.write_text(links_catalog_script(payload), encoding="utf-8", newline="\n")
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    js_path.write_text(links_catalog_script(payload), encoding="utf-8")
 
 
 def main() -> int:

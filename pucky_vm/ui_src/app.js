@@ -240,13 +240,13 @@
     { route: "connect", label: "Connect", icon: "link", accent: "connect", kind: "real" },
     { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
     { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
-    { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "mock" },
+    { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "real" },
     { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "real" },
-    { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "mock" },
-    { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "mock" },
-    { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "mock" },
-    { route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "mock" },
-    { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "mock" }
+    { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "real" },
+    { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "real" },
+    { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "real" },
+    { route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "real" },
+    { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "real" }
   ];
   const LIGHT_ROUTES = new Set([
     "home",
@@ -297,7 +297,6 @@
     "task-detail": "tasks",
     calendar: "calendar-events",
     "meeting-detail": "calendar-events",
-    "message-detail": "messages",
     "meeting-notes": "meeting-notes",
     "meeting-note-detail": "meeting-notes",
     reminders: "reminders",
@@ -7457,7 +7456,6 @@
   function isLightDetailRoute(route) {
     return [
       "meeting-detail",
-      "message-detail",
       "meeting-note-detail",
       "reminder-detail",
       "note-detail",

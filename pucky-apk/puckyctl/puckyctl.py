@@ -154,8 +154,6 @@ def build_context(global_opts):
         config["broker_base_url"] = os.environ["PUCKY_BROKER_BASE_URL"]
     if os.environ.get(env_token_name):
         config["operator_token"] = os.environ[env_token_name]
-    elif env_token_name == "PUCKY_OPERATOR_TOKEN" and os.environ.get("PUCKY_API_TOKEN"):
-        config["operator_token"] = os.environ["PUCKY_API_TOKEN"]
     if os.environ.get("PUCKY_DEVICE_ID"):
         config["default_device_id"] = os.environ["PUCKY_DEVICE_ID"]
     if os.environ.get("PUCKY_EVIDENCE_DIR"):

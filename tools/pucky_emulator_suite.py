@@ -37,20 +37,20 @@ if str(ROOT) not in sys.path:
 
 from pucky_vm.attachment_manifest import normalize_attachments
 from pucky_vm.server import Config, PuckyVoiceService, make_handler, reset_broker_for_tests
+from tools import dev_env_support
 from tools.pucky_emulator_support import bootstrap as emu_bootstrap_support
 from tools.pucky_emulator_support import capture as emu_capture_support
 from tools.pucky_emulator_support import display as emu_display_support
 from tools.pucky_emulator_support import state as emu_state_support
 from tools.pucky_emulator_support import vm as emu_vm_support
 
-ANDROID_TOOLS = Path(r"C:\Users\jimmy\Desktop\Android\tools")
-DEFAULT_ANDROID_HOME = ANDROID_TOOLS / "android-sdk"
-DEFAULT_JAVA_HOME = ANDROID_TOOLS / "jdk-17"
-DEFAULT_GRADLE = ANDROID_TOOLS / "gradle-8.10.2" / "bin" / "gradle.bat"
-DEFAULT_ADB = DEFAULT_ANDROID_HOME / "platform-tools" / "adb.exe"
-DEFAULT_EMULATOR = DEFAULT_ANDROID_HOME / "emulator" / "emulator.exe"
-DEFAULT_AVDMANAGER = DEFAULT_ANDROID_HOME / "cmdline-tools" / "latest" / "bin" / "avdmanager.bat"
-DEFAULT_SYSTEM_IMAGE = "system-images;android-35;google_apis;x86_64"
+DEFAULT_ANDROID_HOME = dev_env_support.default_android_home()
+DEFAULT_JAVA_HOME = dev_env_support.default_java_home()
+DEFAULT_GRADLE = dev_env_support.default_gradle(ROOT)
+DEFAULT_ADB = dev_env_support.default_adb()
+DEFAULT_EMULATOR = dev_env_support.default_emulator()
+DEFAULT_AVDMANAGER = dev_env_support.default_avdmanager()
+DEFAULT_SYSTEM_IMAGE = dev_env_support.default_system_image()
 DEFAULT_DEVICE_PROFILE = "resizable"
 DEFAULT_PACKAGE = "com.pucky.device.debug"
 DEFAULT_ACTIVITY = "com.pucky.device.MainActivity"
@@ -2406,9 +2406,11 @@ def doctor(args: argparse.Namespace) -> dict[str, Any]:
             add("emulator_acceleration", False, exc)
     else:
         add("emulator_acceleration", False, "emulator missing")
-    node = shutil.which("node")
+    node = dev_env_support.default_node()
     if node:
-        result = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10)
+        env = os.environ.copy()
+        env["PATH"] = str(Path(node).parent) + os.pathsep + env.get("PATH", "")
+        result = subprocess.run([str(node), "--version"], capture_output=True, text=True, timeout=10, env=env)
         add("node", result.returncode == 0, result.stdout.strip() or result.stderr.strip())
     else:
         add("node", False, "node not found")
@@ -2423,8 +2425,12 @@ def start_node_broker(args: argparse.Namespace, runner: Runner, config: SlotConf
         return -1
     env = os.environ.copy()
     env["PORT"] = str(config.broker_port)
+    node = dev_env_support.default_node(environment=env)
+    if node is None:
+        raise SuiteError("node not found for fake broker startup")
+    env["PATH"] = str(Path(node).parent) + os.pathsep + env.get("PATH", "")
     pid = runner.start_detached(
-        ["node", "server.js"],
+        [str(node), "server.js"],
         cwd=args.fake_broker,
         env=env,
         stdout_path=Path(config.evidence_dir) / "fake-broker.log",

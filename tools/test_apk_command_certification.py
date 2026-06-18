@@ -9,7 +9,7 @@ def test_certification_recipes_cover_current_command_universe() -> None:
     commands = cert.source_commands()
     coverage = cert.validate_recipe_coverage(commands, cert.static_recipes("unit-cert"))
 
-    assert len(commands) == 236
+    assert len(commands) == 258
     assert len(commands) == len(set(commands))
     assert coverage == {"missing": [], "extra": [], "duplicates": []}
 

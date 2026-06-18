@@ -344,6 +344,7 @@ def test_static_custom_base_file_is_generic_and_compact():
     assert "capabilities.get" in text
     assert "GET /v1/devices" in text
     assert "Authorization: Bearer env:PUCKY_API_TOKEN" in text
+    assert "Authorization: Bearer env:PUCKY_WEB_UI_TOKEN" in text
     assert "POST /v1/devices/{device_id}/commands" in text
     assert "Current device state and permissions" in text
     assert "For weather or local-context requests" in text

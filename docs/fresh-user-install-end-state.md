@@ -10,8 +10,8 @@ Current development proof on May 24, 2026:
 - Installed package: `com.pucky.device.debug`.
 - VM app: `pucky`.
 - The APK connects outbound to `wss://pucky.fly.dev/v1/devices/<device_id>/connect`.
-- `pucky.fly.dev` serves both the broker routes and the cached HTML bundle under `/ui/pucky/latest/`.
-- The phone installs and runs the cached WebView bundle locally from app-private storage.
+- `pucky.fly.dev` serves the user-facing surface at `/ui/pucky/latest/`.
+- The phone uses the hosted surface as primary, with an app-private local cache as a startup fallback.
 - Agents use UBC, direct local ADB, or the emulator harness for device control and acceptance testing.
 
 ## Security Shape
@@ -21,8 +21,8 @@ The safe shape is now:
 ```text
 Android APK
   -> outbound websocket to pucky.fly.dev
-  -> broker command bus
-  -> cached local HTML UI bundle
+  -> `/ui/pucky/latest/` hosted user surface
+  -> optional app-local startup cache
   -> device-local capabilities
 ```
 
@@ -49,7 +49,7 @@ This is the product-grade path for a nontechnical user who wants the Pucky app e
 5. The user installs the APK.
 6. The user opens Pucky from the post-install link or the launcher.
 7. The app consumes the pairing token and stores the broker and turn config in app-private storage.
-8. The app connects to `pucky.fly.dev`, fetches the cached HTML bundle, and starts operating normally.
+8. The app connects to `pucky.fly.dev`, opens `/ui/pucky/latest/`, and starts operating normally.
 
 The fresh user should experience this as:
 
@@ -68,7 +68,7 @@ The APK is still needed for:
 - keeping the broker connection alive
 - app-level command execution
 - foreground service lifecycle
-- cached HTML bundle install and fallback shell
+- hosted `/ui/pucky/latest/` surface and fallback shell behavior
 - cover-screen and home-screen UI
 - Android permissions and device-local capabilities
 - future app-link or token pairing
@@ -80,7 +80,7 @@ VM runtime:
 
 - `pucky_vm` service
 - broker database under persistent storage, currently `/data/pucky/broker.sqlite3`
-- cached bundle artifact serving under `/ui/pucky/latest/`
+- hosted UI surface artifacts under `/ui/pucky/latest/`
 - `puckyctl` or equivalent operator tooling
 - Fly volume or equivalent persistent data directory
 
@@ -104,7 +104,7 @@ Development/bootstrap tooling:
 App-only, default:
 
 - User installs APK and pairs it to the VM.
-- VM uses the broker command bus and cached bundle flow.
+- VM uses the broker command bus and hosted UI flow.
 
 Local developer control:
 

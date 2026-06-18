@@ -12,6 +12,9 @@ import pytest
 from pucky_vm.server import Config, PuckyVoiceService, make_handler
 
 
+BROWSER_TEST_TOKEN = "browser-test-token"
+
+
 class FakeSTT:
     def transcribe(self, audio: bytes, content_type: str) -> str:
         return ""
@@ -50,6 +53,7 @@ def config(tmp_path: Path) -> Config:
         host="127.0.0.1",
         port=0,
         pucky_api_token="test-token",
+        pucky_web_ui_token=BROWSER_TEST_TOKEN,
         deepgram_api_key="",
         deepinfra_api_key="",
         max_audio_bytes=1024,
@@ -86,7 +90,14 @@ def start_server(tmp_path: Path) -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def request_json(base_url: str, path: str, *, method: str = "GET", token: str = "", body: dict[str, object] | None = None) -> dict[str, object]:
+def request_json(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str | None = BROWSER_TEST_TOKEN,
+    body: dict[str, object] | None = None,
+) -> dict[str, object]:
     data = None if body is None else json.dumps(body).encode("utf-8")
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -98,17 +109,29 @@ def request_json(base_url: str, path: str, *, method: str = "GET", token: str = 
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_workspace_api_requires_auth_for_writes_and_allows_reads(tmp_path: Path) -> None:
+def test_workspace_api_requires_auth_for_reads_and_writes_and_accepts_browser_token(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         notes = request_json(base_url, "/api/workspace/notes")
         assert notes["count"] >= 1
         try:
-            request_json(base_url, "/api/workspace/notes", method="POST", body={"id": "x", "title": "X"})
+            request_json(base_url, "/api/workspace/notes", token="", method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("unauthorized read succeeded")
+        try:
+            request_json(base_url, "/api/workspace/notes", method="POST", token="", body={"id": "x", "title": "X"})
         except urllib.error.HTTPError as exc:
             assert exc.code == 401
         else:
             raise AssertionError("unauthorized write succeeded")
+        try:
+            request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("wrong token unexpectedly authorized workspace read")
     finally:
         server.shutdown()
 
@@ -120,7 +143,7 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
         assert "messages" not in set(catalog["collections"])
         assert {"meeting-notes", "reminders"}.issubset(set(catalog["collections"]))
         try:
-            urllib.request.urlopen(f"{base_url}/api/workspace/messages")
+            request_json(base_url, "/api/workspace/messages")
         except urllib.error.HTTPError as exc:
             assert exc.code == 404
         else:

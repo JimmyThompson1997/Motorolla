@@ -8,7 +8,7 @@ const VIEWPORT = { width: 430, height: 932 };
 function parseArgs(argv) {
   const config = {
     baseUrl: process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8771",
-    apiToken: process.env.PUCKY_WORKSPACE_PROOF_TOKEN || process.env.PUCKY_API_TOKEN || "",
+    apiToken: resolveApiToken(),
     reportDir: path.resolve("artifacts", "reminders-v3-browser", new Date().toISOString().replace(/[:.]/g, "-")),
     timeoutMs: 30000,
     theme: "light",
@@ -31,6 +31,18 @@ function parseArgs(argv) {
     }
   }
   return config;
+}
+
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
+  if (proofToken) {
+    return proofToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
 }
 
 function assert(condition, message) {

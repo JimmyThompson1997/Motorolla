@@ -33,8 +33,22 @@ and must be merged before anything is installed on-device.
 This folder is the Motorola Razr working workspace. It contains:
 
 - `pucky-apk/`: editable copy of the current Pucky Android APK source.
-- `pucky_vm/`: the VM-hosted Pucky service that now serves both the cached UI bundle and the broker or command-bus endpoints.
+- `pucky_vm/`: the VM-hosted Pucky service that now serves the hosted `/ui/pucky/latest/` user surface and broker or command-bus endpoints.
 - `pucky-implementation-proof/`, `outer-screen-research/`, `adb_inspect/`: device evidence and research artifacts.
+
+## Local Dev Setup
+
+The repo now supports both a Homebrew-backed macOS bootstrap and a no-`sudo`
+user-local fallback:
+
+```bash
+./tools/bootstrap_mac_dev.sh
+./tools/bootstrap_local_dev_env.sh
+python3 tools/dev_env_doctor.py --include-emulator
+```
+
+If you use the local fallback, source `.tmp/pucky-local-dev-env.sh` before
+running `./gradlew`, emulator commands, or VM scripts in a fresh shell.
 
 `C:\Users\jimmy\Desktop\Motorolla` was not a git repository when this workspace was assembled. The source copy came from:
 
@@ -52,14 +66,14 @@ GitHub master
   -> canonical Motorolla-master-ui workspace
   -> deploy canonical APK over local ADB or UBC
   -> phone connects outbound to wss://pucky.fly.dev/v1/devices/<device_id>/connect
-  -> pucky.fly.dev serves both broker commands and cached HTML UI bundle artifacts
+  -> pucky.fly.dev serves both broker commands and hosted `/ui/pucky/latest/` UI traffic
 ```
 
 Important implications:
 
 - There is no supported remote ADB-over-SSH tunnel lane in this repo anymore.
 - Agent or operator device testing happens through direct local ADB, UBC, or the emulator harness.
-- The APK still owns the phone-side broker connection, cached UI bundle install, player controls, reply cards, and device-local capabilities.
+- The APK still owns the phone-side broker connection, hosted UI surface bootstrapping, player controls, reply cards, and device-local capabilities.
 - The VM-side Pucky service now hosts both `/ui/pucky/latest/*` and the broker or command-bus routes.
 
 ## Nontechnical Install Model
@@ -78,7 +92,7 @@ Direct device access still matters for full hardware control:
 - Emulator harness for parallel agent work that does not require the physical Razr.
 - Root/system/device-owner paths are still out of scope.
 
-See `pucky_vm/README.md` for the current VM service and cached bundle flow.
+See `pucky_vm/README.md` for the current VM service and hosted UI flow.
 See `docs/fresh-user-install-end-state.md` for the current install and pairing shape.
 See `docs/vm-installation-package-requirements.md` for the current VM checklist.
 See `docs/notes/adb-cover-display-input.md` for the ADB cover-display input note.

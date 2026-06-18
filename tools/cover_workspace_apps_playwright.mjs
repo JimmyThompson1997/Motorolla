@@ -15,10 +15,22 @@ const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://1
 const VIEWPORT = { width: 430, height: 932 };
 const PROOF_RUN_ID = "proof-workspace";
 
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
+  if (proofToken) {
+    return proofToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
+}
+
 function parseArgs(argv) {
   const config = {
     baseUrl: DEFAULT_BASE_URL,
-    apiToken: process.env.PUCKY_WORKSPACE_PROOF_TOKEN || process.env.PUCKY_API_TOKEN || "",
+    apiToken: resolveApiToken(),
     reportDir: path.resolve("artifacts", "workspace-apps", new Date().toISOString().replace(/[:.]/g, "-")),
     timeoutMs: 30000,
     reminderDeliveryMode: process.env.PUCKY_REMINDER_DELIVERY_MODE || "auto",

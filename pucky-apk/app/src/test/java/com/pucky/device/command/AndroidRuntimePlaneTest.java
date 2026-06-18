@@ -85,7 +85,7 @@ public final class AndroidRuntimePlaneTest {
         String executor = read("src/main/java/com/pucky/device/command/NativeCommandExecutor.java");
         List<String> commands = commandNames(executor);
 
-        assertEquals(254, commands.size());
+        assertEquals(258, commands.size());
         assertEquals(commands.size(), new HashSet<>(commands).size());
         assertFalse(commands.contains("shell.exec"));
         assertFalse(commands.contains("android.content.query"));

@@ -15,10 +15,22 @@ const PROOF_RUN_ID = "proof-calendar";
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  const proofToken = String(process.env.PUCKY_CALENDAR_PROOF_TOKEN || "").trim();
+  if (proofToken) {
+    return proofToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
+}
+
 function parseArgs(argv) {
   const config = {
     baseUrl: DEFAULT_BASE_URL,
-    apiToken: process.env.PUCKY_CALENDAR_PROOF_TOKEN || process.env.PUCKY_API_TOKEN || "",
+    apiToken: resolveApiToken(),
     reportDir: path.resolve("artifacts", "calendar-proof", new Date().toISOString().replace(/[:.]/g, "-")),
     timeoutMs: 30000
   };

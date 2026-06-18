@@ -823,6 +823,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         host="127.0.0.1",
         port=0,
         pucky_api_token="secret",
+        pucky_web_ui_token="browser-secret",
         deepgram_api_key="dg",
         deepinfra_api_key="di",
         max_audio_bytes=1024 * 1024,
@@ -848,6 +849,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         composio_default_user_id="jimmythompson323",
         connect_portal_secret="portal-secret",
         connect_portal_ttl_seconds=3600,
+        meeting_artifact_link_secret="meeting-artifact-secret",
         composio_default_auth_mode="browser",
         proof_reply_delay_enabled=proof_reply_delay_enabled,
         meeting_developer_instructions=meeting_instructions,
@@ -931,6 +933,44 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(config.codex_model, "custom-model")
         self.assertEqual(config.codex_reasoning_effort, "high")
+
+    def test_config_from_env_loads_browser_token_and_requires_explicit_link_secrets(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PUCKY_API_TOKEN": "owner-token",
+                "PUCKY_WEB_UI_TOKEN": "browser-token",
+                "PUCKY_CONNECT_PORTAL_SECRET": "",
+                "PUCKY_MEETING_ARTIFACT_LINK_SECRET": "",
+            },
+            clear=True,
+        ):
+            config = Config.from_env()
+
+        self.assertEqual(config.pucky_api_token, "owner-token")
+        self.assertEqual(config.pucky_web_ui_token, "browser-token")
+        self.assertEqual(config.connect_portal_secret, "")
+        self.assertEqual(config.meeting_artifact_link_secret, "")
+
+    def test_links_portal_url_accepts_browser_user_token(self) -> None:
+        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
+
+    def test_operator_token_does_not_authorize_browser_user_routes(self) -> None:
+        headers = {"Authorization": "Bearer test-operator-token"}
+        for path in (
+            "/api/feed?limit=1&compact=1",
+            "/api/meetings?compact=1",
+            "/api/workspace/notes",
+            "/api/links/composio/portal-url",
+            "/api/device/phone-role-status",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.get_json(path, headers=headers)
+
+            self.assertEqual(caught.exception.code, 401, msg=path)
 
     def test_ui_bundle_endpoints_serve_manifest_bundle_and_browser_app(self) -> None:
         manifest = self.get_json("/ui/pucky/latest/manifest.json")
@@ -1301,10 +1341,34 @@ class ServerTests(unittest.TestCase):
         )
         self.assertEqual(active["items"], [])
 
-    def test_feed_sync_and_actions_support_browser_same_origin_without_auth(self) -> None:
+    def test_feed_sync_requires_auth_even_for_compact_browser_requests(self) -> None:
         turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_browser_turn")
 
-        payload = self.get_json("/api/feed?limit=10&compact=1&include_archived=0")
+        with self.assertRaises(urllib.error.HTTPError) as feed_caught:
+            self.get_json("/api/feed?limit=10&compact=1&include_archived=0")
+
+        self.assertEqual(feed_caught.exception.code, 401)
+
+        with self.assertRaises(urllib.error.HTTPError) as action_caught:
+            self.post_json(
+                "/api/feed/actions",
+                {
+                    "client_action_id": "feed_browser_archive",
+                    "card_id": turn["card_id"],
+                    "action": "archive",
+                },
+                headers={"Authorization": ""},
+            )
+
+        self.assertEqual(action_caught.exception.code, 401)
+
+    def test_feed_sync_and_actions_accept_browser_user_token(self) -> None:
+        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_browser_token_turn")
+
+        payload = self.get_json(
+            "/api/feed?limit=10&compact=1&include_archived=0",
+            headers={"Authorization": "Bearer browser-secret"},
+        )
 
         self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
         self.assertEqual(payload["items"][0]["card_id"], turn["card_id"])
@@ -1312,11 +1376,11 @@ class ServerTests(unittest.TestCase):
         action = self.post_json(
             "/api/feed/actions",
             {
-                "client_action_id": "feed_browser_archive",
+                "client_action_id": "feed_browser_token_archive",
                 "card_id": turn["card_id"],
                 "action": "archive",
             },
-            headers={"Authorization": ""},
+            headers={"Authorization": "Bearer browser-secret"},
         )
         self.assertTrue(action["ok"])
         self.assertTrue(action["item"]["archived"])
@@ -2609,15 +2673,29 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "meeting_not_found")
 
-    def test_meetings_compact_list_is_browser_readable_but_detail_requires_auth(self) -> None:
-        payload = self.get_json("/api/meetings?compact=1")
+    def test_meetings_compact_list_requires_auth(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as list_caught:
+            self.get_json("/api/meetings?compact=1")
+
+        self.assertEqual(list_caught.exception.code, 401)
+
+        with self.assertRaises(urllib.error.HTTPError) as detail_caught:
+            self.get_json("/api/meetings/missing-meeting")
+
+        self.assertEqual(detail_caught.exception.code, 401)
+
+    def test_meetings_compact_list_and_detail_accept_browser_user_token(self) -> None:
+        payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer browser-secret"})
         self.assertEqual(payload["schema"], "pucky.meetings.v1")
         self.assertTrue(payload["compact"])
 
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            self.get_json("/api/meetings/missing-meeting")
+            self.get_json(
+                "/api/meetings/missing-meeting",
+                headers={"Authorization": "Bearer browser-secret"},
+            )
 
-        self.assertEqual(caught.exception.code, 401)
+        self.assertEqual(caught.exception.code, 404)
 
     def test_turn_status_requires_auth(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -2633,6 +2711,36 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error_code"], "unauthorized")
         self.assertTrue(payload["read_only"])
+
+    def test_phone_role_status_accepts_browser_user_token(self) -> None:
+        self.broker.set_device("phone-browser", True)
+        with self.broker.LOCK:
+            self.broker.DEVICES["phone-browser"] = {"socket": object()}
+
+        def ws_send_side_effect(_socket, message):
+            payload = json.loads(message)
+            self.broker.update_command_from_device(
+                {
+                    "schema": "pucky.command_result.v1",
+                    "id": payload["id"],
+                    "type": payload["type"],
+                    "status": "completed",
+                    "result": {
+                        "schema": "pucky.phone_role_status.v1",
+                        "state": "held",
+                        "role_held": True,
+                        "eligible": True,
+                        "default_dialer_package": "com.pucky.device.debug",
+                        "default_dialer_label": "Pucky",
+                    },
+                }
+            )
+            return None
+
+        with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
+            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer browser-secret"})
+
+        self.assertEqual(payload["schema"], "pucky.phone_role_status.v1")
 
     def test_phone_role_status_uses_single_online_device_fallback(self) -> None:
         self.broker.set_device("phone-1", True)

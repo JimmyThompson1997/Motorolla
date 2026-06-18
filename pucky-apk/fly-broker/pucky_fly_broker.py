@@ -1163,14 +1163,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def require_operator(self):
         actual = bearer_token(self.headers)
-        if any(compare_token(actual, expected) for expected in explicit_tokens("PUCKY_OPERATOR_TOKEN", "PUCKY_API_TOKEN")):
+        if any(compare_token(actual, expected) for expected in explicit_tokens("PUCKY_OPERATOR_TOKEN")):
             return True
         self.send_json({"error": "UNAUTHORIZED"}, 401)
         return False
 
     def require_device(self):
         actual = bearer_token(self.headers) or query_token(self.path)
-        if any(compare_token(actual, expected) for expected in explicit_tokens("PUCKY_DEVICE_TOKEN", "PUCKY_API_TOKEN")):
+        if any(compare_token(actual, expected) for expected in explicit_tokens("PUCKY_DEVICE_TOKEN")):
             return True
         self.send_json({"error": "UNAUTHORIZED"}, 401)
         return False
