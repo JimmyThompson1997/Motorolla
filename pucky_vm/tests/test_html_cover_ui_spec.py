@@ -847,8 +847,10 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
 
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
+    styles = read("styles.css")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
+    contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
@@ -857,8 +859,15 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert '"contact-edit"' not in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
+    assert 'page.classList.add("light-contact-detail-page");' in contact_detail
+    assert 'const hero = el("section", "light-profile-card");' in contact_detail
+    assert 'hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));' in contact_detail
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
+    assert "background: transparent;" in contact_profile_card
+    assert "border: 0;" in contact_profile_card
+    assert "box-shadow: none;" in contact_profile_card
+    assert "border-radius: 0;" in contact_profile_card

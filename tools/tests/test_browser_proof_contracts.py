@@ -102,6 +102,19 @@ def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> No
     assert "endpoints: [{" not in source
 
 
+def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "assertFlatContactProfileCard" in source
+    assert '".light-contact-detail-page .light-profile-card"' in source
+    assert 'cardState.backgroundColor === "rgba(0, 0, 0, 0)"' in source
+    assert 'cardState.boxShadow === "none"' in source
+    assert 'cardState.borderRadius === "0px"' in source
+    assert "profile card should not have a visible border" in source
+    assert "should render the Contact section" in source
+    assert "should render the Activity section" in source
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

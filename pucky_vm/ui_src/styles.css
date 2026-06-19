@@ -4428,6 +4428,14 @@ button {
   box-shadow: var(--home-shell-shadow);
 }
 
+.light-contact-detail-page .light-profile-card {
+  padding: 18px 10px 8px;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
 .light-profile-card h1,
 .light-profile-card p {
   margin: 0;
