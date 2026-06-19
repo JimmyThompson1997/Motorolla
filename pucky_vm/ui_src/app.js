@@ -152,6 +152,7 @@
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
     notesSectionsExpanded: { pinned: true, recent: true },
+    notePinPending: {},
     taskFilter: "all",
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
@@ -931,6 +932,14 @@
       throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
     }
     return payload;
+  }
+
+  async function patchWorkspaceRecord(collection, recordId, payload) {
+    const id = String(recordId || "").trim();
+    return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: payload
+    });
   }
 
   function workspaceQuery(collection, options = {}) {
@@ -5186,6 +5195,90 @@
     };
   }
 
+  function noteRecordId(note) {
+    return String(note?.id || note?.record_id || "").trim();
+  }
+
+  function notePinPending(noteId) {
+    return Boolean(state.notePinPending[String(noteId || "").trim()]);
+  }
+
+  function setNotePinPending(noteId, pending) {
+    const key = String(noteId || "").trim();
+    const next = { ...state.notePinPending };
+    if (!key) {
+      state.notePinPending = next;
+      return;
+    }
+    if (pending) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    state.notePinPending = next;
+  }
+
+  function notesWithPinnedState(items, noteId, nextPinned) {
+    const targetId = String(noteId || "").trim();
+    const source = Array.isArray(items) ? items : [];
+    const target = source.find(item => noteRecordId(item) === targetId);
+    if (!targetId || !target) {
+      return source.slice();
+    }
+    const toggled = { ...target, pinned: nextPinned };
+    const pinned = [];
+    const recent = [];
+    source.forEach(item => {
+      if (noteRecordId(item) === targetId) {
+        return;
+      }
+      if (item?.pinned) {
+        pinned.push(item);
+        return;
+      }
+      recent.push(item);
+    });
+    return nextPinned
+      ? [toggled, ...pinned, ...recent]
+      : [...pinned, toggled, ...recent];
+  }
+
+  async function toggleNotePin(note) {
+    const noteId = noteRecordId(note);
+    if (!noteId || notePinPending(noteId)) {
+      return;
+    }
+    const notesBucket = state.workspace.notes;
+    if (!notesBucket || !Array.isArray(notesBucket.items)) {
+      return;
+    }
+    const previousItems = notesBucket.items.slice();
+    const previousSectionsExpanded = {
+      ...state.notesSectionsExpanded
+    };
+    const nextPinned = !Boolean(note.pinned);
+    notesBucket.error = "";
+    setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);
+    notesBucket.items = notesWithPinnedState(previousItems, noteId, nextPinned);
+    setNotePinPending(noteId, true);
+    render();
+    try {
+      await patchWorkspaceRecord("notes", noteId, { pinned: nextPinned });
+      await loadWorkspaceCollection("notes", { render: true, force: true });
+      notesBucket.error = "";
+    } catch (error) {
+      notesBucket.items = previousItems;
+      state.notesSectionsExpanded = previousSectionsExpanded;
+      notesBucket.error = "";
+      setNotePinPending(noteId, false);
+      render();
+      showToast(error.message);
+      return;
+    }
+    setNotePinPending(noteId, false);
+    render();
+  }
+
   function noteSectionExpanded(sectionKey) {
     return state.notesSectionsExpanded?.[sectionKey] !== false;
   }
@@ -5261,13 +5354,17 @@
 
   function lightNoteRow(note) {
     const row = el("div", "light-note-row");
+    const noteId = noteRecordId(note);
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     row.setAttribute("aria-label", note.title || "Open note");
-    row.dataset.noteId = note.id;
+    row.dataset.noteId = noteId;
     row.dataset.notePinned = String(Boolean(note.pinned));
     const openNote = () => {
-      state.selectedNoteId = note.id;
+      if (!noteId) {
+        return;
+      }
+      state.selectedNoteId = noteId;
       lightNavigate("note-detail", { from: "notes" });
     };
     row.addEventListener("click", openNote);
@@ -5289,15 +5386,23 @@
     metaRow.append(el("span", "light-note-row-time", meta.timestamp));
     copy.append(metaRow);
     row.dataset.noteHasSource = String(Boolean(meta.source));
-    if (note.pinned) {
-      const pin = el("span", "light-note-pin-button");
-      pin.dataset.notePinned = "true";
-      pin.setAttribute("aria-hidden", "true");
-      pin.innerHTML = iconSvg("pin", { filled: true });
-      row.append(copy, pin);
-      return row;
-    }
-    row.append(copy);
+    const pin = el("button", "light-note-pin-button");
+    pin.type = "button";
+    pin.disabled = notePinPending(noteId);
+    pin.dataset.notePinned = String(Boolean(note.pinned));
+    pin.setAttribute("aria-label", note.pinned ? "Unpin note" : "Pin note");
+    pin.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      void toggleNotePin(note);
+    });
+    pin.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+      }
+    });
+    pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });
+    row.append(copy, pin);
     return row;
   }
 
