@@ -16,10 +16,6 @@ const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_CALENDAR_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -71,9 +67,7 @@ function pageUrl(baseUrl, apiToken = "", theme = "light") {
   url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
   url.searchParams.set("_pucky_refresh", String(Date.now()));
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
-  }
+  void apiToken;
   return url.toString();
 }
 

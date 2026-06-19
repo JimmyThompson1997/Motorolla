@@ -30,7 +30,6 @@ from .http_handler import make_handler as _build_http_handler
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
-    is_any_bearer_authorized,
     is_bearer_authorized,
     json_body,
     parse_content_length,
@@ -400,7 +399,6 @@ class Config:
     self_email: str = ""
     self_phone_number: str = ""
     public_base_url: str | None = None
-    pucky_web_ui_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -408,7 +406,6 @@ class Config:
             host=os.environ.get("PUCKY_HOST", "0.0.0.0"),
             port=int(os.environ.get("PORT", os.environ.get("PUCKY_PORT", "8080"))),
             pucky_api_token=os.environ.get("PUCKY_API_TOKEN", ""),
-            pucky_web_ui_token=os.environ.get("PUCKY_WEB_UI_TOKEN", "").strip(),
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),

@@ -21,10 +21,6 @@ const DEFAULT_API_BASE = "https://pucky.fly.dev";
 const DEFAULT_PAGE_URL = `${DEFAULT_API_BASE}/ui/pucky/latest/index.html?route=inbox&reset_nav=1`;
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   return String(process.env.PUCKY_API_TOKEN || "").trim() || "pucky-local-dev-token";
 }
 
@@ -178,7 +174,14 @@ function bridgeResponse(state, message) {
     return {
       schema: "pucky.config.v1",
       api_base_url: state.apiBase,
-      api_token: state.apiToken
+      has_native_bridge: true
+    };
+  }
+  if (command === "pucky.authorization.get") {
+    return {
+      schema: "pucky.authorization.v1",
+      authorization: state.apiToken ? `Bearer ${state.apiToken}` : "",
+      authorized: Boolean(state.apiToken)
     };
   }
   if (command === "browser.open") {

@@ -107,6 +107,7 @@
     "selectedProjectId",
     "selectedFeedId"
   ];
+  let nativeProtectedAuthorization = "";
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -972,9 +973,7 @@
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -995,9 +994,7 @@
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -1704,7 +1701,7 @@
         if (!state.links.token) {
           linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
           await ensureLinksApiConfig();
-          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url", { authorized: true }));
           state.links.portal_url = payload.portal_url;
           state.links.token = payload.token;
           state.links.auth_mode = payload.auth_mode;
@@ -1955,7 +1952,8 @@
     try {
       linksDebugRecord("oauth_start_start", { slug }, "click");
       const payload = await linksApiRequest(
-        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`
+        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`,
+        { authorized: true }
       );
       linksDebugRecord(
         "oauth_start_end",
@@ -2012,19 +2010,38 @@
     }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.apiToken = "";
       state.links.deviceId = "";
       return;
     }
     try {
       const config = await Pucky.request({ command: "pucky.config.get", args: {} });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
-      state.links.apiToken = String(config && config.api_token || "");
       state.links.deviceId = "";
     } catch (_) {
       state.links.apiBaseUrl = "";
-      state.links.apiToken = "";
       state.links.deviceId = "";
+    }
+  }
+
+  async function protectedApiAuthorizationHeaders(options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
+    const needsAuthorization = Boolean(options.authorized) || method !== "GET";
+    if (!needsAuthorization || !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      return {};
+    }
+    if (nativeProtectedAuthorization) {
+      return { Authorization: nativeProtectedAuthorization };
+    }
+    try {
+      const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });
+      const authorization = String(payload && payload.authorization || "").trim();
+      if (!authorization) {
+        return {};
+      }
+      nativeProtectedAuthorization = authorization;
+      return { Authorization: authorization };
+    } catch (_) {
+      return {};
     }
   }
 
@@ -2036,9 +2053,7 @@
       cache: String(options.cache || "no-store"),
       headers: {}
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -2841,7 +2856,6 @@
       portal_url: "",
       token: "",
       apiBaseUrl: "",
-      apiToken: "",
       deviceId: "",
       userId: "",
       auth_mode: "browser",
@@ -10835,11 +10849,7 @@
       throw new Error("artifact url is missing");
     }
     await ensureLinksApiConfig();
-    const headers = {};
-    if (state.links.apiToken && !/[?&]token=/i.test(apiUrl)) {
-      headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
-    const response = await fetch(apiUrl, { cache: "no-store", headers });
+    const response = await fetch(apiUrl, { cache: "no-store", headers: {} });
     if (!response.ok) {
       throw new Error(`${label} unavailable: HTTP ${response.status}`);
     }

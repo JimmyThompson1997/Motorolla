@@ -53,18 +53,16 @@ def test_load_browser_summary_requires_green(tmp_path: Path) -> None:
         meeting_proof.load_browser_summary(path)
 
 
-def test_parse_args_defaults_token_prefers_web_ui_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PUCKY_WEB_UI_TOKEN", "web-ui-token")
+def test_parse_args_defaults_token_uses_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUCKY_API_TOKEN", "api-token")
     monkeypatch.setenv("PUCKY_OPERATOR_TOKEN", "operator-token")
 
     args = meeting_proof.parse_args([])
 
-    assert args.token == "web-ui-token"
+    assert args.token == "api-token"
 
 
-def test_parse_args_falls_back_to_api_token_when_web_ui_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PUCKY_WEB_UI_TOKEN", raising=False)
+def test_parse_args_falls_back_to_api_token_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUCKY_API_TOKEN", "api-token")
     monkeypatch.setenv("PUCKY_OPERATOR_TOKEN", "operator-token")
 
@@ -74,7 +72,6 @@ def test_parse_args_falls_back_to_api_token_when_web_ui_missing(monkeypatch: pyt
 
 
 def test_parse_args_does_not_default_to_operator_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PUCKY_WEB_UI_TOKEN", raising=False)
     monkeypatch.delenv("PUCKY_API_TOKEN", raising=False)
     monkeypatch.setenv("PUCKY_OPERATOR_TOKEN", "operator-token")
 

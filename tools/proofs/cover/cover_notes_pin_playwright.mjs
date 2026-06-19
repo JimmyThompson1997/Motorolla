@@ -13,8 +13,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 const uiRoot = path.join(repoRoot, "pucky_vm", "ui_src");
 const proofDir = path.join(repoRoot, ".tmp", "notes-pin-proof");
-const PROOF_BROWSER_TOKEN = "proof-browser-token";
-
 function loadPlaywrightCore() {
   const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
   const candidates = [
@@ -244,41 +242,9 @@ async function waitForNotesList(page) {
   await page.locator(".light-note-row").first().waitFor({ state: "visible", timeout: 10000 });
 }
 
-async function expectPreviewApiTokenLock(page) {
-  await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    const detail = document.querySelector(".light-empty-state p");
-    const action = document.querySelector(".light-empty-state .light-empty-state-action");
-    return shell?.getAttribute("data-light-route") === "notes"
-      && String(title?.textContent || "").trim() === "Preview needs api_token"
-      && String(detail?.textContent || "").trim() === "Web preview is locked. Use Unlock web preview to load live Notes from the VM in this browser."
-      && String(action?.textContent || "").trim() === "Unlock web preview";
-  }, { timeout: 10000 });
-}
-
-async function unlockBrowserPreview(page, apiToken = PROOF_BROWSER_TOKEN) {
-  await page.getByRole("button", { name: "Unlock web preview" }).click();
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").waitFor({ state: "visible", timeout: 10000 });
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").fill(String(apiToken || "").trim());
-  await page.getByRole("button", { name: "Save token" }).click();
-  await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), { timeout: 10000 });
-  await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), { timeout: 10000 });
-}
-
 async function openNotes(page) {
   await page.waitForFunction(() => Boolean(document.querySelector('button.light-app-tile[data-route="notes"]')), { timeout: 10000 });
   await page.evaluate(() => document.querySelector('button.light-app-tile[data-route="notes"]')?.click());
-  const locked = await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    return shell?.getAttribute("data-light-route") === "notes"
-      && String(title?.textContent || "").trim() === "Preview needs api_token";
-  }, { timeout: 1200 }).then(() => true).catch(() => false);
-  if (locked) {
-    await expectPreviewApiTokenLock(page);
-    await unlockBrowserPreview(page);
-  }
   await waitForNotesList(page);
 }
 

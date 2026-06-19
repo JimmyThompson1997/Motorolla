@@ -823,7 +823,6 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         host="127.0.0.1",
         port=0,
         pucky_api_token="secret",
-        pucky_web_ui_token="browser-secret",
         deepgram_api_key="dg",
         deepinfra_api_key="di",
         max_audio_bytes=1024 * 1024,
@@ -934,12 +933,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(config.codex_model, "custom-model")
         self.assertEqual(config.codex_reasoning_effort, "high")
 
-    def test_config_from_env_loads_browser_token_and_requires_explicit_link_secrets(self) -> None:
+    def test_config_from_env_loads_api_token_and_requires_explicit_link_secrets(self) -> None:
         with mock.patch.dict(
             "os.environ",
             {
                 "PUCKY_API_TOKEN": "owner-token",
-                "PUCKY_WEB_UI_TOKEN": "browser-token",
                 "PUCKY_CONNECT_PORTAL_SECRET": "",
                 "PUCKY_MEETING_ARTIFACT_LINK_SECRET": "",
             },
@@ -948,12 +946,11 @@ class ServerTests(unittest.TestCase):
             config = Config.from_env()
 
         self.assertEqual(config.pucky_api_token, "owner-token")
-        self.assertEqual(config.pucky_web_ui_token, "browser-token")
         self.assertEqual(config.connect_portal_secret, "")
         self.assertEqual(config.meeting_artifact_link_secret, "")
 
-    def test_links_portal_url_accepts_browser_user_token(self) -> None:
-        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
+    def test_links_portal_url_accepts_api_token(self) -> None:
+        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
 
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
@@ -1127,7 +1124,6 @@ class ServerTests(unittest.TestCase):
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
             self.assertNotIn('"links_url"', config_script)
             self.assertNotIn("api_token", config_script)
-            self.assertNotIn("pucky_web_ui_token", config_script)
 
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")
@@ -1539,12 +1535,12 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(action_caught.exception.code, 401)
 
-    def test_feed_sync_and_actions_accept_browser_user_token(self) -> None:
+    def test_feed_sync_and_actions_accept_api_token(self) -> None:
         turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_browser_token_turn")
 
         payload = self.get_json(
             "/api/feed?limit=10&compact=1&include_archived=0",
-            headers={"Authorization": "Bearer browser-secret"},
+            headers={"Authorization": "Bearer secret"},
         )
 
         self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
@@ -1557,7 +1553,7 @@ class ServerTests(unittest.TestCase):
                 "card_id": turn["card_id"],
                 "action": "archive",
             },
-            headers={"Authorization": "Bearer browser-secret"},
+            headers={"Authorization": "Bearer secret"},
         )
         self.assertTrue(action["ok"])
         self.assertTrue(action["item"]["archived"])
@@ -2860,15 +2856,15 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(detail_caught.exception.code, 404)
 
-    def test_meetings_compact_list_and_detail_accept_browser_user_token(self) -> None:
-        payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer browser-secret"})
+    def test_meetings_compact_list_and_detail_accept_api_token(self) -> None:
+        payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"})
         self.assertEqual(payload["schema"], "pucky.meetings.v1")
         self.assertTrue(payload["compact"])
 
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.get_json(
                 "/api/meetings/missing-meeting",
-                headers={"Authorization": "Bearer browser-secret"},
+                headers={"Authorization": "Bearer secret"},
             )
 
         self.assertEqual(caught.exception.code, 404)
@@ -2888,7 +2884,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["error_code"], "unauthorized")
         self.assertTrue(payload["read_only"])
 
-    def test_phone_role_status_accepts_browser_user_token(self) -> None:
+    def test_phone_role_status_accepts_api_token(self) -> None:
         self.broker.set_device("phone-browser", True)
         with self.broker.LOCK:
             self.broker.DEVICES["phone-browser"] = {"socket": object()}
@@ -2914,7 +2910,7 @@ class ServerTests(unittest.TestCase):
             return None
 
         with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
-            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer browser-secret"})
+            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer secret"})
 
         self.assertEqual(payload["schema"], "pucky.phone_role_status.v1")
 

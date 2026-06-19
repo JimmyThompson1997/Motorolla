@@ -34,10 +34,6 @@ function parseArgs(argv) {
 }
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -56,9 +52,7 @@ function pageUrl(baseUrl, theme, apiToken = "") {
   url.searchParams.set("theme", theme);
   url.searchParams.set("route", "home");
   url.searchParams.set("reset_nav", "1");
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
-  }
+  void apiToken;
   return url.toString();
 }
 

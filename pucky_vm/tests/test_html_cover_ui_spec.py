@@ -321,7 +321,10 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
 
 def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -> None:
     app = read("app.js")
+    index_html = read("index.html")
     routes = read("pucky-routes.js")
+    legacy_browser_state = "pucky-browser" + "-state.js"
+    legacy_browser_unlock = "pucky-browser" + "-unlock.js"
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
@@ -332,8 +335,9 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));' in load_workspace
     assert 'bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
-    assert "Preview needs api_token" not in app
-    assert "Unlock web preview" not in app
+    assert "pucky-ui-state.js" in index_html
+    assert legacy_browser_state not in index_html
+    assert legacy_browser_unlock not in index_html
     assert "preview_locked" not in app
     assert 'if (bucket.error) {' in light_workspace_status
     assert 'if (!bucket.loaded) {' in light_workspace_status

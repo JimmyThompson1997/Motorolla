@@ -116,7 +116,14 @@ function bridgeResponse(state, message) {
     return { schema: "pucky.meeting_recording_status.v1", state: "idle", active_meeting_id: null, meetings: [] };
   }
   if (command === "pucky.config.get") {
-    return { api_base_url: "https://pucky.test", api_token: "proof-token" };
+    return { schema: "pucky.config.v1", api_base_url: "https://pucky.test", has_native_bridge: true };
+  }
+  if (command === "pucky.authorization.get") {
+    return {
+      schema: "pucky.authorization.v1",
+      authorization: "Bearer proof-token",
+      authorized: true
+    };
   }
   if (command === "browser.open") {
     const args = message?.args && typeof message.args === "object" ? message.args : {};

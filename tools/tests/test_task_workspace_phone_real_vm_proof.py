@@ -62,25 +62,13 @@ def test_parse_args_defaults_broker_to_official_vm(monkeypatch: pytest.MonkeyPat
     monkeypatch.delenv("PUCKY_BROKER_URL", raising=False)
     monkeypatch.delenv("PUCKY_OPERATOR_TOKEN", raising=False)
     monkeypatch.delenv("PUCKY_API_TOKEN", raising=False)
-    monkeypatch.delenv("PUCKY_WEB_UI_TOKEN", raising=False)
 
     args = phone_proof.parse_args(["--browser-summary", str(make_browser_summary(tmp_path))])
 
     assert args.broker == phone_proof.official_html.DEFAULT_VM_BASE_URL
 
 
-def test_parse_args_prefers_web_ui_token_over_api_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("PUCKY_WEB_UI_TOKEN", "web-ui-token")
-    monkeypatch.setenv("PUCKY_API_TOKEN", "api-token")
-    monkeypatch.delenv("PUCKY_OPERATOR_TOKEN", raising=False)
-
-    args = phone_proof.parse_args(["--browser-summary", str(make_browser_summary(tmp_path))])
-
-    assert args.token == "web-ui-token"
-
-
-def test_parse_args_falls_back_to_api_token_when_web_ui_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("PUCKY_WEB_UI_TOKEN", raising=False)
+def test_parse_args_uses_api_token_when_present(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PUCKY_API_TOKEN", "api-token")
     monkeypatch.setenv("PUCKY_OPERATOR_TOKEN", "operator-token")
 

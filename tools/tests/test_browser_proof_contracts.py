@@ -6,6 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEV_PY_PATH = ROOT / "tools" / "dev.py"
+LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN"
+LEGACY_BROWSER_TOKEN_KEY = "browser_" + "api_token"
+LEGACY_LOCK_TITLE = "Preview needs " + "api_token"
+LEGACY_UNLOCK_LABEL = "Unlock web " + "preview"
 
 
 def read_source(name: str) -> str:
@@ -20,7 +24,7 @@ def has_source(name: str) -> bool:
     return bool(sorted((ROOT / "tools").rglob(name)))
 
 
-def test_browser_facing_proofs_prefer_web_ui_token() -> None:
+def test_browser_facing_proofs_drop_legacy_web_ui_token_precedence() -> None:
     script_names = [
         "cover_calendar_playwright.mjs",
         "cover_links_scroll_probe.mjs",
@@ -34,7 +38,7 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
     if has_source("cover_live_user_session_playwright.mjs"):
         script_names.append("cover_live_user_session_playwright.mjs")
     for script_name in script_names:
-        assert "PUCKY_WEB_UI_TOKEN" in read_source(script_name), script_name
+        assert LEGACY_WEB_TOKEN_ENV not in read_source(script_name), script_name
 
 
 def test_canonical_browser_proof_routes_use_inbox_and_connect() -> None:
@@ -58,7 +62,7 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert "route=feed" not in source
     assert "contacts-edit" not in source
     assert 'url.searchParams.set("api_token"' not in source
-    assert "browser_api_token" not in source
+    assert LEGACY_BROWSER_TOKEN_KEY not in source
     assert "fetchConnectMyApps(" in source
     assert "data-links-connected-slug" in source
     assert "Reload connect directly" in source
@@ -67,30 +71,28 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert "Preview needs api_token" not in source
-    assert "Unlock web preview" not in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
-    assert "browser_api_token" not in source
+    assert LEGACY_BROWSER_TOKEN_KEY not in source
 
-def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
+def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 
-    assert "Preview needs api_token" in source
-    assert "Unlock web preview" in source
-    assert "Paste PUCKY_WEB_UI_TOKEN" in source
-    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
     assert 'request.method() === "PATCH"' in source
     assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
     assert "Notes pin write failed" in source
 
 
-def test_live_notes_centering_proof_unlocks_preview_before_toggling_rows() -> None:
+def test_live_notes_centering_proof_loads_without_preview_unlock() -> None:
     source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
-    assert "Preview needs api_token" in source
-    assert "Unlock web preview" in source
-    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
     assert ".light-note-pin-button" in source
 
 
@@ -99,7 +101,7 @@ def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> No
     dev = DEV_PY_PATH.read_text(encoding="utf-8")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
     assert "PUCKY_WORKSPACE_PROOF_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
     assert 'const RESULT_SCHEMA = "pucky.notes_detail_flash_browser_proof.v1";' in source

@@ -158,7 +158,6 @@ def proof_env() -> dict[str, str]:
 def run_local_workspace_proof(script_path: str, extra_args: list[str], *, include_inbox_media: bool = False) -> int:
     node_binary = require_binary("node")
     env = proof_env()
-    env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
     local_light_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&reset_nav=1"
     local_dark_feed_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1"
     local_dark_meetings_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1"

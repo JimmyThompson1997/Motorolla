@@ -41,10 +41,6 @@ function loadPlaywrightCore() {
 const { chromium } = loadPlaywrightCore();
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;

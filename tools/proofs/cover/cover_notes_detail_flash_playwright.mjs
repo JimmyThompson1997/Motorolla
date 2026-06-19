@@ -49,10 +49,6 @@ function logStep(config, message) {
 }
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -559,7 +555,7 @@ async function runTheme(browser, config, theme, note) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   if (!String(config.apiToken || "").trim()) {
-    throw new Error("Notes detail flash proof requires --api-token or PUCKY_WEB_UI_TOKEN/PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_API_TOKEN");
+    throw new Error("Notes detail flash proof requires --api-token or PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN");
   }
   ensureDir(config.reportDir);
   const localGit = localGitState();

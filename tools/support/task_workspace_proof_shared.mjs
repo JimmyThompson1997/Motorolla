@@ -531,9 +531,7 @@ export function proofPageUrl(baseUrl, apiToken, options = {}) {
   if (String(options.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
   }
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
-  }
+  void apiToken;
   return url.toString();
 }
 
@@ -1277,9 +1275,6 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     hasTouch: mode === "mobile",
     isMobile: mode === "mobile",
   });
-  await context.setExtraHTTPHeaders({
-    Authorization: `Bearer ${config.apiToken}`,
-  });
   await context.addInitScript(() => {
     try {
       if (!sessionStorage.getItem("pucky.task_workspace_proof.nav_reset.v1")) {
@@ -1291,13 +1286,6 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
       // Ignore localStorage bootstrap failures in proof mode.
     }
   });
-  await context.addInitScript(apiToken => {
-    try {
-      localStorage.setItem("pucky.cover.browser_api_token.v1", apiToken);
-    } catch (_error) {
-      // Ignore localStorage bootstrap failures in proof mode.
-    }
-  }, config.apiToken);
 
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);

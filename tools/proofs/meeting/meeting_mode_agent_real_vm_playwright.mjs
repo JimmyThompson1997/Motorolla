@@ -162,14 +162,14 @@ function loadFlyEnvironment() {
 }
 
 function resolveApiToken() {
-  const direct = String(process.env.PUCKY_WEB_UI_TOKEN || process.env.PUCKY_API_TOKEN || "").trim();
+  const direct = String(process.env.PUCKY_API_TOKEN || "").trim();
   if (direct) {
     return direct;
   }
   const flyEnv = loadFlyEnvironment();
-  const token = String(flyEnv.PUCKY_WEB_UI_TOKEN || flyEnv.PUCKY_API_TOKEN || "").trim();
+  const token = String(flyEnv.PUCKY_API_TOKEN || "").trim();
   if (!token) {
-    throw new Error("Could not resolve PUCKY_WEB_UI_TOKEN/PUCKY_API_TOKEN from environment or live Fly app");
+    throw new Error("Could not resolve PUCKY_API_TOKEN from environment or live Fly app");
   }
   return token;
 }
@@ -1399,7 +1399,14 @@ function buildBridgeHandler({ baseUrl, apiToken, pathToMeetingId, bridgeState })
       return {
         schema: "pucky.config.v1",
         api_base_url: baseUrl,
-        api_token: apiToken
+        has_native_bridge: true
+      };
+    }
+    if (command === "pucky.authorization.get") {
+      return {
+        schema: "pucky.authorization.v1",
+        authorization: apiToken ? `Bearer ${apiToken}` : "",
+        authorized: Boolean(apiToken)
       };
     }
     if (command === "ui.reply_cards.get") {

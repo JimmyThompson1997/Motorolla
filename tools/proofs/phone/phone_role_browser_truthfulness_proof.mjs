@@ -29,8 +29,6 @@ const reportDir = path.join(repoRoot, ".tmp", "phone-role-browser-truthfulness")
 const summaryPath = path.join(reportDir, "summary.json");
 const consoleLogPath = path.join(reportDir, "console.log");
 const automationErrorPath = path.join(reportDir, "automation-error.txt");
-const browserToken = "browser-proof-token";
-const browserDeviceId = "phone-proof";
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -87,38 +85,6 @@ function createServer() {
       response.end();
       return;
     }
-    if (url.pathname === "/api/device/phone-role-status") {
-      const auth = String(request.headers.authorization || "");
-      if (auth !== `Bearer ${browserToken}`) {
-        sendJson(response, 401, {
-          schema: "pucky.phone_role_status.v1",
-          state: "unavailable",
-          role_held: false,
-          eligible: false,
-          default_dialer_package: "",
-          default_dialer_label: "",
-          source: "browser_live_api",
-          device_id: "",
-          read_only: true,
-          error_code: "unauthorized"
-        });
-        return;
-      }
-      const requestedDeviceId = String(url.searchParams.get("device_id") || "").trim() || browserDeviceId;
-      sendJson(response, 200, {
-        schema: "pucky.phone_role_status.v1",
-        state: "held",
-        role_held: true,
-        eligible: true,
-        default_dialer_package: "com.pucky.device.debug",
-        default_dialer_label: "Pucky",
-        source: "browser_live_api",
-        device_id: requestedDeviceId,
-        read_only: true,
-        error_code: ""
-      });
-      return;
-    }
     const relativePath = url.pathname === "/" ? "/index.html" : url.pathname;
     const candidate = path.resolve(uiRoot, `.${relativePath}`);
     if (!candidate.startsWith(uiRoot) || !fs.existsSync(candidate) || fs.statSync(candidate).isDirectory()) {
@@ -172,52 +138,20 @@ async function run() {
     chrome_path: chromePath,
     screenshots: {}
   };
-  const phoneRoleResponses = [];
-  page.on("response", async (response) => {
-    const url = response.url();
-    if (!/\/api\/device\/phone-role-status/i.test(url)) {
-      return;
-    }
-    const entry = {
-      url,
-      status: response.status()
-    };
-    try {
-      entry.body = await response.text();
-    } catch (_) {
-      entry.body = "";
-    }
-    phoneRoleResponses.push(entry);
-  });
-
   try {
     await page.goto(`${baseUrl}/index.html?route=settings`, { waitUntil: "load", timeout: 30000 });
     await page.waitForSelector('[data-setting-id="phone-role"]');
     await page.waitForFunction(() => {
       const detail = document.querySelector('[data-setting-id="phone-role"] .settings-card-detail');
-      return Boolean(detail && detail.textContent && /Web preview is read-only for phone-role state\./.test(detail.textContent));
+      return Boolean(
+        detail
+        && detail.textContent
+        && /Hosted web keeps phone-role state read-only\./.test(detail.textContent)
+      );
     });
     summary.preview_unavailable = await cardSnapshot(page);
     summary.preview_unavailable.no_fake_google = !(await page.content()).includes("Phone by Google");
     summary.screenshots.preview_unavailable = await saveScreenshot(page, reportDir, "01-preview-unavailable");
-
-    await page.evaluate(
-      ({ token, deviceId }) => {
-        localStorage.setItem("pucky.cover.browser_api_token.v1", token);
-        localStorage.setItem("pucky.cover.browser_device_id.v1", deviceId);
-      },
-      { token: browserToken, deviceId: browserDeviceId }
-    );
-    phoneRoleResponses.length = 0;
-    await page.goto(`${baseUrl}/index.html?route=settings`, { waitUntil: "load", timeout: 30000 });
-    await page.waitForSelector('[data-setting-id="phone-role"]');
-    await page.waitForFunction(() => {
-      const detail = document.querySelector('[data-setting-id="phone-role"] .settings-card-detail');
-      return Boolean(detail && detail.textContent && /Synced from /.test(detail.textContent));
-    }, null, { timeout: 30000 });
-    summary.live_synced = await cardSnapshot(page);
-    summary.live_synced.responses = phoneRoleResponses;
-    summary.screenshots.live_synced = await saveScreenshot(page, reportDir, "02-live-synced");
 
     if (summary.preview_unavailable.value !== "Preview") {
       throw new Error(`expected preview value label to be Preview, got ${summary.preview_unavailable.value}`);
@@ -227,15 +161,6 @@ async function run() {
     }
     if (!summary.preview_unavailable.no_fake_google) {
       throw new Error("preview mode still rendered fake Google Dialer copy");
-    }
-    if (summary.live_synced.value !== "On") {
-      throw new Error(`expected live synced value label to be On, got ${summary.live_synced.value}`);
-    }
-    if (summary.live_synced.actionCount !== 0) {
-      throw new Error(`expected live synced browser mode to stay read-only, got ${summary.live_synced.actionCount}`);
-    }
-    if (!/Current default: Pucky \(com\.pucky\.device\.debug\)\./.test(summary.live_synced.detail)) {
-      throw new Error(`live synced detail did not include normalized holder: ${summary.live_synced.detail}`);
     }
 
     writeJsonFile(summaryPath, summary);

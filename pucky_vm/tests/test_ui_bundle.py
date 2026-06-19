@@ -25,8 +25,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "source_dirty" in manifest
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
-    assert "pucky-browser-state.js" in manifest["files"]
-    assert "pucky-browser-unlock.js" in manifest["files"]
+    assert "pucky-ui-state.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
     assert "pucky-config.js" in manifest["files"]
     assert "pucky-icons.js" in manifest["files"]
@@ -48,8 +47,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "index.html" in names
-        assert "pucky-browser-state.js" in names
-        assert "pucky-browser-unlock.js" in names
+        assert "pucky-ui-state.js" in names
         assert "pucky-config.js" in names
         assert "pucky-icons.js" in names
         assert "pucky-routes.js" in names
@@ -67,7 +65,6 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert '"ui_version":"test-ui"' in config_script
         assert '"created_at":"2026-05-20T00:00:00+00:00"' in config_script
         assert "api_token" not in config_script
-        assert "pucky_web_ui_token" not in config_script
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)

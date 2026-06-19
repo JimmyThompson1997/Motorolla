@@ -11,10 +11,6 @@ import pytest
 
 from pucky_vm.server import Config, PuckyVoiceService, make_handler
 
-
-BROWSER_TEST_TOKEN = "browser-test-token"
-
-
 class FakeSTT:
     def transcribe(self, audio: bytes, content_type: str) -> str:
         return ""
@@ -53,7 +49,6 @@ def config(tmp_path: Path) -> Config:
         host="127.0.0.1",
         port=0,
         pucky_api_token="test-token",
-        pucky_web_ui_token=BROWSER_TEST_TOKEN,
         deepgram_api_key="",
         deepinfra_api_key="",
         max_audio_bytes=1024,
@@ -95,7 +90,7 @@ def request_json(
     path: str,
     *,
     method: str = "GET",
-    token: str | None = BROWSER_TEST_TOKEN,
+    token: str | None = "",
     headers: dict[str, str] | None = None,
     body: dict[str, object] | None = None,
 ) -> dict[str, object]:

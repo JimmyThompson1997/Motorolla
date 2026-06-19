@@ -20,10 +20,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
 const DEFAULT_BASE_URL = process.env.PUCKY_TASK_PROOF_BASE_URL || "https://pucky.fly.dev";
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -152,7 +148,7 @@ async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
   if (!String(config.apiToken || "").trim()) {
-    throw new Error("Live task workspace proof requires --api-token or PUCKY_WEB_UI_TOKEN/PUCKY_API_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_WORKSPACE_PROOF_TOKEN");
+    throw new Error("Live task workspace proof requires --api-token or PUCKY_API_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_WORKSPACE_PROOF_TOKEN");
   }
   const gitState = localGitState();
   config.refreshKey = gitState.headShort || `manual-${Date.now()}`;

@@ -55,7 +55,6 @@ Broad accessible areas: device status, permissions, battery/network/location, se
 
 - List devices = broker `GET /v1/devices` (operator/broker scope)
 - Broker auth = `Authorization: Bearer env:PUCKY_API_TOKEN`
-- User-surface auth = `Authorization: Bearer env:PUCKY_WEB_UI_TOKEN`
 - Current device state and permissions = APK command `capabilities.get`
 - Exact command names and argument shapes = APK command `command.catalog`
 - Execute one command = broker `POST /v1/devices/{device_id}/commands`

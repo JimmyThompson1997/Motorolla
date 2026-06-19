@@ -13,7 +13,6 @@ PACKAGE_JSON_PATH = ROOT / "tools" / "package.json"
 def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_report() -> None:
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
     assert "PUCKY_LIVE_USER_SESSION_TOKEN" in source
     assert "PUCKY_OPERATOR_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
@@ -30,7 +29,6 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert 'url.searchParams.set("api_token"' not in source
-    assert "browser_api_token" not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
 
 

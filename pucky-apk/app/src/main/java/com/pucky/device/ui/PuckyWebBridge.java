@@ -80,6 +80,8 @@ public final class PuckyWebBridge {
                 return setDefaultAudioSpeed(args);
             case "pucky.config.get":
                 return puckyConfig();
+            case "pucky.authorization.get":
+                return puckyAuthorization();
             case "player.state":
                 return player.state();
             case "player.asset.prepare":
@@ -203,8 +205,16 @@ public final class PuckyWebBridge {
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.web_config.v1");
         Json.put(out, "api_base_url", apiBaseUrl(turnUrl));
-        Json.put(out, "api_token", settings.getPuckyApiToken());
-        Json.put(out, "has_api_token", !settings.getPuckyApiToken().trim().isEmpty());
+        Json.put(out, "has_native_bridge", true);
+        return out;
+    }
+
+    private JSONObject puckyAuthorization() {
+        String token = settings.getPuckyApiToken().trim();
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.authorization.v1");
+        Json.put(out, "authorization", token.isEmpty() ? "" : "Bearer " + token);
+        Json.put(out, "authorized", !token.isEmpty());
         return out;
     }
 
