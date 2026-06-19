@@ -26,9 +26,13 @@ def function_block(source: str, name: str) -> str:
 
 def test_material_icon_registry_remains_bundled() -> None:
     app = read("app.js")
+    icons = read("pucky-icons.js")
     styles = read("styles.css")
 
-    assert "const MATERIAL_SYMBOLS" in app
+    assert "window.PUCKY_UI_ICONS = {" in icons
+    assert "MATERIAL_SYMBOLS:" in icons
+    assert "SEMANTIC_ICON_ACCENT_PALETTE:" in icons
+    assert "const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS" in app
     assert "function iconSvg(" in app
     assert "function replyCardIconSvg(" in app
     assert "function loadCardIconRegistry(" in app
@@ -46,41 +50,50 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'aria-label="Turn state: idle"' in html
     assert 'id="feed"' in html
     assert 'id="detail"' in html
+    assert '<script src="./pucky-icons.js"></script>' in html
+    assert '<script src="./pucky-routes.js"></script>' in html
+    assert html.index('<script src="./pucky-icons.js"></script>') < html.index('<script src="./app.js"></script>')
+    assert html.index('<script src="./pucky-routes.js"></script>') < html.index('<script src="./app.js"></script>')
     assert 'id="pageTabs"' not in html
     assert 'id="routeTray"' not in html
 
 
 def test_home_shell_registry_exposes_modern_routes_only() -> None:
     app = read("app.js")
+    routes = read("pucky-routes.js")
 
-    assert 'const LIGHT_APPS = [' in app
-    assert '{ route: "inbox", label: "Inbox"' in app
-    assert '{ route: "connect", label: "Connect"' in app
-    assert '{ route: "meetings", label: "Meetings"' in app
-    assert '{ route: "settings", label: "Settings"' in app
-    assert '{ route: "feed", label: "Inbox"' not in app
-    assert '{ route: "links", label: "Connect"' not in app
-    assert 'route: "feed-preview"' not in app
-    assert 'route: "morning"' not in app
-    assert 'route: "calls"' not in app
-    assert 'const HOME_SHELL_CANONICAL_ROUTES = new Set(["inbox", "connect", "meetings", "settings"])' in app
+    assert "window.PUCKY_UI_ROUTES = {" in routes
+    assert "const LIGHT_APPS = Array.isArray(routeCatalog.LIGHT_APPS)" in app
+    assert '{ route: "inbox", label: "Inbox"' in routes
+    assert '{ route: "connect", label: "Connect"' in routes
+    assert '{ route: "meetings", label: "Meetings"' in routes
+    assert '{ route: "settings", label: "Settings"' in routes
+    assert '{ route: "feed", label: "Inbox"' not in routes
+    assert '{ route: "links", label: "Connect"' not in routes
+    assert 'route: "feed-preview"' not in routes
+    assert 'route: "morning"' not in routes
+    assert 'route: "calls"' not in routes
+    assert 'HOME_SHELL_CANONICAL_ROUTES: ["inbox", "connect", "meetings", "settings"]' in routes
+    assert "const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)" in app
 
 
 def test_route_aliases_collapse_legacy_entry_points() -> None:
     app = read("app.js")
+    routes = read("pucky-routes.js")
     route_normalizer = function_block(app, "normalizeHomeShellRoute")
     initial_route_state = function_block(app, "resolveInitialRouteState")
     route_for_theme = function_block(app, "resolveRouteForTheme")
     route_sync = function_block(app, "syncRouteQueryParam")
 
-    assert "const ROUTE_ALIASES = {};" in app
-    assert 'feed: "inbox"' not in app
-    assert 'links: "connect"' not in app
-    assert 'apps: "connect"' not in app
-    assert '"feed-preview": "inbox"' not in app
-    assert '"feed-preview-detail": "inbox"' not in app
-    assert 'morning: "home"' not in app
-    assert 'calls: "home"' not in app
+    assert 'ROUTE_ALIASES: {}' in routes
+    assert "const ROUTE_ALIASES = routeCatalog.ROUTE_ALIASES && typeof routeCatalog.ROUTE_ALIASES === \"object\"" in app
+    assert 'feed: "inbox"' not in routes
+    assert 'links: "connect"' not in routes
+    assert 'apps: "connect"' not in routes
+    assert '"feed-preview": "inbox"' not in routes
+    assert '"feed-preview-detail": "inbox"' not in routes
+    assert 'morning: "home"' not in routes
+    assert 'calls: "home"' not in routes
     assert "const normalized = ROUTE_ALIASES[value] || value;" in route_normalizer
     assert 'return { route: normalizeHomeShellRoute(queryRoute) || "home" };' in initial_route_state
     assert 'return { route: normalizeHomeShellRoute(persistedRoute) || "home" };' in initial_route_state
@@ -110,6 +123,24 @@ def test_render_feed_only_uses_modern_home_shell_paths() -> None:
     assert "placeholder-page" not in render_feed
     assert 'return "home-shell";' in chrome_mode
     assert '[data-route="feed"]' not in ui_debug_home
+
+
+def test_meeting_notes_rows_drop_leading_icon_and_trailing_chevron_only_for_that_list() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    meeting_notes_page = function_block(app, "lightMeetingNotesPage")
+    light_graph_row = function_block(app, "lightGraphRow")
+
+    assert 'rowClassName: "light-graph-row-meeting-notes",' in meeting_notes_page
+    assert "showLeadingIcon: false," in meeting_notes_page
+    assert "showTrailingChevron: false" in meeting_notes_page
+    assert 'const rowClassName = String(options.rowClassName || "").trim();' in light_graph_row
+    assert 'const leadingIcon = options.showLeadingIcon === false' in light_graph_row
+    assert 'const trailingChevron = options.showTrailingChevron === false' in light_graph_row
+    assert "if (leadingIcon) {" in light_graph_row
+    assert "if (trailingChevron) {" in light_graph_row
+    assert ".light-graph-row.light-graph-row-meeting-notes {" in styles
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in styles
 
 
 def test_boot_and_navigation_no_longer_depend_on_legacy_shell_state() -> None:
@@ -289,28 +320,79 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
 
 def test_workspace_preview_without_token_uses_locked_empty_state_instead_of_raw_unauthorized() -> None:
     app = read("app.js")
+    routes = read("pucky-routes.js")
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
     preview_lock_detail = function_block(app, "workspacePreviewLockDetail")
+    light_empty_state = function_block(app, "lightEmptyState")
 
     assert 'preview_locked: false' in app
     assert 'preview_detail: ""' in app
+    assert "function isBrowserPreviewSurface()" in app
     assert "function workspacePreviewNeedsApiToken()" in app
-    assert 'if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") && !state.links.apiToken) {' in app
-    assert 'notes: "Notes"' in app
-    assert '"calendar-events": "Calendar"' in app
+    assert "return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === \"function\");" in function_block(app, "isBrowserPreviewSurface")
+    assert "if (isBrowserPreviewSurface() && !state.links.apiToken) {" in app
+    assert 'notes: "Notes"' in routes
+    assert '"calendar-events": "Calendar"' in routes
     assert 'await ensureLinksApiConfig();' in load_workspace
     assert 'if (workspacePreviewNeedsApiToken()) {' in load_workspace
     assert 'bucket.items = [];' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
     assert 'bucket.preview_locked = true;' in load_workspace
     assert 'bucket.preview_detail = workspacePreviewLockDetail(collection);' in load_workspace
-    assert 'return `Web preview needs a valid api_token to load live ${workspaceCollectionLabel(collection)} here. Add api_token to the URL, or open the APK on your phone.`;' in preview_lock_detail
+    assert 'return `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;' in preview_lock_detail
+    assert 'if (options.actionLabel && typeof options.onAction === "function") {' in light_empty_state
+    assert 'const button = el("button", "settings-action-button light-empty-state-action", options.actionLabel);' in light_empty_state
     assert 'if (bucket.preview_locked) {' in light_workspace_status
-    assert 'return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection));' in light_workspace_status
+    assert 'return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection), {' in light_workspace_status
+    assert 'actionLabel: "Unlock web preview",' in light_workspace_status
+    assert "onAction: openBrowserUnlockSheet" in light_workspace_status
     assert 'if (bucket.preview_locked) {' in light_calendar_page
-    assert 'page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events")));' in light_calendar_page
+    assert 'page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events"), {' in light_calendar_page
+    assert 'actionLabel: "Unlock web preview",' in light_calendar_page
+    assert "onAction: openBrowserUnlockSheet" in light_calendar_page
+
+
+def test_browser_unlock_flow_is_managed_from_settings_and_local_storage() -> None:
+    app = read("app.js")
+    settings_page = function_block(app, "settingsPageView")
+    settings_card = function_block(app, "webPreviewSettingsCard")
+    open_unlock_sheet = function_block(app, "openBrowserUnlockSheet")
+    store_token = function_block(app, "storeBrowserApiToken")
+    clear_token = function_block(app, "clearStoredBrowserApiToken")
+    save_token = function_block(app, "saveBrowserPreviewToken")
+    clear_preview_token = function_block(app, "clearBrowserPreviewToken")
+    reset_preview_state = function_block(app, "resetBrowserPreviewAuthorizedState")
+    refresh_after_auth = function_block(app, "refreshBrowserPreviewAfterAuthChange")
+
+    assert "if (isBrowserPreviewSurface()) {" in settings_page
+    assert "cards.push(webPreviewSettingsCard());" in settings_page
+    assert 'title: "Web preview access",' in settings_card
+    assert 'valueLabel: browserPreviewAccessValueLabel(),' in settings_card
+    assert 'actionLabel: state.links.apiToken ? "Clear" : "",' in settings_card
+    assert "action: state.links.apiToken ? () => {" in settings_card
+    assert "clearBrowserPreviewToken" in settings_card
+    assert 'sheet.append(el("h1", "settings-selector-title", "Unlock web preview"));' in open_unlock_sheet
+    assert 'input.type = "password";' in open_unlock_sheet
+    assert 'input.placeholder = "Paste PUCKY_WEB_UI_TOKEN";' in open_unlock_sheet
+    assert '"settings-action-button browser-unlock-button-primary"' in open_unlock_sheet
+    assert 'state.links.apiToken ? "Update token" : "Save token"' in open_unlock_sheet
+    assert 'const clearButton = el("button", "settings-action-button", "Clear saved token");' in open_unlock_sheet
+    assert 'localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, clean);' in store_token
+    assert 'localStorage.removeItem(BROWSER_API_TOKEN_STATE_KEY);' in clear_token
+    assert 'await validateBrowserPreviewToken(clean);' in save_token
+    assert "storeBrowserApiToken(clean);" in save_token
+    assert 'await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_save" });' in save_token
+    assert "clearStoredBrowserApiToken();" in clear_preview_token
+    assert 'await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_clear", cleared: true });' in clear_preview_token
+    assert 'state.cards = [];' in reset_preview_state
+    assert 'state.meetings.records = [];' in reset_preview_state
+    assert 'state.links.token = "";' in reset_preview_state
+    assert 'await loadWorkspaceForRoute(route, { render: true, force: true });' in refresh_after_auth
+    assert 'await syncFeedCards({ reason, silent: true, render: true });' in refresh_after_auth
+    assert 'await loadMeetings({ render: true });' in refresh_after_auth
+    assert 'await loadLinksPortal({ render: true });' in refresh_after_auth
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:

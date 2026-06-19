@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import tempfile
 import threading
 import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -90,6 +91,10 @@ def main() -> int:
     else:
         temp = tempfile.TemporaryDirectory(prefix="pucky-workspace-proof-")
         root = Path(temp.name)
+
+    # Keep the embedded broker in the proof state dir so browser phone-role
+    # polling does not try to initialize VM-only /data paths during local proof.
+    os.environ.setdefault("PUCKY_DB_PATH", str((root / "broker.sqlite3").resolve()))
 
     service = PuckyVoiceService(
         build_config(root, args.host, args.port, args.api_token),

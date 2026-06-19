@@ -635,6 +635,10 @@ button {
   box-shadow: var(--shadow-control);
 }
 
+.browser-unlock-button-primary {
+  background: color-mix(in srgb, #72c2ff 22%, var(--surface-control));
+}
+
 .links-page {
   display: flex;
   flex: 1 1 auto;
@@ -3861,6 +3865,10 @@ button {
   grid-template-columns: 48px minmax(0, 1fr) auto 18px;
 }
 
+.light-graph-row.light-graph-row-meeting-notes {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .light-note-row {
   min-height: 74px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -6250,6 +6258,62 @@ button {
   color: var(--home-shell-text-muted);
   font-size: 14px;
   line-height: 1.35;
+}
+
+.light-empty-state-action {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.browser-unlock-sheet {
+  gap: 12px;
+}
+
+.browser-unlock-copy,
+.browser-unlock-status,
+.browser-unlock-error,
+.browser-unlock-note {
+  margin: 0;
+}
+
+.browser-unlock-copy,
+.browser-unlock-status,
+.browser-unlock-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.browser-unlock-error {
+  color: #ff8f7c;
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 18px;
+}
+
+.browser-unlock-input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--surface-control-strong);
+  color: var(--text);
+  font-size: 15px;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+
+.browser-unlock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.browser-unlock-actions .settings-action-button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 .light-apps-page {

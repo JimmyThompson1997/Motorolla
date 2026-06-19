@@ -9,7 +9,7 @@ import {
   saveScreenshot,
   writeAutomationError,
   writeJsonFile
-} from "./cover_shared.mjs";
+} from "../../support/cover_shared.mjs";
 
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
@@ -721,12 +721,24 @@ async function expectPreviewApiTokenLock(page, route, label, timeoutMs) {
     const shell = document.querySelector(".light-shell");
     const title = document.querySelector(".light-empty-state h2");
     const detail = document.querySelector(".light-empty-state p");
+    const action = document.querySelector(".light-empty-state .light-empty-state-action");
     const text = String(shell?.textContent || "");
     return shell?.getAttribute("data-light-route") === expectedRoute
       && String(title?.textContent || "").trim() === "Preview needs api_token"
-      && String(detail?.textContent || "").trim() === `Web preview needs a valid api_token to load live ${expectedLabel} here. Add api_token to the URL, or open the APK on your phone.`
+      && String(detail?.textContent || "").trim() === `Web preview is locked. Use Unlock web preview to load live ${expectedLabel} from the VM in this browser.`
+      && String(action?.textContent || "").trim() === "Unlock web preview"
       && !/unauthorized/i.test(text);
   }, { expectedRoute: route, expectedLabel: label }, { timeout: timeoutMs });
+}
+
+async function unlockBrowserPreview(page, apiToken, timeoutMs) {
+  assert(String(apiToken || "").trim(), "Expected apiToken to unlock browser preview");
+  await page.getByRole("button", { name: "Unlock web preview" }).click();
+  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").waitFor({ state: "visible", timeout: timeoutMs });
+  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").fill(String(apiToken || "").trim());
+  await page.getByRole("button", { name: "Save token" }).click();
+  await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), { timeout: timeoutMs });
+  await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), { timeout: timeoutMs });
 }
 
 async function readTaskDetailState(page) {
@@ -907,13 +919,24 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
-  if (!String(config.apiToken || "").trim()) {
+  const locked = await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const title = document.querySelector(".light-empty-state h2");
+    return shell?.getAttribute("data-light-route") === "notes"
+      && String(title?.textContent || "").trim() === "Preview needs api_token";
+  }, { timeout: 1_500 }).then(() => true).catch(() => false);
+  if (locked) {
     await expectPreviewApiTokenLock(page, "notes", "Notes", config.timeoutMs);
     screenshots[`${theme}_notes_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-preview-locked`);
-    summary.previewLocks = summary.previewLocks || [];
-    summary.previewLocks.push({ theme, route: "notes", label: "Notes" });
-    await backHome(page, theme, config.timeoutMs);
-    return;
+    if (!String(config.apiToken || "").trim()) {
+      summary.previewLocks = summary.previewLocks || [];
+      summary.previewLocks.push({ theme, route: "notes", label: "Notes" });
+      await backHome(page, theme, config.timeoutMs);
+      return;
+    }
+    await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
+    summary.browserUnlocks = summary.browserUnlocks || [];
+    summary.browserUnlocks.push({ theme, route: "notes", label: "Notes" });
   }
   const note = seed.writeEnabled
     ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
@@ -1067,16 +1090,13 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   const rowBButton = page.locator(`[data-task-id="${rowB.id}"]`);
   await rowAButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   await rowBButton.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const rowAPressTarget = rowAButton.locator(".light-task-row-main");
+  await rowAPressTarget.waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list`);
 
   const baselinePress = await readTaskPressMetrics(page, rowA.id, rowB.id);
   assert(baselinePress.found.row, `Missing task row ${rowA.id}`);
-  await rowAButton.dispatchEvent("pointerdown");
-  await rowAButton.evaluate((button) => {
-    if (button instanceof HTMLButtonElement) {
-      button.classList.add("is-pressed");
-    }
-  });
+  await rowAPressTarget.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "touch", isPrimary: true, buttons: 1 });
   const pressedPress = await readTaskPressMetrics(page, rowA.id, rowB.id);
   assert(pressedPress.found.row, `Pressed task row ${rowA.id} not found`);
   assert(pressedPress.found.parent, `Missing press parent card for task row ${rowA.id}`);
@@ -1101,10 +1121,9 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }
   await page.waitForTimeout(120);
   screenshots[`${theme}_tasks_row_press`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-row-press`);
-  await rowAButton.evaluate((button) => {
-    if (button instanceof HTMLButtonElement) {
-      button.classList.remove("is-pressed");
-    }
+  await rowAPressTarget.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true, buttons: 0 });
+  await rowAButton.evaluate((row) => {
+    row.classList.remove("is-pressed");
   });
 
   summary.taskPress.push({
@@ -1303,20 +1322,31 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
 
 async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Calendar", "calendar", config.timeoutMs);
-  if (!String(config.apiToken || "").trim()) {
+  const locked = await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const title = document.querySelector(".light-empty-state h2");
+    return shell?.getAttribute("data-light-route") === "calendar"
+      && String(title?.textContent || "").trim() === "Preview needs api_token";
+  }, { timeout: 1_500 }).then(() => true).catch(() => false);
+  if (locked) {
     await expectPreviewApiTokenLock(page, "calendar", "Calendar", config.timeoutMs);
     screenshots[`${theme}_calendar_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-preview-locked`);
-    summary.previewLocks = summary.previewLocks || [];
-    summary.previewLocks.push({ theme, route: "calendar", label: "Calendar" });
-    await backHome(page, theme, config.timeoutMs);
-    return;
+    if (!String(config.apiToken || "").trim()) {
+      summary.previewLocks = summary.previewLocks || [];
+      summary.previewLocks.push({ theme, route: "calendar", label: "Calendar" });
+      await backHome(page, theme, config.timeoutMs);
+      return;
+    }
+    await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
+    summary.browserUnlocks = summary.browserUnlocks || [];
+    summary.browserUnlocks.push({ theme, route: "calendar", label: "Calendar" });
   }
   const events = seed.writeEnabled ? [] : (seed.calendarEvents || []);
   const seededEventId = seed.writeEnabled ? seed.calendarIds?.todayRoadmap : null;
-  const eventCards = seededEventId
-    ? page.locator(`[data-event-id="${seededEventId}"]`)
-    : page.locator('[data-event-id]');
-  const eventCount = await eventCards.count();
+  const eventButtons = seededEventId
+    ? page.locator(`[data-event-id="${seededEventId}"] .light-event-main`)
+    : page.locator(".light-event-main");
+  const eventCount = await eventButtons.count();
   if (!eventCount) {
     screenshots[`${theme}_calendar_today`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-today`);
     await backHome(page, theme, config.timeoutMs);
@@ -1324,61 +1354,87 @@ async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   }
   const expectedTitle = seed.writeEnabled
     ? "Proof Today Roadmap"
-    : ((await eventCards.first().innerText()).split("\n")[0].trim() || "Calendar");
+    : ((await eventButtons.first().locator(".light-event-title").innerText()).trim() || "Calendar");
   screenshots[`${theme}_calendar_today`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-today`);
-  await eventCards.first().click();
-  await expectFrameHeading(page, expectedTitle, config.timeoutMs);
-  const layout = await readDetailHtmlBodyMetrics(page);
-  const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected calendar detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected calendar HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected calendar HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assertDetailFrameMetrics(frameMetrics, "calendar detail", theme);
-  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "meeting-detail", layout, frame: frameMetrics });
+  await eventButtons.first().click();
+  await waitForLightRoute(page, "meeting-detail", config.timeoutMs);
+  await waitForGraphText(page, expectedTitle, config.timeoutMs);
+  const detailState = await page.evaluate(() => ({
+    route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
+    title: document.querySelector("h1")?.textContent?.trim() || "",
+    sectionTitles: Array.from(document.querySelectorAll(".light-section-title")).map(node => String(node.textContent || "").trim()),
+    detailRowLabels: Array.from(document.querySelectorAll(".light-calendar-detail-row-label")).map(node => String(node.textContent || "").trim()),
+    hasHtmlFrame: Boolean(document.querySelector(".light-html-frame"))
+  }));
+  assert(detailState.route === "meeting-detail", `Expected meeting-detail route, got ${detailState.route}`);
+  assert(detailState.title === expectedTitle, `Expected calendar detail title ${expectedTitle}, got ${detailState.title}`);
+  assert(detailState.sectionTitles.includes("DETAILS"), `Expected calendar detail sections to include DETAILS, got ${JSON.stringify(detailState.sectionTitles)}`);
+  assert(detailState.detailRowLabels.includes("When"), `Expected calendar detail rows to include When, got ${JSON.stringify(detailState.detailRowLabels)}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect calendar detail to use an iframe page");
+  summary.calendarDetail = summary.calendarDetail || [];
+  summary.calendarDetail.push({ theme, title: detailState.title, sectionTitles: detailState.sectionTitles, detailRowLabels: detailState.detailRowLabels });
   await backHome(page, theme, config.timeoutMs);
   return;
 }
 
 async function proveFeed(page, config, seed, theme, screenshots, summary) {
-  await openTile(page, "Feed", "feed-preview", config.timeoutMs);
+  await openTile(page, "Projects", "projects", config.timeoutMs);
+  const projects = seed.writeEnabled ? null : (seed.projects || []);
+  if (seed.writeEnabled) {
+    await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
+    await expectFrameHeading(page, "Proof Alpha Project", config.timeoutMs);
+  } else if (projects.length) {
+    const firstProject = projects[0];
+    await page.locator(`[data-project-id="${firstProject.id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-project-id="${firstProject.id}"]`).click();
+    await expectFrameHeading(page, firstProject.title, config.timeoutMs);
+  } else {
+    await backHome(page, theme, config.timeoutMs);
+    return;
+  }
   const feedItems = seed.writeEnabled ? null : (seed.feedItems || []);
-  const feedCards = page.locator('[data-feed-id]');
+  const feedCards = seed.writeEnabled
+    ? page.locator(`[data-workspace-target-route="inbox-detail"][data-workspace-target-id="${seed.runId}-project-decision"]`)
+    : page.locator('[data-workspace-target-route="inbox-detail"]');
   const feedCardCount = await feedCards.count();
   if (!feedCardCount) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  if (!seed.writeEnabled && feedItems.length) {
+  screenshots[`${theme}_inbox_links`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-links`);
+  const row = seed.writeEnabled
+    ? page.locator(`[data-workspace-target-route="inbox-detail"][data-workspace-target-id="${seed.runId}-project-decision"]`).first()
+    : feedCards.first();
+  if (seed.writeEnabled) {
+    await row.waitFor({ state: "visible", timeout: config.timeoutMs });
+  } else if (feedItems.length) {
     await page.getByText(feedItems[0].title).first().waitFor({ state: "visible", timeout: config.timeoutMs });
   }
-  screenshots[`${theme}_feed`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-list`);
-  const row = seed.writeEnabled
-    ? page.locator(`[data-feed-id="${seed.runId}-project-decision"]`)
-    : feedCards.first();
   const detailText = await row.innerText();
   await row.click();
-  await expectFrameHeading(page, (detailText || "").split("\n")[0].trim() || "Feed item", config.timeoutMs);
+  await waitForLightRoute(page, "inbox-detail", config.timeoutMs);
+  await expectFrameHeading(page, (detailText || "").split("\n")[0].trim() || "Inbox item", config.timeoutMs);
   if (!seed.writeEnabled && feedItems.length) {
     const item = feedItems.find((entry) => String(entry.id) === `${seed.runId}-project-decision`) || feedItems[0];
-    await expectFrameHeading(page, item?.title || "Feed item", config.timeoutMs);
+    await expectFrameHeading(page, item?.title || "Inbox item", config.timeoutMs);
   }
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected feed detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected feed HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected feed HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assertDetailFrameMetrics(frameMetrics, "feed detail", theme);
+  assert(layout.body && layout.page, "Expected inbox detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected inbox HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected inbox HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "inbox detail", theme);
   summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "feed-preview-detail", layout, frame: frameMetrics });
-  screenshots[`${theme}_feed_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-detail`);
+  summary.detailHtmlMetrics.push({ theme, route: "inbox-detail", layout, frame: frameMetrics });
+  screenshots[`${theme}_inbox_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-detail`);
   if (seed.writeEnabled) {
     await page.locator(`[data-workspace-target-route="project-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
     await waitForLightRoute(page, "project-detail", config.timeoutMs);
     await waitForGraphText(page, "Proof Alpha Project", config.timeoutMs);
-    screenshots[`${theme}_feed_related_project`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-related-project`);
-    await topBackToRoute(page, "feed-preview-detail", "Proof Project Decision", config.timeoutMs);
-    screenshots[`${theme}_feed_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-feed-after-back`);
+    screenshots[`${theme}_inbox_related_project`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-related-project`);
+    await topBackToRoute(page, "inbox-detail", "Proof Project Decision", config.timeoutMs);
+    screenshots[`${theme}_inbox_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-after-back`);
   }
   await backHome(page, theme, config.timeoutMs);
 }
@@ -1443,13 +1499,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
-  await page.getByRole("button", { name: "Edit Me" }).click({ timeout: config.timeoutMs });
-  await waitForLightRoute(page, "contact-edit", config.timeoutMs);
-  await page.getByPlaceholder("Email").waitFor({ state: "visible", timeout: config.timeoutMs });
-  await page.getByPlaceholder("Phone").waitFor({ state: "visible", timeout: config.timeoutMs });
-  await page.getByPlaceholder("Preferred reminder device id").waitFor({ state: "visible", timeout: config.timeoutMs });
-  screenshots[`${theme}_contacts_me_edit`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-edit`);
-  await topBackToRoute(page, "contact-detail", "Me", config.timeoutMs);
+  assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1597,13 +1647,15 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
     const lower = text.toLowerCase();
-    return lower.includes("dismiss")
-      && lower.includes("snooze 10 min")
+    return lower.includes("status:")
+      && lower.includes("delivery:")
       && lower.includes("recipients")
       && lower.includes("channels")
       && lower.includes("me")
       && !lower.includes("self")
       && !lower.includes("mark done")
+      && !lower.includes("dismiss")
+      && !lower.includes("snooze 10 min")
       && !lower.includes("no generated reminder page yet.");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
@@ -1650,41 +1702,15 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     summary.assertions.push(`${theme} reminder live-delivery lanes skipped because ${config.baseUrl} is not the live VM target`);
   }
 
-  await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await manageRow.click({ force: true });
-  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-  await page.getByRole("button", { name: "Snooze 10 min" }).click({ timeout: config.timeoutMs });
-  await page.waitForTimeout(800);
-  const snoozedRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${manageReminderId}`);
-  assert(String(snoozedRecord?.metadata?.delivery_state || "") === "pending", "Expected snoozed reminder to reset delivery_state to pending");
-  assert(Number(snoozedRecord?.due_at_ms || 0) > Date.now() + 9 * 60 * 1000, "Expected snoozed reminder due_at_ms to move into the future");
-  await page.waitForFunction(() => (document.body.innerText || "").includes("Snoozed"), { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminder_detail_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed`);
-
-  await backHome(page, theme, config.timeoutMs);
-  activeCount -= 1;
-  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
-  screenshots[`${theme}_reminders_home_badge_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-snoozed`);
-
-  await openTile(page, "Reminders", "reminders", config.timeoutMs);
-  await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await manageRow.click({ force: true });
-  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-  await page.getByRole("button", { name: "Dismiss" }).click({ timeout: config.timeoutMs });
-  await page.waitForTimeout(800);
-  const doneRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${manageReminderId}`);
-  assert(String(doneRecord?.status || "") === "done", "Expected reminder status to become done");
-  await waitForLightRoute(page, "reminders", config.timeoutMs);
-  await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminder_detail_dismissed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-dismissed`);
   await backHome(page, theme, config.timeoutMs);
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
+  screenshots[`${theme}_reminders_home_badge_readonly`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-readonly`);
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
 
-  reminderSummary.snoozedDueAtMs = Number(snoozedRecord?.due_at_ms || 0);
-  reminderSummary.finalStatus = String(doneRecord?.status || "");
+  reminderSummary.readonly = true;
   reminderSummary.finalActiveCount = activeCount;
   summary.reminders.push(reminderSummary);
-  summary.assertions.push(`${theme} reminders stay active-only, drop row chips, support snooze/dismiss, and derive the home badge from active reminders only`);
+  summary.assertions.push(`${theme} reminders stay active-only, drop row chips, remain read-only in the frontend, and derive the home badge from active reminders only`);
 }
 
 async function readGraphDetailState(page) {
