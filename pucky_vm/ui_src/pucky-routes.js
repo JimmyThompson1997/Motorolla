@@ -1,16 +1,16 @@
 window.PUCKY_UI_ROUTES = {
   LIGHT_APPS: [
     { route: "inbox", label: "Inbox", icon: "mail", accent: "inbox", kind: "real" },
-    { route: "connect", label: "Connect", icon: "link", accent: "connect", kind: "real" },
     { route: "meetings", label: "Meetings", icon: "mic", accent: "meetings", kind: "real" },
-    { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" },
     { route: "meeting-notes", label: "Meeting Notes", icon: "record_voice_over", accent: "meeting_notes", kind: "real" },
     { route: "reminders", label: "Reminders", icon: "bell", accent: "reminders", kind: "real" },
     { route: "notes", label: "Notes", icon: "note", accent: "notes", kind: "real" },
     { route: "tasks", label: "Tasks", icon: "checklist", accent: "tasks", kind: "real" },
     { route: "calendar", label: "Calendar", icon: "calendar", accent: "calendar", kind: "real" },
     { route: "projects", label: "Projects", icon: "folder", accent: "projects", kind: "real" },
-    { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "real" }
+    { route: "contacts", label: "Contacts", icon: "contacts", accent: "contacts", kind: "real" },
+    { route: "connect", label: "Connect", icon: "link", accent: "connect", kind: "real" },
+    { route: "settings", label: "Settings", icon: "settings", accent: "settings", kind: "real" }
   ],
   LIGHT_ROUTES: [
     "home",

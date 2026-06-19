@@ -4061,11 +4061,13 @@ button {
   stroke: none;
 }
 
-.light-note-detail-page .light-detail-html-body {
+.light-note-detail-page .light-detail-html-body,
+.light-task-detail-page .light-detail-html-body {
   margin-top: 0;
 }
 
-.light-note-detail-page .light-detail-html-body.light-card {
+.light-note-detail-page .light-detail-html-body.light-card,
+.light-task-detail-page .light-detail-html-body.light-card {
   padding: 0;
   background: transparent;
   border: 0;
@@ -5971,6 +5973,13 @@ button {
   margin-top: -4px;
   margin-left: 0;
   margin-right: 0;
+}
+
+.light-task-detail-surface > .light-task-detail-body {
+  width: calc(100% + var(--light-shell-column-padding) + var(--light-shell-column-padding));
+  max-width: none;
+  margin-left: calc(0px - var(--light-shell-column-padding));
+  margin-right: calc(0px - var(--light-shell-column-padding));
 }
 
 .light-detail-html-body.light-html-card {

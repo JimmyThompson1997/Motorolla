@@ -109,29 +109,21 @@ def request_json(
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_workspace_api_requires_auth_for_reads_and_writes_and_accepts_browser_token(tmp_path: Path) -> None:
+def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         notes = request_json(base_url, "/api/workspace/notes")
         assert notes["count"] >= 1
-        try:
-            request_json(base_url, "/api/workspace/notes", token="", method="GET")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 401
-        else:
-            raise AssertionError("unauthorized read succeeded")
+        anonymous_notes = request_json(base_url, "/api/workspace/notes", token="", method="GET")
+        assert anonymous_notes["count"] >= 1
         try:
             request_json(base_url, "/api/workspace/notes", method="POST", token="", body={"id": "x", "title": "X"})
         except urllib.error.HTTPError as exc:
             assert exc.code == 401
         else:
             raise AssertionError("unauthorized write succeeded")
-        try:
-            request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 401
-        else:
-            raise AssertionError("wrong token unexpectedly authorized workspace read")
+        public_notes = request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
+        assert public_notes["count"] >= 1
     finally:
         server.shutdown()
 

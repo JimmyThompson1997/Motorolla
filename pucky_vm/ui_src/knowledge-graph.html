@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light">
+    <title>Pucky Workspace Logic</title>
+    <link rel="stylesheet" href="./knowledge-graph.css">
+    <script src="./knowledge-graph.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Workspace Shape</p>
+          <h1>How The Objects Can Relate</h1>
+        </div>
+        <button id="refreshGraph" class="refresh-button" type="button">Refresh</button>
+      </header>
+
+      <p id="sourceLine" class="source-line" aria-live="polite">Loading logical workspace shape...</p>
+
+      <section id="kindCards" class="kind-grid" aria-label="Workspace object cards"></section>
+    </main>
+  </body>
+</html>

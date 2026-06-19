@@ -93,6 +93,7 @@ Direct device access still matters for full hardware control:
 - Root/system/device-owner paths are still out of scope.
 
 See `pucky_vm/README.md` for the current VM service and hosted UI flow.
+See `docs/README.md` for the curated live docs list.
 See `docs/fresh-user-install-end-state.md` for the current install and pairing shape.
 See `docs/vm-installation-package-requirements.md` for the current VM checklist.
 See `docs/notes/adb-cover-display-input.md` for the ADB cover-display input note.

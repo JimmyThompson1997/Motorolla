@@ -958,17 +958,56 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
 
-    def test_operator_token_does_not_authorize_browser_user_routes(self) -> None:
+    def test_unauthenticated_browser_reads_allow_feed_meetings_workspace_and_artifacts(self) -> None:
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-130000-browser-proof",
+                "started_at": "2026-06-01T13:00:00Z",
+                "duration_ms": 2000,
+                "device_id": "device-browser",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFbrowser-proof-audio").decode("ascii"),
+            },
+        )
+        feed = self.get_json("/api/feed?limit=5")
+        meetings = self.get_json("/api/meetings?compact=1")
+        workspace = self.get_json("/api/workspace/notes")
+        artifacts = self.service.feed.list_media_artifacts(limit=1)
+        artifact_id = str(artifacts[0]["artifact_id"] if artifacts else "")
+
+        self.assertEqual(feed["schema"], "pucky.feed_sync.v1")
+        self.assertEqual(meetings["schema"], "pucky.meetings.v1")
+        self.assertEqual(workspace["schema"], "pucky.workspace.list.v1")
+        self.assertTrue(artifact_id)
+
+        with urllib.request.urlopen(self.base_url + f"/api/artifacts/{urllib.parse.quote(artifact_id, safe='')}", timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            self.assertGreater(len(response.read()), 0)
+
+    def test_unknown_operator_token_still_does_not_authorize_protected_browser_routes(self) -> None:
         headers = {"Authorization": "Bearer test-operator-token"}
         for path in (
-            "/api/feed?limit=1&compact=1",
-            "/api/meetings?compact=1",
-            "/api/workspace/notes",
             "/api/links/composio/portal-url",
             "/api/device/phone-role-status",
+            "/api/feed/actions",
+            "/api/meetings/actions",
         ):
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                self.get_json(path, headers=headers)
+            if path.endswith("/actions"):
+                request = urllib.request.Request(
+                    self.base_url + path,
+                    data=json.dumps({"client_action_id": "bad", "action": "archive"}).encode("utf-8"),
+                    method="POST",
+                    headers={
+                        "Authorization": "Bearer test-operator-token",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request, timeout=10)
+            else:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.get_json(path, headers=headers)
 
             self.assertEqual(caught.exception.code, 401, msg=path)
 
@@ -983,6 +1022,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn(manifest["source_dirty"], {True, False})
         self.assertIn("app.js", manifest["files"])
         self.assertIn("pucky-config.js", manifest["files"])
+        self.assertIn("pucky-icons.js", manifest["files"])
+        self.assertIn("pucky-routes.js", manifest["files"])
         self.assertIn("styles.css", manifest["files"])
         self.assertIn("fixtures/reply_cards.json", manifest["files"])
         self.assertIn("fixtures/reply_cards_deploy.json", manifest["files"])
@@ -1012,6 +1053,12 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn('"links_url"', config_script)
             self.assertNotIn("api_token", config_script)
             self.assertNotIn("pucky_web_ui_token", config_script)
+
+    def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
+        request = urllib.request.Request(self.base_url + "/favicon.ico")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.read(), b"")
 
     def test_links_portal_url_endpoint_returns_signed_first_party_url(self) -> None:
         payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
@@ -1059,6 +1106,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("All Apps", text)
         self.assertIn("/api/links/composio/my-apps", text)
         self.assertIn("/api/links/composio/all-apps", text)
+        self.assertIn("?route=connect", text)
         self.assertIn("browser.open", text)
         self.assertIn("window.location.assign(href);", text)
         self.assertIn("if (!/browser\\.open/i.test(detail)) {", text)
@@ -1082,6 +1130,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(linkedin["counts"]["pending"], 1)
         self.assertEqual(linkedin["counts"]["expired"], 1)
         self.assertEqual(len(linkedin["details"]), 2)
+
+    def test_links_read_endpoints_allow_hosted_single_user_mode_without_token(self) -> None:
+        payload = self.get_json("/api/links/composio/my-apps")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["user_id"], "jimmythompson323")
+        self.assertEqual(payload["summary"]["connected"], 1)
+        self.assertEqual(payload["apps"][0]["slug"], "gmail")
+
+        details = self.get_json("/api/links/composio/app-details?slug=gmail")
+        self.assertTrue(details["ok"])
+        self.assertEqual(details["slug"], "gmail")
+        self.assertEqual(details["details"][0]["id"], "ca_gmail_active")
 
     def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
         token = self.issue_portal_token()
@@ -1108,6 +1169,18 @@ class ServerTests(unittest.TestCase):
             urllib.request.urlopen(request, timeout=10)
         self.assertEqual(exc.exception.code, 304)
         self.assertEqual(exc.exception.headers["ETag"], headers["ETag"])
+
+    def test_links_catalog_and_all_apps_allow_hosted_single_user_mode_without_token(self) -> None:
+        payload, headers = self.get_json_response("/api/links/composio/catalog")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.links_catalog.v1")
+        self.assertEqual(headers["Cache-Control"], "private, max-age=600")
+
+        all_apps = self.get_json("/api/links/composio/all-apps?offset=0&limit=20")
+        slugs = [item["slug"] for item in all_apps["apps"]]
+        self.assertIn("gmail", slugs)
+        self.assertIn("googlecalendar", slugs)
 
     def test_links_all_apps_filters_search_and_hides_nonconnectable(self) -> None:
         token = self.issue_portal_token()
@@ -1185,6 +1258,25 @@ class ServerTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(request, timeout=10)
         self.assertEqual(caught.exception.code, 403)
+
+    def test_links_refresh_and_disconnect_stay_protected_without_portal_token(self) -> None:
+        refresh_request = urllib.request.Request(
+            self.base_url + "/api/links/composio/my-apps/refresh",
+            data=b"",
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as refresh_error:
+            urllib.request.urlopen(refresh_request, timeout=10)
+        self.assertEqual(refresh_error.exception.code, 401)
+
+        disconnect_request = urllib.request.Request(
+            self.base_url + "/api/links/composio/disconnect?connection_id=ca_gmail_active",
+            data=b"",
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as disconnect_error:
+            urllib.request.urlopen(disconnect_request, timeout=10)
+        self.assertEqual(disconnect_error.exception.code, 401)
 
     def test_unauthorized_turn_is_rejected(self) -> None:
         request = urllib.request.Request(
@@ -1343,13 +1435,12 @@ class ServerTests(unittest.TestCase):
         )
         self.assertEqual(active["items"], [])
 
-    def test_feed_sync_requires_auth_even_for_compact_browser_requests(self) -> None:
+    def test_feed_sync_allows_unauthenticated_browser_reads_but_not_actions(self) -> None:
         turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_browser_turn")
 
-        with self.assertRaises(urllib.error.HTTPError) as feed_caught:
-            self.get_json("/api/feed?limit=10&compact=1&include_archived=0")
-
-        self.assertEqual(feed_caught.exception.code, 401)
+        payload = self.get_json("/api/feed?limit=10&compact=1&include_archived=0")
+        self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
+        self.assertEqual(payload["items"][0]["card_id"], turn["card_id"])
 
         with self.assertRaises(urllib.error.HTTPError) as action_caught:
             self.post_json(
@@ -1617,9 +1708,9 @@ class ServerTests(unittest.TestCase):
         )
         media_url = manifest["items"][0]["url"]
         media_path = urllib.parse.urlsplit(media_url).path
-        with self.assertRaises(urllib.error.HTTPError) as media_error:
-            urllib.request.urlopen(self.base_url + media_path, timeout=10)
-        self.assertEqual(media_error.exception.code, 401)
+        with urllib.request.urlopen(self.base_url + media_path, timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), audio)
 
         request = urllib.request.Request(
             self.base_url + media_path,
@@ -2675,16 +2766,15 @@ class ServerTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode("utf-8"))
         self.assertEqual(payload["error"], "meeting_not_found")
 
-    def test_meetings_compact_list_requires_auth(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as list_caught:
-            self.get_json("/api/meetings?compact=1")
-
-        self.assertEqual(list_caught.exception.code, 401)
+    def test_meetings_compact_list_and_detail_allow_unauthenticated_browser_reads(self) -> None:
+        payload = self.get_json("/api/meetings?compact=1")
+        self.assertEqual(payload["schema"], "pucky.meetings.v1")
+        self.assertTrue(payload["compact"])
 
         with self.assertRaises(urllib.error.HTTPError) as detail_caught:
             self.get_json("/api/meetings/missing-meeting")
 
-        self.assertEqual(detail_caught.exception.code, 401)
+        self.assertEqual(detail_caught.exception.code, 404)
 
     def test_meetings_compact_list_and_detail_accept_browser_user_token(self) -> None:
         payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer browser-secret"})

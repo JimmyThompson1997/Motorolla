@@ -6,8 +6,6 @@
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
-  const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
-  const BROWSER_DEVICE_ID_STATE_KEY = "pucky.cover.browser_device_id.v1";
   const SELF_CONTACT_ID = "contact-me";
   const COMPLETE_EPSILON_MS = 500;
   const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
@@ -150,15 +148,15 @@
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
     workspace: {
-      notes: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      tasks: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      "calendar-events": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      "feed-items": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      projects: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      contacts: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      messages: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      "meeting-notes": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
-      reminders: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      notes: { items: [], loaded: false, loading: false, error: "" },
+      tasks: { items: [], loaded: false, loading: false, error: "" },
+      "calendar-events": { items: [], loaded: false, loading: false, error: "" },
+      "feed-items": { items: [], loaded: false, loading: false, error: "" },
+      projects: { items: [], loaded: false, loading: false, error: "" },
+      contacts: { items: [], loaded: false, loading: false, error: "" },
+      messages: { items: [], loaded: false, loading: false, error: "" },
+      "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
+      reminders: { items: [], loaded: false, loading: false, error: "" },
       assets: {}
     },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
@@ -941,84 +939,6 @@
     return WORKSPACE_COLLECTION_LABELS[String(collection || "")] || "workspace records";
   }
 
-  function isBrowserPreviewSurface() {
-    return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
-  }
-
-  function workspacePreviewLockDetail(collection) {
-    return `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;
-  }
-
-  function workspacePreviewNeedsApiToken() {
-    if (isBrowserPreviewSurface() && !state.links.apiToken) {
-      return true;
-    }
-    return false;
-  }
-
-  function clearWorkspaceBucketPreviewLock(bucket) {
-    if (!bucket) {
-      return;
-    }
-    bucket.preview_locked = false;
-    bucket.preview_detail = "";
-  }
-
-  function storeBrowserApiToken(token) {
-    const clean = String(token || "").trim();
-    try {
-      localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, clean);
-    } catch (_) {
-      // Browser preview auth is best-effort persistence only.
-    }
-  }
-
-  function clearStoredBrowserApiToken() {
-    try {
-      localStorage.removeItem(BROWSER_API_TOKEN_STATE_KEY);
-    } catch (_) {
-      // Browser preview auth is best-effort persistence only.
-    }
-  }
-
-  function resetBrowserPreviewWorkspaceBucket(bucket) {
-    if (!bucket) {
-      return;
-    }
-    bucket.items = [];
-    bucket.loaded = false;
-    bucket.loading = false;
-    bucket.error = "";
-    clearWorkspaceBucketPreviewLock(bucket);
-  }
-
-  function resetBrowserPreviewAuthorizedState() {
-    Object.entries(state.workspace).forEach(([key, bucket]) => {
-      if (key === "assets") {
-        state.workspace.assets = {};
-        return;
-      }
-      resetBrowserPreviewWorkspaceBucket(bucket);
-    });
-    state.cards = [];
-    state.feedSource = "";
-    state.feedLastAppliedAt = 0;
-    state.feedLoadError = "";
-    state.meetings.records = [];
-    state.meetings.error = "";
-    state.meetings.lastRefreshAt = 0;
-    state.links.portal_url = "";
-    state.links.token = "";
-    state.links.connectedApps = [];
-    state.links.connectedSlugs = new Set();
-    state.links.connectedLoaded = false;
-    state.links.lastRefreshAt = 0;
-    state.links.error = "";
-    state.links.message = "";
-    state.links.messageKind = "";
-    state.phoneRole = initialPhoneRoleStatus();
-  }
-
   async function loadWorkspaceCollection(collection, options = {}) {
     const bucket = state.workspace[collection];
     if (!bucket || (bucket.loading && !options.force)) {
@@ -1026,20 +946,12 @@
     }
     bucket.loading = true;
     bucket.error = "";
-    clearWorkspaceBucketPreviewLock(bucket);
     try {
       await ensureLinksApiConfig();
-      if (workspacePreviewNeedsApiToken()) {
-        bucket.items = [];
-        bucket.loaded = true;
-        bucket.preview_locked = true;
-        bucket.preview_detail = workspacePreviewLockDetail(collection);
-      } else {
-        const date = "";
-        const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
-        bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
-        bucket.loaded = true;
-      }
+      const date = "";
+      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
+      bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
+      bucket.loaded = true;
     } catch (error) {
       bucket.error = String(error && error.message || error || "Workspace request failed");
     } finally {
@@ -1084,9 +996,7 @@
       items: [],
       loaded: false,
       loading: false,
-      error: "",
-      preview_locked: false,
-      preview_detail: ""
+      error: ""
     };
   }
 
@@ -1280,77 +1190,14 @@
         });
       }
     } else {
-      state.phoneRole = await fetchBrowserPhoneRoleStatus();
+      state.phoneRole = unavailableBrowserPhoneRoleStatus("preview_unavailable", {
+        source: "preview_unavailable",
+        loaded: true
+      });
     }
     if (options.render) {
       render();
     }
-  }
-
-  async function fetchBrowserPhoneRoleStatus() {
-    await ensureLinksApiConfig();
-    if (!state.links.apiToken) {
-      return unavailableBrowserPhoneRoleStatus("preview_unavailable", {
-        source: "preview_unavailable",
-        loaded: false
-      });
-    }
-    const params = new URLSearchParams();
-    if (state.links.deviceId) {
-      params.set("device_id", state.links.deviceId);
-    }
-    const response = await fetch(
-      `${linksApiBaseUrl()}/api/device/phone-role-status${params.toString() ? `?${params.toString()}` : ""}`,
-      {
-        method: "GET",
-        cache: "no-store",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${state.links.apiToken}`
-        }
-      }
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (response.ok) {
-      const resolvedDeviceId = String(payload && payload.device_id || "").trim();
-      if (resolvedDeviceId) {
-        state.links.deviceId = resolvedDeviceId;
-      }
-      return normalizePhoneRoleStatus({
-        ...payload,
-        source: "browser_live_api",
-        read_only: true,
-        loaded: true,
-        error_code: "",
-        error_detail: ""
-      });
-    }
-    return unavailableBrowserPhoneRoleStatus(
-      normalizeBrowserPhoneRoleErrorCode(response.status, payload),
-      {
-        ...payload,
-        source: "browser_live_api",
-        read_only: true,
-        loaded: false
-      }
-    );
-  }
-
-  function normalizeBrowserPhoneRoleErrorCode(statusCode, payload) {
-    const explicit = String(payload && payload.error_code || "").trim();
-    if (explicit) {
-      return explicit;
-    }
-    if (statusCode === 401) {
-      return "unauthorized";
-    }
-    if (statusCode === 409) {
-      return "device_context_unavailable";
-    }
-    if (statusCode === 503) {
-      return "device_offline";
-    }
-    return "broker_command_failed";
   }
 
   function unavailableBrowserPhoneRoleStatus(errorCode, overrides = {}) {
@@ -1465,6 +1312,7 @@
       state.links.connectedApps = [];
       state.links.connectedSlugs = new Set();
       state.links.connectedLoaded = false;
+      state.links.userId = "";
     }
     state.links.totalAvailable = 0;
     state.links.lastRefreshAt = 0;
@@ -1519,6 +1367,10 @@
 
     row.append(icon, name, auth, mark);
     row.addEventListener("click", () => {
+      if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+        showToast("Connect stays read-only in hosted web.");
+        return;
+      }
       openLinksAuthFlow(app);
     });
     return row;
@@ -1608,7 +1460,7 @@
         rendered_rows: renderedRows,
         catalog_source: String(state.links.catalogSource || ""),
         catalog_version: String(state.links.catalogVersion || ""),
-        session_ready: Boolean(state.links.token),
+        session_ready: Boolean(state.links.token || state.links.userId || state.links.connectedLoaded),
         connected_loaded: Boolean(state.links.connectedLoaded),
         connected_count: Array.isArray(state.links.connectedApps) ? state.links.connectedApps.length : 0,
         logo_loads: safeNumber(state.links.logoLoads),
@@ -1679,12 +1531,29 @@
     linksDebugRecord("row_click", { slug: String(slug || "") }, "click");
   }
 
+  function hostedConnectReadOnlyMode() {
+    return !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+  }
+
   async function loadLinksConnected(options = {}) {
-    if (!state.links.token) {
+    if (!state.links.token && !hostedConnectReadOnlyMode()) {
       return;
     }
-    linksDebugRecord("my_apps_start", { force: Boolean(options.force) }, "route");
-    const payload = await linksApiRequest(`/api/links/composio/my-apps?token=${encodeURIComponent(state.links.token)}`);
+    linksDebugRecord(
+      "my_apps_start",
+      {
+        force: Boolean(options.force),
+        hosted_read_only: hostedConnectReadOnlyMode(),
+      },
+      "route"
+    );
+    const query = new URLSearchParams();
+    if (state.links.token) {
+      query.set("token", state.links.token);
+    }
+    const payload = await linksApiRequest(
+      `/api/links/composio/my-apps${query.toString() ? `?${query}` : ""}`
+    );
     const list = Array.isArray(payload && payload.apps) ? payload.apps : [];
     const active = [];
     const slugs = new Set();
@@ -1704,12 +1573,14 @@
     state.links.connectedApps = active;
     state.links.connectedSlugs = slugs;
     state.links.connectedLoaded = true;
+    state.links.userId = String(payload && payload.user_id || "").trim();
     state.links.lastRefreshAt = Date.now();
     linksDebugRecord(
       "my_apps_end",
       {
         connected_count: active.length,
         payload_count: list.length,
+        user_id: state.links.userId,
         server_timing: String(payload && payload._server_timing || "")
       },
       "route"
@@ -1740,10 +1611,19 @@
         if (options.force === true) {
           state.links.portal_url = "";
           state.links.token = "";
+          state.links.userId = "";
           state.links.connectedApps = [];
           state.links.connectedSlugs = new Set();
           state.links.connectedLoaded = false;
           state.links.lastRefreshAt = 0;
+        }
+        if (hostedConnectReadOnlyMode()) {
+          state.links.available = true;
+          state.links.portal_url = "";
+          state.links.token = "";
+          state.links.auth_mode = "browser";
+          await loadLinksConnected({ render: false, force: Boolean(options.force) });
+          return;
         }
         if (!state.links.token) {
           linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
@@ -1832,7 +1712,11 @@
   function syncLinksConnected(refs) {
     refs.connected.hidden = !state.links.connectedApps.length;
     refs.connectedStrip.replaceChildren(
-      ...state.links.connectedApps.map(app => el("span", "links-connected-chip", app.name || app.slug))
+      ...state.links.connectedApps.map(app => {
+        const chip = el("span", "links-connected-chip", app.name || app.slug);
+        chip.dataset.linksConnectedSlug = String(app.slug || "");
+        return chip;
+      })
     );
   }
 
@@ -2048,18 +1932,12 @@
 
   async function ensureLinksApiConfig() {
     if (state.links.apiBaseUrl) {
-      if (!state.links.apiToken) {
-        state.links.apiToken = resolveBrowserApiToken();
-      }
-      if (!state.links.deviceId) {
-        state.links.deviceId = resolveBrowserDeviceId();
-      }
       return;
     }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.apiToken = resolveBrowserApiToken();
-      state.links.deviceId = resolveBrowserDeviceId();
+      state.links.apiToken = "";
+      state.links.deviceId = "";
       return;
     }
     try {
@@ -2072,79 +1950,6 @@
       state.links.apiToken = "";
       state.links.deviceId = "";
     }
-  }
-
-  async function validateBrowserPreviewToken(token) {
-    await ensureLinksApiConfig();
-    const clean = String(token || "").trim();
-    if (!clean) {
-      throw new Error("Paste PUCKY_WEB_UI_TOKEN.");
-    }
-    const response = await fetch(`${linksApiBaseUrl()}/api/workspace/notes?limit=1`, {
-      method: "GET",
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${clean}`
-      }
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error("Token was rejected. Paste PUCKY_WEB_UI_TOKEN from the VM.");
-      }
-      throw new Error(String(payload && (payload.detail || payload.error) || `Web preview token check failed (${response.status})`));
-    }
-  }
-
-  async function refreshBrowserPreviewAfterAuthChange(options = {}) {
-    const reason = String(options.reason || "browser_preview_auth_change");
-    const route = effectiveRoute();
-    resetBrowserPreviewAuthorizedState();
-    if (options.cleared) {
-      if (route === "settings") {
-        await loadSettingsState({ render: true, ensureSurface: false });
-        return;
-      }
-      render();
-      return;
-    }
-    if (route === "inbox") {
-      await syncFeedCards({ reason, silent: true, render: true });
-      return;
-    }
-    if (route === "meetings") {
-      await loadMeetings({ render: true });
-      return;
-    }
-    if (route === "connect") {
-      await loadLinksPortal({ render: true });
-      return;
-    }
-    if (route === "settings") {
-      await loadSettingsState({ render: true, ensureSurface: false });
-      return;
-    }
-    if (route === "home") {
-      await loadWorkspaceCollection("reminders", { render: true, force: true });
-      return;
-    }
-    await loadWorkspaceForRoute(route, { render: true, force: true });
-  }
-
-  async function saveBrowserPreviewToken(token) {
-    await ensureLinksApiConfig();
-    const clean = String(token || "").trim();
-    await validateBrowserPreviewToken(clean);
-    state.links.apiToken = clean;
-    storeBrowserApiToken(clean);
-    await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_save" });
-  }
-
-  async function clearBrowserPreviewToken() {
-    state.links.apiToken = "";
-    clearStoredBrowserApiToken();
-    await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_clear", cleared: true });
   }
 
   async function linksApiRequest(path, options = {}) {
@@ -2816,7 +2621,7 @@
       filtered_app_count: filtered.length,
       rendered_row_count: linksPageRefs?.rows ? linksPageRefs.rows.querySelectorAll(".links-app-row").length : 0,
       connected_loaded: Boolean(state.links.connectedLoaded),
-      session_ready: Boolean(state.links.token),
+      session_ready: Boolean(state.links.token || state.links.userId || state.links.connectedLoaded),
       loading: Boolean(state.links.loading),
       logo_loads: safeNumber(state.links.logoLoads),
       logo_errors: safeNumber(state.links.logoErrors),
@@ -2962,6 +2767,7 @@
       apiBaseUrl: "",
       apiToken: "",
       deviceId: "",
+      userId: "",
       auth_mode: "browser",
       apps: [],
       connectedApps: [],
@@ -3704,12 +3510,6 @@
 
   function lightWorkspaceStatus(collection, icon, emptyTitle) {
     const bucket = workspaceBucket(collection);
-    if (bucket.preview_locked) {
-      return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection), {
-        actionLabel: "Unlock web preview",
-        onAction: openBrowserUnlockSheet
-      });
-    }
     if (bucket.error) {
       return lightEmptyState("warning", "Could not load", bucket.error);
     }
@@ -3807,13 +3607,6 @@
     page.append(lightDatePicker());
     page.append(lightCalendarAgendaHeading());
     const bucket = workspaceBucket("calendar-events");
-    if (bucket.preview_locked) {
-      page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events"), {
-        actionLabel: "Unlock web preview",
-        onAction: openBrowserUnlockSheet
-      }));
-      return page;
-    }
     if (bucket.error) {
       page.append(lightEmptyState("calendar", "Could not load", bucket.error));
       return page;
@@ -5841,6 +5634,10 @@
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
+    surface.append(lightHtmlDocument(task, "No task page yet.", {
+      untitledFallback: true,
+      className: "light-detail-html-body light-task-detail-body"
+    }));
     ensureTaskPeopleContacts(task);
     const description = taskDescription(task);
     if (description) {
@@ -7532,9 +7329,6 @@
       modelSettingsCard(),
       reasoningEffortSettingsCard()
     ];
-    if (isBrowserPreviewSurface()) {
-      cards.push(webPreviewSettingsCard());
-    }
     cards.push(phoneRoleSettingsCard(), advancedSettingsCard());
     page.append(...cards);
     return page;
@@ -7565,26 +7359,6 @@
     return normalizeTheme(theme) === "light" ? "Light" : "Dark";
   }
 
-  function browserPreviewAccessValueLabel() {
-    return state.links.apiToken ? "Unlocked" : "Locked";
-  }
-
-  function webPreviewSettingsCard() {
-    return settingsSelectorCard({
-      settingId: "web-preview-access",
-      accent: state.links.apiToken ? "#22c55e" : "#f59e0b",
-      icon: state.links.apiToken ? "link" : "warning",
-      title: "Web preview access",
-      detail: "Store a browser token in this browser so the VM-served dashboard can load your live data.",
-      valueLabel: browserPreviewAccessValueLabel(),
-      onOpen: openBrowserUnlockSheet,
-      actionLabel: state.links.apiToken ? "Clear" : "",
-      action: state.links.apiToken ? () => {
-        void clearBrowserPreviewToken();
-      } : null
-    });
-  }
-
   function phoneRoleSettingsCard() {
     const status = normalizePhoneRoleStatus(state.phoneRole);
     const action = phoneRoleActionForStatus(status);
@@ -7604,14 +7378,14 @@
   function phoneRoleSettingsDetail(status) {
     const holder = phoneRoleHolderLabel(status);
     if (status.source === "preview_unavailable") {
-      return "Web preview is read-only for phone-role state. Add api_token and, when needed, device_id to sync a real device, or open the APK on your phone to manage it.";
+      return "Hosted web keeps phone-role state read-only. Open the APK on your phone to view or change it.";
     }
     if (status.source === "browser_live_api") {
       if (status.error_code === "unauthorized") {
-        return "Web preview could not authenticate device state. Add a valid api_token to view the real phone-role status here.";
+        return "Hosted web does not expose phone-role state. Open the APK on your phone to view it.";
       }
       if (status.error_code === "device_context_unavailable") {
-        return "Web preview could not choose a device. Add device_id or bring exactly one online device into context before reloading.";
+        return "Phone-role state is unavailable because Pucky could not choose a device cleanly.";
       }
       if (status.error_code === "device_offline") {
         return "The selected device is offline, so phone-role state cannot be read right now. Bring the device online in Pucky, then reload.";
@@ -8724,107 +8498,6 @@
 
   function closeSettingsSelector() {
     closeOverlay("settingsSelectorOverlay");
-  }
-
-  function openBrowserUnlockSheet(options = {}) {
-    closeSettingsSelector();
-    dismissAdvancedSettingsSheet();
-    const sheet = el("div", "settings-selector-sheet browser-unlock-sheet");
-    sheet.addEventListener("click", event => event.stopPropagation());
-    sheet.append(el("h1", "settings-selector-title", "Unlock web preview"));
-    sheet.append(el("p", "browser-unlock-copy", "Save a browser token in this browser so the VM-served dashboard can load your live data."));
-    const status = el(
-      "p",
-      "browser-unlock-status",
-      state.links.apiToken ? "Saved token active in this browser." : "No saved browser token yet."
-    );
-    const input = document.createElement("input");
-    input.type = "password";
-    input.className = "browser-unlock-input";
-    input.placeholder = "Paste PUCKY_WEB_UI_TOKEN";
-    input.autocomplete = "off";
-    input.autocapitalize = "off";
-    input.spellcheck = false;
-    const error = el("p", "browser-unlock-error", "");
-    const note = el("p", "browser-unlock-note", "Pucky stores this token only in this browser's local storage.");
-    const actions = el("div", "browser-unlock-actions");
-    const saveButton = el(
-      "button",
-      "settings-action-button browser-unlock-button-primary",
-      state.links.apiToken ? "Update token" : "Save token"
-    );
-    const clearButton = el("button", "settings-action-button", "Clear saved token");
-    const cancelButton = el("button", "settings-action-button", "Cancel");
-    saveButton.type = "button";
-    clearButton.type = "button";
-    cancelButton.type = "button";
-    clearButton.hidden = !state.links.apiToken;
-
-    const setBusy = (busy, message = "") => {
-      saveButton.disabled = busy;
-      clearButton.disabled = busy;
-      cancelButton.disabled = busy;
-      input.disabled = busy;
-      if (message) {
-        status.textContent = message;
-      } else {
-        status.textContent = state.links.apiToken ? "Saved token active in this browser." : "No saved browser token yet.";
-      }
-    };
-
-    const save = async () => {
-      const candidate = String(input.value || "").trim();
-      if (!candidate) {
-        error.textContent = "Paste PUCKY_WEB_UI_TOKEN.";
-        input.focus();
-        return;
-      }
-      error.textContent = "";
-      setBusy(true, "Checking browser token...");
-      try {
-        await saveBrowserPreviewToken(candidate);
-        closeSettingsSelector();
-      } catch (saveError) {
-        error.textContent = String(saveError && saveError.message || saveError || "Could not save the browser token.");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    const clear = async () => {
-      error.textContent = "";
-      setBusy(true, "Clearing saved browser token...");
-      try {
-        await clearBrowserPreviewToken();
-        closeSettingsSelector();
-      } catch (clearError) {
-        error.textContent = String(clearError && clearError.message || clearError || "Could not clear the browser token.");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    input.addEventListener("keydown", event => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        void save();
-      }
-    });
-    saveButton.addEventListener("click", () => {
-      void save();
-    });
-    clearButton.addEventListener("click", () => {
-      void clear();
-    });
-    cancelButton.addEventListener("click", event => {
-      event.preventDefault();
-      closeSettingsSelector();
-    });
-
-    actions.append(saveButton, clearButton, cancelButton);
-    sheet.append(status, input, error, note, actions);
-    openOverlay("settingsSelectorOverlay", sheet, closeSettingsSelector);
-    window.setTimeout(() => input.focus(), 0);
   }
 
   function showAdvancedSettingsSheet() {
@@ -13225,10 +12898,13 @@
   }
 
   function hasAudio(card) {
-    return Boolean(card.audio_path || card.audio_playlist_path || card.audio_url);
+    return Boolean(card && (card.audio_path || card.audio_playlist_path || card.audio_url));
   }
 
   function audioControlKey(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
     if (card.audio_playlist_path) {
       return card.audio_playlist_path;
     }
@@ -13973,34 +13649,6 @@
       return normalizeTheme(localStorage.getItem(THEME_STATE_KEY)) || "dark";
     } catch (_) {
       return "dark";
-    }
-  }
-
-  function resolveBrowserApiToken() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryToken = String(params.get("api_token") || "").trim();
-      if (queryToken) {
-        localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, queryToken);
-        return queryToken;
-      }
-      return String(localStorage.getItem(BROWSER_API_TOKEN_STATE_KEY) || "").trim();
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function resolveBrowserDeviceId() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryDeviceId = String(params.get("device_id") || "").trim();
-      if (queryDeviceId) {
-        localStorage.setItem(BROWSER_DEVICE_ID_STATE_KEY, queryDeviceId);
-        return queryDeviceId;
-      }
-      return String(localStorage.getItem(BROWSER_DEVICE_ID_STATE_KEY) || "").trim();
-    } catch (_) {
-      return "";
     }
   }
 
@@ -15149,7 +14797,7 @@
   }, MEETING_STATUS_POLL_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && (state.route === "tasks" || state.route === "task-detail")) {
+    if (document.visibilityState === "visible" && state.route === "tasks") {
       void loadWorkspaceCollection("tasks", { render: true, force: true });
     }
   }, WORKSPACE_TASK_REFRESH_MS);

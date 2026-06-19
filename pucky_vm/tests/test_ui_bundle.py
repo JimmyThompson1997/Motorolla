@@ -27,6 +27,8 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "app.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
     assert "pucky-config.js" in manifest["files"]
+    assert "pucky-icons.js" in manifest["files"]
+    assert "pucky-routes.js" in manifest["files"]
     assert "pucky-links-catalog.js" in manifest["files"]
     assert "fixtures/reply_cards.json" in manifest["files"]
     assert "fixtures/reply_cards_deploy.json" in manifest["files"]
@@ -38,6 +40,8 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert "manifest.json" in names
         assert "index.html" in names
         assert "pucky-config.js" in names
+        assert "pucky-icons.js" in names
+        assert "pucky-routes.js" in names
         assert "pucky-links-catalog.js" in names
         assert "fixtures/reply_cards.json" in names
         assert "fixtures/links_logo_overrides.json" in names

@@ -68,6 +68,7 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert '{ route: "connect", label: "Connect"' in routes
     assert '{ route: "meetings", label: "Meetings"' in routes
     assert '{ route: "settings", label: "Settings"' in routes
+    assert routes.index('{ route: "contacts", label: "Contacts"') < routes.index('{ route: "connect", label: "Connect"') < routes.index('{ route: "settings", label: "Settings"')
     assert '{ route: "feed", label: "Inbox"' not in routes
     assert '{ route: "links", label: "Connect"' not in routes
     assert 'route: "feed-preview"' not in routes
@@ -318,81 +319,51 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
     assert '}, TURN_STATUS_POLL_MS);' in app
 
 
-def test_workspace_preview_without_token_uses_locked_empty_state_instead_of_raw_unauthorized() -> None:
+def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -> None:
     app = read("app.js")
     routes = read("pucky-routes.js")
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
-    preview_lock_detail = function_block(app, "workspacePreviewLockDetail")
-    light_empty_state = function_block(app, "lightEmptyState")
 
-    assert 'preview_locked: false' in app
-    assert 'preview_detail: ""' in app
-    assert "function isBrowserPreviewSurface()" in app
-    assert "function workspacePreviewNeedsApiToken()" in app
-    assert "return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === \"function\");" in function_block(app, "isBrowserPreviewSurface")
-    assert "if (isBrowserPreviewSurface() && !state.links.apiToken) {" in app
     assert 'notes: "Notes"' in routes
     assert '"calendar-events": "Calendar"' in routes
     assert 'await ensureLinksApiConfig();' in load_workspace
-    assert 'if (workspacePreviewNeedsApiToken()) {' in load_workspace
-    assert 'bucket.items = [];' in load_workspace
+    assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));' in load_workspace
+    assert 'bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
-    assert 'bucket.preview_locked = true;' in load_workspace
-    assert 'bucket.preview_detail = workspacePreviewLockDetail(collection);' in load_workspace
-    assert 'return `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;' in preview_lock_detail
-    assert 'if (options.actionLabel && typeof options.onAction === "function") {' in light_empty_state
-    assert 'const button = el("button", "settings-action-button light-empty-state-action", options.actionLabel);' in light_empty_state
-    assert 'if (bucket.preview_locked) {' in light_workspace_status
-    assert 'return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection), {' in light_workspace_status
-    assert 'actionLabel: "Unlock web preview",' in light_workspace_status
-    assert "onAction: openBrowserUnlockSheet" in light_workspace_status
-    assert 'if (bucket.preview_locked) {' in light_calendar_page
-    assert 'page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events"), {' in light_calendar_page
-    assert 'actionLabel: "Unlock web preview",' in light_calendar_page
-    assert "onAction: openBrowserUnlockSheet" in light_calendar_page
+    assert "Preview needs api_token" not in app
+    assert "Unlock web preview" not in app
+    assert "preview_locked" not in app
+    assert 'if (bucket.error) {' in light_workspace_status
+    assert 'if (!bucket.loaded) {' in light_workspace_status
+    assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
+    assert 'if (bucket.error) {' in light_calendar_page
+    assert 'if (!bucket.loaded) {' in light_calendar_page
 
 
-def test_browser_unlock_flow_is_managed_from_settings_and_local_storage() -> None:
+def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flow() -> None:
     app = read("app.js")
     settings_page = function_block(app, "settingsPageView")
-    settings_card = function_block(app, "webPreviewSettingsCard")
-    open_unlock_sheet = function_block(app, "openBrowserUnlockSheet")
-    store_token = function_block(app, "storeBrowserApiToken")
-    clear_token = function_block(app, "clearStoredBrowserApiToken")
-    save_token = function_block(app, "saveBrowserPreviewToken")
-    clear_preview_token = function_block(app, "clearBrowserPreviewToken")
-    reset_preview_state = function_block(app, "resetBrowserPreviewAuthorizedState")
-    refresh_after_auth = function_block(app, "refreshBrowserPreviewAfterAuthChange")
+    create_links_row = function_block(app, "createLinksRow")
+    hydrate_links_session = function_block(app, "hydrateLinksSession")
+    load_links_connected = function_block(app, "loadLinksConnected")
+    load_phone_role_status = function_block(app, "loadPhoneRoleStatus")
+    phone_role_settings_detail = function_block(app, "phoneRoleSettingsDetail")
 
-    assert "if (isBrowserPreviewSurface()) {" in settings_page
-    assert "cards.push(webPreviewSettingsCard());" in settings_page
-    assert 'title: "Web preview access",' in settings_card
-    assert 'valueLabel: browserPreviewAccessValueLabel(),' in settings_card
-    assert 'actionLabel: state.links.apiToken ? "Clear" : "",' in settings_card
-    assert "action: state.links.apiToken ? () => {" in settings_card
-    assert "clearBrowserPreviewToken" in settings_card
-    assert 'sheet.append(el("h1", "settings-selector-title", "Unlock web preview"));' in open_unlock_sheet
-    assert 'input.type = "password";' in open_unlock_sheet
-    assert 'input.placeholder = "Paste PUCKY_WEB_UI_TOKEN";' in open_unlock_sheet
-    assert '"settings-action-button browser-unlock-button-primary"' in open_unlock_sheet
-    assert 'state.links.apiToken ? "Update token" : "Save token"' in open_unlock_sheet
-    assert 'const clearButton = el("button", "settings-action-button", "Clear saved token");' in open_unlock_sheet
-    assert 'localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, clean);' in store_token
-    assert 'localStorage.removeItem(BROWSER_API_TOKEN_STATE_KEY);' in clear_token
-    assert 'await validateBrowserPreviewToken(clean);' in save_token
-    assert "storeBrowserApiToken(clean);" in save_token
-    assert 'await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_save" });' in save_token
-    assert "clearStoredBrowserApiToken();" in clear_preview_token
-    assert 'await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_clear", cleared: true });' in clear_preview_token
-    assert 'state.cards = [];' in reset_preview_state
-    assert 'state.meetings.records = [];' in reset_preview_state
-    assert 'state.links.token = "";' in reset_preview_state
-    assert 'await loadWorkspaceForRoute(route, { render: true, force: true });' in refresh_after_auth
-    assert 'await syncFeedCards({ reason, silent: true, render: true });' in refresh_after_auth
-    assert 'await loadMeetings({ render: true });' in refresh_after_auth
-    assert 'await loadLinksPortal({ render: true });' in refresh_after_auth
+    assert "webPreviewSettingsCard" not in app
+    assert "openBrowserUnlockSheet" not in app
+    assert 'cards.push(phoneRoleSettingsCard(), advancedSettingsCard());' in settings_page
+    assert 'showToast("Connect stays read-only in hosted web.");' in create_links_row
+    assert "hostedConnectReadOnlyMode()" in hydrate_links_session
+    assert 'state.links.available = true;' in hydrate_links_session
+    assert 'await loadLinksConnected({ render: false, force: Boolean(options.force) });' in hydrate_links_session
+    assert 'const query = new URLSearchParams();' in load_links_connected
+    assert '`/api/links/composio/my-apps${query.toString() ? `?${query}` : ""}`' in load_links_connected
+    assert 'state.links.userId = String(payload && payload.user_id || "").trim();' in load_links_connected
+    assert 'state.phoneRole = unavailableBrowserPhoneRoleStatus("preview_unavailable", {' in load_phone_role_status
+    assert "Hosted web keeps phone-role state read-only. Open the APK on your phone to view or change it." in phone_role_settings_detail
+    assert "Hosted web does not expose phone-role state. Open the APK on your phone to view it." in phone_role_settings_detail
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
@@ -760,6 +731,14 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     task_filters = function_block(app, "lightTaskFilters")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
+    task_refresh_interval = re.search(
+        r'setInterval\(\(\) => \{\s*'
+        r'if \((?P<condition>.*?)\) \{\s*'
+        r'void loadWorkspaceCollection\("tasks", \{ render: true, force: true \}\);',
+        app,
+        re.S,
+    )
+    assert task_refresh_interval, "Missing task refresh interval"
 
     assert 'el("span", "light-task-row-summary"' not in task_group
     assert "function taskRowSummary" not in app
@@ -781,6 +760,8 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'role: "Created by"' in task_people_section
     assert 'role: "Owner"' in task_people_section
     assert 'kind: "contact"' in task_people_section
+    assert 'lightHtmlDocument(task, "No task page yet.", {' in task_detail_surface
+    assert 'className: "light-detail-html-body light-task-detail-body"' in task_detail_surface
     assert 'const button = el("div", "light-pill is-active light-task-status-trigger");' in task_status_control
     assert 'button.append(icon, copy);' in task_status_control
     assert 'iconSvg("expand_more", { filled: true })' not in task_status_control
@@ -794,6 +775,11 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "resetLightRouteScroll();" in light_navigate
     assert "restoreScrollPosition(feed, 0);" in reset_scroll
     assert "window.scrollTo(0, 0);" in reset_scroll
+    assert 'document.visibilityState === "visible"' in task_refresh_interval.group("condition")
+    assert 'state.route === "tasks"' in task_refresh_interval.group("condition")
+    assert "task-detail" not in task_refresh_interval.group("condition")
+    assert ".light-task-detail-page .light-detail-html-body" in styles
+    assert ".light-task-detail-surface > .light-task-detail-body" in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
     assert ".light-task-status-circle-trigger" in styles

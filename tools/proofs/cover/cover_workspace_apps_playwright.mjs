@@ -79,9 +79,7 @@ function pageUrl(baseUrl, theme, apiToken = "") {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
-  }
+  void apiToken;
   return url.toString();
 }
 
@@ -716,38 +714,17 @@ async function expectFrameHeading(page, text, timeoutMs) {
   await page.frameLocator(".light-html-frame").locator(`text=${text}`).first().waitFor({ state: "visible", timeout: timeoutMs });
 }
 
-async function expectPreviewApiTokenLock(page, route, label, timeoutMs) {
-  await page.waitForFunction(({ expectedRoute, expectedLabel }) => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    const detail = document.querySelector(".light-empty-state p");
-    const action = document.querySelector(".light-empty-state .light-empty-state-action");
-    const text = String(shell?.textContent || "");
-    return shell?.getAttribute("data-light-route") === expectedRoute
-      && String(title?.textContent || "").trim() === "Preview needs api_token"
-      && String(detail?.textContent || "").trim() === `Web preview is locked. Use Unlock web preview to load live ${expectedLabel} from the VM in this browser.`
-      && String(action?.textContent || "").trim() === "Unlock web preview"
-      && !/unauthorized/i.test(text);
-  }, { expectedRoute: route, expectedLabel: label }, { timeout: timeoutMs });
-}
-
-async function unlockBrowserPreview(page, apiToken, timeoutMs) {
-  assert(String(apiToken || "").trim(), "Expected apiToken to unlock browser preview");
-  await page.getByRole("button", { name: "Unlock web preview" }).click();
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").waitFor({ state: "visible", timeout: timeoutMs });
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").fill(String(apiToken || "").trim());
-  await page.getByRole("button", { name: "Save token" }).click();
-  await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), { timeout: timeoutMs });
-  await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), { timeout: timeoutMs });
-}
-
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
     const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
     const pageText = document.querySelector(".light-shell")?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
-    const toggle = document.querySelector(".light-task-detail-toggle")?.textContent?.trim() || "";
+    const statusTrigger = document.querySelector(".light-task-status-trigger");
+    const statusLabel = statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent?.trim()
+      || statusTrigger?.textContent?.trim()
+      || "";
+    const statusValue = statusTrigger?.getAttribute("data-task-status") || "";
     const hasNotes = /\bNOTES\b/.test(pageText);
     const hasRelated = /\bRELATED\b/.test(pageText);
     const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
@@ -757,7 +734,8 @@ async function readTaskDetailState(page) {
       route,
       title,
       due,
-      toggle,
+      statusLabel,
+      statusValue,
       hasNotes,
       hasRelated,
       hasGeneratedPage,
@@ -917,27 +895,12 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
   }, { rowTaskId, siblingTaskId });
 }
 
+function taskRowControl(page, taskId) {
+  return page.locator(`[data-task-id="${taskId}"] .light-task-row-main`);
+}
+
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
-  const locked = await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    return shell?.getAttribute("data-light-route") === "notes"
-      && String(title?.textContent || "").trim() === "Preview needs api_token";
-  }, { timeout: 1_500 }).then(() => true).catch(() => false);
-  if (locked) {
-    await expectPreviewApiTokenLock(page, "notes", "Notes", config.timeoutMs);
-    screenshots[`${theme}_notes_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-preview-locked`);
-    if (!String(config.apiToken || "").trim()) {
-      summary.previewLocks = summary.previewLocks || [];
-      summary.previewLocks.push({ theme, route: "notes", label: "Notes" });
-      await backHome(page, theme, config.timeoutMs);
-      return;
-    }
-    await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
-    summary.browserUnlocks = summary.browserUnlocks || [];
-    summary.browserUnlocks.push({ theme, route: "notes", label: "Notes" });
-  }
   const note = seed.writeEnabled
     ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
     : (seed.notes || []).find(item => Boolean(item.id)) ;
@@ -977,28 +940,15 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   let rowB;
 
   if (seed.writeEnabled) {
-    const sameGroupPair =
-      (soonTasks.length >= 2 ? soonTasks : null) ||
-      (overdueTasks.length >= 2 ? overdueTasks : null) ||
-      (doneTasks.length >= 2 ? doneTasks : null) ||
-      (dueFallback.length >= 2 ? dueFallback : null);
-    if (sameGroupPair) {
-      [rowA, rowB] = sameGroupPair;
-    }
-    if (!rowA || !rowB) {
-      rowA = {
-        id: (seed.taskIds?.rowA || `${seed.runId}-${theme}-row-a`),
-        title: "Proof Future Task"
-      };
-      rowB = {
-        id: (seed.taskIds?.rowB || `${seed.runId}-${theme}-row-b`),
-        title: "Proof Overdue Task"
-      };
-      const rowATask = seedTasks.find((task) => String(task.id) === String(rowA.id));
-      const rowBTask = seedTasks.find((task) => String(task.id) === String(rowB.id));
-      if (rowATask) rowA = rowATask;
-      if (rowBTask) rowB = rowBTask;
-    }
+    const taskById = (taskId) => seedTasks.find((task) => String(task.id) === String(taskId));
+    rowA = taskById(seed.taskIds?.rowA) || {
+      id: (seed.taskIds?.rowA || `${seed.runId}-${theme}-row-a`),
+      title: "Proof Future Task"
+    };
+    rowB = taskById(seed.taskIds?.rowB) || {
+      id: (seed.taskIds?.rowB || `${seed.runId}-${theme}-row-b`),
+      title: "Proof Overdue Task"
+    };
   } else if (soonTasks.length >= 2) {
     rowA = soonTasks[0];
     rowB = soonTasks[1];
@@ -1090,8 +1040,10 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   const rowBButton = page.locator(`[data-task-id="${rowB.id}"]`);
   await rowAButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   await rowBButton.waitFor({ state: "visible", timeout: config.timeoutMs });
-  const rowAPressTarget = rowAButton.locator(".light-task-row-main");
+  const rowAPressTarget = taskRowControl(page, rowA.id);
+  const rowBPressTarget = taskRowControl(page, rowB.id);
   await rowAPressTarget.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await rowBPressTarget.waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list`);
 
   const baselinePress = await readTaskPressMetrics(page, rowA.id, rowB.id);
@@ -1122,7 +1074,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.waitForTimeout(120);
   screenshots[`${theme}_tasks_row_press`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-row-press`);
   await rowAPressTarget.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true, buttons: 0 });
-  await rowAButton.evaluate((row) => {
+  await rowAPressTarget.evaluate((row) => {
     row.classList.remove("is-pressed");
   });
 
@@ -1146,13 +1098,12 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     }
   });
 
-  await rowAButton.dispatchEvent("pointerup");
-  await rowAButton.click();
+  await rowAPressTarget.click();
   await expectFrameHeading(page, rowA.title || `Proof ${theme} Row A`, config.timeoutMs);
   screenshots[`${theme}_tasks_detail_a`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-detail-a`);
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
-  await rowBButton.click();
+  await rowBPressTarget.click();
   await expectFrameHeading(page, rowB.title || `Proof ${theme} Row B`, config.timeoutMs);
   screenshots[`${theme}_tasks_detail_b`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-detail-b`);
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
@@ -1169,7 +1120,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   const doneId = seed.taskIds?.done;
   summary.taskDetail = summary.taskDetail || [];
 
-  await page.locator(`[data-task-id="${inlineId}"]`).click();
+  await taskRowControl(page, inlineId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Proof Future Task", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
   let detailState = await readTaskDetailState(page);
@@ -1208,7 +1159,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(idleProbe.sameIframeNode, "Expected task-detail iframe node to remain stable while idling");
   assert(idleProbe.sameShellNode, "Expected task-detail shell node to remain stable while idling");
   assert(idleProbe.sameTitleNode, "Expected task-detail title node to remain stable while idling");
-  summary.taskDetail.push({ theme, type: "inline_html", taskId: inlineId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  summary.taskDetail.push({ theme, type: "inline_html", taskId: inlineId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list-after-back`);
@@ -1220,25 +1171,25 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   summary.listPollingStillActive.push({ theme, networkTaskRequests: listTaskRequests });
   assert(listTaskRequests >= 1, `Expected task polling to remain active on list view, saw ${listTaskRequests} task requests`);
 
-  await page.locator(`[data-task-id="${assetId}"]`).click();
+  await taskRowControl(page, assetId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Asset-backed task page", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Asset Task", `Expected asset task title, got ${detailState.title}`);
   assert(detailState.hasHtmlFrame, "Expected asset-backed task to render an iframe body");
   screenshots[`${theme}_tasks_asset_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-html`);
-  summary.taskDetail.push({ theme, type: "asset_html", taskId: assetId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  summary.taskDetail.push({ theme, type: "asset_html", taskId: assetId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
-  await page.locator(`[data-task-id="${emptyId}"]`).click();
+  await taskRowControl(page, emptyId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Empty Task", `Expected empty task title, got ${detailState.title}`);
   assert(!detailState.hasHtmlFrame, "Did not expect iframe body for no-HTML task");
   assert(detailState.htmlFallback === "No task page yet.", `Expected minimal empty fallback, got ${detailState.htmlFallback}`);
   screenshots[`${theme}_tasks_empty_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-html`);
-  summary.taskDetail.push({ theme, type: "no_html", taskId: emptyId, title: detailState.title, toggle: detailState.toggle, due: detailState.due, fallback: detailState.htmlFallback });
+  summary.taskDetail.push({ theme, type: "no_html", taskId: emptyId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due, fallback: detailState.htmlFallback });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
@@ -1284,19 +1235,13 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   if (expandedForDone?.sectionExpanded?.done !== true) {
     throw new Error("Expected Done section to be expanded before opening done task detail");
   }
-  await page.locator(`[data-task-id="${doneId}"]`).click();
+  await taskRowControl(page, doneId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
-  assert(detailState.toggle === "Reopen task", `Expected done task toggle to say Reopen task, got ${detailState.toggle}`);
-  await page.locator(".light-task-detail-toggle").click();
-  await page.waitForFunction(() => {
-    const button = document.querySelector(".light-task-detail-toggle");
-    return Boolean(button && button.textContent && button.textContent.includes("Mark done"));
-  }, { timeout: config.timeoutMs });
-  detailState = await readTaskDetailState(page);
-  assert(detailState.toggle === "Mark done", `Expected reopened task toggle to say Mark done, got ${detailState.toggle}`);
-  screenshots[`${theme}_tasks_done_toggle`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-toggle`);
-  summary.taskDetail.push({ theme, type: "done_reopen", taskId: doneId, title: detailState.title, toggle: detailState.toggle, due: detailState.due });
+  assert(detailState.statusValue === "done", `Expected done task status value to be done, got ${detailState.statusValue}`);
+  assert(detailState.statusLabel === "Done", `Expected done task status label to say Done, got ${detailState.statusLabel}`);
+  screenshots[`${theme}_tasks_done_status`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-status`);
+  summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
@@ -1313,7 +1258,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   summary.deadlineAutoMoveStillActive = summary.deadlineAutoMoveStillActive || [];
   summary.deadlineAutoMoveStillActive.push({ theme, taskId: flipId, movedToOverdue: Boolean(flipId) });
   if (flipId) {
-    await page.locator(`[data-task-id="${flipId}"]`).click();
+    await taskRowControl(page, flipId).click();
     await expectFrameHeading(page, `Proof Deadline Flip`, config.timeoutMs);
     screenshots[`${theme}_tasks_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-detail`);
   }
@@ -1322,25 +1267,6 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
 
 async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Calendar", "calendar", config.timeoutMs);
-  const locked = await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    return shell?.getAttribute("data-light-route") === "calendar"
-      && String(title?.textContent || "").trim() === "Preview needs api_token";
-  }, { timeout: 1_500 }).then(() => true).catch(() => false);
-  if (locked) {
-    await expectPreviewApiTokenLock(page, "calendar", "Calendar", config.timeoutMs);
-    screenshots[`${theme}_calendar_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-preview-locked`);
-    if (!String(config.apiToken || "").trim()) {
-      summary.previewLocks = summary.previewLocks || [];
-      summary.previewLocks.push({ theme, route: "calendar", label: "Calendar" });
-      await backHome(page, theme, config.timeoutMs);
-      return;
-    }
-    await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
-    summary.browserUnlocks = summary.browserUnlocks || [];
-    summary.browserUnlocks.push({ theme, route: "calendar", label: "Calendar" });
-  }
   const events = seed.writeEnabled ? [] : (seed.calendarEvents || []);
   const seededEventId = seed.writeEnabled ? seed.calendarIds?.todayRoadmap : null;
   const eventButtons = seededEventId

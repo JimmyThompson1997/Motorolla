@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import tools.phone_proof_shared as phone_shared
+import tools.support.phone_proof_shared as phone_shared
 
 
 CANONICAL_REPO_ROOT = Path(r"C:\Users\jimmy\Desktop\Motorolla-master-ui")
@@ -27,6 +27,10 @@ DEFAULT_ADB = Path(r"C:\Users\jimmy\Desktop\Android\tools\android-sdk\platform-t
 DEFAULT_PACKAGE_NAME = "com.pucky.device.debug"
 DEFAULT_ACTIVITY_NAME = "com.pucky.device.MainActivity"
 RESULT_SCHEMA = "pucky.ui_bundle_refresh_evidence.v1"
+ALLOWED_BROWSER_EVIDENCE_SCHEMAS = {
+    "pucky.task_workspace_live_vm_proof.v1",
+    "pucky.live_user_session_browser_proof.v1",
+}
 TRANSIENT_PUCKY_FAILURE_MARKERS = (
     "WINERROR 10053",
     "WINERROR 10054",
@@ -320,6 +324,8 @@ def load_browser_evidence(path: Path) -> dict[str, Any]:
     evidence = json.loads(path.read_text(encoding="utf-8"))
     if evidence.get("ok") is not True:
         raise OfficialRefreshError("Browser evidence must be green before phone refresh")
+    if evidence.get("schema") not in ALLOWED_BROWSER_EVIDENCE_SCHEMAS:
+        raise OfficialRefreshError("Browser evidence schema is invalid")
     return evidence
 
 

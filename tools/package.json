@@ -7,6 +7,7 @@
     "test:cover-archive-reveal": "node ./cover_archive_reveal_playwright.mjs",
     "test:cover-default-audio-speed": "node ./cover_default_audio_speed_playwright.mjs",
     "test:cover-canonical-native-light-theme": "node ./cover_canonical_native_light_theme_playwright.mjs",
+    "test:cover-live-user-session": "node ./cover_live_user_session_playwright.mjs",
     "test:cover-pause-scrubber": "node ./cover_pause_scrubber_playwright.mjs",
     "test:session-model-defaults": "node ./session_model_defaults_playwright.mjs",
     "test:cover-links-scroll-probe": "node ./cover_links_scroll_probe.mjs",
