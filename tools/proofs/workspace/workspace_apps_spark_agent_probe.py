@@ -117,11 +117,11 @@ def main() -> int:
     thread_id = start_thread(base, token, model=args.model.strip(), timeout=args.timeout_s, name="Workspace apps Spark probe")
     scenarios = [
         ("notes", f"{run_id}-note", "Create a pinned note with three bullet points."),
-        ("tasks", f"{run_id}-task", "Create an open task due now, then make the HTML explain the due date."),
+        ("tasks", f"{run_id}-task", "Create an open task due now with a short description."),
         ("calendar-events", f"{run_id}-calendar", "Create a calendar event for tomorrow with a time and brief."),
         ("feed-items", f"{run_id}-feed", "Create a feed item describing a project decision."),
         ("projects", f"{run_id}-project", "Create a project with two named chat threads in metadata.threads."),
-        ("contacts", f"{run_id}-contact", "Create a contact with email, phone, activity, and profile HTML."),
+        ("contacts", f"{run_id}-contact", "Create a contact with email, phone, and activity."),
     ]
     results: list[dict[str, Any]] = []
     for collection, record_id, description in scenarios:
@@ -134,7 +134,7 @@ def main() -> int:
                 "record_id": record_id,
                 "turn": turn,
                 "verified_title": record.get("title", ""),
-                "has_html": bool(str(record.get("html") or record.get("html_asset_id") or "").strip()),
+                "has_html": bool(str(record.get("html") or "").strip()),
                 "metadata": record.get("metadata", {}),
             }
         )

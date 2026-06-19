@@ -985,61 +985,6 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertGreater(len(response.read()), 0)
 
-    def test_same_origin_public_task_status_patch_allows_status_only_and_rejects_other_writes(self) -> None:
-        task = self.post_json(
-            "/api/workspace/tasks",
-            {
-                "id": "browser-public-task",
-                "title": "Browser Public Task",
-                "status": "todo",
-                "due_at_ms": 2_000_000_000_000,
-            },
-        )
-        same_origin_headers = {
-            "Origin": self.base_url,
-            "Referer": f"{self.base_url}/ui/pucky/latest/?theme=light&route=tasks",
-            "Content-Type": "application/json",
-        }
-        request = urllib.request.Request(
-            self.base_url + f"/api/workspace/tasks/{urllib.parse.quote(str(task['id']), safe='')}",
-            data=json.dumps({"status": "in_progress"}).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(payload["status"], "in_progress")
-
-        for body, expected_code in (
-            ({"status": "open"}, 400),
-            ({"status": "done", "owner": "Jordan"}, 400),
-            ({"status": "done"}, 401),
-        ):
-            headers = dict(same_origin_headers)
-            if body == {"status": "done"}:
-                headers.pop("Origin", None)
-                headers.pop("Referer", None)
-            failing = urllib.request.Request(
-                self.base_url + f"/api/workspace/tasks/{urllib.parse.quote(str(task['id']), safe='')}",
-                data=json.dumps(body).encode("utf-8"),
-                method="PATCH",
-                headers=headers,
-            )
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(failing, timeout=10)
-            self.assertEqual(caught.exception.code, expected_code)
-
-        note = self.post_json("/api/workspace/notes", {"id": "browser-public-note", "title": "Browser Public Note"})
-        note_request = urllib.request.Request(
-            self.base_url + f"/api/workspace/notes/{urllib.parse.quote(str(note['id']), safe='')}",
-            data=json.dumps({"pinned": True}).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(note_request, timeout=10)
-        self.assertEqual(caught.exception.code, 401)
-
     def test_unknown_operator_token_still_does_not_authorize_protected_browser_routes(self) -> None:
         headers = {"Authorization": "Bearer test-operator-token"}
         for path in (

@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pucky_vm.workspace_store import SELF_CONTACT_ID, WorkspaceStore, derive_task_group
+from pucky_vm.workspace_store import (
+    SELF_CONTACT_ID,
+    WorkspaceStore,
+    _linked_note_link_id,
+    _linked_note_record_id,
+    derive_task_group,
+)
 
 
 class Clock:
@@ -14,24 +20,13 @@ class Clock:
         return self.value
 
 
-def test_workspace_store_seeds_and_round_trips_html_assets(tmp_path: Path) -> None:
+def test_workspace_store_keeps_note_html_and_clears_non_note_html(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
 
     notes = store.list_records("notes")
     assert notes["count"] >= 3
     assert notes["items"][0]["pinned"] is True
-
-    asset = store.create_asset(
-        {
-            "id": "proof-html",
-            "title": "Proof page",
-            "mime_type": "text/html; charset=utf-8",
-            "html": "<!doctype html><h1>Proof</h1>",
-        }
-    )
-    assert asset["asset_id"] == "proof-html"
-    assert "<h1>Proof</h1>" in asset["text"]
 
     note = store.upsert_record(
         "notes",
@@ -40,12 +35,34 @@ def test_workspace_store_seeds_and_round_trips_html_assets(tmp_path: Path) -> No
             "title": "Proof Note",
             "summary": "Created by test",
             "pinned": True,
-            "html_asset_id": "proof-html",
-            "metadata": {"context": "Tests"},
+            "html": "<!doctype html><h1>Proof</h1>",
+            "html_asset_id": "ignored-on-write",
+            "metadata": {"context": "Tests", "icon": "pin"},
         },
     )
     assert note["title"] == "Proof Note"
     assert note["metadata"]["context"] == "Tests"
+    assert "icon" not in note["metadata"]
+    assert note["html"].startswith("<!doctype html>")
+    assert note["html_asset_id"] == ""
+
+    task = store.upsert_record(
+        "tasks",
+        {
+            "id": "proof-task",
+            "title": "Proof Task",
+            "summary": "Created by test",
+            "status": "open",
+            "due_at_ms": 1_800_000_010_000,
+            "html": "<!doctype html><h1>Task</h1>",
+            "html_asset_id": "ignored-on-write",
+            "metadata": {"owner": "Tests", "project": "Legacy Project", "source": "legacy-meeting"},
+        },
+    )
+    assert task["html"] == ""
+    assert task["html_asset_id"] == ""
+    assert "project" not in task["metadata"]
+    assert "source" not in task["metadata"]
 
 
 def test_contact_endpoint_migration_backfills_email_phone_and_removes_metadata(tmp_path: Path) -> None:
@@ -288,53 +305,127 @@ def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> 
     assert still_done["derived_group"] == "done"
 
 
-def test_task_records_support_inline_html_asset_html_and_empty_html(tmp_path: Path) -> None:
-    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
-    asset = store.create_asset(
+def test_workspace_store_migrates_legacy_non_note_html_and_asset_content_into_linked_notes_idempotently(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.upsert_record(
+        "tasks",
         {
-            "id": "task-proof-html",
-            "title": "Task proof page",
+            "id": "legacy-inline-task",
+            "title": "Legacy Inline Task",
+            "summary": "Inline legacy summary",
+            "status": "open",
+            "due_at_ms": clock.value + 60_000,
+        },
+    )
+    store.upsert_record(
+        "projects",
+        {
+            "id": "legacy-asset-project",
+            "title": "Legacy Asset Project",
+            "summary": "Asset legacy summary",
+        },
+    )
+    store.upsert_record(
+        "notes",
+        {
+            "id": "legacy-asset-note",
+            "title": "Legacy Asset Note",
+            "summary": "Note asset summary",
+        },
+    )
+    store.create_asset(
+        {
+            "id": "legacy-project-html",
+            "title": "Legacy Project HTML",
             "mime_type": "text/html; charset=utf-8",
-            "html": "<!doctype html><html><body><h1>Asset task</h1><p>Asset-backed task page.</p><ul><li>One</li></ul></body></html>",
+            "html": "<!doctype html><h1>Legacy project page</h1><p>Recovered from workspace_assets.</p>",
         }
     )
+    store.create_asset(
+        {
+            "id": "legacy-note-html",
+            "title": "Legacy Note HTML",
+            "mime_type": "text/html; charset=utf-8",
+            "html": "<!doctype html><h1>Legacy note page</h1><p>Recovered from workspace_assets.</p>",
+        }
+    )
+    store._conn.execute(
+        """
+        UPDATE workspace_records
+        SET html = ?, html_asset_id = ''
+        WHERE kind = 'task' AND record_id = 'legacy-inline-task'
+        """,
+        ("<!doctype html><h1>Legacy inline task page</h1><p>Recovered inline HTML.</p>",),
+    )
+    store._conn.execute(
+        """
+        UPDATE workspace_records
+        SET html = '', html_asset_id = ?
+        WHERE kind = 'project' AND record_id = 'legacy-asset-project'
+        """,
+        ("legacy-project-html",),
+    )
+    store._conn.execute(
+        """
+        UPDATE workspace_records
+        SET html = '', html_asset_id = ?
+        WHERE kind = 'note' AND record_id = 'legacy-asset-note'
+        """,
+        ("legacy-note-html",),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'")
+    store._conn.commit()
+    store.close()
 
-    inline_task = store.upsert_record(
-        "tasks",
-        {
-            "id": "inline-task",
-            "title": "Inline task",
-            "status": "open",
-            "due_at_ms": 2_000,
-            "html": "<!doctype html><html><body><h1>Inline task</h1><p>Inline HTML body.</p></body></html>",
-        },
-    )
-    asset_task = store.upsert_record(
-        "tasks",
-        {
-            "id": "asset-task",
-            "title": "Asset task",
-            "status": "open",
-            "due_at_ms": 3_000,
-            "html_asset_id": asset["asset_id"],
-        },
-    )
-    empty_task = store.upsert_record(
-        "tasks",
-        {
-            "id": "empty-task",
-            "title": "Empty task",
-            "status": "open",
-            "due_at_ms": 4_000,
-        },
-    )
-
-    assert inline_task["html"].startswith("<!doctype html>")
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    inline_task = migrated.get_record("tasks", "legacy-inline-task")
+    project = migrated.get_record("projects", "legacy-asset-project")
+    note = migrated.get_record("notes", "legacy-asset-note")
+    assert inline_task is not None
+    assert project is not None
+    assert note is not None
+    assert inline_task["html"] == ""
     assert inline_task["html_asset_id"] == ""
-    assert asset_task["html"] == ""
-    assert asset_task["html_asset_id"] == "task-proof-html"
-    assert empty_task["html"] == ""
-    assert empty_task["html_asset_id"] == ""
+    assert project["html"] == ""
+    assert project["html_asset_id"] == ""
+    assert note["html_asset_id"] == ""
+    assert "Legacy note page" in note["html"]
+
+    inline_note_id = _linked_note_record_id("task", "legacy-inline-task")
+    project_note_id = _linked_note_record_id("project", "legacy-asset-project")
+    inline_note = migrated.get_record("notes", inline_note_id)
+    project_note = migrated.get_record("notes", project_note_id)
+    assert inline_note is not None
+    assert project_note is not None
+    assert "Legacy inline task page" in inline_note["html"]
+    assert "Legacy project page" in project_note["html"]
+    assert any(
+        link["target_kind"] == "note" and link["target_id"] == inline_note_id
+        for link in inline_task["links"]
+    )
+    assert any(
+        link["target_kind"] == "note" and link["target_id"] == project_note_id
+        for link in project["links"]
+    )
+
+    migrated._conn.execute("DELETE FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'")
+    migrated._conn.commit()
+    migrated.close()
+
+    rerun = WorkspaceStore(str(db_path), clock_ms=clock)
+    assert rerun._conn.execute(
+        "SELECT COUNT(*) FROM workspace_records WHERE kind = 'note' AND record_id = ?",
+        (inline_note_id,),
+    ).fetchone()[0] == 1
+    assert rerun._conn.execute(
+        "SELECT COUNT(*) FROM workspace_links WHERE link_id = ?",
+        (_linked_note_link_id("task", "legacy-inline-task"),),
+    ).fetchone()[0] == 1
+    rerun_note = rerun.get_record("notes", inline_note_id)
+    assert rerun_note is not None
+    assert "Legacy inline task page" in rerun_note["html"]
 
 
 def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None:
@@ -424,6 +515,95 @@ def test_reminder_metadata_defaults_and_patch_round_trip(tmp_path: Path) -> None
     assert done["metadata"]["snoozed_until_ms"] == 0
 
 
+def test_workspace_store_metadata_cleanup_migration_strips_retired_keys(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'meeting_note' AND record_id = 'demo-meeting-home-refresh'",
+        (
+            json.dumps(
+                {
+                    "participants": ["Maya Chen"],
+                    "source": "legacy-calendar",
+                    "source_kind": "calendar_event",
+                    "extracted_topics": ["paint"],
+                }
+            ),
+        ),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'task' AND record_id = 'demo-task-do-paint-samples'",
+        (
+            json.dumps(
+                {
+                    "owner": "Maya Chen",
+                    "project": "Home refresh",
+                    "source": "demo-meeting-home-refresh",
+                }
+            ),
+        ),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'reminder' AND record_id = 'demo-reminder-paint-samples'",
+        (
+            json.dumps(
+                {
+                    "source_kind": "task",
+                    "source_id": "demo-task-do-paint-samples",
+                    "snooze_state": "ready",
+                }
+            ),
+        ),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'note' AND record_id = 'q4'",
+        (
+            json.dumps(
+                {
+                    "context": "All notes",
+                    "icon": "pin",
+                }
+            ),
+        ),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'project' AND record_id = 'aurora'",
+        (
+            json.dumps(
+                {
+                    "threads": ["PRD review thread"],
+                    "chips": ["keep me"],
+                    "assets": ["Legacy brief"],
+                }
+            ),
+        ),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'")
+    store._conn.commit()
+    store.close()
+
+    cleaned = WorkspaceStore(str(db_path), clock_ms=clock)
+    meeting = cleaned.get_record("meeting-notes", "demo-meeting-home-refresh")
+    task = cleaned.get_record("tasks", "demo-task-do-paint-samples")
+    reminder = cleaned.get_record("reminders", "demo-reminder-paint-samples")
+    note = cleaned.get_record("notes", "q4")
+    project = cleaned.get_record("projects", "aurora")
+    assert meeting is not None
+    assert task is not None
+    assert reminder is not None
+    assert note is not None
+    assert project is not None
+    assert meeting["metadata"]["source_id"] == "legacy-calendar"
+    assert "source" not in meeting["metadata"]
+    assert "project" not in task["metadata"]
+    assert "source" not in task["metadata"]
+    assert "snooze_state" not in reminder["metadata"]
+    assert "icon" not in note["metadata"]
+    assert "assets" not in project["metadata"]
+    assert project["metadata"]["chips"] == ["keep me"]
+
+
 def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
@@ -433,7 +613,16 @@ def test_default_seeded_tasks_are_intentional_and_balanced(tmp_path: Path) -> No
         counts[str(task["derived_group"])] += 1
     assert counts == {"do": 6, "soon": 2, "overdue": 1, "done": 3}
     assert len(tasks) == 12
-    assert all(task["html"] for task in tasks)
+    assert all(task["html"] == "" for task in tasks)
+    assert all(task["html_asset_id"] == "" for task in tasks)
+    assert all(
+        any(
+            (link["source_kind"] == "task" and link["source_id"] == task["id"] and link["target_kind"] == "note")
+            or (link["target_kind"] == "task" and link["target_id"] == task["id"] and link["source_kind"] == "note")
+            for link in task["links"]
+        )
+        for task in tasks
+    )
 
 
 def test_task_records_expose_structured_metadata_and_graph_attached_items(tmp_path: Path) -> None:

@@ -79,19 +79,39 @@ def maybe_with_default(args: list[str], option: str, default_value: str) -> list
     return args + [option, default_value]
 
 
+def ensure_bundled_node_modules_link(env: dict[str, str]) -> Path | None:
+    node_modules = str(env.get("CODEX_NODE_MODULES") or "").strip()
+    if not node_modules:
+        return None
+    target = Path(node_modules)
+    link_path = ROOT / "node_modules"
+    if link_path.exists() or not target.exists():
+        return None
+    link_path.symlink_to(target, target_is_directory=True)
+    return link_path
+
+
 def run_node_proofs(node_binary: str, scripts: list[tuple[str, list[str]]], env: dict[str, str]) -> int:
-    for script, extra_args in scripts:
-        status = run_command(
-            [
-                node_binary,
-                script,
-                *extra_args,
-            ],
-            env=env,
-        )
-        if status:
-            return status
-    return 0
+    link_path = ensure_bundled_node_modules_link(env)
+    try:
+        for script, extra_args in scripts:
+            status = run_command(
+                [
+                    node_binary,
+                    script,
+                    *extra_args,
+                ],
+                env=env,
+            )
+            if status:
+                return status
+        return 0
+    finally:
+        if link_path is not None:
+            try:
+                link_path.unlink()
+            except FileNotFoundError:  # pragma: no cover - defensive cleanup
+                pass
 
 
 def stop_servers(servers: list[subprocess.Popen[bytes]]) -> None:
@@ -152,6 +172,8 @@ def proof_env() -> dict[str, str]:
             if candidate.is_dir():
                 env["CODEX_NODE_MODULES"] = str(candidate)
                 break
+    if not str(env.get("NODE_PATH") or "").strip():
+        env["NODE_PATH"] = str(env.get("CODEX_NODE_MODULES") or "").strip()
     return env
 
 

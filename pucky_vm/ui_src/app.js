@@ -5045,7 +5045,8 @@
   }
 
   function lightLinkedNotesSection(record, options = {}) {
-    const rows = workspaceLinkedRows(record, {
+    const rows = lightLinkedRecordRows(record, {
+      ...options,
       includeKinds: ["note"],
       valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"
     });
@@ -5430,78 +5431,6 @@
     ];
   }
 
-  function taskStatusSelectorChoices() {
-    return ["todo", "in_progress", "waiting", "done"].map(value => {
-      const leadingNode = el("span", taskStatusCircleClass(value));
-      leadingNode.setAttribute("aria-hidden", "true");
-      return {
-        value,
-        label: taskStatusLabel(value),
-        leadingNode,
-      };
-    });
-  }
-
-  function mergeTaskRecordIntoBucket(record) {
-    const bucket = state.workspace.tasks;
-    const nextId = taskRecordId(record);
-    if (!bucket || !Array.isArray(bucket.items) || !nextId) {
-      return;
-    }
-    let replaced = false;
-    bucket.items = bucket.items.map(item => {
-      if (taskRecordId(item) !== nextId) {
-        return item;
-      }
-      replaced = true;
-      return record;
-    });
-    if (!replaced) {
-      bucket.items.push(record);
-    }
-  }
-
-  async function updateTaskStatus(taskId, nextStatus) {
-    const id = String(taskId || "").trim();
-    const status = String(nextStatus || "").trim();
-    const bucket = state.workspace.tasks;
-    if (!id || !["todo", "in_progress", "waiting", "done"].includes(status) || !bucket || !Array.isArray(bucket.items)) {
-      return;
-    }
-    const current = bucket.items.find(item => taskRecordId(item) === id);
-    if (!current || normalizedTaskStatus(current) === status) {
-      return;
-    }
-    try {
-      const result = await patchWorkspaceRecord("tasks", id, { status });
-      mergeTaskRecordIntoBucket(result);
-      state.selectedTaskId = taskRecordId(result) || id;
-      bucket.error = "";
-      persistNavState();
-      render();
-    } catch (error) {
-      bucket.error = "";
-      showToast(error.message);
-    }
-  }
-
-  function openTaskStatusSelector(task, source) {
-    const taskId = taskRecordId(task);
-    const current = normalizedTaskStatus(task);
-    if (!taskId) {
-      return;
-    }
-    openSettingsSelector({
-      title: source === "list" ? "Update task status" : "Task status",
-      currentValue: current,
-      options: taskStatusSelectorChoices(),
-      onSelect: value => {
-        const nextStatus = String(value || "").trim();
-        void updateTaskStatus(taskId, nextStatus);
-      },
-    });
-  }
-
   function currentTaskFilterChoice() {
     return taskStatusFilterChoices().find(([key]) => key === state.taskFilter) || taskStatusFilterChoices()[0];
   }
@@ -5527,16 +5456,10 @@
       const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      const statusTrigger = el("button", "light-task-row-status-trigger");
-      statusTrigger.type = "button";
+      const statusTrigger = el("span", "light-task-row-status-trigger");
       statusTrigger.dataset.taskStatusTrigger = "true";
-      statusTrigger.setAttribute("aria-label", `Change task status for ${task.title || "task"}`);
+      statusTrigger.setAttribute("aria-hidden", "true");
       statusTrigger.append(el("span", taskCheckCircleClass(task)));
-      statusTrigger.addEventListener("click", event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openTaskStatusSelector(task, "list");
-      });
       const main = el("button", "light-task-row-main");
       main.type = "button";
       main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
@@ -5635,10 +5558,6 @@
 
   function taskChecklist(task) {
     return Array.isArray(task?.checklist) ? task.checklist : [];
-  }
-
-  function taskRecordId(task) {
-    return String(task?.id || task?.record_id || "").trim();
   }
 
   function taskOwners(task) {
@@ -5829,20 +5748,13 @@
   function lightTaskStatusControl(task) {
     const control = el("div", "light-task-status-control");
     const current = normalizedTaskStatus(task);
-    const button = el("button", "light-pill is-active light-task-status-trigger");
-    button.type = "button";
+    const button = el("div", "light-pill is-active light-task-status-trigger");
     button.dataset.taskStatus = current;
-    button.setAttribute("aria-haspopup", "dialog");
     button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
     const icon = el("span", "light-task-status-trigger-icon");
     icon.append(el("span", taskStatusCircleClass(current)));
     const copy = el("span", "light-task-status-trigger-copy");
     copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskStatusSelector(task, "detail-pill");
-    });
     button.append(icon, copy);
     control.append(button);
     return control;
@@ -5925,16 +5837,10 @@
 
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    const statusTrigger = el("button", "light-task-status-circle-trigger");
-    statusTrigger.type = "button";
+    const statusTrigger = el("span", "light-task-status-circle-trigger");
     statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-label", `Change task status for ${task.title || "task"}`);
+    statusTrigger.setAttribute("aria-hidden", "true");
     statusTrigger.append(el("span", taskCheckCircleClass(task)));
-    statusTrigger.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskStatusSelector(task, "detail-circle");
-    });
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),

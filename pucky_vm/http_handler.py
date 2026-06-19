@@ -32,9 +32,6 @@ def _truthy_query(value: object) -> bool:
     return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
-PUBLIC_BROWSER_TASK_STATUSES = frozenset({"todo", "in_progress", "waiting", "done"})
-
-
 def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_types: set[str]):
     class Handler(broker.Handler):
         server_version = "PuckyVoice/0.1"
@@ -648,13 +645,6 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     "collections": sorted(WORKSPACE_COLLECTIONS.keys()),
                 })
                 return
-            if parts[0] == "assets" and len(parts) == 2:
-                asset = service.workspace.get_asset(parts[1])
-                if asset is None:
-                    self._json(HTTPStatus.NOT_FOUND, {"error": "asset_not_found"})
-                    return
-                self._json(HTTPStatus.OK, asset)
-                return
             if parts[0] not in WORKSPACE_COLLECTIONS:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_collection_not_found"})
                 return
@@ -689,33 +679,15 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_route_not_found"})
 
         def _handle_workspace_write(self, parsed, method: str) -> None:
+            if not self._is_user_data_authorized():
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             parts = self._workspace_parts(parsed.path)
             if not parts:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_route_not_found"})
                 return
             try:
                 payload = {} if method == "DELETE" else self._read_json_payload(1024 * 1024)
-                if not self._is_user_data_authorized():
-                    public_task_status_patch, public_task_status_code = self._public_browser_task_status_patch_result(parts, method, payload)
-                    if public_task_status_patch is None:
-                        self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                        return
-                    if not public_task_status_patch:
-                        self._json(
-                            public_task_status_code or HTTPStatus.UNAUTHORIZED,
-                            {
-                                "error": (
-                                    "workspace_task_public_status_patch_invalid"
-                                    if public_task_status_code == HTTPStatus.BAD_REQUEST
-                                    else "unauthorized"
-                                )
-                            },
-                        )
-                        return
-                if parts[0] == "assets" and method == "POST":
-                    result = service.workspace.create_asset(payload)
-                    self._json(HTTPStatus.OK, result)
-                    return
                 if parts[0] == "links" and method == "POST":
                     result = service.workspace.upsert_link(payload)
                     self._json(HTTPStatus.OK, result)
@@ -764,51 +736,6 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             if not suffix:
                 return []
             return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
-
-        def _public_browser_task_status_patch_result(
-            self,
-            parts: list[str],
-            method: str,
-            payload: dict[str, object],
-        ) -> tuple[bool | None, HTTPStatus | None]:
-            if method != "PATCH" or len(parts) != 2 or parts[0] != "tasks":
-                return None, None
-            if set(payload.keys()) != {"status"}:
-                return False, HTTPStatus.BAD_REQUEST
-            status = str(payload.get("status") or "").strip()
-            if status not in PUBLIC_BROWSER_TASK_STATUSES:
-                return False, HTTPStatus.BAD_REQUEST
-            origin = self._origin_signature(self.headers.get("Origin", ""))
-            referer = urlsplit(str(self.headers.get("Referer") or "").strip())
-            expected = self._origin_signature(self._request_base_url())
-            if origin is None or expected is None:
-                return False, HTTPStatus.UNAUTHORIZED
-            if origin != expected:
-                return False, HTTPStatus.UNAUTHORIZED
-            if self._origin_signature(str(self.headers.get("Referer") or "").strip()) != expected:
-                return False, HTTPStatus.UNAUTHORIZED
-            if not referer.path.startswith("/ui/pucky/latest"):
-                return False, HTTPStatus.UNAUTHORIZED
-            return True, HTTPStatus.OK
-
-        def _origin_signature(self, value: str) -> tuple[str, str, int] | None:
-            parsed = urlsplit(str(value or "").strip())
-            scheme = parsed.scheme.lower()
-            host = str(parsed.hostname or "").strip().lower()
-            if not scheme or not host:
-                return None
-            try:
-                port = parsed.port
-            except ValueError:
-                return None
-            if port is None:
-                if scheme == "https":
-                    port = 443
-                elif scheme == "http":
-                    port = 80
-                else:
-                    return None
-            return (scheme, host, int(port))
 
         def _allows_public_browser_user_read(self, path: str) -> bool:
             value = str(path or "").strip()

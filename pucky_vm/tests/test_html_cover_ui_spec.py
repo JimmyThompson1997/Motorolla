@@ -849,6 +849,41 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightHtmlDocument(record" not in graph_detail
 
 
+def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
+    app = read("app.js")
+
+    workspace_html = function_block(app, "workspaceHtml")
+    workspace_linked_rows = function_block(app, "workspaceLinkedRows")
+    linked_rows = function_block(app, "lightLinkedRecordRows")
+    linked_notes = function_block(app, "lightLinkedNotesSection")
+    contact_detail = function_block(app, "lightContactDetailPage")
+    feed_detail = function_block(app, "lightFeedDetailPage")
+    project_detail = function_block(app, "lightProjectDetailPage")
+    graph_detail = function_block(app, "lightGraphDetailPage")
+
+    assert 'return String(record.html || "");' in workspace_html
+    assert "loadWorkspaceAsset" not in app
+    assert "workspace.assets" not in app
+    assert "const includeKinds =" in workspace_linked_rows
+    assert "const excludeKinds = new Set(" in workspace_linked_rows
+    assert "includeKinds && !includeKinds.has(normalizedKind)" in workspace_linked_rows
+    assert "return workspaceLinkedRows(record, options);" in linked_rows
+    assert "function lightLinkedNotesSection(record, options = {}) {" in app
+    assert 'includeKinds: ["note"],' in linked_notes
+    assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
+    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' in contact_detail
+    assert "lightHtmlDocument(contact" not in contact_detail
+    assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
+    assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
+    assert "lightHtmlDocument(item" not in feed_detail
+    assert '["Artifacts", "attachment", projectAssets(project)]' not in project_detail
+    assert "lightHtmlDocument(project" not in project_detail
+    assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
+    assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
+    assert "lightHtmlDocument(record" not in graph_detail
+    assert app.count("lightHtmlDocument(") == 2
+
+
 def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -913,9 +948,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "function taskOwners(task)" in app
     assert "function taskPrimaryOwner(task)" in app
     assert "explicitOwners" not in app
-    assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
-    assert 'statusTrigger.type = "button";' in task_group
-    assert 'openTaskStatusSelector(task, "list");' in task_group
+    assert 'const statusTrigger = el("span", "light-task-row-status-trigger");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
@@ -934,20 +967,13 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const notes = lightTaskNotesSection(task);' in task_detail_surface
     assert "surface.append(notes);" in task_detail_surface
-    assert "lightHtmlDocument(task" not in task_detail_surface
-    assert 'const button = el("button", "light-pill is-active light-task-status-trigger");' in task_status_control
-    assert 'button.type = "button";' in task_status_control
-    assert 'openTaskStatusSelector(task, "detail-pill");' in task_status_control
+    assert 'const button = el("div", "light-pill is-active light-task-status-trigger");' in task_status_control
     assert 'button.append(icon, copy);' in task_status_control
     assert 'iconSvg("expand_more", { filled: true })' not in task_status_control
     assert 'iconSvg("navigate_next")' not in task_status_control
-    assert "function updateTaskStatus(taskId, nextStatus)" in app
+    assert "function updateTaskStatus" not in app
     assert "function toggleTaskChecklistItem" not in app
-    assert "function openTaskStatusSelector(task, source)" in app
-    task_detail_card = function_block(app, "lightTaskDetailCard")
-    assert 'const statusTrigger = el("button", "light-task-status-circle-trigger");' in task_detail_card
-    assert 'statusTrigger.type = "button";' in task_detail_card
-    assert 'openTaskStatusSelector(task, "detail-circle");' in task_detail_card
+    assert "function openTaskStatusSelector" not in app
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
@@ -959,8 +985,6 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'document.visibilityState === "visible"' in task_refresh_interval.group("condition")
     assert 'state.route === "tasks"' in task_refresh_interval.group("condition")
     assert "task-detail" not in task_refresh_interval.group("condition")
-    assert ".light-task-detail-page .light-detail-html-body" not in styles
-    assert ".light-task-detail-surface > .light-task-detail-body" not in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
     assert ".light-task-status-circle-trigger" in styles
@@ -970,7 +994,6 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-status-trigger-icon" in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
-    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles
     assert '.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"]' in styles
 
 

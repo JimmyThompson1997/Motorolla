@@ -62,6 +62,37 @@ def _json_loads(value: str | None, fallback: Any) -> Any:
     return parsed if parsed is not None else fallback
 
 
+def _decode_asset_text(mime_type: object, content_base64: object) -> str:
+    mime = str(mime_type or "").lower()
+    if not (mime.startswith("text/") or "html" in mime):
+        return ""
+    try:
+        return base64.b64decode(str(content_base64 or "")).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _workspace_kind_label(kind: object) -> str:
+    return {
+        "note": "Note",
+        "task": "Task",
+        "calendar_event": "Calendar",
+        "feed_item": "Inbox",
+        "project": "Project",
+        "contact": "Contact",
+        "meeting_note": "Meeting note",
+        "reminder": "Reminder",
+    }.get(str(kind or "").strip(), "Record")
+
+
+def _linked_note_record_id(source_kind: object, source_id: object) -> str:
+    return _clean_id(f"linked-note-{str(source_kind or '').strip()}-{str(source_id or '').strip()}", "note")
+
+
+def _linked_note_link_id(source_kind: object, source_id: object) -> str:
+    return _clean_id(f"linked-note-link-{str(source_kind or '').strip()}-{str(source_id or '').strip()}", "link")
+
+
 def _clean_id(value: object, fallback_prefix: str) -> str:
     raw = str(value or "").strip()
     if raw:
@@ -289,6 +320,7 @@ def _normalize_reminder_delivery_results(value: object) -> list[dict[str, Any]]:
 
 def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> dict[str, Any]:
     normalized = dict(metadata or {})
+    normalized.pop("snooze_state", None)
     delivery_state = str(normalized.get("delivery_state") or "").strip().lower()
     if delivery_state not in {"pending", "sent", "failed"}:
         delivery_state = "pending"
@@ -362,6 +394,8 @@ def _normalize_task_checklist(items: object) -> list[dict[str, object]]:
 
 def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object], *, summary: str) -> dict[str, Any]:
     normalized = dict(metadata or {})
+    normalized.pop("project", None)
+    normalized.pop("source", None)
     owner = str(
         payload.get("owner")
         or normalized.get("owner")
@@ -385,6 +419,25 @@ def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object
     normalized["status"] = normalize_task_status(payload.get("status") or normalized.get("status") or "")
     return normalized
 
+def _normalize_meeting_note_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    source = str(normalized.get("source") or "").strip()
+    if source and not str(normalized.get("source_id") or "").strip():
+        normalized["source_id"] = source
+    normalized.pop("source", None)
+    return normalized
+
+
+def _normalize_note_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    normalized.pop("icon", None)
+    return normalized
+
+
+def _normalize_project_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    normalized.pop("assets", None)
+    return normalized
 def derive_task_group(record: dict[str, Any], now_ms: int | None = None) -> str:
     status = normalize_task_status(record.get("status"))
     if status == "done":
@@ -554,7 +607,6 @@ class WorkspaceStore:
             str(current.get("title") or "") != str(record.get("title") or "")
             or str(current.get("summary") or "") != str(record.get("summary") or "")
             or str(current.get("html") or "") != str(record.get("html") or "")
-            or str(current.get("html_asset_id") or "") != str(record.get("html_asset_id") or "")
             or current_metadata != next_metadata
         )
 
@@ -638,12 +690,7 @@ class WorkspaceStore:
         if row is None:
             return None
         content_base64 = str(row["content_base64"] or "")
-        text = ""
-        if str(row["mime_type"] or "").lower().startswith("text/") or "html" in str(row["mime_type"] or "").lower():
-            try:
-                text = base64.b64decode(content_base64).decode("utf-8", errors="replace")
-            except Exception:
-                text = ""
+        text = _decode_asset_text(row["mime_type"], content_base64)
         return {
             "schema": "pucky.workspace.asset.v1",
             "asset_id": row["asset_id"],
@@ -723,15 +770,19 @@ class WorkspaceStore:
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
+            notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
+            metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
-            defaults = default_workspace_records(now)
+            defaults, default_links = seeded_workspace_snapshot(
+                default_workspace_records(now),
+                default_workspace_links(),
+                default_workspace_assets(now),
+            )
             for collection, records in defaults.items():
                 for record in records:
                     self.upsert_record(collection, record)
-            for asset in default_workspace_assets(now):
-                self.create_asset(asset)
-            for link in default_workspace_links():
+            for link in default_links:
                 self.upsert_link(link)
             with self._lock:
                 self._conn.execute(
@@ -740,11 +791,14 @@ class WorkspaceStore:
                 )
                 self._conn.commit()
         if not graph_seeded:
-            graph_defaults = default_workspace_graph_records(now)
+            graph_defaults, graph_links = seeded_workspace_snapshot(
+                default_workspace_graph_records(now),
+                default_workspace_graph_links(),
+            )
             for collection, records in graph_defaults.items():
                 for record in records:
                     self.upsert_record(collection, record)
-            for link in default_workspace_graph_links():
+            for link in graph_links:
                 self.upsert_link(link)
             with self._lock:
                 self._conn.execute(
@@ -762,10 +816,14 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
-        if not contact_html_removed:
-            self._remove_contact_html_v1(now)
         if not contact_cleanup_photos:
             self._cleanup_contacts_and_photos_v1(now)
+        if not notes_only_html_seeded:
+            self._migrate_notes_only_html_v1(now)
+        if not metadata_cleanup_seeded:
+            self._cleanup_workspace_metadata_v1(now)
+        if not contact_html_removed:
+            self._remove_contact_html_v1(now)
         self.ensure_self_contact()
 
     def ensure_self_contact(self) -> dict[str, object]:
@@ -906,6 +964,169 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_cleanup_photos_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _migrate_notes_only_html_v1(self, now_ms: int) -> None:
+        with self._lock:
+            asset_rows = self._conn.execute(
+                "SELECT asset_id, mime_type, content_base64 FROM workspace_assets"
+            ).fetchall()
+            asset_html_by_id = {
+                str(row["asset_id"] or ""): _decode_asset_text(row["mime_type"], row["content_base64"])
+                for row in asset_rows
+            }
+            note_rows = self._conn.execute(
+                """
+                SELECT record_id, title, summary, html, html_asset_id, metadata_json, archived, deleted,
+                       created_at_ms, updated_at_ms
+                FROM workspace_records
+                WHERE kind = 'note' AND (TRIM(html_asset_id) != '' OR TRIM(html) != '')
+                """
+            ).fetchall()
+            for row in note_rows:
+                asset_id = str(row["html_asset_id"] or "").strip()
+                html = str(row["html"] or "").strip() or asset_html_by_id.get(asset_id, "")
+                metadata = _json_loads(row["metadata_json"], {})
+                metadata = _normalize_note_metadata(metadata if isinstance(metadata, dict) else {})
+                metadata.pop("html", None)
+                metadata.pop("html_asset_id", None)
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET html = ?, html_asset_id = '', metadata_json = ?, updated_at_ms = ?
+                    WHERE kind = 'note' AND record_id = ?
+                    """,
+                    (html, _json_dumps(metadata), now_ms, row["record_id"]),
+                )
+            rich_rows = self._conn.execute(
+                """
+                SELECT record_id, kind, title, summary, html, html_asset_id, archived, deleted,
+                       created_at_ms, updated_at_ms
+                FROM workspace_records
+                WHERE kind != 'note' AND (TRIM(html) != '' OR TRIM(html_asset_id) != '')
+                """
+            ).fetchall()
+            for row in rich_rows:
+                source_kind = str(row["kind"] or "").strip()
+                source_id = str(row["record_id"] or "").strip()
+                asset_id = str(row["html_asset_id"] or "").strip()
+                html = str(row["html"] or "").strip() or asset_html_by_id.get(asset_id, "")
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET html = '', html_asset_id = '', updated_at_ms = ?
+                    WHERE kind = ? AND record_id = ?
+                    """,
+                    (now_ms, source_kind, source_id),
+                )
+                if not html:
+                    continue
+                note_id = _linked_note_record_id(source_kind, source_id)
+                existing_note = self._conn.execute(
+                    "SELECT created_at_ms FROM workspace_records WHERE kind = 'note' AND record_id = ?",
+                    (note_id,),
+                ).fetchone()
+                note_metadata = _normalize_note_metadata(
+                    {
+                        "context": _workspace_kind_label(source_kind),
+                        "source_kind": source_kind,
+                        "source_id": source_id,
+                        "content_updated_at_ms": int(row["updated_at_ms"] or row["created_at_ms"] or now_ms),
+                    }
+                )
+                self._write_record(
+                    "note",
+                    note_id,
+                    {
+                        "record_id": note_id,
+                        "kind": "note",
+                        "title": str(row["title"] or note_id).strip() or note_id,
+                        "summary": str(row["summary"] or "").strip(),
+                        "status": "",
+                        "pinned": False,
+                        "date_key": "",
+                        "start_at_ms": 0,
+                        "end_at_ms": 0,
+                        "due_at_ms": 0,
+                        "event_at_ms": int(row["updated_at_ms"] or row["created_at_ms"] or now_ms),
+                        "html": html,
+                        "html_asset_id": "",
+                        "archived": bool(row["archived"]),
+                        "deleted": bool(row["deleted"]),
+                        "metadata": note_metadata,
+                        "content_updated_at_ms": int(row["updated_at_ms"] or row["created_at_ms"] or now_ms),
+                    },
+                    created_at_ms=int(existing_note["created_at_ms"]) if existing_note else int(row["created_at_ms"] or now_ms),
+                    updated_at_ms=now_ms,
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO workspace_links (
+                      link_id, source_kind, source_id, target_kind, target_id, label, metadata_json, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(link_id) DO UPDATE SET
+                      source_kind = excluded.source_kind,
+                      source_id = excluded.source_id,
+                      target_kind = excluded.target_kind,
+                      target_id = excluded.target_id,
+                      label = excluded.label,
+                      metadata_json = excluded.metadata_json,
+                      updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (
+                        _linked_note_link_id(source_kind, source_id),
+                        source_kind,
+                        source_id,
+                        "note",
+                        note_id,
+                        "Note",
+                        _json_dumps({}),
+                        now_ms,
+                        now_ms,
+                    ),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("workspace_notes_only_html_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _cleanup_workspace_metadata_v1(self, now_ms: int) -> None:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT kind, record_id, metadata_json FROM workspace_records"
+            ).fetchall()
+            for row in rows:
+                kind = str(row["kind"] or "").strip()
+                metadata = _json_loads(row["metadata_json"], {})
+                if not isinstance(metadata, dict):
+                    continue
+                next_metadata = dict(metadata)
+                if kind == "meeting_note":
+                    next_metadata = _normalize_meeting_note_metadata(next_metadata)
+                elif kind == "task":
+                    next_metadata.pop("project", None)
+                    next_metadata.pop("source", None)
+                elif kind == "reminder":
+                    next_metadata.pop("snooze_state", None)
+                elif kind == "note":
+                    next_metadata.pop("icon", None)
+                elif kind == "project":
+                    next_metadata.pop("assets", None)
+                if next_metadata == metadata:
+                    continue
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET metadata_json = ?, updated_at_ms = ?
+                    WHERE kind = ? AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, kind, row["record_id"]),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("workspace_metadata_cleanup_v1", "1", now_ms),
             )
             self._conn.commit()
 
@@ -1099,7 +1320,7 @@ class WorkspaceStore:
         end_at_ms = _int_or_zero(payload.get("end_at_ms") or metadata.get("end_at_ms"))
         due_at_ms = _int_or_zero(payload.get("due_at_ms") or metadata.get("due_at_ms"))
         html = str(payload.get("html") or metadata.get("html") or "").strip()
-        html_asset_id = str(payload.get("html_asset_id") or metadata.get("html_asset_id") or "").strip()
+        html_asset_id = ""
         archived = bool(payload.get("archived", False))
         deleted = bool(payload.get("deleted", False))
         pinned = bool(payload.get("pinned", False))
@@ -1112,6 +1333,12 @@ class WorkspaceStore:
         if kind == "reminder":
             status = status or "open"
             metadata = _normalize_reminder_metadata(metadata, status=status)
+        if kind == "meeting_note":
+            metadata = _normalize_meeting_note_metadata(metadata)
+        if kind == "note":
+            metadata = _normalize_note_metadata(metadata)
+        if kind == "project":
+            metadata = _normalize_project_metadata(metadata)
         if kind == "contact":
             metadata = _contact_metadata_without_endpoints(metadata)
             html = ""
@@ -1138,6 +1365,8 @@ class WorkspaceStore:
             date_key = time.strftime("%Y-%m-%d", time.localtime(start_at_ms / 1000))
         if kind == "feed_item":
             event_at_ms = _int_or_zero(payload.get("event_at_ms") or now_ms)
+        if kind != "note":
+            html = ""
         return {
             "record_id": record_id,
             "kind": kind,
@@ -1334,6 +1563,79 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
+def seeded_workspace_snapshot(
+    records_by_collection: dict[str, list[dict[str, object]]],
+    links: list[dict[str, object]],
+    assets: list[dict[str, object]] | None = None,
+) -> tuple[dict[str, list[dict[str, object]]], list[dict[str, object]]]:
+    asset_html_by_id = {
+        str(asset.get("id") or asset.get("asset_id") or "").strip(): str(asset.get("html") or asset.get("text") or "").strip()
+        for asset in (assets or [])
+        if str(asset.get("id") or asset.get("asset_id") or "").strip()
+    }
+    next_records = {
+        collection: [dict(record) for record in records]
+        for collection, records in records_by_collection.items()
+    }
+    next_links = [dict(link) for link in links]
+    next_records.setdefault("notes", [])
+    notes = next_records["notes"]
+    existing_note_ids = {
+        str(note.get("id") or note.get("record_id") or "").strip()
+        for note in notes
+        if str(note.get("id") or note.get("record_id") or "").strip()
+    }
+    for collection, records in next_records.items():
+        kind = WORKSPACE_COLLECTIONS.get(collection, "")
+        for record in records:
+            metadata = dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {}
+            html = str(record.get("html") or "").strip()
+            asset_id = str(record.get("html_asset_id") or "").strip()
+            resolved_html = html or asset_html_by_id.get(asset_id, "")
+            if kind == "note":
+                record["html"] = resolved_html
+                record["html_asset_id"] = ""
+                record["metadata"] = _normalize_note_metadata(metadata)
+                continue
+            record["html"] = ""
+            record["html_asset_id"] = ""
+            if kind == "project":
+                metadata.pop("chips", None)
+                record["metadata"] = metadata
+            if not kind or not resolved_html:
+                continue
+            source_id = str(record.get("id") or record.get("record_id") or "").strip()
+            if not source_id:
+                continue
+            note_id = _linked_note_record_id(kind, source_id)
+            if note_id not in existing_note_ids:
+                notes.append(
+                    {
+                        "id": note_id,
+                        "title": str(record.get("title") or note_id).strip() or note_id,
+                        "summary": str(record.get("summary") or "").strip(),
+                        "html": resolved_html,
+                        "metadata": _normalize_note_metadata(
+                            {
+                                "context": _workspace_kind_label(kind),
+                                "source_kind": kind,
+                                "source_id": source_id,
+                            }
+                        ),
+                    }
+                )
+                existing_note_ids.add(note_id)
+            next_links.append(
+                {
+                    "id": _linked_note_link_id(kind, source_id),
+                    "source_kind": kind,
+                    "source_id": source_id,
+                    "target_kind": "note",
+                    "target_id": note_id,
+                    "label": "Note",
+                }
+            )
+    return next_records, next_links
 def default_workspace_assets(now_ms: int) -> list[dict[str, object]]:
     return [
         {
