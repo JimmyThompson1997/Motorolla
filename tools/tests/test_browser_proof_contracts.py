@@ -22,6 +22,7 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
     script_names = [
         "cover_calendar_playwright.mjs",
         "cover_links_scroll_probe.mjs",
+        "cover_notes_feed_centering_real_vm_playwright.mjs",
         "cover_workspace_apps_playwright.mjs",
         "meeting_mode_agent_real_vm_playwright.mjs",
         "meetings_load_probe.mjs",
@@ -68,6 +69,28 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert "Unlock web preview" not in source
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
     assert "browser_api_token" not in source
+
+
+def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
+    source = read_source("cover_notes_pin_playwright.mjs")
+
+    assert "Preview needs api_token" in source
+    assert "Unlock web preview" in source
+    assert "Paste PUCKY_WEB_UI_TOKEN" in source
+    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert 'request.method() === "PATCH"' in source
+    assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
+    assert "Notes pin write failed" in source
+
+
+def test_live_notes_centering_proof_unlocks_preview_before_toggling_rows() -> None:
+    source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
+
+    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert "Preview needs api_token" in source
+    assert "Unlock web preview" in source
+    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert ".light-note-pin-button" in source
 
 
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:

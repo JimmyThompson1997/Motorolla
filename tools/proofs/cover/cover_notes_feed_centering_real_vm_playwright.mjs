@@ -23,10 +23,19 @@ const viewports = [
   { label: "desktop", width: 1440, height: 900 }
 ];
 
+function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
+}
+
 function parseArgs(argv) {
   const config = {
     pageUrl: process.env.PUCKY_NOTES_FEED_CENTERING_URL || DEFAULT_PAGE_URL,
     reportDir: DEFAULT_REPORT_DIR,
+    apiToken: resolveApiToken(),
     timeoutMs: 20000,
     headless: true
   };
@@ -36,6 +45,8 @@ function parseArgs(argv) {
       config.pageUrl = String(argv[++index] || config.pageUrl);
     } else if (arg === "--report-dir" && argv[index + 1]) {
       config.reportDir = path.resolve(String(argv[++index] || config.reportDir));
+    } else if (arg === "--api-token" && argv[index + 1]) {
+      config.apiToken = String(argv[++index] || config.apiToken);
     } else if (arg === "--timeout-ms" && argv[index + 1]) {
       config.timeoutMs = Math.max(1000, Number(argv[++index] || config.timeoutMs) || config.timeoutMs);
     } else if (arg === "--headed") {
@@ -255,6 +266,43 @@ async function waitForNotes(page, timeoutMs) {
   await page.locator(".light-note-row").first().waitFor({ state: "visible", timeout: timeoutMs });
 }
 
+async function expectPreviewApiTokenLock(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const title = document.querySelector(".light-empty-state h2");
+    const detail = document.querySelector(".light-empty-state p");
+    const action = document.querySelector(".light-empty-state .light-empty-state-action");
+    return shell?.getAttribute("data-light-route") === "notes"
+      && String(title?.textContent || "").trim() === "Preview needs api_token"
+      && String(detail?.textContent || "").trim() === "Web preview is locked. Use Unlock web preview to load live Notes from the VM in this browser."
+      && String(action?.textContent || "").trim() === "Unlock web preview";
+  }, { timeout: timeoutMs });
+}
+
+async function unlockBrowserPreview(page, apiToken, timeoutMs) {
+  assert(String(apiToken || "").trim(), "Expected PUCKY_WEB_UI_TOKEN to unlock live Notes preview");
+  await page.getByRole("button", { name: "Unlock web preview" }).click();
+  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").waitFor({ state: "visible", timeout: timeoutMs });
+  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").fill(String(apiToken || "").trim());
+  await page.getByRole("button", { name: "Save token" }).click();
+  await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), { timeout: timeoutMs });
+  await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), { timeout: timeoutMs });
+}
+
+async function ensureNotesUnlocked(page, config) {
+  const locked = await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const title = document.querySelector(".light-empty-state h2");
+    return shell?.getAttribute("data-light-route") === "notes"
+      && String(title?.textContent || "").trim() === "Preview needs api_token";
+  }, { timeout: 1200 }).then(() => true).catch(() => false);
+  if (!locked) {
+    return;
+  }
+  await expectPreviewApiTokenLock(page, config.timeoutMs);
+  await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
+}
+
 async function reloadIntoNotes(page, timeoutMs) {
   await page.reload({ waitUntil: "domcontentloaded" });
   const route = await page.evaluate(() => document.querySelector(".light-shell")?.getAttribute("data-light-route") || "");
@@ -299,6 +347,7 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
       const centering = await attemptHorizontalShift(page, `${viewport.label}:${route}`);
       const entry = { route, centering };
       if (route === "notes") {
+        await ensureNotesUnlocked(page, config);
         await waitForNotes(page, config.timeoutMs);
         const baseline = await readNotesView(page);
         assert(baseline.rowPinButtons > 0, `${viewport.label}: live Notes has no row pin buttons`);

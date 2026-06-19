@@ -555,6 +555,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     note_timestamp_label = function_block(app, "noteTimestampLabel")
     note_source = function_block(app, "noteSourceLabel")
     note_meta = function_block(app, "noteMetaLine")
+    patch_workspace_record = function_block(app, "patchWorkspaceRecord")
+    toggle_note_pin = function_block(app, "toggleNotePin")
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
     feed_block = css_block(styles, ".feed")
@@ -622,11 +624,16 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'metaRow.append(el("span", "light-note-row-context", meta.source));' in note_row
     assert 'metaRow.classList.add("is-time-only");' in note_row
     assert 'metaRow.append(el("span", "light-note-row-time", meta.timestamp));' in note_row
-    assert 'const pin = el("span", "light-note-pin-button");' in note_row
-    assert 'pin.setAttribute("aria-hidden", "true");' in note_row
-    assert 'pin.innerHTML = iconSvg("pin", { filled: true });' in note_row
-    assert "if (note.pinned) {" in note_row
-    assert "row.append(copy);" in note_row
+    assert 'const pin = el("button", "light-note-pin-button");' in note_row
+    assert 'pin.type = "button";' in note_row
+    assert 'pin.dataset.notePinned = String(Boolean(note.pinned));' in note_row
+    assert 'pin.setAttribute("aria-label", note.pinned ? "Unpin note" : "Pin note");' in note_row
+    assert 'pin.addEventListener("click", event => {' in note_row
+    assert "event.preventDefault();" in note_row
+    assert "event.stopPropagation();" in note_row
+    assert "void toggleNotePin(note);" in note_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
+    assert "row.append(copy, pin);" in note_row
     assert 'return lightPage("Note", { subtitle: "Note not found.", detail: true });' in note_detail
     assert 'const page = lightPage(note.title || "Untitled note", { detail: true });' in note_detail
     assert 'page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");' in note_detail
@@ -635,8 +642,13 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
     assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));' in note_detail
 
-    assert "function toggleNotePin" not in app
-    assert 'patchWorkspaceRecord("notes"' not in app
+    assert 'return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`,' in patch_workspace_record
+    assert 'method: "PATCH",' in patch_workspace_record
+    assert "const nextPinned = !Boolean(note.pinned);" in toggle_note_pin
+    assert 'setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);' in toggle_note_pin
+    assert 'await patchWorkspaceRecord("notes", noteId, { pinned: nextPinned });' in toggle_note_pin
+    assert 'await loadWorkspaceCollection("notes", { render: true, force: true });' in toggle_note_pin
+    assert "showToast(error.message);" in toggle_note_pin
     assert "overflow-x: hidden;" in feed_block
     assert "overscroll-behavior-x: none;" in feed_block
     assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" not in header_block
