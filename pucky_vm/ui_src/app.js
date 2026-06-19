@@ -7441,6 +7441,16 @@
     const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
     let revealTimerId = 0;
     if (revealOnLoad) {
+      const keepDetailAtTop = () => {
+        if (!fullBleed) {
+          return;
+        }
+        resetLightRouteScroll();
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+          window.requestAnimationFrame(() => resetLightRouteScroll());
+        }
+        window.setTimeout(() => resetLightRouteScroll(), 0);
+      };
       const markReady = (force = false) => {
         if (!force) {
           const embeddedBody = frame.contentDocument?.body;
@@ -7460,8 +7470,14 @@
       };
       wrap.dataset.htmlFrameState = "loading";
       wrap.setAttribute("aria-busy", "true");
-      frame.addEventListener("load", () => markReady(false));
-      revealTimerId = window.setTimeout(() => markReady(true), 1500);
+      frame.addEventListener("load", () => {
+        markReady(false);
+        keepDetailAtTop();
+      });
+      revealTimerId = window.setTimeout(() => {
+        markReady(true);
+        keepDetailAtTop();
+      }, 1500);
     }
     installHtmlDetailFrameSizing(frame);
     frame.srcdoc = normalizedWorkspaceHtmlDocument(html);

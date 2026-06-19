@@ -745,13 +745,18 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "light-html-stage" in light_html_document
     assert "const revealOnLoad = Boolean(options && options.revealOnLoad);" in light_html_document
     assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
+    assert "const keepDetailAtTop = () => {" in light_html_document
+    assert "if (!fullBleed) {" in light_html_document
+    assert "resetLightRouteScroll();" in light_html_document
+    assert 'window.requestAnimationFrame(() => resetLightRouteScroll());' in light_html_document
     assert 'wrap.dataset.htmlFrameState = "loading";' in light_html_document
     assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
     assert 'wrap.dataset.htmlFrameState = "ready";' in light_html_document
     assert 'wrap.setAttribute("aria-busy", "false");' in light_html_document
     assert 'embeddedBody.getAttribute("data-pucky-embedded-body") !== "true"' in light_html_document
-    assert 'frame.addEventListener("load", () => markReady(false));' in light_html_document
-    assert 'window.setTimeout(() => markReady(true), 1500);' in light_html_document
+    assert 'frame.addEventListener("load", () => {' in light_html_document
+    assert "keepDetailAtTop();" in light_html_document
+    assert 'window.setTimeout(() => {' in light_html_document
     assert 'frame.setAttribute("sandbox", "allow-same-origin");' in light_html_document
     assert "installHtmlDetailFrameSizing(frame);" in light_html_document
     assert "light-html-stage" in light_html_document

@@ -785,6 +785,7 @@ async function readDetailHtmlBodyMetrics(page) {
     const header = document.querySelector(".light-page-header-shell");
     const body = document.querySelector(".light-detail-html-body");
     const frame = body?.querySelector(".light-html-frame");
+    const feed = document.getElementById("feed");
     const scrollingNode = document.scrollingElement || document.documentElement;
     const rect = (node) => {
       if (!(node instanceof Element)) return null;
@@ -805,6 +806,7 @@ async function readDetailHtmlBodyMetrics(page) {
       frame: rect(frame),
       headerBottom: rect(header)?.bottom || 0,
       bodyTop: rect(body)?.top || 0,
+      feedScrollTop: feed?.scrollTop || 0,
       pageScrollHeight: scrollingNode?.scrollHeight || 0,
       pageClientHeight: scrollingNode?.clientHeight || 0,
       frameClientHeight: frame?.clientHeight || 0,
@@ -865,6 +867,7 @@ function assertDetailHtmlLayout(layout, label) {
   assert(layout.body.left <= layout.page.left + 2, `Expected ${label} HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected ${label} HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, `Expected ${label} HTML body to start directly below the header, got ${layout.bodyTop} vs ${layout.headerBottom}`);
+  assert(Number(layout.feedScrollTop || 0) <= 2, `Expected ${label} shell scroll to reset to top, got ${layout.feedScrollTop}`);
   assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), `Expected ${label} iframe height to cover its document height, got ${layout.frameClientHeight} vs ${layout.frameScrollHeight}`);
 }
 
@@ -913,16 +916,30 @@ function taskRowControl(page, taskId) {
 }
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
+  await page.setViewportSize({ width: VIEWPORT.width, height: 360 });
   await openTile(page, "Notes", "notes", config.timeoutMs);
   const note = seed.writeEnabled
-    ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
+    ? { id: `${seed.runId}-recent-note`, title: "Proof Recent Note" }
     : (seed.notes || []).find(item => Boolean(item.id)) ;
   const rowSelector = `.light-note-row[data-note-id="${note?.id || ""}"]`;
   if (!note?.id || !note?.title) {
     await backHome(page, theme, config.timeoutMs);
+    await page.setViewportSize(VIEWPORT);
     return;
   }
   await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
+  if (seed.writeEnabled) {
+    const notesScrollTop = await page.evaluate(() => {
+      const feed = document.getElementById("feed");
+      if (!feed) {
+        return 0;
+      }
+      feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight);
+      return feed.scrollTop;
+    });
+    assert(notesScrollTop > 0, `Expected notes list to scroll before opening detail, got ${notesScrollTop}`);
+    await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
+  }
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(rowSelector).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);

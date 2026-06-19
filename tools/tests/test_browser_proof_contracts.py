@@ -78,9 +78,12 @@ def test_workspace_apps_browser_proof_checks_full_bleed_note_detail_layout() -> 
     assert "const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };" in source
     assert "headerBottom" in source
     assert "bodyTop" in source
+    assert "feedScrollTop" in source
     assert "pageScrollHeight" in source
     assert "frameClientHeight" in source
     assert "frameScrollHeight" in source
+    assert "Expected notes list to scroll before opening detail" in source
+    assert "shell scroll to reset to top" in source
     assert "Expected note HTML body to start directly below the header" in source
     assert "Expected note detail iframe height to cover its document height" in source
     assert "Expected note detail desktop HTML body to remain full width" in source
