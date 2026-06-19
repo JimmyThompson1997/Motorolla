@@ -1,98 +1,46 @@
 # Motorola Razr Pucky Workspace
 
-## Canonical APK Source
+This repo has three active ownership zones:
 
-`C:\Users\jimmy\Desktop\Motorolla\pucky-apk` is now the only Pucky APK
-source of truth. Do not build, install, or patch from
-`C:\Users\jimmy\Desktop\Android\pucky-apk`; that older folder is deprecated and
-may contain stale APK versions.
+- `pucky_vm/`: the Fly-hosted VM service and the hosted `/ui/pucky/latest/` web surface.
+- `pucky-apk/`: the Android APK runtime and phone-native capabilities.
+- `tools/`: developer entrypoints, deploy helpers, proofs, and tool tests.
 
-APK update flow:
+Live device traffic still flows through `wss://pucky.fly.dev/v1/devices/<device_id>/connect`, while the same VM also serves the hosted `/ui/pucky/latest/` surface.
 
-```text
-Motorolla GitHub repo
-  -> C:\Users\jimmy\Desktop\Motorolla\pucky-apk
-  -> tools\deploy-canonical-apk.ps1
-  -> plugged-in Android device
-```
+## Repo Map
 
-Current live canonical APK line:
+- `pucky_vm/` owns server behavior, hosted UI source, bundle generation, and VM-side tests.
+- `pucky-apk/` owns device behavior, Gradle builds, and `puckyctl`.
+- `tools/proofs/` owns real browser and device proof implementations.
+- `tools/tests/` owns tests for tooling and proof contracts.
+- `tools/` is the public command facade only. Real proof logic should not live at the top level.
+- `docs/README.md` is the agent-facing map for current ownership, commands, and safe-change rules.
 
-```text
-branch:      master
-package:     com.pucky.device.debug
-version:     22 / 0.2.21-cover-sleep-cleanup-debug
-deploy gate: tools\deploy-canonical-apk.ps1
-```
+## Canonical Dev Commands
 
-The deploy gate refuses the wrong worktree, wrong branch, dirty worktree,
-unpushed HEAD, or mismatched Gradle version. All agents should work from
-`master` for deployable APK changes; feature branches are for experiments only
-and must be merged before anything is installed on-device.
-
-This folder is the Motorola Razr working workspace. It contains:
-
-- `pucky-apk/`: editable copy of the current Pucky Android APK source.
-- `pucky_vm/`: the VM-hosted Pucky service that now serves the hosted `/ui/pucky/latest/` user surface and broker or command-bus endpoints.
-- `pucky-implementation-proof/`, `outer-screen-research/`, `adb_inspect/`: device evidence and research artifacts.
-
-## Local Dev Setup
-
-The repo now supports both a Homebrew-backed macOS bootstrap and a no-`sudo`
-user-local fallback:
+Use the Python task runner first:
 
 ```bash
-./tools/bootstrap_mac_dev.sh
-./tools/bootstrap_local_dev_env.sh
-python3 tools/dev_env_doctor.py --include-emulator
+python -m tools.dev test-fast
+python -m tools.dev test-full
+python -m tools.dev proof-local-web
+python -m tools.dev proof-live-web
+python -m tools.dev deploy-vm
+python -m tools.dev deploy-apk
 ```
 
-If you use the local fallback, source `.tmp/pucky-local-dev-env.sh` before
-running `./gradlew`, emulator commands, or VM scripts in a fresh shell.
+Generated inputs:
 
-`C:\Users\jimmy\Desktop\Motorolla` was not a git repository when this workspace was assembled. The source copy came from:
+- `pucky_vm/ui_src/fixtures/links_catalog.json` is refreshed with `python -m tools.dev refresh-links-catalog`.
+- `pucky_vm/ui_src/pucky-links-catalog.js` is bundle-generated. Do not hand-edit it.
 
-```text
-C:\Users\jimmy\Desktop\Android\pucky-apk
-C:\Users\jimmy\Desktop\Android\pucky-bridge
-```
+## Safe Change Rules
 
-## Current Device Control Direction
+- VM or hosted UI changes: run `python -m tools.dev test-fast`, then `python -m tools.dev test-full`.
+- Behavior-adjacent VM or hosted UI changes: also run `python -m tools.dev proof-local-web`.
+- Live behavior changes: push, deploy with `python -m tools.dev deploy-vm`, then verify the served manifest and real browser session on [pucky.fly.dev](https://pucky.fly.dev).
+- APK deploys stay gated through `tools/deploy-canonical-apk.ps1` or `python -m tools.dev deploy-apk`.
 
-The live shape is simpler now:
-
-```text
-GitHub master
-  -> canonical Motorolla-master-ui workspace
-  -> deploy canonical APK over local ADB or UBC
-  -> phone connects outbound to wss://pucky.fly.dev/v1/devices/<device_id>/connect
-  -> pucky.fly.dev serves both broker commands and hosted `/ui/pucky/latest/` UI traffic
-```
-
-Important implications:
-
-- There is no supported remote ADB-over-SSH tunnel lane in this repo anymore.
-- Agent or operator device testing happens through direct local ADB, UBC, or the emulator harness.
-- The APK still owns the phone-side broker connection, hosted UI surface bootstrapping, player controls, reply cards, and device-local capabilities.
-- The VM-side Pucky service now hosts both `/ui/pucky/latest/*` and the broker or command-bus routes.
-
-## Nontechnical Install Model
-
-For app-level pairing without USB, the clean flow is a VM-specific download link:
-
-```text
-https://<vm>/download/pucky.apk?pair=<short-lived-token>
-```
-
-The token is generated by the VM, expires quickly, and is consumed once. If the user installs from that link, the APK can pair to the VM automatically after install/open. QR codes or manual pairing codes are fallback flows for generic APK downloads, not the primary user path.
-
-Direct device access still matters for full hardware control:
-
-- USB ADB or UBC for development and acceptance testing.
-- Emulator harness for parallel agent work that does not require the physical Razr.
-- Root/system/device-owner paths are still out of scope.
-
-See `pucky_vm/README.md` for the current VM service and hosted UI flow.
-See `docs/fresh-user-install-end-state.md` for the current install and pairing shape.
-See `docs/vm-installation-package-requirements.md` for the current VM checklist.
-See `docs/notes/adb-cover-display-input.md` for the ADB cover-display input note.
+See `pucky_vm/README.md` for VM/runtime specifics.
+See `docs/README.md` for the full source-of-truth map.

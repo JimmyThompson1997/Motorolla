@@ -86,6 +86,12 @@
   const WORKSPACE_KIND_COLLECTIONS = routeCatalog.WORKSPACE_KIND_COLLECTIONS && typeof routeCatalog.WORKSPACE_KIND_COLLECTIONS === "object"
     ? routeCatalog.WORKSPACE_KIND_COLLECTIONS
     : {};
+  const browserStateSurface = window.PUCKY_UI_BROWSER_STATE && typeof window.PUCKY_UI_BROWSER_STATE === "object"
+    ? window.PUCKY_UI_BROWSER_STATE
+    : {};
+  const browserUnlockSurface = window.PUCKY_UI_BROWSER_UNLOCK && typeof window.PUCKY_UI_BROWSER_UNLOCK === "object"
+    ? window.PUCKY_UI_BROWSER_UNLOCK
+    : {};
 
   const DEFAULT_HOME_MENU_ICONS = Array.isArray(routeCatalog.DEFAULT_HOME_MENU_ICONS)
     ? routeCatalog.DEFAULT_HOME_MENU_ICONS
@@ -942,11 +948,13 @@
   }
 
   function isBrowserPreviewSurface() {
-    return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    return browserUnlockSurface.isBrowserPreviewSurface ? browserUnlockSurface.isBrowserPreviewSurface() : !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
   }
 
   function workspacePreviewLockDetail(collection) {
-    return `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;
+    return browserUnlockSurface.workspacePreviewLockDetail
+      ? browserUnlockSurface.workspacePreviewLockDetail(collection, { collectionLabel: workspaceCollectionLabel })
+      : `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;
   }
 
   function workspacePreviewNeedsApiToken() {
@@ -965,20 +973,15 @@
   }
 
   function storeBrowserApiToken(token) {
-    const clean = String(token || "").trim();
-    try {
-      localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, clean);
-    } catch (_) {
-      // Browser preview auth is best-effort persistence only.
-    }
+    return browserUnlockSurface.storeBrowserApiToken
+      ? browserUnlockSurface.storeBrowserApiToken(token, { tokenStateKey: BROWSER_API_TOKEN_STATE_KEY })
+      : undefined;
   }
 
   function clearStoredBrowserApiToken() {
-    try {
-      localStorage.removeItem(BROWSER_API_TOKEN_STATE_KEY);
-    } catch (_) {
-      // Browser preview auth is best-effort persistence only.
-    }
+    return browserUnlockSurface.clearStoredBrowserApiToken
+      ? browserUnlockSurface.clearStoredBrowserApiToken({ tokenStateKey: BROWSER_API_TOKEN_STATE_KEY })
+      : undefined;
   }
 
   function resetBrowserPreviewWorkspaceBucket(bucket) {
@@ -8727,104 +8730,19 @@
   }
 
   function openBrowserUnlockSheet(options = {}) {
-    closeSettingsSelector();
-    dismissAdvancedSettingsSheet();
-    const sheet = el("div", "settings-selector-sheet browser-unlock-sheet");
-    sheet.addEventListener("click", event => event.stopPropagation());
-    sheet.append(el("h1", "settings-selector-title", "Unlock web preview"));
-    sheet.append(el("p", "browser-unlock-copy", "Save a browser token in this browser so the VM-served dashboard can load your live data."));
-    const status = el(
-      "p",
-      "browser-unlock-status",
-      state.links.apiToken ? "Saved token active in this browser." : "No saved browser token yet."
-    );
-    const input = document.createElement("input");
-    input.type = "password";
-    input.className = "browser-unlock-input";
-    input.placeholder = "Paste PUCKY_WEB_UI_TOKEN";
-    input.autocomplete = "off";
-    input.autocapitalize = "off";
-    input.spellcheck = false;
-    const error = el("p", "browser-unlock-error", "");
-    const note = el("p", "browser-unlock-note", "Pucky stores this token only in this browser's local storage.");
-    const actions = el("div", "browser-unlock-actions");
-    const saveButton = el(
-      "button",
-      "settings-action-button browser-unlock-button-primary",
-      state.links.apiToken ? "Update token" : "Save token"
-    );
-    const clearButton = el("button", "settings-action-button", "Clear saved token");
-    const cancelButton = el("button", "settings-action-button", "Cancel");
-    saveButton.type = "button";
-    clearButton.type = "button";
-    cancelButton.type = "button";
-    clearButton.hidden = !state.links.apiToken;
-
-    const setBusy = (busy, message = "") => {
-      saveButton.disabled = busy;
-      clearButton.disabled = busy;
-      cancelButton.disabled = busy;
-      input.disabled = busy;
-      if (message) {
-        status.textContent = message;
-      } else {
-        status.textContent = state.links.apiToken ? "Saved token active in this browser." : "No saved browser token yet.";
-      }
-    };
-
-    const save = async () => {
-      const candidate = String(input.value || "").trim();
-      if (!candidate) {
-        error.textContent = "Paste PUCKY_WEB_UI_TOKEN.";
-        input.focus();
-        return;
-      }
-      error.textContent = "";
-      setBusy(true, "Checking browser token...");
-      try {
-        await saveBrowserPreviewToken(candidate);
-        closeSettingsSelector();
-      } catch (saveError) {
-        error.textContent = String(saveError && saveError.message || saveError || "Could not save the browser token.");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    const clear = async () => {
-      error.textContent = "";
-      setBusy(true, "Clearing saved browser token...");
-      try {
-        await clearBrowserPreviewToken();
-        closeSettingsSelector();
-      } catch (clearError) {
-        error.textContent = String(clearError && clearError.message || clearError || "Could not clear the browser token.");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    input.addEventListener("keydown", event => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        void save();
-      }
-    });
-    saveButton.addEventListener("click", () => {
-      void save();
-    });
-    clearButton.addEventListener("click", () => {
-      void clear();
-    });
-    cancelButton.addEventListener("click", event => {
-      event.preventDefault();
-      closeSettingsSelector();
-    });
-
-    actions.append(saveButton, clearButton, cancelButton);
-    sheet.append(status, input, error, note, actions);
-    openOverlay("settingsSelectorOverlay", sheet, closeSettingsSelector);
-    window.setTimeout(() => input.focus(), 0);
+    return browserUnlockSurface.openBrowserUnlockSheet
+      ? browserUnlockSurface.openBrowserUnlockSheet({
+        ...options,
+        state,
+        document,
+        el,
+        closeSettingsSelector,
+        dismissAdvancedSettingsSheet,
+        openOverlay,
+        saveBrowserPreviewToken,
+        clearBrowserPreviewToken
+      })
+      : null;
   }
 
   function showAdvancedSettingsSheet() {
@@ -13963,68 +13881,46 @@
   }
 
   function resolveInitialTheme() {
-    const params = new URLSearchParams(window.location.search || "");
-    const queryTheme = normalizeTheme(params.get("theme"));
-    if (queryTheme) {
-      persistTheme(queryTheme);
-      return queryTheme;
-    }
-    try {
-      return normalizeTheme(localStorage.getItem(THEME_STATE_KEY)) || "dark";
-    } catch (_) {
-      return "dark";
-    }
+    return browserStateSurface.resolveInitialTheme
+      ? browserStateSurface.resolveInitialTheme({
+        themeStateKey: THEME_STATE_KEY,
+        normalizeTheme,
+        persistTheme
+      })
+      : "dark";
   }
 
   function resolveBrowserApiToken() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryToken = String(params.get("api_token") || "").trim();
-      if (queryToken) {
-        localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, queryToken);
-        return queryToken;
-      }
-      return String(localStorage.getItem(BROWSER_API_TOKEN_STATE_KEY) || "").trim();
-    } catch (_) {
-      return "";
-    }
+    return browserStateSurface.resolveBrowserApiToken
+      ? browserStateSurface.resolveBrowserApiToken({ tokenStateKey: BROWSER_API_TOKEN_STATE_KEY })
+      : "";
   }
 
   function resolveBrowserDeviceId() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryDeviceId = String(params.get("device_id") || "").trim();
-      if (queryDeviceId) {
-        localStorage.setItem(BROWSER_DEVICE_ID_STATE_KEY, queryDeviceId);
-        return queryDeviceId;
-      }
-      return String(localStorage.getItem(BROWSER_DEVICE_ID_STATE_KEY) || "").trim();
-    } catch (_) {
-      return "";
-    }
+    return browserStateSurface.resolveBrowserDeviceId
+      ? browserStateSurface.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_ID_STATE_KEY })
+      : "";
   }
 
   function normalizeTheme(value) {
-    const theme = String(value || "").trim().toLowerCase();
-    return theme === "light" || theme === "dark" ? theme : "";
+    return browserStateSurface.normalizeTheme
+      ? browserStateSurface.normalizeTheme(value)
+      : "";
   }
 
   function persistTheme(theme) {
-    try {
-      localStorage.setItem(THEME_STATE_KEY, normalizeTheme(theme) || "dark");
-    } catch (_) {
-      // Theme persistence is a visual preference and should never block boot.
-    }
+    return browserStateSurface.persistTheme
+      ? browserStateSurface.persistTheme(theme, {
+        themeStateKey: THEME_STATE_KEY,
+        normalizeTheme
+      })
+      : undefined;
   }
 
   function syncThemeQueryParam(theme) {
-    try {
-      const url = new URL(window.location.href || "");
-      url.searchParams.set("theme", normalizeTheme(theme) || "dark");
-      window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
-    } catch (_) {
-      // Query param sync should help reload parity without blocking the page.
-    }
+    return browserStateSurface.syncThemeQueryParam
+      ? browserStateSurface.syncThemeQueryParam(theme, { normalizeTheme })
+      : undefined;
   }
 
   function effectiveRoute() {
@@ -14101,25 +13997,18 @@
   }
 
   function loadNavState() {
-    try {
-      if (shouldResetNavState()) {
-        localStorage.removeItem(NAV_STATE_KEY);
-        return {};
-      }
-      const parsed = JSON.parse(localStorage.getItem(NAV_STATE_KEY) || "{}");
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (_) {
-      return {};
-    }
+    return browserStateSurface.loadNavState
+      ? browserStateSurface.loadNavState({
+        navStateKey: NAV_STATE_KEY,
+        shouldResetNavState
+      })
+      : {};
   }
 
   function shouldResetNavState() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      return params.get("reset_nav") === "1";
-    } catch (_) {
-      return false;
-    }
+    return browserStateSurface.shouldResetNavState
+      ? browserStateSurface.shouldResetNavState()
+      : false;
   }
 
   function initialRoute(route, theme = "dark") {

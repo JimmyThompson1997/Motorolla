@@ -12,15 +12,31 @@ def read(name: str) -> str:
     return (UI / name).read_text(encoding="utf-8")
 
 
+def read_all_js() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(UI.glob("*.js")))
+
+
 def css_block(styles: str, selector: str) -> str:
     match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>.*?)\n\}}", styles, re.S)
     assert match, f"Missing CSS selector {selector}"
     return match.group("body")
 
 
-def function_block(source: str, name: str) -> str:
-    match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
-    assert match, f"Missing function {name}"
+def function_block(source_or_name: str, name: str | None = None) -> str:
+    target = source_or_name if name is None else name
+    pattern = rf"function {re.escape(target)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}"
+    if name is None:
+        ordered_sources = [
+            *[path for path in sorted(UI.glob("*.js")) if path.name != "app.js"],
+            UI / "app.js",
+        ]
+        for path in ordered_sources:
+            match = re.search(pattern, path.read_text(encoding="utf-8"), re.S)
+            if match:
+                return match.group("body")
+        raise AssertionError(f"Missing function {target}")
+    match = re.search(pattern, source_or_name, re.S)
+    assert match, f"Missing function {target}"
     return match.group("body")
 
 
@@ -52,8 +68,12 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'id="detail"' in html
     assert '<script src="./pucky-icons.js"></script>' in html
     assert '<script src="./pucky-routes.js"></script>' in html
+    assert '<script src="./pucky-browser-state.js"></script>' in html
+    assert '<script src="./pucky-browser-unlock.js"></script>' in html
     assert html.index('<script src="./pucky-icons.js"></script>') < html.index('<script src="./app.js"></script>')
     assert html.index('<script src="./pucky-routes.js"></script>') < html.index('<script src="./app.js"></script>')
+    assert html.index('<script src="./pucky-browser-state.js"></script>') < html.index('<script src="./app.js"></script>')
+    assert html.index('<script src="./pucky-browser-unlock.js"></script>') < html.index('<script src="./app.js"></script>')
     assert 'id="pageTabs"' not in html
     assert 'id="routeTray"' not in html
 
@@ -320,18 +340,19 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
 
 def test_workspace_preview_without_token_uses_locked_empty_state_instead_of_raw_unauthorized() -> None:
     app = read("app.js")
+    all_js = read_all_js()
     routes = read("pucky-routes.js")
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
-    preview_lock_detail = function_block(app, "workspacePreviewLockDetail")
+    preview_lock_detail = function_block("workspacePreviewLockDetail")
     light_empty_state = function_block(app, "lightEmptyState")
 
     assert 'preview_locked: false' in app
     assert 'preview_detail: ""' in app
-    assert "function isBrowserPreviewSurface()" in app
+    assert "function isBrowserPreviewSurface()" in all_js
     assert "function workspacePreviewNeedsApiToken()" in app
-    assert "return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === \"function\");" in function_block(app, "isBrowserPreviewSurface")
+    assert "return !Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === \"function\");" in function_block("isBrowserPreviewSurface")
     assert "if (isBrowserPreviewSurface() && !state.links.apiToken) {" in app
     assert 'notes: "Notes"' in routes
     assert '"calendar-events": "Calendar"' in routes
@@ -341,7 +362,8 @@ def test_workspace_preview_without_token_uses_locked_empty_state_instead_of_raw_
     assert 'bucket.loaded = true;' in load_workspace
     assert 'bucket.preview_locked = true;' in load_workspace
     assert 'bucket.preview_detail = workspacePreviewLockDetail(collection);' in load_workspace
-    assert 'return `Web preview is locked. Use Unlock web preview to load live ${workspaceCollectionLabel(collection)} from the VM in this browser.`;' in preview_lock_detail
+    assert "const labelForCollection = typeof options.collectionLabel === \"function\"" in preview_lock_detail
+    assert 'return `Web preview is locked. Use Unlock web preview to load live ${labelForCollection(collection)} from the VM in this browser.`;' in preview_lock_detail
     assert 'if (options.actionLabel && typeof options.onAction === "function") {' in light_empty_state
     assert 'const button = el("button", "settings-action-button light-empty-state-action", options.actionLabel);' in light_empty_state
     assert 'if (bucket.preview_locked) {' in light_workspace_status
@@ -358,9 +380,9 @@ def test_browser_unlock_flow_is_managed_from_settings_and_local_storage() -> Non
     app = read("app.js")
     settings_page = function_block(app, "settingsPageView")
     settings_card = function_block(app, "webPreviewSettingsCard")
-    open_unlock_sheet = function_block(app, "openBrowserUnlockSheet")
-    store_token = function_block(app, "storeBrowserApiToken")
-    clear_token = function_block(app, "clearStoredBrowserApiToken")
+    open_unlock_sheet = function_block("openBrowserUnlockSheet")
+    store_token = function_block("storeBrowserApiToken")
+    clear_token = function_block("clearStoredBrowserApiToken")
     save_token = function_block(app, "saveBrowserPreviewToken")
     clear_preview_token = function_block(app, "clearBrowserPreviewToken")
     reset_preview_state = function_block(app, "resetBrowserPreviewAuthorizedState")
@@ -379,8 +401,10 @@ def test_browser_unlock_flow_is_managed_from_settings_and_local_storage() -> Non
     assert '"settings-action-button browser-unlock-button-primary"' in open_unlock_sheet
     assert 'state.links.apiToken ? "Update token" : "Save token"' in open_unlock_sheet
     assert 'const clearButton = el("button", "settings-action-button", "Clear saved token");' in open_unlock_sheet
-    assert 'localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, clean);' in store_token
-    assert 'localStorage.removeItem(BROWSER_API_TOKEN_STATE_KEY);' in clear_token
+    assert 'const tokenStateKey = String(options.tokenStateKey || "pucky.cover.browser_api_token.v1");' in store_token
+    assert "localStorage.setItem(tokenStateKey, clean);" in store_token
+    assert 'const tokenStateKey = String(options.tokenStateKey || "pucky.cover.browser_api_token.v1");' in clear_token
+    assert "localStorage.removeItem(tokenStateKey);" in clear_token
     assert 'await validateBrowserPreviewToken(clean);' in save_token
     assert "storeBrowserApiToken(clean);" in save_token
     assert 'await refreshBrowserPreviewAfterAuthChange({ reason: "browser_unlock_save" });' in save_token
