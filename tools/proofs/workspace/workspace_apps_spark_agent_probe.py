@@ -121,7 +121,7 @@ def main() -> int:
         ("calendar-events", f"{run_id}-calendar", "Create a calendar event for tomorrow with a time and brief."),
         ("feed-items", f"{run_id}-feed", "Create a feed item describing a project decision."),
         ("projects", f"{run_id}-project", "Create a project with two named chat threads in metadata.threads."),
-        ("contacts", f"{run_id}-contact", "Create a contact with email, phone, endpoints, activity, and profile HTML."),
+        ("contacts", f"{run_id}-contact", "Create a contact with email, phone, activity, and profile HTML."),
     ]
     results: list[dict[str, Any]] = []
     for collection, record_id, description in scenarios:

@@ -860,21 +860,6 @@ class PuckyVoiceService:
                 refs.append(recipient)
         return refs
 
-    def _contact_endpoint_value(self, contact: dict[str, object], labels: tuple[str, ...]) -> str:
-        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
-        endpoints = list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else []
-        for endpoint in endpoints:
-            if not isinstance(endpoint, dict):
-                continue
-            label = str(endpoint.get("label") or endpoint.get("type") or "").strip().lower()
-            if not label:
-                continue
-            if any(term in label for term in labels):
-                value = str(endpoint.get("value") or endpoint.get("address") or endpoint.get("number") or "").strip()
-                if value:
-                    return value
-        return ""
-
     def _self_contact_record(self) -> dict[str, object]:
         return self.workspace.ensure_self_contact()
 
@@ -887,19 +872,6 @@ class PuckyVoiceService:
         metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
         current_email = str(metadata.get("email") or "").strip()
         current_phone = str(metadata.get("phone") or "").strip()
-        endpoints = [item for item in list(metadata.get("endpoints") or []) if isinstance(item, dict)]
-        preserved: list[dict[str, object]] = []
-        stripped_email_or_phone = False
-        for endpoint in endpoints:
-            label = str(endpoint.get("label") or endpoint.get("type") or "").strip().lower()
-            if label in {"email", "gmail", "mail", "phone", "sms", "text", "mobile", "call"}:
-                stripped_email_or_phone = True
-                continue
-            preserved.append(dict(endpoint))
-        if next_email:
-            preserved.append({"label": "Email", "value": next_email})
-        if next_phone:
-            preserved.append({"label": "Phone", "value": next_phone})
         next_metadata = dict(metadata)
         changed = False
         if next_email and next_email != current_email:
@@ -908,8 +880,8 @@ class PuckyVoiceService:
         if next_phone and next_phone != current_phone:
             next_metadata["phone"] = next_phone
             changed = True
-        if stripped_email_or_phone or changed:
-            next_metadata["endpoints"] = preserved
+        if "endpoints" in next_metadata:
+            next_metadata.pop("endpoints", None)
             changed = True
         if changed:
             self.workspace.patch_record("contacts", SELF_CONTACT_ID, {"metadata": next_metadata})
@@ -927,7 +899,7 @@ class PuckyVoiceService:
         if str(recipient.get("kind") or "").strip().lower() == "self":
             me = self._self_contact_record()
             metadata = me.get("metadata") if isinstance(me.get("metadata"), dict) else {}
-            direct = str(metadata.get("email") or "").strip() or self._contact_endpoint_value(me, ("email", "gmail", "mail"))
+            direct = str(metadata.get("email") or "").strip()
             if direct:
                 return direct
             fallback = str(self.config.self_email or "").strip() or self._resolve_connected_gmail_self_email(destination)
@@ -938,8 +910,7 @@ class PuckyVoiceService:
         if not contact:
             return ""
         metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
-        direct = str(metadata.get("email") or "").strip()
-        return direct or self._contact_endpoint_value(contact, ("email", "gmail", "mail"))
+        return str(metadata.get("email") or "").strip()
 
     def _resolve_reminder_phone_target(self, recipient: dict[str, object], destination: dict[str, object]) -> str:
         explicit = str(destination.get("address") or "").strip()
@@ -948,7 +919,7 @@ class PuckyVoiceService:
         if str(recipient.get("kind") or "").strip().lower() == "self":
             me = self._self_contact_record()
             metadata = me.get("metadata") if isinstance(me.get("metadata"), dict) else {}
-            direct = str(metadata.get("phone") or "").strip() or self._contact_endpoint_value(me, ("phone", "sms", "text", "mobile", "call"))
+            direct = str(metadata.get("phone") or "").strip()
             if direct:
                 return direct
             fallback = str(self.config.self_phone_number or "").strip()
@@ -959,8 +930,7 @@ class PuckyVoiceService:
         if not contact:
             return ""
         metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
-        direct = str(metadata.get("phone") or "").strip()
-        return direct or self._contact_endpoint_value(contact, ("phone", "sms", "text", "mobile", "call"))
+        return str(metadata.get("phone") or "").strip()
 
     def _resolve_connected_gmail_self_email(self, destination: dict[str, object]) -> str:
         try:

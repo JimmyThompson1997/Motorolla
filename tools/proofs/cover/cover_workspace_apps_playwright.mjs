@@ -466,7 +466,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         avatar: "P1",
         email: "proof.one@example.com",
         phone: "+1 (555) 010-1000",
-        endpoints: [{ label: "Email", value: "proof.one@example.com" }, { label: "Signal", value: "+1 (555) 010-1000" }],
         activity: ["Created by proof", "Linked to Alpha"]
       }
     });
@@ -479,7 +478,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         avatar: "P2",
         email: "proof.two@example.com",
         phone: "+1 (555) 010-2000",
-        endpoints: [{ label: "Email", value: "proof.two@example.com" }],
         activity: ["Created by proof", "Linked to Beta"]
       }
     });
@@ -1414,6 +1412,24 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   await backHome(page, theme, config.timeoutMs);
 }
 
+async function assertNoContactEndpoints(page, config, contactId, label) {
+  const detailState = await page.evaluate(() => {
+    const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    return {
+      sectionTitles
+    };
+  });
+  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
+  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
+    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
+    const metadata = record?.metadata || {};
+    assert(!Object.prototype.hasOwnProperty.call(metadata, "endpoints"), `${label} API metadata should not expose endpoints`);
+  }
+  return detailState;
+}
+
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
@@ -1424,6 +1440,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
+  await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
   assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
@@ -1440,10 +1457,12 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
+    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
   } else {
     const firstContact = contacts[0];
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
     await expectFrameHeading(page, firstContact.title, config.timeoutMs);
+    await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
   }
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);
