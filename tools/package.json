@@ -9,6 +9,8 @@
     "test:cover-canonical-native-light-theme": "node ./proofs/cover/cover_canonical_native_light_theme_playwright.mjs",
     "test:cover-notes-detail-flash": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs",
     "test:cover-live-user-session": "node ./proofs/cover/cover_live_user_session_playwright.mjs",
+    "test:cover-inbox-tile-audio-truth": "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
+    "test:cover-light-native-ports": "node ./proofs/cover/cover_light_native_ports_playwright.mjs",
     "test:cover-pause-scrubber": "node ./proofs/cover/cover_pause_scrubber_playwright.mjs",
     "test:session-model-defaults": "node ./proofs/cover/session_model_defaults_playwright.mjs",
     "test:cover-links-scroll-probe": "node ./proofs/cover/cover_links_scroll_probe.mjs",

@@ -1045,7 +1045,27 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(fixture["schema"], "pucky.reply_cards.v1")
         self.assertGreaterEqual(fixture["count"], 4)
         self.assertNotIn("artifact_base_path", fixture)
-        self.assertIn("audio_path", fixture["cards"][0])
+        artifact_cards = [
+            card for card in fixture.get("cards", [])
+            if str(card.get("audio_path", "")).startswith("fixtures/artifacts/")
+            and str(card.get("html_path", "")).startswith("fixtures/artifacts/")
+        ]
+        self.assertGreaterEqual(len(artifact_cards), 1)
+        sample = artifact_cards[0]
+        self.assertIn("audio_path", sample)
+        self.assertIn("html_path", sample)
+        self.assertIn("audio_url", sample)
+        self.assertIn("html_url", sample)
+        self.assertTrue(str(sample["audio_path"]).startswith("fixtures/artifacts/"))
+        self.assertTrue(str(sample["html_path"]).startswith("fixtures/artifacts/"))
+        self.assertTrue(str(sample["audio_url"]).startswith("fixtures/artifacts/"))
+        self.assertTrue(str(sample["html_url"]).startswith("fixtures/artifacts/"))
+        self.assertEqual(sample["audio_url"], sample["audio_path"])
+        self.assertEqual(sample["html_url"], sample["html_path"])
+        self.assertNotIn("/mock/", str(sample["audio_path"]))
+        self.assertNotIn("/mock/", str(sample["audio_url"]))
+        self.assertNotIn("/mock/", str(sample["html_path"]))
+        self.assertNotIn("/mock/", str(sample["html_url"]))
 
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/pucky-config.js", timeout=10) as response:
             config_script = response.read().decode("utf-8")
@@ -1407,6 +1427,9 @@ class ServerTests(unittest.TestCase):
 
         full = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertIn("audio_base64", full["items"][0])
+        self.assertIn("html_base64", full["items"][0])
+        self.assertEqual("text/html", full["items"][0]["html_mime_type"])
+        full_html_bytes = base64.b64decode(full["items"][0]["html_base64"])
 
         compact = self.get_json("/api/feed?limit=10&compact=1", headers={"Authorization": "Bearer secret"})
         self.assertNotIn("audio_base64", compact["items"][0])
@@ -1416,6 +1439,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(compact["items"][0]["audio_bytes"], len(b"RIFFaudio"))
         self.assertEqual(compact["items"][0]["audio_sha256"], hashlib.sha256(b"RIFFaudio").hexdigest())
         self.assertEqual(compact["items"][0]["audio_media_id"], f"feed:{turn['card_id']}:audio")
+        self.assertEqual(compact["items"][0]["html_mime_type"], "text/html")
+        self.assertEqual(compact["items"][0]["html_artifact"], f"{turn['card_id']}:html")
+        self.assertEqual(compact["items"][0]["html_bytes"], len(full_html_bytes))
+        self.assertEqual(compact["items"][0]["html_sha256"], hashlib.sha256(full_html_bytes).hexdigest())
+        self.assertTrue(compact["items"][0]["html_url"].startswith(self.base_url + "/api/artifacts/"))
+        self.assertNotIn(str(self.tmp.name), compact["items"][0]["html_url"])
         self.assertTrue(compact["items"][0]["audio_url"].startswith(self.base_url + "/api/artifacts/"))
         self.assertNotIn(str(self.tmp.name), compact["items"][0]["audio_url"])
 

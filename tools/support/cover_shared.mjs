@@ -147,9 +147,14 @@ function runtimeCardFromDeploy(rawCard) {
   delete card.public_audio_playlist_path;
 
   if (audioArtifact) {
-    card.audio_path = artifactMockPath(audioArtifact);
+    const audioPath = artifactRuntimePath(audioArtifact);
+    card.audio_artifact = audioArtifact;
+    card.audio_url = audioPath;
+    card.audio_path = audioPath;
   } else if (impliedAudioArtifact) {
-    card.audio_path = artifactMockPath(impliedAudioArtifact);
+    const audioPath = artifactRuntimePath(impliedAudioArtifact);
+    card.audio_url = audioPath;
+    card.audio_path = audioPath;
   } else if (deviceAudioPath) {
     card.audio_path = deviceAudioPath;
   } else if (publicAudioPath) {
@@ -159,7 +164,10 @@ function runtimeCardFromDeploy(rawCard) {
     card.audio_playlist_path = publicAudioPlaylistPath;
   }
   if (htmlArtifact) {
-    card.html_path = artifactMockPath(htmlArtifact);
+    const htmlPath = artifactRuntimePath(htmlArtifact);
+    card.html_artifact = htmlArtifact;
+    card.html_url = htmlPath;
+    card.html_path = htmlPath;
   }
   if (Array.isArray(card.attachments)) {
     card.attachments = card.attachments.map(runtimeAttachmentFromDeploy);
@@ -186,13 +194,13 @@ function runtimeAttachmentFromDeploy(attachment) {
   const item = JSON.parse(JSON.stringify(attachment || {}));
   const artifact = String(item.artifact || "").trim();
   if (artifact && !String(item.path || "").trim()) {
-    item.path = artifactMockPath(artifact);
+    item.path = artifactRuntimePath(artifact);
   }
   return item;
 }
 
-function artifactMockPath(artifactName) {
-  return `/mock/${String(artifactName || "").replace(/^\/+/, "")}`;
+function artifactRuntimePath(artifactName) {
+  return `fixtures/artifacts/${String(artifactName || "").replace(/^\/+/, "")}`;
 }
 
 function inferredAudioArtifactName({ card, htmlArtifact, deviceAudioPath, publicAudioPath }) {

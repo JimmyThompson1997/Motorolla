@@ -779,12 +779,16 @@ class FeedStore:
             audio_mime_type = str(audio["mime_type"])
             audio_base64 = str(audio["content_base64"])
             if compact:
-                audio_meta = self._compact_audio_metadata(audio, base_url=base_url)
+                audio_meta = self._compact_artifact_metadata(audio, base_url=base_url, media_prefix="audio")
                 if audio_meta:
                     item.update(audio_meta)
             else:
                 item["audio_mime_type"] = audio_mime_type
                 item["audio_base64"] = audio_base64
+        if compact and html is not None:
+            html_meta = self._compact_artifact_metadata(html, base_url=base_url, media_prefix="html")
+            if html_meta:
+                item.update(html_meta)
         if not compact and html is not None:
             item["html_mime_type"] = str(html["mime_type"])
             item["html_base64"] = str(html["content_base64"])
@@ -794,23 +798,41 @@ class FeedStore:
                 card["html_base64"] = str(html["content_base64"])
         return item
 
-    def _compact_audio_metadata(self, audio: sqlite3.Row, *, base_url: str = "") -> dict[str, object]:
-        audio_base64 = str(audio["content_base64"] or "")
-        if not audio_base64:
+    def _compact_artifact_metadata(
+        self,
+        artifact: sqlite3.Row,
+        *,
+        base_url: str = "",
+        media_prefix: str,
+    ) -> dict[str, object]:
+        artifact_base64 = str(artifact["content_base64"] or "")
+        if not artifact_base64:
             return {}
         try:
-            body = base64.b64decode(audio_base64, validate=True)
+            body = base64.b64decode(artifact_base64, validate=True)
         except Exception:
             return {}
         if not body:
             return {}
-        artifact_id = str(audio["artifact_id"])
+        artifact_id = str(artifact["artifact_id"])
+        if not media_prefix:
+            return {}
         root = str(base_url or "").rstrip("/")
         path = f"/api/artifacts/{quote(artifact_id, safe='')}"
-        return {
-            "audio_url": f"{root}{path}" if root else path,
-            "audio_media_id": f"feed:{artifact_id}",
-            "audio_mime_type": str(audio["mime_type"] or "application/octet-stream"),
-            "audio_bytes": len(body),
-            "audio_sha256": hashlib.sha256(body).hexdigest(),
+        artifact_url = f"{root}{path}" if root else path
+        url_field = f"{media_prefix}_url"
+        artifact_field = f"{media_prefix}_artifact"
+        mime_field = f"{media_prefix}_mime_type"
+        bytes_field = f"{media_prefix}_bytes"
+        sha_field = f"{media_prefix}_sha256"
+        media_id_field = f"{media_prefix}_media_id"
+        result = {
+            url_field: artifact_url,
+            artifact_field: artifact_id,
+            mime_field: str(artifact["mime_type"] or "application/octet-stream"),
+            bytes_field: len(body),
+            sha_field: hashlib.sha256(body).hexdigest(),
         }
+        if media_prefix == "audio":
+            result[media_id_field] = f"feed:{artifact_id}"
+        return result

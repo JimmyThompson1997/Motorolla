@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pucky_vm.tools import deploy_cover_fixture
+from pucky_vm.cover_fixtures import runtime_fixture_from_deploy
 from pucky_vm.ui_bundle import build_ui_bundle
 import tools.refresh_pucky_html_official as official_html
 
@@ -63,6 +64,51 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
         assert path.stat().st_size > 100
     assert (ARTIFACTS / "morning.wav").read_bytes().startswith(b"RIFF")
     assert deploy_cover_fixture.artifact_names(spec) == sorted(artifacts)
+
+
+def test_runtime_fixture_from_deploy_uses_bundled_artifact_urls() -> None:
+    spec = json.loads((FIXTURES / "reply_cards_deploy.json").read_text(encoding="utf-8"))
+    runtime = runtime_fixture_from_deploy(spec)
+    fixture_cards = runtime["cards"]
+    assert runtime["schema"] == "pucky.reply_cards.v1"
+    assert isinstance(fixture_cards, list)
+    assert fixture_cards
+
+    artifact_cards = [card for card in fixture_cards if card.get("audio_artifact") or card.get("html_artifact")]
+    assert artifact_cards
+
+    for card in artifact_cards:
+        if card.get("audio_artifact"):
+            audio_path = str(card.get("audio_path") or "")
+            audio_url = str(card.get("audio_url") or "")
+            assert audio_path.startswith("fixtures/artifacts/")
+            assert audio_url == audio_path
+            assert audio_path.endswith(str(card["audio_artifact"]))
+            assert "/mock/" not in audio_path
+            assert "/mock/" not in audio_url
+        if card.get("html_artifact"):
+            html_path = str(card.get("html_path") or "")
+            html_url = str(card.get("html_url") or "")
+            assert html_path.startswith("fixtures/artifacts/")
+            assert html_url == html_path
+            assert html_path.endswith(str(card["html_artifact"]))
+            assert "/mock/" not in html_path
+            assert "/mock/" not in html_url
+
+        messages = card.get("transcript_messages") or []
+        for message in messages:
+            for image in message.get("images", []):
+                artifact = str(image.get("artifact") or "")
+                path = str(image.get("path") or "")
+                if artifact:
+                    assert path.startswith("fixtures/artifacts/")
+                    assert path.endswith(artifact)
+            for attachment in message.get("attachments", []):
+                artifact = str(attachment.get("artifact") or "")
+                path = str(attachment.get("path") or "")
+                if artifact:
+                    assert path.startswith("fixtures/artifacts/")
+                    assert path.endswith(artifact)
 
 
 def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:

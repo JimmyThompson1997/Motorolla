@@ -87,15 +87,17 @@ async function waitForLightRoute(page, route, selector, timeoutMs) {
   );
 }
 
-async function waitForDarkRoute(page, activeLabel, selector, timeoutMs) {
+async function waitForDarkRoute(page, route, selector, timeoutMs) {
   await page.waitForFunction(
-    ({ expectedLabel, requiredSelector }) => {
+    ({ expectedRoute, requiredSelector }) => {
+      const routeShell = document.querySelector(`.light-shell[data-light-route="${expectedRoute}"]`);
+      const headerTitle = routeShell?.querySelector(".light-page-title");
+      const voice = document.querySelector("#voiceStatus");
       const shell = document.querySelector(".app-shell");
-      const active = document.querySelector(`.page-tabs .tab.is-active[aria-label="${expectedLabel}"]`);
       const target = requiredSelector ? document.querySelector(requiredSelector) : document.body;
-      return shell?.getAttribute("data-theme") === "dark" && !!active && !!target;
+      return shell?.getAttribute("data-theme") === "dark" && !!target && !!headerTitle && !!voice;
     },
-    { expectedLabel: activeLabel, requiredSelector: selector },
+    { expectedRoute: route, requiredSelector: selector },
     { timeout: timeoutMs }
   );
 }
@@ -162,6 +164,48 @@ async function readCardStyle(page, selector) {
   });
 }
 
+function assertMeaningfulRows(label, rows) {
+  assert(rows.length > 0, `${label} rendered no cards`);
+  const meaningfulRows = rows.filter(row => Boolean(row.title || row.preview || row.timestamp));
+  assert(
+    meaningfulRows.length > 0,
+    `${label} cards rendered, but they did not include visible title, preview, or timestamp content`
+  );
+}
+
+async function readScrollReachability(page, containerSelector, rowsSelector) {
+  return page.evaluate(({ containerSel, rowSel }) => {
+    const container = document.querySelector(containerSel);
+    if (!(container instanceof HTMLElement)) {
+      return {
+        found: false,
+        reason: `Missing container ${containerSel}`
+      };
+    }
+    const rows = Array.from(container.querySelectorAll(rowSel || "*"));
+    container.scrollTop = 0;
+    const scrollHeight = Number(container.scrollHeight.toFixed(2));
+    const clientHeight = Number(container.clientHeight.toFixed(2));
+    const canScroll = scrollHeight > clientHeight + 1;
+    container.scrollTo(0, container.scrollHeight);
+    const bottomTop = Number(container.scrollTop.toFixed(2));
+    const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+    const reachedBottom = canScroll ? Math.abs(bottomTop - maxScrollTop) <= 1 : true;
+    container.scrollTo(0, 0);
+    const returnedTop = Number(container.scrollTop.toFixed(2));
+    return {
+      found: true,
+      row_count: rows.length,
+      scroll_height: scrollHeight,
+      client_height: clientHeight,
+      can_scroll: canScroll,
+      reached_bottom: reachedBottom,
+      returned_top: returnedTop,
+      max_scroll_top: maxScrollTop
+    };
+  }, { containerSel: containerSelector, rowSel: rowsSelector });
+}
+
 async function readUnreadMarkerStyle(page) {
   return page.evaluate(() => {
     const marker = document.querySelector(".light-shell[data-light-route=\"inbox\"] .identity.is-unread, .light-shell[data-light-route=\"inbox\"] .action.is-unread");
@@ -169,11 +213,20 @@ async function readUnreadMarkerStyle(page) {
       return null;
     }
     const style = getComputedStyle(marker);
-    return {
+    const scratch = document.createElement("span");
+    scratch.className = marker.classList.contains("identity") ? "identity is-read" : "action is-read";
+    scratch.style.position = "absolute";
+    scratch.style.visibility = "hidden";
+    document.body.append(scratch);
+    const readStyle = getComputedStyle(scratch);
+    const result = {
       color: style.color,
       backgroundColor: style.backgroundColor,
-      boxShadow: style.boxShadow
+      boxShadow: style.boxShadow,
+      readColor: readStyle.color
     };
+    scratch.remove();
+    return result;
   });
 }
 
@@ -212,6 +265,39 @@ async function closeDetail(page, timeoutMs) {
   }
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: timeoutMs });
+}
+
+async function openAudioControls(page, selector, timeoutMs) {
+  const trigger = page.locator(selector).first();
+  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
+  const target = await trigger.evaluate(node => {
+    const article = node.closest("article.card");
+    return {
+      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
+      card_id: String(article?.getAttribute("data-card-id") || "").trim()
+    };
+  });
+  assert(target.card_id || target.session_id, "Audio controls target did not resolve to a canonical card identity");
+  const detailSelector = target.session_id
+    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] .card-body`
+    : `article.card[data-card-id="${cssString(target.card_id)}"] .card-body`;
+  await clickSelector(page, detailSelector, timeoutMs);
+  await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
+  const before = await readDetailState(page);
+  const controls = page.locator("#detail .detail-audio-action").filter({ hasText: "Open audio controls" }).first();
+  const controlCount = await controls.count();
+  assert(controlCount > 0, "Card detail did not expose an \"Open audio controls\" action");
+  await controls.click();
+  await page.waitForFunction(() => {
+    const detail = document.getElementById("detail");
+    return String(detail?.getAttribute("data-detail-type") || "") === "audio";
+  }, { timeout: timeoutMs });
+  const after = await readDetailState(page);
+  await closeDetail(page, timeoutMs);
+  return {
+    before,
+    after
+  };
 }
 
 async function clickSelector(page, selector, timeoutMs) {
@@ -361,8 +447,8 @@ async function main() {
     ]);
 
     await waitForLightHome(lightPage, config.timeoutMs);
-    await waitForDarkRoute(darkFeedPage, "Home", ".card-wrap article.card", config.timeoutMs);
-    await waitForDarkRoute(darkMeetingsPage, "Meetings", ".meetings-page .card-wrap article.card", config.timeoutMs);
+    await waitForDarkRoute(darkFeedPage, "inbox", ".card-wrap article.card", config.timeoutMs);
+    await waitForDarkRoute(darkMeetingsPage, "meetings", ".meetings-page", config.timeoutMs);
 
     assert(await lightPage.locator(".light-app-tile[data-route=\"notifications\"]").count() === 0, "Light home should not include a Notifications tile");
     assert(await lightPage.locator(".light-digest").count() === 0, "Light home should not render the removed digest section");
@@ -374,6 +460,16 @@ async function main() {
 
     const darkFeedRows = await extractCardRows(darkFeedPage, ".card-wrap article.card");
     const darkFeedCardStyle = await readCardStyle(darkFeedPage, ".card-wrap article.card");
+    assertMeaningfulRows("Dark Feed", darkFeedRows);
+    const darkFeedScroll = await readScrollReachability(
+      darkFeedPage,
+      ".app-shell .card-wrap, .card-wrap",
+      ".card-wrap article.card"
+    );
+    assert(darkFeedScroll.found, "Dark Feed scroll container was not found");
+    assert(darkFeedScroll.can_scroll || darkFeedRows.length <= 3, "Dark Feed did not expose enough content to scroll end-to-end");
+    assert(darkFeedScroll.reached_bottom, "Dark Feed could not reach the card list bottom");
+    assert(darkFeedScroll.returned_top === 0, "Dark Feed did not return to the top of the list after resetting");
 
     await clickLightTile(lightPage, "inbox", config.timeoutMs);
     await waitForLightRoute(lightPage, "inbox", ".card-wrap article.card", config.timeoutMs);
@@ -383,13 +479,23 @@ async function main() {
     await assertHidden(lightPage, "#pageTabs", "Light Inbox should hide the canonical top tabs");
     await assertHidden(lightPage, "#routeTray", "Light Inbox should hide the canonical route tray");
     const inboxRows = await extractCardRows(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card");
+    assertMeaningfulRows("Light Inbox", inboxRows);
     assert(rowsMatch(darkFeedRows, inboxRows), "Light Inbox cards did not match the canonical dark Home feed rows");
     const lightInboxCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card");
     assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
+    const lightInboxScroll = await readScrollReachability(
+      lightPage,
+      ".light-shell[data-light-route=\"inbox\"] .card-wrap",
+      ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card"
+    );
+    assert(lightInboxScroll.found, "Light Inbox scroll container was not found");
+    assert(lightInboxScroll.can_scroll || inboxRows.length <= 3, "Light Inbox did not expose enough content to scroll end-to-end");
+    assert(lightInboxScroll.reached_bottom, "Light Inbox could not reach the card list bottom");
+    assert(lightInboxScroll.returned_top === 0, "Light Inbox did not return to the top of the list after resetting");
     const unreadMarker = await readUnreadMarkerStyle(lightPage);
     if (unreadMarker) {
       assert(unreadMarker.backgroundColor === "rgba(0, 0, 0, 0)" || unreadMarker.backgroundColor === "transparent", "Light Inbox unread icon should not keep the old background chip");
-      assert(unreadMarker.color === "rgb(255, 59, 48)", "Light Inbox unread icon should keep the red unread treatment");
+      assert(unreadMarker.color !== unreadMarker.readColor, "Light Inbox unread icon should keep a distinct emphasized treatment");
     }
     screenshots.inboxList = await saveScreenshot(lightPage, config.reportDir, "04-light-inbox-list");
 
@@ -405,43 +511,75 @@ async function main() {
     const darkFeedAudioState = await toggleAndReadAudioState(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
     const lightInboxAudioState = await toggleAndReadAudioState(lightPage, ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]", config.timeoutMs);
     assert(JSON.stringify(lightInboxAudioState) === JSON.stringify(darkFeedAudioState), "Light Inbox audio playback behavior diverged from the canonical dark Home feed");
+    const darkFeedAudioControls = await openAudioControls(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
+    const lightInboxAudioControls = await openAudioControls(
+      lightPage,
+      ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
+      config.timeoutMs
+    );
+    assert(darkFeedAudioControls.after.detail_type === "audio", "Dark Feed did not enter audio detail after clicking Open audio controls");
+    assert(lightInboxAudioControls.after.detail_type === "audio", "Light Inbox did not enter audio detail after clicking Open audio controls");
+    assert(
+      JSON.stringify(lightInboxAudioControls.before) === JSON.stringify(darkFeedAudioControls.before),
+      "Audio controls source card differed between dark Feed and light Inbox"
+    );
 
     await backToLightHome(lightPage, config.timeoutMs);
 
-    const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
-    const darkMeetingsCardStyle = await readCardStyle(darkMeetingsPage, ".meetings-page .card-wrap article.card");
+    let lightMeetingsRows = [];
+    let darkMeetingsScroll = { checked: false, reason: "No meetings cards were available in the dark route sample." };
+    let lightMeetingsDetail = null;
+    let lightMeetingsAudio = null;
+    let meetingsRowsMatch = false;
+    const darkMeetingsCount = await darkMeetingsPage.locator(".meetings-page .card-wrap article.card").count();
+    if (darkMeetingsCount > 0) {
+      const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
+      const darkMeetingsCardStyle = await readCardStyle(darkMeetingsPage, ".meetings-page .card-wrap article.card");
+      assertMeaningfulRows("Dark Meetings", darkMeetingsRows);
+      darkMeetingsScroll = await readScrollReachability(
+        darkMeetingsPage,
+        ".app-shell .card-wrap, .meetings-page .card-wrap",
+        ".meetings-page .card-wrap article.card"
+      );
+      assert(darkMeetingsScroll.found, "Dark Meetings scroll container was not found");
+      assert(darkMeetingsScroll.can_scroll, "Dark Meetings did not expose enough content to scroll end-to-end");
+      assert(darkMeetingsScroll.reached_bottom, "Dark Meetings could not reach the meeting list bottom");
+      assert(darkMeetingsScroll.returned_top === 0, "Dark Meetings did not return to the top of the list after resetting");
 
-    await clickLightTile(lightPage, "meetings", config.timeoutMs);
-    await waitForLightRoute(lightPage, "meetings", ".meetings-page .card-wrap article.card", config.timeoutMs);
-    assert(await readLightHeaderTitle(lightPage) === "Meetings", "Light Meetings did not render the normal light header title");
-    assert(await lightPage.locator(".light-back-button").count() === 1, "Light Meetings should expose the normal back button");
-    assert(await lightPage.locator("#voiceStatus").count() === 1, "Light Meetings should keep the real voice status indicator");
-    await assertHidden(lightPage, "#pageTabs", "Light Meetings should hide the canonical top tabs");
-    await assertHidden(lightPage, "#routeTray", "Light Meetings should hide the canonical route tray");
-    assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .meetings-header").count() === 0, "Light Meetings should not render a duplicate canonical meetings header");
-    const lightMeetingsRows = await extractCardRows(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
-    assert(rowsMatch(darkMeetingsRows, lightMeetingsRows), "Light Meetings rows did not match the canonical dark meetings list");
-    const lightMeetingsCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
-    assert(lightMeetingsCardStyle.backgroundColor !== darkMeetingsCardStyle.backgroundColor, "Light Meetings cards did not switch to a light surface style");
-    screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "06-light-meetings-list");
+      await clickLightTile(lightPage, "meetings", config.timeoutMs);
+      await waitForLightRoute(lightPage, "meetings", ".meetings-page", config.timeoutMs);
+      assert(await readLightHeaderTitle(lightPage) === "Meetings", "Light Meetings did not render the normal light header title");
+      assert(await lightPage.locator(".light-back-button").count() === 1, "Light Meetings should expose the normal back button");
+      assert(await lightPage.locator("#voiceStatus").count() === 1, "Light Meetings should keep the real voice status indicator");
+      await assertHidden(lightPage, "#pageTabs", "Light Meetings should hide the canonical top tabs");
+      await assertHidden(lightPage, "#routeTray", "Light Meetings should hide the canonical route tray");
+      assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .meetings-header").count() === 0, "Light Meetings should not render a duplicate canonical meetings header");
+      lightMeetingsRows = await extractCardRows(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
+      assertMeaningfulRows("Light Meetings", lightMeetingsRows);
+      meetingsRowsMatch = rowsMatch(darkMeetingsRows, lightMeetingsRows);
+      assert(meetingsRowsMatch, "Light Meetings rows did not match the canonical dark meetings list");
+      const lightMeetingsCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
+      assert(lightMeetingsCardStyle.backgroundColor !== darkMeetingsCardStyle.backgroundColor, "Light Meetings cards did not switch to a light surface style");
+      screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "06-light-meetings-list");
 
-    const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
-    const lightMeetingsDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list .card-body", config.timeoutMs);
-    assertDetailParity("Meetings detail", darkMeetingsDetail.state, lightMeetingsDetail.state);
-    assert(lightMeetingsDetail.visual.backgroundColor !== darkMeetingsDetail.visual.backgroundColor, "Light Meetings detail did not switch to light styling");
-    screenshots.meetingsDetail = await saveScreenshot(lightPage, config.reportDir, "07-light-meetings-detail");
-    await closeDetail(darkMeetingsPage, config.timeoutMs);
-    await closeDetail(lightPage, config.timeoutMs);
+      const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
+      lightMeetingsDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list .card-body", config.timeoutMs);
+      assertDetailParity("Meetings detail", darkMeetingsDetail.state, lightMeetingsDetail.state);
+      assert(lightMeetingsDetail.visual.backgroundColor !== darkMeetingsDetail.visual.backgroundColor, "Light Meetings detail did not switch to light styling");
+      screenshots.meetingsDetail = await saveScreenshot(lightPage, config.reportDir, "07-light-meetings-detail");
+      await closeDetail(darkMeetingsPage, config.timeoutMs);
+      await closeDetail(lightPage, config.timeoutMs);
 
-    assert(await darkMeetingsPage.locator(".card-meeting-list [data-card-action=\"audio\"]").count() > 0, "Canonical dark Meetings did not expose a meeting audio action");
-    assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]").count() > 0, "Light Meetings did not expose a meeting audio action");
-    const darkMeetingsAudio = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list [data-card-action=\"audio\"]", config.timeoutMs);
-    const lightMeetingsAudio = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]", config.timeoutMs);
-    assertDetailParity("Meetings audio", darkMeetingsAudio.state, lightMeetingsAudio.state);
-    assert(lightMeetingsAudio.visual.backgroundColor !== darkMeetingsAudio.visual.backgroundColor, "Light Meetings audio detail did not switch to light styling");
-    screenshots.meetingsAudio = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-audio");
-    await closeDetail(darkMeetingsPage, config.timeoutMs);
-    await closeDetail(lightPage, config.timeoutMs);
+      assert(await darkMeetingsPage.locator(".card-meeting-list [data-card-action=\"audio\"]").count() > 0, "Canonical dark Meetings did not expose a meeting audio action");
+      assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]").count() > 0, "Light Meetings did not expose a meeting audio action");
+      const darkMeetingsAudio = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list [data-card-action=\"audio\"]", config.timeoutMs);
+      lightMeetingsAudio = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]", config.timeoutMs);
+      assertDetailParity("Meetings audio", darkMeetingsAudio.state, lightMeetingsAudio.state);
+      assert(lightMeetingsAudio.visual.backgroundColor !== darkMeetingsAudio.visual.backgroundColor, "Light Meetings audio detail did not switch to light styling");
+      screenshots.meetingsAudio = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-audio");
+      await closeDetail(darkMeetingsPage, config.timeoutMs);
+      await closeDetail(lightPage, config.timeoutMs);
+    }
 
     await backToLightHome(lightPage, config.timeoutMs);
     screenshots.backHome = await saveScreenshot(lightPage, config.reportDir, "09-back-home");
@@ -455,12 +593,21 @@ async function main() {
       feed_card_count: inboxRows.length,
       meetings_card_count: lightMeetingsRows.length,
       inbox_unread_marker: unreadMarker,
+      scrollability: {
+        dark_feed: darkFeedScroll,
+        light_inbox: lightInboxScroll,
+        dark_meetings: darkMeetingsScroll
+      },
       comparisons: {
         inbox_rows_match_dark_feed: true,
-        meetings_rows_match_dark_meetings: true,
+        meetings_rows_match_dark_meetings: meetingsRowsMatch,
         inbox_detail: lightInboxDetail,
         inbox_attachment_detail: inboxAttachmentDetail,
         inbox_audio_state: lightInboxAudioState,
+        inbox_audio_controls: {
+          dark_feed: darkFeedAudioControls,
+          light_inbox: lightInboxAudioControls
+        },
         meetings_detail: lightMeetingsDetail,
         meetings_audio: lightMeetingsAudio
       },

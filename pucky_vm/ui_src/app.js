@@ -8,8 +8,6 @@
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const SELF_CONTACT_ID = "contact-me";
   const COMPLETE_EPSILON_MS = 500;
-  const MOCK_STANDARD_DURATION_MS = 1000 * 60 * 19 + 57000;
-  const MOCK_AUDIOBOOK_DURATION_MS = 69897450;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const TURN_STATUS_POLL_MS = 250;
@@ -46,6 +44,7 @@
   const AUDIO_START_CONFIRMATION_TIMEOUT_MS = 1800;
   const AUDIO_EARLY_END_WINDOW_MS = 2000;
   const AUDIO_TERMINAL_RESET_MS = 1600;
+  const BROWSER_AUDIO_RUNTIME = "browser_native";
   const DOT = " \u00b7 ";
   let calendarTimeZoneOptionsCache = null;
   const iconCatalog = window.PUCKY_UI_ICONS && typeof window.PUCKY_UI_ICONS === "object"
@@ -157,8 +156,7 @@
       contacts: { items: [], loaded: false, loading: false, error: "" },
       messages: { items: [], loaded: false, loading: false, error: "" },
       "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
-      reminders: { items: [], loaded: false, loading: false, error: "" },
-      assets: {}
+      reminders: { items: [], loaded: false, loading: false, error: "" }
     },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
@@ -213,6 +211,7 @@
   let seq = 0;
   let feedSyncIntervalId = 0;
   let audioProbeResetTimerId = 0;
+  let sharedBrowserAudio = null;
   let activeArchiveReveal = null;
   let archiveRevealGestureSeq = 0;
   const archiveRevealDebugTrace = [];
@@ -463,6 +462,62 @@
     }
   };
 
+  function ensureSharedBrowserAudio() {
+    if (sharedBrowserAudio) {
+      return sharedBrowserAudio;
+    }
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.playsInline = true;
+    sharedBrowserAudio = audio;
+    audio.addEventListener("loadedmetadata", () => syncSharedBrowserPlayerState({ render: true }));
+    audio.addEventListener("durationchange", () => syncSharedBrowserPlayerState({ render: true }));
+    audio.addEventListener("ratechange", () => syncSharedBrowserPlayerState({ render: false }));
+    audio.addEventListener("play", () => syncSharedBrowserPlayerState({ render: true }));
+    audio.addEventListener("pause", () => syncSharedBrowserPlayerState({ render: true }));
+    audio.addEventListener("ended", () => syncSharedBrowserPlayerState({ state: "completed", render: true }));
+    return audio;
+  }
+
+  function audioPlayerNumberValue(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function syncSharedBrowserPlayerState(overrides = {}) {
+    const previousPlayer = state.player;
+    const audio = ensureSharedBrowserAudio();
+    const hasDuration = Number.isFinite(Number(audio.duration)) && audio.duration > 0;
+    const isPlaying = Boolean(audio && !audio.paused && !audio.ended);
+    const durationSource = Number.isFinite(audioPlayerNumberValue(audio.duration, 0)) ? audio.duration : 0;
+    const positionSource = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+    const next = {
+      schema: "pucky.player_state.v1",
+      loaded: true,
+      state: String(overrides.state || "").trim() || (isPlaying ? "playing" : (audio.ended ? "completed" : "paused")),
+      is_playing: isPlaying,
+      path: String("path" in overrides ? overrides.path : previousPlayer?.path || ""),
+      source: String("source" in overrides ? overrides.source : previousPlayer?.source || ""),
+      position_ms: Math.max(0, Math.round("position_ms" in overrides ? audioPlayerNumberValue(overrides.position_ms) : positionSource * 1000)),
+      duration_ms: Math.max(0, Math.round("duration_ms" in overrides ? audioPlayerNumberValue(overrides.duration_ms) : (hasDuration ? durationSource * 1000 : audioPlayerNumberValue(previousPlayer?.duration_ms, 0)))),
+      queue_index: audioPlayerNumberValue("queue_index" in overrides ? overrides.queue_index : previousPlayer?.queue_index, -1),
+      queue_count: audioPlayerNumberValue("queue_count" in overrides ? overrides.queue_count : previousPlayer?.queue_count, 0),
+      speed: finiteSpeed("speed" in overrides ? overrides.speed : audio.playbackRate ?? previousPlayer?.speed ?? 1) ?? previousPlayer?.speed ?? 1,
+      can_seek: true,
+      audio_session_id: audioPlayerNumberValue(previousPlayer?.audio_session_id, 1)
+    };
+    state.player = stampPlayerState(next);
+    syncActivePathFromPlayer(state.player);
+    rememberPlayerProgress(state.player);
+    if (overrides.render) {
+      const probeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
+      if (shouldRenderForPlayerState(previousPlayer, state.player) || probeChanged) {
+        render();
+      }
+    }
+    return state.player;
+  }
+
   async function browserRequest(command, args) {
     if (command === "voice.thread_scope.get") {
       return normalizeThreadScope(state.threadScope);
@@ -479,7 +534,9 @@
       return state.meetingRecording;
     }
     if (command === "player.state") {
-      return state.player;
+      return playerHasAudioIdentity(state.player)
+        ? syncSharedBrowserPlayerState({ render: false })
+        : state.player;
     }
     if (command === "pucky.turn.status") {
       return state.turn;
@@ -735,126 +792,153 @@
       };
     }
     if (command === "player.play") {
-      const nextPath = args.path || state.player.path || state.activePath;
-      const nextSource = args.path ? null : (state.player.source || null);
-      state.activePath = nextSource || args.path || state.activePath;
-      const start = args.start_at_ms ?? savedPositionFor(nextSource || nextPath) ?? 0;
+      const requestedPath = String(args.path || "").trim();
+      const nextPath = requestedPath || String(state.player.path || state.activePath || "").trim();
+      const nextSource = args.source !== undefined
+        ? String(args.source || "").trim()
+        : (requestedPath ? "" : String(state.player.source || "").trim());
+      const selectedPlayer = state.player;
+      const start = Number.isFinite(Number(args.start_at_ms))
+        ? Math.max(0, Math.round(Number(args.start_at_ms)))
+        : savedPositionFor(nextSource || nextPath);
       const speed = finiteSpeed(args.speed ?? args.rate)
-        ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === state.activePath) || {})
+        ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === (nextSource || nextPath)) || {})
         ?? state.player.speed
         ?? 1;
-      state.player = stampPlayerState({
-        schema: "pucky.player_state.v1",
-        loaded: true,
-        state: "playing",
-        is_playing: true,
+      const audio = ensureSharedBrowserAudio();
+      if (!nextPath) {
+        throw new Error("No audio source available.");
+      }
+      audio.src = nextPath;
+      audio.playbackRate = speed;
+      audio.currentTime = Math.max(0, start / 1000);
+      state.activePath = nextSource || nextPath;
+      await audio.play();
+      return syncSharedBrowserPlayerState({
         path: nextPath,
         source: nextSource,
-        position_ms: start,
-        duration_ms: mockDurationForPath(nextSource || nextPath),
-        queue_index: state.player.queue_index ?? -1,
-        queue_count: state.player.queue_count ?? 0,
+        queue_index: selectedPlayer?.queue_index ?? -1,
+        queue_count: selectedPlayer?.queue_count ?? 0,
         speed,
-        can_seek: true,
-        audio_session_id: 1
+        position_ms: start,
+        render: true
       });
-      return state.player;
     }
     if (command === "player.queue.set") {
       const playlist = args.playlist_path || "";
       const first = playlist ? `${playlist}#track1` : String((args.items && args.items[0] && args.items[0].path) || "");
-      state.activePath = playlist || first || state.activePath;
-      state.player = stampPlayerState({
-        schema: "pucky.player_state.v1",
-        loaded: true,
+      const nextSource = String(playlist).trim();
+      const nextPath = first;
+      const selectedPlayer = state.player;
+      const speed = finiteSpeed(args.speed ?? args.rate)
+        || state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first })))
+        || state.player.speed
+        || 1;
+      const audio = ensureSharedBrowserAudio();
+      if (nextPath) {
+        audio.src = nextPath;
+        audio.load();
+      }
+      state.activePath = nextSource || nextPath || state.activePath;
+      return syncSharedBrowserPlayerState({
+        path: nextPath || selectedPlayer?.path || "",
+        source: nextSource || selectedPlayer?.source || "",
         state: "loaded",
         is_playing: false,
-        path: first,
-        source: playlist || null,
         position_ms: 0,
-        duration_ms: mockDurationForPath(playlist || first),
+        duration_ms: 0,
         queue_index: Number(args.index || 0),
         queue_count: playlist ? 83 : ((args.items && args.items.length) || 1),
-        speed: finiteSpeed(args.speed ?? args.rate) || state.speedByPath.get(normalizePath(audioControlKey({ audio_playlist_path: playlist, audio_path: first }))) || 1,
-        can_seek: true,
-        audio_session_id: 1
+        speed
       });
-      return state.player;
     }
     if (command === "player.pause") {
-      state.player = stampPlayerState({ ...state.player, state: "paused", is_playing: false });
-      return state.player;
+      const audio = ensureSharedBrowserAudio();
+      await audio.pause();
+      return syncSharedBrowserPlayerState({ render: true });
     }
     if (command === "player.seek") {
-      state.player = stampPlayerState({ ...state.player, position_ms: Math.max(0, Number(args.position_ms || 0)) });
-      rememberPlayerProgress(state.player);
-      return state.player;
+      const audio = ensureSharedBrowserAudio();
+      const positionMs = Math.max(0, Math.round(Number(args.position_ms || 0)));
+      if (positionMs) {
+        audio.currentTime = positionMs / 1000;
+      } else if (audio.currentTime) {
+        audio.currentTime = 0;
+      }
+      return syncSharedBrowserPlayerState({
+        position_ms: positionMs,
+        render: true
+      });
     }
     if (command === "player.speed") {
       const speed = Math.max(0.5, Math.min(3, Number(args.speed || 1)));
-      state.player = stampPlayerState({ ...state.player, speed });
+      const audio = ensureSharedBrowserAudio();
+      audio.playbackRate = speed;
       if (state.activePath) {
         state.speedByPath.set(normalizePath(state.activePath), speed);
         persistAudioState();
       }
-      return state.player;
+      return syncSharedBrowserPlayerState({
+        speed,
+        render: true
+      });
     }
     if (command === "artifact.read_base64") {
-      return mockArtifactResult(args.path);
+      return fetchArtifactBase64(args.path, args.max_bytes);
     }
     if (command === "artifact.url") {
+      const url = await resolveBrowserArtifactUrl(args.path);
       return {
         schema: "pucky.artifact_url.v1",
-        url: String(args.path || ""),
-        mime_type: guessMediaMime(args.path || ""),
+        url,
+        mime_type: guessMediaMime(args.path || url),
         bytes: 0
       };
     }
     throw new Error(`Unsupported browser mock command: ${command}`);
   }
 
-  function mockDurationForPath(path) {
-    return /pocket-computers/i.test(String(path || ""))
-      ? MOCK_AUDIOBOOK_DURATION_MS
-      : MOCK_STANDARD_DURATION_MS;
-  }
-
-  function mockArtifactResult(path) {
-    const value = String(path || "");
-    const title = mockArtifactTitle(value);
-    if (/\.(avif|gif|jpe?g|png|svg|webp)$/i.test(value)) {
-      const svg = `<!doctype svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#0b1828"/><stop offset=".58" stop-color="#1f6feb"/><stop offset="1" stop-color="#ffb000"/></linearGradient></defs><rect width="900" height="620" fill="url(#g)"/><circle cx="705" cy="132" r="82" fill="#f5f9ff" opacity=".18"/><path d="M85 472 292 250l135 152 116-148 245 218H85Z" fill="#f5f9ff" opacity=".88"/><text x="70" y="96" fill="#f5f9ff" font-family="Arial,sans-serif" font-size="44" font-weight="800">${title}</text></svg>`;
-      return {
-        mime_type: "image/svg+xml",
-        content_base64: btoa(svg)
-      };
-    }
-    if (/\.pdf$/i.test(value)) {
-      const pdf = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 594] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n4 0 obj\n<< /Length 86 >>\nstream\nBT /F1 24 Tf 48 522 Td (${title}) Tj /F1 13 Tf 0 -36 Td (PDF fixture preview) Tj ET\nendstream\nendobj\n5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF`;
-      return {
-        mime_type: "application/pdf",
-        content_base64: btoa(pdf)
-      };
+  async function fetchArtifactBase64(path, maxBytes = 0) {
+    const artifactUrl = await resolveBrowserArtifactUrl(path);
+    const response = await fetchArtifactHttpResponse(artifactUrl, "Artifact");
+    const buffer = await response.arrayBuffer();
+    const bytes = Number(buffer.byteLength || 0);
+    const limit = Math.max(0, Number(maxBytes || 0));
+    if (limit && bytes > limit) {
+      throw new Error(`Artifact exceeds max_bytes (${bytes} > ${limit})`);
     }
     return {
-      mime_type: "text/html",
-      content_base64: btoa(mockHtmlArtifact(title))
+      schema: "pucky.artifact_base64.v1",
+      path: String(path || ""),
+      url: artifactUrl,
+      mime_type: String(response.headers.get("content-type") || "").split(";", 1)[0].trim() || guessMediaMime(path || artifactUrl),
+      bytes,
+      content_base64: base64FromBytes(buffer)
     };
   }
 
-  function mockArtifactTitle(path) {
-    return String(path || "Pucky page")
-      .replace(/^.*\//, "")
-      .replace(/\.[a-z0-9]+$/i, "")
-      .replace(/-/g, " ");
+  async function resolveBrowserArtifactUrl(path) {
+    const value = String(path || "").trim();
+    if (!value) {
+      throw new Error("artifact path is missing");
+    }
+    if (/^(data|blob|https?):/i.test(value)) {
+      return value;
+    }
+    if (value.startsWith("/")) {
+      return new URL(value, window.location.origin).toString();
+    }
+    return new URL(value, window.location.href).toString();
   }
 
-  function mockHtmlArtifact(title) {
-    return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:Georgia,serif;background:#fff8e7;color:#17202a;padding:22px;line-height:1.45}h1{font:800 30px/1.05 system-ui,sans-serif;margin:0 0 14px}section{margin:18px 0;padding:14px;border:2px solid #17202a;box-shadow:5px 5px 0 #f2b705}p{font-size:16px}.tag{display:inline-block;background:#17202a;color:white;padding:4px 8px;margin-bottom:10px}</style><h1>${title}</h1><section><span class="tag">rich reply</span><p>This is a longer HTML artifact preview so the cover sheet has to scroll. It is intentionally text-heavy for layout testing.</p><p>The final agent version can ship charts, images, controls, route pages, or generated documents here. The APK only needs to cache and display the bundle safely.</p></section><section><p>Second section: a compact brief, a decision, a risk list, and a next action. This tests whether the iframe gets enough vertical room without swallowing the bottom safe area.</p><p>Keep this scrolling naturally. No giant dead band at the top, no clipped bottom controls, and no mystery margins.</p></section>`;
-  }
-
-  function isMockHtmlArtifact(path) {
-    return /^\/mock\/[^/]+\.html$/i.test(String(path || ""));
+  function base64FromBytes(buffer) {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return btoa(binary);
   }
 
   const HOME_FEED_LIMIT = 100;
@@ -977,23 +1061,6 @@
       return;
     }
     await loadWorkspaceCollection(collection, options);
-  }
-
-  async function loadWorkspaceAsset(assetId, options = {}) {
-    const id = String(assetId || "").trim();
-    if (!id || state.workspace.assets[id]) {
-      return state.workspace.assets[id] || null;
-    }
-    try {
-      const payload = await workspaceApiRequest(`/api/workspace/assets/${encodeURIComponent(id)}`);
-      state.workspace.assets[id] = payload;
-      if (options.render) {
-        render();
-      }
-      return payload;
-    } catch (_) {
-      return null;
-    }
   }
 
   function workspaceItems(collection) {
@@ -2302,7 +2369,7 @@
   }
 
   function audioRuntimeMode() {
-    return hasNativeAudioBridge() ? "native_bridge" : "browser_stub";
+    return hasNativeAudioBridge() ? "native_bridge" : BROWSER_AUDIO_RUNTIME;
   }
 
   function initialSurfaceKind() {
@@ -3599,8 +3666,13 @@
       value: item
       }))));
     }
-    if (contact.links && contact.links.length) {
-      page.append(lightInfoSection("Linked records", lightLinkedRecordRows(contact)));
+    const notes = lightLinkedNotesSection(contact);
+    if (notes) {
+      page.append(notes);
+    }
+    const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });
+    if (linkedRows.length) {
+      page.append(lightInfoSection("Linked records", linkedRows));
     }
     return page;
   }
@@ -4029,7 +4101,11 @@
       channels.classList.add("light-reminder-channels-section");
       page.append(channels);
     }
-    const linkedRows = lightLinkedRecordRows(reminder);
+    const notes = lightLinkedNotesSection(reminder);
+    if (notes) {
+      page.append(notes);
+    }
+    const linkedRows = lightLinkedRecordRows(reminder, { excludeKinds: ["note"] });
     if (linkedRows.length) {
       page.append(lightInfoSection("Linked records", linkedRows));
     }
@@ -4149,11 +4225,14 @@
     if (Array.isArray(options.rows) && options.rows.length) {
       page.append(lightInfoSection("Context", options.rows));
     }
-    const linkedRows = lightLinkedRecordRows(record);
+    const notes = lightLinkedNotesSection(record);
+    if (notes) {
+      page.append(notes);
+    }
+    const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });
     if (linkedRows.length) {
       page.append(lightInfoSection("Linked records", linkedRows));
     }
-    page.append(lightHtmlDocument(record, options.fallback, { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -4925,25 +5004,55 @@
     });
   }
 
-  function lightLinkedRecordRows(record) {
+  function workspaceLinkedRows(record, options = {}) {
     const currentKind = String(record?.kind || "");
     const currentId = String(record?.id || record?.record_id || "");
     const links = Array.isArray(record?.links) ? record.links : [];
-    return links.map(link => {
+    const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
+      ? new Set(options.includeKinds.map(value => String(value || "").trim()).filter(Boolean))
+      : null;
+    const excludeKinds = new Set(
+      Array.isArray(options.excludeKinds) ? options.excludeKinds.map(value => String(value || "").trim()).filter(Boolean) : []
+    );
+    const rows = [];
+    links.forEach(link => {
       const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
       const relatedKind = isSource ? link.target_kind : link.source_kind;
+      const normalizedKind = String(relatedKind || "").trim();
+      if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {
+        return;
+      }
       const relatedId = isSource ? link.target_id : link.source_id;
       const related = workspaceRecordByKind(relatedKind, relatedId);
       const label = related?.title || link.label || relatedId || graphKindLabel(relatedKind);
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
-      return {
+      const resolvedValue = typeof options.valueResolver === "function"
+        ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
+        : relation;
+      rows.push({
         icon: graphKindIcon(relatedKind),
         accentKey: graphKindAccentKey(relatedKind),
         label,
-        value: relation,
+        value: String(resolvedValue || relation || graphKindLabel(relatedKind)),
         target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
-      };
+      });
     });
+    return rows;
+  }
+
+  function lightLinkedRecordRows(record, options = {}) {
+    return workspaceLinkedRows(record, options);
+  }
+
+  function lightLinkedNotesSection(record, options = {}) {
+    const rows = workspaceLinkedRows(record, {
+      includeKinds: ["note"],
+      valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"
+    });
+    if (!rows.length) {
+      return null;
+    }
+    return lightInfoSection(options.title || "Notes", rows);
   }
 
   function noteContentUpdatedAtMs(note) {
@@ -5198,11 +5307,12 @@
     if (!note) {
       return lightPage("Note", { subtitle: "Note not found.", detail: true });
     }
-    const page = lightPage(note.title || "Untitled note", { detail: true });
+    const page = lightPage(note.title || "Untitled note", { detail: true, htmlDetail: true });
     page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");
     page.append(lightHtmlDocument(note, "No generated note page yet.", {
       untitledFallback: true,
       className: "light-detail-html-body light-note-detail-html-body",
+      fullBleed: true,
       revealOnLoad: true,
     }));
     return page;
@@ -5603,7 +5713,7 @@
   function taskAttachmentTargets(task) {
     const links = Array.isArray(task?.links) ? task.links : [];
     const seen = new Set();
-    const allowedKinds = new Set(["calendar_event", "contact", "project", "note", "meeting_note", "reminder"]);
+    const allowedKinds = new Set(["calendar_event", "contact", "project", "meeting_note", "reminder"]);
     const ordered = [];
     links.forEach(link => {
       const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
@@ -5625,9 +5735,13 @@
         kind: relatedKind
       });
     });
-    const order = ["calendar_event", "contact", "project", "note", "meeting_note", "reminder"];
+    const order = ["calendar_event", "contact", "project", "meeting_note", "reminder"];
     ordered.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
     return ordered;
+  }
+
+  function lightTaskNotesSection(task) {
+    return lightLinkedNotesSection(task);
   }
 
   function lightTaskStatusControl(task) {
@@ -5740,10 +5854,6 @@
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
-    surface.append(lightHtmlDocument(task, "No task page yet.", {
-      untitledFallback: true,
-      className: "light-detail-html-body light-task-detail-body"
-    }));
     ensureTaskPeopleContacts(task);
     const description = taskDescription(task);
     if (description) {
@@ -5757,6 +5867,10 @@
     const checklist = lightTaskChecklistSection(task);
     if (checklist) {
       surface.append(checklist);
+    }
+    const notes = lightTaskNotesSection(task);
+    if (notes) {
+      surface.append(notes);
     }
     const attachments = lightTaskAttachmentsSection(task);
     if (attachments) {
@@ -5856,11 +5970,14 @@
       el("p", "light-note-body", item.summary || "")
     );
     page.append(article);
-    const relatedRows = lightLinkedRecordRows(item);
+    const notes = lightLinkedNotesSection(item);
+    if (notes) {
+      page.append(notes);
+    }
+    const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });
     if (relatedRows.length) {
       page.append(lightInfoSection("Related", relatedRows));
     }
-    page.append(lightHtmlDocument(item, "No generated inbox page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -5901,7 +6018,6 @@
     const grid = el("div", "light-project-section-grid");
     [
       ["Threads", "chat", projectThreads(project)],
-      ["Artifacts", "attachment", projectAssets(project)],
       ["Meetings", "record_voice_over", projectLinked(project, "meeting_note")],
       ["Notes", "note", projectLinked(project, "note")],
       ["Tasks", "checklist", projectLinked(project, "task")],
@@ -5911,7 +6027,6 @@
       ["Reminders", "bell", projectLinked(project, "reminder")]
     ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
     page.append(grid);
-    page.append(lightHtmlDocument(project, "No generated project page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -5976,6 +6091,9 @@
 
   function lightPage(title, options = {}) {
     const page = el("section", "light-page");
+    if (options.htmlDetail) {
+      page.classList.add("light-html-detail-page");
+    }
     page.append(lightHeader(title, options));
     if (options.subtitle) {
       page.append(el("p", "light-page-subtitle", options.subtitle));
@@ -7108,20 +7226,7 @@
     if (!record) {
       return "";
     }
-    const direct = String(record.html || "");
-    if (direct) {
-      return direct;
-    }
-    const assetId = String(record.html_asset_id || "");
-    if (!assetId) {
-      return "";
-    }
-    const cached = state.workspace.assets[assetId];
-    if (cached && String(cached.text || "")) {
-      return String(cached.text || "");
-    }
-    void loadWorkspaceAsset(assetId, { render: true });
-    return "";
+    return String(record.html || "");
   }
 
   function workspaceHtmlThemePalette() {
@@ -7216,21 +7321,121 @@
     }
   }
 
+  function syncHtmlDetailFrameHeight(frame) {
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return 0;
+    }
+    try {
+      const root = frame.contentDocument.documentElement;
+      const body = frame.contentDocument.body;
+      const height = Math.max(
+        Number(root?.scrollHeight || 0),
+        Number(root?.offsetHeight || 0),
+        Number(root?.clientHeight || 0),
+        Number(body?.scrollHeight || 0),
+        Number(body?.offsetHeight || 0),
+        Number(body?.clientHeight || 0)
+      );
+      if (!Number.isFinite(height) || height <= 0) {
+        return 0;
+      }
+      frame.style.height = `${height}px`;
+      return height;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function installHtmlDetailFrameSizing(frame) {
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return;
+    }
+    if (typeof frame.__puckyHtmlDetailFrameCleanup === "function") {
+      frame.__puckyHtmlDetailFrameCleanup();
+    }
+    let rafId = 0;
+    const schedule = () => {
+      if (rafId) {
+        return;
+      }
+      const run = () => {
+        rafId = 0;
+        syncHtmlDetailFrameHeight(frame);
+      };
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        rafId = window.requestAnimationFrame(run);
+        return;
+      }
+      rafId = window.setTimeout(run, 0);
+    };
+    const cleanup = [];
+    const bind = () => {
+      schedule();
+      let doc = null;
+      try {
+        doc = frame.contentDocument;
+      } catch (error) {
+        doc = null;
+      }
+      if (!doc || !doc.body || doc.__puckyHtmlDetailFrameSizingBound) {
+        return;
+      }
+      doc.__puckyHtmlDetailFrameSizingBound = true;
+      if (typeof ResizeObserver === "function") {
+        const observer = new ResizeObserver(() => schedule());
+        observer.observe(doc.documentElement);
+        observer.observe(doc.body);
+        cleanup.push(() => observer.disconnect());
+      }
+      const docChange = () => schedule();
+      doc.addEventListener("load", docChange, true);
+      doc.addEventListener("toggle", docChange, true);
+      cleanup.push(() => doc.removeEventListener("load", docChange, true));
+      cleanup.push(() => doc.removeEventListener("toggle", docChange, true));
+      if (doc.fonts && typeof doc.fonts.addEventListener === "function") {
+        doc.fonts.addEventListener("loadingdone", docChange);
+        cleanup.push(() => doc.fonts.removeEventListener("loadingdone", docChange));
+      }
+    };
+    const onResize = () => schedule();
+    window.addEventListener("resize", schedule);
+    cleanup.push(() => window.removeEventListener("resize", schedule));
+    frame.addEventListener("load", bind);
+    cleanup.push(() => frame.removeEventListener("load", bind));
+    frame.__puckyHtmlDetailFrameCleanup = () => {
+      cleanup.splice(0).forEach(fn => {
+        try {
+          fn();
+        } catch (error) {
+          // Best-effort cleanup for detached detail frames.
+        }
+      });
+      if (rafId && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(rafId);
+      }
+      rafId = 0;
+    };
+    bind();
+    onResize();
+  }
+
   function lightHtmlDocument(record, fallbackText = "Generated page is loading.", options = {}) {
     const html = workspaceHtml(record);
     const untitledFallback = Boolean(options && options.untitledFallback);
     const extraClassName = String(options && options.className || "").trim();
+    const fullBleed = Boolean(options && options.fullBleed);
     const revealOnLoad = Boolean(options && options.revealOnLoad);
     if (!html) {
       if (untitledFallback) {
-        return el("section", `light-html-empty ${extraClassName}`.trim(), fallbackText);
+        return el("section", `light-html-empty ${fullBleed ? "light-html-stage" : ""} ${extraClassName}`.trim(), fallbackText);
       }
       return lightCopySection("Generated page", fallbackText);
     }
     const frame = el("iframe", "light-html-frame");
-    frame.setAttribute("sandbox", "");
+    frame.setAttribute("sandbox", "allow-same-origin");
+    frame.setAttribute("scrolling", "no");
     frame.setAttribute("title", String(record?.title || "Generated page"));
-    const wrap = el("section", `light-card light-html-card ${extraClassName}`.trim());
+    const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
     let revealTimerId = 0;
     if (revealOnLoad) {
       const markReady = (force = false) => {
@@ -7255,6 +7460,7 @@
       frame.addEventListener("load", () => markReady(false));
       revealTimerId = window.setTimeout(() => markReady(true), 1500);
     }
+    installHtmlDetailFrameSizing(frame);
     frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     wrap.append(frame);
     return wrap;
@@ -8830,7 +9036,7 @@
     }
     if (!isMeetingList) {
       const attachmentInfo = firstDisplayableAttachmentInfo(card);
-      if (card.html_path) {
+      if (hasRichPage(card)) {
         const page = el("button", `action ${actionStateClass(card, "page")}`);
         page.type = "button";
         applyCardActionData(page, "page", card, "reply");
@@ -9059,6 +9265,9 @@
     if (!card || typeof card !== "object") {
       return "";
     }
+    if (prefersHostedDirectAudio(card)) {
+      return String(card.audio_url || "").trim();
+    }
     if (card.audio_path && (!card.is_meeting_recording || isAndroidPlayableAudioPath(card.audio_path))) {
       return String(card.audio_path);
     }
@@ -9186,7 +9395,7 @@
           source: String(state.player?.source || "")
         });
         rememberPlayerProgress(state.player);
-      } else if (card.audio_playlist_path) {
+      } else if (hasNativeAudioBridge() && card.audio_playlist_path) {
         setAudioProbePhase(card, "starting", {
           reason: "queue_requested",
           clear_error: true,
@@ -9475,26 +9684,26 @@
     }
     const panel = document.getElementById("detail");
     const content = el("div", "detail-content rich-detail");
+    const pageSource = resolveRichPageSource(card);
     let cleanupEdgeDismiss = () => {};
     const dismissWithCleanup = () => {
       cleanupEdgeDismiss();
       dismissDetail();
     };
     try {
+      if (!pageSource) {
+        throw new Error("Page source is missing.");
+      }
       const result = await Pucky.request({
         command: "artifact.read_base64",
-        args: { path: card.html_path, max_bytes: 1024 * 1024 }
+        args: { path: pageSource, max_bytes: 1024 * 1024 }
       });
-      content.append(await richFrame(result, card.html_path, card), el("div", "rich-swipe-edge"));
+      content.append(await richFrame(result, pageSource, card), el("div", "rich-swipe-edge"));
     } catch (error) {
-      if (isMockHtmlArtifact(card.html_path)) {
-        content.append(await richFrame(mockArtifactResult(card.html_path), card.html_path, card), el("div", "rich-swipe-edge"));
-      } else {
-        content.append(el("p", "preview", `Page unavailable: ${error.message}`));
-      }
+      content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
     applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });
-    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null, fullBleed: true });
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
     void syncVoiceThreadScope({ reason: "show_page", render: true });
@@ -9511,14 +9720,33 @@
     const mime = String((result && result.mime_type) || "").toLowerCase();
     const content = String((result && result.content_base64) || "");
     const transcriptContext = source ? await resolveMeetingTranscriptLink(source, source) : { href: "" };
+    const audioContext = source ? await resolveMeetingAudioAttachmentLink(source, source) : { href: "" };
     if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
       iframe.srcdoc = pdfArtifactHtml(result, path, content);
     } else {
       iframe.srcdoc = await rewriteMeetingHtmlContent(atob(content), source || {}, {
-        transcriptHref: String(transcriptContext.href || "")
+        transcriptHref: String(transcriptContext.href || ""),
+        audioHref: String(audioContext.href || "")
       });
     }
     return iframe;
+  }
+
+  function hasRichPage(card) {
+    return Boolean(resolveRichPageSource(card));
+  }
+
+  function resolveRichPageSource(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
+    const htmlPath = String(card.html_path || "").trim();
+    const htmlUrl = String(card.html_url || "").trim();
+    const htmlArtifact = String(card.html_artifact || "").trim();
+    if (hasNativeAudioBridge()) {
+      return htmlPath || (htmlArtifact ? artifactVirtualPath(htmlArtifact) : "") || htmlUrl;
+    }
+    return htmlUrl || (htmlArtifact ? artifactApiUrl(htmlArtifact) : "") || htmlPath;
   }
 
   function pdfArtifactHtml(result, path, contentBase64) {
@@ -10567,6 +10795,12 @@
 
   function guessMediaMime(path) {
     const value = String(path || "").toLowerCase();
+    if (value.endsWith(".m4a")) return "audio/mp4";
+    if (value.endsWith(".mp3")) return "audio/mpeg";
+    if (value.endsWith(".wav")) return "audio/wav";
+    if (value.endsWith(".aac")) return "audio/aac";
+    if (value.endsWith(".ogg")) return "audio/ogg";
+    if (value.endsWith(".opus")) return "audio/opus";
     if (value.endsWith(".mp4")) return "video/mp4";
     if (value.endsWith(".webm")) return "video/webm";
     if (value.endsWith(".mov")) return "video/quicktime";
@@ -10909,9 +11143,16 @@
   function openSideDetail(panel, title, content, onDismiss, options = {}) {
     const shell = el("div", "detail-shell");
     const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;
+    const fullBleed = Boolean(options.fullBleed);
     const header = lightHeader(title, { onBack: onDismiss, detail: true });
     const body = el("div", "detail-content");
     const bodyInner = el("div", "detail-content-inner");
+    if (fullBleed) {
+      shell.classList.add("is-full-bleed");
+      body.classList.add("is-full-bleed");
+      bodyInner.classList.add("is-full-bleed");
+      content.classList.add("is-full-bleed");
+    }
     bodyInner.append(content);
     body.append(bodyInner);
     shell.append(header);
@@ -10983,13 +11224,36 @@
     return false;
   }
 
+  function resolveAudioControlsTargetCard(card) {
+    const active = findCardByPlayer(state.player);
+    if (active) {
+      return active;
+    }
+    const sessionId = cardSessionId(card);
+    if (sessionId) {
+      const bySession = findCardBySessionId(sessionId);
+      if (bySession) {
+        return bySession;
+      }
+    }
+    const threadId = cardThreadId(card);
+    if (threadId) {
+      const byThread = findCardByThreadId(threadId);
+      if (byThread) {
+        return byThread;
+      }
+    }
+    return findCardByIdentity(card) || card;
+  }
+
   function showAudioDetail(card, options = {}) {
-    state.audioCard = card;
+    const targetCard = resolveAudioControlsTargetCard(card);
+    state.audioCard = targetCard;
     const panel = document.getElementById("detail");
-    const content = audioDetailContent(card);
-    applyDetailDataAttributes(panel, "audio", card, { viewer: "audio_player" });
-    openSideDetail(panel, card.title || "Audio", content, dismissAudioDetail);
-    rememberNavDetail("audio", card, options);
+    const content = audioDetailContent(targetCard);
+    applyDetailDataAttributes(panel, "audio", targetCard, { viewer: "audio_player" });
+    openSideDetail(panel, targetCard.title || "Audio", content, dismissAudioDetail);
+    rememberNavDetail("audio", targetCard, options);
     installDetailScrollPersistence(content, "audio");
     void syncVoiceThreadScope({ reason: "show_audio_detail", render: true });
     restoreScrollPosition(content, options.scrollTop);
@@ -11050,19 +11314,16 @@
   }
 
   function detailAudioContinuity(card) {
-    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
-      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
-      : audioRuntimeMode();
     const section = el("section", "detail-audio-continuity");
     const inner = el("div", "detail-audio-continuity-inner");
     section.style.setProperty("--accent", card.accent || "#72c2ff");
     section.dataset.audioKey = audioStateKey(card);
     const copy = el("div", "detail-audio-continuity-copy");
-    copy.append(el("div", "detail-audio-continuity-kicker", runtime === "browser_stub" ? "Browser preview" : "Tile audio"));
+    copy.append(el("div", "detail-audio-continuity-kicker", "Audio playback"));
     copy.append(el("div", "detail-audio-continuity-title", card.title || "Audio"));
     copy.append(audioTileStatus(card));
     const actions = el("div", "detail-audio-continuity-actions");
-    const toggle = el("button", "detail-audio-action detail-audio-action-primary", isPlayingCard(card) ? (runtime === "browser_stub" ? "Stop preview" : "Pause") : "Play");
+    const toggle = el("button", "detail-audio-action detail-audio-action-primary", isPlayingCard(card) ? "Pause" : "Play");
     toggle.type = "button";
     toggle.disabled = isCardAudioBusy(card) || ["starting", "pause_pending"].includes(currentTileAudioPhase(card));
     toggle.addEventListener("click", () => {
@@ -11070,7 +11331,9 @@
     });
     const open = el("button", "detail-audio-action", "Open audio controls");
     open.type = "button";
-    open.addEventListener("click", () => showAudioDetail(card));
+    open.addEventListener("click", () => {
+      showAudioDetail(resolveAudioControlsTargetCard(card));
+    });
     actions.append(toggle, open);
     inner.append(copy, actions);
     section.append(inner);
@@ -11414,7 +11677,7 @@
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
       const same = isSameAudioCard(current, card);
-      if (!same && card.audio_playlist_path) {
+      if (!same && hasNativeAudioBridge() && card.audio_playlist_path) {
         await Pucky.request({
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
@@ -11629,7 +11892,7 @@
       rememberPlayerProgress(current);
       const same = isSameAudioCard(current, card);
       state.activePath = audioControlKey(card);
-      if (!same && card.audio_playlist_path) {
+      if (!same && hasNativeAudioBridge() && card.audio_playlist_path) {
         await Pucky.request({
           command: "player.queue.set",
           args: { playlist_path: card.audio_playlist_path, title: card.title, load: true }
@@ -13239,7 +13502,14 @@
     return true;
   }
 
+  function prefersHostedDirectAudio(card) {
+    return !hasNativeAudioBridge() && Boolean(String(card?.audio_url || "").trim());
+  }
+
   function describeAudioSourceForCard(card) {
+    if (prefersHostedDirectAudio(card)) {
+      return { resolved_source_type: "browser_url", cache_prep: "skipped" };
+    }
     if (card?.audio_playlist_path) {
       return { resolved_source_type: "playlist_path", cache_prep: "skipped" };
     }
@@ -13270,7 +13540,7 @@
     if (phase !== "playing_confirmed") {
       return "status";
     }
-    if (audioRuntimeMode() === "native_bridge" && Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {
+    if (Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {
       return "progress";
     }
     return "status";
@@ -13282,17 +13552,14 @@
 
   function tileAudioLabel(card) {
     const phase = currentTileAudioPhase(card);
-    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
-      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
-      : audioRuntimeMode();
     if (phase === "starting") {
-      return runtime === "browser_stub" ? "Starting browser preview..." : "Starting audio...";
+      return "Starting audio...";
     }
     if (phase === "pause_pending") {
       return "Pausing audio...";
     }
     if (phase === "playing_confirmed") {
-      return runtime === "browser_stub" ? "Browser preview active" : "Audio playing";
+      return "Audio playing";
     }
     if (phase === "start_failed") {
       return "Playback failed";
@@ -13305,14 +13572,8 @@
 
   function tileAudioMeta(card) {
     const phase = currentTileAudioPhase(card);
-    const runtime = samePath(state.audioProbe.target_key, audioStateKey(card))
-      ? String(state.audioProbe.runtime_mode || audioRuntimeMode())
-      : audioRuntimeMode();
     if (["start_failed", "ended_immediately"].includes(phase)) {
       return String(state.audioProbe.last_error_toast || "Tap again to retry playback.");
-    }
-    if (phase === "playing_confirmed" && runtime === "browser_stub" && currentTileAudioStripKind(card) === "status") {
-      return "Browser preview only.";
     }
     if (phase === "playing_confirmed" && currentTileAudioStripKind(card) === "progress") {
       const duration = Number(state.player.duration_ms || 0);
@@ -13333,22 +13594,19 @@
     const label = el("div", "tile-audio-status-label", tileAudioLabel(card));
     const strip = el("div", `tile-audio-strip is-${phase} is-${runtime}`);
     const stripKind = currentTileAudioStripKind(card);
-    const shouldRenderStrip = !(runtime === "browser_stub" && phase === "playing_confirmed" && stripKind === "status");
     setDataAttribute(status, "data-audio-phase", phase);
     setDataAttribute(status, "data-audio-runtime-mode", runtime);
     setDataAttribute(status, "data-audio-strip-kind", stripKind);
     setDataAttribute(strip, "data-strip-kind", stripKind);
     status.append(label);
-    if (shouldRenderStrip) {
-      if (stripKind === "progress") {
-        const progress = el("span", "tile-audio-progress");
-        const duration = Math.max(0, Number(state.player.duration_ms || 0));
-        const position = currentPlayerPositionMs(state.player);
-        progress.style.setProperty("--progress", String(duration > 0 ? Math.min(1, position / duration) : 0));
-        strip.append(progress);
-      }
-      status.append(strip);
+    if (stripKind === "progress") {
+      const progress = el("span", "tile-audio-progress");
+      const duration = Math.max(0, Number(state.player.duration_ms || 0));
+      const position = currentPlayerPositionMs(state.player);
+      progress.style.setProperty("--progress", String(duration > 0 ? Math.min(1, position / duration) : 0));
+      strip.append(progress);
     }
+    status.append(strip);
     const meta = tileAudioMeta(card);
     if (meta) {
       status.append(el("div", "tile-audio-status-meta", meta));
@@ -13384,7 +13642,7 @@
   function currentPlayerPositionMs(player) {
     const base = Math.max(0, Number(player?.position_ms || 0));
     const duration = Math.max(0, Number(player?.duration_ms || 0));
-    if (!player?.is_playing || audioRuntimeMode() !== "native_bridge" || duration <= 0) {
+    if (!player?.is_playing || duration <= 0) {
       return duration > 0 ? Math.min(duration, base) : base;
     }
     const observedAtMs = Math.max(0, Number(player?.observed_at_ms || 0));
@@ -13405,7 +13663,7 @@
     if (!state.activePath || !state.player.is_playing) {
       return false;
     }
-    if (audioRuntimeMode() !== "native_bridge" || Number(state.player.duration_ms || 0) <= 0) {
+    if (Number(state.player.duration_ms || 0) <= 0) {
       return false;
     }
     if (isAudioDetailOpen()) {
@@ -13415,7 +13673,8 @@
     if (detailCard && activePlayerMatchesCard(detailCard)) {
       return true;
     }
-    return state.route === "inbox" && feedDisplayCards().some(card => activePlayerMatchesCard(card));
+    return (state.route === "inbox" || state.route === "inbox-detail")
+      && feedDisplayCards().some(card => activePlayerMatchesCard(card));
   }
 
   function shouldRenderForPlayerState(previousPlayer, nextPlayer) {
@@ -14133,6 +14392,13 @@
   function findCardBySessionId(sessionId) {
     const target = String(sessionId || "");
     return target ? feedDisplayCards().find(card => cardSessionId(card) === target) || null : null;
+  }
+
+  function findCardByPlayer(player) {
+    if (!playerHasAudioIdentity(player)) {
+      return null;
+    }
+    return feedDisplayCards().find(card => isSameAudioCard(player, card)) || null;
   }
 
   function findCardByIdentity(sourceCard) {

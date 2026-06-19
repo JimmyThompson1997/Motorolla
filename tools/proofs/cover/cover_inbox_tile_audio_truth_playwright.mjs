@@ -27,7 +27,9 @@ function parseArgs(argv) {
     headless: true,
     preferredTitle: "Probe Check",
     sampleDurationMs: 8000,
-    sampleIntervalMs: 100
+    sampleIntervalMs: 100,
+    skipCanonicalCheck: false,
+    apiToken: String(process.env.PUCKY_WEB_UI_TOKEN || process.env.PUCKY_API_TOKEN || "").trim(),
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -45,9 +47,20 @@ function parseArgs(argv) {
       config.preferredTitle = String(argv[++index] || config.preferredTitle);
     } else if (arg === "--headed") {
       config.headless = false;
+    } else if (arg === "--skip-canonical-check") {
+      config.skipCanonicalCheck = true;
     }
   }
   return config;
+}
+
+function isLocalProofUrl(pageUrl) {
+  try {
+    const host = String(new URL(pageUrl).hostname || "").trim();
+    return host === "127.0.0.1" || host === "localhost";
+  } catch (_) {
+    return false;
+  }
 }
 
 function runProcess(executable, args, options = {}) {
@@ -94,8 +107,12 @@ function ensureCanonicalMasterReady() {
   return status;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+async function fetchJson(url, token = "") {
+  const headers = { Accept: "application/json" };
+  if (String(token || "").trim()) {
+    headers.Authorization = `Bearer ${String(token || "").trim()}`;
+  }
+  const response = await fetch(url, { headers, cache: "no-store" });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(`GET ${url} failed with ${response.status}: ${String(payload?.detail || payload?.error || "")}`);
@@ -103,8 +120,8 @@ async function fetchJson(url) {
   return payload;
 }
 
-async function fetchManifest(pageUrl) {
-  return fetchJson(new URL("manifest.json", pageUrl).toString());
+async function fetchManifest(pageUrl, token = "") {
+  return fetchJson(new URL("manifest.json", pageUrl).toString(), token);
 }
 
 function assert(condition, message) {
@@ -214,11 +231,10 @@ function cardLocator(page, title) {
 
 async function clickAudioButton(page, title) {
   const button = cardLocator(page, title).locator("button.action-audio").first();
-  await button.scrollIntoViewIfNeeded();
   try {
     await button.click({ timeout: 5000 });
   } catch (_) {
-    await button.evaluate(node => node.click());
+    await cardLocator(page, title).locator("button.action-audio").first().evaluate(node => node.click());
   }
 }
 
@@ -578,9 +594,12 @@ async function run() {
   const consoleLogPath = path.join(config.reportDir, "console.log");
   fs.writeFileSync(consoleLogPath, "", "utf8");
 
-  const repo = ensureCanonicalMasterReady();
-  const manifest = await fetchManifest(config.pageUrl);
-  assert(String(manifest.source_commit_full || "") === String(repo.head), `Live manifest ${manifest.source_commit_full} does not match local/pushed HEAD ${repo.head}.`);
+  const isLocalProof = config.skipCanonicalCheck || isLocalProofUrl(config.pageUrl);
+  const repo = isLocalProof ? { head: "", upstream: "", branch_status: "", clean: true } : ensureCanonicalMasterReady();
+  const manifest = await fetchManifest(config.pageUrl, config.apiToken);
+  if (!isLocalProof) {
+    assert(String(manifest.source_commit_full || "") === String(repo.head), `Live manifest ${manifest.source_commit_full} does not match local/pushed HEAD ${repo.head}.`);
+  }
 
   const chromePath = resolveChromePath();
   const browser = await chromium.launch({

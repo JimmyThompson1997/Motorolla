@@ -1660,6 +1660,25 @@ button {
   box-sizing: border-box;
 }
 
+.detail-shell.is-full-bleed {
+  --light-shell-column-max: 100%;
+  --light-shell-column-padding: 0px;
+}
+
+.detail-content.is-full-bleed,
+.detail-content-inner.is-full-bleed {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.detail-content-inner.is-full-bleed {
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 .detail-audio-continuity {
   width: 100%;
   padding: 10px 0 12px;
@@ -2163,6 +2182,11 @@ button {
   flex-direction: column;
   overflow: hidden;
   padding: 0;
+}
+
+.rich-detail.is-full-bleed {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .attachment-detail {
@@ -3764,6 +3788,30 @@ button {
   box-sizing: border-box;
 }
 
+.light-page.light-html-detail-page {
+  gap: 0;
+}
+
+.light-html-detail-page > :not(.light-page-header-shell) {
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.light-feed-document.light-page {
+  width: 100%;
+  max-width: 100%;
+  min-height: calc(var(--viewport-h) - 42px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.light-feed-document.light-page > :not(.light-page-header-shell) {
+  max-width: 100%;
+  margin: 0;
+  padding-inline: 0;
+}
+
 .light-page-title {
   margin: 0;
   min-width: 0;
@@ -5095,6 +5143,11 @@ button {
   padding-bottom: 96px;
 }
 
+.light-html-detail-page.light-document-page {
+  gap: 0;
+  padding-bottom: var(--safe-area-bottom);
+}
+
 .light-calendar-detail-section {
   display: grid;
   gap: 10px;
@@ -5869,6 +5922,16 @@ button {
   min-height: min(62vh, 620px);
 }
 
+.light-html-stage {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .light-task-detail-surface {
   display: grid;
   gap: 12px;
@@ -5994,7 +6057,7 @@ button {
 .light-detail-html-body.light-html-empty {
   width: 100%;
   max-width: 100%;
-  margin-top: -4px;
+  margin-top: 0;
   margin-left: 0;
   margin-right: 0;
 }
@@ -6029,6 +6092,11 @@ button {
 
 .light-note-detail-html-body.light-html-card[data-html-frame-state="loading"] .light-html-frame {
   visibility: hidden;
+}
+
+.light-html-detail-page .light-detail-html-body.light-html-card .light-html-frame {
+  min-height: calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom));
+  overflow: hidden;
 }
 
 .light-detail-html-body.light-html-empty {

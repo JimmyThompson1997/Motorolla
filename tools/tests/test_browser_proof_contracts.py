@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -70,7 +71,6 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert "Unlock web preview" not in source
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
     assert "browser_api_token" not in source
-
 
 def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
@@ -221,3 +221,33 @@ def test_workspace_proof_server_keeps_broker_state_out_of_vm_only_data_dir() -> 
     source = read_source("workspace_apps_proof_server.py")
 
     assert 'os.environ.setdefault("PUCKY_DB_PATH", str((root / "broker.sqlite3").resolve()))' in source
+
+
+def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
+    source = read_source("cover_inbox_tile_audio_truth_playwright.mjs")
+    package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
+
+    assert '"--skip-canonical-check"' in source
+    assert "isLocalProofUrl" in source
+    assert "isLocalProof" in source
+    assert package["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
+
+
+def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> None:
+    source = read_source("cover_light_native_ports_playwright.mjs")
+
+    assert "assertMeaningfulRows(" in source
+    assert "readScrollReachability(" in source
+    assert "reached_bottom" in source
+    assert "Open audio controls" in source
+    assert "openAudioControls(" in source
+    assert "inbox_audio_controls" in source
+    assert "scrollability" in source
+
+
+def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
+    source = read_source("cover_inbox_media_proof_server.py")
+
+    assert 'parsed.path == "/ui/pucky/fixtures/reply_cards.json"' in source
+    assert 'mock_artifact_prefix="fixtures/artifacts"' in source
+    assert '"/ui/pucky/fixtures/reply_cards.json"' in source

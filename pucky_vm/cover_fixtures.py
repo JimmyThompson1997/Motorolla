@@ -8,7 +8,7 @@ from typing import Any
 
 RUNTIME_SCHEMA = "pucky.reply_cards.v1"
 DEPLOY_SCHEMA = "pucky.reply_cards_deploy.v1"
-DEFAULT_MOCK_ARTIFACT_PREFIX = "/mock"
+DEFAULT_MOCK_ARTIFACT_PREFIX = "fixtures/artifacts"
 DEPLOY_ONLY_CARD_FIELDS = (
     "audio_artifact",
     "html_artifact",
@@ -88,9 +88,15 @@ def runtime_card_from_deploy(
         card.pop(field, None)
 
     if audio_artifact:
-        card["audio_path"] = artifact_mock_path(audio_artifact, mock_artifact_prefix)
+        audio_path = artifact_mock_path(audio_artifact, mock_artifact_prefix)
+        card["audio_artifact"] = audio_artifact
+        card["audio_url"] = audio_path
+        card["audio_path"] = audio_path
     elif implied_audio_artifact:
-        card["audio_path"] = artifact_mock_path(implied_audio_artifact, mock_artifact_prefix)
+        audio_path = artifact_mock_path(implied_audio_artifact, mock_artifact_prefix)
+        card["audio_url"] = audio_path
+        card["audio_artifact"] = implied_audio_artifact
+        card["audio_path"] = audio_path
     elif device_audio_path:
         card["audio_path"] = device_audio_path
     elif public_audio_path:
@@ -99,7 +105,10 @@ def runtime_card_from_deploy(
     if public_audio_playlist_path:
         card["audio_playlist_path"] = public_audio_playlist_path
     if html_artifact:
-        card["html_path"] = artifact_mock_path(html_artifact, mock_artifact_prefix)
+        html_path = artifact_mock_path(html_artifact, mock_artifact_prefix)
+        card["html_artifact"] = html_artifact
+        card["html_url"] = html_path
+        card["html_path"] = html_path
 
     if "attachments" in card:
         card["attachments"] = runtime_attachment_list(card.get("attachments"), mock_artifact_prefix=mock_artifact_prefix)
@@ -152,8 +161,11 @@ def runtime_attachment_from_deploy(
 
 
 def artifact_mock_path(artifact_name: str, mock_artifact_prefix: str = DEFAULT_MOCK_ARTIFACT_PREFIX) -> str:
-    prefix = "/" + str(mock_artifact_prefix or DEFAULT_MOCK_ARTIFACT_PREFIX).strip("/")
-    return f"{prefix}/{str(artifact_name).lstrip('/')}"
+    prefix = str(mock_artifact_prefix or DEFAULT_MOCK_ARTIFACT_PREFIX).strip().strip("/")
+    artifact = str(artifact_name).lstrip("/")
+    if not artifact:
+        return ""
+    return f"{prefix}/{artifact}" if prefix else artifact
 
 
 def inferred_audio_artifact_name(
