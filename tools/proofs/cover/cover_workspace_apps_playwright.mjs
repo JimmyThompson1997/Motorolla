@@ -1516,7 +1516,15 @@ async function assertNoContactHtmlDocument(page, config, contactId, label) {
   return htmlState;
 }
 
-async function assertContactPhotoThumbnails(page, label) {
+async function assertContactPhotoThumbnails(page, label, timeoutMs = 30000) {
+  await page.waitForFunction(() => {
+    const rows = Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]"))
+      .filter(row => String(row.getAttribute("data-contact-id") || "") !== "contact-me");
+    return rows.length > 0 && rows.every(row => {
+      const img = row.querySelector(".light-avatar.has-photo img");
+      return Boolean(img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+    });
+  }, { timeout: timeoutMs });
   const rows = await page.evaluate(() => {
     const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
     return {
@@ -1583,7 +1591,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`);
+  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`, config.timeoutMs);
   summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
   summary.contactPhotoThumbnails.push({ theme, ...photoState });
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
