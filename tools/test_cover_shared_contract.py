@@ -11,3 +11,6 @@ def test_cover_shared_resolves_chrome_from_env_and_cross_platform_locations() ->
     assert "ms-playwright" in source
     assert "Google Chrome.app" in source
     assert "Chromium.app" in source
+    assert 'animations: "disabled"' in source
+    assert 'if (error?.name !== "TimeoutError") {' in source
+    assert "fullPage: false" in source

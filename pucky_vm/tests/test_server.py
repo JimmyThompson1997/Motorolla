@@ -1010,6 +1010,8 @@ class ServerTests(unittest.TestCase):
             config_script = response.read().decode("utf-8")
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
             self.assertNotIn('"links_url"', config_script)
+            self.assertNotIn("api_token", config_script)
+            self.assertNotIn("pucky_web_ui_token", config_script)
 
     def test_links_portal_url_endpoint_returns_signed_first_party_url(self) -> None:
         payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})

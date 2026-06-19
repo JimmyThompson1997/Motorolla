@@ -250,6 +250,7 @@
   ];
   const LIGHT_ROUTES = new Set([
     "home",
+    "inbox-detail",
     "notes",
     "note-detail",
     "tasks",
@@ -262,35 +263,23 @@
     "reminder-detail",
     "projects",
     "project-detail",
-    "project-new",
     "contacts",
-    "contact-detail",
-    "contact-edit",
-    "contact-new"
+    "contact-detail"
   ]);
   const HOME_SHELL_CANONICAL_ROUTES = new Set(["inbox", "connect", "meetings", "settings"]);
   const LIGHT_ROUTE_PARENTS = {
+    "inbox-detail": "inbox",
     "note-detail": "notes",
     "task-detail": "tasks",
     "meeting-detail": "calendar",
     "meeting-note-detail": "meeting-notes",
     "reminder-detail": "reminders",
     "project-detail": "projects",
-    "project-new": "projects",
-    "contact-detail": "contacts",
-    "contact-edit": "contacts",
-    "contact-new": "contacts"
+    "contact-detail": "contacts"
   };
-  const ROUTE_ALIASES = {
-    apps: "connect",
-    links: "connect",
-    feed: "inbox",
-    "feed-preview": "inbox",
-    "feed-preview-detail": "inbox",
-    morning: "home",
-    calls: "home"
-  };
+  const ROUTE_ALIASES = {};
   const WORKSPACE_ROUTE_COLLECTIONS = {
+    "inbox-detail": "feed-items",
     notes: "notes",
     "note-detail": "notes",
     tasks: "tasks",
@@ -301,15 +290,20 @@
     "meeting-note-detail": "meeting-notes",
     reminders: "reminders",
     "reminder-detail": "reminders",
-    "feed-preview": "feed-items",
-    "feed-preview-detail": "feed-items",
     projects: "projects",
     "project-detail": "projects",
-    "project-new": "projects",
     contacts: "contacts",
-    "contact-detail": "contacts",
-    "contact-edit": "contacts",
-    "contact-new": "contacts"
+    "contact-detail": "contacts"
+  };
+  const WORKSPACE_COLLECTION_LABELS = {
+    notes: "Notes",
+    tasks: "Tasks",
+    "calendar-events": "Calendar",
+    "feed-items": "Feed",
+    projects: "Projects",
+    contacts: "Contacts",
+    "meeting-notes": "Meeting Notes",
+    reminders: "Reminders"
   };
   const WORKSPACE_KIND_COLLECTIONS = {
     note: "notes",
@@ -385,15 +379,15 @@
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
     workspace: {
-      notes: { items: [], loaded: false, loading: false, error: "" },
-      tasks: { items: [], loaded: false, loading: false, error: "" },
-      "calendar-events": { items: [], loaded: false, loading: false, error: "" },
-      "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      projects: { items: [], loaded: false, loading: false, error: "" },
-      contacts: { items: [], loaded: false, loading: false, error: "" },
-      messages: { items: [], loaded: false, loading: false, error: "" },
-      "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
-      reminders: { items: [], loaded: false, loading: false, error: "" },
+      notes: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      tasks: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      "calendar-events": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      "feed-items": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      projects: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      contacts: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      messages: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      "meeting-notes": { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
+      reminders: { items: [], loaded: false, loading: false, error: "", preview_locked: false, preview_detail: "" },
       assets: {}
     },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
@@ -1172,6 +1166,29 @@
     return `/api/workspace/${collection}${query ? `?${query}` : ""}`;
   }
 
+  function workspaceCollectionLabel(collection) {
+    return WORKSPACE_COLLECTION_LABELS[String(collection || "")] || "workspace records";
+  }
+
+  function workspacePreviewLockDetail(collection) {
+    return `Web preview needs a valid api_token to load live ${workspaceCollectionLabel(collection)} here. Add api_token to the URL, or open the APK on your phone.`;
+  }
+
+  function workspacePreviewNeedsApiToken() {
+    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") && !state.links.apiToken) {
+      return true;
+    }
+    return false;
+  }
+
+  function clearWorkspaceBucketPreviewLock(bucket) {
+    if (!bucket) {
+      return;
+    }
+    bucket.preview_locked = false;
+    bucket.preview_detail = "";
+  }
+
   async function loadWorkspaceCollection(collection, options = {}) {
     const bucket = state.workspace[collection];
     if (!bucket || (bucket.loading && !options.force)) {
@@ -1179,11 +1196,20 @@
     }
     bucket.loading = true;
     bucket.error = "";
+    clearWorkspaceBucketPreviewLock(bucket);
     try {
-      const date = "";
-      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
-      bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
-      bucket.loaded = true;
+      await ensureLinksApiConfig();
+      if (workspacePreviewNeedsApiToken()) {
+        bucket.items = [];
+        bucket.loaded = true;
+        bucket.preview_locked = true;
+        bucket.preview_detail = workspacePreviewLockDetail(collection);
+      } else {
+        const date = "";
+        const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
+        bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
+        bucket.loaded = true;
+      }
     } catch (error) {
       bucket.error = String(error && error.message || error || "Workspace request failed");
     } finally {
@@ -1191,54 +1217,6 @@
     }
     if (options.render) {
       render();
-    }
-  }
-
-  async function upsertWorkspaceRecord(collection, body, options = {}) {
-    const bucket = workspaceBucket(collection);
-    try {
-      const record = await workspaceApiRequest(`/api/workspace/${collection}`, {
-        method: "POST",
-        body
-      });
-      await loadWorkspaceCollection(collection, { ...options, force: true, render: false });
-      if (options.render) {
-        render();
-      }
-      return record;
-    } catch (error) {
-      bucket.error = String(error && error.message || error || "Workspace write failed");
-      showToast(bucket.error);
-      if (options.render) {
-        render();
-      }
-      return null;
-    }
-  }
-
-  async function patchWorkspaceRecord(collection, id, body, options = {}) {
-    const recordId = String(id || "").trim();
-    const bucket = workspaceBucket(collection);
-    if (!recordId) {
-      return null;
-    }
-    try {
-      const record = await workspaceApiRequest(`/api/workspace/${collection}/${encodeURIComponent(recordId)}`, {
-        method: "PATCH",
-        body
-      });
-      await loadWorkspaceCollection(collection, { ...options, force: true, render: false });
-      if (options.render) {
-        render();
-      }
-      return record;
-    } catch (error) {
-      bucket.error = String(error && error.message || error || "Workspace write failed");
-      showToast(bucket.error);
-      if (options.render) {
-        render();
-      }
-      return null;
     }
   }
 
@@ -1272,7 +1250,14 @@
   }
 
   function workspaceBucket(collection) {
-    return state.workspace[collection] || { items: [], loaded: false, loading: false, error: "" };
+    return state.workspace[collection] || {
+      items: [],
+      loaded: false,
+      loading: false,
+      error: "",
+      preview_locked: false,
+      preview_detail: ""
+    };
   }
 
   function normalizeFeedSnapshot(payload, source = "vm") {
@@ -3642,17 +3627,14 @@
     view.dataset.lightRoute = state.route || "home";
     view.dataset.homeShellKind = "mock";
     switch (state.route) {
+      case "inbox-detail":
+        view.append(lightFeedDetailPage());
+        break;
       case "contacts":
         view.append(lightContactsPage());
         break;
       case "contact-detail":
         view.append(lightContactDetailPage());
-        break;
-      case "contact-edit":
-        view.append(lightContactEditPage());
-        break;
-      case "contact-new":
-        view.append(lightContactCreatePage());
         break;
       case "calendar":
         view.append(lightCalendarPage());
@@ -3689,9 +3671,6 @@
         break;
       case "project-detail":
         view.append(lightProjectDetailPage());
-        break;
-      case "project-new":
-        view.append(lightProjectCreatePage());
         break;
       case "home":
       default:
@@ -3799,7 +3778,7 @@
     if (key === "note") return "notes";
     if (key === "checklist") return "tasks";
     if (key === "calendar") return "calendar";
-    if (key === "text") return "feed_preview";
+    if (key === "text") return "inbox";
     if (key === "folder") return "projects";
     if (key === "contacts") return "contacts";
     return "";
@@ -3822,6 +3801,9 @@
 
   function lightWorkspaceStatus(collection, icon, emptyTitle) {
     const bucket = workspaceBucket(collection);
+    if (bucket.preview_locked) {
+      return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection));
+    }
     if (bucket.error) {
       return lightEmptyState("warning", "Could not load", bucket.error);
     }
@@ -3878,162 +3860,13 @@
     return page;
   }
 
-  function lightContactCreatePage() {
-    const page = lightPage("New Contact");
-    const card = el("section", "light-card light-create-card");
-    const name = el("input", "light-project-input");
-    name.type = "text";
-    name.placeholder = "Display name";
-    name.value = "New contact";
-    const email = el("input", "light-project-input");
-    email.type = "email";
-    email.placeholder = "Email";
-    const phone = el("input", "light-project-input");
-    phone.type = "tel";
-    phone.placeholder = "Phone";
-    const save = lightPillButton("Create contact", async () => {
-      const title = name.value.trim() || "New contact";
-      const record = await upsertWorkspaceRecord("contacts", {
-        id: `contact-${Date.now()}`,
-        title,
-        summary: "Workspace contact",
-        metadata: {
-          avatar: title.split(/\s+/).map(part => part[0] || "").join("").slice(0, 2).toUpperCase(),
-          email: email.value.trim(),
-          phone: phone.value.trim(),
-          endpoints: [
-            ...(email.value.trim() ? [{ label: "Email", value: email.value.trim() }] : []),
-            ...(phone.value.trim() ? [{ label: "Phone", value: phone.value.trim() }] : [])
-          ],
-          activity: ["Created from Contacts"]
-        }
-      }, { render: false });
-      if (record) {
-        state.selectedContactId = record.id;
-        lightNavigate("contact-detail", { from: "contacts" });
-      }
-    });
-    card.append(
-      lightSmallIcon("contacts"),
-      lightTextStack("Create a contact", "Persist a person, endpoints, activity, and agent-written HTML profile."),
-      name,
-      email,
-      phone,
-      save
-    );
-    page.append(card);
-    return page;
-  }
-
-  function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue) {
-    const endpoints = Array.isArray(existingEndpoints) ? existingEndpoints.filter(item => {
-      if (!item || typeof item !== "object") {
-        return false;
-      }
-      const label = String(item.label || item.type || "").trim().toLowerCase();
-      return !["email", "gmail", "mail", "phone", "sms", "text", "mobile", "call"].includes(label);
-    }).map(item => ({ ...item })) : [];
-    const email = String(emailValue || "").trim();
-    const phone = String(phoneValue || "").trim();
-    if (email) {
-      endpoints.push({ label: "Email", value: email });
-    }
-    if (phone) {
-      endpoints.push({ label: "Phone", value: phone });
-    }
-    return endpoints;
-  }
-
-  function lightContactEditPage() {
-    const contact = selectedContact();
-    if (!contact) {
-      return lightPage("Edit Contact", { subtitle: "Contact not found.", detail: true });
-    }
-    const selfContact = contactIsSelf(contact);
-    const meta = contact.metadata || {};
-    const page = lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });
-    const card = el("section", "light-card light-create-card");
-    const name = el("input", "light-project-input");
-    name.type = "text";
-    name.placeholder = "Display name";
-    name.value = String(contact.title || "");
-    const email = el("input", "light-project-input");
-    email.type = "email";
-    email.placeholder = "Email";
-    email.value = String(meta.email || "");
-    const phone = el("input", "light-project-input");
-    phone.type = "tel";
-    phone.placeholder = "Phone";
-    phone.value = String(meta.phone || "");
-    const device = el("input", "light-project-input");
-    device.type = "text";
-    device.placeholder = "Preferred reminder device id";
-    device.value = String(meta.notification_device_id || meta.preferred_reminder_device_id || "");
-    const save = lightPillButton(selfContact ? "Save profile" : "Save contact", async () => {
-      const title = selfContact ? "Me" : (name.value.trim() || "Contact");
-      const nextEmail = email.value.trim();
-      const nextPhone = phone.value.trim();
-      const metadata = {
-        ...(meta || {}),
-        ...(selfContact ? { is_self: true } : {}),
-        avatar: selfContact
-          ? String(meta.avatar || "ME").trim() || "ME"
-          : String(meta.avatar || title.split(/\s+/).map(part => part[0] || "").join("").slice(0, 2).toUpperCase()).trim(),
-        email: nextEmail,
-        phone: nextPhone,
-        endpoints: buildEditableContactEndpoints(meta.endpoints, nextEmail, nextPhone),
-        notification_device_id: selfContact ? device.value.trim() : String(meta.notification_device_id || ""),
-        preferred_reminder_device_id: selfContact ? device.value.trim() : String(meta.preferred_reminder_device_id || "")
-      };
-      const record = await patchWorkspaceRecord("contacts", String(contact.id || contact.record_id || ""), {
-        title,
-        summary: selfContact
-          ? "Personal reminder delivery profile"
-          : String(contact.summary || "Workspace contact"),
-        metadata
-      }, { render: false });
-      if (record) {
-        state.selectedContactId = String(record.id || record.record_id || contact.id || "");
-        lightNavigate("contact-detail", { from: "contacts" });
-      }
-    });
-    card.append(
-      lightSmallIcon("contacts", "contacts"),
-      lightTextStack(
-        selfContact ? "Edit Me" : "Edit contact",
-        selfContact
-          ? "Keep your delivery endpoints current so reminders can route through phone, Gmail, and SMS."
-          : "Update the contact profile and endpoints."
-      )
-    );
-    if (!selfContact) {
-      card.append(name);
-    }
-    card.append(email, phone);
-    if (selfContact) {
-      card.append(device);
-    }
-    card.append(save);
-    page.append(card);
-    return page;
-  }
-
   function lightContactDetailPage() {
     const contact = selectedContact();
     if (!contact) {
       return lightPage("Contact", { subtitle: "Contact not found.", detail: true });
     }
     ensureLinkedCollections(contact);
-    const selfContact = contactIsSelf(contact);
-    const page = lightPage("Contact", {
-      detail: true,
-      action: lightCircleButton(
-        "edit",
-        selfContact ? "Edit Me" : "Edit contact",
-        () => lightNavigate("contact-edit", { from: "contact-detail" }),
-        "light-contact-edit-button"
-      )
-    });
+    const page = lightPage("Contact", { detail: true });
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
@@ -4041,14 +3874,6 @@
     page.append(lightInfoSection("Contact", [
       { icon: "mail", accentKey: "connect", label: "Email", value: meta.email || "" },
       { icon: "phone", accentKey: "contacts", label: "Phone", value: meta.phone || "" },
-      ...(selfContact && String(meta.notification_device_id || meta.preferred_reminder_device_id || "").trim()
-        ? [{
-            icon: "bell",
-            accentKey: "reminders",
-            label: "Reminder device",
-            value: String(meta.notification_device_id || meta.preferred_reminder_device_id || "").trim()
-          }]
-        : [])
     ]));
     if (Array.isArray(meta.endpoints) && meta.endpoints.length) {
       page.append(lightInfoSection("Endpoints", meta.endpoints.map(row => ({ icon: "apps", accentKey: "connect", label: row.label, value: row.value }))));
@@ -4076,6 +3901,10 @@
     page.append(lightDatePicker());
     page.append(lightCalendarAgendaHeading());
     const bucket = workspaceBucket("calendar-events");
+    if (bucket.preview_locked) {
+      page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events")));
+      return page;
+    }
     if (bucket.error) {
       page.append(lightEmptyState("calendar", "Could not load", bucket.error));
       return page;
@@ -4967,52 +4796,12 @@
     return String(recipient.label || contact?.title || contactId || "Contact").trim() || "Contact";
   }
 
-  function reminderSnoozePayload(reminder, reopen = false) {
-    const nextDueAtMs = Date.now() + 10 * 60 * 1000;
-    return {
-      status: reopen ? "open" : String(reminder?.status || "").trim().toLowerCase() === "done" ? "open" : (reminder?.status || "open"),
-      due_at_ms: nextDueAtMs,
-      metadata: {
-        delivery_state: "pending",
-        last_fired_at_ms: 0,
-        last_fired_due_at_ms: 0,
-        last_delivery_error: "",
-        last_notification_command_id: "",
-        last_delivery_mode_requested: "",
-        last_delivery_mode_effective: "",
-        last_delivery_degraded_to: "",
-        last_delivery_warnings: [],
-        snoozed_until_ms: nextDueAtMs
-      }
-    };
-  }
-
-  function reminderDismissButton(reminder) {
-    const button = lightPillButton("Dismiss", async () => {
-      button.disabled = true;
-      await patchWorkspaceRecord("reminders", reminder.id, {
-        status: "done"
-      }, { render: true });
-      if (state.route === "reminder-detail") {
-        lightNavigate("reminders", { from: "reminders" });
-      }
-    }, false);
-    button.classList.add("light-reminder-dismiss");
-    return button;
-  }
-
-  function reminderSnoozeButton(reminder) {
-    const button = lightPillButton("Snooze 10 min", async () => {
-      button.disabled = true;
-      await patchWorkspaceRecord("reminders", reminder.id, reminderSnoozePayload(reminder), { render: true });
-    }, false);
-    button.classList.add("light-reminder-snooze");
-    return button;
-  }
-
-  function lightReminderActionRow(reminder) {
+  function lightReminderStatusRow(reminder) {
     const row = el("div", "light-reminder-actions");
-    row.append(reminderDismissButton(reminder), reminderSnoozeButton(reminder));
+    row.append(
+      el("span", "light-pill", `Status: ${reminderStatusLabel(reminder)}`),
+      el("span", "light-pill", `Delivery: ${reminderDeliveryLabel(reminder)}`)
+    );
     return row;
   }
 
@@ -5020,6 +4809,8 @@
     const card = el("section", `light-card light-reminder-detail-card ${reminderDeliveryClass(reminder)}`.trim());
     const identity = el("div", "light-reminder-detail-identity");
     const copy = el("div", "light-reminder-detail-copy");
+    const statusLabel = `Status: ${reminderStatusLabel(reminder)}`;
+    const deliveryLabel = `Delivery: ${reminderDeliveryLabel(reminder)}`;
     copy.append(
       el("span", "light-reminder-detail-eyebrow", reminderDetailEyebrow(reminder)),
       el("strong", "light-reminder-detail-title", reminder.title || "Untitled reminder")
@@ -5029,7 +4820,14 @@
       copy.append(el("p", "light-reminder-detail-summary", summary));
     }
     identity.append(lightSmallIcon("bell", "reminders"), copy);
-    card.append(identity, lightReminderActionRow(reminder));
+    const statusRow = lightReminderStatusRow(reminder);
+    if (statusRow?.children?.[0]) {
+      statusRow.children[0].textContent = statusLabel;
+    }
+    if (statusRow?.children?.[1]) {
+      statusRow.children[1].textContent = deliveryLabel;
+    }
+    card.append(identity, statusRow);
     return card;
   }
 
@@ -5131,7 +4929,7 @@
       note: "Note",
       task: "Task",
       calendar_event: "Calendar",
-      feed_item: "Feed",
+      feed_item: "Inbox",
       project: "Project",
       contact: "Contact",
       message: "Message",
@@ -5179,7 +4977,7 @@
       note: "note-detail",
       task: "task-detail",
       calendar_event: "meeting-detail",
-      feed_item: "feed-preview-detail",
+      feed_item: "inbox-detail",
       project: "project-detail",
       contact: "contact-detail",
       meeting_note: "meeting-note-detail",
@@ -5568,23 +5366,15 @@
     metaRow.append(el("span", "light-note-row-time", meta.timestamp));
     copy.append(metaRow);
     row.dataset.noteHasSource = String(Boolean(meta.source));
-    const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note", event => {
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      void toggleNotePin(note.id);
-    }, "light-note-pin-button");
-    pin.addEventListener("keydown", event => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.stopPropagation();
-      }
-    });
-    pin.dataset.noteId = note.id;
-    pin.dataset.notePinned = String(Boolean(note.pinned));
-    pin.setAttribute("aria-pressed", String(Boolean(note.pinned)));
-    pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });
-    row.append(copy, pin);
+    if (note.pinned) {
+      const pin = el("span", "light-note-pin-button");
+      pin.dataset.notePinned = "true";
+      pin.setAttribute("aria-hidden", "true");
+      pin.innerHTML = iconSvg("pin", { filled: true });
+      row.append(copy, pin);
+      return row;
+    }
+    row.append(copy);
     return row;
   }
 
@@ -5597,51 +5387,6 @@
     page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");
     page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
-  }
-
-  async function toggleNotePin(noteId) {
-    const bucket = workspaceBucket("notes");
-    const recordId = String(noteId || "").trim();
-    const items = workspaceItems("notes");
-    if (!recordId || !items.length) {
-      return;
-    }
-    const note = items.find(item => String(item.id || "") === recordId);
-    if (!note) {
-      return;
-    }
-    const previousItems = bucket.items.slice();
-    const previousError = bucket.error;
-    const previousNotesSectionsExpanded = { ...state.notesSectionsExpanded };
-    const nextPinned = !Boolean(note.pinned);
-    const toggled = { ...note, pinned: nextPinned };
-    const pinned = [];
-    const recent = [];
-    previousItems.forEach(item => {
-      if (String(item.id || "") === recordId) {
-        return;
-      }
-      if (item.pinned) {
-        pinned.push(item);
-        return;
-      }
-      recent.push(item);
-    });
-    bucket.items = nextPinned
-      ? [toggled, ...pinned, ...recent]
-      : [...pinned, toggled, ...recent];
-    setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);
-    bucket.error = "";
-    render();
-    const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });
-    if (!updated) {
-      bucket.items = previousItems;
-      bucket.error = previousError;
-      state.notesSectionsExpanded = previousNotesSectionsExpanded;
-      render();
-      return;
-    }
-    render();
   }
 
   function lightTasksPage() {
@@ -5781,16 +5526,10 @@
       const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      const statusTrigger = el("button", "light-task-row-status-trigger");
-      statusTrigger.type = "button";
+      const statusTrigger = el("span", "light-task-row-status-trigger");
       statusTrigger.dataset.taskStatusTrigger = "true";
-      statusTrigger.setAttribute("aria-label", `Change status for ${task.title || "task"}`);
+      statusTrigger.setAttribute("aria-hidden", "true");
       statusTrigger.append(el("span", taskCheckCircleClass(task)));
-      statusTrigger.addEventListener("click", event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openTaskStatusSelector(task);
-      });
       const main = el("button", "light-task-row-main");
       main.type = "button";
       main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
@@ -6072,67 +5811,17 @@
     return ordered;
   }
 
-  async function updateTaskStatus(task, nextStatus) {
-    await patchWorkspaceRecord("tasks", task.id, { status: nextStatus }, { render: true });
-  }
-
-  async function toggleTaskChecklistItem(task, itemId) {
-    const items = taskChecklist(task).map(item => (
-      String(item.id || "") === String(itemId || "")
-        ? { ...item, done: !Boolean(item.done) }
-        : item
-    ));
-    await patchWorkspaceRecord("tasks", task.id, { checklist: items }, { render: true });
-  }
-
-  function taskStatusSelectorOptions() {
-    return [
-      ["todo", "To do"],
-      ["in_progress", "In progress"],
-      ["waiting", "Waiting"],
-      ["done", "Done"],
-    ].map(([value, label]) => {
-      const leading = el("span", "settings-selector-status-icon");
-      leading.append(el("span", taskStatusCircleClass(value)));
-      return { value, label, leadingNode: leading };
-    });
-  }
-
-  function openTaskStatusSelector(task) {
-    const current = normalizedTaskStatus(task);
-    openSettingsSelector({
-      title: "Task status",
-      currentValue: current,
-      options: taskStatusSelectorOptions(),
-      onSelect: async value => {
-        const next = String(value || current);
-        if (next === current) {
-          return;
-        }
-        await updateTaskStatus(task, next);
-      },
-    });
-  }
-
   function lightTaskStatusControl(task) {
     const control = el("div", "light-task-status-control");
     const current = normalizedTaskStatus(task);
-    const button = el("button", "light-pill is-active light-task-status-trigger");
-    button.type = "button";
+    const button = el("div", "light-pill is-active light-task-status-trigger");
     button.dataset.taskStatus = current;
-    button.setAttribute("aria-haspopup", "dialog");
-    button.setAttribute("aria-label", `Change status: ${taskStatusLabel(current)}`);
+    button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
     const icon = el("span", "light-task-status-trigger-icon");
     icon.append(el("span", taskStatusCircleClass(current)));
     const copy = el("span", "light-task-status-trigger-copy");
     copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
-    const chevron = el("span", "light-task-status-trigger-chevron");
-    chevron.innerHTML = iconSvg("expand_more", { filled: true });
-    button.append(icon, copy, chevron);
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      openTaskStatusSelector(task);
-    });
+    button.append(icon, copy);
     control.append(button);
     return control;
   }
@@ -6146,13 +5835,8 @@
     section.append(lightSectionTitle("Checklist"));
     const card = el("div", "light-card light-task-checklist-card");
     items.forEach(item => {
-      const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
-      row.type = "button";
+      const row = el("div", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
       row.dataset.checklistItemId = String(item.id || "");
-      row.addEventListener("click", async () => {
-        row.disabled = true;
-        await toggleTaskChecklistItem(task, item.id);
-      });
       row.append(
         el("span", item.done ? "light-check-circle done" : "light-check-circle"),
         el("span", "light-task-checklist-label", String(item.label || "Checklist item"))
@@ -6219,16 +5903,10 @@
 
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    const statusTrigger = el("button", "light-task-status-circle-trigger");
-    statusTrigger.type = "button";
+    const statusTrigger = el("span", "light-task-status-circle-trigger");
     statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-label", `Change status for ${task.title || "task"}`);
+    statusTrigger.setAttribute("aria-hidden", "true");
     statusTrigger.append(el("span", taskCheckCircleClass(task)));
-    statusTrigger.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskStatusSelector(task);
-    });
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
@@ -6328,35 +6006,13 @@
     return page;
   }
 
-  function lightFeedPage() {
-    const page = lightPage("Feed");
-    const status = lightWorkspaceStatus("feed-items", "text", "No feed items yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    const items = workspaceItems("feed-items");
-    const todayItems = items.filter(item => dateKey(new Date(Number(item.event_at_ms || item.updated_at_ms || 0))) === todayDateKey());
-    const olderItems = items.filter(item => dateKey(new Date(Number(item.event_at_ms || item.updated_at_ms || 0))) !== todayDateKey());
-    page.append(lightSectionTitle("Today"));
-    const list = el("div", "light-list");
-    list.append(...(todayItems.length ? todayItems : items.slice(0, 3)).map(lightFeedRow));
-    page.append(list);
-    if (olderItems.length) {
-      const older = el("div", "light-list");
-      older.append(...olderItems.map(lightFeedRow));
-      page.append(lightSectionTitle("Older"), older);
-    }
-    return page;
-  }
-
   function lightFeedRow(item) {
       const row = el("button", "light-card light-feed-row");
       row.type = "button";
       row.dataset.feedId = item.id;
       row.addEventListener("click", () => {
         state.selectedFeedId = item.id;
-        lightNavigate("feed-preview-detail", { from: "feed-preview" });
+        lightNavigate("inbox-detail", { from: "inbox" });
       });
     row.append(lightSmallIcon(item.metadata?.icon || "text"), lightTextStack(item.title, `${workspaceTimestamp(item.event_at_ms || item.updated_at_ms, "Updated")}${DOT}${item.summary || item.metadata?.type || "Workspace"}`), el("span", "light-chevron", ">"));
     return row;
@@ -6365,14 +6021,14 @@
   function lightFeedDetailPage() {
     const item = selectedFeedItem();
     if (!item) {
-      return lightPage("Feed Item", { subtitle: "Feed item not found.", detail: true });
+      return lightPage("Inbox Item", { subtitle: "Inbox item not found.", detail: true });
     }
     ensureLinkedCollections(item);
-    const page = lightPage("Feed Item", { detail: true });
+    const page = lightPage("Inbox Item", { detail: true });
     page.classList.add("light-document-page", "light-feed-document");
     const article = el("article", "light-doc-article");
     article.append(
-      lightDocumentEyebrow(item.metadata?.type || "Workspace feed", workspaceTimestamp(item.event_at_ms || item.updated_at_ms, "Updated")),
+      lightDocumentEyebrow(item.metadata?.type || "Inbox update", workspaceTimestamp(item.event_at_ms || item.updated_at_ms, "Updated")),
       el("h1", "", item.title),
       el("p", "light-note-body", item.summary || "")
     );
@@ -6381,7 +6037,7 @@
     if (relatedRows.length) {
       page.append(lightInfoSection("Related", relatedRows));
     }
-    page.append(lightHtmlDocument(item, "No generated feed page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
+    page.append(lightHtmlDocument(item, "No generated inbox page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 
@@ -6427,51 +6083,12 @@
       ["Notes", "note", projectLinked(project, "note")],
       ["Tasks", "checklist", projectLinked(project, "task")],
       ["Calendar", "calendar", projectLinked(project, "calendar_event")],
-      ["Feed", "text", projectLinked(project, "feed_item")],
+      ["Inbox", "text", projectLinked(project, "feed_item")],
       ["People", "contacts", projectLinked(project, "contact")],
       ["Reminders", "bell", projectLinked(project, "reminder")]
     ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
     page.append(grid);
     page.append(lightHtmlDocument(project, "No generated project page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
-    return page;
-  }
-
-  function lightProjectCreatePage() {
-    const page = lightPage("New Project");
-    const card = el("section", "light-card light-project-create-card");
-    const name = el("input", "light-project-input");
-    name.type = "text";
-    name.placeholder = "Project name";
-    name.value = "New project";
-    const hints = el("div", "light-create-options");
-    [
-      ["chat", "Threads", "Collect related conversations"],
-      ["attachment", "Artifacts", "Roll up files and generated pages"],
-      ["checklist", "Tasks", "Track follow-ups in one folder"]
-    ].forEach(([icon, label, value]) => {
-      const option = el("div", "light-create-option");
-      option.append(lightSmallIcon(icon), lightTextStack(label, value));
-      hints.append(option);
-    });
-    const create = lightPillButton("Create project", async () => {
-      const title = name.value.trim() || "New project";
-      const record = await upsertWorkspaceRecord("projects", {
-        id: `project-${Date.now()}`,
-        title,
-        summary: "Workspace project folder for threads, generated pages, links, tasks, and people.",
-        metadata: {
-          threads: ["Drop related chat threads here"],
-          assets: ["Generated pages and files will appear here"],
-          chips: ["1 thread", "Draft"]
-        }
-      }, { render: false });
-      if (record) {
-        state.selectedProjectId = record.id;
-        lightNavigate("project-detail", { from: "projects" });
-      }
-    }, false);
-    card.append(lightSmallIcon("folder"), lightTextStack("Project folder", "A lightweight rollup of chats, artifacts, notes, tasks, meetings, and people."), name, hints, create);
-    page.append(card);
     return page;
   }
 
@@ -6575,15 +6192,14 @@
 
   function lightRouteDetailKey(route) {
     return ({
+      "inbox-detail": "selectedFeedId",
       "meeting-detail": "selectedMeetingId",
       "meeting-note-detail": "selectedMeetingNoteId",
       "reminder-detail": "selectedReminderId",
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
-      "feed-preview-detail": "selectedFeedId",
       "project-detail": "selectedProjectId",
-      "contact-detail": "selectedContactId",
-      "contact-edit": "selectedContactId"
+      "contact-detail": "selectedContactId"
     })[String(route || "")] || "";
   }
 
@@ -7455,15 +7071,14 @@
 
   function isLightDetailRoute(route) {
     return [
+      "inbox-detail",
       "meeting-detail",
       "meeting-note-detail",
       "reminder-detail",
       "note-detail",
       "task-detail",
-      "feed-preview-detail",
       "project-detail",
-      "contact-detail",
-      "contact-edit"
+      "contact-detail"
     ].includes(String(route || ""));
   }
 

@@ -96,7 +96,7 @@ async function main() {
   ensureDir(config.reportDir);
 
   const server = await startStaticServer(config.port);
-  const pageUrl = `http://127.0.0.1:${config.port}/index.html?route=feed&reset_nav=1`;
+  const pageUrl = `http://127.0.0.1:${config.port}/index.html?route=inbox&reset_nav=1`;
   const feedItems = [
     {
       card_id: "vm-card-alpha",

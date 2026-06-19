@@ -660,7 +660,21 @@ async function assertHomeShellChrome(page, route) {
 }
 
 async function openTile(page, label, route, timeoutMs) {
-  await page.locator(`.light-app-tile[data-app-label="${label}"]`).click({ timeout: timeoutMs });
+  const selector = `.light-app-tile[data-app-label="${label}"]`;
+  await page.waitForFunction((tileSelector) => {
+    const tile = document.querySelector(tileSelector);
+    if (!(tile instanceof HTMLElement)) {
+      return false;
+    }
+    const rect = tile.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }, selector, { timeout: timeoutMs });
+  await page.evaluate((tileSelector) => {
+    const tile = document.querySelector(tileSelector);
+    if (tile instanceof HTMLElement) {
+      tile.click();
+    }
+  }, selector);
   await page.waitForSelector(`.light-shell[data-light-route="${route}"]`, { timeout: timeoutMs });
   await assertHomeShellChrome(page, route);
 }
@@ -700,6 +714,19 @@ async function expectFrameHeading(page, text, timeoutMs) {
     return;
   }
   await page.frameLocator(".light-html-frame").locator(`text=${text}`).first().waitFor({ state: "visible", timeout: timeoutMs });
+}
+
+async function expectPreviewApiTokenLock(page, route, label, timeoutMs) {
+  await page.waitForFunction(({ expectedRoute, expectedLabel }) => {
+    const shell = document.querySelector(".light-shell");
+    const title = document.querySelector(".light-empty-state h2");
+    const detail = document.querySelector(".light-empty-state p");
+    const text = String(shell?.textContent || "");
+    return shell?.getAttribute("data-light-route") === expectedRoute
+      && String(title?.textContent || "").trim() === "Preview needs api_token"
+      && String(detail?.textContent || "").trim() === `Web preview needs a valid api_token to load live ${expectedLabel} here. Add api_token to the URL, or open the APK on your phone.`
+      && !/unauthorized/i.test(text);
+  }, { expectedRoute: route, expectedLabel: label }, { timeout: timeoutMs });
 }
 
 async function readTaskDetailState(page) {
@@ -880,6 +907,14 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
+  if (!String(config.apiToken || "").trim()) {
+    await expectPreviewApiTokenLock(page, "notes", "Notes", config.timeoutMs);
+    screenshots[`${theme}_notes_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-preview-locked`);
+    summary.previewLocks = summary.previewLocks || [];
+    summary.previewLocks.push({ theme, route: "notes", label: "Notes" });
+    await backHome(page, theme, config.timeoutMs);
+    return;
+  }
   const note = seed.writeEnabled
     ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
     : (seed.notes || []).find(item => Boolean(item.id)) ;
@@ -1268,6 +1303,14 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
 
 async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Calendar", "calendar", config.timeoutMs);
+  if (!String(config.apiToken || "").trim()) {
+    await expectPreviewApiTokenLock(page, "calendar", "Calendar", config.timeoutMs);
+    screenshots[`${theme}_calendar_preview_locked`] = await saveScreenshot(page, config.reportDir, `${theme}-calendar-preview-locked`);
+    summary.previewLocks = summary.previewLocks || [];
+    summary.previewLocks.push({ theme, route: "calendar", label: "Calendar" });
+    await backHome(page, theme, config.timeoutMs);
+    return;
+  }
   const events = seed.writeEnabled ? [] : (seed.calendarEvents || []);
   const seededEventId = seed.writeEnabled ? seed.calendarIds?.todayRoadmap : null;
   const eventCards = seededEventId

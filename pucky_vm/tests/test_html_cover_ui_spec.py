@@ -73,14 +73,14 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     route_for_theme = function_block(app, "resolveRouteForTheme")
     route_sync = function_block(app, "syncRouteQueryParam")
 
-    assert "const ROUTE_ALIASES = {" in app
-    assert 'feed: "inbox"' in app
-    assert 'links: "connect"' in app
-    assert 'apps: "connect"' in app
-    assert '"feed-preview": "inbox"' in app
-    assert '"feed-preview-detail": "inbox"' in app
-    assert 'morning: "home"' in app
-    assert 'calls: "home"' in app
+    assert "const ROUTE_ALIASES = {};" in app
+    assert 'feed: "inbox"' not in app
+    assert 'links: "connect"' not in app
+    assert 'apps: "connect"' not in app
+    assert '"feed-preview": "inbox"' not in app
+    assert '"feed-preview-detail": "inbox"' not in app
+    assert 'morning: "home"' not in app
+    assert 'calls: "home"' not in app
     assert "const normalized = ROUTE_ALIASES[value] || value;" in route_normalizer
     assert 'return { route: normalizeHomeShellRoute(queryRoute) || "home" };' in initial_route_state
     assert 'return { route: normalizeHomeShellRoute(persistedRoute) || "home" };' in initial_route_state
@@ -287,6 +287,32 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
     assert '}, TURN_STATUS_POLL_MS);' in app
 
 
+def test_workspace_preview_without_token_uses_locked_empty_state_instead_of_raw_unauthorized() -> None:
+    app = read("app.js")
+    load_workspace = function_block(app, "loadWorkspaceCollection")
+    light_workspace_status = function_block(app, "lightWorkspaceStatus")
+    light_calendar_page = function_block(app, "lightCalendarPage")
+    preview_lock_detail = function_block(app, "workspacePreviewLockDetail")
+
+    assert 'preview_locked: false' in app
+    assert 'preview_detail: ""' in app
+    assert "function workspacePreviewNeedsApiToken()" in app
+    assert 'if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") && !state.links.apiToken) {' in app
+    assert 'notes: "Notes"' in app
+    assert '"calendar-events": "Calendar"' in app
+    assert 'await ensureLinksApiConfig();' in load_workspace
+    assert 'if (workspacePreviewNeedsApiToken()) {' in load_workspace
+    assert 'bucket.items = [];' in load_workspace
+    assert 'bucket.loaded = true;' in load_workspace
+    assert 'bucket.preview_locked = true;' in load_workspace
+    assert 'bucket.preview_detail = workspacePreviewLockDetail(collection);' in load_workspace
+    assert 'return `Web preview needs a valid api_token to load live ${workspaceCollectionLabel(collection)} here. Add api_token to the URL, or open the APK on your phone.`;' in preview_lock_detail
+    assert 'if (bucket.preview_locked) {' in light_workspace_status
+    assert 'return lightEmptyState(icon, "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail(collection));' in light_workspace_status
+    assert 'if (bucket.preview_locked) {' in light_calendar_page
+    assert 'page.append(lightEmptyState("calendar", "Preview needs api_token", bucket.preview_detail || workspacePreviewLockDetail("calendar-events")));' in light_calendar_page
+
+
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
     app = read("app.js")
     describe_ui_surface = function_block(app, "describeUiSurface")
@@ -478,7 +504,6 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     note_meta = function_block(app, "noteMetaLine")
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
-    toggle_note_pin = function_block(app, "toggleNotePin")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
     notes_feed_block = css_block(styles, ".light-notes-feed")
@@ -544,9 +569,11 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'metaRow.append(el("span", "light-note-row-context", meta.source));' in note_row
     assert 'metaRow.classList.add("is-time-only");' in note_row
     assert 'metaRow.append(el("span", "light-note-row-time", meta.timestamp));' in note_row
-    assert 'const pin = lightIconButton("pin", note.pinned ? "Unpin note" : "Pin note"' in note_row
-    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(note.pinned) });' in note_row
-    assert "void toggleNotePin(note.id);" in note_row
+    assert 'const pin = el("span", "light-note-pin-button");' in note_row
+    assert 'pin.setAttribute("aria-hidden", "true");' in note_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: true });' in note_row
+    assert "if (note.pinned) {" in note_row
+    assert "row.append(copy);" in note_row
     assert 'return lightPage("Note", { subtitle: "Note not found.", detail: true });' in note_detail
     assert 'const page = lightPage(note.title || "Untitled note", { detail: true });' in note_detail
     assert 'page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");' in note_detail
@@ -555,13 +582,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
     assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));' in note_detail
 
-    assert 'const updated = await patchWorkspaceRecord("notes", note.id, { pinned: nextPinned }, { render: false });' in app
-    assert 'const previousNotesSectionsExpanded = { ...state.notesSectionsExpanded };' in toggle_note_pin
-    assert 'setNotesSectionExpanded(nextPinned ? "pinned" : "recent", true);' in toggle_note_pin
-    assert "bucket.items = nextPinned" in toggle_note_pin
-    assert "bucket.items = previousItems;" in toggle_note_pin
-    assert "bucket.error = previousError;" in toggle_note_pin
-    assert "state.notesSectionsExpanded = previousNotesSectionsExpanded;" in toggle_note_pin
+    assert "function toggleNotePin" not in app
+    assert 'patchWorkspaceRecord("notes"' not in app
     assert "overflow-x: hidden;" in feed_block
     assert "overscroll-behavior-x: none;" in feed_block
     assert "width: calc(100% + (var(--app-shell-side-pad) * 2));" not in header_block
@@ -662,7 +684,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "function taskOwners(task)" in app
     assert "function taskPrimaryOwner(task)" in app
     assert "explicitOwners" not in app
-    assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
+    assert 'const statusTrigger = el("span", "light-task-row-status-trigger");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
@@ -677,10 +699,13 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'role: "Created by"' in task_people_section
     assert 'role: "Owner"' in task_people_section
     assert 'kind: "contact"' in task_people_section
-    assert 'const button = el("button", "light-pill is-active light-task-status-trigger");' in task_status_control
-    assert 'button.append(icon, copy, chevron);' in task_status_control
-    assert 'iconSvg("expand_more", { filled: true })' in task_status_control
+    assert 'const button = el("div", "light-pill is-active light-task-status-trigger");' in task_status_control
+    assert 'button.append(icon, copy);' in task_status_control
+    assert 'iconSvg("expand_more", { filled: true })' not in task_status_control
     assert 'iconSvg("navigate_next")' not in task_status_control
+    assert "function updateTaskStatus" not in app
+    assert "function toggleTaskChecklistItem" not in app
+    assert "function openTaskStatusSelector" not in app
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
@@ -708,6 +733,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     reminder_row = function_block(app, "lightReminderRow")
     reminder_detail = function_block(app, "lightReminderDetailPage")
     reminder_detail_card = function_block(app, "lightReminderDetailCard")
+    reminder_status_row = function_block(app, "lightReminderStatusRow")
     recipient_name = function_block(app, "reminderRecipientDisplayName")
     recipient_rows = function_block(app, "reminderRecipientRows")
 
@@ -724,7 +750,9 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "page.append(lightReminderDetailCard(reminder));" in reminder_detail
     assert 'page.append(lightReminderActionRow(reminder));' not in reminder_detail
     assert 'el("h1", "", reminder.title)' not in reminder_detail
-    assert 'lightReminderActionRow(reminder)' in reminder_detail_card
+    assert 'lightReminderStatusRow(reminder)' in reminder_detail_card
+    assert '`Status: ${reminderStatusLabel(reminder)}`' in reminder_status_row
+    assert '`Delivery: ${reminderDeliveryLabel(reminder)}`' in reminder_status_row
     assert 'el("p", "light-reminder-detail-summary", summary)' in reminder_detail_card
     assert 'page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));' in reminder_detail
     assert 'page.append(lightInfoSection("Recipients", recipientRows));' in reminder_detail
@@ -737,22 +765,18 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert ".light-reminder-channels-section" in styles
 
 
-def test_contacts_expose_preserved_me_contact_with_detail_edit_action() -> None:
+def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
-    contact_edit = function_block(app, "lightContactEditPage")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
-    assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" in app
-    assert '"contact-edit"' in app
+    assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
+    assert '"contact-edit"' not in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
-    assert 'action: lightCircleButton(' in contact_detail
-    assert '"edit"' in contact_detail
-    assert 'selfContact ? "Edit Me" : "Edit contact"' in contact_detail
-    assert '() => lightNavigate("contact-edit", { from: "contact-detail" })' in contact_detail
-    assert 'lightPage(selfContact ? "Edit Me" : "Edit Contact", { detail: true });' in contact_edit
-    assert 'const save = lightPillButton(selfContact ? "Save profile" : "Save contact"' in contact_edit
-    assert "notification_device_id: selfContact ? device.value.trim()" in contact_edit
+    assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
+    assert 'action: lightCircleButton(' not in contact_detail
+    assert "Reminder device" not in contact_detail
+    assert "lightContactEditPage" not in app

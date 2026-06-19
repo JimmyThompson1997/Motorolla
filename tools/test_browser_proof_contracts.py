@@ -26,3 +26,11 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
 def test_canonical_browser_proof_routes_use_inbox_and_connect() -> None:
     assert "route=inbox" in read_source("meetings_load_probe.mjs")
     assert "route=connect" in read_source("cover_links_scroll_probe.mjs")
+
+
+def test_workspace_apps_browser_proof_covers_preview_api_token_lock() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "Preview needs api_token" in source
+    assert "Web preview needs a valid api_token to load live ${expectedLabel} here. Add api_token to the URL, or open the APK on your phone." in source
+    assert "!/unauthorized/i.test(text)" in source

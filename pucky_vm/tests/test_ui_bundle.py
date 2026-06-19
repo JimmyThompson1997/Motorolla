@@ -47,6 +47,8 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert '"schema":"pucky.bundle_config.v1"' in config_script
         assert '"ui_version":"test-ui"' in config_script
         assert '"created_at":"2026-05-20T00:00:00+00:00"' in config_script
+        assert "api_token" not in config_script
+        assert "pucky_web_ui_token" not in config_script
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)

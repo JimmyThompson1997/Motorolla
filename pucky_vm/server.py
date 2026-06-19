@@ -6691,7 +6691,7 @@ def make_handler(service: PuckyVoiceService):
                 except ValueError:
                     self._html(HTTPStatus.UNAUTHORIZED, "<h3>Invalid or expired connect link.</h3>")
                     return
-                back_url = f"{base_url.rstrip('/')}/ui/pucky/latest/?route=feed"
+                back_url = f"{base_url.rstrip('/')}/ui/pucky/latest/?route=connect"
                 self._html(
                     HTTPStatus.OK,
                     _links_portal_document(
