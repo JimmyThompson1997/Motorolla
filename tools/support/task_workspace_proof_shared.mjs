@@ -203,6 +203,7 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
     metadata: {
       first_name: "Proof",
       last_name: runDisplayToken(seed),
+      photo: "fixtures/contact_photos/proof-contact.webp",
       email: `${seed.prefix}@example.com`,
     },
   });
@@ -213,6 +214,7 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
     metadata: {
       first_name: "Owner",
       last_name: runDisplayToken(seed),
+      photo: "fixtures/contact_photos/eric.webp",
       email: `${seed.prefix}-owner@example.com`,
     },
   });

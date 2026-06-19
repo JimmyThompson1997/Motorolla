@@ -105,6 +105,69 @@ def test_contact_writes_strip_endpoint_metadata_without_backfilling(tmp_path: Pa
     assert "endpoints" not in metadata
 
 
+def test_contact_cleanup_removes_clinic_and_assigns_fixture_photos(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.upsert_record(
+        "contacts",
+        {
+            "id": "clinic-front-desk",
+            "title": "Clinic front desk",
+            "summary": "Legacy clinic contact",
+            "metadata": {"avatar": "CF", "phone": "+1 (415) 555-0133"},
+        },
+    )
+    store.upsert_link(
+        {
+            "id": "legacy-clinic-link",
+            "source_kind": "calendar_event",
+            "source_id": "clinic-checkin",
+            "target_kind": "contact",
+            "target_id": "clinic-front-desk",
+            "label": "Clinic front desk",
+        }
+    )
+    store.upsert_record(
+        "contacts",
+        {
+            "id": "eric-donaldson",
+            "title": "Eric Donaldson",
+            "summary": "Legacy imported contact",
+            "metadata": {"avatar": "ED", "activity": ["Imported contact"]},
+        },
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'")
+    store._conn.commit()
+    store.close()
+
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    visible_contacts = {item["id"]: item for item in migrated.list_records("contacts")["items"]}
+    assert "clinic-front-desk" not in visible_contacts
+    clinic = migrated.get_record("contacts", "clinic-front-desk", include_deleted=True)
+    assert clinic is not None
+    assert clinic["deleted"] is True
+    assert clinic["archived"] is True
+
+    clinic_links = migrated._conn.execute(
+        """
+        SELECT link_id
+        FROM workspace_links
+        WHERE (source_kind = 'contact' AND source_id = 'clinic-front-desk')
+           OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
+        """
+    ).fetchall()
+    assert clinic_links == []
+
+    assert visible_contacts[SELF_CONTACT_ID]["metadata"].get("photo", "") == ""
+    for contact_id, contact in visible_contacts.items():
+        if contact_id == SELF_CONTACT_ID:
+            continue
+        photo = str(contact["metadata"].get("photo") or "")
+        assert photo.startswith("fixtures/contact_photos/")
+        assert photo.endswith((".jpg", ".jpeg", ".webp"))
+
+
 def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
@@ -606,7 +669,7 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
             """
         ).fetchall()
     }
-    assert ("contact", "clinic-front-desk") in clinic_links
+    assert not any(kind == "contact" for kind, _ in clinic_links)
     assert ("note", "clinic-prep-note") in clinic_links
     assert ("reminder", "demo-reminder-health-call") in clinic_links
 

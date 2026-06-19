@@ -156,14 +156,14 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     title: "Jimmy Torres",
     summary: "Proof collaborator",
     html: "<!doctype html><h1>Jimmy Torres</h1><p>Proof contact for the freelance review.</p>",
-    metadata: { first_name: "Jimmy", last_name: "Torres", email: "jimmy@example.com", phone: "+1 (415) 555-0101" }
+    metadata: { first_name: "Jimmy", last_name: "Torres", photo: "fixtures/contact_photos/proof-contact.webp", email: "jimmy@example.com", phone: "+1 (415) 555-0101" }
   });
   await rememberRecord("contacts", {
     id: `${runId}-jeff-bennett`,
     title: "Jeff Bennett",
     summary: "Proof family contact",
     html: "<!doctype html><h1>Jeff Bennett</h1><p>Proof contact for family plans and review context.</p>",
-    metadata: { first_name: "Jeff", last_name: "Bennett", email: "jeff@example.com", phone: "+1 (415) 555-0102" }
+    metadata: { first_name: "Jeff", last_name: "Bennett", photo: "fixtures/contact_photos/eric.webp", email: "jeff@example.com", phone: "+1 (415) 555-0102" }
   });
   await rememberRecord("projects", {
     id: `${runId}-project`,

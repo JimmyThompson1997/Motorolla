@@ -144,6 +144,17 @@ def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> N
     assert "should render the Activity section" in source
 
 
+def test_workspace_apps_browser_proof_checks_contact_photo_thumbnail_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "assertContactPhotoThumbnails" in source
+    assert "Clinic front desk should not render in Contacts" in source
+    assert "contact-me should remain initials-only" in source
+    assert "naturalWidth" in source
+    assert "objectFit" in source
+    assert ".light-contact-row .light-avatar.has-photo img" in source
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

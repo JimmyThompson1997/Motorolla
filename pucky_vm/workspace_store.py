@@ -33,6 +33,17 @@ SELF_CONTACT_TITLE = "Me"
 SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
 CONTACT_EMAIL_ENDPOINT_LABELS = ("email", "gmail", "mail")
 CONTACT_PHONE_ENDPOINT_LABELS = ("phone", "sms", "text", "mobile", "call")
+CONTACT_PHOTO_FIXTURES = (
+    "fixtures/contact_photos/maya.webp",
+    "fixtures/contact_photos/sam.webp",
+    "fixtures/contact_photos/eric.webp",
+    "fixtures/contact_photos/proof-contact.webp",
+)
+CONTACT_PHOTO_BY_ID = {
+    "maya": "fixtures/contact_photos/maya.webp",
+    "sam-rivera": "fixtures/contact_photos/sam.webp",
+    "eric-donaldson": "fixtures/contact_photos/eric.webp",
+}
 
 
 def _now_ms() -> int:
@@ -107,6 +118,20 @@ def _contact_metadata_without_endpoints(metadata: dict[str, Any]) -> dict[str, A
     cleaned = dict(metadata or {})
     cleaned.pop("endpoints", None)
     return cleaned
+
+
+def _is_contact_fixture_bitmap_photo(value: object) -> bool:
+    photo = str(value or "").strip()
+    return photo.startswith("fixtures/contact_photos/") and photo.lower().endswith((".jpg", ".jpeg", ".webp"))
+
+
+def _contact_fixture_photo(record_id: str, title: str = "") -> str:
+    clean_id = str(record_id or "").strip()
+    if clean_id in CONTACT_PHOTO_BY_ID:
+        return CONTACT_PHOTO_BY_ID[clean_id]
+    key = f"{clean_id}:{title}".strip(":") or "contact"
+    index = sum(ord(char) for char in key) % len(CONTACT_PHOTO_FIXTURES)
+    return CONTACT_PHOTO_FIXTURES[index]
 
 
 def _normalize_reminder_recipient_id(value: object) -> str:
@@ -702,6 +727,7 @@ class WorkspaceStore:
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
+            contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
             defaults = default_workspace_records(now)
@@ -741,6 +767,8 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
+        if not contact_cleanup_photos:
+            self._cleanup_contacts_and_photos_v1(now)
         self.ensure_self_contact()
 
     def ensure_self_contact(self) -> dict[str, object]:
@@ -748,6 +776,7 @@ class WorkspaceStore:
         if current is None:
             return self.upsert_record("contacts", _self_contact_record())
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
+        metadata.pop("photo", None)
         payload = {
             "id": SELF_CONTACT_ID,
             "title": SELF_CONTACT_TITLE,
@@ -801,6 +830,58 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
+    def _cleanup_contacts_and_photos_v1(self, now_ms: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM workspace_links
+                WHERE (source_kind = 'contact' AND source_id = 'clinic-front-desk')
+                   OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
+                """
+            )
+            self._conn.execute(
+                """
+                UPDATE workspace_records
+                SET archived = 1,
+                    deleted = 1,
+                    updated_at_ms = ?
+                WHERE kind = 'contact'
+                  AND record_id = 'clinic-front-desk'
+                """,
+                (now_ms,),
+            )
+            rows = self._conn.execute(
+                "SELECT record_id, title, metadata_json, deleted FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                record_id = str(row["record_id"] or "").strip()
+                metadata = _json_loads(row["metadata_json"], {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                next_metadata = dict(metadata)
+                is_self = record_id == SELF_CONTACT_ID or bool(next_metadata.get("is_self"))
+                if is_self:
+                    next_metadata.pop("photo", None)
+                elif not bool(row["deleted"]):
+                    if not _is_contact_fixture_bitmap_photo(next_metadata.get("photo")):
+                        next_metadata["photo"] = _contact_fixture_photo(record_id, str(row["title"] or ""))
+                if next_metadata != metadata:
+                    self._conn.execute(
+                        """
+                        UPDATE workspace_records
+                        SET metadata_json = ?,
+                            updated_at_ms = ?
+                        WHERE kind = 'contact'
+                          AND record_id = ?
+                        """,
+                        (_json_dumps(next_metadata), now_ms, record_id),
+                    )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_cleanup_photos_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
     @staticmethod
     def kind_for_collection(collection: str) -> str:
         kind = WORKSPACE_COLLECTIONS.get(str(collection or "").strip())
@@ -821,7 +902,6 @@ class WorkspaceStore:
             "home-refresh",
             "freelance-followup",
             "sam-rivera",
-            "clinic-front-desk",
             "demo-message-house-repair",
             "demo-message-dinner-plan",
             "demo-message-freelance-followup",
@@ -1006,6 +1086,7 @@ class WorkspaceStore:
             metadata = _contact_metadata_without_endpoints(metadata)
             is_self = record_id == SELF_CONTACT_ID or bool(metadata.get("is_self"))
             if is_self:
+                metadata.pop("photo", None)
                 metadata = {
                     **metadata,
                     "is_self": True,
@@ -1557,7 +1638,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "first_name": "Maya",
                     "last_name": "Chen",
                     "avatar": "MC",
-                    "photo": "fixtures/contact_photos/maya.svg",
+                    "photo": "fixtures/contact_photos/maya.webp",
                     "email": "maya.chen@email.com",
                     "phone": "+1 (415) 555-0142",
                     "activity": ["Slack DM - approved the engineering budget", "Meeting - Roadmap sync today"],
@@ -1795,25 +1876,10 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "first_name": "Sam",
                     "last_name": "Rivera",
                     "avatar": "SR",
+                    "photo": "fixtures/contact_photos/sam.webp",
                     "email": "sam.rivera@example.com",
                     "phone": "+1 (415) 555-0168",
                     "activity": ["Email - asked for the revised homepage pass", "Calendar - review call in two days"],
-                },
-            },
-            {
-                "id": "clinic-front-desk",
-                "title": "Clinic front desk",
-                "summary": "Call to confirm the appointment window and prep notes.",
-                "html": _personal_html(
-                    "Clinic front desk",
-                    "Short contact card for appointment timing and prep questions.",
-                    ["Confirm the time", "Ask about prep", "Write down follow-up instructions"],
-                ),
-                "metadata": {
-                    "avatar": "CF",
-                    "email": "frontdesk@clinic.example.com",
-                    "phone": "+1 (415) 555-0133",
-                    "activity": ["Call - confirm the appointment time", "Reminder - check prep instructions"],
                 },
             },
         ],
@@ -1948,7 +2014,6 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-task-home-project", "source_kind": "task", "source_id": "demo-task-do-paint-samples", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
         {"id": "graph-reminder-paint-task", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "task", "target_id": "demo-task-do-paint-samples", "label": "Bring paint samples upstairs"},
         {"id": "graph-reminder-paint-meeting", "source_kind": "reminder", "source_id": "demo-reminder-paint-samples", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
-        {"id": "graph-reminder-health-contact", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
         {"id": "graph-reminder-health-calendar", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "calendar_event", "target_id": "clinic-checkin", "label": "Clinic check-in"},
         {"id": "graph-reminder-health-note", "source_kind": "reminder", "source_id": "demo-reminder-health-call", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
         {"id": "graph-note-clinic-reminder", "source_kind": "note", "source_id": "clinic-prep-note", "target_kind": "reminder", "target_id": "demo-reminder-book-note", "label": "Review clinic prep note tonight"},
@@ -1961,7 +2026,6 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-calendar-home-project", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "project", "target_id": "home-refresh", "label": "Home refresh"},
         {"id": "graph-calendar-home-meeting", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "meeting_note", "target_id": "demo-meeting-home-refresh", "label": "Home refresh walkthrough"},
         {"id": "graph-calendar-home-reminder", "source_kind": "calendar_event", "source_id": "house-walkthrough", "target_kind": "reminder", "target_id": "demo-reminder-paint-samples", "label": "Bring paint samples upstairs"},
-        {"id": "graph-calendar-health-contact", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
         {"id": "graph-calendar-health-note", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
         {"id": "graph-calendar-health-reminder", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "reminder", "target_id": "demo-reminder-health-call", "label": "Call clinic before lunch"},
         {"id": "graph-meeting-freelance-contact", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "contact", "target_id": "sam-rivera", "label": "Sam Rivera"},

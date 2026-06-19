@@ -36,6 +36,13 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "fixtures/reply_cards_deploy.json" in manifest["files"]
     assert "fixtures/links_catalog.json" in manifest["files"]
     assert "fixtures/links_logo_overrides.json" in manifest["files"]
+    for contact_photo in (
+        "fixtures/contact_photos/maya.webp",
+        "fixtures/contact_photos/sam.webp",
+        "fixtures/contact_photos/eric.webp",
+        "fixtures/contact_photos/proof-contact.webp",
+    ):
+        assert contact_photo in manifest["files"]
 
     with zipfile.ZipFile(result["bundle_path"]) as archive:
         names = set(archive.namelist())
@@ -49,6 +56,10 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert "pucky-links-catalog.js" in names
         assert "fixtures/reply_cards.json" in names
         assert "fixtures/links_logo_overrides.json" in names
+        assert "fixtures/contact_photos/maya.webp" in names
+        assert "fixtures/contact_photos/sam.webp" in names
+        assert "fixtures/contact_photos/eric.webp" in names
+        assert "fixtures/contact_photos/proof-contact.webp" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
         config_script = archive.read("pucky-config.js").decode("utf-8")

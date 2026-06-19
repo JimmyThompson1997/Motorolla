@@ -3857,10 +3857,10 @@ class ServerTests(unittest.TestCase):
                 "due_at_ms": self.service.workspace.now_ms() - 1_000,
                 "metadata": {
                     "recipients": [
-                        {"id": "clinic-front-desk", "kind": "contact", "contact_id": "clinic-front-desk", "label": "Clinic front desk"},
+                        {"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"},
                     ],
                     "destinations": [
-                        {"channel": "call", "recipient_ids": ["clinic-front-desk"]},
+                        {"channel": "call", "recipient_ids": ["sam-rivera"]},
                     ],
                 },
             },
@@ -3893,7 +3893,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(updated["metadata"]["delivery_state"], "sent")
         self.assertEqual(len(updated["metadata"]["last_delivery_results"]), 1)
         self.assertEqual(updated["metadata"]["last_delivery_results"][0]["channel"], "call")
-        self.assertEqual(updated["metadata"]["last_delivery_results"][0]["target"], "+1 (415) 555-0133")
+        self.assertEqual(updated["metadata"]["last_delivery_results"][0]["target"], "+1 (415) 555-0168")
 
     def test_due_reminder_connected_app_delivery_uses_proxy_template(self) -> None:
         self.clear_active_reminders()
