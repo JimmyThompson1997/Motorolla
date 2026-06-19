@@ -5315,6 +5315,7 @@
       className: "light-detail-html-body light-note-detail-html-body",
       fullBleed: true,
       revealOnLoad: true,
+      fullBleed: true,
     }));
     return page;
   }
@@ -7436,6 +7437,7 @@
     frame.setAttribute("sandbox", "allow-same-origin");
     frame.setAttribute("scrolling", "no");
     frame.setAttribute("title", String(record?.title || "Generated page"));
+    installHtmlDetailFrameSizing(frame);
     const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
     let revealTimerId = 0;
     if (revealOnLoad) {
@@ -7465,6 +7467,103 @@
     frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     wrap.append(frame);
     return wrap;
+  }
+
+  function syncHtmlDetailFrameHeight(frame) {
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return 0;
+    }
+    try {
+      const root = frame.contentDocument.documentElement;
+      const body = frame.contentDocument.body;
+      const height = Math.max(
+        Number(root?.scrollHeight || 0),
+        Number(root?.offsetHeight || 0),
+        Number(root?.clientHeight || 0),
+        Number(body?.scrollHeight || 0),
+        Number(body?.offsetHeight || 0),
+        Number(body?.clientHeight || 0)
+      );
+      if (!Number.isFinite(height) || height <= 0) {
+        return 0;
+      }
+      frame.style.height = `${height}px`;
+      return height;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function installHtmlDetailFrameSizing(frame) {
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return;
+    }
+    if (typeof frame.__puckyHtmlDetailFrameCleanup === "function") {
+      frame.__puckyHtmlDetailFrameCleanup();
+    }
+    let rafId = 0;
+    const schedule = () => {
+      if (rafId) {
+        return;
+      }
+      const run = () => {
+        rafId = 0;
+        syncHtmlDetailFrameHeight(frame);
+      };
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        rafId = window.requestAnimationFrame(run);
+        return;
+      }
+      rafId = window.setTimeout(run, 0);
+    };
+    const cleanup = [];
+    const bind = () => {
+      schedule();
+      let doc = null;
+      try {
+        doc = frame.contentDocument;
+      } catch (error) {
+        doc = null;
+      }
+      if (!doc || !doc.body || doc.__puckyHtmlDetailFrameSizingBound) {
+        return;
+      }
+      doc.__puckyHtmlDetailFrameSizingBound = true;
+      if (typeof ResizeObserver === "function") {
+        const observer = new ResizeObserver(() => schedule());
+        observer.observe(doc.documentElement);
+        observer.observe(doc.body);
+        cleanup.push(() => observer.disconnect());
+      }
+      const docChange = () => schedule();
+      doc.addEventListener("load", docChange, true);
+      doc.addEventListener("toggle", docChange, true);
+      cleanup.push(() => doc.removeEventListener("load", docChange, true));
+      cleanup.push(() => doc.removeEventListener("toggle", docChange, true));
+      if (doc.fonts && typeof doc.fonts.addEventListener === "function") {
+        doc.fonts.addEventListener("loadingdone", docChange);
+        cleanup.push(() => doc.fonts.removeEventListener("loadingdone", docChange));
+      }
+    };
+    window.addEventListener("resize", schedule);
+    cleanup.push(() => window.removeEventListener("resize", schedule));
+    frame.addEventListener("load", bind);
+    cleanup.push(() => frame.removeEventListener("load", bind));
+    frame.__puckyHtmlDetailFrameCleanup = () => {
+      cleanup.splice(0).forEach(fn => {
+        try {
+          fn();
+        } catch (error) {
+          // Best-effort cleanup for detached detail frames.
+        }
+      });
+      if (rafId && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(rafId);
+      }
+      rafId = 0;
+    };
+    bind();
+    schedule();
   }
 
   function filteredFeedEmptyView() {

@@ -72,6 +72,19 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
     assert "browser_api_token" not in source
 
+def test_workspace_apps_browser_proof_checks_full_bleed_note_detail_layout() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };" in source
+    assert "headerBottom" in source
+    assert "bodyTop" in source
+    assert "pageScrollHeight" in source
+    assert "frameClientHeight" in source
+    assert "frameScrollHeight" in source
+    assert "Expected note HTML body to start directly below the header" in source
+    assert "Expected note detail iframe height to cover its document height" in source
+    assert "Expected note detail desktop HTML body to remain full width" in source
+
 def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 

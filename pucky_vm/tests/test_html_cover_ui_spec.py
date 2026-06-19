@@ -628,9 +628,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
     light_page = function_block(app, "lightPage")
+    light_html_document = function_block(app, "lightHtmlDocument")
     sync_html_detail_frame_height = function_block(app, "syncHtmlDetailFrameHeight")
     install_html_detail_frame_sizing = function_block(app, "installHtmlDetailFrameSizing")
-    light_html_document = function_block(app, "lightHtmlDocument")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
     notes_feed_block = css_block(styles, ".light-notes-feed")
@@ -654,7 +654,10 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     html_detail_page_children_block = css_block(styles, ".light-html-detail-page > :not(.light-page-header-shell)")
     html_detail_document_block = css_block(styles, ".light-html-detail-page.light-document-page")
     html_detail_stage_block = css_block(styles, ".light-html-stage")
-    html_detail_frame_block = css_block(styles, ".light-html-detail-page .light-detail-html-body.light-html-card .light-html-frame")
+    html_detail_note_match = re.search(r"\.light-html-detail-page \.light-detail-html-body\.light-html-card,\s*\.light-html-detail-page \.light-detail-html-body\.light-html-empty\s*\{(?P<body>.*?)\n\}", styles, re.S)
+    assert html_detail_note_match, "Missing html-detail note body block"
+    html_detail_note_block = html_detail_note_match.group("body")
+    html_detail_frame_block = css_block(styles, ".light-html-detail-page .light-note-detail-html-body.light-html-card .light-html-frame")
 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
@@ -724,6 +727,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'className: "light-detail-html-body light-note-detail-html-body"' in note_detail
     assert "fullBleed: true" in note_detail
     assert "revealOnLoad: true" in note_detail
+    assert "fullBleed: true" in note_detail
+    assert "if (options.htmlDetail) {" in light_page
+    assert 'page.classList.add("light-html-detail-page");' in light_page
 
     assert "if (options.htmlDetail) {" in light_page
     assert 'page.classList.add("light-html-detail-page");' in light_page
@@ -738,6 +744,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
     assert "light-html-stage" in light_html_document
     assert "const revealOnLoad = Boolean(options && options.revealOnLoad);" in light_html_document
+    assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
     assert 'wrap.dataset.htmlFrameState = "loading";' in light_html_document
     assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
     assert 'wrap.dataset.htmlFrameState = "ready";' in light_html_document
@@ -745,6 +752,15 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'embeddedBody.getAttribute("data-pucky-embedded-body") !== "true"' in light_html_document
     assert 'frame.addEventListener("load", () => markReady(false));' in light_html_document
     assert 'window.setTimeout(() => markReady(true), 1500);' in light_html_document
+    assert 'frame.setAttribute("sandbox", "allow-same-origin");' in light_html_document
+    assert "installHtmlDetailFrameSizing(frame);" in light_html_document
+    assert "light-html-stage" in light_html_document
+    assert "frame.contentDocument.documentElement" in sync_html_detail_frame_height
+    assert "frame.contentDocument.body" in sync_html_detail_frame_height
+    assert 'frame.style.height = `${height}px`;' in sync_html_detail_frame_height
+    assert "ResizeObserver" in install_html_detail_frame_sizing
+    assert 'window.addEventListener("resize", schedule);' in install_html_detail_frame_sizing
+    assert 'frame.addEventListener("load", bind);' in install_html_detail_frame_sizing
 
     assert 'return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`,' in patch_workspace_record
     assert 'method: "PATCH",' in patch_workspace_record
@@ -788,7 +804,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "--note-document-surface: #08111c;" in styles
     assert "--note-document-surface: #ffffff;" in styles
     assert "background: var(--note-document-surface);" in note_detail_html_card_block
-    assert "background: var(--note-document-surface);" in note_detail_html_frame_block
+    assert ".light-note-detail-html-body.light-html-card .light-html-frame" in styles
+    assert "background: var(--note-document-surface);" in styles
     assert "background: #fff;" not in note_detail_html_frame_block
     assert "visibility: hidden;" in note_detail_html_loading_frame_block
     assert "width: 100%;" in detail_html_empty_block
@@ -804,6 +821,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "border: 0;" in html_detail_stage_block
     assert "border-radius: 0;" in html_detail_stage_block
     assert "box-shadow: none;" in html_detail_stage_block
+    assert "margin-top: 0;" in html_detail_note_block
     assert "overflow: hidden;" in html_detail_frame_block
     assert "calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom))" in html_detail_frame_block
     assert "height: 36px;" in note_pin_button_block

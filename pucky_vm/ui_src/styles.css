@@ -3811,7 +3811,6 @@ button {
   margin: 0;
   padding-inline: 0;
 }
-
 .light-page-title {
   margin: 0;
   min-width: 0;
@@ -6076,6 +6075,16 @@ button {
 .light-detail-html-body.light-html-card .light-html-frame {
   width: 100%;
   min-height: min(68vh, 720px);
+}
+
+.light-html-detail-page .light-detail-html-body.light-html-card,
+.light-html-detail-page .light-detail-html-body.light-html-empty {
+  margin-top: 0;
+}
+
+.light-html-detail-page .light-note-detail-html-body.light-html-card .light-html-frame {
+  min-height: calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom));
+  overflow: hidden;
 }
 
 .light-note-detail-html-body.light-html-card {
