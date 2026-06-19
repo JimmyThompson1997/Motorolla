@@ -88,6 +88,7 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert '{ route: "connect", label: "Connect"' in routes
     assert '{ route: "meetings", label: "Meetings"' in routes
     assert '{ route: "settings", label: "Settings"' in routes
+    assert routes.index('{ route: "contacts", label: "Contacts"') < routes.index('{ route: "connect", label: "Connect"') < routes.index('{ route: "settings", label: "Settings"')
     assert '{ route: "feed", label: "Inbox"' not in routes
     assert '{ route: "links", label: "Connect"' not in routes
     assert 'route: "feed-preview"' not in routes
