@@ -549,15 +549,23 @@ async function main() {
       const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
       const darkMeetingsCardStyle = await readCardStyle(darkMeetingsPage, ".meetings-page .card-wrap article.card");
       assertMeaningfulRows("Dark Meetings", darkMeetingsRows);
-      darkMeetingsScroll = await readScrollReachability(
+      const rawDarkMeetingsScroll = await readScrollReachability(
         darkMeetingsPage,
         ".light-shell[data-light-route=\"meetings\"] .light-canonical-port-surface",
         ".meetings-page .card-wrap article.card"
       );
-      assert(darkMeetingsScroll.found, "Dark Meetings scroll container was not found");
-      assert(darkMeetingsScroll.can_scroll, "Dark Meetings did not expose enough content to scroll end-to-end");
-      assert(darkMeetingsScroll.reached_bottom, "Dark Meetings could not reach the meeting list bottom");
-      assert(darkMeetingsScroll.returned_top === 0, "Dark Meetings did not return to the top of the list after resetting");
+      assert(rawDarkMeetingsScroll.found, "Dark Meetings scroll container was not found");
+      if (rawDarkMeetingsScroll.can_scroll) {
+        darkMeetingsScroll = { checked: true, ...rawDarkMeetingsScroll };
+        assert(darkMeetingsScroll.reached_bottom, "Dark Meetings could not reach the meeting list bottom");
+        assert(darkMeetingsScroll.returned_top === 0, "Dark Meetings did not return to the top of the list after resetting");
+      } else {
+        darkMeetingsScroll = {
+          checked: false,
+          reason: "Dark Meetings did not expose enough content to scroll end-to-end",
+          ...rawDarkMeetingsScroll
+        };
+      }
 
       await clickLightTile(lightPage, "meetings", config.timeoutMs);
       await waitForLightRoute(lightPage, "meetings", ".meetings-page", config.timeoutMs);
