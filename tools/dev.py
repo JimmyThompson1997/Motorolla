@@ -152,6 +152,8 @@ def proof_env() -> dict[str, str]:
             if candidate.is_dir():
                 env["CODEX_NODE_MODULES"] = str(candidate)
                 break
+    if not str(env.get("NODE_PATH") or "").strip():
+        env["NODE_PATH"] = str(env.get("CODEX_NODE_MODULES") or "").strip()
     return env
 
 

@@ -577,6 +577,8 @@ async function readTaskDetailState(page) {
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
         .map(node => String(node.textContent || "").trim()),
+      notes: Array.from(detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong, [data-workspace-target-route="note-detail"] .light-record-chip-label') || [])
+        .map(node => String(node.textContent || "").trim()),
       attachments: Array.from(detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-label") || [])
         .map(node => String(node.textContent || "").trim()),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
@@ -746,12 +748,13 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(`.light-graph-row[data-record-id="${seed.meetingNoteId}"]`).first().click();
   await waitForRoute(page, "meeting-note-detail", config.timeoutMs);
   await waitForTextInBody(page, seed.meetingNoteTitle, config.timeoutMs);
+  await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
   await recorder.capture({
     route: "meeting-note-detail",
     action: "Open seeded meeting note detail",
-    expected: "The seeded meeting note opens from the Meeting Notes route.",
-    confirmation: "Seeded meeting note detail opened.",
-    observed: { meeting_note_title: seed.meetingNoteTitle },
+    expected: "The seeded meeting note opens from the Meeting Notes route and surfaces its linked note.",
+    confirmation: "Seeded meeting note detail opened with linked note context.",
+    observed: { meeting_note_title: seed.meetingNoteTitle, linked_note_title: seed.noteTitle },
   });
 
   await goHome(page, config);
@@ -760,12 +763,13 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(`.light-reminder-row[data-reminder-id="${seed.reminderId}"]`).first().click();
   await waitForRoute(page, "reminder-detail", config.timeoutMs);
   await waitForTextInBody(page, seed.reminderTitle, config.timeoutMs);
+  await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
   await recorder.capture({
     route: "reminder-detail",
     action: "Open seeded reminder detail",
-    expected: "The seeded reminder opens from the Reminders route.",
-    confirmation: "Seeded reminder detail opened.",
-    observed: { reminder_title: seed.reminderTitle },
+    expected: "The seeded reminder opens from the Reminders route and surfaces its linked note.",
+    confirmation: "Seeded reminder detail opened with linked note context.",
+    observed: { reminder_title: seed.reminderTitle, linked_note_title: seed.noteTitle },
   });
 
   await goHome(page, config);
@@ -800,15 +804,15 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
   await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
   const taskState = await readTaskDetailState(page);
-  ["description", "people", "checklist", "attached"].forEach(section => {
+  ["description", "people", "checklist", "notes", "attached"].forEach(section => {
     assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
   });
   assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
   assert(taskState.people.includes(seed.ownerContactTitle), `${mode}: task detail missing owner contact`);
+  assert(taskState.notes.includes(seed.noteTitle), `${mode}: task detail missing linked note section entry`);
   assert(taskState.attachments.includes(seed.calendarEventTitle), `${mode}: task detail missing linked calendar event`);
   assert(taskState.attachments.includes(seed.contactTitle), `${mode}: task detail missing linked contact`);
   assert(taskState.attachments.includes(seed.projectTitle), `${mode}: task detail missing linked project`);
-  assert(taskState.attachments.includes(seed.noteTitle), `${mode}: task detail missing linked note`);
   assert(taskState.checklist.includes("Prep the room summary"), `${mode}: task detail missing expected checklist item`);
   assert(taskState.description.includes(seed.primaryDescription), `${mode}: task detail missing seeded description`);
   await recorder.capture({
@@ -823,13 +827,16 @@ async function runRouteTour(page, config, mode, seed) {
     const targetId = seed[link.idKey];
     const targetTitle = seed[link.titleKey];
     const locator = page.locator(
-      `.light-task-chip-cloud [data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
+      `[data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
     ).first();
     await locator.waitFor({ state: "visible", timeout: config.timeoutMs });
     await locator.click();
     await waitForRoute(page, link.route, config.timeoutMs);
     await waitForTextInBody(page, targetTitle, config.timeoutMs);
     const pageTitle = normalizeText(await page.locator(".light-page-title").last().textContent().catch(() => targetTitle));
+    if (link.route === "project-detail" || link.route === "contact-detail") {
+      await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
+    }
     await recorder.capture({
       route: link.route,
       action: `Open task-linked ${link.label}`,

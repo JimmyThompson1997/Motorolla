@@ -5055,6 +5055,18 @@
     return lightInfoSection(options.title || "Notes", rows);
   }
 
+  function lightLinkedNotesSection(record, options = {}) {
+    const rows = lightLinkedRecordRows(record, {
+      ...options,
+      includeKinds: ["note"],
+      valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"
+    });
+    if (!rows.length) {
+      return null;
+    }
+    return lightInfoSection("Notes", rows);
+  }
+
   function noteContentUpdatedAtMs(note) {
     const candidates = [
       note?.content_updated_at_ms,

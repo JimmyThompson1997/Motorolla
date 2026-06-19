@@ -645,13 +645,6 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     "collections": sorted(WORKSPACE_COLLECTIONS.keys()),
                 })
                 return
-            if parts[0] == "assets" and len(parts) == 2:
-                asset = service.workspace.get_asset(parts[1])
-                if asset is None:
-                    self._json(HTTPStatus.NOT_FOUND, {"error": "asset_not_found"})
-                    return
-                self._json(HTTPStatus.OK, asset)
-                return
             if parts[0] not in WORKSPACE_COLLECTIONS:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "workspace_collection_not_found"})
                 return
@@ -695,10 +688,6 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return
             try:
                 payload = {} if method == "DELETE" else self._read_json_payload(1024 * 1024)
-                if parts[0] == "assets" and method == "POST":
-                    result = service.workspace.create_asset(payload)
-                    self._json(HTTPStatus.OK, result)
-                    return
                 if parts[0] == "links" and method == "POST":
                     result = service.workspace.upsert_link(payload)
                     self._json(HTTPStatus.OK, result)

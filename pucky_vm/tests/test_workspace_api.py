@@ -128,7 +128,7 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
         server.shutdown()
 
 
-def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> None:
+def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         catalog = request_json(base_url, "/api/workspace/")
@@ -141,23 +141,33 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
         else:
             raise AssertionError("messages endpoint should be removed")
 
-        asset = request_json(
-            base_url,
-            "/api/workspace/assets",
-            method="POST",
-            token="test-token",
-            body={"id": "api-html", "title": "API HTML", "html": "<!doctype html><h1>API</h1>"},
-        )
-        assert asset["asset_id"] == "api-html"
+        for method, path in [
+            ("GET", "/api/workspace/assets/api-html"),
+            ("POST", "/api/workspace/assets"),
+        ]:
+            try:
+                request_json(
+                    base_url,
+                    path,
+                    method=method,
+                    token="test-token",
+                    body={"id": "api-html", "title": "API HTML", "html": "<!doctype html><h1>API</h1>"} if method == "POST" else None,
+                )
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 404
+            else:
+                raise AssertionError(f"{method} {path} should 404")
 
         note = request_json(
             base_url,
             "/api/workspace/notes",
             method="POST",
             token="test-token",
-            body={"id": "api-note", "title": "API Note", "pinned": True, "html_asset_id": "api-html"},
+            body={"id": "api-note", "title": "API Note", "pinned": True, "html": "<!doctype html><h1>API Note</h1>"},
         )
         assert note["pinned"] is True
+        assert note["html"].startswith("<!doctype html>")
+        assert note["html_asset_id"] == ""
 
         patched = request_json(
             base_url,
@@ -195,15 +205,25 @@ def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> N
         assert done["derived_group"] == "done"
         assert done["created_by"] == "Maya Chen"
         assert done["owner"] == "Jordan Lee"
-        task_asset = request_json(
+        task_rich = request_json(
             base_url,
             "/api/workspace/tasks",
             method="POST",
             token="test-token",
-            body={"id": "api-task-asset", "title": "API Task Asset", "status": "open", "due_at_ms": 1000, "html_asset_id": "api-html"},
+            body={
+                "id": "api-task-rich",
+                "title": "API Task Rich",
+                "status": "open",
+                "due_at_ms": 1000,
+                "html": "<!doctype html><h1>Task</h1>",
+                "html_asset_id": "api-html",
+                "metadata": {"project": "Legacy", "source": "legacy-meeting"},
+            },
         )
-        assert task_asset["html_asset_id"] == "api-html"
-        assert task_asset["html"] == ""
+        assert task_rich["html"] == ""
+        assert task_rich["html_asset_id"] == ""
+        assert "project" not in task_rich["metadata"]
+        assert "source" not in task_rich["metadata"]
         task_empty = request_json(
             base_url,
             "/api/workspace/tasks",
