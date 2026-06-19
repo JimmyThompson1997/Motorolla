@@ -63,4 +63,4 @@ def test_live_user_session_wrapper_targets_nested_runner() -> None:
 def test_tools_package_exposes_live_user_session_script() -> None:
     payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
 
-    assert payload["scripts"]["test:cover-live-user-session"] == "node ./cover_live_user_session_playwright.mjs"
+    assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
