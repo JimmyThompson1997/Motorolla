@@ -4125,13 +4125,11 @@ button {
   stroke: none;
 }
 
-.light-note-detail-page .light-detail-html-body,
-.light-task-detail-page .light-detail-html-body {
+.light-note-detail-page .light-detail-html-body {
   margin-top: 0;
 }
 
-.light-note-detail-page .light-detail-html-body.light-card,
-.light-task-detail-page .light-detail-html-body.light-card {
+.light-note-detail-page .light-detail-html-body.light-card {
   padding: 0;
   background: transparent;
   border: 0;
@@ -6062,13 +6060,6 @@ button {
   margin-right: 0;
 }
 
-.light-task-detail-surface > .light-task-detail-body {
-  width: calc(100% + var(--light-shell-column-padding) + var(--light-shell-column-padding));
-  max-width: none;
-  margin-left: calc(0px - var(--light-shell-column-padding));
-  margin-right: calc(0px - var(--light-shell-column-padding));
-}
-
 .light-detail-html-body.light-html-card {
   border-radius: 0;
 }
@@ -6114,19 +6105,24 @@ button {
 .light-task-status-trigger {
   min-height: 40px;
   padding: 0 14px 0 10px;
+  border: 0;
   border-radius: 999px;
-  box-shadow: none;
   display: inline-grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   color: var(--home-shell-text);
   background: color-mix(in srgb, var(--home-shell-card-strong) 94%, white 6%);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 88%, transparent);
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
 }
 
-.light-task-status-trigger-icon,
-.light-task-status-trigger-chevron {
+.light-task-status-trigger-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6153,17 +6149,6 @@ button {
 .light-task-status-trigger-label {
   min-width: 0;
   white-space: nowrap;
-}
-
-.light-task-status-trigger-chevron {
-  width: 14px;
-  height: 14px;
-  color: var(--home-shell-text-subtle);
-}
-
-.light-task-status-trigger-chevron svg {
-  width: 14px;
-  height: 14px;
 }
 
 .app-shell[data-theme="dark"] .light-task-status-trigger {

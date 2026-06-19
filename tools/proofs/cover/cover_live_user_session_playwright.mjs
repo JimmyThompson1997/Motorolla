@@ -8,6 +8,7 @@ import {
   assert,
   cleanupTaskProofSeed,
   logStep,
+  restoreTaskProofSeed,
   seedTaskProofWorkspace,
 } from "../../support/task_workspace_proof_shared.mjs";
 import {
@@ -192,6 +193,13 @@ async function fetchConnectMyApps(baseUrl, refreshKey) {
     },
   });
   if (!response.ok) {
+    if (!isHostedDeployBaseUrl(baseUrl) && response.status >= 500) {
+      return {
+        myAppsUrl: url.toString(),
+        payload: {},
+        activeApps: [],
+      };
+    }
     throw new Error(`Could not load Connect my-apps (${response.status}) from ${url.toString()}`);
   }
   const payload = await response.json().catch(() => ({}));
@@ -213,6 +221,27 @@ async function fetchConnectMyApps(baseUrl, refreshKey) {
     payload,
     activeApps,
   };
+}
+
+async function fetchTaskRecord(baseUrl, taskId, refreshKey) {
+  const url = new URL(`/api/workspace/tasks/${encodeURIComponent(String(taskId || "").trim())}`, `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  if (String(refreshKey || "").trim()) {
+    url.searchParams.set("_pucky_refresh", String(refreshKey || "").trim());
+  }
+  const response = await fetch(url, {
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Could not load task record (${response.status}) from ${url.toString()}`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!payload || typeof payload !== "object") {
+    throw new Error(`Task record from ${url.toString()} was not valid JSON`);
+  }
+  return payload;
 }
 
 async function loadChromium() {
@@ -298,6 +327,10 @@ async function waitForRoute(page, route, timeoutMs) {
     route,
     { timeout: timeoutMs }
   );
+}
+
+async function currentRoute(page) {
+  return page.evaluate(() => document.querySelector(".light-shell")?.getAttribute("data-light-route") || "");
 }
 
 async function waitForTextInBody(page, text, timeoutMs) {
@@ -540,6 +573,86 @@ async function waitForTaskDetail(page, taskId, timeoutMs) {
   );
 }
 
+async function waitForTaskRowStatus(page, taskId, status, timeoutMs) {
+  await page.waitForFunction(
+    ([expectedTaskId, expectedStatus]) => {
+      return document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)?.getAttribute("data-task-status") === expectedStatus;
+    },
+    [String(taskId || ""), String(status || "")],
+    { timeout: timeoutMs }
+  );
+}
+
+async function waitForTaskDetailStatus(page, status, timeoutMs) {
+  await page.waitForFunction(
+    expectedStatus => {
+      const detail = document.querySelector(".light-task-detail-surface");
+      const button = document.querySelector(".light-task-status-trigger");
+      return Boolean(
+        detail
+        && detail.getAttribute("data-task-status") === expectedStatus
+        && button
+        && button.getAttribute("data-task-status") === expectedStatus
+      );
+    },
+    String(status || ""),
+    { timeout: timeoutMs }
+  );
+}
+
+async function ensureTaskSectionExpanded(page, group) {
+  const toggle = page.locator(`button.light-task-section-toggle[data-task-section="${group}"]`).first();
+  if (!(await toggle.count())) {
+    return;
+  }
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+}
+
+async function taskRowVisible(page, taskId) {
+  return page.locator(`.light-task-row[data-task-id="${taskId}"]`).first().isVisible().catch(() => false);
+}
+
+async function revealTaskRow(page, taskId) {
+  if (await taskRowVisible(page, taskId)) {
+    return;
+  }
+  for (const group of ["overdue", "do", "soon", "done"]) {
+    await ensureTaskSectionExpanded(page, group);
+    if (await taskRowVisible(page, taskId)) {
+      return;
+    }
+  }
+}
+
+async function taskGroupForRow(page, taskId) {
+  return page.evaluate(expectedTaskId => {
+    const toggles = Array.from(document.querySelectorAll("button.light-task-section-toggle"));
+    for (const toggle of toggles) {
+      const card = toggle.nextElementSibling;
+      if (card && card.matches(".light-task-group") && card.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)) {
+        return String(toggle.getAttribute("data-task-section") || "");
+      }
+    }
+    return "";
+  }, String(taskId || ""));
+}
+
+async function goToTasksList(page, mode, timeoutMs) {
+  let route = await currentRoute(page);
+  let attempts = 0;
+  while (route !== "tasks" && attempts < 3) {
+    await clickBack(page, timeoutMs);
+    attempts += 1;
+    await page.waitForTimeout(150);
+    route = await currentRoute(page);
+  }
+  if (mode === "mobile") {
+    await waitForRoute(page, "tasks", timeoutMs);
+  }
+}
+
 async function waitForSeededProject(page, seed, timeoutMs) {
   await page.locator(`.light-project-row[data-project-id="${seed.projectId}"]`).first().waitFor({ state: "visible", timeout: timeoutMs });
 }
@@ -566,10 +679,15 @@ async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
     const detail = document.querySelector(".light-task-detail-surface");
+    const contentSections = Array.from(detail?.children || [])
+      .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
+    const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+    const statusTrigger = document.querySelector(".light-task-status-trigger");
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       task_detail_id: detail?.getAttribute("data-task-detail-id") || "",
       task_status: detail?.getAttribute("data-task-status") || "",
+      status_label: String(statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent || statusTrigger?.textContent || "").trim(),
       title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       sections: Array.from(document.querySelectorAll(".light-section-title"))
         .map(node => String(node.textContent || "").trim().toLowerCase()),
@@ -581,6 +699,10 @@ async function readTaskDetailState(page) {
         .map(node => String(node.textContent || "").trim()),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),
+      description_is_first_section: firstSectionTitle === "description",
+      status_trigger_present: Boolean(document.querySelector(".light-task-status-trigger")),
+      status_circle_trigger_present: Boolean(document.querySelector(".light-task-status-circle-trigger")),
+      task_html_frame_present: Boolean(detail?.querySelector(".light-html-frame, iframe")),
     };
   });
 }
@@ -797,12 +919,32 @@ async function runRouteTour(page, config, mode, seed) {
   await goHome(page, config);
   await openRouteFromHome(page, "tasks", config.timeoutMs);
   await waitForSeededTask(page, seed, config.timeoutMs);
+  await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger`).first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert((await currentRoute(page)) === "tasks", `${mode}: task list status selector should keep the route on tasks`);
+  await recorder.capture({
+    route: "tasks",
+    action: "Open task list status selector",
+    expected: "Clicking the task list status icon opens the shared status selector without opening task detail.",
+    confirmation: "Task list status selector opened in place.",
+    observed: {
+      route: await currentRoute(page),
+      task_id: seed.primaryTaskId,
+    },
+  });
+  await page.locator('.settings-selector-option[data-selector-value="in_progress"]').first().click();
+  await waitForTaskRowStatus(page, seed.primaryTaskId, "in_progress", config.timeoutMs);
+  assert((await currentRoute(page)) === "tasks", `${mode}: applying a list task status change should keep the route on tasks`);
   await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
   await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
-  const taskState = await readTaskDetailState(page);
+  let taskState = await readTaskDetailState(page);
   ["description", "people", "checklist", "attached"].forEach(section => {
     assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
   });
+  assert(taskState.status_trigger_present, `${mode}: task detail is missing the status pill trigger`);
+  assert(taskState.status_circle_trigger_present, `${mode}: task detail is missing the top-left status trigger`);
+  assert(!taskState.task_html_frame_present, `${mode}: task detail should not render a task HTML frame above Description`);
+  assert(taskState.description_is_first_section, `${mode}: task detail should start with Description`);
   assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
   assert(taskState.people.includes(seed.ownerContactTitle), `${mode}: task detail missing owner contact`);
   assert(taskState.attachments.includes(seed.calendarEventTitle), `${mode}: task detail missing linked calendar event`);
@@ -814,10 +956,84 @@ async function runRouteTour(page, config, mode, seed) {
   await recorder.capture({
     route: taskState.route || "tasks",
     action: "Open seeded task detail",
-    expected: "The seeded primary task shows description, people, checklist, and attached linked records.",
-    confirmation: "Task detail rendered the seeded structured sections.",
+    expected: "The seeded primary task shows Description first, then Details, People, Checklist, and Attached with no embedded task HTML block.",
+    confirmation: "Task detail rendered the cleaned structured sections.",
     observed: taskState,
   });
+
+  await page.locator(".light-task-status-trigger").first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail pill selector should keep the current route stable`);
+  await recorder.capture({
+    route: taskState.route || expectedTaskReturnRoute(mode),
+    action: "Open task detail pill status selector",
+    expected: "Clicking the task detail status pill opens the shared status selector without leaving task detail.",
+    confirmation: "Task detail pill selector opened in place.",
+    observed: {
+      route: await currentRoute(page),
+      task_id: seed.primaryTaskId,
+      task_status: taskState.task_status,
+      status_label: taskState.status_label,
+    },
+  });
+  await page.locator('.settings-selector-option[data-selector-value="waiting"]').first().click();
+  await waitForTaskDetailStatus(page, "waiting", config.timeoutMs);
+  taskState = await readTaskDetailState(page);
+  assert(taskState.task_status === "waiting", `${mode}: task detail pill did not persist Waiting in the DOM`);
+
+  await page.locator(".light-task-status-circle-trigger").first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail top-left selector should keep the current route stable`);
+  await recorder.capture({
+    route: taskState.route || expectedTaskReturnRoute(mode),
+    action: "Open task detail top-left status selector",
+    expected: "Clicking the top-left task status icon opens the shared status selector without leaving task detail.",
+    confirmation: "Task detail top-left status selector opened in place.",
+    observed: {
+      route: await currentRoute(page),
+      task_id: seed.primaryTaskId,
+      task_status: taskState.task_status,
+      status_label: taskState.status_label,
+    },
+  });
+  await page.locator('.settings-selector-option[data-selector-value="done"]').first().click();
+  await waitForTaskDetailStatus(page, "done", config.timeoutMs);
+  await page.evaluate(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("reset_nav");
+    window.history.replaceState({}, "", url.toString());
+  });
+  await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, expectedTaskReturnRoute(mode), config.timeoutMs);
+  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  taskState = await readTaskDetailState(page);
+  const taskRecord = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+  assert(taskState.task_status === "done", `${mode}: task detail did not keep Done after reload`);
+  assert(taskRecord.status === "done", `${mode}: task API did not persist Done after reload`);
+  assert(!taskState.task_html_frame_present, `${mode}: task detail should stay free of embedded HTML after reload`);
+  assert(taskState.description_is_first_section, `${mode}: task detail should still start with Description after reload`);
+  await recorder.capture({
+    route: taskState.route || expectedTaskReturnRoute(mode),
+    action: "Persist Done status after reload",
+    expected: "The task keeps its Done status after reload, matches the workspace API, and still starts with Description and no task HTML block.",
+    confirmation: "Task status persisted through reload and the cleaned detail layout remained intact.",
+    observed: {
+      ...taskState,
+      api_status: String(taskRecord.status || ""),
+    },
+  });
+
+  await goToTasksList(page, mode, config.timeoutMs);
+  await revealTaskRow(page, seed.primaryTaskId);
+  await ensureTaskSectionExpanded(page, "done");
+  const finalTaskGroup = await taskGroupForRow(page, seed.primaryTaskId);
+  assert(finalTaskGroup === "done", `${mode}: task did not move into the Done section after the final status change`);
+  if (mode === "mobile") {
+    await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
+    await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  } else {
+    await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  }
 
   for (const link of TASK_LINKS) {
     const targetId = seed[link.idKey];
@@ -903,8 +1119,12 @@ async function runProofMode(browser, config, mode, seed) {
   });
   await context.addInitScript(() => {
     try {
-      localStorage.removeItem("pucky.cover.nav_state.v1");
-      localStorage.removeItem("pucky.cover.browser_device_id.v1");
+      const bootKey = "pucky.cover.live_user_session_bootstrap.v1";
+      if (!sessionStorage.getItem(bootKey)) {
+        localStorage.removeItem("pucky.cover.nav_state.v1");
+        localStorage.removeItem("pucky.cover.browser_device_id.v1");
+        sessionStorage.setItem(bootKey, "1");
+      }
     } catch (_error) {
       // Ignore localStorage bootstrap failures in proof mode.
     }
@@ -990,6 +1210,7 @@ async function main() {
       reportDir: config.reportDir,
     });
     mobile = await runProofMode(browser, config, "mobile", seed);
+    await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
     desktop = await runProofMode(browser, config, "desktop", seed);
   } catch (error) {
     pendingError = error;

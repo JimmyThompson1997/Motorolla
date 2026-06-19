@@ -54,6 +54,27 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'localStorage.removeItem("pucky.cover.browser_device_id.v1");' in source
 
 
+def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detail_surface() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'await openRouteFromHome(page, "tasks", config.timeoutMs);' in source
+    assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger' in source
+    assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main' in source
+    assert '.settings-selector-option[data-selector-value="in_progress"]' in source
+    assert '.settings-selector-option[data-selector-value="waiting"]' in source
+    assert '.settings-selector-option[data-selector-value="done"]' in source
+    assert '".light-task-status-trigger"' in source
+    assert '".light-task-status-circle-trigger"' in source
+    assert 'description_is_first_section' in source
+    assert 'task_html_frame_present' in source
+    assert 'assert(!taskState.task_html_frame_present' in source
+    assert 'assert(taskState.description_is_first_section' in source
+    assert "Open task list status selector" in source
+    assert "Open task detail pill status selector" in source
+    assert "Open task detail top-left status selector" in source
+    assert "Persist Done status after reload" in source
+
+
 def test_live_user_session_wrapper_targets_nested_runner() -> None:
     source = WRAPPER_PATH.read_text(encoding="utf-8")
 
