@@ -6469,6 +6469,7 @@ button {
 
 .light-canonical-port-page {
   min-height: calc(var(--viewport-h) - 42px);
+  height: calc(var(--viewport-h) - 42px);
   padding-bottom: 28px;
 }
 
@@ -6478,9 +6479,14 @@ button {
 
 .light-canonical-port-surface {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  min-height: 0;
   gap: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding-bottom: 92px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .light-settings-surface {
