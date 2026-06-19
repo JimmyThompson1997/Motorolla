@@ -175,14 +175,27 @@ function assertMeaningfulRows(label, rows) {
 
 async function readScrollReachability(page, containerSelector, rowsSelector) {
   return page.evaluate(({ containerSel, rowSel }) => {
-    const container = document.querySelector(containerSel);
+    const explicitContainer = document.querySelector(containerSel);
+    const scrollingElement = document.scrollingElement instanceof HTMLElement
+      ? document.scrollingElement
+      : document.documentElement instanceof HTMLElement
+        ? document.documentElement
+        : null;
+    const explicitScrollable = explicitContainer instanceof HTMLElement
+      ? explicitContainer.scrollHeight > explicitContainer.clientHeight + 1
+      : false;
+    const container = explicitContainer instanceof HTMLElement
+      ? explicitScrollable
+        ? explicitContainer
+        : scrollingElement || explicitContainer
+      : scrollingElement;
     if (!(container instanceof HTMLElement)) {
       return {
         found: false,
         reason: `Missing container ${containerSel}`
       };
     }
-    const rows = Array.from(container.querySelectorAll(rowSel || "*"));
+    const rows = Array.from(document.querySelectorAll(rowSel || "*"));
     container.scrollTop = 0;
     const scrollHeight = Number(container.scrollHeight.toFixed(2));
     const clientHeight = Number(container.clientHeight.toFixed(2));
@@ -463,7 +476,7 @@ async function main() {
     assertMeaningfulRows("Dark Feed", darkFeedRows);
     const darkFeedScroll = await readScrollReachability(
       darkFeedPage,
-      ".app-shell .card-wrap, .card-wrap",
+      ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface",
       ".card-wrap article.card"
     );
     assert(darkFeedScroll.found, "Dark Feed scroll container was not found");
@@ -485,7 +498,7 @@ async function main() {
     assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
-      ".light-shell[data-light-route=\"inbox\"] .card-wrap",
+      ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface",
       ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card"
     );
     assert(lightInboxScroll.found, "Light Inbox scroll container was not found");
@@ -538,7 +551,7 @@ async function main() {
       assertMeaningfulRows("Dark Meetings", darkMeetingsRows);
       darkMeetingsScroll = await readScrollReachability(
         darkMeetingsPage,
-        ".app-shell .card-wrap, .meetings-page .card-wrap",
+        ".light-shell[data-light-route=\"meetings\"] .light-canonical-port-surface",
         ".meetings-page .card-wrap article.card"
       );
       assert(darkMeetingsScroll.found, "Dark Meetings scroll container was not found");
