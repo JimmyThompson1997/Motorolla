@@ -356,9 +356,40 @@ async function goHome(page, config) {
 
 async function openRouteFromHome(page, route, timeoutMs) {
   const tile = page.locator(`.light-app-tile[data-light-app-route="${route}"]`).first();
-  await tile.waitFor({ state: "visible", timeout: timeoutMs });
-  await tile.click();
-  await waitForRoute(page, route, timeoutMs);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await tile.waitFor({ state: "visible", timeout: timeoutMs });
+    await tile.click();
+    try {
+      await waitForRoute(page, route, timeoutMs);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 2) {
+        throw error;
+      }
+      await page.waitForTimeout(300);
+    }
+  }
+  throw lastError || new Error(`Unable to open route ${route} from home`);
+}
+
+async function gotoAndWaitForRoute(page, url, route, timeoutMs) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    try {
+      await waitForRoute(page, route, timeoutMs);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 2) {
+        throw error;
+      }
+      await page.waitForTimeout(300);
+    }
+  }
+  throw lastError || new Error(`Unable to load route ${route}`);
 }
 
 async function readHomeTiles(page) {
@@ -407,6 +438,29 @@ async function waitForConnectReady(page, timeoutMs) {
       || document.querySelector(".links-connected-chip")
     );
   }, undefined, { timeout: timeoutMs });
+}
+
+async function waitForConnectChips(page, expectedApps, timeoutMs) {
+  const expectedSlugs = Array.isArray(expectedApps)
+    ? expectedApps
+        .map(app => String(app?.slug || "").trim().toLowerCase())
+        .filter(Boolean)
+        .sort()
+    : [];
+  if (!expectedSlugs.length) {
+    return;
+  }
+  await page.waitForFunction(
+    slugs => {
+      const rendered = Array.from(document.querySelectorAll(".links-connected-chip"))
+        .map(node => String(node.getAttribute("data-links-connected-slug") || "").trim().toLowerCase())
+        .filter(Boolean)
+        .sort();
+      return JSON.stringify(rendered) === JSON.stringify(slugs);
+    },
+    expectedSlugs,
+    { timeout: timeoutMs }
+  );
 }
 
 async function readConnectState(page) {
@@ -608,8 +662,9 @@ async function runRouteTour(page, config, mode, seed) {
 
   await goHome(page, config);
   await openRouteFromHome(page, "connect", config.timeoutMs);
-  await waitForConnectReady(page, config.timeoutMs);
   const backendConnect = await fetchConnectMyApps(config.baseUrl, config.refreshKey);
+  await waitForConnectReady(page, config.timeoutMs);
+  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
   const connectState = await readConnectState(page);
   assertConnectMatchesBackend(mode, connectState, backendConnect, config.baseUrl);
   await recorder.capture({
@@ -628,6 +683,7 @@ async function runRouteTour(page, config, mode, seed) {
   await goHome(page, config);
   await openRouteFromHome(page, "connect", config.timeoutMs);
   await waitForConnectReady(page, config.timeoutMs);
+  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
   const connectRevisitState = await readConnectState(page);
   assertConnectMatchesBackend(mode, connectRevisitState, backendConnect, config.baseUrl);
   await recorder.capture({
@@ -640,9 +696,9 @@ async function runRouteTour(page, config, mode, seed) {
 
   const reloadUrl = buildRouteUrl(config, "connect");
   logStep(config, `${mode}: reloading connect route ${reloadUrl}`);
-  await page.goto(reloadUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-  await waitForRoute(page, "connect", config.timeoutMs);
+  await gotoAndWaitForRoute(page, reloadUrl, "connect", config.timeoutMs);
   await waitForConnectReady(page, config.timeoutMs);
+  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
   const connectReloadState = await readConnectState(page);
   assertConnectMatchesBackend(mode, connectReloadState, backendConnect, config.baseUrl);
   await recorder.capture({
