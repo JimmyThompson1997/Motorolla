@@ -575,6 +575,11 @@ async function main() {
       await assertHidden(lightPage, "#pageTabs", "Light Meetings should hide the canonical top tabs");
       await assertHidden(lightPage, "#routeTray", "Light Meetings should hide the canonical route tray");
       assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .meetings-header").count() === 0, "Light Meetings should not render a duplicate canonical meetings header");
+      await lightPage.waitForFunction(
+        selector => document.querySelectorAll(selector).length > 0,
+        ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card",
+        { timeout: config.timeoutMs }
+      );
       lightMeetingsRows = await extractCardRows(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
       assertMeaningfulRows("Light Meetings", lightMeetingsRows);
       meetingsRowsMatch = rowsMatch(darkMeetingsRows, lightMeetingsRows);
