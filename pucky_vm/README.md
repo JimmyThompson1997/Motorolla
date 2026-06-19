@@ -97,10 +97,20 @@ Official HTML refresh flow is:
 
 `GitHub master -> VM sync helper -> manifest verification -> emulator refresh/verify -> phone refresh/verify`
 
+Canonical developer commands:
+
+```bash
+python -m tools.dev test-fast
+python -m tools.dev test-full
+python -m tools.dev proof-local-web
+python -m tools.dev proof-live-web
+python -m tools.dev deploy-vm
+```
+
 Sync the VM source checkout and verify the served manifest first:
 
 ```powershell
-python .\tools\sync_pucky_vm_official.py --app pucky
+python -m tools.dev deploy-vm
 ```
 
 Use the official helper from the canonical deploy repo for bundle refreshes:
@@ -116,6 +126,11 @@ Deploy cover fixture cards through the same official gate:
 python -m pucky_vm.tools.deploy_cover_fixture --target emulator --device-id <emulator-device-id>
 python -m pucky_vm.tools.deploy_cover_fixture --target phone --device-id <phone-device-id> --emulator-evidence .tmp\pucky-html-refresh\<evidence>.json
 ```
+
+Generated inputs:
+
+- `ui_src/fixtures/links_catalog.json` is refreshed with `python -m tools.dev refresh-links-catalog`.
+- `ui_src/pucky-links-catalog.js` is generated during bundle build and should not be hand-edited.
 
 The official helpers refuse to run unless the source is clean pushed `master`,
 the VM manifest matches that exact commit, and phone refreshes have matching

@@ -25,6 +25,8 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
     assert "source_dirty" in manifest
     assert "index.html" in manifest["files"]
     assert "app.js" in manifest["files"]
+    assert "pucky-browser-state.js" in manifest["files"]
+    assert "pucky-browser-unlock.js" in manifest["files"]
     assert "styles.css" in manifest["files"]
     assert "pucky-config.js" in manifest["files"]
     assert "pucky-icons.js" in manifest["files"]
@@ -39,6 +41,8 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "index.html" in names
+        assert "pucky-browser-state.js" in names
+        assert "pucky-browser-unlock.js" in names
         assert "pucky-config.js" in names
         assert "pucky-icons.js" in names
         assert "pucky-routes.js" in names

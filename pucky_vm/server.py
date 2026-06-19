@@ -2875,8 +2875,8 @@ class PuckyVoiceService:
             meeting_id = _safe_meeting_id(meeting.get("meeting_id"))
             if not meeting_id:
                 continue
-            audio_path = Path(str(meeting.get("audio_path") or ""))
-            if not audio_path.is_file():
+            audio_path = self._meeting_audio_artifact_path(meeting)
+            if audio_path is None:
                 continue
             body = audio_path.read_bytes()
             title = str(meeting.get("recording_title") or meeting.get("title") or "Meeting Audio").strip()
@@ -2981,9 +2981,51 @@ class PuckyVoiceService:
         for meeting in self._load_meetings():
             if str(meeting.get("meeting_id") or "") != clean_id:
                 continue
-            path = Path(str(meeting.get("audio_path") or ""))
-            if path.is_file():
+            path = self._meeting_audio_artifact_path(meeting)
+            if path is not None:
                 return path.read_bytes(), str(meeting.get("mime_type") or "audio/mp4"), path.name
+        return None
+
+    def _meeting_audio_artifact_path(self, record: dict[str, object]) -> Path | None:
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        latest = self._meeting_record_by_id(meeting_id) if meeting_id else None
+        direct = Path(str(record.get("audio_path") or ""))
+        latest_path = Path(str(latest.get("audio_path") or "")) if isinstance(latest, dict) else Path()
+        suffix = direct.suffix or latest_path.suffix or (".wav" if "wav" in str(record.get("mime_type") or "").lower() else ".m4a")
+        candidates: list[Path] = []
+        for path in (direct, latest_path):
+            if str(path).strip():
+                candidates.append(path)
+        if self._meetings_dir.exists():
+            canonical_basename = str(record.get("canonical_basename") or "").strip()
+            if not canonical_basename and meeting_id:
+                canonical_basename = _meeting_canonical_basename(
+                    record,
+                    str(record.get("recording_title") or record.get("title") or "Meeting Recording"),
+                )
+            search_patterns: list[str] = []
+            if canonical_basename:
+                search_patterns.append(f"{canonical_basename}*{suffix}")
+            if meeting_id:
+                search_patterns.append(f"{meeting_id}*{suffix}")
+            for pattern in search_patterns:
+                matches = sorted(
+                    self._meetings_dir.glob(pattern),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )
+                candidates.extend(matches)
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            if candidate.is_file():
+                record["audio_path"] = str(candidate)
+                if isinstance(latest, dict):
+                    latest["audio_path"] = str(candidate)
+                return candidate
         return None
 
     def meeting_deepgram_transcribe_tool(

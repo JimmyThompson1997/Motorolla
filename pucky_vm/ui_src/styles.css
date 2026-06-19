@@ -3640,7 +3640,7 @@ button {
 .light-app-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  column-gap: 18px;
+  column-gap: 14px;
   row-gap: 24px;
   align-content: start;
   padding: 18px 0 24px;
@@ -3648,7 +3648,10 @@ button {
 
 .light-app-tile {
   min-width: 0;
+  width: 100%;
+  padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: 9px;
   position: relative;
@@ -3682,12 +3685,16 @@ button {
 }
 
 .light-app-label {
-  max-width: 92px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 2.1em;
   color: var(--home-shell-text);
   font-size: 13px;
   line-height: 1.05;
   font-weight: 720;
-  white-space: nowrap;
+  text-align: center;
+  white-space: normal;
 }
 
 .light-app-badge {
@@ -6379,6 +6386,166 @@ button {
   min-width: 0;
 }
 
+.light-settings-real {
+  gap: 0;
+  padding-bottom: var(--nav-safe);
+}
+
+.light-settings-real .settings-card {
+  min-height: 58px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--home-shell-border) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  text-align: left;
+}
+
+.light-settings-real .settings-card:last-child {
+  border-bottom: 0;
+}
+
+.light-settings-real .settings-card.is-disabled {
+  opacity: 0.66;
+}
+
+.light-settings-real .settings-selector-card {
+  grid-template-rows: none;
+  align-items: center;
+}
+
+.light-settings-real .settings-card-icon {
+  width: 30px;
+  height: 30px;
+  align-self: center;
+  padding-top: 0;
+  color: color-mix(in srgb, var(--accent, #72c2ff) 54%, var(--home-shell-text-muted));
+}
+
+.light-settings-real .settings-card-icon .material-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.light-settings-real .settings-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.light-settings-real .settings-card-title {
+  color: var(--home-shell-text);
+  font-size: 14px;
+  line-height: 1.08;
+  font-weight: 760;
+}
+
+.light-settings-real .settings-card-detail {
+  margin: 0;
+  color: var(--home-shell-text-muted);
+  font-size: 12px;
+  line-height: 1.18;
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.light-settings-real .settings-card-trailing {
+  justify-self: end;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.light-settings-real .settings-selector-button,
+.light-settings-real .settings-action-button {
+  min-height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--home-shell-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 88%, transparent);
+}
+
+.light-settings-real .settings-selector-button {
+  min-height: 30px;
+  max-width: 118px;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 8px;
+}
+
+.light-settings-real .settings-selector-button-label,
+.light-settings-real .settings-card-value {
+  color: var(--home-shell-text);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 740;
+}
+
+.light-settings-real .settings-selector-button-icon {
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--home-shell-text-muted) 82%, transparent);
+}
+
+.light-settings-real .settings-selector-button-icon .material-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.light-settings-real .settings-action-button {
+  padding: 0 8px;
+  color: color-mix(in srgb, var(--home-shell-text) 86%, var(--home-shell-text-muted));
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.light-settings-real .settings-toggle {
+  width: 48px;
+  height: 28px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--home-shell-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 88%, transparent);
+}
+
+.light-settings-real .settings-toggle-thumb {
+  width: 22px;
+  height: 22px;
+  background: var(--home-shell-card);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+}
+
+.light-settings-real .settings-toggle.is-on {
+  background: color-mix(in srgb, var(--accent-primary) 22%, var(--home-shell-card));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 34%, var(--home-shell-border));
+}
+
+.light-settings-real .settings-toggle.is-on .settings-toggle-thumb {
+  background: var(--accent-primary);
+  transform: translateX(20px);
+}
+
+.light-settings-real .settings-nav-chevron {
+  width: 20px;
+  height: 20px;
+  justify-self: end;
+}
+
+.light-settings-real .settings-nav-chevron .material-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .light-shell[data-light-route="inbox"] .light-canonical-port-surface {
   padding-top: 6px;
 }
@@ -6410,7 +6577,7 @@ button {
   }
 
   .light-app-grid {
-    column-gap: 14px;
+    column-gap: 10px;
     row-gap: 20px;
   }
 

@@ -18,15 +18,15 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "PUCKY_OPERATOR_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
     assert "/ui/pucky/latest/manifest.json" in source
-    assert '_pucky_refresh' in source
+    assert "_pucky_refresh" in source
     assert '".tmp", "live-user-session-proof"' in source
     assert "summary.json" in source
     assert "report.md" in source
     assert "saveScreenshot(" in source
     assert "seedTaskProofWorkspace(" in source
     assert "cleanupTaskProofSeed(" in source
-    assert 'pucky.live_user_session_browser_proof.v1' in source
-    assert '--keep-seed' in source
+    assert 'const RESULT_SCHEMA = "pucky.live_user_session_browser_proof.v1";' in source
+    assert "--keep-seed" in source
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert 'url.searchParams.set("api_token"' not in source
@@ -38,9 +38,10 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert 'buildRouteUrl(config, "home")' in source
-    assert 'openRouteFromHome(page, "connect"' in source
-    assert 'openRouteFromHome(page, "meeting-notes"' in source
-    assert 'openRouteFromHome(page, "reminders"' in source
+    assert 'url.searchParams.set("route", String(route || "home"));' in source
+    assert 'await openRouteFromHome(page, "connect", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
     assert "contacts-edit" not in source

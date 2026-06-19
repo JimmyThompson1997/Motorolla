@@ -40,10 +40,10 @@ def test_canonical_browser_proof_routes_use_inbox_and_connect() -> None:
     if not has_source("cover_live_user_session_playwright.mjs"):
         return
     source = read_source("cover_live_user_session_playwright.mjs")
-    assert 'openRouteFromHome(page, "inbox"' in source
-    assert 'openRouteFromHome(page, "connect"' in source
-    assert 'openRouteFromHome(page, "meeting-notes"' in source
-    assert 'openRouteFromHome(page, "reminders"' in source
+    assert 'await openRouteFromHome(page, "inbox", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "connect", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
 
 
 def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit() -> None:
@@ -89,6 +89,38 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
     assert ".light-task-detail-toggle" not in source
+
+
+def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
+    source = read_source("cover_home_app_labels_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "pucky.home_app_labels_browser_proof.v1" in source
+    assert "const VIEWPORT = { width: 395, height: 786 };" in source
+    assert ".light-app-label" in source
+    assert "Meeting Notes" in source
+    assert "assertNoSameRowLabelOverlap(metrics);" in source
+    assert "horizontalOverlap > OVERLAP_EPSILON" in source
+    assert "Math.abs(item.icon.centerX - tileCenter)" in source
+    assert "Math.abs(item.label.centerX - tileCenter)" in source
+    assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
+
+
+def test_settings_quiet_list_proof_checks_compact_live_rows() -> None:
+    source = read_source("cover_settings_quiet_list_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "pucky.settings_quiet_list_browser_proof.v1" in source
+    assert "const VIEWPORT = { width: 393, height: 852 };" in source
+    assert "const MAX_ANY_ROW_HEIGHT = 82;" in source
+    assert "const MAX_NORMAL_ROW_HEIGHT = 64;" in source
+    assert '.light-settings-real .settings-card' in source
+    assert "byId.advanced.rect.bottom <= VIEWPORT.height" in source
+    assert 'card.style.boxShadow === "none"' in source
+    assert "card.selector.hittable" in source
+    assert "card.toggle.hittable" in source
+    assert "card.action.hittable" in source
+    assert '"test:cover-settings-quiet-list": "node ./proofs/cover/cover_settings_quiet_list_playwright.mjs"' in package
 
 
 def test_workspace_proof_server_keeps_broker_state_out_of_vm_only_data_dir() -> None:
