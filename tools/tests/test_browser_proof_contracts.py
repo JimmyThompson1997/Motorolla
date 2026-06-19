@@ -87,6 +87,21 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert ".light-task-detail-toggle" not in source
 
 
+def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
+    source = read_source("cover_home_app_labels_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "pucky.home_app_labels_browser_proof.v1" in source
+    assert "const VIEWPORT = { width: 395, height: 786 };" in source
+    assert ".light-app-label" in source
+    assert "Meeting Notes" in source
+    assert "assertNoSameRowLabelOverlap(metrics);" in source
+    assert "horizontalOverlap > OVERLAP_EPSILON" in source
+    assert "Math.abs(item.icon.centerX - tileCenter)" in source
+    assert "Math.abs(item.label.centerX - tileCenter)" in source
+    assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
+
+
 def test_workspace_proof_server_keeps_broker_state_out_of_vm_only_data_dir() -> None:
     source = read_source("workspace_apps_proof_server.py")
 

@@ -3640,7 +3640,7 @@ button {
 .light-app-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  column-gap: 18px;
+  column-gap: 14px;
   row-gap: 24px;
   align-content: start;
   padding: 18px 0 24px;
@@ -3648,7 +3648,10 @@ button {
 
 .light-app-tile {
   min-width: 0;
+  width: 100%;
+  padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: 9px;
   position: relative;
@@ -3682,12 +3685,16 @@ button {
 }
 
 .light-app-label {
-  max-width: 92px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 2.1em;
   color: var(--home-shell-text);
   font-size: 13px;
   line-height: 1.05;
   font-weight: 720;
-  white-space: nowrap;
+  text-align: center;
+  white-space: normal;
 }
 
 .light-app-badge {
@@ -6401,7 +6408,7 @@ button {
   }
 
   .light-app-grid {
-    column-gap: 14px;
+    column-gap: 10px;
     row-gap: 20px;
   }
 

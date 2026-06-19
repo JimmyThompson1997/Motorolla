@@ -87,6 +87,7 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert '{ route: "inbox", label: "Inbox"' in routes
     assert '{ route: "connect", label: "Connect"' in routes
     assert '{ route: "meetings", label: "Meetings"' in routes
+    assert '{ route: "meeting-notes", label: "Meeting Notes"' in routes
     assert '{ route: "settings", label: "Settings"' in routes
     assert routes.index('{ route: "contacts", label: "Contacts"') < routes.index('{ route: "connect", label: "Connect"') < routes.index('{ route: "settings", label: "Settings"')
     assert '{ route: "feed", label: "Inbox"' not in routes
@@ -96,6 +97,25 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert 'route: "calls"' not in routes
     assert 'HOME_SHELL_CANONICAL_ROUTES: ["inbox", "connect", "meetings", "settings"]' in routes
     assert "const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)" in app
+
+
+def test_home_app_labels_wrap_inside_tile_columns() -> None:
+    styles = read("styles.css")
+    grid = css_block(styles, ".light-app-grid")
+    tile = css_block(styles, ".light-app-tile")
+    label = css_block(styles, ".light-app-label")
+
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in grid
+    assert "column-gap: 14px;" in grid
+    assert "width: 100%;" in tile
+    assert "padding: 0;" in tile
+    assert "grid-template-columns: minmax(0, 1fr);" in tile
+    assert "width: 100%;" in label
+    assert "max-width: 100%;" in label
+    assert "min-height: 2.1em;" in label
+    assert "text-align: center;" in label
+    assert "white-space: normal;" in label
+    assert "white-space: nowrap;" not in label
 
 
 def test_route_aliases_collapse_legacy_entry_points() -> None:
