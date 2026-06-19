@@ -3602,7 +3602,6 @@
     if (contact.links && contact.links.length) {
       page.append(lightInfoSection("Linked records", lightLinkedRecordRows(contact)));
     }
-    page.append(lightHtmlDocument(contact, "No generated contact page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
     return page;
   }
 

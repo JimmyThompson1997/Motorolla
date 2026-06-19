@@ -155,6 +155,15 @@ def test_workspace_apps_browser_proof_checks_contact_photo_thumbnail_contract() 
     assert ".light-contact-row .light-avatar.has-photo img" in source
 
 
+def test_workspace_apps_browser_proof_rejects_contact_html_document_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "assertNoContactHtmlDocument" in source
+    assert "should not render a Contact HTML document panel" in source
+    assert "API contact record should not expose document HTML" in source
+    assert "No generated contact page yet." not in source
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

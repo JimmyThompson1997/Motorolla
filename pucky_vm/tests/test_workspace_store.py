@@ -105,6 +105,67 @@ def test_contact_writes_strip_endpoint_metadata_without_backfilling(tmp_path: Pa
     assert "endpoints" not in metadata
 
 
+def test_contact_html_migration_clears_legacy_contact_documents(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store._conn.execute(
+        """
+        UPDATE workspace_records
+        SET html = ?, html_asset_id = ?
+        WHERE kind = 'contact' AND record_id = 'sam-rivera'
+        """,
+        ("<!doctype html><h1>Legacy contact page</h1>", "asset-contact-maya"),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'contact_html_removed_v1'")
+    store._conn.commit()
+    store.close()
+
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    contact = migrated.get_record("contacts", "sam-rivera")
+    assert contact is not None
+    assert contact["html"] == ""
+    assert contact["html_asset_id"] == ""
+    meta = migrated._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+
+
+def test_contact_writes_strip_html_document_fields(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    contact = store.upsert_record(
+        "contacts",
+        {
+            "id": "html-write",
+            "title": "HTML Write",
+            "html": "<!doctype html><h1>Contact page</h1>",
+            "html_asset_id": "asset-contact-maya",
+            "metadata": {
+                "html": "<!doctype html><h1>Metadata page</h1>",
+                "html_asset_id": "metadata-asset",
+            },
+        },
+    )
+    assert contact["html"] == ""
+    assert contact["html_asset_id"] == ""
+
+    patched = store.patch_record(
+        "contacts",
+        "html-write",
+        {
+            "html": "<!doctype html><h1>Patched page</h1>",
+            "html_asset_id": "patched-asset",
+            "metadata": {"html": "<p>Patched metadata</p>", "html_asset_id": "patched-metadata-asset"},
+        },
+    )
+    assert patched is not None
+    assert patched["html"] == ""
+    assert patched["html_asset_id"] == ""
+    assert "html" not in patched["metadata"]
+    assert "html_asset_id" not in patched["metadata"]
+
+
 def test_contact_cleanup_removes_clinic_and_assigns_fixture_photos(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"
@@ -681,6 +742,8 @@ def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> Non
     assert contacts["items"]
     assert contacts["items"][0]["id"] == SELF_CONTACT_ID
     assert contacts["items"][0]["title"] == "Me"
+    assert contacts["items"][0]["html"] == ""
+    assert contacts["items"][0]["html_asset_id"] == ""
     assert contacts["items"][0]["metadata"]["is_self"] is True
 
     updated = store.patch_record(

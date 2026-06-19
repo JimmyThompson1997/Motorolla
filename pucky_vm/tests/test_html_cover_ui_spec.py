@@ -883,6 +883,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'page.classList.add("light-contact-detail-page");' in contact_detail
     assert 'const hero = el("section", "light-profile-card");' in contact_detail
     assert 'hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));' in contact_detail
+    assert "lightHtmlDocument(contact" not in contact_detail
+    assert "No generated contact page yet." not in contact_detail
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
     assert 'action: lightCircleButton(' not in contact_detail

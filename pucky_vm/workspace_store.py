@@ -82,11 +82,6 @@ def _self_contact_record() -> dict[str, object]:
         "title": SELF_CONTACT_TITLE,
         "summary": SELF_CONTACT_SUMMARY,
         "pinned": True,
-        "html": _personal_html(
-            SELF_CONTACT_TITLE,
-            "Keep your own reminder delivery email and phone current so Gmail and SMS can route cleanly.",
-            ["Primary email", "Primary phone", "Preferred reminder device"],
-        ),
         "metadata": {
             "is_self": True,
             "avatar": "ME",
@@ -389,7 +384,6 @@ def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object
     normalized["checklist"] = _normalize_task_checklist(checklist)
     normalized["status"] = normalize_task_status(payload.get("status") or normalized.get("status") or "")
     return normalized
-
 
 def derive_task_group(record: dict[str, Any], now_ms: int | None = None) -> str:
     status = normalize_task_status(record.get("status"))
@@ -727,6 +721,7 @@ class WorkspaceStore:
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
+            contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
@@ -767,6 +762,8 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
+        if not contact_html_removed:
+            self._remove_contact_html_v1(now)
         if not contact_cleanup_photos:
             self._cleanup_contacts_and_photos_v1(now)
         self.ensure_self_contact()
@@ -777,6 +774,8 @@ class WorkspaceStore:
             return self.upsert_record("contacts", _self_contact_record())
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
         metadata.pop("photo", None)
+        metadata.pop("html", None)
+        metadata.pop("html_asset_id", None)
         payload = {
             "id": SELF_CONTACT_ID,
             "title": SELF_CONTACT_TITLE,
@@ -784,8 +783,8 @@ class WorkspaceStore:
             "pinned": True,
             "archived": False,
             "deleted": False,
-            "html": str(current.get("html") or "") or _self_contact_record()["html"],
-            "html_asset_id": str(current.get("html_asset_id") or ""),
+            "html": "",
+            "html_asset_id": "",
             "metadata": {
                 **metadata,
                 "is_self": True,
@@ -827,6 +826,34 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_endpoints_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _remove_contact_html_v1(self, now_ms: int) -> None:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT record_id, metadata_json FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                metadata = _json_loads(row["metadata_json"], {})
+                next_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                next_metadata.pop("html", None)
+                next_metadata.pop("html_asset_id", None)
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET html = '',
+                        html_asset_id = '',
+                        metadata_json = ?,
+                        updated_at_ms = ?
+                    WHERE kind = 'contact'
+                      AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, row["record_id"]),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_html_removed_v1", "1", now_ms),
             )
             self._conn.commit()
 
@@ -1076,6 +1103,9 @@ class WorkspaceStore:
         archived = bool(payload.get("archived", False))
         deleted = bool(payload.get("deleted", False))
         pinned = bool(payload.get("pinned", False))
+        metadata = dict(metadata)
+        metadata.pop("html", None)
+        metadata.pop("html_asset_id", None)
         if kind == "task":
             metadata = _normalize_task_metadata(metadata, payload, summary=summary)
             status = normalize_task_status(status or metadata.get("status") or "todo")
@@ -1084,6 +1114,8 @@ class WorkspaceStore:
             metadata = _normalize_reminder_metadata(metadata, status=status)
         if kind == "contact":
             metadata = _contact_metadata_without_endpoints(metadata)
+            html = ""
+            html_asset_id = ""
             is_self = record_id == SELF_CONTACT_ID or bool(metadata.get("is_self"))
             if is_self:
                 metadata.pop("photo", None)
@@ -1302,7 +1334,6 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
-
 def default_workspace_assets(now_ms: int) -> list[dict[str, object]]:
     return [
         {
@@ -1317,13 +1348,6 @@ def default_workspace_assets(now_ms: int) -> list[dict[str, object]]:
             "title": "Project Aurora summary",
             "mime_type": "text/html; charset=utf-8",
             "html": "<!doctype html><h1>Project Aurora</h1><p>Spec review, PRD discussion, requirements artifacts, and linked launch work.</p>",
-            "metadata": {"seeded_at_ms": now_ms},
-        },
-        {
-            "id": "asset-contact-maya",
-            "title": "Maya Chen profile",
-            "mime_type": "text/html; charset=utf-8",
-            "html": "<!doctype html><h1>Maya Chen</h1><p>Design lead. Budget approved; next check-in Friday.</p>",
             "metadata": {"seeded_at_ms": now_ms},
         },
     ]
@@ -1633,7 +1657,6 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                 "id": "maya",
                 "title": "Maya Chen",
                 "summary": "Design lead",
-                "html_asset_id": "asset-contact-maya",
                 "metadata": {
                     "first_name": "Maya",
                     "last_name": "Chen",
@@ -1867,11 +1890,6 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "id": "sam-rivera",
                 "title": "Sam Rivera",
                 "summary": "Freelance client",
-                "html": _personal_html(
-                    "Sam Rivera",
-                    "Client contact for the homepage revision and invoice follow-up.",
-                    ["Homepage revision", "Invoice timing", "Review call"],
-                ),
                 "metadata": {
                     "first_name": "Sam",
                     "last_name": "Rivera",

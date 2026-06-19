@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 
-import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -14,6 +15,30 @@ import {
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
 const PROOF_RUN_ID = "proof-workspace";
+const require = createRequire(import.meta.url);
+
+function loadPlaywrightCore() {
+  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
+  const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
+  const candidates = [
+    () => require("playwright-core"),
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
+    () => require(bundled)
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolved = candidate();
+      if (resolved) {
+        return resolved;
+      }
+    } catch {
+      // Try the next resolution path.
+    }
+  }
+  throw new Error("Could not resolve playwright-core from local tools or bundled runtime");
+}
+
+const { chromium } = loadPlaywrightCore();
 
 function resolveApiToken() {
   const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
@@ -461,7 +486,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       id: `${runId}-contact-one`,
       title: "Proof Contact One",
       summary: "Partner lead",
-      html: "<!doctype html><h1>Proof Contact One</h1><p>Contact profile HTML.</p>",
       metadata: {
         avatar: "P1",
         photo: "fixtures/contact_photos/proof-contact.webp",
@@ -474,7 +498,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       id: `${runId}-contact-two`,
       title: "Proof Contact Two",
       summary: "Customer sponsor",
-      html: "<!doctype html><h1>Proof Contact Two</h1><p>Second contact profile.</p>",
       metadata: {
         avatar: "P2",
         photo: "fixtures/contact_photos/eric.webp",
@@ -1470,6 +1493,29 @@ async function assertNoContactEndpoints(page, config, contactId, label, options 
   return detailState;
 }
 
+async function assertNoContactHtmlDocument(page, config, contactId, label) {
+  const htmlState = await page.evaluate(() => {
+    const root = document.querySelector(".light-contact-detail-page");
+    const text = String(root?.textContent || "");
+    return {
+      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
+      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
+      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
+      hasGeneratedFallback: text.includes("generated contact page") || text.includes("Generated page")
+    };
+  });
+  assert(!htmlState.hasHtmlBody, `${label} should not render a Contact HTML document panel`);
+  assert(!htmlState.hasHtmlCard, `${label} should not render a Contact HTML card`);
+  assert(!htmlState.hasHtmlFrame, `${label} should not render a Contact HTML iframe`);
+  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
+  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
+    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
+    assert(!String(record?.html || "").trim(), `${label} API contact record should not expose document HTML`);
+    assert(!String(record?.html_asset_id || "").trim(), `${label} API contact record should not expose document HTML asset id`);
+  }
+  return htmlState;
+}
+
 async function assertContactPhotoThumbnails(page, label) {
   const rows = await page.evaluate(() => {
     const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
@@ -1523,6 +1569,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await waitForGraphText(page, "Me", config.timeoutMs);
   const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
+  await assertNoContactHtmlDocument(page, config, "contact-me", "Me contact detail");
   summary.contactProfileCards = summary.contactProfileCards || [];
   summary.contactProfileCards.push({ theme, contact: "contact-me", profile: meProfileCard });
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
@@ -1543,26 +1590,20 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
+    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
     await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail", { requireActivity: true });
+    await assertNoContactHtmlDocument(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
     summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
   } else {
     const firstContact = contacts[0];
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
-    await expectFrameHeading(page, firstContact.title, config.timeoutMs);
+    await waitForGraphText(page, firstContact.title, config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
     await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
+    await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
     summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
-  const layout = await readDetailHtmlBodyMetrics(page);
-  const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected contact detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected contact HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected contact HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assertDetailFrameMetrics(frameMetrics, "contact detail", theme);
-  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "contact-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   if (seed.writeEnabled) {
     for (const [route, id, text] of [
@@ -1939,7 +1980,7 @@ async function main() {
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
-    summary.assertions.push("generated HTML iframes rendered for workspace object apps");
+    summary.assertions.push("generated HTML iframes rendered for document-bearing workspace apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();
