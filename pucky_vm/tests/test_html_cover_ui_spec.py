@@ -440,6 +440,71 @@ def test_browser_unlock_flow_is_managed_from_settings_and_local_storage() -> Non
     assert 'await loadLinksPortal({ render: true });' in refresh_after_auth
 
 
+def test_light_settings_rows_are_quiet_short_copy_list_items() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    settings_row = css_block(styles, ".light-settings-real .settings-card")
+    settings_icon = css_block(styles, ".light-settings-real .settings-card-icon")
+    settings_detail = css_block(styles, ".light-settings-real .settings-card-detail")
+    selector_button = css_block(styles, ".light-settings-real .settings-selector-button")
+    toggle_on = css_block(styles, ".light-settings-real .settings-toggle.is-on")
+
+    for expected in [
+        "Theme for Pucky.",
+        "Device bridge required.",
+        "Future audio starts.",
+        "How replies play back.",
+        "Listen on this device.",
+        "Sound after send.",
+        "Default for new sessions.",
+        "Reasoning for new sessions.",
+        "Unlock live browser data.",
+        "Browser token saved.",
+        "Read-only in web preview.",
+        "Needs valid api_token.",
+        "Choose one device.",
+        "Device offline.",
+        "Device bridge failed.",
+        "Synced from device.",
+        "Bundle, surface, bridge.",
+    ]:
+        assert expected in app
+
+    for stale in [
+        "Switch between dark and light.",
+        "Applies to future Home tile playback starts",
+        "Device only. Connect the Android bridge",
+        "Choose if replies stay as cards or also speak.",
+        "Cue when your message lands.",
+        "Default OpenAI model. Applies to new sessions.",
+        "Default reasoning effort. Applies to new sessions.",
+        "Store a browser token in this browser",
+        "Web preview is read-only for phone-role state.",
+        "Bundle, surface, wake, bridge.",
+    ]:
+        assert stale not in app
+
+    assert 'settingId: "wake-word",' in app
+    assert 'settingId: "message-sent-cue",' in app
+    assert 'card.setAttribute("data-setting-id", "advanced");' in app
+    assert 'const trailing = el("div", actionLabel && action ? "settings-card-trailing has-actions" : "settings-card-trailing");' in app
+    assert "min-height: 58px;" in settings_row
+    assert "grid-template-columns: 30px minmax(0, 1fr) auto;" in settings_row
+    assert "padding: 8px 0;" in settings_row
+    assert "border: 0;" in settings_row
+    assert "border-bottom: 1px solid color-mix(in srgb, var(--home-shell-border) 72%, transparent);" in settings_row
+    assert "border-radius: 0;" in settings_row
+    assert "background: transparent;" in settings_row
+    assert "box-shadow: none;" in settings_row
+    assert "width: 30px;" in settings_icon
+    assert "height: 30px;" in settings_icon
+    assert "font-size: 12px;" in settings_detail
+    assert "-webkit-line-clamp: 1;" in settings_detail
+    assert "min-height: 30px;" in selector_button
+    assert "border-radius: 8px;" in selector_button
+    assert "0 0 16px" not in toggle_on
+
+
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
     app = read("app.js")
     describe_ui_surface = function_block(app, "describeUiSurface")

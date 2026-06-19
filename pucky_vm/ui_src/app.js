@@ -7550,7 +7550,7 @@
       accent: "#8b63ff",
       icon: currentTheme === "light" ? "lightbulb_2" : "moon",
       title: "Appearance",
-      detail: "Switch between dark and light.",
+      detail: "Theme for Pucky.",
       valueLabel: appearanceThemeLabel(currentTheme),
       onOpen: () => openSettingsSelector({
         title: "Appearance",
@@ -7578,7 +7578,7 @@
       accent: state.links.apiToken ? "#22c55e" : "#f59e0b",
       icon: state.links.apiToken ? "link" : "warning",
       title: "Web preview access",
-      detail: "Store a browser token in this browser so the VM-served dashboard can load your live data.",
+      detail: state.links.apiToken ? "Browser token saved." : "Unlock live browser data.",
       valueLabel: browserPreviewAccessValueLabel(),
       onOpen: openBrowserUnlockSheet,
       actionLabel: state.links.apiToken ? "Clear" : "",
@@ -7605,27 +7605,25 @@
   }
 
   function phoneRoleSettingsDetail(status) {
-    const holder = phoneRoleHolderLabel(status);
     if (status.source === "preview_unavailable") {
-      return "Web preview is read-only for phone-role state. Add api_token and, when needed, device_id to sync a real device, or open the APK on your phone to manage it.";
+      return "Read-only in web preview.";
     }
     if (status.source === "browser_live_api") {
       if (status.error_code === "unauthorized") {
-        return "Web preview could not authenticate device state. Add a valid api_token to view the real phone-role status here.";
+        return "Needs valid api_token.";
       }
       if (status.error_code === "device_context_unavailable") {
-        return "Web preview could not choose a device. Add device_id or bring exactly one online device into context before reloading.";
+        return "Choose one device.";
       }
       if (status.error_code === "device_offline") {
-        return "The selected device is offline, so phone-role state cannot be read right now. Bring the device online in Pucky, then reload.";
+        return "Device offline.";
       }
       if (status.error_code === "broker_command_failed") {
-        return "Pucky reached the backend, but the device did not return phone-role state cleanly. Retry from the device once the bridge is healthy.";
+        return "Device bridge failed.";
       }
-      const scope = status.device_id ? `Synced from ${status.device_id}` : "Synced from your device";
-      return `${holder}. ${scope} in read-only mode. Use the APK on your phone to change the phone-app role.`;
+      return "Synced from device.";
     }
-    return `${holder}. Enabling dialer mode unlocks direct call control, stays user-mediated through Android settings, and may replace the stock in-call UI while active.`;
+    return "Synced from device.";
   }
 
   function phoneRoleSettingsValueLabel(status) {
@@ -7787,8 +7785,8 @@
         "p",
         "settings-card-detail",
         state.defaultAudioSpeedAvailable
-          ? "Applies to future Home tile playback starts unless a tile already has its own saved speed."
-          : "Device only. Connect the Android bridge to change this setting."
+          ? "Future audio starts."
+          : "Device bridge required."
       )
     );
     const value = el("span", "settings-card-value", formatSpeed(state.defaultAudioSpeed));
@@ -8307,7 +8305,7 @@
       accent: "#ffb000",
       icon: "mic",
       title: "Reply playback",
-      detail: "Choose if replies stay as cards or also speak.",
+      detail: "How replies play back.",
       valueLabel: replyModeLabel(currentMode),
       onOpen: () => openSettingsSelector({
         title: "Reply playback",
@@ -8342,10 +8340,11 @@
 
   function wakeWordSettingsCard() {
     return settingsToggleCard({
+      settingId: "wake-word",
       accent: "#72c2ff",
       icon: "record_voice_over",
       title: "Wake word",
-      detail: wakeStatusDetail(state.wakeStatus),
+      detail: "Listen on this device.",
       enabled: state.wakeStatus.enabled,
       onToggle: setWakeWordEnabled
     });
@@ -8358,10 +8357,11 @@
     }));
     const currentMode = normalizeArrivalCueMode(state.turnSettings.arrival_cue_mode);
     return settingsSelectorCard({
+      settingId: "message-sent-cue",
       accent: "#ffb000",
       icon: "bell",
       title: "Message sent cue",
-      detail: "Cue when your message lands.",
+      detail: "Sound after send.",
       valueLabel: arrivalCueLabel(currentMode),
       onOpen: () => openSettingsSelector({
         title: "Message sent cue",
@@ -8441,7 +8441,7 @@
       accent: "#63c1a5",
       icon: "smart_toy",
       title: "Session model",
-      detail: "Default OpenAI model. Applies to new sessions.",
+      detail: "Default for new sessions.",
       valueLabel: turnModelLabel(currentModel),
       onOpen: () => openSettingsSelector({
         title: "Session model",
@@ -8484,7 +8484,7 @@
       accent: "#72c2ff",
       icon: "psychology",
       title: "Thinking level",
-      detail: "Default reasoning effort. Applies to new sessions.",
+      detail: "Reasoning for new sessions.",
       valueLabel: reasoningEffortLabel(currentEffort),
       onOpen: () => openSettingsSelector({
         title: "Thinking level",
@@ -8536,8 +8536,11 @@
     render();
   }
 
-  function settingsToggleCard({ accent, icon, title, detail, enabled, onToggle }) {
+  function settingsToggleCard({ settingId = "", accent, icon, title, detail, enabled, onToggle }) {
     const row = el("article", "settings-card");
+    if (settingId) {
+      row.setAttribute("data-setting-id", String(settingId));
+    }
     row.style.setProperty("--accent", accent || "#72c2ff");
     const iconEl = el("div", "settings-card-icon");
     iconEl.innerHTML = iconSvg(icon, { filled: true });
@@ -8567,12 +8570,12 @@
       el("p", "settings-card-detail", detail)
     );
     const selector = settingsSelectorButton(valueLabel, onOpen);
-    row.append(iconEl, copy, selector);
+    const trailing = el("div", actionLabel && action ? "settings-card-trailing has-actions" : "settings-card-trailing");
+    trailing.append(selector);
     if (actionLabel && action) {
-      const actions = el("div", "settings-card-actions");
-      actions.append(settingsActionButton(actionLabel, action));
-      row.append(actions);
+      trailing.append(settingsActionButton(actionLabel, action));
     }
+    row.append(iconEl, copy, trailing);
     return row;
   }
 
@@ -8614,13 +8617,14 @@
   function advancedSettingsCard() {
     const card = el("button", "settings-card settings-nav-card");
     card.type = "button";
+    card.setAttribute("data-setting-id", "advanced");
     card.style.setProperty("--accent", "#8b63ff");
     const icon = el("div", "settings-card-icon");
     icon.innerHTML = iconSvg("tune", { filled: true });
     const copy = el("div", "settings-card-copy");
     copy.append(
       el("h2", "settings-card-title", "Advanced"),
-      el("p", "settings-card-detail", "Bundle, surface, wake, bridge.")
+      el("p", "settings-card-detail", "Bundle, surface, bridge.")
     );
     const chevron = el("span", "settings-nav-chevron");
     chevron.innerHTML = iconSvg("navigate_next");

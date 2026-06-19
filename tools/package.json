@@ -13,6 +13,7 @@
     "test:cover-live-user-session": "node ./proofs/cover/cover_live_user_session_playwright.mjs",
     "test:meeting-mode-real-vm": "node ./proofs/meeting/meeting_mode_agent_real_vm_playwright.mjs",
     "test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs",
+    "test:cover-settings-quiet-list": "node ./proofs/cover/cover_settings_quiet_list_playwright.mjs",
     "test:cover-voice-status-dot": "node ./proofs/cover/cover_voice_status_dot_playwright.mjs"
   },
   "dependencies": {

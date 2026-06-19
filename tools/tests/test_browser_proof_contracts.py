@@ -102,6 +102,23 @@ def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
     assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
 
 
+def test_settings_quiet_list_proof_checks_compact_live_rows() -> None:
+    source = read_source("cover_settings_quiet_list_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "pucky.settings_quiet_list_browser_proof.v1" in source
+    assert "const VIEWPORT = { width: 393, height: 852 };" in source
+    assert "const MAX_ANY_ROW_HEIGHT = 82;" in source
+    assert "const MAX_NORMAL_ROW_HEIGHT = 64;" in source
+    assert '.light-settings-real .settings-card' in source
+    assert "byId.advanced.rect.bottom <= VIEWPORT.height" in source
+    assert 'card.style.boxShadow === "none"' in source
+    assert "card.selector.hittable" in source
+    assert "card.toggle.hittable" in source
+    assert "card.action.hittable" in source
+    assert '"test:cover-settings-quiet-list": "node ./proofs/cover/cover_settings_quiet_list_playwright.mjs"' in package
+
+
 def test_workspace_proof_server_keeps_broker_state_out_of_vm_only_data_dir() -> None:
     source = read_source("workspace_apps_proof_server.py")
 
