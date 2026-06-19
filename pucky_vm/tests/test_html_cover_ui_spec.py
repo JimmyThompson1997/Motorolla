@@ -981,6 +981,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert '"contact-edit"' not in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
+    assert 'lightInfoSection("Endpoints"' not in contact_detail
+    assert "meta.endpoints" not in contact_detail
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app

@@ -3349,7 +3349,7 @@ class ServerTests(unittest.TestCase):
         self.service.workspace.patch_record(
             "contacts",
             "contact-me",
-            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+            {"metadata": {"email": "", "notification_device_id": "", "preferred_reminder_device_id": ""}},
         )
         metadata = {
             "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
@@ -3363,7 +3363,7 @@ class ServerTests(unittest.TestCase):
         self.service.workspace.patch_record(
             "contacts",
             "contact-me",
-            {"metadata": {"phone": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+            {"metadata": {"phone": "", "notification_device_id": "", "preferred_reminder_device_id": ""}},
         )
         metadata = {
             "recipients": [{"id": "self", "kind": "self", "label": "Me"}],
@@ -3377,7 +3377,7 @@ class ServerTests(unittest.TestCase):
         self.service.workspace.patch_record(
             "contacts",
             "contact-me",
-            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+            {"metadata": {"email": "", "notification_device_id": "", "preferred_reminder_device_id": ""}},
         )
         self.composio.tool_results["GMAIL_GET_PROFILE"] = {
             "data": {"emailAddress": "jimmy@gmail.example"}
@@ -3391,13 +3391,14 @@ class ServerTests(unittest.TestCase):
         me = self.service.workspace.get_record("contacts", "contact-me")
         self.assertIsNotNone(me)
         self.assertEqual((me.get("metadata") or {}).get("email"), "jimmy@gmail.example")
+        self.assertNotIn("endpoints", me.get("metadata") or {})
 
     def test_reminder_email_validation_falls_back_to_gmail_send_as_profile(self) -> None:
         self.service.config = replace(self.service.config, self_email="")
         self.service.workspace.patch_record(
             "contacts",
             "contact-me",
-            {"metadata": {"email": "", "endpoints": [], "notification_device_id": "", "preferred_reminder_device_id": ""}},
+            {"metadata": {"email": "", "notification_device_id": "", "preferred_reminder_device_id": ""}},
         )
         self.composio.tool_results["GMAIL_GET_PROFILE"] = {"data": {}}
         self.composio.tool_results["GMAIL_LIST_SEND_AS"] = {
@@ -3412,6 +3413,7 @@ class ServerTests(unittest.TestCase):
         me = self.service.workspace.get_record("contacts", "contact-me")
         self.assertIsNotNone(me)
         self.assertEqual((me.get("metadata") or {}).get("email"), "jimmy.alias@gmail.example")
+        self.assertNotIn("endpoints", me.get("metadata") or {})
 
     def test_self_contact_delivery_profile_resolves_self_targets_and_device(self) -> None:
         self.service.config = replace(self.service.config, self_email="", self_phone_number="")
@@ -3454,7 +3456,7 @@ class ServerTests(unittest.TestCase):
         self.service.workspace.patch_record(
             "contacts",
             "sam-rivera",
-            {"metadata": {**(contact.get("metadata") or {}), "email": "", "endpoints": []}},
+            {"metadata": {**(contact.get("metadata") or {}), "email": ""}},
         )
         metadata = {
             "recipients": [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}],
@@ -3469,13 +3471,51 @@ class ServerTests(unittest.TestCase):
         self.service.workspace.patch_record(
             "contacts",
             "sam-rivera",
-            {"metadata": {**(contact.get("metadata") or {}), "phone": "", "endpoints": []}},
+            {"metadata": {**(contact.get("metadata") or {}), "phone": ""}},
         )
         metadata = {
             "recipients": [{"id": "sam-rivera", "kind": "contact", "contact_id": "sam-rivera", "label": "Sam Rivera"}],
             "destinations": [{"channel": "sms", "recipient_ids": ["sam-rivera"]}],
         }
         with self.assertRaisesRegex(ValueError, "reminder_phone_target_missing:sam-rivera"):
+            self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_email_validation_ignores_contact_endpoint_only_metadata(self) -> None:
+        self.service.workspace.upsert_record(
+            "contacts",
+            {
+                "id": "endpoint-only-email",
+                "title": "Endpoint Only Email",
+                "metadata": {"email": "", "endpoints": [{"label": "Email", "value": "endpoint-only@example.com"}]},
+            },
+        )
+        contact = self.service.workspace.get_record("contacts", "endpoint-only-email")
+        self.assertIsNotNone(contact)
+        self.assertNotIn("endpoints", contact.get("metadata") or {})
+        metadata = {
+            "recipients": [{"id": "endpoint-only-email", "kind": "contact", "contact_id": "endpoint-only-email", "label": "Endpoint Only Email"}],
+            "destinations": [{"channel": "email", "recipient_ids": ["endpoint-only-email"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_email_target_missing:endpoint-only-email"):
+            self.service._validate_reminder_metadata(metadata)
+
+    def test_reminder_sms_validation_ignores_contact_endpoint_only_metadata(self) -> None:
+        self.service.workspace.upsert_record(
+            "contacts",
+            {
+                "id": "endpoint-only-phone",
+                "title": "Endpoint Only Phone",
+                "metadata": {"phone": "", "endpoints": [{"label": "Phone", "value": "+14155550123"}]},
+            },
+        )
+        contact = self.service.workspace.get_record("contacts", "endpoint-only-phone")
+        self.assertIsNotNone(contact)
+        self.assertNotIn("endpoints", contact.get("metadata") or {})
+        metadata = {
+            "recipients": [{"id": "endpoint-only-phone", "kind": "contact", "contact_id": "endpoint-only-phone", "label": "Endpoint Only Phone"}],
+            "destinations": [{"channel": "sms", "recipient_ids": ["endpoint-only-phone"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "reminder_phone_target_missing:endpoint-only-phone"):
             self.service._validate_reminder_metadata(metadata)
 
     def test_due_reminder_custom_payload_records_effective_mode_and_downgrade(self) -> None:

@@ -3793,9 +3793,6 @@
       { icon: "mail", accentKey: "connect", label: "Email", value: meta.email || "" },
       { icon: "phone", accentKey: "contacts", label: "Phone", value: meta.phone || "" },
     ]));
-    if (Array.isArray(meta.endpoints) && meta.endpoints.length) {
-      page.append(lightInfoSection("Endpoints", meta.endpoints.map(row => ({ icon: "apps", accentKey: "connect", label: row.label, value: row.value }))));
-    }
     if (Array.isArray(meta.activity) && meta.activity.length) {
       page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
       icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pucky_vm.workspace_store import SELF_CONTACT_ID, WorkspaceStore, derive_task_group
@@ -45,6 +46,63 @@ def test_workspace_store_seeds_and_round_trips_html_assets(tmp_path: Path) -> No
     )
     assert note["title"] == "Proof Note"
     assert note["metadata"]["context"] == "Tests"
+
+
+def test_contact_endpoint_migration_backfills_email_phone_and_removes_metadata(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    legacy_metadata = {
+        "avatar": "LG",
+        "email": "",
+        "phone": "",
+        "endpoints": [
+            {"label": "Slack", "value": "@legacy"},
+            {"label": "Gmail", "value": "legacy@example.com"},
+            {"label": "SMS", "value": "+1 (555) 010-9999"},
+        ],
+        "activity": ["Legacy imported contact"],
+    }
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'contact' AND record_id = 'sam-rivera'",
+        (json.dumps(legacy_metadata),),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'")
+    store._conn.commit()
+    store.close()
+
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    contact = migrated.get_record("contacts", "sam-rivera")
+    assert contact is not None
+    metadata = contact["metadata"]
+    assert metadata["email"] == "legacy@example.com"
+    assert metadata["phone"] == "+1 (555) 010-9999"
+    assert "endpoints" not in metadata
+
+
+def test_contact_writes_strip_endpoint_metadata_without_backfilling(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    contact = store.upsert_record(
+        "contacts",
+        {
+            "id": "endpoint-write",
+            "title": "Endpoint Write",
+            "metadata": {
+                "email": "",
+                "phone": "",
+                "endpoints": [
+                    {"label": "Email", "value": "ignored@example.com"},
+                    {"label": "Phone", "value": "+1 (555) 010-1111"},
+                ],
+            },
+        },
+    )
+
+    metadata = contact["metadata"]
+    assert metadata.get("email", "") == ""
+    assert metadata.get("phone", "") == ""
+    assert "endpoints" not in metadata
 
 
 def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: Path) -> None:

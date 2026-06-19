@@ -31,6 +31,8 @@ KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
 SELF_CONTACT_ID = "contact-me"
 SELF_CONTACT_TITLE = "Me"
 SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
+CONTACT_EMAIL_ENDPOINT_LABELS = ("email", "gmail", "mail")
+CONTACT_PHONE_ENDPOINT_LABELS = ("phone", "sms", "text", "mobile", "call")
 
 
 def _now_ms() -> int:
@@ -71,7 +73,7 @@ def _self_contact_record() -> dict[str, object]:
         "pinned": True,
         "html": _personal_html(
             SELF_CONTACT_TITLE,
-            "Keep your own reminder delivery endpoints current so phone, Gmail, and SMS can route cleanly.",
+            "Keep your own reminder delivery email and phone current so Gmail and SMS can route cleanly.",
             ["Primary email", "Primary phone", "Preferred reminder device"],
         ),
         "metadata": {
@@ -81,10 +83,30 @@ def _self_contact_record() -> dict[str, object]:
             "phone": "",
             "notification_device_id": "",
             "preferred_reminder_device_id": "",
-            "endpoints": [],
             "activity": ["Reminder delivery profile"],
         },
     }
+
+
+def _contact_endpoint_value(metadata: dict[str, Any], labels: tuple[str, ...]) -> str:
+    endpoints = list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else []
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        label = str(endpoint.get("label") or endpoint.get("type") or "").strip().lower()
+        if not label:
+            continue
+        if any(term in label for term in labels):
+            value = str(endpoint.get("value") or endpoint.get("address") or endpoint.get("number") or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _contact_metadata_without_endpoints(metadata: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(metadata or {})
+    cleaned.pop("endpoints", None)
+    return cleaned
 
 
 def _normalize_reminder_recipient_id(value: object) -> str:
@@ -679,6 +701,7 @@ class WorkspaceStore:
             graph_v3_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v3'").fetchone()
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
+            contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
             defaults = default_workspace_records(now)
@@ -716,13 +739,15 @@ class WorkspaceStore:
             self._refresh_seeded_task_sweep_v1(now)
         if not proof_cleanup_seeded:
             self._cleanup_proof_artifacts(now)
+        if not contact_endpoints_removed:
+            self._remove_contact_endpoints_v1(now)
         self.ensure_self_contact()
 
     def ensure_self_contact(self) -> dict[str, object]:
         current = self.get_record("contacts", SELF_CONTACT_ID, include_deleted=True)
         if current is None:
             return self.upsert_record("contacts", _self_contact_record())
-        metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+        metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
         payload = {
             "id": SELF_CONTACT_ID,
             "title": SELF_CONTACT_TITLE,
@@ -740,11 +765,41 @@ class WorkspaceStore:
                 "phone": str(metadata.get("phone") or "").strip(),
                 "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
                 "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
-                "endpoints": list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else [],
                 "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
             },
         }
         return self.upsert_record("contacts", payload)
+
+    def _remove_contact_endpoints_v1(self, now_ms: int) -> None:
+        with self._lock:
+            rows = self._conn.execute("SELECT record_id, metadata_json FROM workspace_records WHERE kind = 'contact'").fetchall()
+            for row in rows:
+                metadata = _json_loads(row["metadata_json"], {})
+                if not isinstance(metadata, dict) or "endpoints" not in metadata:
+                    continue
+                next_metadata = dict(metadata)
+                if not str(next_metadata.get("email") or "").strip():
+                    email = _contact_endpoint_value(next_metadata, CONTACT_EMAIL_ENDPOINT_LABELS)
+                    if email:
+                        next_metadata["email"] = email
+                if not str(next_metadata.get("phone") or "").strip():
+                    phone = _contact_endpoint_value(next_metadata, CONTACT_PHONE_ENDPOINT_LABELS)
+                    if phone:
+                        next_metadata["phone"] = phone
+                next_metadata.pop("endpoints", None)
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET metadata_json = ?, updated_at_ms = ?
+                    WHERE kind = 'contact' AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, row["record_id"]),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_endpoints_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
@@ -948,6 +1003,7 @@ class WorkspaceStore:
             status = status or "open"
             metadata = _normalize_reminder_metadata(metadata, status=status)
         if kind == "contact":
+            metadata = _contact_metadata_without_endpoints(metadata)
             is_self = record_id == SELF_CONTACT_ID or bool(metadata.get("is_self"))
             if is_self:
                 metadata = {
@@ -958,7 +1014,6 @@ class WorkspaceStore:
                     "phone": str(metadata.get("phone") or "").strip(),
                     "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
                     "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
-                    "endpoints": list(metadata.get("endpoints") or []) if isinstance(metadata.get("endpoints"), list) else [],
                     "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
                 }
                 title = SELF_CONTACT_TITLE
@@ -1505,7 +1560,6 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "photo": "fixtures/contact_photos/maya.svg",
                     "email": "maya.chen@email.com",
                     "phone": "+1 (415) 555-0142",
-                    "endpoints": [{"label": "Slack", "value": "@maya"}, {"label": "Gmail", "value": "maya.chen@email.com"}],
                     "activity": ["Slack DM - approved the engineering budget", "Meeting - Roadmap sync today"],
                 },
             },
@@ -1743,7 +1797,6 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "avatar": "SR",
                     "email": "sam.rivera@example.com",
                     "phone": "+1 (415) 555-0168",
-                    "endpoints": [{"label": "Email", "value": "sam.rivera@example.com"}],
                     "activity": ["Email - asked for the revised homepage pass", "Calendar - review call in two days"],
                 },
             },
@@ -1760,7 +1813,6 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "avatar": "CF",
                     "email": "frontdesk@clinic.example.com",
                     "phone": "+1 (415) 555-0133",
-                    "endpoints": [{"label": "Phone", "value": "+1 (415) 555-0133"}],
                     "activity": ["Call - confirm the appointment time", "Reminder - check prep instructions"],
                 },
             },
