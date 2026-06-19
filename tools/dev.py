@@ -49,7 +49,9 @@ TASK_HELP = {
     "test-fast": "Run the fast unit and contract suite plus canonical tool tests.",
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
     "proof-local-web": "Boot the local workspace proof server, then run the hosted UI browser proof.",
+    "proof-local-notes-flash": "Boot the local workspace proof server, then run the targeted notes flash browser proof.",
     "proof-live-web": "Run the live hosted UI browser proof against the current base URL env/default.",
+    "proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
     "refresh-links-catalog": "Refresh the generated links catalog fixture used by the hosted UI bundle.",
@@ -97,7 +99,7 @@ def proof_env() -> dict[str, str]:
     return env
 
 
-def run_local_web_proof(extra_args: list[str]) -> int:
+def run_local_workspace_proof(script_path: str, extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
     server = subprocess.Popen(
@@ -112,7 +114,7 @@ def run_local_web_proof(extra_args: list[str]) -> int:
         return run_command(
             [
                 node_binary,
-                "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
+                script_path,
                 "--base-url",
                 "http://127.0.0.1:8767",
                 "--api-token",
@@ -130,9 +132,22 @@ def run_local_web_proof(extra_args: list[str]) -> int:
             server.wait(timeout=5)
 
 
+def run_local_web_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof("tools/proofs/cover/cover_workspace_apps_playwright.mjs", extra_args)
+
+
+def run_local_notes_flash_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof("tools/proofs/cover/cover_notes_detail_flash_playwright.mjs", extra_args)
+
+
 def run_live_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_command([node_binary, "tools/proofs/cover/cover_live_user_session_playwright.mjs", *extra_args], env=proof_env())
+
+
+def run_live_notes_flash_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_command([node_binary, "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs", *extra_args], env=proof_env())
 
 
 def powershell_command() -> list[str]:
@@ -172,8 +187,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
+    if args.task == "proof-local-notes-flash":
+        return run_local_notes_flash_proof(args.extra_args)
     if args.task == "proof-live-web":
         return run_live_web_proof(args.extra_args)
+    if args.task == "proof-live-notes-flash":
+        return run_live_notes_flash_proof(args.extra_args)
     return run_command(build_task_command(args.task) + args.extra_args)
 
 

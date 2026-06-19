@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEV_PY_PATH = ROOT / "tools" / "dev.py"
 
 
 def read_source(name: str) -> str:
@@ -91,6 +92,34 @@ def test_live_notes_centering_proof_unlocks_preview_before_toggling_rows() -> No
     assert "Unlock web preview" in source
     assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
     assert ".light-note-pin-button" in source
+
+
+def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> None:
+    source = read_source("cover_notes_detail_flash_playwright.mjs")
+    dev = DEV_PY_PATH.read_text(encoding="utf-8")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert "PUCKY_WORKSPACE_PROOF_TOKEN" in source
+    assert "PUCKY_API_TOKEN" in source
+    assert 'const RESULT_SCHEMA = "pucky.notes_detail_flash_browser_proof.v1";' in source
+    assert 'const TRANSITION_DELAY_MS = 450;' in source
+    assert 'const FAIL_OPEN_MS = 1500;' in source
+    assert 'frame.addEventListener("load", markReady, { once: true });' not in source
+    assert 'window.setTimeout(() => descriptor.set.call(this, value), delayMs);' not in source
+    assert 'window.setTimeout(() => descriptor.set.call(frame, value), delayMs);' in source
+    assert 'wrapperState === "loading"' in source
+    assert 'background === "rgb(8, 17, 28)"' in source
+    assert 'background === "rgb(255, 255, 255)"' in source
+    assert '"summary.json"' in source
+    assert '"report.md"' in source
+    assert 'path.join(config.reportDir, "report.md")' in source
+    assert "saveScreenshot(page, config.reportDir, `${theme}-transition`)" in source
+    assert "saveScreenshot(page, config.reportDir, `${theme}-settled`)" in source
+    assert '"proof-local-notes-flash"' in dev
+    assert '"proof-live-notes-flash"' in dev
+    assert '"tools/proofs/cover/cover_notes_detail_flash_playwright.mjs"' in dev
+    assert '"test:cover-notes-detail-flash": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"' in package
 
 
 def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> None:

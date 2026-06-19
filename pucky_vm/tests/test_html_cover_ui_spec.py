@@ -559,6 +559,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     toggle_note_pin = function_block(app, "toggleNotePin")
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
+    light_html_document = function_block(app, "lightHtmlDocument")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
     notes_feed_block = css_block(styles, ".light-notes-feed")
@@ -574,6 +575,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert detail_html_shared_match, "Missing shared detail HTML body block"
     detail_html_shared_block = detail_html_shared_match.group("body")
     detail_html_card_block = css_block(styles, ".light-detail-html-body.light-html-card")
+    note_detail_html_card_block = css_block(styles, ".light-note-detail-html-body.light-html-card")
+    note_detail_html_frame_block = css_block(styles, ".light-note-detail-html-body.light-html-card .light-html-frame")
+    note_detail_html_loading_frame_block = css_block(styles, '.light-note-detail-html-body.light-html-card[data-html-frame-state="loading"] .light-html-frame')
     detail_html_empty_block = css_block(styles, ".light-detail-html-body.light-html-empty")
 
     assert "note?.content_updated_at_ms" in note_timestamp
@@ -640,7 +644,18 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "lightDocumentEyebrow(" not in note_detail
     assert 'el("h1", "", note.title)' not in note_detail
     assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
-    assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));' in note_detail
+    assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", {' in note_detail
+    assert 'className: "light-detail-html-body light-note-detail-html-body"' in note_detail
+    assert "revealOnLoad: true" in note_detail
+
+    assert "const revealOnLoad = Boolean(options && options.revealOnLoad);" in light_html_document
+    assert 'wrap.dataset.htmlFrameState = "loading";' in light_html_document
+    assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
+    assert 'wrap.dataset.htmlFrameState = "ready";' in light_html_document
+    assert 'wrap.setAttribute("aria-busy", "false");' in light_html_document
+    assert 'embeddedBody.getAttribute("data-pucky-embedded-body") !== "true"' in light_html_document
+    assert 'frame.addEventListener("load", () => markReady(false));' in light_html_document
+    assert 'window.setTimeout(() => markReady(true), 1500);' in light_html_document
 
     assert 'return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`,' in patch_workspace_record
     assert 'method: "PATCH",' in patch_workspace_record
@@ -681,6 +696,12 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "margin-right: 0;" in detail_html_shared_block
     assert "calc(100% + 40px)" not in detail_html_shared_block
     assert "margin-left: -20px;" not in detail_html_shared_block
+    assert "--note-document-surface: #08111c;" in styles
+    assert "--note-document-surface: #ffffff;" in styles
+    assert "background: var(--note-document-surface);" in note_detail_html_card_block
+    assert "background: var(--note-document-surface);" in note_detail_html_frame_block
+    assert "background: #fff;" not in note_detail_html_frame_block
+    assert "visibility: hidden;" in note_detail_html_loading_frame_block
     assert "width: 100%;" in detail_html_empty_block
     assert "padding-left: 0;" in styles
     assert "padding-right: 0;" in styles

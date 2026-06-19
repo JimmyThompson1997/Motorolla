@@ -102,7 +102,9 @@ Canonical developer commands:
 ```bash
 python -m tools.dev test-fast
 python -m tools.dev test-full
+python -m tools.dev proof-local-notes-flash
 python -m tools.dev proof-local-web
+python -m tools.dev proof-live-notes-flash
 python -m tools.dev proof-live-web
 python -m tools.dev deploy-vm
 ```

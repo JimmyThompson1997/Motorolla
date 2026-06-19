@@ -21,6 +21,7 @@
   --surface-media-tile: rgba(245, 249, 255, 0.06);
   --surface-document-fallback: #02060a;
   --surface-viewer: #02060a;
+  --note-document-surface: #08111c;
   --surface-video-controls: rgba(0, 0, 0, 0.66);
   --surface-video-track: rgba(245, 249, 255, 0.28);
   --surface-audio-primary: rgba(245, 249, 255, 0.96);
@@ -3532,6 +3533,7 @@ button {
   --surface-media-tile: rgba(17, 24, 39, 0.04);
   --surface-document-fallback: #fbfcff;
   --surface-viewer: #fbfcff;
+  --note-document-surface: #ffffff;
   --surface-video-controls: rgba(255, 255, 255, 0.92);
   --surface-video-track: rgba(17, 24, 39, 0.12);
   --surface-audio-primary: var(--accent-primary);
@@ -6011,6 +6013,22 @@ button {
 .light-detail-html-body.light-html-card .light-html-frame {
   width: 100%;
   min-height: min(68vh, 720px);
+}
+
+.light-note-detail-html-body.light-html-card {
+  background: var(--note-document-surface);
+}
+
+.light-note-detail-page .light-note-detail-html-body.light-html-card {
+  background: var(--note-document-surface);
+}
+
+.light-note-detail-html-body.light-html-card .light-html-frame {
+  background: var(--note-document-surface);
+}
+
+.light-note-detail-html-body.light-html-card[data-html-frame-state="loading"] .light-html-frame {
+  visibility: hidden;
 }
 
 .light-detail-html-body.light-html-empty {

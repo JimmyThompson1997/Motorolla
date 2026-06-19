@@ -5201,7 +5201,11 @@
     }
     const page = lightPage(note.title || "Untitled note", { detail: true });
     page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");
-    page.append(lightHtmlDocument(note, "No generated note page yet.", { untitledFallback: true, className: "light-detail-html-body" }));
+    page.append(lightHtmlDocument(note, "No generated note page yet.", {
+      untitledFallback: true,
+      className: "light-detail-html-body light-note-detail-html-body",
+      revealOnLoad: true,
+    }));
     return page;
   }
 
@@ -7217,6 +7221,7 @@
     const html = workspaceHtml(record);
     const untitledFallback = Boolean(options && options.untitledFallback);
     const extraClassName = String(options && options.className || "").trim();
+    const revealOnLoad = Boolean(options && options.revealOnLoad);
     if (!html) {
       if (untitledFallback) {
         return el("section", `light-html-empty ${extraClassName}`.trim(), fallbackText);
@@ -7226,8 +7231,32 @@
     const frame = el("iframe", "light-html-frame");
     frame.setAttribute("sandbox", "");
     frame.setAttribute("title", String(record?.title || "Generated page"));
-    frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     const wrap = el("section", `light-card light-html-card ${extraClassName}`.trim());
+    let revealTimerId = 0;
+    if (revealOnLoad) {
+      const markReady = (force = false) => {
+        if (!force) {
+          const embeddedBody = frame.contentDocument?.body;
+          if (!embeddedBody || embeddedBody.getAttribute("data-pucky-embedded-body") !== "true") {
+            return;
+          }
+        }
+        if (wrap.dataset.htmlFrameState === "ready") {
+          return;
+        }
+        wrap.dataset.htmlFrameState = "ready";
+        wrap.setAttribute("aria-busy", "false");
+        if (revealTimerId) {
+          window.clearTimeout(revealTimerId);
+          revealTimerId = 0;
+        }
+      };
+      wrap.dataset.htmlFrameState = "loading";
+      wrap.setAttribute("aria-busy", "true");
+      frame.addEventListener("load", () => markReady(false));
+      revealTimerId = window.setTimeout(() => markReady(true), 1500);
+    }
+    frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     wrap.append(frame);
     return wrap;
   }
