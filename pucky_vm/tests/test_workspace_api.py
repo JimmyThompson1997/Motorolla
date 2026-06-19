@@ -96,15 +96,18 @@ def request_json(
     *,
     method: str = "GET",
     token: str | None = BROWSER_TEST_TOKEN,
+    headers: dict[str, str] | None = None,
     body: dict[str, object] | None = None,
 ) -> dict[str, object]:
     data = None if body is None else json.dumps(body).encode("utf-8")
-    headers = {"Accept": "application/json"}
+    request_headers = {"Accept": "application/json"}
     if body is not None:
-        headers["Content-Type"] = "application/json"
+        request_headers["Content-Type"] = "application/json"
     if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
+        request_headers["Authorization"] = f"Bearer {token}"
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(base_url + path, data=data, headers=request_headers, method=method)
     with urllib.request.urlopen(req, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -124,6 +127,92 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
             raise AssertionError("unauthorized write succeeded")
         public_notes = request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
         assert public_notes["count"] >= 1
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        task = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={"id": "public-task", "title": "Public Task", "status": "todo", "due_at_ms": 2_000_000_000_000},
+        )
+        same_origin_headers = {
+            "Origin": base_url,
+            "Referer": f"{base_url}/ui/pucky/latest/?theme=light&route=tasks",
+        }
+
+        patched = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={"status": "waiting"},
+        )
+        assert patched["status"] == "waiting"
+
+        for bad_body in (
+            {"status": "open"},
+            {"status": "done", "owner": "Jordan"},
+            {"checklist": [{"id": "x", "done": True}]},
+        ):
+            with pytest.raises(urllib.error.HTTPError) as caught:
+                request_json(
+                    base_url,
+                    f"/api/workspace/tasks/{task['id']}",
+                    method="PATCH",
+                    token="",
+                    headers=same_origin_headers,
+                    body=bad_body,
+                )
+            assert caught.value.code == 400
+
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            request_json(
+                base_url,
+                f"/api/workspace/tasks/{task['id']}",
+                method="PATCH",
+                token="",
+                body={"status": "done"},
+            )
+        assert caught.value.code == 401
+
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            request_json(
+                base_url,
+                f"/api/workspace/tasks/{task['id']}",
+                method="PATCH",
+                token="",
+                headers={
+                    "Origin": "https://evil.example",
+                    "Referer": "https://evil.example/ui/pucky/latest/?route=tasks",
+                },
+                body={"status": "done"},
+            )
+        assert caught.value.code == 401
+
+        note = request_json(
+            base_url,
+            "/api/workspace/notes",
+            method="POST",
+            token="test-token",
+            body={"id": "public-note", "title": "Public Note"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            request_json(
+                base_url,
+                f"/api/workspace/notes/{note['id']}",
+                method="PATCH",
+                token="",
+                headers=same_origin_headers,
+                body={"pinned": True},
+            )
+        assert caught.value.code == 401
     finally:
         server.shutdown()
 

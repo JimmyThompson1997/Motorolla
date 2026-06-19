@@ -739,6 +739,7 @@ async function expectFrameHeading(page, text, timeoutMs) {
 
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
+    const detail = document.querySelector(".light-task-detail-surface");
     const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
     const pageText = document.querySelector(".light-shell")?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
@@ -751,8 +752,11 @@ async function readTaskDetailState(page) {
     const hasNotes = /\bNOTES\b/.test(pageText);
     const hasRelated = /\bRELATED\b/.test(pageText);
     const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
-    const htmlFrame = document.querySelector(".light-task-detail-body.light-html-card iframe");
-    const htmlFallback = document.querySelector(".light-task-detail-body.light-html-empty")?.textContent?.trim() || "";
+    const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
+      .map(node => String(node.textContent || "").trim().toLowerCase());
+    const contentSections = Array.from(detail?.children || [])
+      .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
+    const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
     return {
       route,
       title,
@@ -762,8 +766,10 @@ async function readTaskDetailState(page) {
       hasNotes,
       hasRelated,
       hasGeneratedPage,
-      hasHtmlFrame: Boolean(htmlFrame),
-      htmlFallback
+      sections: sectionTitles,
+      descriptionIsFirstSection: firstSectionTitle === "description",
+      taskHtmlFramePresent: Boolean(detail?.querySelector(".light-html-frame, iframe")),
+      statusCircleTriggerPresent: Boolean(document.querySelector(".light-task-status-circle-trigger")),
     };
   });
 }
@@ -788,20 +794,47 @@ async function readTaskListState(page) {
   });
 }
 
+async function waitForTaskRowStatus(page, taskId, status, timeoutMs) {
+  await page.waitForFunction(
+    ([expectedTaskId, expectedStatus]) => {
+      return document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)?.getAttribute("data-task-status") === expectedStatus;
+    },
+    [String(taskId || ""), String(status || "")],
+    { timeout: timeoutMs }
+  );
+}
+
+async function waitForTaskDetailStatus(page, status, timeoutMs) {
+  await page.waitForFunction(
+    expectedStatus => {
+      const detail = document.querySelector(".light-task-detail-surface");
+      const trigger = document.querySelector(".light-task-status-trigger");
+      return Boolean(
+        detail
+        && detail.getAttribute("data-task-status") === expectedStatus
+        && trigger
+        && trigger.getAttribute("data-task-status") === expectedStatus
+      );
+    },
+    String(status || ""),
+    { timeout: timeoutMs }
+  );
+}
+
 async function probeTaskDetailIdle(page, idleMs = 5200) {
   return page.evaluate(async (waitMs) => {
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const firstShell = document.querySelector(".light-shell");
+    const firstDetail = document.querySelector(".light-task-detail-surface");
     const firstTitleNode = document.querySelector(".light-task-detail-title");
-    const firstFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     await sleep(waitMs);
     const currentShell = document.querySelector(".light-shell");
+    const currentDetail = document.querySelector(".light-task-detail-surface");
     const currentTitleNode = document.querySelector(".light-task-detail-title");
-    const currentFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     return {
       sameShellNode: currentShell === firstShell,
+      sameDetailNode: currentDetail === firstDetail,
       sameTitleNode: currentTitleNode === firstTitleNode,
-      sameIframeNode: currentFrame === firstFrame,
       route: currentShell?.getAttribute("data-light-route") || "",
       title: currentTitleNode?.textContent?.trim() || ""
     };
@@ -1143,25 +1176,28 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   const doneId = seed.taskIds?.done;
   summary.taskDetail = summary.taskDetail || [];
 
+  await page.locator(".light-task-row-status-trigger").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const listStatusControl = page.locator(`.light-task-row[data-task-id="${inlineId}"] .light-task-row-status-trigger`).first();
+  await listStatusControl.click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_tasks_status_selector_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-status-selector-list`);
+  await page.locator('.settings-selector-option[data-selector-value="in_progress"]').first().click();
+  await waitForTaskRowStatus(page, inlineId, "in_progress", config.timeoutMs);
+
   await taskRowControl(page, inlineId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
-  await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Proof Future Task", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
   let detailState = await readTaskDetailState(page);
-  let detailLayout = await readDetailHtmlBodyMetrics(page);
-  let detailFrameMetrics = await readDetailFrameDocumentMetrics(page);
   assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
   assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
-  assert(detailState.hasHtmlFrame, "Expected inline HTML task to render an iframe body");
+  assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
+  assert(detailState.sections.includes("details"), "Expected inline task detail to include a Details section");
+  assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
+  assert(detailState.statusCircleTriggerPresent, "Expected inline task detail to render the top-left status trigger");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
   assert(!detailState.hasNotes, "Did not expect NOTES section on task detail");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
-  assert(detailLayout.body && detailLayout.page, "Expected task detail to expose a measurable HTML body");
-  assert(detailLayout.body.left <= detailLayout.page.left + 2, `Expected task HTML body to reach page left edge, got ${detailLayout.body.left} vs ${detailLayout.page.left}`);
-  assert(detailLayout.body.right >= detailLayout.page.right - 2, `Expected task HTML body to reach page right edge, got ${detailLayout.body.right} vs ${detailLayout.page.right}`);
-  assertDetailFrameMetrics(detailFrameMetrics, "task detail", theme);
-  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "task-detail", layout: detailLayout, frame: detailFrameMetrics });
-  screenshots[`${theme}_tasks_inline_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-html`);
+  screenshots[`${theme}_tasks_inline_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-detail`);
   screenshots[`${theme}_task_detail_open_0s`] = await saveScreenshot(page, config.reportDir, `${theme}-task-detail-open-0s`);
   const idleStartMs = Date.now() + 250;
   await page.waitForTimeout(250);
@@ -1174,15 +1210,25 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     theme,
     taskId: inlineId,
     networkTaskRequests: idleTaskRequests,
-    sameIframeNode: idleProbe.sameIframeNode,
+    sameDetailNode: idleProbe.sameDetailNode,
     sameShellNode: idleProbe.sameShellNode,
     sameTitleNode: idleProbe.sameTitleNode
   });
   assert(idleTaskRequests === 0, `Expected no task polling while task-detail idles, saw ${idleTaskRequests} task requests`);
-  assert(idleProbe.sameIframeNode, "Expected task-detail iframe node to remain stable while idling");
+  assert(idleProbe.sameDetailNode, "Expected task-detail surface node to remain stable while idling");
   assert(idleProbe.sameShellNode, "Expected task-detail shell node to remain stable while idling");
   assert(idleProbe.sameTitleNode, "Expected task-detail title node to remain stable while idling");
-  summary.taskDetail.push({ theme, type: "inline_html", taskId: inlineId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
+  summary.taskDetail.push({
+    theme,
+    type: "inline_detail",
+    taskId: inlineId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list-after-back`);
@@ -1196,12 +1242,22 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
 
   await taskRowControl(page, assetId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
-  await page.frameLocator(".light-task-detail-body.light-html-card iframe").getByText("Asset-backed task page", { exact: true }).waitFor({ state: "visible", timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Asset Task", `Expected asset task title, got ${detailState.title}`);
-  assert(detailState.hasHtmlFrame, "Expected asset-backed task to render an iframe body");
-  screenshots[`${theme}_tasks_asset_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-html`);
-  summary.taskDetail.push({ theme, type: "asset_html", taskId: assetId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
+  assert(detailState.descriptionIsFirstSection, "Expected asset task detail to start with Description");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect asset task detail to render an embedded HTML frame");
+  screenshots[`${theme}_tasks_asset_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-detail`);
+  summary.taskDetail.push({
+    theme,
+    type: "asset_detail",
+    taskId: assetId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
@@ -1209,10 +1265,20 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Empty Task", `Expected empty task title, got ${detailState.title}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect iframe body for no-HTML task");
-  assert(detailState.htmlFallback === "No task page yet.", `Expected minimal empty fallback, got ${detailState.htmlFallback}`);
-  screenshots[`${theme}_tasks_empty_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-html`);
-  summary.taskDetail.push({ theme, type: "no_html", taskId: emptyId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due, fallback: detailState.htmlFallback });
+  assert(detailState.descriptionIsFirstSection, "Expected empty task detail to start with Description");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect empty task detail to render an embedded HTML frame");
+  screenshots[`${theme}_tasks_empty_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-detail`);
+  summary.taskDetail.push({
+    theme,
+    type: "empty_detail",
+    taskId: emptyId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 

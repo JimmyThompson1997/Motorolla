@@ -180,8 +180,12 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
 
     assert 'document.querySelector(".light-task-status-trigger")' in source
     assert 'querySelector(".light-task-status-trigger-label")' in source
+    assert 'document.querySelector(".light-task-status-circle-trigger")' in source
+    assert '".light-task-row-status-trigger"' in source
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
+    assert "light-task-detail-body" not in source
+    assert "lightHtmlFrame" not in source
     assert ".light-task-detail-toggle" not in source
 
 
