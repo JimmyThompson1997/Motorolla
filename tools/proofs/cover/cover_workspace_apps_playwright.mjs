@@ -734,6 +734,7 @@ async function readTaskDetailState(page) {
     const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || statusLabels[statusValue] || "";
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
+    const hasConnected = sectionTitles.includes("connected") || /\bconnected\b/i.test(pageText);
     const hasNotes = sectionTitles.includes("notes") || /\bnotes\b/i.test(pageText);
     const hasRelated = sectionTitles.includes("related") || /\brelated\b/i.test(pageText);
     const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(pageText);
@@ -751,6 +752,7 @@ async function readTaskDetailState(page) {
       due,
       statusLabel,
       statusValue,
+      hasConnected,
       hasNotes,
       notes,
       hasRelated,
@@ -1201,13 +1203,14 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
   assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
   assert(detailState.sections.includes("details"), "Expected inline task detail to include a Details section");
-  assert(detailState.sections.includes("notes"), "Expected inline task detail to include a Notes section");
+  assert(detailState.sections.includes("connected"), "Expected inline task detail to include a Connected section");
   assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
   assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
   assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
   assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
-  assert(detailState.hasNotes, "Expected NOTES section on task detail");
-  assert(detailState.notes.includes("Proof Pinned Note"), "Expected inline task detail to surface the linked note in Notes");
+  assert(detailState.hasConnected, "Expected Connected section on task detail");
+  assert(detailState.notes.includes("Proof Pinned Note"), "Expected inline task detail to surface the linked note in Connected");
+  assert(!detailState.hasNotes, "Did not expect separate NOTES section on task detail");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
   screenshots[`${theme}_tasks_inline_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-detail`);
