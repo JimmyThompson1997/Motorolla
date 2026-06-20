@@ -345,45 +345,14 @@ async function openRouteFromHome(page, route, timeoutMs) {
   await waitForRoute(page, route, timeoutMs);
 }
 
-async function expectPreviewApiTokenLock(page, timeoutMs) {
-  await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const title = document.querySelector(".light-empty-state h2");
-    const detail = document.querySelector(".light-empty-state p");
-    const action = document.querySelector(".light-empty-state .light-empty-state-action");
-    return shell?.getAttribute("data-light-route") === "notes"
-      && String(title?.textContent || "").trim() === "Preview needs api_token"
-      && String(detail?.textContent || "").trim() === "Web preview is locked. Use Unlock web preview to load live Notes from the VM in this browser."
-      && String(action?.textContent || "").trim() === "Unlock web preview";
-  }, undefined, { timeout: timeoutMs });
-}
-
-async function unlockBrowserPreview(page, apiToken, timeoutMs) {
-  assert(
-    String(apiToken || "").trim(),
-    "Expected --api-token or PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN to unlock Notes preview",
-  );
-  await page.getByRole("button", { name: "Unlock web preview" }).click();
-  const tokenField = page.locator('input[placeholder*="api_token"], input[placeholder*="API token"], input[placeholder*="api token"]').first();
-  await tokenField.waitFor({ state: "visible", timeout: timeoutMs });
-  await tokenField.fill(String(apiToken || "").trim());
-  await page.getByRole("button", { name: "Save token" }).click();
-  await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), undefined, { timeout: timeoutMs });
-  await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), undefined, { timeout: timeoutMs });
-}
-
-async function ensureNotesUnlocked(page, config) {
+async function assertNoPreviewApiTokenLock(page) {
   const locked = await page.waitForFunction(() => {
     const shell = document.querySelector(".light-shell");
     const title = document.querySelector(".light-empty-state h2");
     return shell?.getAttribute("data-light-route") === "notes"
       && String(title?.textContent || "").trim() === "Preview needs api_token";
   }, undefined, { timeout: 1200 }).then(() => true).catch(() => false);
-  if (!locked) {
-    return;
-  }
-  await expectPreviewApiTokenLock(page, config.timeoutMs);
-  await unlockBrowserPreview(page, config.apiToken, config.timeoutMs);
+  assert(!locked, "Hosted Notes should load without a preview unlock screen.");
 }
 
 async function waitForSeededNote(page, noteId, timeoutMs) {
@@ -458,7 +427,7 @@ async function preparePage(page, config, theme, lane) {
   await page.goto(buildRouteUrl(config, theme, lane), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   await waitForHomeReady(page, config.timeoutMs);
   await openRouteFromHome(page, "notes", config.timeoutMs);
-  await ensureNotesUnlocked(page, config);
+  await assertNoPreviewApiTokenLock(page);
   await waitForSeededNote(page, config.seed.id, config.timeoutMs);
 }
 

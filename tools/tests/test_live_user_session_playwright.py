@@ -56,6 +56,13 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
 def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detail_surface() -> None:
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
+    assert "function readTaskRowFocusState(page, taskId)" in source
+    assert "function readTaskDetailFocusState(page)" in source
+    assert "function assertNoVisibleTaskFocusRing(state, context)" in source
+    assert "task_row_outline_style" in source
+    assert "task_row_outline_width" in source
+    assert "task_detail_outline_style" in source
+    assert "task_detail_outline_width" in source
     assert 'await openRouteFromHome(page, "tasks", config.timeoutMs);' in source
     assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger' in source
     assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main' in source
@@ -73,6 +80,8 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert "Open task list status selector" in source
     assert "Open task detail header status selector near circle" in source
     assert "Open task detail header status selector on title area" in source
+    assert "Task list status selector opened in place without a blue focus rectangle." in source
+    assert "Task detail header selector opened in place without a blue focus rectangle." in source
     assert "Open task detail pill status selector" not in source
     assert "Open task detail top-left status selector" not in source
     assert "Persist Done status after reload" in source

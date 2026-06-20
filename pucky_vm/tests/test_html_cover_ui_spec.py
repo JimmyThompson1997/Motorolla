@@ -1077,7 +1077,15 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-person-row" not in styles
     assert ".light-task-filter-button-icon" in styles
     assert ".light-task-detail-card" in styles
+    assert ".light-task-row:focus-within" not in styles
+    assert ".light-task-row-main:focus," in styles
+    assert ".light-task-row-main:focus-visible," in styles
+    assert ".light-task-row-status-trigger:focus," in styles
+    assert ".light-task-row-status-trigger:focus-visible," in styles
+    assert ".light-task-detail-card:focus," in styles
     assert ".light-task-detail-card:focus-visible" in styles
+    assert "outline: none;" in styles
+    assert "box-shadow: none;" in styles
     assert ".light-task-people-card" not in styles
     assert ".light-task-attachment-card" not in styles
     assert ".light-task-chip-cloud" not in styles

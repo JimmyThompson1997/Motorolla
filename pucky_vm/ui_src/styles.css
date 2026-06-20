@@ -5616,11 +5616,6 @@ button {
   background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
 }
 
-.light-task-row:focus-within {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: -1px;
-}
-
 .light-task-row-status-trigger,
 .light-task-row-main {
   border: 0;
@@ -5656,6 +5651,16 @@ button {
   padding: 0;
   text-align: left;
   cursor: pointer;
+}
+
+.light-task-row-main:focus,
+.light-task-row-main:focus-visible,
+.light-task-row-status-trigger:focus,
+.light-task-row-status-trigger:focus-visible,
+.light-task-detail-card:focus,
+.light-task-detail-card:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .light-task-row-copy {
@@ -5994,11 +5999,6 @@ button {
   height: 24px;
   align-self: start;
   margin-top: 1px;
-}
-
-.light-task-detail-card:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-primary) 28%, transparent);
-  outline-offset: 2px;
 }
 
 .light-task-status-circle {

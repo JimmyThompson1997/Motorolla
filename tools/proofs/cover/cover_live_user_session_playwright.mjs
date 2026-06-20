@@ -596,6 +596,66 @@ async function waitForTaskDetailStatus(page, status, timeoutMs) {
   );
 }
 
+async function readTaskRowFocusState(page, taskId) {
+  return page.evaluate(expectedTaskId => {
+    const row = document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`);
+    const statusTrigger = row?.querySelector(".light-task-row-status-trigger");
+    const mainButton = row?.querySelector(".light-task-row-main");
+    const rowStyle = row ? getComputedStyle(row) : null;
+    const statusStyle = statusTrigger ? getComputedStyle(statusTrigger) : null;
+    const mainStyle = mainButton ? getComputedStyle(mainButton) : null;
+    const active = document.activeElement;
+    return {
+      active_tag: String(active?.tagName || ""),
+      active_class: active instanceof Element ? String(active.className || "") : "",
+      task_row_outline_style: String(rowStyle?.outlineStyle || ""),
+      task_row_outline_width: String(rowStyle?.outlineWidth || ""),
+      task_row_outline_offset: String(rowStyle?.outlineOffset || ""),
+      task_row_box_shadow: String(rowStyle?.boxShadow || ""),
+      row_status_outline_style: String(statusStyle?.outlineStyle || ""),
+      row_status_outline_width: String(statusStyle?.outlineWidth || ""),
+      row_status_box_shadow: String(statusStyle?.boxShadow || ""),
+      row_main_outline_style: String(mainStyle?.outlineStyle || ""),
+      row_main_outline_width: String(mainStyle?.outlineWidth || ""),
+      row_main_box_shadow: String(mainStyle?.boxShadow || ""),
+    };
+  }, String(taskId || ""));
+}
+
+async function readTaskDetailFocusState(page) {
+  return page.evaluate(() => {
+    const card = document.querySelector(".light-task-detail-card");
+    const style = card ? getComputedStyle(card) : null;
+    const active = document.activeElement;
+    return {
+      active_tag: String(active?.tagName || ""),
+      active_class: active instanceof Element ? String(active.className || "") : "",
+      task_detail_outline_style: String(style?.outlineStyle || ""),
+      task_detail_outline_width: String(style?.outlineWidth || ""),
+      task_detail_outline_offset: String(style?.outlineOffset || ""),
+      task_detail_box_shadow: String(style?.boxShadow || ""),
+    };
+  });
+}
+
+function assertNoVisibleTaskFocusRing(state, context) {
+  const rowHidden = String(state.task_row_outline_style || "").toLowerCase() === "none"
+    || String(state.task_row_outline_width || "") === "0px";
+  const statusHidden = !("row_status_outline_style" in state)
+    || String(state.row_status_outline_style || "").toLowerCase() === "none"
+    || String(state.row_status_outline_width || "") === "0px";
+  const mainHidden = !("row_main_outline_style" in state)
+    || String(state.row_main_outline_style || "").toLowerCase() === "none"
+    || String(state.row_main_outline_width || "") === "0px";
+  const detailHidden = !("task_detail_outline_style" in state)
+    || String(state.task_detail_outline_style || "").toLowerCase() === "none"
+    || String(state.task_detail_outline_width || "") === "0px";
+  assert(rowHidden, `${context}: task row focus ring is still visible`);
+  assert(statusHidden, `${context}: task status icon focus ring is still visible`);
+  assert(mainHidden, `${context}: task row main-button focus ring is still visible`);
+  assert(detailHidden, `${context}: task detail header focus ring is still visible`);
+}
+
 async function ensureTaskSectionExpanded(page, group) {
   const toggle = page.locator(`button.light-task-section-toggle[data-task-section="${group}"]`).first();
   if (!(await toggle.count())) {
@@ -924,14 +984,17 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger`).first().click();
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
   assert((await currentRoute(page)) === "tasks", `${mode}: task list status selector should keep the route on tasks`);
+  const listFocusState = await readTaskRowFocusState(page, seed.primaryTaskId);
+  assertNoVisibleTaskFocusRing(listFocusState, `${mode}: task list status selector`);
   await recorder.capture({
     route: "tasks",
     action: "Open task list status selector",
     expected: "Clicking the task list status icon opens the shared status selector without opening task detail.",
-    confirmation: "Task list status selector opened in place.",
+    confirmation: "Task list status selector opened in place without a blue focus rectangle.",
     observed: {
       route: await currentRoute(page),
       task_id: seed.primaryTaskId,
+      ...listFocusState,
     },
   });
   await page.locator('.settings-selector-option[data-selector-value="in_progress"]').first().click();
@@ -966,16 +1029,19 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(".light-task-detail-card").first().click({ position: { x: 16, y: 16 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
   assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail header selector should keep the current route stable`);
+  const detailFocusState = await readTaskDetailFocusState(page);
+  assertNoVisibleTaskFocusRing(detailFocusState, `${mode}: task detail header selector from circle side`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
     action: "Open task detail header status selector near circle",
     expected: "Clicking the task detail header near the status circle opens the shared status selector without leaving task detail.",
-    confirmation: "Task detail header selector opened from the circle side in place.",
+    confirmation: "Task detail header selector opened in place without a blue focus rectangle.",
     observed: {
       route: await currentRoute(page),
       task_id: seed.primaryTaskId,
       task_status: taskState.task_status,
       status_label: taskState.status_label,
+      ...detailFocusState,
     },
   });
   await page.locator('.settings-selector-option[data-selector-value="waiting"]').first().click();
@@ -986,16 +1052,19 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(".light-task-detail-card").first().click({ position: { x: 132, y: 20 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
   assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail header selector should keep the current route stable`);
+  const detailTitleFocusState = await readTaskDetailFocusState(page);
+  assertNoVisibleTaskFocusRing(detailTitleFocusState, `${mode}: task detail header selector from title area`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
     action: "Open task detail header status selector on title area",
     expected: "Clicking the task detail header on the title area opens the shared status selector without leaving task detail.",
-    confirmation: "Task detail header selector opened from the title area in place.",
+    confirmation: "Task detail header selector opened from the title area without a blue focus rectangle.",
     observed: {
       route: await currentRoute(page),
       task_id: seed.primaryTaskId,
       task_status: taskState.task_status,
       status_label: taskState.status_label,
+      ...detailTitleFocusState,
     },
   });
   await page.locator('.settings-selector-option[data-selector-value="done"]').first().click();

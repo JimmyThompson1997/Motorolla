@@ -119,6 +119,9 @@ def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> No
     assert 'path.join(config.reportDir, "report.md")' in source
     assert 'buildAttemptName(theme, lane, "preclick")' in source
     assert 'buildAttemptName(theme, lane, "settled")' in source
+    assert 'saveScreenshot(page, laneDir, buildAttemptName(theme, lane, "preclick"))' in source
+    assert 'saveScreenshot(page, laneDir, buildAttemptName(theme, lane, "settled"))' in source
+    assert 'Hosted Notes should load without a preview unlock screen.' in source
     assert '"proof-local-notes-flash"' in dev
     assert '"proof-live-notes-flash"' in dev
     assert '"proof-local-notes-flash-browser"' in dev
@@ -194,6 +197,22 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert "light-task-detail-body" not in source
     assert "lightHtmlFrame" not in source
     assert ".light-task-detail-toggle" not in source
+
+
+def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "function readTaskRowFocusState(page, taskId)" in source
+    assert "function readTaskDetailFocusState(page)" in source
+    assert "function assertNoVisibleTaskFocusRing(state, context)" in source
+    assert "task_row_outline_style" in source
+    assert "task_row_outline_width" in source
+    assert "task_detail_outline_style" in source
+    assert "task_detail_outline_width" in source
+    assert "assertNoVisibleTaskFocusRing(listFocusState" in source
+    assert "assertNoVisibleTaskFocusRing(detailFocusState" in source
+    assert "Task list status selector opened in place without a blue focus rectangle." in source
+    assert "Task detail header selector opened in place without a blue focus rectangle." in source
 
 
 def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
@@ -299,7 +318,7 @@ def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
     assert 'body_text: bodyText,' in source
     assert 'shell?.getAttribute("data-light-route") !== "note-detail"' in source
     assert 'text.includes(title) && text.includes(bodyText)' in source
-    assert '}, undefined, { timeout: timeoutMs });' in source
+    assert '}, { timeout: timeoutMs });' in source
     assert '}, undefined, { timeout: 1200 }).then(() => true).catch(() => false);' in source
     assert "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
     assert "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
