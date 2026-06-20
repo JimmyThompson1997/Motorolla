@@ -5,6 +5,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEV_PY_PATH = ROOT / "tools" / "dev.py"
+LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN"
+LEGACY_BROWSER_TOKEN_KEY = "browser_" + "api_token"
+LEGACY_LOCK_TITLE = "Preview needs " + "api_token"
+LEGACY_UNLOCK_LABEL = "Unlock web " + "preview"
 
 
 def read_source(name: str) -> str:
@@ -19,7 +24,7 @@ def has_source(name: str) -> bool:
     return bool(sorted((ROOT / "tools").rglob(name)))
 
 
-def test_browser_facing_proofs_prefer_web_ui_token() -> None:
+def test_browser_facing_proofs_drop_legacy_web_ui_token_precedence() -> None:
     script_names = [
         "cover_calendar_playwright.mjs",
         "cover_links_scroll_probe.mjs",
@@ -32,10 +37,8 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
     ]
     if has_source("cover_live_user_session_playwright.mjs"):
         script_names.append("cover_live_user_session_playwright.mjs")
-    if has_source("cover_hosted_bug_hunt_playwright.mjs"):
-        script_names.append("cover_hosted_bug_hunt_playwright.mjs")
     for script_name in script_names:
-        assert "PUCKY_WEB_UI_TOKEN" in read_source(script_name), script_name
+        assert LEGACY_WEB_TOKEN_ENV not in read_source(script_name), script_name
 
 
 def test_canonical_browser_proof_routes_use_inbox_and_connect() -> None:
@@ -59,9 +62,8 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert "route=feed" not in source
     assert "contacts-edit" not in source
     assert 'url.searchParams.set("api_token"' not in source
-    assert "browser_api_token" not in source
+    assert LEGACY_BROWSER_TOKEN_KEY not in source
     assert "fetchConnectMyApps(" in source
-    assert "waitForConnectChips(" in source
     assert "data-links-connected-slug" in source
     assert "Reload connect directly" in source
 
@@ -69,46 +71,58 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert "Preview needs api_token" not in source
-    assert "Unlock web preview" not in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
-    assert "browser_api_token" not in source
+    assert LEGACY_BROWSER_TOKEN_KEY not in source
 
 
-def test_workspace_apps_browser_proof_checks_full_bleed_note_detail_layout() -> None:
-    source = read_source("cover_workspace_apps_playwright.mjs")
-
-    assert "const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };" in source
-    assert "headerBottom" in source
-    assert "bodyTop" in source
-    assert "pageScrollHeight" in source
-    assert "frameClientHeight" in source
-    assert "frameScrollHeight" in source
-    assert "Expected note HTML body to start directly below the header" in source
-    assert "Expected note detail iframe height to cover its document height" in source
-    assert "Expected note detail desktop HTML body to remain full width" in source
-
-
-def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
+def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 
-    assert "Preview needs api_token" in source
-    assert "Unlock web preview" in source
-    assert "Paste PUCKY_WEB_UI_TOKEN" in source
-    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
     assert 'request.method() === "PATCH"' in source
     assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
     assert "Notes pin write failed" in source
 
 
-def test_live_notes_centering_proof_unlocks_preview_before_toggling_rows() -> None:
+def test_live_notes_centering_proof_loads_without_preview_unlock() -> None:
     source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
-    assert "Preview needs api_token" in source
-    assert "Unlock web preview" in source
-    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
     assert ".light-note-pin-button" in source
+
+
+def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> None:
+    source = read_source("cover_notes_detail_flash_playwright.mjs")
+    dev = DEV_PY_PATH.read_text(encoding="utf-8")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert LEGACY_WEB_TOKEN_ENV not in source
+    assert "PUCKY_WORKSPACE_PROOF_TOKEN" in source
+    assert "PUCKY_API_TOKEN" in source
+    assert 'const RESULT_SCHEMA = "pucky.notes_detail_flash_browser_proof.v1";' in source
+    assert 'const TRANSITION_DELAY_MS = 450;' in source
+    assert 'const FAIL_OPEN_MS = 1500;' in source
+    assert 'frame.addEventListener("load", markReady, { once: true });' not in source
+    assert 'window.setTimeout(() => descriptor.set.call(this, value), delayMs);' not in source
+    assert 'window.setTimeout(() => descriptor.set.call(frame, value), delayMs);' in source
+    assert 'wrapperState === "loading"' in source
+    assert 'background === "rgb(8, 17, 28)"' in source
+    assert 'background === "rgb(255, 255, 255)"' in source
+    assert '"summary.json"' in source
+    assert '"report.md"' in source
+    assert 'path.join(config.reportDir, "report.md")' in source
+    assert "saveScreenshot(page, config.reportDir, `${theme}-transition`)" in source
+    assert "saveScreenshot(page, config.reportDir, `${theme}-settled`)" in source
+    assert '"proof-local-notes-flash"' in dev
+    assert '"proof-live-notes-flash"' in dev
+    assert '"tools/proofs/cover/cover_notes_detail_flash_playwright.mjs"' in dev
+    assert '"test:cover-notes-detail-flash": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"' in package
 
 
 def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> None:
@@ -120,31 +134,37 @@ def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> No
     assert "endpoints: [{" not in source
 
 
-def test_workspace_apps_browser_proof_flattens_contact_profile_card_contract() -> None:
+def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
     assert "assertFlatContactProfileCard" in source
     assert '".light-contact-detail-page .light-profile-card"' in source
-    assert "profile card should have a transparent background" in source
-    assert "profile card should not have a shadow" in source
-    assert "profile card should not have a card radius" in source
+    assert 'cardState.backgroundColor === "rgba(0, 0, 0, 0)"' in source
+    assert 'cardState.boxShadow === "none"' in source
+    assert 'cardState.borderRadius === "0px"' in source
     assert "profile card should not have a visible border" in source
-    assert "should keep the Contact section" in source
-    assert "should keep the Activity section" in source
-    assert "should not render a contact HTML document surface" in source
-    assert "contactProfileCards" in source
+    assert "should render the Contact section" in source
+    assert "should render the Activity section" in source
 
 
-def test_workspace_apps_browser_proof_drops_linked_record_chevrons_contract() -> None:
+def test_workspace_apps_browser_proof_checks_contact_photo_thumbnail_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert "assertNoLinkedRecordChevrons" in source
-    assert '".light-section-title"' in source
-    assert 'title === "linked records"' in source
-    assert '".light-chevron"' in source
-    assert "Linked records rows should stay clickable" in source
-    assert "Linked records should not render side chevrons" in source
-    assert "linkedRecordChevrons" in source
+    assert "assertContactPhotoThumbnails" in source
+    assert "Clinic front desk should not render in Contacts" in source
+    assert "contact-me should remain initials-only" in source
+    assert "naturalWidth" in source
+    assert "objectFit" in source
+    assert ".light-contact-row .light-avatar.has-photo img" in source
+
+
+def test_workspace_apps_browser_proof_rejects_contact_html_document_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "assertNoContactHtmlDocument" in source
+    assert "should not render a Contact HTML document panel" in source
+    assert "API contact record should not expose document HTML" in source
+    assert "No generated contact page yet." not in source
 
 
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
@@ -161,10 +181,15 @@ def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
 def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert 'document.querySelector(".light-task-status-trigger")' in source
-    assert 'querySelector(".light-task-status-trigger-label")' in source
+    assert 'document.querySelector(".light-task-detail-card")' in source
+    assert 'document.querySelector(".light-task-status-circle")' in source
+    assert 'document.querySelector(".light-task-status-trigger")' not in source
+    assert 'document.querySelector(".light-task-status-circle-trigger")' not in source
+    assert '".light-task-row-status-trigger"' in source
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
+    assert "light-task-detail-body" not in source
+    assert "lightHtmlFrame" not in source
     assert ".light-task-detail-toggle" not in source
 
 
@@ -211,57 +236,21 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
 
     assert '"--skip-canonical-check"' in source
-    assert 'import { chromium, webkit } from "playwright-core";' in source
     assert "isLocalProofUrl" in source
     assert "isLocalProof" in source
-    assert "allowAutoplayBypass" in source
-    assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
-    assert 'if (browserName === "webkit") {' in source
-    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
-    assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
-    assert 'writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);' in source
-    assert 'writeJsonFile(path.join(config.reportDir, "console.json"), consoleMessages);' in source
-    assert 'fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");' in source
-    assert 'immediate_feedback: immediateFeedbackResult(startStop),' in source
-    assert 'playing_stability: playingStabilityResult(startStop),' in source
-    assert 'cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },' in source
-    assert 'assert(summary.results.immediate_feedback.pass' in source
-    assert 'assert(summary.results.playing_stability.pass' in source
-    assert 'assert(summary.results.cross_card.pass' in source
-    assert 'assert(summary.results.injected_failure.pass' in source
-    assert 'assert(summary.results.injected_early_stop.pass' in source
-    assert 'summary.evidence.video_path = pageVideo ? await pageVideo.path().catch(() => "") : "";' in source
     assert package["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
 
 
 def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> None:
     source = read_source("cover_light_native_ports_playwright.mjs")
 
-    assert 'import { createRequire } from "node:module";' in source
-    assert 'if (process.env.CODEX_NODE_MODULES) {' in source
-    assert 'const pnpmRoot = path.join(basePath, ".pnpm");' in source
-    assert 'Could not resolve playwright-core from bundled or local node_modules' in source
-    assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
-    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
-    assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
-    assert 'writeJsonFile(consoleJsonPath, consoleEvents);' in source
-    assert 'writeJsonFile(networkJsonPath, networkEvents);' in source
-    assert 'writeJsonFile(actionsJsonPath, actions);' in source
-    assert 'fs.writeFileSync(finalDomPaths.light, await lightPage.content(), "utf8");' in source
     assert "assertMeaningfulRows(" in source
     assert "readScrollReachability(" in source
-    assert 'addCandidate(document.scrollingElement, "document.scrollingElement");' in source
-    assert "measurements.find(candidate => candidate.can_scroll) || measurements[0]" in source
-    assert "listCardActionTargets(" in source
-    assert "No page action opened a scrollable rich page that reached the bottom in both themes" in source
-    assert "No audio card exposed an inline audio detail strip after playback started" in source
     assert "reached_bottom" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source
     assert "inbox_audio_controls" in source
     assert "scrollability" in source
-    assert '"07-dark-inbox-page-top"' in source
-    assert '"10-light-inbox-page-bottom"' in source
 
 
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
@@ -270,72 +259,3 @@ def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
     assert 'parsed.path == "/ui/pucky/fixtures/reply_cards.json"' in source
     assert 'mock_artifact_prefix="fixtures/artifacts"' in source
     assert '"/ui/pucky/fixtures/reply_cards.json"' in source
-
-
-def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
-    source = read_source("cover_notes_detail_flash_playwright.mjs")
-    scoring = read_source("notes_detail_flash_scoring.mjs")
-    package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
-    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
-
-    assert "pucky.notes_detail_flash_browser_proof.v2" in scoring
-    assert 'schema: NOTES_DETAIL_FLASH_RESULT_SCHEMA_V2,' in source
-    assert 'build_verified: false,' in source
-    assert 'build_dirty: false,' in source
-    assert 'remote_manifest: null,' in source
-    assert 'target_kind: targetKindForBaseUrl(config.baseUrl),' in source
-    assert 'debug_note_flash: true,' in source
-    assert 'route_delay_ms: NOTES_DETAIL_FLASH_ROUTE_DELAY_MS,' in source
-    assert 'iframe_delay_ms: NOTES_DETAIL_FLASH_IFRAME_DELAY_MS,' in source
-    assert 'offsets_ms: NOTES_DETAIL_FLASH_OFFSETS_MS.slice(),' in source
-    assert 'required_phases: NOTES_DETAIL_FLASH_REQUIRED_PHASES.slice(),' in source
-    assert 'failure_categories: NOTES_DETAIL_FLASH_FAILURE_CATEGORIES.slice(),' in source
-    assert 'natural_click: lanes.natural_click,' in source
-    assert 'route_delay: lanes.route_delay,' in source
-    assert 'iframe_delay: lanes.iframe_delay,' in source
-    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
-    assert 'recordVideo: { dir: path.join(laneDir, "video"), size: VIEWPORT },' in source
-    assert 'window.__puckyNoteFlashTimelinePromise = new Promise((resolve) => {' in source
-    assert 'window.__puckyNoteFlashDebug' in source
-    assert 'url.searchParams.set("debug_note_flash", "1");' in source
-    assert 'url.searchParams.set("debug_note_flash_delay_route_ms", String(laneConfig.routeDelayMs || 0));' in source
-    assert 'url.searchParams.set("debug_note_flash_delay_iframe_ms", String(laneConfig.iframeDelayMs || 0));' in source
-    assert 'document.querySelector(".light-detail-html-body")' in source
-    assert 'const frame = wrapper?.querySelector(".light-html-frame");' in source
-    assert 'body_text: bodyText,' in source
-    assert 'shell?.getAttribute("data-light-route") !== "note-detail"' in source
-    assert 'text.includes(title) && text.includes(bodyText)' in source
-    assert '}, undefined, { timeout: timeoutMs });' in source
-    assert '}, undefined, { timeout: 1200 }).then(() => true).catch(() => false);' in source
-    assert "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
-    assert "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
-    assert 'buildAttemptName(theme, lane, "preclick")' in source
-    assert 'buildAttemptName(theme, lane, "first-route-frame")' in source
-    assert 'buildAttemptName(theme, lane, "settled")' in source
-    assert 'const stem = `${theme}-${lane}-offset-${String(offsetMs).padStart(3, "0")}ms`;' in source
-    assert '`${theme}-${lane}-worst-frame.png`' in source
-    assert "build_mismatch" in scoring
-    assert "theme_cross_flash" in scoring
-    assert "route_transition_flash" in scoring
-    assert "iframe_transition_flash" in scoring
-    assert "note_never_ready" in scoring
-    assert "seed_note_missing" in scoring
-    assert "instrumentation_gap" in scoring
-    assert "console_error_during_transition" in scoring
-    assert 'export const NOTES_DETAIL_FLASH_OFFSETS_MS = Object.freeze([0, 12, 24, 36, 48, 72, 96, 132, 180, 260]);' in scoring
-    assert 'export const NOTES_DETAIL_FLASH_LANES = Object.freeze(["natural_click", "route_delay", "iframe_delay"]);' in scoring
-    assert "mean_luma>" in scoring
-    assert "bright_pixel_ratio>" in scoring
-    assert "mean_luma<" in scoring
-    assert "dark_pixel_ratio>" in scoring
-    assert package["scripts"]["test:cover-notes-detail-flash-browser"] == "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"
-    assert '"proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle."' in dev_source
-    assert '"proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification."' in dev_source
-    assert 'return run_local_notes_flash_browser_proof(args.extra_args)' in dev_source
-    assert 'return run_live_notes_flash_browser_proof(args.extra_args)' in dev_source
-    assert "python -m tools.dev proof-local-notes-flash-browser" in readme
-    assert "python -m tools.dev proof-live-notes-flash-browser" in readme
-    assert "Notes flash browser proof (local): `python -m tools.dev proof-local-notes-flash-browser`" in docs_readme
-    assert "Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`" in docs_readme

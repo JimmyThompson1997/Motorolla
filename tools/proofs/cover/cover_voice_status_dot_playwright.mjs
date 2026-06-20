@@ -224,8 +224,14 @@ function createBridgeState(baseUrl) {
   const feed = createFeedSnapshot();
   return {
     config: {
+      schema: "pucky.config.v1",
       api_base_url: new URL(baseUrl).origin,
-      api_token: "cover-proof-token",
+      has_native_bridge: true,
+    },
+    authorization: {
+      schema: "pucky.authorization.v1",
+      authorization: "Bearer cover-proof-token",
+      authorized: true,
     },
     turnStatus: {
       schema: "pucky.turn_status.v1",
@@ -419,6 +425,9 @@ function commandResultForState(bridgeState, message) {
   });
   if (command === "pucky.config.get") {
     return bridgeState.config;
+  }
+  if (command === "pucky.authorization.get") {
+    return bridgeState.authorization;
   }
   if (command === "pucky.turn.status") {
     return bridgeState.turnStatus;

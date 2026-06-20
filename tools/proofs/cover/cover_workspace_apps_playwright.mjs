@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 
-import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -13,14 +14,33 @@ import {
 
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
-const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };
 const PROOF_RUN_ID = "proof-workspace";
+const require = createRequire(import.meta.url);
+
+function loadPlaywrightCore() {
+  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
+  const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
+  const candidates = [
+    () => require("playwright-core"),
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
+    () => require(bundled)
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolved = candidate();
+      if (resolved) {
+        return resolved;
+      }
+    } catch {
+      // Try the next resolution path.
+    }
+  }
+  throw new Error("Could not resolve playwright-core from local tools or bundled runtime");
+}
+
+const { chromium } = loadPlaywrightCore();
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -201,15 +221,13 @@ async function waitForReminderRecord(config, reminderId, predicate, description,
 function buildSeedManifest(runId = PROOF_RUN_ID) {
   return {
     runId,
+    assetIds: [`${runId}-note-html`, `${runId}-task-asset-html`],
     linkIds: [
       `${runId}-alpha-note`,
       `${runId}-alpha-task`,
       `${runId}-alpha-calendar`,
       `${runId}-alpha-feed`,
       `${runId}-alpha-contact`,
-      `${runId}-future-task-note`,
-      `${runId}-feed-note`,
-      `${runId}-contact-note`,
       `${runId}-beta-task`,
       `${runId}-beta-calendar`,
       `${runId}-beta-feed`,
@@ -221,7 +239,6 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       `${runId}-meeting-project`,
       `${runId}-meeting-reminder`,
       `${runId}-project-reminder`,
-      `${runId}-reminder-note`,
       `${runId}-reminder-task`,
       `${runId}-reminder-meeting`
     ],
@@ -295,12 +312,17 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   try {
     await cleanupWorkspaceSeed(config, { runId, writeEnabled: true });
+    const asset = await apiRequest(config, "POST", "/api/workspace/assets", {
+      id: manifest.assetIds[0],
+      title: "Proof pinned note HTML",
+      html: "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>"
+    });
     await apiRequest(config, "POST", "/api/workspace/notes", {
       id: `${runId}-pinned-note`,
       title: "Proof Pinned Note",
       summary: "Pinned note created through workspace API.",
       pinned: true,
-      html: "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>",
+      html_asset_id: asset.asset_id,
       metadata: { context: "Browser proof", icon: "pin" }
     });
     await apiRequest(config, "POST", "/api/workspace/notes", {
@@ -311,33 +333,70 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       metadata: { context: "Browser proof", icon: "note" }
     });
 
+    const taskAsset = await apiRequest(config, "POST", "/api/workspace/assets", {
+      id: manifest.assetIds[1],
+      title: "Proof task asset HTML",
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Asset-backed task page</h1>",
+        "<p>This task uses an HTML asset instead of inline record HTML.</p>",
+        "<ul><li>Review the latest legal edits</li><li>Sync with procurement</li><li>Send the signed version</li></ul>",
+        "<p>Open questions: redlines, final signer, delivery timing.</p>",
+        "</body></html>"
+      ].join("")
+    });
+
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-overdue-task`,
       title: "Proof Overdue Task",
       summary: "Starts overdue.",
       status: "open",
-      due_at_ms: Date.now() - 60_000
+      due_at_ms: Date.now() - 60_000,
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Overdue Task</h1>",
+        "<p>This overdue task proves the detail page can render a realistic inline task document.</p>",
+        "<ul><li>Confirm the missing response</li><li>Escalate blocker to the project owner</li><li>Update the rollout note</li></ul>",
+        "<p>Status note: this one should already be overdue when the browser proof opens.</p>",
+        "</body></html>"
+      ].join("")
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-future-task`,
       title: "Proof Future Task",
       summary: "Due later.",
       status: "open",
-      due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000
+      due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000,
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Future Task</h1>",
+        "<p>This upcoming task demonstrates the new HTML-first body layout.</p>",
+        "<ol><li>Pull product feedback</li><li>Refine the launch checklist</li><li>Share the final summary</li></ol>",
+        "<p>Body length is intentional so the iframe has enough content to prove scrolling and spacing.</p>",
+        "</body></html>"
+      ].join("")
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-done-task`,
       title: "Proof Done Task",
       summary: "Done stays done even after deadline.",
       status: "done",
-      due_at_ms: Date.now() - 120_000
+      due_at_ms: Date.now() - 120_000,
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Done Task</h1>",
+        "<p>This task proves the same detail shell works after completion and can be reopened.</p>",
+        "<ul><li>Archive the draft</li><li>Note final approval</li><li>Close the loop with the team</li></ul>",
+        "</body></html>"
+      ].join("")
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-asset-task`,
-      title: "Proof Waiting Task",
-      summary: "Linked note only.",
-      status: "waiting",
-      due_at_ms: Date.now() + 24 * 60 * 60 * 1000
+      title: "Proof Asset Task",
+      summary: "Uses html_asset_id instead of inline html.",
+      status: "open",
+      due_at_ms: Date.now() + 24 * 60 * 60 * 1000,
+      html_asset_id: taskAsset.asset_id
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-empty-task`,
@@ -352,7 +411,8 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       title: `Proof Deadline Flip`,
       summary: "Moves to overdue after timestamp passes.",
       status: "open",
-      due_at_ms: Date.now() + 6_500
+      due_at_ms: Date.now() + 6_500,
+      html: "<!doctype html><html><body><h1>Proof Deadline Flip</h1><p>Use to verify task auto-overdue transition.</p></body></html>"
     });
 
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -362,6 +422,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 10),
       end_at_ms: dayAt(0, 11),
+      html: "<!doctype html><h1>Proof Today Roadmap</h1><p>Today detail page.</p>",
       metadata: { place: "Zoom", attendees: ["Proof Contact One", "Proof Contact Two"], type: "planning" }
     });
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -371,6 +432,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 10, 15),
       end_at_ms: dayAt(0, 10, 45),
+      html: "<!doctype html><h1>Proof Overlap Event</h1><p>Overlap detail page.</p>",
       metadata: { place: "Figma", attendees: ["Proof Contact One"], type: "design" }
     });
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -380,6 +442,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: tomorrow,
       start_at_ms: dayAt(1, 14),
       end_at_ms: dayAt(1, 15),
+      html: "<!doctype html><h1>Proof Tomorrow Event</h1><p>Tomorrow detail page.</p>",
       metadata: { place: "Office", attendees: ["Proof Contact Two"], type: "review" }
     });
 
@@ -395,6 +458,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         title: item[1],
         summary: item[2],
         event_at_ms: Date.now() - Math.floor(Math.random() * 600_000),
+        html: `<!doctype html><h1>${item[1]}</h1><p>${item[2]} detail.</p>`,
         metadata: { type: item[0], icon: item[3] }
       });
     }
@@ -403,13 +467,15 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       id: `${runId}-alpha-project`,
       title: "Proof Alpha Project",
       summary: "Alpha has two named threads.",
-      metadata: { threads: ["Alpha kickoff", "Alpha launch"] }
+      html: "<!doctype html><h1>Proof Alpha Project</h1><p>Alpha project page.</p>",
+      metadata: { threads: ["Alpha kickoff", "Alpha launch"], chips: ["2 threads", "5 links"], assets: ["Alpha brief", "Alpha diagram"] }
     });
     await apiRequest(config, "POST", "/api/workspace/projects", {
       id: `${runId}-beta-project`,
       title: "Proof Beta Project",
       summary: "Beta has three named threads.",
-      metadata: { threads: ["Beta planning", "Beta risks", "Beta wrap"] }
+      html: "<!doctype html><h1>Proof Beta Project</h1><p>Beta project page.</p>",
+      metadata: { threads: ["Beta planning", "Beta risks", "Beta wrap"], chips: ["3 threads", "4 links"], assets: ["Beta brief"] }
     });
 
     await apiRequest(config, "POST", "/api/workspace/contacts", {
@@ -418,6 +484,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Partner lead",
       metadata: {
         avatar: "P1",
+        photo: "fixtures/contact_photos/proof-contact.webp",
         email: "proof.one@example.com",
         phone: "+1 (555) 010-1000",
         activity: ["Created by proof", "Linked to Alpha"]
@@ -429,6 +496,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Customer sponsor",
       metadata: {
         avatar: "P2",
+        photo: "fixtures/contact_photos/eric.webp",
         email: "proof.two@example.com",
         phone: "+1 (555) 010-2000",
         activity: ["Created by proof", "Linked to Beta"]
@@ -441,6 +509,13 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 12),
       end_at_ms: dayAt(0, 12, 45),
+      html: [
+        "<!doctype html><html><body>",
+        "<h1>Proof Graph Meeting</h1>",
+        "<p>This meeting links attendee, calendar, note, task, project, and reminder context.</p>",
+        "<ol><li>Review proof graph</li><li>Confirm linked task</li><li>Schedule reminder</li></ol>",
+        "</body></html>"
+      ].join(""),
       metadata: {
         participants: ["Proof Contact One"],
         project: "Proof Alpha Project",
@@ -476,7 +551,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       ["alpha-calendar", "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["alpha-feed", "feed_item", `${runId}-project-decision`, "Proof Project Decision"],
       ["alpha-contact", "contact", `${runId}-contact-one`, "Proof Contact One"],
-      ["future-task-note", "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["beta-task", "task", `${runId}-overdue-task`, "Proof Overdue Task"],
       ["beta-calendar", "calendar_event", `${runId}-tomorrow-event`, "Proof Tomorrow Event"],
       ["beta-feed", "feed_item", `${runId}-calendar-change`, "Proof Calendar Change"],
@@ -484,12 +558,8 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     ]) {
       await apiRequest(config, "POST", "/api/workspace/links", {
         id: `${runId}-${link[0]}`,
-        source_kind: link[0] === "future-task-note" ? "task" : "project",
-        source_id: link[0] === "future-task-note"
-          ? `${runId}-future-task`
-          : link[0].startsWith("alpha")
-            ? `${runId}-alpha-project`
-            : `${runId}-beta-project`,
+        source_kind: "project",
+        source_id: link[0].startsWith("alpha") ? `${runId}-alpha-project` : `${runId}-beta-project`,
         target_kind: link[1],
         target_id: link[2],
         label: link[3]
@@ -504,9 +574,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       ["meeting-project", "meeting_note", `${runId}-graph-meeting`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-reminder", "meeting_note", `${runId}-graph-meeting`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
       ["project-reminder", "project", `${runId}-alpha-project`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
-      ["feed-note", "feed_item", `${runId}-project-decision`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["reminder-note", "reminder", `${runId}-graph-reminder`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["reminder-task", "reminder", `${runId}-graph-reminder`, "task", `${runId}-future-task`, "Proof Future Task"],
       ["reminder-meeting", "reminder", `${runId}-graph-reminder`, "meeting_note", `${runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
@@ -517,21 +584,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         target_kind: link[3],
         target_id: link[4],
         label: link[5]
-      });
-    }
-    for (const link of [
-      ["future-task-note", "task", `${runId}-future-task`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["feed-note", "feed_item", `${runId}-project-decision`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["reminder-note", "reminder", `${runId}-graph-reminder`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-    ]) {
-      await apiRequest(config, "POST", "/api/workspace/links", {
-        id: `${runId}-${link[0]}`,
-        source_kind: link[1],
-        source_id: link[2],
-        target_kind: link[3],
-        target_id: link[4],
-        label: link[5],
       });
     }
 
@@ -683,20 +735,27 @@ async function expectFrameHeading(page, text, timeoutMs) {
 
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
+    const detail = document.querySelector(".light-task-detail-surface");
     const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
     const pageText = document.querySelector(".light-shell")?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
-    const statusTrigger = document.querySelector(".light-task-status-trigger");
-    const statusLabel = statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent?.trim()
-      || statusTrigger?.textContent?.trim()
-      || "";
-    const statusValue = statusTrigger?.getAttribute("data-task-status") || "";
-    const hasNotes = /\bnotes\b/i.test(pageText);
-    const hasRelated = /\brelated\b/i.test(pageText);
-    const hasGeneratedPage = /\bgenerated page\b/i.test(pageText);
-    const htmlFrame = document.querySelector(".light-task-detail-body.light-html-card iframe");
-    const htmlFallback = document.querySelector(".light-task-detail-body.light-html-empty")?.textContent?.trim() || "";
+    const statusCard = document.querySelector(".light-task-detail-card");
+    const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || "";
+    const statusValue = statusCard?.getAttribute("data-task-status") || detail?.getAttribute("data-task-status") || "";
+    const hasNotes = /\bNOTES\b/.test(pageText);
+    const hasRelated = /\bRELATED\b/.test(pageText);
+    const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
+    const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
+      .map(node => String(node.textContent || "").trim().toLowerCase());
+    const contentSections = Array.from(detail?.children || [])
+      .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
+    const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+    const notes = Array.from(
+      detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong, [data-workspace-target-route="note-detail"] .light-record-chip-label') || []
+    )
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
     return {
       route,
       title,
@@ -704,10 +763,14 @@ async function readTaskDetailState(page) {
       statusLabel,
       statusValue,
       hasNotes,
+      notes,
       hasRelated,
       hasGeneratedPage,
-      hasHtmlFrame: Boolean(htmlFrame),
-      htmlFallback
+      sections: sectionTitles,
+      descriptionIsFirstSection: firstSectionTitle === "description",
+      taskHtmlFramePresent: Boolean(detail?.querySelector(".light-html-frame, iframe")),
+      statusCardPresent: Boolean(document.querySelector(".light-task-detail-card")),
+      statusCirclePresent: Boolean(document.querySelector(".light-task-status-circle")),
     };
   });
 }
@@ -732,20 +795,47 @@ async function readTaskListState(page) {
   });
 }
 
+async function waitForTaskRowStatus(page, taskId, status, timeoutMs) {
+  await page.waitForFunction(
+    ([expectedTaskId, expectedStatus]) => {
+      return document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)?.getAttribute("data-task-status") === expectedStatus;
+    },
+    [String(taskId || ""), String(status || "")],
+    { timeout: timeoutMs }
+  );
+}
+
+async function waitForTaskDetailStatus(page, status, timeoutMs) {
+  await page.waitForFunction(
+    expectedStatus => {
+      const detail = document.querySelector(".light-task-detail-surface");
+      const card = document.querySelector(".light-task-detail-card");
+      return Boolean(
+        detail
+        && detail.getAttribute("data-task-status") === expectedStatus
+        && card
+        && card.getAttribute("data-task-status") === expectedStatus
+      );
+    },
+    String(status || ""),
+    { timeout: timeoutMs }
+  );
+}
+
 async function probeTaskDetailIdle(page, idleMs = 5200) {
   return page.evaluate(async (waitMs) => {
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const firstShell = document.querySelector(".light-shell");
+    const firstDetail = document.querySelector(".light-task-detail-surface");
     const firstTitleNode = document.querySelector(".light-task-detail-title");
-    const firstFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     await sleep(waitMs);
     const currentShell = document.querySelector(".light-shell");
+    const currentDetail = document.querySelector(".light-task-detail-surface");
     const currentTitleNode = document.querySelector(".light-task-detail-title");
-    const currentFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     return {
       sameShellNode: currentShell === firstShell,
+      sameDetailNode: currentDetail === firstDetail,
       sameTitleNode: currentTitleNode === firstTitleNode,
-      sameIframeNode: currentFrame === firstFrame,
       route: currentShell?.getAttribute("data-light-route") || "",
       title: currentTitleNode?.textContent?.trim() || ""
     };
@@ -755,16 +845,12 @@ async function probeTaskDetailIdle(page, idleMs = 5200) {
 async function readDetailHtmlBodyMetrics(page) {
   return page.evaluate(() => {
     const pageNode = document.querySelector(".light-shell .light-page");
-    const header = document.querySelector(".light-page-header-shell");
     const body = document.querySelector(".light-detail-html-body");
     const frame = body?.querySelector(".light-html-frame");
-    const scrollingNode = document.scrollingElement || document.documentElement;
     const rect = (node) => {
       if (!(node instanceof Element)) return null;
       const box = node.getBoundingClientRect();
       return {
-        top: box.top,
-        bottom: box.bottom,
         left: box.left,
         right: box.right,
         width: box.width
@@ -773,15 +859,8 @@ async function readDetailHtmlBodyMetrics(page) {
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       page: rect(pageNode),
-      header: rect(header),
       body: rect(body),
-      frame: rect(frame),
-      headerBottom: rect(header)?.bottom || 0,
-      bodyTop: rect(body)?.top || 0,
-      pageScrollHeight: scrollingNode?.scrollHeight || 0,
-      pageClientHeight: scrollingNode?.clientHeight || 0,
-      frameClientHeight: frame?.clientHeight || 0,
-      frameScrollHeight: frame?.contentDocument?.documentElement?.scrollHeight || frame?.contentDocument?.body?.scrollHeight || 0
+      frame: rect(frame)
     };
   });
 }
@@ -831,14 +910,6 @@ function assertDetailFrameMetrics(metrics, label, theme) {
   assert(metrics.bodyMarginLeft === "0px", `Expected ${label} body margin-left reset, got ${metrics?.bodyMarginLeft}`);
   assert(!/Times New Roman|Georgia/i.test(metrics.bodyFontFamily || ""), `Expected ${label} font stack to avoid default serif, got ${metrics?.bodyFontFamily}`);
   assert(String(metrics.theme || "") === theme, `Expected ${label} embedded theme ${theme}, got ${metrics?.theme}`);
-}
-
-function assertDetailHtmlLayout(layout, label) {
-  assert(layout.body && layout.page, `Expected ${label} to expose a measurable HTML body`);
-  assert(layout.body.left <= layout.page.left + 2, `Expected ${label} HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected ${label} HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, `Expected ${label} HTML body to start directly below the header, got ${layout.bodyTop} vs ${layout.headerBottom}`);
-  assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), `Expected ${label} iframe height to cover its document height, got ${layout.frameClientHeight} vs ${layout.frameScrollHeight}`);
 }
 
 function countTaskRequestEvents(networkLog, startMs, endMs) {
@@ -901,33 +972,14 @@ async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await expectFrameHeading(page, note.title, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assertDetailHtmlLayout(layout, "note detail");
-  assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, "Expected note HTML body to start directly below the header");
-  assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), "Expected note detail iframe height to cover its document height");
+  assert(layout.body && layout.page, "Expected note detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected note HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected note HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   assertDetailFrameMetrics(frameMetrics, "note detail", theme);
   summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
   summary.detailHtmlMetrics.push({ theme, route: "note-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_notes_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail`);
   await backHome(page, theme, config.timeoutMs);
-  await page.setViewportSize(DESKTOP_NOTE_DETAIL_VIEWPORT);
-  await waitForHome(page, theme, config.timeoutMs);
-  await openTile(page, "Notes", "notes", config.timeoutMs);
-  await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
-  await page.locator(rowSelector).click();
-  await expectFrameHeading(page, note.title, config.timeoutMs);
-  const desktopLayout = await readDetailHtmlBodyMetrics(page);
-  assertDetailHtmlLayout(desktopLayout, "note detail desktop");
-  assert(
-    desktopLayout.body && desktopLayout.page &&
-      desktopLayout.body.left <= desktopLayout.page.left + 2 &&
-      desktopLayout.body.right >= desktopLayout.page.right - 2,
-    "Expected note detail desktop HTML body to remain full width"
-  );
-  summary.detailHtmlMetrics.push({ theme, route: "note-detail-desktop", layout: desktopLayout });
-  screenshots[`${theme}_notes_detail_desktop`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail-desktop`);
-  await backHome(page, theme, config.timeoutMs);
-  await page.setViewportSize(VIEWPORT);
-  await waitForHome(page, theme, config.timeoutMs);
 }
 
 async function proveTasks(page, config, seed, theme, screenshots, summary, networkLog) {
@@ -1120,19 +1172,36 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }
 
   const inlineId = seed.taskIds?.inline;
+  const assetId = seed.taskIds?.asset;
   const emptyId = seed.taskIds?.empty;
   const doneId = seed.taskIds?.done;
   summary.taskDetail = summary.taskDetail || [];
+
+  await page.locator(".light-task-row-status-trigger").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const listStatusControl = page.locator(`.light-task-row[data-task-id="${inlineId}"] .light-task-row-status-trigger`).first();
+  await listStatusControl.click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_tasks_status_selector_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-status-selector-list`);
+  await page.locator('.settings-selector-option[data-selector-value="in_progress"]').first().click();
+  await waitForTaskRowStatus(page, inlineId, "in_progress", config.timeoutMs);
 
   await taskRowControl(page, inlineId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   let detailState = await readTaskDetailState(page);
   assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
-  assert(detailState.title === "Proof Future Task", `Expected linked-note task title, got ${detailState.title}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect task detail to render an iframe body");
+  assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
+  assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
+  assert(detailState.sections.includes("details"), "Expected inline task detail to include a Details section");
+  assert(detailState.sections.includes("notes"), "Expected inline task detail to include a Notes section");
+  assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
+  assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
+  assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
+  assert(detailState.hasNotes, "Expected NOTES section on task detail");
+  assert(detailState.notes.includes("Proof Pinned Note"), "Expected inline task detail to surface the linked note in Notes");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
-  screenshots[`${theme}_tasks_note_linked`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-note-linked`);
+  screenshots[`${theme}_tasks_inline_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-detail`);
   const noteLink = page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first();
   await noteLink.waitFor({ state: "visible", timeout: config.timeoutMs });
   await noteLink.click();
@@ -1152,15 +1221,25 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     theme,
     taskId: inlineId,
     networkTaskRequests: idleTaskRequests,
-    sameIframeNode: idleProbe.sameIframeNode,
+    sameDetailNode: idleProbe.sameDetailNode,
     sameShellNode: idleProbe.sameShellNode,
     sameTitleNode: idleProbe.sameTitleNode
   });
   assert(idleTaskRequests === 0, `Expected no task polling while task-detail idles, saw ${idleTaskRequests} task requests`);
-  assert(idleProbe.sameIframeNode, "Expected task-detail iframe node to remain stable while idling");
+  assert(idleProbe.sameDetailNode, "Expected task-detail surface node to remain stable while idling");
   assert(idleProbe.sameShellNode, "Expected task-detail shell node to remain stable while idling");
   assert(idleProbe.sameTitleNode, "Expected task-detail title node to remain stable while idling");
-  summary.taskDetail.push({ theme, type: "linked_note", taskId: inlineId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
+  summary.taskDetail.push({
+    theme,
+    type: "inline_detail",
+    taskId: inlineId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list-after-back`);
@@ -1172,17 +1251,49 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   summary.listPollingStillActive.push({ theme, networkTaskRequests: listTaskRequests });
   assert(listTaskRequests >= 1, `Expected task polling to remain active on list view, saw ${listTaskRequests} task requests`);
 
+  await taskRowControl(page, assetId).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  detailState = await readTaskDetailState(page);
+  assert(detailState.title === "Proof Asset Task", `Expected asset task title, got ${detailState.title}`);
+  assert(detailState.descriptionIsFirstSection, "Expected asset task detail to start with Description");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect asset task detail to render an embedded HTML frame");
+  screenshots[`${theme}_tasks_asset_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-detail`);
+  summary.taskDetail.push({
+    theme,
+    type: "asset_detail",
+    taskId: assetId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+
   await taskRowControl(page, emptyId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Empty Task", `Expected empty task title, got ${detailState.title}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect iframe body for no-HTML task");
+  assert(detailState.descriptionIsFirstSection, "Expected empty task detail to start with Description");
+  assert(!detailState.taskHtmlFramePresent, "Did not expect empty task detail to render an embedded HTML frame");
   assert(
     await page.locator(`[data-workspace-target-route="note-detail"]`).count() === 0,
     "Did not expect note link targets on empty task detail"
   );
-  screenshots[`${theme}_tasks_empty_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-html`);
-  summary.taskDetail.push({ theme, type: "no_note", taskId: emptyId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
+  screenshots[`${theme}_tasks_empty_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-detail`);
+  summary.taskDetail.push({
+    theme,
+    type: "empty_detail",
+    taskId: emptyId,
+    title: detailState.title,
+    statusLabel: detailState.statusLabel,
+    statusValue: detailState.statusValue,
+    due: detailState.due,
+    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
+    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+  });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
@@ -1338,18 +1449,16 @@ async function proveFeed(page, config, seed, theme, screenshots, summary) {
     const item = feedItems.find((entry) => String(entry.id) === `${seed.runId}-project-decision`) || feedItems[0];
     await expectFrameHeading(page, item?.title || "Inbox item", config.timeoutMs);
   }
-  const detailState = await readGraphDetailState(page);
-  assert(detailState.route === "inbox-detail", `Expected inbox-detail route, got ${detailState.route}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect inbox detail to render a generated HTML iframe");
+  const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
+  assert(layout.body && layout.page, "Expected inbox detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected inbox HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected inbox HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "inbox detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "inbox-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_inbox_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-detail`);
   if (seed.writeEnabled) {
-    const noteLink = page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first();
-    await noteLink.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await noteLink.click();
-    await waitForLightRoute(page, "note-detail", config.timeoutMs);
-    await waitForGraphText(page, "Proof Pinned Note", config.timeoutMs);
-    screenshots[`${theme}_inbox_related_note`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-related-note`);
-    await topBackToRoute(page, "inbox-detail", "Proof Project Decision", config.timeoutMs);
     await page.locator(`[data-workspace-target-route="project-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
     await waitForLightRoute(page, "project-detail", config.timeoutMs);
     await waitForGraphText(page, "Proof Alpha Project", config.timeoutMs);
@@ -1384,12 +1493,16 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
     await page.locator(`[data-project-id="${firstProject.id}"]`).click();
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
-  const detailState = await readGraphDetailState(page);
-  assert(detailState.route === "project-detail", `Expected project-detail route, got ${detailState.route}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect project detail to render a generated HTML iframe");
+  const layout = await readDetailHtmlBodyMetrics(page);
+  const frameMetrics = await readDetailFrameDocumentMetrics(page);
+  assert(layout.body && layout.page, "Expected project detail to expose a measurable HTML body");
+  assert(layout.body.left <= layout.page.left + 2, `Expected project HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected project HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailFrameMetrics(frameMetrics, "project detail", theme);
+  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
+  summary.detailHtmlMetrics.push({ theme, route: "project-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   if (seed.writeEnabled) {
-    await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     for (const [route, id, text] of [
       ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
       ["task-detail", `${seed.runId}-future-task`, "Proof Future Task"],
@@ -1405,34 +1518,14 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function assertNoContactEndpoints(page, config, contactId, label) {
-  const detailState = await page.evaluate(() => {
-    const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
-    return {
-      sectionTitles
-    };
-  });
-  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
-  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
-    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
-    const metadata = record?.metadata || {};
-    assert(!Object.prototype.hasOwnProperty.call(metadata, "endpoints"), `${label} API metadata should not expose endpoints`);
-  }
-  return detailState;
-}
-
 async function assertFlatContactProfileCard(page, label) {
   const cardState = await page.evaluate(() => {
     const card = document.querySelector(".light-contact-detail-page .light-profile-card");
     if (!card) {
       return { exists: false };
     }
-    const styles = getComputedStyle(card);
-    const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
+    const styles = window.getComputedStyle(card);
+    const rect = card.getBoundingClientRect();
     return {
       exists: true,
       heading: String(card.querySelector("h1")?.textContent || "").trim(),
@@ -1443,62 +1536,106 @@ async function assertFlatContactProfileCard(page, label) {
       borderTopStyle: styles.borderTopStyle,
       borderTopWidth: styles.borderTopWidth,
       boxShadow: styles.boxShadow,
-      sectionTitles,
-      hasHtmlBody: Boolean(document.querySelector(".light-detail-html-body")),
-      hasHtmlCard: Boolean(document.querySelector(".light-html-card")),
-      hasHtmlFrame: Boolean(document.querySelector(".light-html-frame")),
-      hasGeneratedContactFallback: String(document.querySelector(".light-contact-detail-page")?.textContent || "").includes("No generated contact page yet.")
+      rect: {
+        height: Math.round(rect.height),
+        width: Math.round(rect.width)
+      }
     };
   });
-  assert(cardState.exists, `${label} should render a scoped flat contact profile card`);
+  assert(cardState.exists, `${label} should render the scoped contact profile card`);
   assert(cardState.heading, `${label} should keep a visible profile heading`);
   assert(cardState.summary, `${label} should keep visible descriptor text`);
   assert(cardState.backgroundColor === "rgba(0, 0, 0, 0)" || cardState.backgroundColor === "transparent", `${label} profile card should have a transparent background, got ${cardState.backgroundColor}`);
   assert(cardState.boxShadow === "none", `${label} profile card should not have a shadow, got ${cardState.boxShadow}`);
   assert(cardState.borderRadius === "0px", `${label} profile card should not have a card radius, got ${cardState.borderRadius}`);
   assert(cardState.borderTopWidth === "0px" || cardState.borderTopStyle === "none" || cardState.borderTopColor === "rgba(0, 0, 0, 0)", `${label} profile card should not have a visible border, got ${cardState.borderTopWidth} ${cardState.borderTopStyle} ${cardState.borderTopColor}`);
-  assert(cardState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should keep the Contact section`);
-  assert(cardState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should keep the Activity section`);
-  assert(!cardState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
-  assert(!cardState.hasHtmlBody && !cardState.hasHtmlCard && !cardState.hasHtmlFrame && !cardState.hasGeneratedContactFallback, `${label} should not render a contact HTML document surface`);
   return cardState;
 }
 
-async function assertNoLinkedRecordChevrons(page, label, options = {}) {
-  const state = await page.evaluate(() => {
-    const sections = Array.from(document.querySelectorAll(".light-info-section"));
-    const section = sections.find(node => {
-      const title = String(node.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
-      return title === "linked records";
-    });
-    if (!section) {
-      return { exists: false, rowCount: 0, clickableCount: 0, chevronCount: 0, chevronTexts: [] };
-    }
-    const rows = Array.from(section.querySelectorAll(".light-info-row"));
-    const clickableRows = rows.filter(row => row.matches("button") && row.hasAttribute("data-workspace-target-route"));
-    const chevrons = Array.from(section.querySelectorAll(".light-chevron"));
+async function assertNoContactEndpoints(page, config, contactId, label, options = {}) {
+  const detailState = await page.evaluate(() => {
+    const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
     return {
-      exists: true,
-      rowCount: rows.length,
-      clickableCount: clickableRows.length,
-      chevronCount: chevrons.length,
-      chevronTexts: chevrons.map(node => String(node.textContent || "").trim()).filter(Boolean),
-      targets: clickableRows.map(row => ({
-        route: row.getAttribute("data-workspace-target-route") || "",
-        id: row.getAttribute("data-workspace-target-id") || ""
-      }))
+      sectionTitles
     };
   });
-  if (options.requireRows) {
-    assert(state.exists, `${label} should render a Linked records section`);
-    assert(state.rowCount > 0, `${label} should render Linked records rows`);
+  assert(detailState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should render the Contact section`);
+  if (options.requireActivity) {
+    assert(detailState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should render the Activity section`);
   }
-  if (!state.exists) {
-    return state;
+  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
+  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
+    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
+    const metadata = record?.metadata || {};
+    assert(!Object.prototype.hasOwnProperty.call(metadata, "endpoints"), `${label} API metadata should not expose endpoints`);
   }
-  assert(state.clickableCount === state.rowCount, `${label} Linked records rows should stay clickable, got ${state.clickableCount}/${state.rowCount}`);
-  assert(state.chevronCount === 0, `${label} Linked records should not render side chevrons, got ${JSON.stringify(state.chevronTexts)}`);
-  return state;
+  return detailState;
+}
+
+async function assertNoContactHtmlDocument(page, config, contactId, label) {
+  const htmlState = await page.evaluate(() => {
+    const root = document.querySelector(".light-contact-detail-page");
+    const text = String(root?.textContent || "");
+    return {
+      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
+      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
+      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
+      hasGeneratedFallback: text.includes("generated contact page") || text.includes("Generated page")
+    };
+  });
+  assert(!htmlState.hasHtmlBody, `${label} should not render a Contact HTML document panel`);
+  assert(!htmlState.hasHtmlCard, `${label} should not render a Contact HTML card`);
+  assert(!htmlState.hasHtmlFrame, `${label} should not render a Contact HTML iframe`);
+  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
+  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
+    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
+    assert(!String(record?.html || "").trim(), `${label} API contact record should not expose document HTML`);
+    assert(!String(record?.html_asset_id || "").trim(), `${label} API contact record should not expose document HTML asset id`);
+  }
+  return htmlState;
+}
+
+async function assertContactPhotoThumbnails(page, label) {
+  const rows = await page.evaluate(() => {
+    const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
+    return {
+      loadedImageCount: loadedImages.length,
+      rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
+        const avatar = row.querySelector(".light-avatar");
+        const img = row.querySelector(".light-avatar.has-photo img");
+        const titleNode = row.querySelector(".light-text-stack span");
+        return {
+          id: String(row.getAttribute("data-contact-id") || ""),
+          title: String(titleNode?.textContent || "").trim(),
+          hasPhotoClass: Boolean(avatar?.classList.contains("has-photo")),
+          imageCount: img ? 1 : 0,
+          src: img ? String(img.getAttribute("src") || img.currentSrc || "") : "",
+          naturalWidth: img ? img.naturalWidth : 0,
+          naturalHeight: img ? img.naturalHeight : 0,
+          complete: img ? img.complete : false,
+          objectFit: img ? getComputedStyle(img).objectFit : "",
+          initials: avatar ? String(avatar.textContent || "").trim() : ""
+        };
+      })
+    };
+  });
+  assert(rows.rows.length > 0, `${label} should render contact rows`);
+  assert(!rows.rows.some(row => row.title === "Clinic front desk" || row.id === "clinic-front-desk"), "Clinic front desk should not render in Contacts");
+  const me = rows.rows.find(row => row.id === "contact-me");
+  assert(me, `${label} should render contact-me`);
+  assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
+  const contacts = rows.rows.filter(row => row.id !== "contact-me");
+  assert(contacts.length > 0, `${label} should render at least one non-self contact`);
+  for (const contact of contacts) {
+    assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
+    assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
+    assert(contact.complete, `${contact.title || contact.id} thumbnail should finish loading`);
+    assert(contact.naturalWidth > 0 && contact.naturalHeight > 0, `${contact.title || contact.id} thumbnail should have natural dimensions, got ${contact.naturalWidth}x${contact.naturalHeight}`);
+    assert(contact.objectFit === "cover", `${contact.title || contact.id} thumbnail should use object-fit: cover, got ${contact.objectFit}`);
+  }
+  return rows;
 }
 
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
@@ -1513,6 +1650,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await waitForGraphText(page, "Me", config.timeoutMs);
   const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
+  await assertNoContactHtmlDocument(page, config, "contact-me", "Me contact detail");
   summary.contactProfileCards = summary.contactProfileCards || [];
   summary.contactProfileCards.push({ theme, contact: "contact-me", profile: meProfileCard });
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
@@ -1526,36 +1664,30 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
+  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`);
+  summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
+  summary.contactPhotoThumbnails.push({ theme, ...photoState });
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
+    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
-    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
-    const linkedRecordChevrons = await assertNoLinkedRecordChevrons(page, "Proof Contact One detail", { requireRows: true });
-    summary.linkedRecordChevrons = summary.linkedRecordChevrons || [];
-    summary.linkedRecordChevrons.push({ theme, contact: `${seed.runId}-contact-one`, state: linkedRecordChevrons });
+    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail", { requireActivity: true });
+    await assertNoContactHtmlDocument(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
     summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
   } else {
     const firstContact = contacts[0];
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
-    await expectFrameHeading(page, firstContact.title, config.timeoutMs);
+    await waitForGraphText(page, firstContact.title, config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
     await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
-    const linkedRecordChevrons = await assertNoLinkedRecordChevrons(page, `${firstContact.title} detail`);
-    summary.linkedRecordChevrons = summary.linkedRecordChevrons || [];
-    summary.linkedRecordChevrons.push({ theme, contact: firstContact.id, state: linkedRecordChevrons });
+    await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
     summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
-  const detailState = await readGraphDetailState(page);
-  assert(detailState.route === "contact-detail", `Expected contact-detail route, got ${detailState.route}`);
-  assert(!detailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
   screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   if (seed.writeEnabled) {
-    await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     for (const [route, id, text] of [
-      ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
       ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
@@ -1743,8 +1875,7 @@ async function readGraphDetailState(page) {
   return page.evaluate(() => ({
     route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     text: document.querySelector(".light-shell")?.textContent || "",
-    hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame")),
-    hasNotes: /\bnotes\b/i.test(document.querySelector(".light-shell")?.textContent || "")
+    hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame"))
   }));
 }
 
@@ -1781,8 +1912,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   }
   graphState = await readGraphDetailState(page);
   assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
-  assert(!graphState.hasHtmlFrame, "Did not expect meeting note detail to render a generated HTML iframe");
-  await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.runId}-pinned-note"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert(graphState.hasHtmlFrame, "Expected meeting note detail to render generated HTML iframe");
   screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
   for (const [route, id, text, shot] of [
     ["contact-detail", `${seed.runId}-contact-one`, "Proof Contact One", "graph-meeting-linked-contact"],
@@ -1802,16 +1932,14 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["Proof Pinned Note", "Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "RECIPIENTS", "CHANNELS", "LINKED RECORDS"]) {
+  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "RECIPIENTS", "CHANNELS", "LINKED RECORDS"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
   assert(graphState.route === "reminder-detail", `Expected reminder-detail route, got ${graphState.route}`);
   assert(!graphState.hasHtmlFrame, "Did not expect reminder detail to render a generated HTML iframe");
-  await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.runId}-pinned-note"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_graph_reminder_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminder-detail`);
   for (const [route, id, text, shot] of [
-    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-reminder-linked-note"],
     ["task-detail", `${seed.runId}-future-task`, "Proof Future Task", "graph-reminder-source-task"],
     ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting", "graph-reminder-linked-meeting"]
   ]) {
@@ -1834,7 +1962,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
-  for (const text of ["Proof Pinned Note", "Proof Graph Meeting", "Proof Alpha Project"]) {
+  for (const text of ["Proof Graph Meeting", "Proof Alpha Project"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   screenshots[`${theme}_graph_contact_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-contact-ripple`);
@@ -1933,7 +2061,7 @@ async function main() {
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
-    summary.assertions.push("note detail remains the only generated HTML iframe surface across workspace object apps");
+    summary.assertions.push("generated HTML iframes rendered for document-bearing workspace apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();

@@ -561,9 +561,7 @@ export function proofPageUrl(baseUrl, apiToken, options = {}) {
   if (String(options.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
   }
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
-  }
+  void apiToken;
   return url.toString();
 }
 
@@ -646,8 +644,8 @@ async function recordViewState(page) {
       hasAttachedSection: sectionTitles.includes("attached"),
       hasLegacyCreatedByRow: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
       attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
-      statusTriggerPresent: Boolean(detail?.querySelector(".light-task-status-trigger")),
-      statusCircleTriggerPresent: Boolean(detail?.querySelector(".light-task-status-circle-trigger")),
+      statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
+      statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
       people,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
     };
@@ -990,8 +988,8 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.hasAttachedSection, `${mode}: primary task is missing Attached`);
   assert(state.hasLegacyCreatedByRow === false, `${mode}: primary task should not render a legacy Created by row`);
   assert(state.attachedChipIconCount >= 4, `${mode}: primary task chips should render icons for linked records`);
-  assert(state.statusTriggerPresent, `${mode}: primary task is missing the status trigger pill`);
-  assert(state.statusCircleTriggerPresent, `${mode}: primary task is missing the circle status trigger`);
+  assert(state.statusHeaderPresent, `${mode}: primary task is missing the interactive status header card`);
+  assert(state.statusCirclePresent, `${mode}: primary task is missing the visible status circle`);
   const createdByChip = state.people.find(person => person.role === "created_by");
   assert(createdByChip?.route === "contact-detail", `${mode}: Created by chip should open the linked contact`);
   assert(createdByChip?.id === seed.contactId, `${mode}: Created by chip did not point at the expected contact`);
@@ -1078,19 +1076,17 @@ async function verifyStatusSelectorTriggers(page, seed, mode, config, screenshot
   await page.waitForTimeout(150);
 
   await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
-  const pill = page.locator(".light-task-status-trigger").first();
-  await pill.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await pill.click();
+  const detailHeader = page.locator(".light-task-detail-card").first();
+  await detailHeader.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await detailHeader.click({ position: { x: 16, y: 16 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  screenshots[`${mode}_status_selector_pill`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-pill`);
+  screenshots[`${mode}_status_selector_header_circle_side`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-header-circle-side`);
   await page.locator('.settings-selector-option[data-selector-value="todo"]').first().click();
   await page.waitForTimeout(150);
 
-  const detailCircle = page.locator(".light-task-status-circle-trigger").first();
-  await detailCircle.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await detailCircle.click();
+  await detailHeader.click({ position: { x: 132, y: 20 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  screenshots[`${mode}_status_selector_circle`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-circle`);
+  screenshots[`${mode}_status_selector_header_title_side`] = await saveScreenshot(page, config.reportDir, `${mode}-status-selector-header-title-side`);
   await page.locator('.settings-selector-option[data-selector-value="todo"]').first().click();
   await page.waitForTimeout(150);
   checks.push({
@@ -1098,24 +1094,22 @@ async function verifyStatusSelectorTriggers(page, seed, mode, config, screenshot
     mode,
     screenshots: {
       list_circle: screenshots[`${mode}_status_selector_list_circle`],
-      pill: screenshots[`${mode}_status_selector_pill`],
-      detail_circle: screenshots[`${mode}_status_selector_circle`],
+      header_circle_side: screenshots[`${mode}_status_selector_header_circle_side`],
+      header_title_side: screenshots[`${mode}_status_selector_header_title_side`],
     },
   });
 }
 
 async function verifyStatusMutations(page, seed, mode, config, checks) {
   const transitions = [
-    { nextStatus: "in_progress", expectedGroup: "do", trigger: "pill" },
-    { nextStatus: "waiting", expectedGroup: "do", trigger: "circle" },
-    { nextStatus: "done", expectedGroup: "done", trigger: "pill" },
+    { nextStatus: "in_progress", expectedGroup: "do", position: { x: 16, y: 16 } },
+    { nextStatus: "waiting", expectedGroup: "do", position: { x: 132, y: 20 } },
+    { nextStatus: "done", expectedGroup: "done", position: { x: 16, y: 16 } },
   ];
   for (const transition of transitions) {
-    const trigger = transition.trigger === "circle"
-      ? page.locator(".light-task-status-circle-trigger").first()
-      : page.locator(".light-task-status-trigger").first();
+    const trigger = page.locator(".light-task-detail-card").first();
     await trigger.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await trigger.click();
+    await trigger.click({ position: transition.position });
     const option = page.locator(`.settings-selector-option[data-selector-value="${transition.nextStatus}"]`).first();
     await option.waitFor({ state: "visible", timeout: config.timeoutMs });
     await option.click();
@@ -1307,9 +1301,6 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     hasTouch: mode === "mobile",
     isMobile: mode === "mobile",
   });
-  await context.setExtraHTTPHeaders({
-    Authorization: `Bearer ${config.apiToken}`,
-  });
   await context.addInitScript(() => {
     try {
       if (!sessionStorage.getItem("pucky.task_workspace_proof.nav_reset.v1")) {
@@ -1321,13 +1312,6 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
       // Ignore localStorage bootstrap failures in proof mode.
     }
   });
-  await context.addInitScript(apiToken => {
-    try {
-      localStorage.setItem("pucky.cover.browser_api_token.v1", apiToken);
-    } catch (_error) {
-      // Ignore localStorage bootstrap failures in proof mode.
-    }
-  }, config.apiToken);
 
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);

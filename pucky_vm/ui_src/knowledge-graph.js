@@ -201,7 +201,7 @@
     try {
       const apiConfig = await resolveApiConfig();
       const counts = await fetchWorkspaceCounts(apiConfig);
-      state.summary = summarizeModel(counts, apiConfig.apiToken);
+      state.summary = summarizeModel(counts);
       render();
       setSourceLine(
         `${state.summary.sourceLabel} • ${state.summary.totalKinds} kinds • ${state.summary.totalRecords} live records`,
@@ -256,17 +256,15 @@
   async function resolveApiConfig() {
     const params = new URLSearchParams(window.location.search || "");
     let apiBase = String(params.get("apiBase") || "").trim().replace(/\/$/, "");
-    let apiToken = String(params.get("token") || "").trim();
 
     if (!apiBase && window.location && /^https?:$/i.test(window.location.protocol || "")) {
       apiBase = String(window.location.origin || "").replace(/\/$/, "");
     }
 
-    if ((!apiBase || !apiToken) && window.Pucky && typeof window.Pucky.request === "function") {
+    if (!apiBase && window.Pucky && typeof window.Pucky.request === "function") {
       try {
         const config = await window.Pucky.request({ command: "pucky.config.get", args: {} });
         apiBase = apiBase || String(config && config.api_base_url || "").replace(/\/$/, "");
-        apiToken = apiToken || String(config && config.api_token || "");
       } catch (_) {
         // Local public-read surfaces can still work.
       }
@@ -274,16 +272,15 @@
 
     return {
       apiBase: apiBase || "https://pucky.fly.dev",
-      apiToken,
     };
   }
 
   async function fetchWorkspaceCounts(apiConfig) {
-    const catalog = await fetchJson(`${apiConfig.apiBase}/api/workspace/`, apiConfig.apiToken);
+    const catalog = await fetchJson(`${apiConfig.apiBase}/api/workspace/`);
     const collections = Array.isArray(catalog && catalog.collections) ? catalog.collections : [];
     const wanted = collections.filter(collection => COLLECTION_TO_KIND[collection]);
     const payloads = await Promise.all(
-      wanted.map(collection => fetchJson(`${apiConfig.apiBase}/api/workspace/${encodeURIComponent(collection)}?limit=200`, apiConfig.apiToken)),
+      wanted.map(collection => fetchJson(`${apiConfig.apiBase}/api/workspace/${encodeURIComponent(collection)}?limit=200`)),
     );
     const counts = {};
     payloads.forEach((payload, index) => {
@@ -292,12 +289,8 @@
     return counts;
   }
 
-  async function fetchJson(url, token) {
-    const headers = { Accept: "application/json" };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    const response = await fetch(url, { cache: "no-store", headers });
+  async function fetchJson(url) {
+    const response = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(String(payload && (payload.detail || payload.error) || `Request failed (${response.status})`));
@@ -305,7 +298,7 @@
     return payload;
   }
 
-  function summarizeModel(countsByCollection, hasToken) {
+  function summarizeModel(countsByCollection) {
     const kinds = KIND_ORDER
       .filter(kind => LOGICAL_MODEL[kind] && KIND_META[kind])
       .map(kind => {
@@ -340,7 +333,7 @@
       });
 
     return {
-      sourceLabel: hasToken ? "Logical model with live counts" : "Logical model with public live counts",
+      sourceLabel: "Logical model with public live counts",
       totalKinds: kinds.length,
       totalRecords: kinds.reduce((sum, kind) => sum + kind.count, 0),
       kinds,

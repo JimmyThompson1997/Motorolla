@@ -30,7 +30,7 @@ function parseArgs(argv) {
     sampleDurationMs: 8000,
     sampleIntervalMs: 100,
     skipCanonicalCheck: false,
-    apiToken: String(process.env.PUCKY_WEB_UI_TOKEN || process.env.PUCKY_API_TOKEN || "").trim(),
+    apiToken: String(process.env.PUCKY_API_TOKEN || "").trim(),
     allowAutoplayBypass: false,
   };
   for (let index = 0; index < argv.length; index += 1) {

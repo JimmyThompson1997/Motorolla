@@ -13,7 +13,6 @@ PACKAGE_JSON_PATH = ROOT / "tools" / "package.json"
 def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_report() -> None:
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
     assert "PUCKY_LIVE_USER_SESSION_TOKEN" in source
     assert "PUCKY_OPERATOR_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
@@ -30,7 +29,6 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert 'url.searchParams.set("api_token"' not in source
-    assert "browser_api_token" not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
 
 
@@ -53,6 +51,31 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert "Reload connect directly" in source
     assert 'LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"]' in source
     assert 'localStorage.removeItem("pucky.cover.browser_device_id.v1");' in source
+
+
+def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detail_surface() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'await openRouteFromHome(page, "tasks", config.timeoutMs);' in source
+    assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger' in source
+    assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main' in source
+    assert '.settings-selector-option[data-selector-value="in_progress"]' in source
+    assert '.settings-selector-option[data-selector-value="done"]' in source
+    assert '.settings-selector-option[data-selector-value="waiting"]' in source
+    assert '".light-task-detail-card"' in source
+    assert '".light-task-status-circle"' in source
+    assert '".light-task-status-trigger"' not in source
+    assert '".light-task-status-circle-trigger"' not in source
+    assert 'description_is_first_section' in source
+    assert 'task_html_frame_present' in source
+    assert 'assert(!taskState.task_html_frame_present' in source
+    assert 'assert(taskState.description_is_first_section' in source
+    assert "Open task list status selector" in source
+    assert "Open task detail header status selector near circle" in source
+    assert "Open task detail header status selector on title area" in source
+    assert "Open task detail pill status selector" not in source
+    assert "Open task detail top-left status selector" not in source
+    assert "Persist Done status after reload" in source
 
 
 def test_live_user_session_wrapper_targets_nested_runner() -> None:

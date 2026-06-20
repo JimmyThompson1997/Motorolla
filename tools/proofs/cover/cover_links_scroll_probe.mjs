@@ -41,10 +41,6 @@ const GESTURES = [
 ];
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   return String(process.env.PUCKY_API_TOKEN || "").trim();
 }
 
@@ -197,7 +193,14 @@ function bridgeResponse(state, message) {
     return {
       schema: "pucky.config.v1",
       api_base_url: state.apiBase,
-      api_token: state.apiToken
+      has_native_bridge: true
+    };
+  }
+  if (command === "pucky.authorization.get") {
+    return {
+      schema: "pucky.authorization.v1",
+      authorization: state.apiToken ? `Bearer ${state.apiToken}` : "",
+      authorized: Boolean(state.apiToken)
     };
   }
   return {};

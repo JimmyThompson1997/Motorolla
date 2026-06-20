@@ -321,7 +321,10 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
 
 def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -> None:
     app = read("app.js")
+    index_html = read("index.html")
     routes = read("pucky-routes.js")
+    legacy_browser_state = "pucky-browser" + "-state.js"
+    legacy_browser_unlock = "pucky-browser" + "-unlock.js"
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
@@ -332,8 +335,9 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));' in load_workspace
     assert 'bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
-    assert "Preview needs api_token" not in app
-    assert "Unlock web preview" not in app
+    assert "pucky-ui-state.js" in index_html
+    assert legacy_browser_state not in index_html
+    assert legacy_browser_unlock not in index_html
     assert "preview_locked" not in app
     assert 'if (bucket.error) {' in light_workspace_status
     assert 'if (!bucket.loaded) {' in light_workspace_status
@@ -966,7 +970,6 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     task_notes_section = function_block(app, "lightTaskNotesSection")
     task_people_section = function_block(app, "lightTaskPeopleSection")
     task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
-    task_status_control = function_block(app, "lightTaskStatusControl")
     task_filters = function_block(app, "lightTaskFilters")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
@@ -984,7 +987,9 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "function taskOwners(task)" in app
     assert "function taskPrimaryOwner(task)" in app
     assert "explicitOwners" not in app
-    assert 'const statusTrigger = el("span", "light-task-row-status-trigger");' in task_group
+    assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
+    assert 'statusTrigger.type = "button";' in task_group
+    assert 'openTaskStatusSelector(task, "list");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
@@ -1003,13 +1008,22 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const notes = lightTaskNotesSection(task);' in task_detail_surface
     assert "surface.append(notes);" in task_detail_surface
-    assert 'const button = el("div", "light-pill is-active light-task-status-trigger");' in task_status_control
-    assert 'button.append(icon, copy);' in task_status_control
-    assert 'iconSvg("expand_more", { filled: true })' not in task_status_control
-    assert 'iconSvg("navigate_next")' not in task_status_control
-    assert "function updateTaskStatus" not in app
+    assert "lightHtmlDocument(task" not in task_detail_surface
+    assert "function updateTaskStatus(taskId, nextStatus)" in app
     assert "function toggleTaskChecklistItem" not in app
-    assert "function openTaskStatusSelector" not in app
+    assert "function openTaskStatusSelector(task, source)" in app
+    task_detail_card = function_block(app, "lightTaskDetailCard")
+    assert "function lightTaskStatusControl" not in app
+    assert 'const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
+    assert 'card.type = "button";' in task_detail_card
+    assert 'card.dataset.taskStatusTrigger = "true";' in task_detail_card
+    assert 'card.setAttribute("aria-haspopup", "dialog");' in task_detail_card
+    assert 'card.setAttribute("aria-label", `Change task status for ${task.title || "task"}. Current status ${taskStatusLabel(current)}.`);' in task_detail_card
+    assert 'card.addEventListener("click", event => {' in task_detail_card
+    assert 'openTaskStatusSelector(task, "detail-header");' in task_detail_card
+    assert 'const statusCircle = el("span", "light-task-status-circle");' in task_detail_card
+    assert 'statusCircle.append(el("span", taskCheckCircleClass(task)));' in task_detail_card
+    assert "lightTaskStatusControl(task)" not in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
@@ -1021,15 +1035,18 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'document.visibilityState === "visible"' in task_refresh_interval.group("condition")
     assert 'state.route === "tasks"' in task_refresh_interval.group("condition")
     assert "task-detail" not in task_refresh_interval.group("condition")
-    assert ".light-task-detail-page .light-detail-html-body" in styles
-    assert ".light-task-detail-surface > .light-task-detail-body" in styles
+    assert ".light-task-detail-page .light-detail-html-body" not in styles
+    assert ".light-task-detail-surface > .light-task-detail-body" not in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
-    assert ".light-task-status-circle-trigger" in styles
-    assert ".light-task-status-trigger" in styles
+    assert ".light-task-status-circle" in styles
+    assert ".light-task-status-circle-trigger" not in styles
+    assert ".light-task-status-control" not in styles
+    assert ".light-task-status-trigger" not in styles
     assert ".light-task-person-row" in styles
     assert ".light-task-filter-button-icon" in styles
-    assert ".light-task-status-trigger-icon" in styles
+    assert ".light-task-detail-card" in styles
+    assert ".light-task-detail-card:focus-visible" in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles

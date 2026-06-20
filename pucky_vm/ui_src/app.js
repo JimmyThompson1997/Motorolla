@@ -123,6 +123,7 @@
     "selectedProjectId",
     "selectedFeedId"
   ];
+  let nativeProtectedAuthorization = "";
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -1143,9 +1144,7 @@
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -1166,9 +1165,7 @@
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -1875,7 +1872,7 @@
         if (!state.links.token) {
           linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
           await ensureLinksApiConfig();
-          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url", { authorized: true }));
           state.links.portal_url = payload.portal_url;
           state.links.token = payload.token;
           state.links.auth_mode = payload.auth_mode;
@@ -2126,7 +2123,8 @@
     try {
       linksDebugRecord("oauth_start_start", { slug }, "click");
       const payload = await linksApiRequest(
-        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`
+        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`,
+        { authorized: true }
       );
       linksDebugRecord(
         "oauth_start_end",
@@ -2183,19 +2181,38 @@
     }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.apiToken = "";
       state.links.deviceId = "";
       return;
     }
     try {
       const config = await Pucky.request({ command: "pucky.config.get", args: {} });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
-      state.links.apiToken = String(config && config.api_token || "");
       state.links.deviceId = "";
     } catch (_) {
       state.links.apiBaseUrl = "";
-      state.links.apiToken = "";
       state.links.deviceId = "";
+    }
+  }
+
+  async function protectedApiAuthorizationHeaders(options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
+    const needsAuthorization = Boolean(options.authorized) || method !== "GET";
+    if (!needsAuthorization || !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      return {};
+    }
+    if (nativeProtectedAuthorization) {
+      return { Authorization: nativeProtectedAuthorization };
+    }
+    try {
+      const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });
+      const authorization = String(payload && payload.authorization || "").trim();
+      if (!authorization) {
+        return {};
+      }
+      nativeProtectedAuthorization = authorization;
+      return { Authorization: authorization };
+    } catch (_) {
+      return {};
     }
   }
 
@@ -2207,9 +2224,7 @@
       cache: String(options.cache || "no-store"),
       headers: {}
     };
-    if (state.links.apiToken) {
-      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
+    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
@@ -3014,7 +3029,6 @@
       portal_url: "",
       token: "",
       apiBaseUrl: "",
-      apiToken: "",
       deviceId: "",
       userId: "",
       auth_mode: "browser",
@@ -5617,6 +5631,78 @@
     ];
   }
 
+  function taskStatusSelectorChoices() {
+    return ["todo", "in_progress", "waiting", "done"].map(value => {
+      const leadingNode = el("span", taskStatusCircleClass(value));
+      leadingNode.setAttribute("aria-hidden", "true");
+      return {
+        value,
+        label: taskStatusLabel(value),
+        leadingNode,
+      };
+    });
+  }
+
+  function mergeTaskRecordIntoBucket(record) {
+    const bucket = state.workspace.tasks;
+    const nextId = taskRecordId(record);
+    if (!bucket || !Array.isArray(bucket.items) || !nextId) {
+      return;
+    }
+    let replaced = false;
+    bucket.items = bucket.items.map(item => {
+      if (taskRecordId(item) !== nextId) {
+        return item;
+      }
+      replaced = true;
+      return record;
+    });
+    if (!replaced) {
+      bucket.items.push(record);
+    }
+  }
+
+  async function updateTaskStatus(taskId, nextStatus) {
+    const id = String(taskId || "").trim();
+    const status = String(nextStatus || "").trim();
+    const bucket = state.workspace.tasks;
+    if (!id || !["todo", "in_progress", "waiting", "done"].includes(status) || !bucket || !Array.isArray(bucket.items)) {
+      return;
+    }
+    const current = bucket.items.find(item => taskRecordId(item) === id);
+    if (!current || normalizedTaskStatus(current) === status) {
+      return;
+    }
+    try {
+      const result = await patchWorkspaceRecord("tasks", id, { status });
+      mergeTaskRecordIntoBucket(result);
+      state.selectedTaskId = taskRecordId(result) || id;
+      bucket.error = "";
+      persistNavState();
+      render();
+    } catch (error) {
+      bucket.error = "";
+      showToast(error.message);
+    }
+  }
+
+  function openTaskStatusSelector(task, source) {
+    const taskId = taskRecordId(task);
+    const current = normalizedTaskStatus(task);
+    if (!taskId) {
+      return;
+    }
+    openSettingsSelector({
+      title: source === "list" ? "Update task status" : "Task status",
+      currentValue: current,
+      options: taskStatusSelectorChoices(),
+      onSelect: value => {
+        const nextStatus = String(value || "").trim();
+        void updateTaskStatus(taskId, nextStatus);
+      },
+    });
+  }
+
   function currentTaskFilterChoice() {
     return taskStatusFilterChoices().find(([key]) => key === state.taskFilter) || taskStatusFilterChoices()[0];
   }
@@ -5642,10 +5728,16 @@
       const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      const statusTrigger = el("span", "light-task-row-status-trigger");
+      const statusTrigger = el("button", "light-task-row-status-trigger");
+      statusTrigger.type = "button";
       statusTrigger.dataset.taskStatusTrigger = "true";
-      statusTrigger.setAttribute("aria-hidden", "true");
+      statusTrigger.setAttribute("aria-label", `Change task status for ${task.title || "task"}`);
       statusTrigger.append(el("span", taskCheckCircleClass(task)));
+      statusTrigger.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openTaskStatusSelector(task, "list");
+      });
       const main = el("button", "light-task-row-main");
       main.type = "button";
       main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
@@ -5744,6 +5836,10 @@
 
   function taskChecklist(task) {
     return Array.isArray(task?.checklist) ? task.checklist : [];
+  }
+
+  function taskRecordId(task) {
+    return String(task?.id || task?.record_id || "").trim();
   }
 
   function taskOwners(task) {
@@ -5931,21 +6027,6 @@
     return lightLinkedNotesSection(task);
   }
 
-  function lightTaskStatusControl(task) {
-    const control = el("div", "light-task-status-control");
-    const current = normalizedTaskStatus(task);
-    const button = el("div", "light-pill is-active light-task-status-trigger");
-    button.dataset.taskStatus = current;
-    button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
-    const icon = el("span", "light-task-status-trigger-icon");
-    icon.append(el("span", taskStatusCircleClass(current)));
-    const copy = el("span", "light-task-status-trigger-copy");
-    copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
-    button.append(icon, copy);
-    control.append(button);
-    return control;
-  }
-
   function lightTaskChecklistSection(task) {
     const items = taskChecklist(task);
     if (!items.length) {
@@ -6022,17 +6103,28 @@
   }
 
   function lightTaskDetailCard(task) {
-    const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    const statusTrigger = el("span", "light-task-status-circle-trigger");
-    statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-hidden", "true");
-    statusTrigger.append(el("span", taskCheckCircleClass(task)));
+    const current = normalizedTaskStatus(task);
+    const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);
+    card.type = "button";
+    card.dataset.taskStatusTrigger = "true";
+    card.dataset.taskStatus = current;
+    card.dataset.taskStatusLabel = taskStatusLabel(current);
+    card.setAttribute("aria-haspopup", "dialog");
+    card.setAttribute("aria-label", `Change task status for ${task.title || "task"}. Current status ${taskStatusLabel(current)}.`);
+    card.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTaskStatusSelector(task, "detail-header");
+    });
+    const statusCircle = el("span", "light-task-status-circle");
+    statusCircle.setAttribute("aria-hidden", "true");
+    statusCircle.append(el("span", taskCheckCircleClass(task)));
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    card.append(statusTrigger, copy, lightTaskStatusControl(task));
+    card.append(statusCircle, copy);
     return card;
   }
 
@@ -11141,11 +11233,7 @@
       throw new Error("artifact url is missing");
     }
     await ensureLinksApiConfig();
-    const headers = {};
-    if (state.links.apiToken && !/[?&]token=/i.test(apiUrl)) {
-      headers.Authorization = `Bearer ${state.links.apiToken}`;
-    }
-    const response = await fetch(apiUrl, { cache: "no-store", headers });
+    const response = await fetch(apiUrl, { cache: "no-store", headers: {} });
     if (!response.ok) {
       throw new Error(`${label} unavailable: HTTP ${response.status}`);
     }

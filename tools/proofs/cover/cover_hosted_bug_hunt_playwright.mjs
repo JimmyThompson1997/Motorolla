@@ -338,10 +338,6 @@ const BASELINE_PROOFS = [
 ];
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
   if (operatorToken) {
     return operatorToken;
@@ -1011,7 +1007,7 @@ function runProofLane(lane, config, proofsDir, consoleLogPath) {
       report_dir: reportDir,
       summary_path: "",
       screenshots: [],
-      error: "requires PUCKY_WEB_UI_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN for hosted write-enabled proofs",
+      error: "requires PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN for hosted write-enabled proofs",
     };
   }
 

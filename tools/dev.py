@@ -59,8 +59,8 @@ BUNDLED_NODE_MODULES_CANDIDATES = [
 TASK_HELP = {
     "test-fast": "Run the fast unit and contract suite plus canonical tool tests.",
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
-    "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
-    "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
+    "proof-local-notes-flash": "Boot the local workspace proof server, then run the targeted notes flash browser proof.",
+    "proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, and native-port browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
@@ -214,7 +214,6 @@ def ensure_cover_playwright_shims() -> None:
 def run_local_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
-    env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
     local_light_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&reset_nav=1"
     local_dark_feed_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1"
     local_dark_meetings_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1"
@@ -308,7 +307,7 @@ def run_local_web_proof(extra_args: list[str]) -> int:
 def run_local_workspace_proof(script: str, script_args: list[str], extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
-    env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
+    env.setdefault("PUCKY_API_TOKEN", "proof-token")
     server = run_server(LOCAL_PROOF_SERVER)
     try:
         wait_for_api("http://127.0.0.1:8767/healthz")
@@ -340,7 +339,7 @@ def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
             "--api-token",
             "proof-token",
             "--report-dir",
-            str((ROOT / ".tmp" / "proof-local-notes-flash-browser").resolve()),
+            str((ROOT / ".tmp" / "proof-local-notes-flash").resolve()),
         ],
         extra_args,
     )
@@ -355,7 +354,7 @@ def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
                 "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
                 [
                     "--report-dir",
-                    str((ROOT / ".tmp" / "proof-live-notes-flash-browser").resolve()),
+                    str((ROOT / ".tmp" / "proof-live-notes-flash").resolve()),
                     *extra_args,
                 ],
             ),
@@ -493,9 +492,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    if args.task == "proof-local-notes-flash-browser":
+    if args.task == "proof-local-notes-flash":
         return run_local_notes_flash_browser_proof(args.extra_args)
-    if args.task == "proof-live-notes-flash-browser":
+    if args.task == "proof-live-notes-flash":
         return run_live_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)

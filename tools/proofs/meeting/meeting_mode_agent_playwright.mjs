@@ -805,7 +805,14 @@ async function run() {
         return {
           schema: "pucky.config.v1",
           api_base_url: baseUrl,
-          api_token: DEFAULT_API_TOKEN
+          has_native_bridge: true
+        };
+      }
+      if (command === "pucky.authorization.get") {
+        return {
+          schema: "pucky.authorization.v1",
+          authorization: `Bearer ${DEFAULT_API_TOKEN}`,
+          authorized: true
         };
       }
       if (command === "ui.reply_cards.get") {
@@ -1075,4 +1082,3 @@ run().catch((error) => {
   console.error(error?.stack || error?.message || String(error));
   process.exit(1);
 });
-

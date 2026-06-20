@@ -40,7 +40,6 @@ The Android APK expects provisioning with:
 - `pucky_turn_url`
 - `token`
 - optional `pucky_api_token` (operator/broker token)
-- optional `pucky_web_ui_token` (user-surface token)
 
 The phone then:
 
