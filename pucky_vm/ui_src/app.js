@@ -5953,52 +5953,45 @@
 
   function lightTaskPeopleSection(task) {
     const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    const entries = [];
+    const rows = [];
     const createdBy = taskCreatedBy(task);
     if (createdBy) {
-      entries.push({
-        role: "Created by",
-        datasetRole: "created_by",
-        contactName: createdBy,
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: createdBy,
+        value: "Created by",
+        target: taskCreatedByTarget(task),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "created_by" },
       });
     }
     const owner = taskPrimaryOwner(task);
     if (owner) {
-      entries.push({
-        role: "Owner",
-        datasetRole: "owner",
-        contactName: owner,
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: owner,
+        value: "Owner",
+        target: workspaceContactTargetByName(owner),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "owner" },
       });
     }
-    if (!entries.length) {
+    if (!rows.length) {
       return null;
     }
-    const section = el("section", "light-info-section");
-    section.append(lightSectionTitle("People"));
-    const card = el("div", "light-card light-task-people-card");
-    entries.forEach(entry => {
-      const row = el("div", "light-task-person-row");
-      row.dataset.taskPersonRole = entry.datasetRole;
-      row.append(el("span", "light-task-person-label", entry.role));
-      row.append(lightRecordChip({
-        label: entry.contactName,
-        kind: "contact",
-        target: workspaceContactTargetByName(entry.contactName),
-      }, {
-        fromRoute: origin.route,
-        taskOrigin: origin,
-      }));
-      card.append(row);
-    });
-    section.append(card);
-    return section;
+    return lightInfoSection("People", rows);
   }
 
-  function taskAttachmentTargets(task) {
+  function taskAttachmentRows(task) {
     const links = Array.isArray(task?.links) ? task.links : [];
     const seen = new Set();
     const allowedKinds = new Set(["calendar_event", "contact", "project", "meeting_note", "reminder"]);
-    const ordered = [];
+    const rows = [];
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
     links.forEach(link => {
       const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
       const relatedKind = String(isSource ? link.target_kind : link.source_kind);
@@ -6013,15 +6006,24 @@
         return;
       }
       seen.add(key);
-      ordered.push({
+      const relation = link.label && link.label !== related?.title
+        ? `${graphKindLabel(relatedKind)}${DOT}${link.label}`
+        : graphKindLabel(relatedKind);
+      rows.push({
+        icon: graphKindIcon(relatedKind),
+        accentKey: graphKindAccentKey(relatedKind),
         label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
         target,
-        kind: relatedKind
+        kind: relatedKind,
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskAttachmentKind: relatedKind },
       });
     });
     const order = ["calendar_event", "contact", "project", "meeting_note", "reminder"];
-    ordered.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
-    return ordered;
+    rows.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
+    return rows;
   }
 
   function lightTaskNotesSection(task) {
@@ -6050,24 +6052,11 @@
   }
 
   function lightTaskAttachmentsSection(task) {
-    const attachments = taskAttachmentTargets(task);
-    if (!attachments.length) {
+    const rows = taskAttachmentRows(task);
+    if (!rows.length) {
       return null;
     }
-    const section = el("section", "light-info-section");
-    section.append(lightSectionTitle("Attached"));
-    const card = el("div", "light-card light-task-attachment-card");
-    const cloud = el("div", "light-chip-cloud light-task-chip-cloud");
-    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    attachments.forEach(entry => {
-      cloud.append(lightRecordChip(entry, {
-        fromRoute: origin.route,
-        taskOrigin: origin
-      }));
-    });
-    card.append(cloud);
-    section.append(card);
-    return section;
+    return lightInfoSection("Attached", rows);
   }
 
   function lightChipIcon(icon, accentKey = "") {
@@ -6806,21 +6795,41 @@
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
     const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";
-    rows.forEach(row => {
-      const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
-      const item = el(isInteractive ? "button" : "div", isInteractive ? "light-info-row is-clickable" : "light-info-row");
-      if (isInteractive) {
-        item.type = "button";
-        item.dataset.workspaceTargetRoute = row.target.route;
-        item.dataset.workspaceTargetId = row.target.id;
-        item.dataset.workspaceTargetKind = row.target.kind || "";
-        item.addEventListener("click", () => openWorkspaceTarget(row.target, state.route));
-      }
-      item.append(lightSmallIcon(row.icon, row.accentKey || row.accent || ""), lightTextStack(row.label, row.value), isInteractive && !suppressInteractiveChevron ? el("span", "light-chevron", ">") : el("span", ""));
-      card.append(item);
-    });
+    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: !suppressInteractiveChevron })));
     section.append(card);
     return section;
+  }
+
+  function lightInfoRow(row, options = {}) {
+    const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
+    const className = [
+      "light-info-row",
+      isInteractive ? "is-clickable" : "",
+      String(row?.className || "").trim(),
+    ].filter(Boolean).join(" ");
+    const item = el(isInteractive ? "button" : "div", className);
+    if (row?.dataset && typeof row.dataset === "object") {
+      Object.entries(row.dataset).forEach(([key, value]) => {
+        item.dataset[key] = String(value || "");
+      });
+    }
+    if (isInteractive) {
+      item.type = "button";
+      item.dataset.workspaceTargetRoute = row.target.route;
+      item.dataset.workspaceTargetId = row.target.id;
+      item.dataset.workspaceTargetKind = row.target.kind || "";
+      item.addEventListener("click", () => openWorkspaceTarget(
+        row.target,
+        row.fromRoute || state.route || "",
+        row.openOptions || {}
+      ));
+    }
+    item.append(
+      lightSmallIcon(row.icon, row.accentKey || row.accent || ""),
+      lightTextStack(row.label, row.value),
+      isInteractive && options.showChevron !== false ? el("span", "light-chevron", ">") : el("span", "")
+    );
+    return item;
   }
 
   function lightAttendeesSection(attendees, options = {}) {

@@ -675,6 +675,12 @@ async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
     const detail = document.querySelector(".light-task-detail-surface");
+    const infoSections = Array.from(detail?.querySelectorAll(".light-info-section") || []);
+    const infoSection = title => infoSections.find(section =>
+      String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
+    ) || null;
+    const peopleSection = infoSection("people");
+    const attachedSection = infoSection("attached");
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
     const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
@@ -687,11 +693,11 @@ async function readTaskDetailState(page) {
       title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       sections: Array.from(document.querySelectorAll(".light-section-title"))
         .map(node => String(node.textContent || "").trim().toLowerCase()),
-      people: Array.from(detail?.querySelectorAll(".light-task-person-row .light-record-chip-label") || [])
+      people: Array.from(peopleSection?.querySelectorAll('.light-info-row[data-task-person-role] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
         .map(node => String(node.textContent || "").trim()),
-      attachments: Array.from(detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-label") || [])
+      attachments: Array.from(attachedSection?.querySelectorAll('.light-info-row[data-task-attachment-kind] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),

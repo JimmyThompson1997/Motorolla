@@ -298,7 +298,7 @@ def detail_status_header_selector() -> str:
 
 
 def person_chip_selector(role: str) -> str:
-    return f'.light-task-person-row[data-task-person-role="{role}"] [data-workspace-target-kind="contact"]'
+    return f'.light-info-row[data-task-person-role="{role}"][data-workspace-target-kind="contact"]'
 
 
 def checklist_selector(item_id: str) -> str:
@@ -306,7 +306,7 @@ def checklist_selector(item_id: str) -> str:
 
 
 def attachment_selector(kind: str) -> str:
-    return f'.light-task-chip-cloud [data-workspace-target-kind="{kind}"]'
+    return f'.light-info-row[data-task-attachment-kind="{kind}"]'
 
 
 def screenshot_operation(path: Path) -> dict[str, Any]:
@@ -359,6 +359,16 @@ def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
         assert_or_fail(str(visual.get("chevronColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter chevron is not using the readable neutral color")
 
 
+def verify_people_icon_visual(person: dict[str, Any], *, label: str) -> None:
+    icon_color = str(person.get("icon_color") or "").strip().lower()
+    icon_background = str(person.get("icon_background") or "").strip().lower()
+    assert_or_fail(bool(person.get("uses_small_icon")), "phone_task_detail_render_failed", f"{label} should use the standard linked-row icon")
+    assert_or_fail(bool(person.get("icon_has_svg")), "phone_task_detail_render_failed", f"{label} icon is missing its SVG glyph")
+    assert_or_fail(bool(icon_color), "phone_task_detail_render_failed", f"{label} icon color was missing")
+    assert_or_fail(bool(icon_background), "phone_task_detail_render_failed", f"{label} icon background was missing")
+    assert_or_fail(icon_color != icon_background, "phone_task_detail_render_failed", f"{label} icon lost contrast against its background")
+
+
 def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> None:
     assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_detail_render_failed", "Primary task detail did not open")
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Primary task still renders legacy task HTML")
@@ -366,16 +376,20 @@ def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> 
     assert_or_fail(bool(state.get("hasPeopleSection")), "phone_task_detail_render_failed", "Primary task is missing People")
     assert_or_fail(bool(state.get("hasChecklistSection")), "phone_task_detail_render_failed", "Primary task is missing Checklist")
     assert_or_fail(bool(state.get("hasAttachedSection")), "phone_task_detail_render_failed", "Primary task is missing Attached")
-    assert_or_fail(int(state.get("attachedChipIconCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task chips are missing icons")
-    assert_or_fail(not bool(state.get("hasLegacyCreatedByRow")), "phone_task_detail_render_failed", "Primary task still renders the legacy Created by info row")
+    assert_or_fail(int(state.get("attachedRowCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task is missing attached linked rows")
+    assert_or_fail(not bool(state.get("hasTaskPersonChips")), "phone_task_detail_render_failed", "Primary task still renders People as task chips")
+    assert_or_fail(not bool(state.get("hasTaskAttachmentChips")), "phone_task_detail_render_failed", "Primary task still renders Attached as task chips")
     assert_or_fail(bool(state.get("statusHeaderPresent")), "phone_task_detail_render_failed", "Primary task is missing the interactive status header card")
     assert_or_fail(bool(state.get("statusCirclePresent")), "phone_task_detail_render_failed", "Primary task is missing the visible status circle")
     assert_or_fail(str(state.get("title") or "") == str(seed["primaryTaskTitle"]), "phone_task_detail_render_failed", "Primary task title did not render correctly")
     people = [item for item in list(state.get("people") or []) if isinstance(item, dict)]
+    attached = [item for item in list(state.get("attached") or []) if isinstance(item, dict)]
+    assert_or_fail(all(bool(item.get("hasIcon")) and bool(item.get("uses_small_icon")) for item in attached), "phone_task_detail_render_failed", "Attached linked rows did not use the standard icons")
     created_by = next((item for item in people if str(item.get("role") or "") == "created_by"), {})
     owner = next((item for item in people if str(item.get("role") or "") == "owner"), {})
     assert_or_fail(str(created_by.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Created by chip is not linked to contact detail")
     assert_or_fail(str(created_by.get("id") or "") == str(seed["contactId"]), "phone_task_detail_render_failed", "Created by chip did not point at the expected contact")
+    verify_people_icon_visual(created_by, label="Created by")
     assert_or_fail(str(owner.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Owner chip is not linked to contact detail")
     assert_or_fail(str(owner.get("id") or "") == str(seed["ownerContactId"]), "phone_task_detail_render_failed", "Owner chip did not point at the expected owner contact")
 

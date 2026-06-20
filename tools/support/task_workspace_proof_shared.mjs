@@ -614,24 +614,61 @@ async function pageTextIncludes(page, text, timeoutMs) {
   );
 }
 
+function normalizedVisualValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function assertTaskPersonIconContrast(person, mode, label) {
+  assert(Boolean(person?.uses_small_icon), `${mode}: ${label} should render with the standard linked-row icon`);
+  assert(Boolean(person?.icon_has_svg), `${mode}: ${label} icon is missing its SVG glyph`);
+  const iconColor = normalizedVisualValue(person?.icon_color);
+  const iconBackground = normalizedVisualValue(person?.icon_background);
+  assert(iconColor, `${mode}: ${label} icon color was missing`);
+  assert(iconBackground, `${mode}: ${label} icon background was missing`);
+  assert(iconColor !== iconBackground, `${mode}: ${label} icon lost contrast against its background`);
+}
+
 async function recordViewState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
     const detail = document.querySelector(".light-task-detail-surface");
+    const infoSections = Array.from(detail?.querySelectorAll(".light-info-section") || []);
+    const infoSection = title => infoSections.find(section =>
+      String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
+    ) || null;
+    const peopleSection = infoSection("people");
+    const attachedSection = infoSection("attached");
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
-    const people = detail
-      ? Array.from(detail.querySelectorAll(".light-task-person-row")).map(row => {
-          const chip = row.querySelector('[data-workspace-target-kind="contact"]');
+    const people = peopleSection
+      ? Array.from(peopleSection.querySelectorAll(".light-info-row")).map(row => {
+          const icon = row.querySelector(".light-small-icon");
+          const iconStyle = icon ? getComputedStyle(icon) : null;
           return {
             role: String(row.getAttribute("data-task-person-role") || ""),
-            label: String(row.querySelector(".light-task-person-label")?.textContent || "").trim(),
-            id: String(chip?.getAttribute("data-workspace-target-id") || ""),
-            route: String(chip?.getAttribute("data-workspace-target-route") || ""),
-            kind: String(chip?.getAttribute("data-workspace-target-kind") || ""),
-            text: String(chip?.textContent || "").replace(/\s+/g, " ").trim(),
+            label: String(row.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+            value: String(row.querySelector(".light-text-stack span")?.textContent || "").trim(),
+            id: String(row.getAttribute("data-workspace-target-id") || ""),
+            route: String(row.getAttribute("data-workspace-target-route") || ""),
+            kind: String(row.getAttribute("data-workspace-target-kind") || ""),
+            text: String(row.textContent || "").replace(/\s+/g, " ").trim(),
+            icon_color: String(iconStyle?.color || "").trim(),
+            icon_background: String(iconStyle?.backgroundColor || "").trim(),
+            icon_has_svg: Boolean(icon?.querySelector("svg")),
+            uses_small_icon: icon?.classList.contains("light-small-icon") || false,
           };
         })
+      : [];
+    const attached = attachedSection
+      ? Array.from(attachedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(row => ({
+          kind: String(row.getAttribute("data-workspace-target-kind") || ""),
+          id: String(row.getAttribute("data-workspace-target-id") || ""),
+          route: String(row.getAttribute("data-workspace-target-route") || ""),
+          label: String(row.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+          value: String(row.querySelector(".light-text-stack span")?.textContent || "").trim(),
+          hasIcon: Boolean(row.querySelector(".light-small-icon svg")),
+          uses_small_icon: Boolean(row.querySelector(".light-small-icon")),
+        }))
       : [];
     return {
       route: shell?.getAttribute("data-light-route") || "",
@@ -642,11 +679,13 @@ async function recordViewState(page) {
       hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
       hasAttachedSection: sectionTitles.includes("attached"),
-      hasLegacyCreatedByRow: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
-      attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
+      hasTaskPersonChips: Boolean(peopleSection?.querySelector(".light-record-chip")),
+      hasTaskAttachmentChips: Boolean(attachedSection?.querySelector(".light-record-chip")),
+      attachedRowCount: attached.length,
       statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
       statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
       people,
+      attached,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
     };
   });
@@ -986,19 +1025,22 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.hasPeopleSection, `${mode}: primary task is missing People`);
   assert(state.hasChecklistSection, `${mode}: primary task is missing Checklist`);
   assert(state.hasAttachedSection, `${mode}: primary task is missing Attached`);
-  assert(state.hasLegacyCreatedByRow === false, `${mode}: primary task should not render a legacy Created by row`);
-  assert(state.attachedChipIconCount >= 4, `${mode}: primary task chips should render icons for linked records`);
+  assert(state.hasTaskPersonChips === false, `${mode}: primary task should not render People as task chips`);
+  assert(state.hasTaskAttachmentChips === false, `${mode}: primary task should not render Attached as task chips`);
+  assert(state.attachedRowCount >= 4, `${mode}: primary task should render linked rows for attached records`);
+  assert(state.attached.every(entry => entry.hasIcon && entry.uses_small_icon), `${mode}: attached linked rows should use standard icons`);
   assert(state.statusHeaderPresent, `${mode}: primary task is missing the interactive status header card`);
   assert(state.statusCirclePresent, `${mode}: primary task is missing the visible status circle`);
   const createdByChip = state.people.find(person => person.role === "created_by");
   assert(createdByChip?.route === "contact-detail", `${mode}: Created by chip should open the linked contact`);
   assert(createdByChip?.id === seed.contactId, `${mode}: Created by chip did not point at the expected contact`);
+  assertTaskPersonIconContrast(createdByChip, mode, "Created by");
   const ownerChip = state.people.find(person => person.role === "owner");
   assert(ownerChip?.route === "contact-detail", `${mode}: Owner chip should open the linked owner contact`);
   assert(ownerChip?.id === seed.ownerContactId, `${mode}: Owner chip did not point at the expected owner contact`);
   await pageTextIncludes(page, seed.primaryTaskTitle, config.timeoutMs);
   screenshots[`${mode}_task_detail_primary`] = await saveScreenshot(page, config.reportDir, `${mode}-02-task-detail-primary`);
-  screenshots[`${mode}_task_detail_attached`] = await saveLocatorScreenshot(page, ".light-task-chip-cloud", config.reportDir, `${mode}-02b-task-attached`);
+  screenshots[`${mode}_task_detail_attached`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-attachment-kind]', config.reportDir, `${mode}-02b-task-attached`);
   checks.push({
     type: "structured_primary_detail",
     mode,
@@ -1027,8 +1069,47 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
 }
 
+async function verifyDarkThemeCreatedByChip(page, seed, mode, config, screenshots, checks) {
+  const darkUrl = proofPageUrl(config.baseUrl, config.apiToken, {
+    refreshKey: config.refreshKey,
+    theme: "dark",
+  });
+  logStep(config, `${mode}: opening dark-theme task detail proof ${darkUrl}`);
+  await page.goto(darkUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await ensureSectionExpanded(page, "done");
+  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
+  const darkState = await recordViewState(page);
+  assert(darkState.taskDetailId === seed.primaryTaskId, `${mode}: wrong dark-theme primary task detail opened`);
+  const createdByChip = darkState.people.find(person => person.role === "created_by");
+  assertTaskPersonIconContrast(createdByChip, `${mode}/dark`, "Created by");
+  screenshots[`${mode}_task_detail_primary_dark`] = await saveScreenshot(page, config.reportDir, `${mode}-02c-task-detail-primary-dark`);
+  screenshots[`${mode}_created_by_row_dark`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-person-role="created_by"]', config.reportDir, `${mode}-02d-created-by-row-dark`);
+  screenshots[`${mode}_created_by_icon_dark`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-person-role="created_by"] .light-small-icon', config.reportDir, `${mode}-02e-created-by-icon-dark`);
+  checks.push({
+    type: "dark_created_by_icon_visual",
+    mode,
+    state: darkState,
+    screenshots: {
+      detail: screenshots[`${mode}_task_detail_primary_dark`],
+      row: screenshots[`${mode}_created_by_row_dark`],
+      icon: screenshots[`${mode}_created_by_icon_dark`],
+    },
+  });
+
+  const lightUrl = proofPageUrl(config.baseUrl, config.apiToken, {
+    refreshKey: config.refreshKey,
+    theme: "light",
+  });
+  await page.goto(lightUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await stabilizeUrlForReloads(page);
+  await ensureSectionExpanded(page, "done");
+  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
+}
+
 async function verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks) {
-  const chip = page.locator('.light-task-person-row[data-task-person-role="created_by"] [data-workspace-target-kind="contact"]').first();
+  const chip = page.locator('.light-info-row[data-task-person-role="created_by"][data-workspace-target-kind="contact"]').first();
   await chip.waitFor({ state: "visible", timeout: config.timeoutMs });
   const payload = await chip.evaluate(node => ({
     label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
@@ -1193,10 +1274,10 @@ async function verifyChecklistPersistence(page, seed, mode, config, checks) {
 }
 
 async function clickChipForKind(page, kind, timeoutMs) {
-  const locator = page.locator(`.light-task-chip-cloud [data-workspace-target-kind="${kind}"]`).first();
+  const locator = page.locator(`.light-info-row[data-task-attachment-kind="${kind}"]`).first();
   await locator.waitFor({ state: "visible", timeout: timeoutMs });
   const payload = await locator.evaluate(node => ({
-    label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
+    label: String(node.querySelector(".light-text-stack strong")?.textContent || node.textContent || "").replace(/\s+/g, " ").trim(),
     route: String(node.dataset.workspaceTargetRoute || "").trim(),
     id: String(node.dataset.workspaceTargetId || "").trim(),
     kind: String(node.dataset.workspaceTargetKind || "").trim(),
@@ -1347,6 +1428,7 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     }
 
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
+    await verifyDarkThemeCreatedByChip(page, seed, mode, config, screenshots, checks);
     await verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks);
     await verifyStatusSelectorTriggers(page, seed, mode, config, screenshots, checks);
     await verifyStatusMutations(page, seed, mode, config, checks);

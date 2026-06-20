@@ -207,6 +207,24 @@ def test_patch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch:
 
 def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) -> None:
     seed = load_seed(tmp_path)
+    created_by_person = {
+        "role": "created_by",
+        "route": "contact-detail",
+        "id": "contact-1",
+        "icon_color": "rgb(244, 63, 104)",
+        "icon_background": "rgba(244, 63, 104, 0.14)",
+        "icon_has_svg": True,
+        "uses_small_icon": True,
+    }
+    owner_person = {
+        "role": "owner",
+        "route": "contact-detail",
+        "id": "contact-owner-1",
+        "icon_color": "rgb(244, 63, 104)",
+        "icon_background": "rgba(244, 63, 104, 0.14)",
+        "icon_has_svg": True,
+        "uses_small_icon": True,
+    }
     state = {
         "taskDetailId": "task-1",
         "hasTaskHtmlFrame": False,
@@ -214,14 +232,21 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
         "hasPeopleSection": True,
         "hasChecklistSection": True,
         "hasAttachedSection": True,
-        "attachedChipIconCount": 4,
-        "hasLegacyCreatedByRow": False,
+        "attachedRowCount": 4,
+        "hasTaskPersonChips": False,
+        "hasTaskAttachmentChips": False,
         "statusHeaderPresent": True,
         "statusCirclePresent": True,
         "title": "Task Proof Primary",
         "people": [
-            {"role": "created_by", "route": "contact-detail", "id": "contact-1"},
-            {"role": "owner", "route": "contact-detail", "id": "contact-owner-1"},
+            created_by_person,
+            owner_person,
+        ],
+        "attached": [
+            {"kind": "calendar_event", "hasIcon": True, "uses_small_icon": True},
+            {"kind": "contact", "hasIcon": True, "uses_small_icon": True},
+            {"kind": "project", "hasIcon": True, "uses_small_icon": True},
+            {"kind": "meeting_note", "hasIcon": True, "uses_small_icon": True},
         ],
     }
 
@@ -229,3 +254,12 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
 
     with pytest.raises(phone_proof.TaskPhoneProofError, match="legacy task HTML"):
         phone_proof.verify_primary_detail_state({**state, "hasTaskHtmlFrame": True}, seed)
+
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="Created by icon lost contrast"):
+        phone_proof.verify_primary_detail_state({
+            **state,
+            "people": [
+                {**created_by_person, "icon_background": "rgb(244, 63, 104)"},
+                owner_person,
+            ],
+        }, seed)

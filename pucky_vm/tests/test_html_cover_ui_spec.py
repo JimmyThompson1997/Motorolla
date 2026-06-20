@@ -208,7 +208,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
     assert 'return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;' in app
     assert 'localStorage.setItem("pucky.cover.calendar_type_filters.v1"' in app
-    assert 'openWorkspaceTarget(row.target, state.route)' in light_info_section
+    light_info_row = function_block(app, "lightInfoRow")
+    assert 'openWorkspaceTarget(' in light_info_row
+    assert 'row.fromRoute || state.route || ""' in light_info_row
     assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
@@ -979,8 +981,11 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_notes_section = function_block(app, "lightTaskNotesSection")
     task_people_section = function_block(app, "lightTaskPeopleSection")
+    task_attachment_rows = function_block(app, "taskAttachmentRows")
+    task_attachments_section = function_block(app, "lightTaskAttachmentsSection")
     task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
     task_filters = function_block(app, "lightTaskFilters")
+    light_info_row = function_block(app, "lightInfoRow")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
     task_refresh_interval = re.search(
@@ -1009,12 +1014,23 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'label: "Created by"' not in task_detail_rows
     assert 'label: "Owner"' not in task_detail_rows
     assert 'const owner = taskPrimaryOwner(task);' in task_people_section
-    assert 'datasetRole: "created_by"' in task_people_section
-    assert 'datasetRole: "owner"' in task_people_section
-    assert 'role: "Created by"' in task_people_section
-    assert 'role: "Owner"' in task_people_section
-    assert 'kind: "contact"' in task_people_section
+    assert 'label: createdBy,' in task_people_section
+    assert 'label: owner,' in task_people_section
+    assert 'value: "Created by"' in task_people_section
+    assert 'value: "Owner"' in task_people_section
+    assert 'target: taskCreatedByTarget(task)' in task_people_section
+    assert 'target: workspaceContactTargetByName(owner)' in task_people_section
+    assert 'dataset: { taskPersonRole: "created_by" }' in task_people_section
+    assert 'dataset: { taskPersonRole: "owner" }' in task_people_section
+    assert 'return lightInfoSection("People", rows);' in task_people_section
+    assert "lightRecordChip(" not in task_people_section
     assert 'return lightLinkedNotesSection(task);' in task_notes_section
+    assert 'icon: graphKindIcon(relatedKind),' in task_attachment_rows
+    assert 'accentKey: graphKindAccentKey(relatedKind),' in task_attachment_rows
+    assert 'value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),' in task_attachment_rows
+    assert 'openOptions: { taskOrigin: origin }' in task_attachment_rows
+    assert 'return lightInfoSection("Attached", rows);' in task_attachments_section
+    assert "lightRecordChip(" not in task_attachments_section
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const notes = lightTaskNotesSection(task);' in task_detail_surface
     assert "surface.append(notes);" in task_detail_surface
@@ -1035,6 +1051,11 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'statusCircle.append(el("span", taskCheckCircleClass(task)));' in task_detail_card
     assert "lightTaskStatusControl(task)" not in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
+    assert 'Object.entries(row.dataset).forEach(([key, value]) => {' in light_info_row
+    assert 'item.dataset[key] = String(value || "");' in light_info_row
+    assert 'row.fromRoute || state.route || ""' in light_info_row
+    assert 'row.openOptions || {}' in light_info_row
+    assert "options.showChevron !== false" in light_info_row
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
     assert task_detail_surface.index("lightTaskChecklistSection(task)") < task_detail_surface.index("lightTaskNotesSection(task)")
@@ -1053,14 +1074,13 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-status-circle-trigger" not in styles
     assert ".light-task-status-control" not in styles
     assert ".light-task-status-trigger" not in styles
-    assert ".light-task-person-row" in styles
+    assert ".light-task-person-row" not in styles
     assert ".light-task-filter-button-icon" in styles
     assert ".light-task-detail-card" in styles
     assert ".light-task-detail-card:focus-visible" in styles
-    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
-    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
-    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles
-    assert '.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"]' in styles
+    assert ".light-task-people-card" not in styles
+    assert ".light-task-attachment-card" not in styles
+    assert ".light-task-chip-cloud" not in styles
 
 
 def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
@@ -1139,9 +1159,11 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
 def test_linked_records_keep_click_targets_but_drop_trailing_chevrons() -> None:
     app = read("app.js")
     light_info_section = function_block(app, "lightInfoSection")
+    light_info_row = function_block(app, "lightInfoRow")
 
     assert 'const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";' in light_info_section
-    assert "item.dataset.workspaceTargetRoute = row.target.route;" in light_info_section
-    assert "item.dataset.workspaceTargetId = row.target.id;" in light_info_section
-    assert "item.addEventListener(\"click\", () => openWorkspaceTarget(row.target, state.route));" in light_info_section
-    assert 'isInteractive && !suppressInteractiveChevron ? el("span", "light-chevron", ">") : el("span", "")' in light_info_section
+    assert 'rows.forEach(row => card.append(lightInfoRow(row, { showChevron: !suppressInteractiveChevron })));' in light_info_section
+    assert "item.dataset.workspaceTargetRoute = row.target.route;" in light_info_row
+    assert "item.dataset.workspaceTargetId = row.target.id;" in light_info_row
+    assert "item.addEventListener(\"click\", () => openWorkspaceTarget(" in light_info_row
+    assert 'isInteractive && options.showChevron !== false ? el("span", "light-chevron", ">") : el("span", "")' in light_info_row
