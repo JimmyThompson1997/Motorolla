@@ -168,6 +168,7 @@ def wait_for_http(url: str, *, timeout_seconds: float = 20.0) -> None:
 
 
 def proof_env() -> dict[str, str]:
+    ensure_cover_playwright_shims()
     env = os.environ.copy()
     if not str(env.get("CODEX_NODE_MODULES") or "").strip():
         for candidate in BUNDLED_NODE_MODULES_CANDIDATES:
@@ -175,6 +176,39 @@ def proof_env() -> dict[str, str]:
                 env["CODEX_NODE_MODULES"] = str(candidate)
                 break
     return env
+
+
+def bundled_package_dir(package_name: str) -> Path | None:
+    package = str(package_name or "").strip()
+    if not package:
+        return None
+    for candidate in BUNDLED_NODE_MODULES_CANDIDATES:
+        direct = candidate / package
+        if direct.is_dir():
+            return direct
+        pnpm_root = candidate / ".pnpm"
+        if not pnpm_root.is_dir():
+            continue
+        for entry in pnpm_root.iterdir():
+            if not entry.is_dir() or not entry.name.startswith(package):
+                continue
+            nested = entry / "node_modules" / package
+            if nested.is_dir():
+                return nested
+    return None
+
+
+def ensure_cover_playwright_shims() -> None:
+    tools_node_modules = ROOT / "tools" / "node_modules"
+    tools_node_modules.mkdir(parents=True, exist_ok=True)
+    for package_name in ("playwright-core", "playwright"):
+        target = bundled_package_dir(package_name)
+        if target is None:
+            continue
+        link_path = tools_node_modules / package_name
+        if link_path.exists() or link_path.is_symlink():
+            continue
+        link_path.symlink_to(target, target_is_directory=True)
 
 
 def run_local_web_proof(extra_args: list[str]) -> int:

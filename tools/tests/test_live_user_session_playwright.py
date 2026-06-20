@@ -82,6 +82,9 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "cover_live_user_session_playwright.mjs" in source
     assert "--skip-canonical-check" in source
     assert "127.0.0.1:8768" in source
+    assert "ensure_cover_playwright_shims()" in source
+    assert 'for package_name in ("playwright-core", "playwright"):' in source
+    assert 'tools_node_modules = ROOT / "tools" / "node_modules"' in source
     assert 'for browser_name in ("chromium", "webkit"):' in source
     assert "for attempt in range(1, 4):" in source
     assert 'append_refresh_param(' in source
