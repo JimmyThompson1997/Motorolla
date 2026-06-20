@@ -34,6 +34,8 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
         script_names.append("cover_live_user_session_playwright.mjs")
     if has_source("cover_hosted_bug_hunt_playwright.mjs"):
         script_names.append("cover_hosted_bug_hunt_playwright.mjs")
+    if has_source("cover_universal_feed_tiles_playwright.mjs"):
+        script_names.append("cover_universal_feed_tiles_playwright.mjs")
     for script_name in script_names:
         assert "PUCKY_WEB_UI_TOKEN" in read_source(script_name), script_name
 
@@ -64,6 +66,13 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert "waitForConnectChips(" in source
     assert "data-links-connected-slug" in source
     assert "Reload connect directly" in source
+    assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
+    assert '"inbox"' in source
+    assert '"meetings"' in source
+    assert '"meeting-notes"' in source
+    assert '"reminders"' in source
+    assert '"notes"' in source
+    assert '"projects"' in source
 
 
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
@@ -139,6 +148,16 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
     assert ".light-task-detail-toggle" not in source
+
+
+def test_task_workspace_live_proof_reads_linked_notes_from_notes_section() -> None:
+    source = read_source("task_workspace_proof_shared.mjs")
+
+    assert 'function linkedTargetLocator(page, kind) {' in source
+    assert 'if (kind === "note") {' in source
+    assert '.filter({ has: page.locator(".light-section-title", { hasText: "NOTES" }) })' in source
+    assert '.locator(\'.light-info-row[data-workspace-target-kind="note"]\')' in source
+    assert 'return page.locator(`.light-info-row[data-task-attachment-kind="${kind}"]`).first();' in source
 
 
 def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
@@ -229,6 +248,9 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "No page action opened a scrollable rich page that reached the bottom in both themes" in source
     assert "No audio card exposed an inline audio detail strip after playback started" in source
     assert "reached_bottom" in source
+    assert "startPositionMs" in source
+    assert "progress.delta_ms >= 2000" in source
+    assert "player_delta_ms >= 500" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source
     assert "inbox_audio_controls" in source
@@ -306,9 +328,71 @@ def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
     assert package["scripts"]["test:cover-notes-detail-flash-browser"] == "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"
     assert '"proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle."' in dev_source
     assert '"proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification."' in dev_source
+    assert "def find_free_localhost_port() -> int:" in dev_source
+    assert 'sock.bind(("127.0.0.1", 0))' in dev_source
+    assert "def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:" in dev_source
+    assert 'base_url = f"http://127.0.0.1:{port}"' in dev_source
+    assert 'server_command=build_local_workspace_proof_server_command(' in dev_source
+    assert 'health_url=f"{base_url}/healthz"' in dev_source
     assert 'return run_local_notes_flash_browser_proof(args.extra_args)' in dev_source
     assert 'return run_live_notes_flash_browser_proof(args.extra_args)' in dev_source
     assert "python -m tools.dev proof-local-notes-flash-browser" in readme
     assert "python -m tools.dev proof-live-notes-flash-browser" in readme
     assert "Notes flash browser proof (local): `python -m tools.dev proof-local-notes-flash-browser`" in docs_readme
-    assert "Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`" in docs_readme
+
+
+def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
+    source = read_source("cover_universal_feed_tiles_playwright.mjs")
+    package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+
+    assert 'const RESULT_SCHEMA = "pucky.universal_feed_tiles_browser_proof.v1";' in source
+    assert "const MOBILE_VIEWPORT = { width: 430, height: 932 };" in source
+    assert "const DESKTOP_VIEWPORT = { width: 1440, height: 980 };" in source
+    assert 'themes: ["light", "dark"]' in source
+    assert 'viewportModes: ["mobile", "desktop"]' in source
+    assert 'route: "notes"' in source
+    assert 'route: "meeting-notes"' in source
+    assert 'route: "reminders"' in source
+    assert 'route: "projects"' in source
+    assert 'route: "inbox"' in source
+    assert 'route: "meetings"' in source
+    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
+    assert 'recordVideo: { dir: videoDir, size: viewport }' in source
+    assert 'writeJsonFile(path.join(config.reportDir, "summary.json"), summary);' in source
+    assert 'writeJsonFile(path.join(config.reportDir, "console.json"), consoleEvents);' in source
+    assert 'writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);' in source
+    assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-route-top.png`));' in source
+    assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));' in source
+    assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-back-to-list.png`));' in source
+    assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-archive-reveal.png`));' in source
+    assert "document.documentElement.scrollWidth" in source
+    assert "window.getComputedStyle(firstRow)" in source
+    assert "borderTopWidth" in source
+    assert "borderTopLeftRadius" in source
+    assert "boxShadow" in source
+    assert "backgroundColor" in source
+    assert "paddingLeft" in source
+    assert "paddingRight" in source
+    assert "dividerColor" in source
+    assert ".light-feed-page" in source
+    assert ".light-feed-surface" in source
+    assert ".light-feed-section" in source
+    assert ".is-flat-feed" in source
+    assert '.card-wrap > article.card' in source
+    assert ".card.card-meeting-list" in source
+    assert "assertFlatShellState(" in source
+    assert "revealArchiveWithoutMutating(" in source
+    assert package["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
+    assert '"proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts."' in dev_source
+    assert "cover_universal_feed_tiles_playwright.mjs" in dev_source
+
+
+def test_hosted_bug_hunt_contract_includes_universal_feed_tiles_acceptance_surface() -> None:
+    source = read_source("cover_hosted_bug_hunt_playwright.mjs")
+
+    assert 'id: "universal_feed_tiles"' in source
+    assert 'label: "Universal feed tiles"' in source
+    assert 'script: "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs"' in source
+    assert "universal_feed_tiles" in source

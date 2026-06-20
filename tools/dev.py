@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -61,8 +62,10 @@ TASK_HELP = {
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
     "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
     "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
+    "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
+    "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
-    "proof-live-web": "Run live user session, inbox audio truth, and native-port browser proofs against the current base URL env/default.",
+    "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
@@ -137,6 +140,12 @@ def wait_for_api(url: str) -> None:
     wait_for_http(url)
 
 
+def find_free_localhost_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def run_command(argv: list[str], *, env: dict[str, str] | None = None) -> int:
     completed = subprocess.run(argv, cwd=ROOT, env=env)
     return int(completed.returncode)
@@ -209,6 +218,22 @@ def ensure_cover_playwright_shims() -> None:
         if link_path.exists() or link_path.is_symlink():
             continue
         link_path.symlink_to(target, target_is_directory=True)
+
+
+def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:
+    command = [
+        PYTHON,
+        "tools/proofs/workspace/workspace_apps_proof_server.py",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--api-token",
+        "proof-token",
+    ]
+    if state_dir is not None:
+        command.extend(["--state-dir", str(state_dir.resolve())])
+    return command
 
 
 def run_local_web_proof(extra_args: list[str]) -> int:
@@ -305,13 +330,20 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                 server.wait(timeout=5)
 
 
-def run_local_workspace_proof(script: str, script_args: list[str], extra_args: list[str]) -> int:
+def run_local_workspace_proof(
+    script: str,
+    script_args: list[str],
+    extra_args: list[str],
+    *,
+    server_command: list[str] | None = None,
+    health_url: str = "http://127.0.0.1:8767/healthz",
+) -> int:
     node_binary = require_binary("node")
     env = proof_env()
     env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
-    server = run_server(LOCAL_PROOF_SERVER)
+    server = run_server(server_command or LOCAL_PROOF_SERVER)
     try:
-        wait_for_api("http://127.0.0.1:8767/healthz")
+        wait_for_api(health_url)
         return run_node_proofs(
             node_binary,
             [
@@ -332,17 +364,24 @@ def run_local_workspace_proof(script: str, script_args: list[str], extra_args: l
 
 
 def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
     return run_local_workspace_proof(
         "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
         [
             "--base-url",
-            "http://127.0.0.1:8767",
+            base_url,
             "--api-token",
             "proof-token",
             "--report-dir",
             str((ROOT / ".tmp" / "proof-local-notes-flash-browser").resolve()),
         ],
         extra_args,
+        server_command=build_local_workspace_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-notes-flash-browser-state",
+        ),
+        health_url=f"{base_url}/healthz",
     )
 
 
@@ -356,6 +395,45 @@ def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
                 [
                     "--report-dir",
                     str((ROOT / ".tmp" / "proof-live-notes-flash-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_local_universal_feed_tiles_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+        [
+            "--base-url",
+            "http://127.0.0.1:8768",
+            "--api-token",
+            "proof-token",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-universal-tiles").resolve()),
+        ],
+        extra_args,
+        server_command=LOCAL_INBOX_MEDIA_PROOF_SERVER,
+        health_url="http://127.0.0.1:8768/healthz",
+    )
+
+
+def run_live_universal_feed_tiles_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    base_url = append_refresh_param("https://pucky.fly.dev", refresh_seed)
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+                [
+                    "--base-url",
+                    base_url,
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-universal-tiles").resolve()),
                     *extra_args,
                 ],
             ),
@@ -432,6 +510,18 @@ def run_live_web_proof(extra_args: list[str]) -> int:
             ])
     scripts.append(
         (
+            "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+            [
+                "--base-url",
+                append_refresh_param("https://pucky.fly.dev", refresh_seed),
+                "--report-dir",
+                str((live_root / "universal-feed-tiles").resolve()),
+                *extra_args,
+            ],
+        )
+    )
+    scripts.append(
+        (
             "tools/proofs/cover/cover_live_user_session_playwright.mjs",
             [
                 "--report-dir",
@@ -497,6 +587,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-live-notes-flash-browser":
         return run_live_notes_flash_browser_proof(args.extra_args)
+    if args.task == "proof-local-universal-tiles":
+        return run_local_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-live-universal-tiles":
+        return run_live_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":

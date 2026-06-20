@@ -14,6 +14,7 @@ ALLOWED_WRAPPERS = {
     "cover_links_scroll_probe.mjs": 'import "./proofs/cover/cover_links_scroll_probe.mjs";',
     "cover_light_native_ports_playwright.mjs": 'import "./proofs/cover/cover_light_native_ports_playwright.mjs";',
     "cover_live_user_session_playwright.mjs": 'import "./proofs/cover/cover_live_user_session_playwright.mjs";',
+    "cover_universal_feed_tiles_playwright.mjs": 'import "./proofs/cover/cover_universal_feed_tiles_playwright.mjs";',
     "cover_pause_scrubber_playwright.mjs": 'import "./proofs/cover/cover_pause_scrubber_playwright.mjs";',
     "cover_voice_status_dot_playwright.mjs": 'import "./proofs/cover/cover_voice_status_dot_playwright.mjs";',
     "meeting_mode_agent_real_vm_playwright.mjs": 'import "./proofs/meeting/meeting_mode_agent_real_vm_playwright.mjs";',

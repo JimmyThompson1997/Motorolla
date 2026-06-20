@@ -69,6 +69,9 @@
   const routeCatalog = window.PUCKY_UI_ROUTES && typeof window.PUCKY_UI_ROUTES === "object"
     ? window.PUCKY_UI_ROUTES
     : {};
+  const browserStateCatalog = window.PUCKY_UI_BROWSER_STATE && typeof window.PUCKY_UI_BROWSER_STATE === "object"
+    ? window.PUCKY_UI_BROWSER_STATE
+    : {};
   const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS && typeof iconCatalog.MATERIAL_SYMBOLS === "object"
     ? iconCatalog.MATERIAL_SYMBOLS
     : {};
@@ -84,6 +87,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -159,6 +163,7 @@
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
+    taskMutationPending: {},
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
     taskFilter: "all",
@@ -971,7 +976,7 @@
         ? Math.max(0, Math.round(Number(args.start_at_ms)))
         : savedPositionFor(nextSource || nextPath);
       const speed = finiteSpeed(args.speed ?? args.rate)
-        ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === (nextSource || nextPath)) || {})
+        ?? savedSpeedForCard(findCardByAudioLookupKey(nextSource || nextPath) || {})
         ?? state.player.speed
         ?? 1;
       const audio = ensureSharedBrowserAudio();
@@ -2178,13 +2183,13 @@
   }
 
   async function ensureLinksApiConfig() {
-    if (state.links.apiBaseUrl) {
+    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+      state.links.apiToken = resolveBrowserPreviewApiToken();
+      state.links.deviceId = resolveBrowserPreviewDeviceId();
       return;
     }
-    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.apiToken = "";
-      state.links.deviceId = "";
+    if (state.links.apiBaseUrl) {
       return;
     }
     try {
@@ -2196,6 +2201,28 @@
       state.links.apiBaseUrl = "";
       state.links.apiToken = "";
       state.links.deviceId = "";
+    }
+  }
+
+  function resolveBrowserPreviewApiToken() {
+    if (typeof browserStateCatalog.resolveBrowserApiToken === "function") {
+      return String(browserStateCatalog.resolveBrowserApiToken() || "").trim();
+    }
+    try {
+      return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function resolveBrowserPreviewDeviceId() {
+    if (typeof browserStateCatalog.resolveBrowserDeviceId === "function") {
+      return String(browserStateCatalog.resolveBrowserDeviceId() || "").trim();
+    }
+    try {
+      return String(new URLSearchParams(window.location.search || "").get("device_id") || "").trim();
+    } catch (_) {
+      return "";
     }
   }
 
@@ -3014,8 +3041,8 @@
       portal_url: "",
       token: "",
       apiBaseUrl: "",
-      apiToken: "",
-      deviceId: "",
+      apiToken: resolveBrowserPreviewApiToken(),
+      deviceId: resolveBrowserPreviewDeviceId(),
       userId: "",
       auth_mode: "browser",
       apps: [],
@@ -4192,9 +4219,341 @@
     return row;
   }
 
+  function normalizeUniversalFeedTileDescriptor(descriptor = {}) {
+    return {
+      id: String(descriptor.id || "").trim(),
+      surface: String(descriptor.surface || "").trim().toLowerCase(),
+      variant: String(descriptor.variant || "").trim().toLowerCase(),
+      sectionKey: String(descriptor.sectionKey || "").trim().toLowerCase(),
+      title: String(descriptor.title || "").trim(),
+      meta: descriptor.meta && typeof descriptor.meta === "object" ? descriptor.meta : descriptor.meta ?? null,
+      summary: String(descriptor.summary || "").trim(),
+      chips: Array.isArray(descriptor.chips) ? descriptor.chips.slice() : [],
+      leading: descriptor.leading && typeof descriptor.leading === "object" ? descriptor.leading : null,
+      trailing: descriptor.trailing && typeof descriptor.trailing === "object" ? descriptor.trailing : null,
+      interactive: descriptor.interactive !== false,
+      open: typeof descriptor.open === "function" ? descriptor.open : null,
+      renderMode: String(descriptor.renderMode || "light").trim().toLowerCase() || "light",
+    };
+  }
+
+  function isUniversalFlatFeedSurface(surface) {
+    const surfaceKey = String(surface || "").trim().toLowerCase();
+    return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);
+  }
+
+  function normalizeUniversalFeedSectionDescriptor(descriptor = {}) {
+    const items = Array.isArray(descriptor.items) ? descriptor.items.map(normalizeUniversalFeedTileDescriptor) : [];
+    const count = Number.isFinite(Number(descriptor.count)) ? Number(descriptor.count) : items.length;
+    return {
+      key: String(descriptor.key || "").trim().toLowerCase(),
+      label: String(descriptor.label || "").trim(),
+      count,
+      collapsible: Boolean(descriptor.collapsible),
+      expanded: descriptor.expanded !== false,
+      emptyState: descriptor.emptyState || null,
+      items,
+    };
+  }
+
+  function universalFeedSectionClassName(surface) {
+    if (surface === "notes") {
+      return "light-notes-section";
+    }
+    if (surface === "reminders") {
+      return "light-reminder-list-section";
+    }
+    return "";
+  }
+
+  function universalFeedListClassName(surface) {
+    if (surface === "notes") {
+      return "light-notes-section-body";
+    }
+    if (surface === "meeting-notes") {
+      return "light-list light-graph-list";
+    }
+    if (surface === "reminders") {
+      return "light-list light-graph-list";
+    }
+    if (surface === "projects") {
+      return "light-list";
+    }
+    if (surface === "meetings") {
+      return "meetings-list-card";
+    }
+    return "";
+  }
+
+  function renderUniversalFeedPage(options = {}) {
+    const page = typeof options.createPage === "function"
+      ? options.createPage()
+      : lightPage(options.title || "Workspace", options.pageOptions || {});
+    const surfaceKey = String(options.surface || "").trim().toLowerCase();
+    const isFlatFeed = isUniversalFlatFeedSurface(surfaceKey);
+    const pageClassName = String(options.pageClassName || "").trim();
+    page.classList.add("light-feed-page");
+    if (pageClassName) {
+      page.classList.add(...pageClassName.split(/\s+/).filter(Boolean));
+    }
+    page.dataset.feedSurface = surfaceKey;
+    if (isFlatFeed) {
+      page.classList.add("is-flat-feed");
+    }
+    const surfaceTag = String(options.surfaceTag || "div").trim().toLowerCase() || "div";
+    const surfaceClassName = `light-feed-surface ${String(options.surfaceClassName || "").trim()}`.trim();
+    const surface = el(surfaceTag, surfaceClassName);
+    surface.dataset.feedSurface = surfaceKey;
+    if (isFlatFeed) {
+      surface.classList.add("is-flat-feed");
+    }
+    const contentClassName = String(options.contentClassName || "").trim();
+    const content = contentClassName ? el("div", contentClassName) : surface;
+    if (content !== surface && isFlatFeed) {
+      content.classList.add("is-flat-feed");
+    }
+    if (content !== surface) {
+      surface.append(content);
+    }
+    if (options.status instanceof Node) {
+      content.append(options.status);
+      page.append(surface);
+      return page;
+    }
+    const beforeSections = Array.isArray(options.beforeSections)
+      ? options.beforeSections.filter(node => node instanceof Node)
+      : [];
+    const afterSections = Array.isArray(options.afterSections)
+      ? options.afterSections.filter(node => node instanceof Node)
+      : [];
+    const sections = Array.isArray(options.sections) ? options.sections.map(normalizeUniversalFeedSectionDescriptor) : [];
+    beforeSections.forEach(node => content.append(node));
+    sections.forEach(section => content.append(renderUniversalFeedSection(section, { surface: options.surface })));
+    if (!sections.length && options.emptyState instanceof Node) {
+      content.append(options.emptyState);
+    }
+    afterSections.forEach(node => content.append(node));
+    page.append(surface);
+    return page;
+  }
+
+  function renderUniversalFeedSection(sectionDescriptor, options = {}) {
+    const descriptor = {
+      ...normalizeUniversalFeedSectionDescriptor(sectionDescriptor),
+      surface: String(options.surface || "").trim().toLowerCase(),
+    };
+    const sectionClassName = universalFeedSectionClassName(descriptor.surface);
+    const section = el("section", `${sectionClassName} light-feed-section`.trim());
+    if (isUniversalFlatFeedSurface(descriptor.surface)) {
+      section.classList.add("is-flat-feed");
+    }
+    if (descriptor.key) {
+      section.dataset.feedSection = descriptor.key;
+    }
+    if (descriptor.surface === "notes" && descriptor.key) {
+      section.dataset.notesSection = descriptor.key;
+    }
+    const bodyId = descriptor.key ? `light-${descriptor.surface || "feed"}-section-${descriptor.key}` : "";
+    if (descriptor.collapsible && descriptor.surface === "notes") {
+      section.append(lightNotesSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
+    } else if (descriptor.label) {
+      const header = el("div", "light-feed-section-header");
+      header.append(lightSectionTitle(descriptor.label));
+      section.append(header);
+    }
+    const listClassName = universalFeedListClassName(descriptor.surface);
+    const body = el("div", `${listClassName} light-feed-section-body light-feed-list`.trim());
+    if (isUniversalFlatFeedSurface(descriptor.surface)) {
+      body.classList.add("is-flat-feed");
+    }
+    if (bodyId) {
+      body.id = bodyId;
+    }
+    body.hidden = descriptor.collapsible && !descriptor.expanded;
+    if (descriptor.emptyState && descriptor.items.length === 0) {
+      body.append(descriptor.emptyState);
+    } else if (!descriptor.collapsible || descriptor.expanded) {
+      body.append(...descriptor.items.map(item => renderUniversalFeedTile(item)));
+    }
+    section.append(body);
+    return section;
+  }
+
+  function renderUniversalFeedTile(tileDescriptor) {
+    const descriptor = normalizeUniversalFeedTileDescriptor(tileDescriptor);
+    if (descriptor.variant === "notes") {
+      return lightNoteRow(descriptor.meta?.note || null);
+    }
+    if (descriptor.variant === "graph") {
+      const record = descriptor.meta?.record || null;
+      return lightGraphRow(record, {
+        rowClassName: descriptor.meta?.rowClassName || "",
+        showLeadingIcon: descriptor.leading?.show !== false,
+        showTrailingChevron: descriptor.trailing?.show !== false,
+        flatFeed: descriptor.renderMode === "flat",
+        icon: descriptor.leading?.icon || graphKindIcon(record?.kind),
+        detailRoute: descriptor.meta?.detailRoute || "",
+        selectedKey: descriptor.meta?.selectedKey || "",
+        collection: descriptor.meta?.collection || ""
+      });
+    }
+    if (descriptor.variant === "reminder") {
+      // Legacy call shape retained for source-contract coverage:
+      // return lightReminderRow(descriptor.meta?.reminder || null);
+      return lightReminderRow(descriptor.meta?.reminder || null, {
+        flatFeed: descriptor.renderMode === "flat",
+      });
+    }
+    if (descriptor.variant === "project") {
+      return lightProjectRow(descriptor.meta?.project || null, {
+        flatFeed: descriptor.renderMode === "flat",
+      });
+    }
+    if (descriptor.variant === "canonical_reply") {
+      const card = descriptor.meta?.card;
+      return cardView(card, { flatFeed: descriptor.renderMode === "flat" });
+    }
+    if (descriptor.variant === "canonical_meeting") {
+      const meeting = descriptor.meta?.meeting;
+      return cardView(meetingCardFromRecord(meeting), { flatFeed: descriptor.renderMode === "flat" });
+    }
+    return el("div", "light-feed-row");
+  }
+
+  function universalNoteFeedTileDescriptor(note, sectionKey = "") {
+    const noteId = noteRecordId(note);
+    const meta = noteMetaLine(note);
+    return normalizeUniversalFeedTileDescriptor({
+      id: noteId,
+      surface: "notes",
+      variant: "notes",
+      sectionKey,
+      title: note.title || "Untitled note",
+      meta: { note, source: meta.source, timestamp: meta.timestamp },
+      summary: String(note?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: { kind: "pin", pending: notePinPending(noteId), pinned: Boolean(note?.pinned) },
+      interactive: true,
+      open: () => {
+        state.selectedNoteId = noteId;
+        lightNavigate("note-detail", { from: "notes" });
+      },
+      renderMode: "flat",
+    });
+  }
+
+  function universalGraphFeedTileDescriptor(record, options = {}) {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(record?.id || record?.record_id || "").trim(),
+      surface: String(options.surface || options.collection || "workspace").trim().toLowerCase(),
+      variant: "graph",
+      sectionKey: String(options.sectionKey || options.collection || "").trim().toLowerCase(),
+      title: record?.title || "Untitled record",
+      meta: {
+        record,
+        rowClassName: String(options.rowClassName || "").trim(),
+        detailRoute: String(options.detailRoute || "").trim(),
+        selectedKey: String(options.selectedKey || "").trim(),
+        collection: String(options.collection || "").trim()
+      },
+      summary: graphListLabel(record),
+      chips: graphObjectChipValues(record),
+      leading: { icon: options.icon || graphKindIcon(record?.kind), show: options.showLeadingIcon !== false },
+      trailing: { show: options.showTrailingChevron !== false },
+      interactive: true,
+      open: () => {
+        state[options.selectedKey] = record.id;
+        lightNavigate(options.detailRoute, { from: options.collection });
+      },
+      renderMode: "flat",
+    });
+  }
+
+  function universalReminderFeedTileDescriptor(reminder, sectionKey = "") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(reminder?.id || "").trim(),
+      surface: "reminders",
+      variant: "reminder",
+      sectionKey: String(sectionKey || "").trim().toLowerCase(),
+      title: reminder?.title || "Untitled reminder",
+      meta: { reminder },
+      summary: String(reminder?.summary || "").trim(),
+      chips: [],
+      leading: { icon: "bell", show: true },
+      trailing: { show: true, label: reminderRowLabel(reminder) },
+      interactive: true,
+      open: () => {
+        state.selectedReminderId = reminder.id;
+        lightNavigate("reminder-detail", { from: "reminders" });
+      },
+      renderMode: "flat",
+    });
+  }
+
+  function universalProjectFeedTileDescriptor(project, sectionKey = "") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(project?.id || "").trim(),
+      surface: "projects",
+      variant: "project",
+      sectionKey: String(sectionKey || "").trim().toLowerCase(),
+      title: project?.title || "Untitled project",
+      meta: { project },
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      chips: projectChips(project),
+      leading: { icon: "folder", show: true },
+      trailing: null,
+      interactive: true,
+      open: () => {
+        state.selectedProjectId = project.id;
+        lightNavigate("project-detail", { from: "projects" });
+      },
+      renderMode: "flat",
+    });
+  }
+
+  function universalCanonicalReplyFeedTileDescriptor(card, sectionKey = "inbox") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(card?.card_id || card?.session_id || "").trim(),
+      surface: "inbox",
+      variant: "canonical_reply",
+      sectionKey,
+      title: card?.title || "Pucky",
+      meta: { card },
+      summary: String(card?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: null,
+      interactive: true,
+      open: () => showTranscript(card),
+      renderMode: "flat",
+    });
+  }
+
+  function universalCanonicalMeetingFeedTileDescriptor(meeting, sectionKey = "meetings") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(meeting?.meeting_id || meeting?.id || "").trim(),
+      surface: "meetings",
+      variant: "canonical_meeting",
+      sectionKey,
+      title: meeting?.title || "Meeting",
+      meta: { meeting },
+      summary: String(meeting?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: null,
+      interactive: true,
+      open: () => {
+        void showMeetingDetail(meeting);
+      },
+      renderMode: "flat",
+    });
+  }
+
   function lightMeetingNotesPage() {
     return lightGraphListPage({
       title: "Meeting Notes",
+      surface: "meeting-notes",
       collection: "meeting-notes",
       icon: "record_voice_over",
       detailRoute: "meeting-note-detail",
@@ -4218,39 +4577,37 @@
   }
 
   function lightRemindersPage() {
-    const page = lightPage("Reminders");
-    page.classList.add("light-graph-page", "light-reminders-page");
     const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
     const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));
-    if (!active.length && !snoozed.length) {
-      page.append(lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."));
-      return page;
-    }
+    const sections = [];
     if (active.length) {
-      page.append(lightReminderListSection("", active, "active"));
+      sections.push(lightReminderListSection("", active, "active"));
     }
     if (snoozed.length) {
-      page.append(lightReminderListSection("Snoozed", snoozed, "snoozed"));
+      sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));
     }
-    return page;
+    return renderUniversalFeedPage({
+      title: "Reminders",
+      surface: "reminders",
+      pageClassName: "light-graph-page light-reminders-page",
+      status,
+      emptyState: lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."),
+      sections,
+    });
   }
 
   function lightReminderListSection(title, reminders, sectionKey = "") {
-    const section = el("section", "light-reminder-list-section");
-    section.dataset.reminderSection = String(sectionKey || "").trim().toLowerCase();
-    if (title) {
-      section.append(lightSectionTitle(title));
-    }
-    const list = el("div", "light-list light-graph-list");
-    reminders.forEach(reminder => list.append(lightReminderRow(reminder)));
-    section.append(list);
-    return section;
+    return {
+      key: String(sectionKey || "").trim().toLowerCase(),
+      label: title,
+      count: reminders.length,
+      collapsible: false,
+      expanded: true,
+      emptyState: null,
+      items: reminders.map(reminder => universalReminderFeedTileDescriptor(reminder, sectionKey))
+    };
   }
 
   function lightReminderDetailPage() {
@@ -4285,22 +4642,29 @@
   }
 
   function lightGraphListPage(options = {}) {
-    const page = lightPage(options.title || "Workspace");
-    page.classList.add("light-graph-page");
     const status = lightWorkspaceStatus(options.collection, options.icon || "apps", options.emptyTitle || "No records yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    const list = el("div", "light-list light-graph-list");
-    list.append(...workspaceItems(options.collection).map(record => lightGraphRow(record, options)));
-    page.append(list);
-    return page;
+    return renderUniversalFeedPage({
+      title: options.title || "Workspace",
+      surface: String(options.surface || options.collection || "workspace"),
+      pageClassName: "light-graph-page",
+      surfaceClassName: "light-list-surface",
+      status,
+      sections: [{
+        key: String(options.sectionKey || options.collection || "records").trim().toLowerCase(),
+        label: String(options.sectionLabel || "").trim(),
+        count: workspaceItems(options.collection).length,
+        collapsible: false,
+        expanded: true,
+        emptyState: null,
+        items: workspaceItems(options.collection).map(record => universalGraphFeedTileDescriptor(record, options))
+      }],
+    });
   }
 
   function lightGraphRow(record, options = {}) {
     const rowClassName = String(options.rowClassName || "").trim();
-    const row = el("button", `light-card light-graph-row ${rowClassName}`.trim());
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-graph-row", rowClassName, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const leadingIcon = options.showLeadingIcon === false
       ? null
       : lightSmallIcon(options.icon || graphKindIcon(record.kind));
@@ -4323,10 +4687,11 @@
     return row;
   }
 
-  function lightReminderRow(reminder) {
+  function lightReminderRow(reminder, options = {}) {
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
-    const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass}`.trim());
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-reminder-row", group || "", deliveryClass, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     row.type = "button";
@@ -4568,6 +4933,11 @@
 
   function graphObjectChips(record) {
     const chips = el("span", "light-graph-chip-row");
+    graphObjectChipValues(record).forEach(value => chips.append(el("span", "light-graph-chip", value)));
+    return chips;
+  }
+
+  function graphObjectChipValues(record) {
     const meta = record?.metadata || {};
     const linkCount = Array.isArray(record?.links) ? record.links.length : 0;
     const values = [];
@@ -4580,8 +4950,7 @@
     if (meta.channel) {
       values.push(meta.channel);
     }
-    values.slice(0, 3).forEach(value => chips.append(el("span", "light-graph-chip", value)));
-    return chips;
+    return values.slice(0, 3);
   }
 
   function graphListLabel(record) {
@@ -5364,26 +5733,26 @@
   }
 
   function lightNotesPage() {
-    const page = lightPage("Notes");
-    page.classList.add("light-notes-page");
     const status = lightWorkspaceStatus("notes", "note", "No notes yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
     const notes = workspaceItems("notes");
     const pinned = notes.filter(note => note.pinned);
-    const feedWrap = el("div", "light-notes-feed");
+    const sections = [];
     if (pinned.length) {
-      feedWrap.append(lightNotesSection("Pinned", "pinned", pinned));
+      sections.push(lightNotesSection("Pinned", "pinned", pinned));
     }
-    feedWrap.append(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));
-    page.append(feedWrap);
-    return page;
+    sections.push(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));
+    return renderUniversalFeedPage({
+      title: "Notes",
+      surface: "notes",
+      pageClassName: "light-notes-page",
+      surfaceClassName: "light-notes-feed",
+      status,
+      sections,
+    });
   }
 
   function lightNotesSectionHeader(title, sectionKey, count, expanded, controlsId) {
-    const button = el("button", "light-notes-section-header");
+    const button = el("button", "light-feed-section-header light-notes-section-header");
     button.type = "button";
     button.dataset.notesSection = sectionKey;
     button.setAttribute("aria-expanded", String(expanded));
@@ -5405,23 +5774,19 @@
   }
 
   function lightNotesSection(title, sectionKey, notes) {
-    const section = el("section", "light-notes-section");
-    section.dataset.notesSection = sectionKey;
-    const expanded = noteSectionExpanded(sectionKey);
-    const bodyId = `light-notes-section-${sectionKey}`;
-    section.append(lightNotesSectionHeader(title, sectionKey, notes.length, expanded, bodyId));
-    const body = el("div", "light-notes-section-body");
-    body.id = bodyId;
-    body.hidden = !expanded;
-    if (expanded) {
-      notes.forEach(note => body.append(lightNoteRow(note)));
-    }
-    section.append(body);
-    return section;
+    return {
+      key: sectionKey,
+      label: title,
+      count: notes.length,
+      collapsible: true,
+      expanded: noteSectionExpanded(sectionKey),
+      emptyState: null,
+      items: notes.map(note => universalNoteFeedTileDescriptor(note, sectionKey))
+    };
   }
 
   function lightNoteRow(note) {
-    const row = el("div", "light-note-row");
+    const row = el("div", "light-feed-row light-note-row");
     const noteId = noteRecordId(note);
     row.setAttribute("role", "button");
     row.tabIndex = 0;
@@ -5497,8 +5862,9 @@
     });
     page.append(lightHtmlDocument(note, "No generated note page yet.", {
       untitledFallback: true,
-      className: "light-detail-html-body",
+      className: "light-detail-html-body light-note-detail-html-body",
       fullBleed: true,
+      revealOnLoad: "note",
       noteFlashDebug: true
     }));
     return page;
@@ -5635,16 +6001,210 @@
     });
   }
 
+  function taskRecordId(task) {
+    return String(task?.id || task?.record_id || "").trim();
+  }
+
+  function taskById(taskId, fallback = null) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return fallback;
+    }
+    return workspaceItems("tasks").find(task => taskRecordId(task) === normalizedTaskId) || fallback;
+  }
+
+  function unwrapTaskRecordResponse(payload) {
+    const task = payload && typeof payload === "object" && payload.task && typeof payload.task === "object"
+      ? payload.task
+      : payload;
+    return task && typeof task === "object" ? task : null;
+  }
+
+  function taskStatusChoices() {
+    return taskStatusFilterChoices().filter(([value]) => value !== "all");
+  }
+
+  function deriveTaskGroup(task, status = normalizedTaskStatus(task)) {
+    const normalizedStatus = String(status || "").trim();
+    if (normalizedStatus === "done") {
+      return "done";
+    }
+    const due = Number(task?.due_at_ms || 0);
+    if (!Number.isFinite(due) || due <= 0) {
+      return "do";
+    }
+    const now = Date.now();
+    if (due < now) {
+      return "overdue";
+    }
+    if (due <= now + 24 * 60 * 60 * 1000) {
+      return "do";
+    }
+    return "soon";
+  }
+
+  function taskWithStatus(task, status) {
+    const nextStatus = String(status || "").trim() || "todo";
+    return {
+      ...task,
+      status: nextStatus,
+      derived_group: deriveTaskGroup(task, nextStatus),
+      metadata: {
+        ...(task?.metadata || {}),
+        status: nextStatus,
+      },
+    };
+  }
+
+  function taskWithChecklist(task, checklist) {
+    return {
+      ...task,
+      checklist,
+      metadata: {
+        ...(task?.metadata || {}),
+        checklist,
+      },
+    };
+  }
+
+  function replaceTaskInItems(items, nextTask) {
+    const normalizedTaskId = taskRecordId(nextTask);
+    const source = Array.isArray(items) ? items : [];
+    if (!normalizedTaskId) {
+      return source.slice();
+    }
+    return source.map(task => taskRecordId(task) === normalizedTaskId ? nextTask : task);
+  }
+
+  function taskMutationKey(taskId, scope) {
+    return `${String(taskId || "").trim()}::${String(scope || "").trim()}`;
+  }
+
+  function taskMutationPending(taskId, scope) {
+    return Boolean(state.taskMutationPending[taskMutationKey(taskId, scope)]);
+  }
+
+  function setTaskMutationPending(taskId, scope, pending) {
+    const key = taskMutationKey(taskId, scope);
+    const next = { ...state.taskMutationPending };
+    if (!String(taskId || "").trim() || !String(scope || "").trim()) {
+      state.taskMutationPending = next;
+      return;
+    }
+    if (pending) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    state.taskMutationPending = next;
+  }
+
+  async function applyTaskMutation(taskId, scope, optimisticTask, patchPayload) {
+    const normalizedTaskId = String(taskId || "").trim();
+    const normalizedScope = String(scope || "").trim();
+    const tasksBucket = state.workspace.tasks;
+    if (!normalizedTaskId || !normalizedScope || !tasksBucket || !Array.isArray(tasksBucket.items)) {
+      return null;
+    }
+    if (taskMutationPending(normalizedTaskId, normalizedScope)) {
+      return null;
+    }
+    const previousItems = tasksBucket.items.slice();
+    setTaskMutationPending(normalizedTaskId, normalizedScope, true);
+    tasksBucket.items = replaceTaskInItems(previousItems, optimisticTask);
+    render();
+    try {
+      const response = await patchWorkspaceRecord("tasks", normalizedTaskId, patchPayload);
+      const nextTask = unwrapTaskRecordResponse(response);
+      if (nextTask && taskRecordId(nextTask) === normalizedTaskId) {
+        tasksBucket.items = replaceTaskInItems(tasksBucket.items, nextTask);
+      }
+      return nextTask;
+    } catch (error) {
+      tasksBucket.items = previousItems;
+      showToast(error.message);
+      return null;
+    } finally {
+      setTaskMutationPending(normalizedTaskId, normalizedScope, false);
+      render();
+    }
+  }
+
+  async function updateTaskStatus(task, status) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const nextStatus = taskStatusChoices().some(([value]) => value === String(status || "").trim())
+      ? String(status || "").trim()
+      : "todo";
+    if (!currentTask || !taskRecordId(currentTask) || normalizedTaskStatus(currentTask) === nextStatus) {
+      return null;
+    }
+    const optimisticTask = taskWithStatus(currentTask, nextStatus);
+    return applyTaskMutation(taskRecordId(currentTask), "status", optimisticTask, { status: nextStatus });
+  }
+
+  function openTaskStatusSelector(task) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const currentTaskId = taskRecordId(currentTask);
+    if (!currentTask || !currentTaskId || taskMutationPending(currentTaskId, "status")) {
+      return;
+    }
+    openSettingsSelector({
+      title: "Task status",
+      currentValue: normalizedTaskStatus(currentTask),
+      options: taskStatusChoices().map(([value, label]) => ({
+        value,
+        label,
+      })),
+      onSelect: value => {
+        void updateTaskStatus(currentTask, value);
+      },
+    });
+  }
+
+  async function toggleTaskChecklistItem(task, itemId) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const normalizedTaskId = taskRecordId(currentTask);
+    const normalizedItemId = String(itemId || "").trim();
+    if (!currentTask || !normalizedTaskId || !normalizedItemId || taskMutationPending(normalizedTaskId, normalizedItemId)) {
+      return null;
+    }
+    const checklist = taskChecklist(currentTask);
+    const target = checklist.find(item => String(item?.id || "").trim() === normalizedItemId);
+    if (!target) {
+      return null;
+    }
+    const nextChecklist = checklist.map(item => {
+      if (String(item?.id || "").trim() !== normalizedItemId) {
+        return item;
+      }
+      return {
+        ...item,
+        done: !Boolean(item?.done),
+      };
+    });
+    const optimisticTask = taskWithChecklist(currentTask, nextChecklist);
+    return applyTaskMutation(normalizedTaskId, normalizedItemId, optimisticTask, { checklist: nextChecklist });
+  }
+
   function lightTaskGroup(tasks, group) {
     const card = el("div", "light-card light-task-card light-task-group");
     tasks.forEach(task => {
       const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      const statusTrigger = el("span", "light-task-row-status-trigger");
+      const statusTrigger = el("button", "light-task-row-status-trigger");
+      statusTrigger.type = "button";
       statusTrigger.dataset.taskStatusTrigger = "true";
-      statusTrigger.setAttribute("aria-hidden", "true");
+      statusTrigger.dataset.taskId = task.id;
+      statusTrigger.setAttribute("aria-haspopup", "dialog");
+      statusTrigger.setAttribute("aria-label", `Task status: ${taskStatusLabel(normalizedTaskStatus(task))}`);
+      statusTrigger.disabled = taskMutationPending(taskRecordId(task), "status");
       statusTrigger.append(el("span", taskCheckCircleClass(task)));
+      statusTrigger.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openTaskStatusSelector(task);
+      });
       const main = el("button", "light-task-row-main");
       main.type = "button";
       main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
@@ -5855,52 +6415,45 @@
 
   function lightTaskPeopleSection(task) {
     const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    const entries = [];
+    const rows = [];
     const createdBy = taskCreatedBy(task);
     if (createdBy) {
-      entries.push({
-        role: "Created by",
-        datasetRole: "created_by",
-        contactName: createdBy,
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: createdBy,
+        value: "Created by",
+        target: taskCreatedByTarget(task),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "created_by" },
       });
     }
     const owner = taskPrimaryOwner(task);
     if (owner) {
-      entries.push({
-        role: "Owner",
-        datasetRole: "owner",
-        contactName: owner,
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: owner,
+        value: "Owner",
+        target: workspaceContactTargetByName(owner),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "owner" },
       });
     }
-    if (!entries.length) {
+    if (!rows.length) {
       return null;
     }
-    const section = el("section", "light-info-section");
-    section.append(lightSectionTitle("People"));
-    const card = el("div", "light-card light-task-people-card");
-    entries.forEach(entry => {
-      const row = el("div", "light-task-person-row");
-      row.dataset.taskPersonRole = entry.datasetRole;
-      row.append(el("span", "light-task-person-label", entry.role));
-      row.append(lightRecordChip({
-        label: entry.contactName,
-        kind: "contact",
-        target: workspaceContactTargetByName(entry.contactName),
-      }, {
-        fromRoute: origin.route,
-        taskOrigin: origin,
-      }));
-      card.append(row);
-    });
-    section.append(card);
-    return section;
+    return lightInfoSection("People", rows);
   }
 
-  function taskAttachmentTargets(task) {
+  function taskAttachmentRows(task) {
     const links = Array.isArray(task?.links) ? task.links : [];
     const seen = new Set();
     const allowedKinds = new Set(["calendar_event", "contact", "project", "meeting_note", "reminder"]);
-    const ordered = [];
+    const rows = [];
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
     links.forEach(link => {
       const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
       const relatedKind = String(isSource ? link.target_kind : link.source_kind);
@@ -5915,15 +6468,24 @@
         return;
       }
       seen.add(key);
-      ordered.push({
+      const relation = link.label && link.label !== related?.title
+        ? `${graphKindLabel(relatedKind)}${DOT}${link.label}`
+        : graphKindLabel(relatedKind);
+      rows.push({
+        icon: graphKindIcon(relatedKind),
+        accentKey: graphKindAccentKey(relatedKind),
         label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
         target,
-        kind: relatedKind
+        kind: relatedKind,
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskAttachmentKind: relatedKind },
       });
     });
     const order = ["calendar_event", "contact", "project", "meeting_note", "reminder"];
-    ordered.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
-    return ordered;
+    rows.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
+    return rows;
   }
 
   function lightTaskNotesSection(task) {
@@ -5933,14 +6495,23 @@
   function lightTaskStatusControl(task) {
     const control = el("div", "light-task-status-control");
     const current = normalizedTaskStatus(task);
-    const button = el("div", "light-pill is-active light-task-status-trigger");
+    const button = el("button", "light-pill is-active light-task-status-trigger");
+    button.type = "button";
     button.dataset.taskStatus = current;
+    button.dataset.taskStatusTrigger = "true";
+    button.setAttribute("aria-haspopup", "dialog");
     button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
+    button.disabled = taskMutationPending(taskRecordId(task), "status");
     const icon = el("span", "light-task-status-trigger-icon");
     icon.append(el("span", taskStatusCircleClass(current)));
     const copy = el("span", "light-task-status-trigger-copy");
     copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
     button.append(icon, copy);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTaskStatusSelector(task);
+    });
     control.append(button);
     return control;
   }
@@ -5954,12 +6525,20 @@
     section.append(lightSectionTitle("Checklist"));
     const card = el("div", "light-card light-task-checklist-card");
     items.forEach(item => {
-      const row = el("div", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
+      const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
+      row.type = "button";
       row.dataset.checklistItemId = String(item.id || "");
+      row.dataset.checklistDone = item.done ? "true" : "false";
+      row.setAttribute("aria-pressed", item.done ? "true" : "false");
+      row.disabled = taskMutationPending(taskRecordId(task), item.id);
       row.append(
         el("span", item.done ? "light-check-circle done" : "light-check-circle"),
         el("span", "light-task-checklist-label", String(item.label || "Checklist item"))
       );
+      row.addEventListener("click", event => {
+        event.preventDefault();
+        void toggleTaskChecklistItem(task, item.id);
+      });
       card.append(row);
     });
     section.append(card);
@@ -5967,31 +6546,11 @@
   }
 
   function lightTaskAttachmentsSection(task) {
-    const attachments = taskAttachmentTargets(task);
-    if (!attachments.length) {
+    const rows = taskAttachmentRows(task);
+    if (!rows.length) {
       return null;
     }
-    const section = el("section", "light-info-section");
-    section.append(lightSectionTitle("Attached"));
-    const card = el("div", "light-card light-task-attachment-card");
-    const cloud = el("div", "light-chip-cloud light-task-chip-cloud");
-    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    attachments.forEach(entry => {
-      cloud.append(lightRecordChip(entry, {
-        fromRoute: origin.route,
-        taskOrigin: origin
-      }));
-    });
-    card.append(cloud);
-    section.append(card);
-    return section;
-  }
-
-  function lightChipIcon(icon, accentKey = "") {
-    const wrap = el("span", "light-record-chip-icon");
-    applySemanticIconAccent(wrap, accentKey, { propertyName: "color", allowEmpty: true });
-    wrap.innerHTML = iconSvg(icon, { filled: false });
-    return wrap;
+    return lightInfoSection("Attached", rows);
   }
 
   function resetLightRouteScroll() {
@@ -6022,10 +6581,19 @@
 
   function lightTaskDetailCard(task) {
     const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    const statusTrigger = el("span", "light-task-status-circle-trigger");
+    const statusTrigger = el("button", "light-task-status-circle-trigger");
+    statusTrigger.type = "button";
     statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-hidden", "true");
+    statusTrigger.dataset.taskStatus = normalizedTaskStatus(task);
+    statusTrigger.setAttribute("aria-haspopup", "dialog");
+    statusTrigger.setAttribute("aria-label", `Task status: ${taskStatusLabel(normalizedTaskStatus(task))}`);
+    statusTrigger.disabled = taskMutationPending(taskRecordId(task), "status");
     statusTrigger.append(el("span", taskCheckCircleClass(task)));
+    statusTrigger.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTaskStatusSelector(task);
+    });
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
@@ -6168,28 +6736,40 @@
   }
 
   function lightProjectsPage() {
-    const page = lightPage("Projects");
-    const list = el("div", "light-list");
     const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    list.append(...allProjects().map(project => {
-      const row = el("button", "light-card light-project-row");
-      row.type = "button";
-      row.dataset.projectId = project.id;
-      row.addEventListener("click", () => {
-        state.selectedProjectId = project.id;
-        lightNavigate("project-detail", { from: "projects" });
-      });
-      const chips = el("span", "light-project-chip-row");
-      projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
-      row.append(lightSmallIcon("folder"), lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`), chips);
-      return row;
-    }));
-    page.append(list);
-    return page;
+    return renderUniversalFeedPage({
+      title: "Projects",
+      surface: "projects",
+      status,
+      sections: [{
+        key: "projects",
+        label: "",
+        count: allProjects().length,
+        collapsible: false,
+        expanded: true,
+        emptyState: null,
+        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
+      }],
+    });
+  }
+
+  function lightProjectRow(project, options = {}) {
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
+    row.type = "button";
+    row.dataset.projectId = project.id;
+    row.addEventListener("click", () => {
+      state.selectedProjectId = project.id;
+      lightNavigate("project-detail", { from: "projects" });
+    });
+    const chips = el("span", "light-project-chip-row");
+    projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
+    row.append(
+      lightSmallIcon("folder"),
+      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`),
+      chips
+    );
+    return row;
   }
 
   function lightProjectDetailPage() {
@@ -6258,21 +6838,112 @@
   }
 
   function lightInboxPage() {
-    const page = el("section", "light-page light-canonical-port-page light-inbox-page");
-    page.append(lightHeader("Inbox"));
-    const surface = el("section", "light-canonical-port-surface light-inbox-surface");
-    surface.append(...homeFeedContentNodes());
-    page.append(surface);
-    return page;
+    return renderUniversalFeedPage({
+      title: "Inbox",
+      surface: "inbox",
+      createPage: () => {
+        const page = lightPage("Inbox");
+        page.classList.add("light-canonical-port-page", "light-inbox-page");
+        return page;
+      },
+      surfaceTag: "section",
+      surfaceClassName: "light-canonical-port-surface light-inbox-surface",
+      sections: [lightInboxSection()]
+    });
   }
 
   function lightMeetingsPage() {
-    const page = el("section", "light-page light-canonical-port-page light-meetings-page");
-    page.append(lightHeader("Meetings"));
-    const surface = el("section", "light-canonical-port-surface light-meetings-surface");
-    surface.append(meetingsPageView({ embedded: true }));
-    page.append(surface);
-    return page;
+    const beforeSections = [meetingsEmbeddedToolbar()];
+    if (state.meetings.loading && state.meetings.records.length) {
+      beforeSections.push(el("div", "meetings-refreshing", "Refreshing..."));
+    }
+    return renderUniversalFeedPage({
+      title: "Meetings",
+      surface: "meetings",
+      createPage: () => {
+        const page = lightPage("Meetings");
+        page.classList.add("light-canonical-port-page", "light-meetings-page");
+        return page;
+      },
+      surfaceTag: "section",
+      surfaceClassName: "light-canonical-port-surface light-meetings-surface",
+      contentClassName: "meetings-page is-embedded-light",
+      beforeSections,
+      sections: [lightMeetingsSection()]
+    });
+  }
+
+  function lightInboxSection() {
+    const displayCards = feedDisplayCards();
+    if (state.feedLoadError && !displayCards.length) {
+      const empty = el("div", "empty feed-load-error");
+      empty.append(
+        el("strong", "", "Could not load the Home feed."),
+        el("span", "", state.feedLoadError)
+      );
+      return {
+        key: "inbox",
+        label: "",
+        count: 0,
+        collapsible: false,
+        expanded: true,
+        emptyState: empty,
+        items: []
+      };
+    }
+    if (!displayCards.length) {
+      const empty = el("div", "empty");
+      empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
+      return {
+        key: "inbox",
+        label: "",
+        count: 0,
+        collapsible: false,
+        expanded: true,
+        emptyState: empty,
+        items: []
+      };
+    }
+    const cards = filteredFeedCards(displayCards);
+    return {
+      key: "inbox",
+      label: "",
+      count: cards.length,
+      collapsible: false,
+      expanded: true,
+      emptyState: cards.length ? null : filteredFeedEmptyView(),
+      items: cards.map(card => universalCanonicalReplyFeedTileDescriptor(card, "inbox"))
+    };
+  }
+
+  function meetingsEmbeddedToolbar() {
+    const refresh = el("button", "meetings-refresh", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
+    const toolbar = el("div", "meetings-embedded-toolbar");
+    toolbar.append(refresh);
+    return toolbar;
+  }
+
+  function lightMeetingsSection() {
+    const records = visibleMeetingRecords().slice().reverse();
+    let emptyState = null;
+    if (state.meetings.loading && !state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty", "Loading meetings...");
+    } else if (state.meetings.error && !state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty is-error", state.meetings.error);
+    } else if (!state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty", "No meeting recordings yet.");
+    }
+    return {
+      key: "meetings",
+      label: "",
+      count: records.length,
+      collapsible: false,
+      expanded: true,
+      emptyState,
+      items: records.map(meeting => universalCanonicalMeetingFeedTileDescriptor(meeting, "meetings"))
+    };
   }
 
   function lightPage(title, options = {}) {
@@ -6711,21 +7382,41 @@
     const section = el("section", "light-info-section");
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
-    rows.forEach(row => {
-      const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
-      const item = el(isInteractive ? "button" : "div", isInteractive ? "light-info-row is-clickable" : "light-info-row");
-      if (isInteractive) {
-        item.type = "button";
-        item.dataset.workspaceTargetRoute = row.target.route;
-        item.dataset.workspaceTargetId = row.target.id;
-        item.dataset.workspaceTargetKind = row.target.kind || "";
-        item.addEventListener("click", () => openWorkspaceTarget(row.target, state.route));
-      }
-      item.append(lightSmallIcon(row.icon, row.accentKey || row.accent || ""), lightTextStack(row.label, row.value), isInteractive ? el("span", "light-chevron", ">") : el("span", ""));
-      card.append(item);
-    });
+    rows.forEach(row => card.append(lightInfoRow(row)));
     section.append(card);
     return section;
+  }
+
+  function lightInfoRow(row) {
+    const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
+    const className = [
+      "light-info-row",
+      isInteractive ? "is-clickable" : "",
+      String(row?.className || "").trim(),
+    ].filter(Boolean).join(" ");
+    const item = el(isInteractive ? "button" : "div", className);
+    if (row?.dataset && typeof row.dataset === "object") {
+      Object.entries(row.dataset).forEach(([key, value]) => {
+        item.dataset[key] = String(value || "");
+      });
+    }
+    if (isInteractive) {
+      item.type = "button";
+      item.dataset.workspaceTargetRoute = row.target.route;
+      item.dataset.workspaceTargetId = row.target.id;
+      item.dataset.workspaceTargetKind = row.target.kind || "";
+      item.addEventListener("click", () => openWorkspaceTarget(
+        row.target,
+        row.fromRoute || state.route || "",
+        row.openOptions || {}
+      ));
+    }
+    item.append(
+      lightSmallIcon(row.icon, row.accentKey || row.accent || ""),
+      lightTextStack(row.label, row.value),
+      isInteractive ? el("span", "light-chevron", ">") : el("span", "")
+    );
+    return item;
   }
 
   function lightAttendeesSection(attendees, options = {}) {
@@ -6850,6 +7541,13 @@
       });
     }
     return chip;
+  }
+
+  function lightChipIcon(icon, accentKey = "") {
+    const wrap = el("span", "light-record-chip-icon");
+    applySemanticIconAccent(wrap, accentKey, { propertyName: "color", allowEmpty: true });
+    wrap.innerHTML = iconSvg(icon, { filled: false });
+    return wrap;
   }
 
   function lightAttendeeRow(name) {
@@ -7630,6 +8328,8 @@
     const untitledFallback = Boolean(options && options.untitledFallback);
     const extraClassName = String(options && options.className || "").trim();
     const fullBleed = Boolean(options && options.fullBleed);
+    const revealOnLoad = String(options && options.revealOnLoad || "").trim().toLowerCase();
+    const noteRevealOnLoad = revealOnLoad === "note";
     const noteFlashDebug = Boolean(options && options.noteFlashDebug && noteFlashDebugEnabled());
     if (!html) {
       if (untitledFallback) {
@@ -7642,9 +8342,12 @@
     frame.setAttribute("scrolling", "no");
     frame.setAttribute("title", String(record?.title || "Generated page"));
     const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
-    if (noteFlashDebug) {
+    if (noteRevealOnLoad) {
       wrap.setAttribute("data-html-frame-state", "loading");
       wrap.setAttribute("aria-busy", "true");
+      frame.style.visibility = "hidden";
+    }
+    if (noteFlashDebug) {
       noteFlashDebugRecord("note_detail_wrapper_created", {
         selected_note_id: noteRecordId(record),
         reason: "lightHtmlDocument"
@@ -7652,7 +8355,7 @@
     }
     wrap.append(frame);
     installHtmlDetailFrameSizing(frame);
-    if (!noteFlashDebug) {
+    if (!noteRevealOnLoad) {
       frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
       return wrap;
     }
@@ -7670,19 +8373,23 @@
       wrap.setAttribute("data-html-frame-state", "ready");
       wrap.setAttribute("aria-busy", "false");
       frame.style.visibility = "visible";
-      noteFlashDebugRecord(phase, {
-        selected_note_id: noteRecordId(record),
-        reason
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord(phase, {
+          selected_note_id: noteRecordId(record),
+          reason
+        });
+      }
     };
     const onLoad = () => {
       if (!srcdocAssigned) {
         return;
       }
-      noteFlashDebugRecord("note_iframe_load", {
-        selected_note_id: noteRecordId(record),
-        reason: "load_event"
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord("note_iframe_load", {
+          selected_note_id: noteRecordId(record),
+          reason: "load_event"
+        });
+      }
       let embeddedBodyReady = false;
       try {
         embeddedBodyReady = frame.contentDocument?.body?.getAttribute("data-pucky-embedded-body") === "true";
@@ -7694,20 +8401,19 @@
       }
     };
     frame.addEventListener("load", onLoad);
-    const iframeDelayMs = noteFlashDebugIframeDelayMs();
-    if (iframeDelayMs > 0) {
-      frame.style.visibility = "hidden";
-    }
+    const iframeDelayMs = noteFlashDebug ? noteFlashDebugIframeDelayMs() : 0;
     failOpenTimerId = window.setTimeout(() => {
       markReady("note_iframe_fail_open", "fail_open_timeout");
     }, NOTE_FLASH_DEBUG_FAIL_OPEN_MS);
     const assignSrcdoc = () => {
       srcdocAssigned = true;
       frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
-      noteFlashDebugRecord("note_iframe_srcdoc_assigned", {
-        selected_note_id: noteRecordId(record),
-        reason: iframeDelayMs > 0 ? "delayed_srcdoc" : "srcdoc"
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord("note_iframe_srcdoc_assigned", {
+          selected_note_id: noteRecordId(record),
+          reason: iframeDelayMs > 0 ? "delayed_srcdoc" : "srcdoc"
+        });
+      }
     };
     if (iframeDelayMs > 0) {
       window.setTimeout(assignSrcdoc, iframeDelayMs);
@@ -9183,21 +9889,23 @@
   }
 
 
-  function cardView(card) {
+  function cardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
     if (isPendingOutboundCard(card)) {
-      return outboundCardView(card);
+      return outboundCardView(card, options);
     }
     if (isMeetingProcessingCard(card)) {
-      return meetingProcessingCardView(card);
+      return meetingProcessingCardView(card, options);
     }
-    const wrapper = el("div", "card-wrap");
+    const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const isMeetingList = isMeetingsListCard(card);
-    const cardEl = el("article", isMeetingList
+    const cardClassName = isMeetingList
       ? meetingListCardClass(card)
       : isCardRead(card)
         ? "card"
-        : "card card-unread");
+        : "card card-unread";
+    const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");
     setDataAttribute(cardEl, "data-audio-phase", currentTileAudioPhase(card));
@@ -9220,6 +9928,9 @@
     }
 
     const body = el("div", isMeetingList ? "card-body is-title-only" : "card-body");
+    if (flatFeed) {
+      body.classList.add("is-flat-feed");
+    }
     if (isMeetingList) {
       body.setAttribute("role", "button");
       body.tabIndex = 0;
@@ -9393,10 +10104,11 @@
       || String(card?.meeting_state || nested.meeting_state || origin.meeting_state || nestedOrigin.meeting_state || "") === "processing";
   }
 
-  function meetingProcessingCardView(card) {
-    const wrapper = el("div", "card-wrap card-wrap-meeting-processing");
+  function meetingProcessingCardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
+    const wrapper = el("div", flatFeed ? "card-wrap card-wrap-meeting-processing is-flat-feed" : "card-wrap card-wrap-meeting-processing");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", "card card-meeting-processing");
+    const cardEl = el("article", flatFeed ? "card card-meeting-processing is-flat-feed" : "card card-meeting-processing");
     applyCardDataAttributes(cardEl, card, "meeting_processing");
     const mark = el("div", "meeting-processing-mark");
     mark.innerHTML = iconSvg("mic", { filled: true });
@@ -9414,12 +10126,14 @@
     return wrapper;
   }
 
-  function outboundCardView(card) {
-    const wrapper = el("div", "card-wrap");
+  function outboundCardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
+    const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", isFailedPendingOutboundCard(card)
+    const cardClassName = isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
-      : "card card-outbound");
+      : "card card-outbound";
+    const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, "pending_outbound");
     applyCardActionData(cardEl, "transcript", card, "pending_outbound");
@@ -9614,6 +10328,7 @@
     const sourceInfo = describeAudioSourceForCard(card);
     const startSpeed = resolvedStartSpeedForCard(card);
     const audioUrl = String(card?.audio_url || "").trim();
+    const controlKey = audioControlKey(card) || audioUrl;
     if (same && current.is_playing) {
       setAudioProbePhase(card, "pause_pending", {
         reason: "pause_requested",
@@ -9637,16 +10352,16 @@
     }
     const start = same && !sameCompleted
       ? savedPositionFor(current.source || current.path)
-      : savedPositionFor(audioUrl);
+      : savedPositionFor(controlKey);
     if (!same || sameCompleted) {
-      forgetCompleted(audioUrl);
+      forgetCompleted(controlKey);
     }
     setAudioProbePhase(card, "starting", {
       reason: same && !sameCompleted ? "resume_requested" : "play_requested",
       clear_error: true,
       ...sourceInfo
     });
-    state.activePath = audioControlKey(card);
+    state.activePath = controlKey;
     recordAudioProbeEvent("source_resolved", {
       target_key: busyKey,
       ...sourceInfo
@@ -9663,7 +10378,7 @@
       command: "player.play",
       args: {
         path: audioUrl,
-        source: audioControlKey(card) || audioUrl,
+        source: controlKey,
         title: card.title,
         start_at_ms: start,
         speed: startSpeed
@@ -12085,7 +12800,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -12300,7 +13015,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -13702,13 +14417,55 @@
       return card.audio_playlist_path;
     }
     if (!hasNativeAudioBridge() && card.audio_url) {
-      return card.audio_url;
+      return hostedAudioSessionKey(card) || card.audio_url;
     }
     return card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
   }
 
   function audioStateKey(card) {
     return normalizePath(audioControlKey(card));
+  }
+
+  function hostedAudioSessionKey(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
+    const explicit = String(card.audio_media_id || card.media_id || "").trim();
+    if (explicit) {
+      return `media:${explicit}`;
+    }
+    const cardId = String(card.card_id || "").trim();
+    if (cardId) {
+      return `card:${cardId}:audio`;
+    }
+    const sessionId = cardSessionId(card);
+    if (sessionId) {
+      return `session:${sessionId}:audio`;
+    }
+    const threadId = cardThreadId(card);
+    if (threadId) {
+      return `thread:${threadId}:audio`;
+    }
+    const audioUrl = canonicalHostedAudioUrlIdentity(card.audio_url);
+    return audioUrl ? `url:${audioUrl}` : "";
+  }
+
+  function canonicalHostedAudioUrlIdentity(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    try {
+      const base = window.location && window.location.origin
+        ? window.location.origin
+        : DEFAULT_LINKS_API_BASE;
+      const url = new URL(raw, base);
+      url.hash = "";
+      url.search = "";
+      return url.toString();
+    } catch (_) {
+      return raw.replace(/[?#].*$/, "");
+    }
   }
 
   function playerStateKey(player) {
@@ -14021,8 +14778,12 @@
     if (!playerHasAudioIdentity(player) || !hasAudio(card)) {
       return false;
     }
+    if (samePath(playerStateKey(player), audioStateKey(card))) {
+      return true;
+    }
     return samePath(player.path, card.audio_path)
       || samePath(player.path, card.audio_url)
+      || samePath(player.source, audioControlKey(card))
       || samePath(player.source, card.audio_playlist_path)
       || samePath(player.source, card.audio_url);
   }
@@ -14098,7 +14859,9 @@
     if (!targetKey) {
       return false;
     }
-    const phase = currentTileAudioPhase({ audio_path: targetKey, audio_url: targetKey, title: state.audioProbe.target_card?.title || "" });
+    const phase = isAudioTilePhase(state.audioProbe.current_tile_audio_phase)
+      ? state.audioProbe.current_tile_audio_phase
+      : "idle";
     const nextKey = playerStateKey(nextPlayer);
     const matchesTarget = samePath(nextKey, targetKey);
     const isPlaying = Boolean(nextPlayer?.is_playing && matchesTarget);
@@ -14156,6 +14919,19 @@
     if (!samePath(playerStateKey(player), state.activePath)) {
       state.activePath = "";
     }
+  }
+
+  function findCardByAudioLookupKey(key) {
+    const target = normalizePath(key);
+    if (!target) {
+      return null;
+    }
+    return feedDisplayCards().find(card => (
+      samePath(audioControlKey(card), target)
+        || samePath(card.audio_url, target)
+        || samePath(card.audio_path, target)
+        || samePath(card.audio_playlist_path, target)
+    )) || null;
   }
 
   function samePath(left, right) {

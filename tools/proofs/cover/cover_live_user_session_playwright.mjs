@@ -34,6 +34,14 @@ const REQUIRED_HOME_ROUTES = [
   "projects",
   "contacts",
 ];
+const UNIVERSAL_FEED_TILE_ROUTES = [
+  "inbox",
+  "meetings",
+  "meeting-notes",
+  "reminders",
+  "notes",
+  "projects",
+];
 const LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"];
 const TASK_LINKS = [
   {
@@ -566,6 +574,12 @@ async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
     const detail = document.querySelector(".light-task-detail-surface");
+    const infoSections = Array.from(detail?.querySelectorAll(".light-info-section") || []);
+    const infoSection = title => infoSections.find(section =>
+      String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
+    ) || null;
+    const peopleSection = infoSection("people");
+    const attachedSection = infoSection("attached");
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       task_detail_id: detail?.getAttribute("data-task-detail-id") || "",
@@ -573,13 +587,13 @@ async function readTaskDetailState(page) {
       title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       sections: Array.from(document.querySelectorAll(".light-section-title"))
         .map(node => String(node.textContent || "").trim().toLowerCase()),
-      people: Array.from(detail?.querySelectorAll(".light-task-person-row .light-record-chip-label") || [])
+      people: Array.from(peopleSection?.querySelectorAll('.light-info-row[data-task-person-role] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
         .map(node => String(node.textContent || "").trim()),
-      notes: Array.from(detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong, [data-workspace-target-route="note-detail"] .light-record-chip-label') || [])
+      notes: Array.from(detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
-      attachments: Array.from(detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-label") || [])
+      attachments: Array.from(attachedSection?.querySelectorAll('.light-info-row[data-task-attachment-kind] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),
@@ -951,6 +965,7 @@ function renderReport(summary) {
     `- Source commit: ${summary.source_commit_full}`,
     `- UI version: ${summary.ui_version}`,
     `- Cleanup ok: ${summary.cleanup_ok}`,
+    `- Universal feed tile acceptance routes: ${summary.universal_feed_tile_routes.join(", ")}`,
   ];
   if (summary.cleanup_error) {
     lines.push(`- Cleanup error: ${summary.cleanup_error}`);
@@ -1040,6 +1055,7 @@ async function main() {
     cleanup_ok: config.keepSeed ? true : cleanupOk,
     cleanup_error: cleanupError || "",
     cleanup_skipped: Boolean(config.keepSeed),
+    universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
     mobile,
     desktop,
   };

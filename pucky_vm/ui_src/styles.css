@@ -3915,6 +3915,45 @@ button {
   overflow: hidden;
 }
 
+.light-feed-page {
+  width: 100%;
+}
+
+.light-feed-surface {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-section {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-section-header {
+  width: 100%;
+  min-width: 0;
+}
+
+.light-feed-section-body {
+  width: 100%;
+  min-width: 0;
+}
+
+.light-feed-list {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-row {
+  width: 100%;
+}
+
 .light-list {
   display: flex;
   flex-direction: column;
@@ -4152,6 +4191,15 @@ button {
   margin-top: 0;
 }
 
+.light-note-detail-page {
+  --light-note-detail-document-bg: #ffffff;
+  background: var(--light-note-detail-document-bg);
+}
+
+.app-shell[data-theme="dark"] .light-note-detail-page {
+  --light-note-detail-document-bg: #08111c;
+}
+
 .light-note-detail-page .light-detail-html-body.light-card,
 .light-task-detail-page .light-detail-html-body.light-card {
   padding: 0;
@@ -4159,6 +4207,14 @@ button {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.light-note-detail-page .light-note-detail-html-body[data-html-frame-state="loading"] {
+  background: var(--light-note-detail-document-bg);
+}
+
+.light-note-detail-page .light-note-detail-html-body .light-html-frame {
+  background: var(--light-note-detail-document-bg);
 }
 
 .light-graph-row .light-text-stack span {
@@ -5815,6 +5871,101 @@ button {
   align-items: center;
 }
 
+.light-feed-surface.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-section.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-section.is-flat-feed:not(.light-notes-section) + .light-feed-section.is-flat-feed:not(.light-notes-section) {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-feed-list.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-row.is-flat-feed {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 0;
+}
+
+.light-feed-row.is-flat-feed + .light-feed-row.is-flat-feed {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-feed-row.is-flat-feed:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
+}
+
+.light-feed-row.is-flat-feed:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.light-graph-row.is-flat-feed {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.light-reminder-row.is-flat-feed {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.light-project-row.is-flat-feed {
+  min-height: 88px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-block: 14px;
+}
+
+.card-wrap.is-flat-feed {
+  margin: 0;
+}
+
+.card.is-flat-feed {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.card.is-flat-feed:focus-visible,
+.card.is-flat-feed:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.card.is-flat-feed:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
+}
+
+.card.is-flat-feed .card-body.is-flat-feed {
+  padding-left: 12px;
+}
+
+.card.card-meeting-list.is-flat-feed .card-body.is-flat-feed {
+  padding-left: 0;
+}
+
+.card-wrap.is-flat-feed + .card-wrap.is-flat-feed .card.is-flat-feed {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
 .light-project-chip-row {
   grid-column: 2;
   display: flex;
@@ -5982,6 +6133,12 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+.light-task-status-circle-trigger:focus-visible,
+.light-task-status-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 24%, transparent);
+  outline-offset: 3px;
+}
+
 .light-task-detail-copy {
   min-width: 0;
   display: grid;
@@ -6113,14 +6270,24 @@ button {
   min-height: 40px;
   padding: 0 14px 0 10px;
   border-radius: 999px;
+  border: 0;
   box-shadow: none;
   display: inline-grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+  cursor: pointer;
   color: var(--home-shell-text);
   background: color-mix(in srgb, var(--home-shell-card-strong) 94%, white 6%);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--home-shell-border) 88%, transparent);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .light-task-status-trigger-icon,
@@ -6170,31 +6337,10 @@ button {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.light-task-people-card,
-.light-task-checklist-card,
-.light-task-attachment-card {
+.light-task-checklist-card {
   display: grid;
   gap: 8px;
   padding: 10px 12px;
-}
-
-.light-task-person-row {
-  display: grid;
-  gap: 8px;
-}
-
-.light-task-person-row + .light-task-person-row {
-  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 78%, transparent);
-  padding-top: 8px;
-}
-
-.light-task-person-label {
-  color: var(--home-shell-text-subtle);
-  font-size: 11px;
-  line-height: 1.1;
-  font-weight: 780;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .light-task-checklist-row {
@@ -6234,6 +6380,14 @@ button {
   border-radius: 10px;
 }
 
+.light-task-row-status-trigger:disabled,
+.light-task-status-circle-trigger:disabled,
+.light-task-status-trigger:disabled,
+.light-task-checklist-row:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .light-task-checklist-label {
   color: var(--home-shell-text);
   font-size: 14px;
@@ -6241,55 +6395,11 @@ button {
   font-weight: 650;
 }
 
-.light-task-chip-cloud {
-  gap: 8px;
-}
-
-.light-task-chip-cloud .light-attendee-chip {
-  min-height: 32px;
-  font-size: 12px;
-}
-
 .light-record-chip {
   gap: 7px;
   padding: 0 11px 0 8px;
   user-select: none;
   -webkit-user-select: none;
-}
-
-.light-task-chip-cloud .light-record-chip,
-.light-task-people-card .light-record-chip {
-  min-height: 34px;
-  color: var(--home-shell-text);
-  background: color-mix(in srgb, var(--home-shell-card-strong) 96%, white 4%);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--task-chip-accent, var(--home-shell-border)) 18%, var(--home-shell-border)),
-    0 1px 0 rgba(255, 255, 255, 0.02);
-}
-
-.app-shell[data-theme="dark"] .light-task-chip-cloud .light-record-chip,
-.app-shell[data-theme="dark"] .light-task-people-card .light-record-chip {
-  background: color-mix(in srgb, var(--home-shell-card-strong) 86%, #111827 14%);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--task-chip-accent, rgba(255, 255, 255, 0.08)) 20%, rgba(255, 255, 255, 0.08)),
-    0 8px 18px rgba(2, 6, 23, 0.14);
-}
-
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"] { --task-chip-accent: #ff5b52; }
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="contact"],
-.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"] { --task-chip-accent: #f43f68; }
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"] { --task-chip-accent: #0f9fb8; }
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"] { --task-chip-accent: #f2a000; }
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="meeting_note"] { --task-chip-accent: #0ea5e9; }
-.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="reminder"] { --task-chip-accent: #f59e0b; }
-
-.light-task-chip-cloud .light-record-chip .light-record-chip-icon,
-.light-task-people-card .light-record-chip .light-record-chip-icon {
-  color: #fff;
-  background: var(--task-chip-accent, color-mix(in srgb, var(--accent-primary) 78%, var(--home-shell-text)));
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 0 0 1px color-mix(in srgb, var(--task-chip-accent, var(--accent-primary)) 34%, transparent);
 }
 
 .light-record-chip-icon {

@@ -400,14 +400,20 @@ async function readPlayerState(page) {
 
 async function waitForPlayerAdvance(page, timeoutMs, minimumDeltaMs = 400) {
   const before = await readPlayerState(page);
+  const startPosition = Number(before?.position_ms || 0);
   await page.waitForFunction(
-    ({ minimumDelta }) => window.Pucky.request({ command: "player.state", args: {} }).then((player) => {
+    ({ minimumDelta, startPositionMs }) => window.Pucky.request({ command: "player.state", args: {} }).then((player) => {
       const current = Number(player?.position_ms || 0);
       const duration = Number(player?.duration_ms || 0);
       const playing = Boolean(player?.is_playing);
-      return current >= minimumDelta || (duration > 0 && current >= duration) || !playing;
+      return current - startPositionMs >= minimumDelta
+        || (duration > 0 && current >= duration && current >= startPositionMs)
+        || !playing;
     }),
-    { minimumDelta: Math.max(50, Number(minimumDeltaMs || 400)) },
+    {
+      minimumDelta: Math.max(50, Number(minimumDeltaMs || 400)),
+      startPositionMs: startPosition
+    },
     { timeout: timeoutMs }
   );
   const after = await readPlayerState(page);
@@ -542,7 +548,7 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
     targetSelector,
     { timeout: timeoutMs }
   );
-  const progress = await waitForPlayerAdvance(page, timeoutMs, 250);
+  const progress = await waitForPlayerAdvance(page, Math.min(timeoutMs, 3500), 2000);
   const playing = await page.locator(targetSelector).evaluate(button => ({
     classes: String(button.className || "").trim(),
     aria_label: String(button.getAttribute("aria-label") || "").trim()
@@ -896,8 +902,8 @@ async function main() {
     assert(lightInboxAudioState.title === darkFeedAudioState.title, "Light Inbox audio title diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.session_id === darkFeedAudioState.session_id, "Light Inbox audio session diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.aria_label === darkFeedAudioState.aria_label, "Light Inbox audio control label diverged from the canonical dark Home feed");
-    assert(lightInboxAudioState.progress.delta_ms >= 0, "Light Inbox audio did not advance or complete after starting playback");
-    assert(darkFeedAudioState.progress.delta_ms >= 0, "Dark Feed audio did not advance or complete after starting playback");
+    assert(lightInboxAudioState.progress.delta_ms >= 2000, "Light Inbox audio did not advance by at least 2 seconds after starting playback");
+    assert(darkFeedAudioState.progress.delta_ms >= 2000, "Dark Feed audio did not advance by at least 2 seconds after starting playback");
     logAction(actions, "open_inline_audio_detail");
     const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
     const lightInboxInlineAudioDetail = await openInlineAudioDetail(
@@ -908,7 +914,7 @@ async function main() {
     assert(darkFeedInlineAudioDetail.detail.detail_type === "audio", "Dark Feed inline audio strip did not open audio detail");
     assert(lightInboxInlineAudioDetail.detail.detail_type === "audio", "Light Inbox inline audio strip did not open audio detail");
     assert(
-      darkFeedInlineAudioDetail.player_delta_ms >= 0 && lightInboxInlineAudioDetail.player_delta_ms >= 0,
+      darkFeedInlineAudioDetail.player_delta_ms >= 500 && lightInboxInlineAudioDetail.player_delta_ms >= 500,
       "Inline audio detail did not preserve the active player session"
     );
     logAction(actions, "open_audio_controls_navigation");

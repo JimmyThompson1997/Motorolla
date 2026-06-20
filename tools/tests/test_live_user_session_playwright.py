@@ -29,6 +29,11 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "--keep-seed" in source
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
+    assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
+    assert '"notes"' in source
+    assert '"projects"' in source
+    assert '"inbox"' in source
+    assert '"meetings"' in source
     assert 'url.searchParams.set("api_token"' not in source
     assert "browser_api_token" not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
@@ -40,8 +45,12 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'buildRouteUrl(config, "home")' in source
     assert 'url.searchParams.set("route", String(route || "home"));' in source
     assert 'await openRouteFromHome(page, "connect", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "inbox", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "meetings", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "notes", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "projects", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
     assert "contacts-edit" not in source
@@ -65,6 +74,7 @@ def test_tools_package_exposes_live_user_session_script() -> None:
     payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
 
     assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
+    assert payload["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
 
 
 def test_tools_package_exposes_inbox_related_proofs() -> None:
@@ -93,3 +103,6 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
     assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
     assert 'live_root / "light-native-ports" / browser_name / run_name' in source
+    assert "cover_universal_feed_tiles_playwright.mjs" in source
+    assert 'proof-local-universal-tiles' in source
+    assert 'proof-live-universal-tiles' in source
