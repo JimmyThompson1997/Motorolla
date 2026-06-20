@@ -597,11 +597,28 @@ async function openInlineAudioDetail(page, selector, timeoutMs) {
       }
       continue;
     }
-    await clickSelector(page, inlineSelector, timeoutMs);
-    await page.waitForFunction(() => {
+    const openedInlineDetail = await clickSelector(page, inlineSelector, timeoutMs).then(() => true).catch(() => false);
+    if (!openedInlineDetail) {
+      const stillPlaying = await page.locator(audioSelector).evaluate(button => button.classList.contains("is-playing")).catch(() => false);
+      if (stillPlaying) {
+        await clickSelector(page, audioSelector, timeoutMs);
+        await page.waitForTimeout(160);
+      }
+      continue;
+    }
+    const detailOpened = await page.waitForFunction(() => {
       const detail = document.getElementById("detail");
       return String(detail?.getAttribute("data-detail-type") || "") === "audio";
-    }, { timeout: timeoutMs });
+    }, { timeout: timeoutMs }).then(() => true).catch(() => false);
+    if (!detailOpened) {
+      const stillPlaying = await page.locator(audioSelector).evaluate(button => button.classList.contains("is-playing")).catch(() => false);
+      if (stillPlaying) {
+        await clickSelector(page, audioSelector, timeoutMs);
+        await page.waitForTimeout(160);
+      }
+      await closeDetail(page, timeoutMs);
+      continue;
+    }
     const before = await readPlayerState(page);
     await page.waitForTimeout(900);
     const after = await readPlayerState(page);
